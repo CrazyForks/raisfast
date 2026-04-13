@@ -4,6 +4,7 @@ use std::path::Path;
 
 use rust_blog::config::app::AppConfig;
 use rust_blog::db::connection::init_pool;
+use rust_blog::db::dialect;
 
 // ── migrate ──────────────────────────────────────────────────────
 
@@ -14,9 +15,9 @@ pub async fn migrate(config: &AppConfig) -> anyhow::Result<()> {
     println!("running migrations...");
     let pool = init_pool(&config.database_url, 1).await?;
 
-    sqlx::query("CREATE TABLE IF NOT EXISTS _migrations (filename TEXT PRIMARY KEY)")
-        .execute(&pool)
-        .await?;
+    let create_sql =
+        dialect::translate("CREATE TABLE IF NOT EXISTS _migrations (filename TEXT PRIMARY KEY)");
+    sqlx::query(&create_sql).execute(&pool).await?;
 
     let migrations_dir = Path::new("./migrations");
     if !migrations_dir.exists() {
@@ -34,18 +35,20 @@ pub async fn migrate(config: &AppConfig) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let check_sql = dialect::translate("SELECT COUNT(*) FROM _migrations WHERE filename = ?");
+    let insert_sql = dialect::translate("INSERT INTO _migrations (filename) VALUES (?)");
+
     let mut applied = 0u32;
     for entry in &entries {
         let filename = entry.file_name().to_string_lossy().to_string();
         let sql = std::fs::read_to_string(entry.path())?;
 
-        let already_applied: bool =
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM _migrations WHERE filename = ?")
-                .bind(&filename)
-                .fetch_one(&pool)
-                .await
-                .unwrap_or(0)
-                > 0;
+        let already_applied: bool = sqlx::query_scalar::<_, i64>(&check_sql)
+            .bind(&filename)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(0)
+            > 0;
 
         if already_applied {
             println!("  [skip] {}", filename);
@@ -54,7 +57,7 @@ pub async fn migrate(config: &AppConfig) -> anyhow::Result<()> {
 
         print!("  [apply] {} ... ", filename);
         sqlx::query(&sql).execute(&pool).await?;
-        sqlx::query("INSERT INTO _migrations (filename) VALUES (?)")
+        sqlx::query(&insert_sql)
             .bind(&filename)
             .execute(&pool)
             .await?;
@@ -73,37 +76,49 @@ pub async fn migrate(config: &AppConfig) -> anyhow::Result<()> {
 
 // ── backup ───────────────────────────────────────────────────────
 
-/// `db backup` — 将 SQLite 数据库文件复制到指定目录。
+/// `db backup` — 备份数据库。
 ///
-/// 自动添加时间戳后缀，保留最近 10 个备份。
+/// SQLite：复制数据库文件到指定目录，自动添加时间戳后缀，保留最近 10 个备份。
+/// PostgreSQL / MySQL：提示使用 `pg_dump` / `mysqldump`。
 pub fn backup(config: &AppConfig, output_dir: &str) -> anyhow::Result<()> {
-    let db_path = config
-        .database_url
-        .trim_start_matches("sqlite:")
-        .split('?')
-        .next()
-        .unwrap_or("./data/blog.db");
+    #[cfg(feature = "db-sqlite")]
+    {
+        let db_path = config
+            .database_url
+            .trim_start_matches("sqlite:")
+            .split('?')
+            .next()
+            .unwrap_or("./data/blog.db");
 
-    if !Path::new(db_path).exists() {
-        anyhow::bail!("database file not found: {}", db_path);
+        if !Path::new(db_path).exists() {
+            anyhow::bail!("database file not found: {}", db_path);
+        }
+
+        std::fs::create_dir_all(output_dir)?;
+
+        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+        let backup_name = format!("blog_{}.db", timestamp);
+        let backup_path = Path::new(output_dir).join(&backup_name);
+
+        std::fs::copy(db_path, &backup_path)?;
+        let now = std::time::SystemTime::now();
+        let _ = std::fs::File::open(&backup_path).and_then(|f| f.set_modified(now));
+        let size = std::fs::metadata(&backup_path)?.len();
+
+        println!("backed up to {} ({} bytes)", backup_path.display(), size);
+
+        cleanup_old_backups(output_dir);
+        Ok(())
     }
 
-    std::fs::create_dir_all(output_dir)?;
-
-    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-    let backup_name = format!("blog_{}.db", timestamp);
-    let backup_path = Path::new(output_dir).join(&backup_name);
-
-    std::fs::copy(db_path, &backup_path)?;
-    let now = std::time::SystemTime::now();
-    let _ = std::fs::File::open(&backup_path).and_then(|f| f.set_modified(now));
-    let size = std::fs::metadata(&backup_path)?.len();
-
-    println!("backed up to {} ({} bytes)", backup_path.display(), size);
-
-    cleanup_old_backups(output_dir);
-
-    Ok(())
+    #[cfg(not(feature = "db-sqlite"))]
+    {
+        let _ = (config, output_dir);
+        anyhow::bail!(
+            "file-based backup is only supported for SQLite. \
+             Use pg_dump (PostgreSQL) or mysqldump (MySQL) instead."
+        );
+    }
 }
 
 /// 清理旧备份，只保留最近 10 个。

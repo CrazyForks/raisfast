@@ -58,17 +58,20 @@ fn test_config() -> AppConfig {
     }
 }
 
-async fn test_pool() -> sqlx::SqlitePool {
-    let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-    sqlx::query(include_str!("../migrations/001_init.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/002_add_indexes.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    pool
+async fn test_pool() -> rust_blog::db::Pool {
+    #[cfg(feature = "db-sqlite")]
+    {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(include_str!("../migrations/001_init.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(include_str!("../migrations/002_add_indexes.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
 }
 
 async fn test_app() -> (axum::Router, AppState) {
@@ -242,26 +245,30 @@ async fn register_and_login(
     )
 }
 
-async fn create_admin(pool: &sqlx::SqlitePool) -> String {
+async fn create_admin(pool: &rust_blog::db::Pool) -> String {
     let hash = rust_blog::services::auth::hash_password("AdminPass123!").unwrap();
     let id = uuid::Uuid::now_v7().to_string();
-    sqlx::query(
+    let sql = rust_blog::db::dialect::translate(
         "INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, 'admin')",
-    )
-    .bind(&id)
-    .bind("admin@test.com")
-    .bind("testadmin")
-    .bind(&hash)
-    .execute(pool)
-    .await
-    .unwrap();
+    );
+    sqlx::query(&sql)
+        .bind(&id)
+        .bind("admin@test.com")
+        .bind("testadmin")
+        .bind(&hash)
+        .execute(pool)
+        .await
+        .unwrap();
     id
 }
 
-async fn create_author(pool: &sqlx::SqlitePool) -> String {
+async fn create_author(pool: &rust_blog::db::Pool) -> String {
     let hash = rust_blog::services::auth::hash_password("AuthorPass123!").unwrap();
     let id = uuid::Uuid::now_v7().to_string();
-    sqlx::query("INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, 'author')")
+    let sql = rust_blog::db::dialect::translate(
+        "INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, 'author')",
+    );
+    sqlx::query(&sql)
         .bind(&id)
         .bind("author@test.com")
         .bind("testauthor")
@@ -1137,7 +1144,10 @@ mod comment {
         .await;
         let pid = b1["data"]["id"].as_str().unwrap();
 
-        sqlx::query("UPDATE comments SET status = 'approved' WHERE id = ?")
+        let approve_sql = rust_blog::db::dialect::translate(
+            "UPDATE comments SET status = 'approved' WHERE id = ?",
+        );
+        sqlx::query(&approve_sql)
             .bind(pid)
             .execute(&state.pool)
             .await

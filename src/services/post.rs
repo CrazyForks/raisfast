@@ -43,7 +43,7 @@ fn joined_row_to_response(r: PostJoinedRow, tags: Vec<post::TagBrief>) -> PostRe
     }
 }
 
-async fn build_post_response_from_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<PostResponse> {
+async fn build_post_response_from_id(pool: &crate::db::Pool, id: &str) -> AppResult<PostResponse> {
     let row = post::find_joined_by_id(pool, id).await?;
     let tags = post::get_post_tags(pool, &row.id).await.unwrap_or_default();
     Ok(joined_row_to_response(row, tags))
@@ -53,7 +53,7 @@ async fn build_post_response_from_id(pool: &sqlx::SqlitePool, id: &str) -> AppRe
 ///
 /// 从分类名称自动生成 slug。
 pub async fn create_category(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     req: CreateCategoryRequest,
 ) -> AppResult<category::Category> {
     let slug = slugify(&req.name);
@@ -72,7 +72,7 @@ pub async fn create_category(
 ///
 /// 若名称变更，自动重新生成 slug。
 pub async fn update_category(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     id: &str,
     req: UpdateCategoryRequest,
 ) -> AppResult<category::Category> {
@@ -92,37 +92,37 @@ pub async fn update_category(
 }
 
 /// 删除分类。
-pub async fn delete_category(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
+pub async fn delete_category(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
     category::delete(pool, id).await
 }
 
 /// 获取所有分类列表。
-pub async fn list_categories(pool: &sqlx::SqlitePool) -> AppResult<Vec<category::Category>> {
+pub async fn list_categories(pool: &crate::db::Pool) -> AppResult<Vec<category::Category>> {
     category::find_all(pool).await
 }
 
 /// 创建标签。
 ///
 /// 从标签名称自动生成 slug。
-pub async fn create_tag(pool: &sqlx::SqlitePool, req: CreateTagRequest) -> AppResult<tag::Tag> {
+pub async fn create_tag(pool: &crate::db::Pool, req: CreateTagRequest) -> AppResult<tag::Tag> {
     let slug = slugify(&req.name);
     tag::create(pool, &req.name, &slug).await
 }
 
 /// 删除标签。
-pub async fn delete_tag(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
+pub async fn delete_tag(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
     tag::delete(pool, id).await
 }
 
 /// 获取所有标签列表。
-pub async fn list_tags(pool: &sqlx::SqlitePool) -> AppResult<Vec<tag::Tag>> {
+pub async fn list_tags(pool: &crate::db::Pool) -> AppResult<Vec<tag::Tag>> {
     tag::find_all(pool).await
 }
 
 /// 生成唯一的 slug。
 ///
 /// 若基础 slug 已被占用，则追加递增后缀（`-2`、`-3`、...）直到唯一。
-async fn make_unique_slug(base_slug: &str, pool: &sqlx::SqlitePool) -> AppResult<String> {
+async fn make_unique_slug(base_slug: &str, pool: &crate::db::Pool) -> AppResult<String> {
     let mut slug = base_slug.to_string();
     let mut counter = 1;
     while post::find_by_slug(pool, &slug).await?.is_some() {
@@ -150,7 +150,7 @@ fn extract_excerpt(content: &str, max_len: usize) -> String {
 /// - 若未提供摘要，从内容中自动提取前 200 字符。
 /// - 同步关联标签。
 pub async fn create_post(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     plugins: &PluginManager,
     author_id: &str,
     req: CreatePostRequest,
@@ -195,7 +195,7 @@ pub async fn create_post(
 /// - 重新生成摘要（若内容变更）。
 /// - 同步关联标签。
 pub async fn update_post(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     id: &str,
     req: UpdatePostRequest,
 ) -> AppResult<PostResponse> {
@@ -241,7 +241,7 @@ pub async fn update_post(
 }
 
 /// 删除文章。
-pub async fn delete_post(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
+pub async fn delete_post(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
     post::delete(pool, id).await
 }
 
@@ -249,7 +249,7 @@ pub async fn delete_post(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
 ///
 /// 仅文章作者或管理员可执行。
 pub async fn update_post_with_auth(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     _plugins: &PluginManager,
     slug: &str,
     user_id: &str,
@@ -271,7 +271,7 @@ pub async fn update_post_with_auth(
 ///
 /// 仅文章作者或管理员可执行。
 pub async fn delete_post_with_auth(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     plugins: &PluginManager,
     slug: &str,
     user_id: &str,
@@ -296,7 +296,7 @@ pub async fn delete_post_with_auth(
 ///
 /// 每次访问原子递增文章的浏览计数（`view_count`），
 /// 并通过 JOIN 一次查询获取作者名和分类名。
-pub async fn get_post(pool: &sqlx::SqlitePool, slug: &str) -> AppResult<PostResponse> {
+pub async fn get_post(pool: &crate::db::Pool, slug: &str) -> AppResult<PostResponse> {
     let row = post::increment_view_count_joined(pool, slug).await?;
     let tags = post::get_post_tags(pool, &row.id).await.unwrap_or_default();
     Ok(joined_row_to_response(row, tags))
@@ -307,7 +307,7 @@ pub async fn get_post(pool: &sqlx::SqlitePool, slug: &str) -> AppResult<PostResp
 /// 支持按分类、标签和关键词进行可选过滤。
 /// 使用 JOIN 查询和批量标签获取，将查询次数从 3N+1 降至 2~3 次。
 pub async fn list_posts(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     page: i64,
     page_size: i64,
     category_id: Option<&str>,
@@ -355,7 +355,7 @@ pub async fn list_posts(
 /// 获取文章详情（供所有者编辑用）。
 ///
 /// 与 [`get_post`] 不同，此方法返回文章不论其发布状态，适用于作者编辑草稿。
-pub async fn get_post_for_owner(pool: &sqlx::SqlitePool, id: &str) -> AppResult<PostResponse> {
+pub async fn get_post_for_owner(pool: &crate::db::Pool, id: &str) -> AppResult<PostResponse> {
     build_post_response_from_id(pool, id).await
 }
 

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// | `APP_HOST` | String | `0.0.0.0` | 监听地址 |
 /// | `APP_PORT` | u16 | `3000` | 监听端口 |
 /// | `APP_ENV` | String | `development` | 运行环境 |
-/// | `DATABASE_URL` | String | `sqlite:./data/blog.db?mode=rwc` | SQLite 连接字符串 |
+/// | `DATABASE_URL` | String | (按数据库后端不同) | 数据库连接字符串 |
 /// | `DB_POOL_SIZE` | u32 | `5` | 连接池大小 |
 /// | `JWT_SECRET` | String | (内置默认值) | JWT 签名密钥 |
 /// | `JWT_ACCESS_EXPIRES` | u64 | `900` (15 分钟) | Access Token 过期时间（秒） |
@@ -77,8 +77,20 @@ impl AppConfig {
             host,
             port,
             env: env::var("APP_ENV").unwrap_or_else(|_| "development".into()),
-            database_url: env::var("DATABASE_URL")
-                .unwrap_or_else(|_| "sqlite:./data/blog.db?mode=rwc".into()),
+            database_url: env::var("DATABASE_URL").unwrap_or_else(|_| {
+                #[cfg(feature = "db-sqlite")]
+                {
+                    "sqlite:./data/blog.db?mode=rwc".into()
+                }
+                #[cfg(feature = "db-postgres")]
+                {
+                    "postgres://localhost/blog".into()
+                }
+                #[cfg(feature = "db-mysql")]
+                {
+                    "mysql://root@localhost/blog".into()
+                }
+            }),
             db_pool_size: env::var("DB_POOL_SIZE")
                 .ok()
                 .and_then(|v| v.parse().ok())

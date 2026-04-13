@@ -26,7 +26,7 @@ const MAGIC_SIGNATURES: &[(&str, &[u8])] = &[
 /// 3. 使用 UUID v7 生成文件名，写入磁盘。
 /// 4. 在数据库中创建媒体记录。
 pub async fn save_file(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     user_id: &str,
     upload_dir: &str,
     max_size: usize,
@@ -81,7 +81,7 @@ pub async fn save_file(
 ///
 /// 返回媒体列表和总记录数。
 pub async fn list(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     user_id: &str,
     page: i64,
     page_size: i64,
@@ -93,7 +93,7 @@ pub async fn list(
 ///
 /// 仅文件所有者或管理员可执行。同时删除磁盘文件和数据库记录。
 pub async fn delete_media(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     upload_dir: &str,
     media_id: &str,
     user_id: &str,

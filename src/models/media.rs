@@ -64,7 +64,7 @@ impl Media {
 /// 自动生成 UUID v7 作为主键。
 /// 创建完成后重新查询并返回完整媒体文件记录。
 pub async fn create(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     user_id: &str,
     filename: &str,
     filepath: &str,
@@ -87,7 +87,8 @@ pub async fn create(
     .execute(pool)
     .await?;
 
-    let media = sqlx::query_as::<_, Media>("SELECT * FROM media WHERE id = ?")
+    let sql = crate::db::dialect::translate("SELECT * FROM media WHERE id = ?");
+    let media = sqlx::query_as::<_, Media>(&sql)
         .bind(&id)
         .fetch_one(pool)
         .await?;
@@ -99,25 +100,24 @@ pub async fn create(
 ///
 /// 按 `created_at` 降序排列。返回媒体文件列表和总记录数。
 pub async fn find_all(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     user_id: &str,
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<Media>, i64)> {
     let offset = (page - 1) * page_size;
-    let items = sqlx::query_as::<_, Media>(
+    let sql = crate::db::dialect::translate(
         "SELECT * FROM media WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
-    )
-    .bind(user_id)
-    .bind(page_size)
-    .bind(offset)
-    .fetch_all(pool)
-    .await?;
-
-    let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM media WHERE user_id = ?")
+    );
+    let items = sqlx::query_as::<_, Media>(&sql)
         .bind(user_id)
-        .fetch_one(pool)
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(pool)
         .await?;
+
+    let sql = crate::db::dialect::translate("SELECT COUNT(*) FROM media WHERE user_id = ?");
+    let total: (i64,) = sqlx::query_as(&sql).bind(user_id).fetch_one(pool).await?;
 
     Ok((items, total.0))
 }
@@ -125,8 +125,9 @@ pub async fn find_all(
 /// 根据媒体文件 ID 查找
 ///
 /// 返回 `Ok(Some(media))` 或 `Ok(None)`（未找到时）。
-pub async fn find_by_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<Option<Media>> {
-    let media = sqlx::query_as::<_, Media>("SELECT * FROM media WHERE id = ?")
+pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<Media>> {
+    let sql = crate::db::dialect::translate("SELECT * FROM media WHERE id = ?");
+    let media = sqlx::query_as::<_, Media>(&sql)
         .bind(id)
         .fetch_optional(pool)
         .await?;
@@ -137,7 +138,7 @@ pub async fn find_by_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<Option<M
 ///
 /// 仅删除数据库记录，不删除磁盘文件。
 /// 若记录不存在则返回 [`AppError::NotFound`]。
-pub async fn delete(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
+pub async fn delete(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
     let result = sqlx::query!("DELETE FROM media WHERE id = ?", id)
         .execute(pool)
         .await?;

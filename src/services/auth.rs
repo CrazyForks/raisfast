@@ -134,7 +134,7 @@ fn generate_refresh_token_string() -> AppResult<String> {
 /// 用户注册。
 ///
 /// 检查邮箱是否已被注册，若唯一则哈希密码并创建用户记录。
-pub async fn register(pool: &sqlx::SqlitePool, req: RegisterRequest) -> AppResult<UserResponse> {
+pub async fn register(pool: &crate::db::Pool, req: RegisterRequest) -> AppResult<UserResponse> {
     if user::find_by_email(pool, &req.email).await?.is_some() {
         return Err(AppError::Conflict("email_registered".into()));
     }
@@ -148,7 +148,7 @@ pub async fn register(pool: &sqlx::SqlitePool, req: RegisterRequest) -> AppResul
 ///
 /// 验证邮箱和密码，成功后生成访问令牌和刷新令牌，将刷新令牌存入数据库。
 pub async fn login(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     req: &crate::models::user::LoginRequest,
     jwt_secret: &str,
     jwt_access_expires: u64,
@@ -181,7 +181,7 @@ pub async fn login(
 ///
 /// 验证刷新令牌的有效性，执行令牌轮换：删除旧刷新令牌，生成新的访问令牌和刷新令牌。
 pub async fn refresh(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     refresh_token_str: &str,
     jwt_secret: &str,
     jwt_access_expires: u64,
@@ -227,12 +227,12 @@ pub async fn refresh(
 /// 用户登出。
 ///
 /// 删除该用户的所有刷新令牌，使其所有设备上的会话失效。
-pub async fn logout(pool: &sqlx::SqlitePool, user_id: &str) -> AppResult<()> {
+pub async fn logout(pool: &crate::db::Pool, user_id: &str) -> AppResult<()> {
     refresh_token::delete_by_user(pool, user_id).await
 }
 
 /// 获取当前用户资料。
-pub async fn get_me(pool: &sqlx::SqlitePool, user_id: &str) -> AppResult<UserResponse> {
+pub async fn get_me(pool: &crate::db::Pool, user_id: &str) -> AppResult<UserResponse> {
     let user = user::find_by_id(pool, user_id)
         .await?
         .ok_or_else(|| AppError::NotFound("user".into()))?;
@@ -241,7 +241,7 @@ pub async fn get_me(pool: &sqlx::SqlitePool, user_id: &str) -> AppResult<UserRes
 
 /// 更新当前用户资料（用户名、简介、网站、头像）。
 pub async fn update_me(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     user_id: &str,
     req: UpdateUserRequest,
 ) -> AppResult<UserResponse> {
@@ -261,7 +261,7 @@ pub async fn update_me(
 ///
 /// 验证旧密码正确后，用新密码的哈希替换旧哈希。
 pub async fn change_password(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     user_id: &str,
     req: UpdatePasswordRequest,
 ) -> AppResult<()> {
@@ -280,7 +280,7 @@ pub async fn change_password(
 }
 
 /// 获取指定用户的公开资料。
-pub async fn get_public_user(pool: &sqlx::SqlitePool, id: &str) -> AppResult<UserResponse> {
+pub async fn get_public_user(pool: &crate::db::Pool, id: &str) -> AppResult<UserResponse> {
     let user = user::find_by_id(pool, id)
         .await?
         .ok_or_else(|| AppError::NotFound("user".into()))?;
@@ -291,7 +291,7 @@ pub async fn get_public_user(pool: &sqlx::SqlitePool, id: &str) -> AppResult<Use
 ///
 /// 返回用户响应列表和总记录数。
 pub async fn list_users(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<UserResponse>, i64)> {

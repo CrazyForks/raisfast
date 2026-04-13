@@ -34,7 +34,7 @@ pub struct CreateTagRequest {
 /// 查询所有标签
 ///
 /// 按 `name` 字母顺序排列返回完整标签列表。
-pub async fn find_all(pool: &sqlx::SqlitePool) -> AppResult<Vec<Tag>> {
+pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Tag>> {
     let tags = sqlx::query_as::<_, Tag>("SELECT * FROM tags ORDER BY name")
         .fetch_all(pool)
         .await?;
@@ -44,8 +44,9 @@ pub async fn find_all(pool: &sqlx::SqlitePool) -> AppResult<Vec<Tag>> {
 /// 根据标签 ID 查找标签
 ///
 /// 若未找到则返回 [`AppError::NotFound`]。
-pub async fn find_by_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<Tag> {
-    sqlx::query_as::<_, Tag>("SELECT * FROM tags WHERE id = ?")
+pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Tag> {
+    let sql = crate::db::dialect::translate("SELECT * FROM tags WHERE id = ?");
+    sqlx::query_as::<_, Tag>(&sql)
         .bind(id)
         .fetch_one(pool)
         .await
@@ -55,7 +56,7 @@ pub async fn find_by_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<Tag> {
 /// 创建新标签
 ///
 /// 自动生成 UUID v7 作为主键。创建完成后重新查询并返回完整标签记录。
-pub async fn create(pool: &sqlx::SqlitePool, name: &str, slug: &str) -> AppResult<Tag> {
+pub async fn create(pool: &crate::db::Pool, name: &str, slug: &str) -> AppResult<Tag> {
     let id = Uuid::now_v7().to_string();
     let now = Utc::now().to_rfc3339();
 
@@ -75,7 +76,7 @@ pub async fn create(pool: &sqlx::SqlitePool, name: &str, slug: &str) -> AppResul
 /// 删除标签
 ///
 /// 若标签不存在则返回 [`AppError::NotFound`]。
-pub async fn delete(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
+pub async fn delete(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
     let result = sqlx::query!("DELETE FROM tags WHERE id = ?", id)
         .execute(pool)
         .await?;

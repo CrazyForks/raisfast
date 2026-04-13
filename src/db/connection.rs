@@ -1,37 +1,57 @@
-//! SQLite 连接池初始化。
+//! 数据库连接池初始化。
 //!
-//! 创建异步连接池并设置关键 PRAGMA：
-//! - `journal_mode = WAL` — Write-Ahead Logging，提升并发读写性能
-//! - `foreign_keys = ON` — 启用外键约束（SQLite 默认关闭）
+//! 根据 feature flag 创建对应数据库类型的连接池：
+//! - `sqlite`：创建 SqlitePool 并设置 WAL 模式、外键约束
+//! - `postgres`：创建 PgPool
+//! - `mysql`：创建 MySqlPool
 
-use sqlx::SqlitePool;
-use sqlx::pool::PoolOptions;
+use crate::db::pool::Pool;
 
-/// 初始化 SQLite 连接池。
+/// 初始化数据库连接池。
 ///
-/// # 参数
-///
-/// - `database_url` — SQLite 连接字符串，如 `sqlite:./data/blog.db?mode=rwc`
-/// - `pool_size` — 最大连接数
-///
-/// # 返回
-///
-/// 配置好 PRAGMA 的 `SqlitePool` 实例。
-pub async fn init_pool(database_url: &str, pool_size: u32) -> Result<SqlitePool, sqlx::Error> {
-    let pool = PoolOptions::<sqlx::Sqlite>::new()
-        .max_connections(pool_size)
-        .connect(database_url)
-        .await?;
+/// SQLite 额外执行 PRAGMA 配置（WAL 模式 + 外键约束），
+/// PostgreSQL / MySQL 无需额外设置。
+pub async fn init_pool(database_url: &str, pool_size: u32) -> Result<Pool, sqlx::Error> {
+    #[cfg(feature = "db-sqlite")]
+    {
+        use sqlx::pool::PoolOptions;
+        let pool = PoolOptions::<sqlx::Sqlite>::new()
+            .max_connections(pool_size)
+            .connect(database_url)
+            .await?;
 
-    // WAL 模式：读写不互相阻塞，适合 Web 场景
-    sqlx::query("PRAGMA journal_mode = WAL")
-        .execute(&pool)
-        .await?;
-    // 启用外键约束：确保 posts_tags、comments 等表的级联删除正常工作
-    sqlx::query("PRAGMA foreign_keys = ON")
-        .execute(&pool)
-        .await?;
+        sqlx::query("PRAGMA journal_mode = WAL")
+            .execute(&pool)
+            .await?;
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await?;
 
-    tracing::info!("sqlite connection pool initialized");
-    Ok(pool)
+        tracing::info!("sqlite connection pool initialized");
+        Ok(pool)
+    }
+
+    #[cfg(feature = "db-postgres")]
+    {
+        use sqlx::pool::PoolOptions;
+        let pool = PoolOptions::<sqlx::Postgres>::new()
+            .max_connections(pool_size)
+            .connect(database_url)
+            .await?;
+
+        tracing::info!("postgres connection pool initialized");
+        Ok(pool)
+    }
+
+    #[cfg(feature = "db-mysql")]
+    {
+        use sqlx::pool::PoolOptions;
+        let pool = PoolOptions::<sqlx::MySql>::new()
+            .max_connections(pool_size)
+            .connect(database_url)
+            .await?;
+
+        tracing::info!("mysql connection pool initialized");
+        Ok(pool)
+    }
 }

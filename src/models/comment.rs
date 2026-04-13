@@ -80,8 +80,9 @@ pub struct UpdateCommentStatusRequest {
 /// 根据评论 ID 查找评论
 ///
 /// 返回 `Ok(Some(comment))` 或 `Ok(None)`（未找到时）。
-pub async fn find_by_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<Option<Comment>> {
-    let comment = sqlx::query_as::<_, Comment>("SELECT * FROM comments WHERE id = ?")
+pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<Comment>> {
+    let sql = crate::db::dialect::translate("SELECT * FROM comments WHERE id = ?");
+    let comment = sqlx::query_as::<_, Comment>(&sql)
         .bind(id)
         .fetch_optional(pool)
         .await?;
@@ -93,7 +94,7 @@ pub async fn find_by_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<Option<C
 /// 自动生成 UUID v7 作为主键，初始状态为 `pending`。
 /// 创建完成后重新查询并返回完整评论记录。
 pub async fn create(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     post_id: &str,
     author_id: Option<&str>,
     nickname: Option<&str>,
@@ -127,15 +128,16 @@ pub async fn create(
 ///
 /// 按 `created_at` 升序排列。
 pub async fn find_approved_by_post(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     post_id: &str,
 ) -> AppResult<Vec<Comment>> {
-    let comments = sqlx::query_as::<_, Comment>(
+    let sql = crate::db::dialect::translate(
         "SELECT * FROM comments WHERE post_id = ? AND status = 'approved' ORDER BY created_at ASC",
-    )
-    .bind(post_id)
-    .fetch_all(pool)
-    .await?;
+    );
+    let comments = sqlx::query_as::<_, Comment>(&sql)
+        .bind(post_id)
+        .fetch_all(pool)
+        .await?;
     Ok(comments)
 }
 
@@ -143,27 +145,29 @@ pub async fn find_approved_by_post(
 ///
 /// 按 `created_at` 升序排列。返回评论列表和总记录数。
 pub async fn find_approved_by_post_paginated(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     post_id: &str,
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<Comment>, i64)> {
     let offset = (page - 1) * page_size;
-    let comments = sqlx::query_as::<_, Comment>(
+    let sql = crate::db::dialect::translate(
         "SELECT * FROM comments WHERE post_id = ? AND status = 'approved' ORDER BY created_at ASC LIMIT ? OFFSET ?",
-    )
-    .bind(post_id)
-    .bind(page_size)
-    .bind(offset)
-    .fetch_all(pool)
-    .await?;
+    );
+    let comments = sqlx::query_as::<_, Comment>(&sql)
+        .bind(post_id)
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
 
-    let total: i64 = sqlx::query_scalar(
+    let sql = crate::db::dialect::translate(
         "SELECT COUNT(*) FROM comments WHERE post_id = ? AND status = 'approved'",
-    )
-    .bind(post_id)
-    .fetch_one(pool)
-    .await?;
+    );
+    let total: i64 = sqlx::query_scalar(&sql)
+        .bind(post_id)
+        .fetch_one(pool)
+        .await?;
 
     Ok((comments, total))
 }
@@ -171,13 +175,14 @@ pub async fn find_approved_by_post_paginated(
 /// 查询指定文章下的所有评论（含未审核）
 ///
 /// 按 `created_at` 升序排列。仅管理员使用。
-pub async fn find_all_by_post(pool: &sqlx::SqlitePool, post_id: &str) -> AppResult<Vec<Comment>> {
-    let comments = sqlx::query_as::<_, Comment>(
+pub async fn find_all_by_post(pool: &crate::db::Pool, post_id: &str) -> AppResult<Vec<Comment>> {
+    let sql = crate::db::dialect::translate(
         "SELECT * FROM comments WHERE post_id = ? ORDER BY created_at ASC",
-    )
-    .bind(post_id)
-    .fetch_all(pool)
-    .await?;
+    );
+    let comments = sqlx::query_as::<_, Comment>(&sql)
+        .bind(post_id)
+        .fetch_all(pool)
+        .await?;
     Ok(comments)
 }
 
@@ -197,18 +202,19 @@ pub struct AdminCommentRow {
 }
 
 pub async fn find_all_paginated(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<AdminCommentRow>, i64)> {
     let offset = (page - 1) * page_size;
-    let rows = sqlx::query_as::<_, AdminCommentRow>(
+    let sql = crate::db::dialect::translate(
         "SELECT c.id, c.post_id, p.title AS post_title, c.author_id, c.nickname, c.email, c.content, c.parent_id, c.status, c.created_at FROM comments c JOIN posts p ON c.post_id = p.id ORDER BY c.created_at DESC LIMIT ? OFFSET ?",
-    )
-    .bind(page_size)
-    .bind(offset)
-    .fetch_all(pool)
-    .await?;
+    );
+    let rows = sqlx::query_as::<_, AdminCommentRow>(&sql)
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
 
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM comments")
         .fetch_one(pool)
@@ -220,7 +226,7 @@ pub async fn find_all_paginated(
 /// 更新评论审核状态
 ///
 /// 若评论不存在则返回 [`AppError::NotFound`]。
-pub async fn update_status(pool: &sqlx::SqlitePool, id: &str, status: &str) -> AppResult<()> {
+pub async fn update_status(pool: &crate::db::Pool, id: &str, status: &str) -> AppResult<()> {
     let result = sqlx::query!("UPDATE comments SET status = ? WHERE id = ?", status, id,)
         .execute(pool)
         .await?;
@@ -234,7 +240,7 @@ pub async fn update_status(pool: &sqlx::SqlitePool, id: &str, status: &str) -> A
 /// 删除评论
 ///
 /// 若评论不存在则返回 [`AppError::NotFound`]。
-pub async fn delete(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
+pub async fn delete(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
     let result = sqlx::query!("DELETE FROM comments WHERE id = ?", id)
         .execute(pool)
         .await?;

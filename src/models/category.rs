@@ -55,7 +55,7 @@ pub struct UpdateCategoryRequest {
 /// 查询所有分类
 ///
 /// 按 `sort_order` 和 `name` 排序返回完整分类列表。
-pub async fn find_all(pool: &sqlx::SqlitePool) -> AppResult<Vec<Category>> {
+pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Category>> {
     let categories =
         sqlx::query_as::<_, Category>("SELECT * FROM categories ORDER BY sort_order, name")
             .fetch_all(pool)
@@ -66,8 +66,9 @@ pub async fn find_all(pool: &sqlx::SqlitePool) -> AppResult<Vec<Category>> {
 /// 根据分类 ID 查找分类
 ///
 /// 若未找到则返回 [`AppError::NotFound`]。
-pub async fn find_by_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<Category> {
-    sqlx::query_as::<_, Category>("SELECT * FROM categories WHERE id = ?")
+pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Category> {
+    let sql = crate::db::dialect::translate("SELECT * FROM categories WHERE id = ?");
+    sqlx::query_as::<_, Category>(&sql)
         .bind(id)
         .fetch_one(pool)
         .await
@@ -78,7 +79,7 @@ pub async fn find_by_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<Category
 ///
 /// 自动生成 UUID v7 作为主键。创建完成后重新查询并返回完整分类记录。
 pub async fn create(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     name: &str,
     slug: &str,
     description: Option<&str>,
@@ -108,7 +109,7 @@ pub async fn create(
 ///
 /// 仅更新传入的非空字段，其余保留原值。
 pub async fn update(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     id: &str,
     name: Option<&str>,
     slug: Option<&str>,
@@ -142,7 +143,7 @@ pub async fn update(
 /// 删除分类
 ///
 /// 若分类不存在则返回 [`AppError::NotFound`]。
-pub async fn delete(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
+pub async fn delete(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
     let result = sqlx::query!("DELETE FROM categories WHERE id = ?", id)
         .execute(pool)
         .await?;

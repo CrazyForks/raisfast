@@ -115,8 +115,9 @@ pub struct UpdatePostRequest {
 /// 根据 slug 查找文章
 ///
 /// 返回 `Ok(Some(post))` 或 `Ok(None)`（未找到时）。
-pub async fn find_by_slug(pool: &sqlx::SqlitePool, slug: &str) -> AppResult<Option<Post>> {
-    let post = sqlx::query_as::<_, Post>("SELECT * FROM posts WHERE slug = ?")
+pub async fn find_by_slug(pool: &crate::db::Pool, slug: &str) -> AppResult<Option<Post>> {
+    let sql = crate::db::dialect::translate("SELECT * FROM posts WHERE slug = ?");
+    let post = sqlx::query_as::<_, Post>(&sql)
         .bind(slug)
         .fetch_optional(pool)
         .await?;
@@ -126,8 +127,9 @@ pub async fn find_by_slug(pool: &sqlx::SqlitePool, slug: &str) -> AppResult<Opti
 /// 根据文章 ID 查找文章
 ///
 /// 返回 `Ok(Some(post))` 或 `Ok(None)`（未找到时）。
-pub async fn find_by_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<Option<Post>> {
-    let post = sqlx::query_as::<_, Post>("SELECT * FROM posts WHERE id = ?")
+pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<Post>> {
+    let sql = crate::db::dialect::translate("SELECT * FROM posts WHERE id = ?");
+    let post = sqlx::query_as::<_, Post>(&sql)
         .bind(id)
         .fetch_optional(pool)
         .await?;
@@ -140,7 +142,7 @@ pub async fn find_by_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<Option<P
 /// 创建完成后重新查询并返回完整文章记录。
 #[allow(clippy::too_many_arguments)]
 pub async fn create(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     title: &str,
     slug: &str,
     content: &str,
@@ -187,7 +189,7 @@ pub async fn create(
 /// 若文章首次从草稿变为已发布状态，自动填充 `published_at`。
 #[allow(clippy::too_many_arguments)]
 pub async fn update(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     id: &str,
     title: Option<&str>,
     slug: Option<&str>,
@@ -240,7 +242,7 @@ pub async fn update(
 /// 删除文章
 ///
 /// 若文章不存在则返回 [`AppError::NotFound`]。
-pub async fn delete(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
+pub async fn delete(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
     let result = sqlx::query!("DELETE FROM posts WHERE id = ?", id)
         .execute(pool)
         .await?;
@@ -255,7 +257,7 @@ pub async fn delete(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
 ///
 /// 单条 SQL 完成 UPDATE + SELECT，避免 get_post 中查询与更新之间的竞态。
 pub async fn increment_view_count_joined(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     slug: &str,
 ) -> AppResult<PostJoinedRow> {
     sqlx::query!(
@@ -271,11 +273,7 @@ pub async fn increment_view_count_joined(
 /// 同步文章与标签的关联关系
 ///
 /// 在事务中执行：先删除该文章的所有现有关联，再逐条插入新的关联。
-pub async fn sync_tags(
-    pool: &sqlx::SqlitePool,
-    post_id: &str,
-    tag_ids: &[String],
-) -> AppResult<()> {
+pub async fn sync_tags(pool: &crate::db::Pool, post_id: &str, tag_ids: &[String]) -> AppResult<()> {
     let mut tx = pool.begin().await?;
 
     sqlx::query!("DELETE FROM posts_tags WHERE post_id = ?", post_id)
@@ -309,13 +307,14 @@ pub struct TagRow {
 /// 获取文章关联的标签列表
 ///
 /// 通过 `posts_tags` 关联表查询，返回 [`TagBrief`] 列表。
-pub async fn get_post_tags(pool: &sqlx::SqlitePool, post_id: &str) -> AppResult<Vec<TagBrief>> {
-    let rows = sqlx::query_as::<_, TagRow>(
+pub async fn get_post_tags(pool: &crate::db::Pool, post_id: &str) -> AppResult<Vec<TagBrief>> {
+    let sql = crate::db::dialect::translate(
         "SELECT t.id, t.name, t.slug FROM tags t INNER JOIN posts_tags pt ON t.id = pt.tag_id WHERE pt.post_id = ?",
-    )
-    .bind(post_id)
-    .fetch_all(pool)
-    .await?;
+    );
+    let rows = sqlx::query_as::<_, TagRow>(&sql)
+        .bind(post_id)
+        .fetch_all(pool)
+        .await?;
 
     Ok(rows
         .into_iter()
@@ -338,11 +337,9 @@ pub struct AuthorRow {
 /// 根据用户 ID 获取作者用户名
 ///
 /// 返回 `Ok(Some(username))` 或 `Ok(None)`（用户不存在时）。
-pub async fn get_author_name(
-    pool: &sqlx::SqlitePool,
-    author_id: &str,
-) -> AppResult<Option<String>> {
-    let row = sqlx::query_as::<_, AuthorRow>("SELECT username FROM users WHERE id = ?")
+pub async fn get_author_name(pool: &crate::db::Pool, author_id: &str) -> AppResult<Option<String>> {
+    let sql = crate::db::dialect::translate("SELECT username FROM users WHERE id = ?");
+    let row = sqlx::query_as::<_, AuthorRow>(&sql)
         .bind(author_id)
         .fetch_optional(pool)
         .await?;
@@ -361,10 +358,11 @@ pub struct CategoryNameRow {
 ///
 /// 返回 `Ok(Some(name))` 或 `Ok(None)`（分类不存在时）。
 pub async fn get_category_name(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     category_id: &str,
 ) -> AppResult<Option<String>> {
-    let row = sqlx::query_as::<_, CategoryNameRow>("SELECT name FROM categories WHERE id = ?")
+    let sql = crate::db::dialect::translate("SELECT name FROM categories WHERE id = ?");
+    let row = sqlx::query_as::<_, CategoryNameRow>(&sql)
         .bind(category_id)
         .fetch_optional(pool)
         .await?;
@@ -377,7 +375,7 @@ pub async fn get_category_name(
 /// 结果按 `is_pinned DESC, created_at DESC` 排序。
 /// 返回文章列表和总记录数。
 pub async fn find_published(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     page: i64,
     page_size: i64,
     category_id: Option<&str>,
@@ -387,70 +385,74 @@ pub async fn find_published(
     let offset = (page - 1) * page_size;
 
     let (posts, total) = if let Some(tag_id) = tag_id {
-        let posts = sqlx::query_as::<_, Post>(
+        let sql = crate::db::dialect::translate(
             "SELECT p.* FROM posts p INNER JOIN posts_tags pt ON p.id = pt.post_id WHERE p.status = 'published' AND pt.tag_id = ? ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?",
-        )
-        .bind(tag_id)
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
+        );
+        let posts = sqlx::query_as::<_, Post>(&sql)
+            .bind(tag_id)
+            .bind(page_size)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
 
-        let total: (i64,) = sqlx::query_as(
+        let sql = crate::db::dialect::translate(
             "SELECT COUNT(*) FROM posts p INNER JOIN posts_tags pt ON p.id = pt.post_id WHERE p.status = 'published' AND pt.tag_id = ?",
-        )
-        .bind(tag_id)
-        .fetch_one(pool)
-        .await?;
+        );
+        let total: (i64,) = sqlx::query_as(&sql).bind(tag_id).fetch_one(pool).await?;
 
         (posts, total.0)
     } else if let Some(q) = q {
         let pattern = format!("%{}%", q);
-        let posts = sqlx::query_as::<_, Post>(
+        let sql = crate::db::dialect::translate(
             "SELECT * FROM posts WHERE status = 'published' AND (title LIKE ? OR content LIKE ?) ORDER BY is_pinned DESC, created_at DESC LIMIT ? OFFSET ?",
-        )
-        .bind(&pattern)
-        .bind(&pattern)
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
+        );
+        let posts = sqlx::query_as::<_, Post>(&sql)
+            .bind(&pattern)
+            .bind(&pattern)
+            .bind(page_size)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
 
-        let total: (i64,) = sqlx::query_as(
+        let sql = crate::db::dialect::translate(
             "SELECT COUNT(*) FROM posts WHERE status = 'published' AND (title LIKE ? OR content LIKE ?)",
-        )
-        .bind(&pattern)
-        .bind(&pattern)
-        .fetch_one(pool)
-        .await?;
+        );
+        let total: (i64,) = sqlx::query_as(&sql)
+            .bind(&pattern)
+            .bind(&pattern)
+            .fetch_one(pool)
+            .await?;
 
         (posts, total.0)
     } else if let Some(category_id) = category_id {
-        let posts = sqlx::query_as::<_, Post>(
+        let sql = crate::db::dialect::translate(
             "SELECT * FROM posts WHERE status = 'published' AND category_id = ? ORDER BY is_pinned DESC, created_at DESC LIMIT ? OFFSET ?",
-        )
-        .bind(category_id)
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
+        );
+        let posts = sqlx::query_as::<_, Post>(&sql)
+            .bind(category_id)
+            .bind(page_size)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
 
-        let total: (i64,) = sqlx::query_as(
+        let sql = crate::db::dialect::translate(
             "SELECT COUNT(*) FROM posts WHERE status = 'published' AND category_id = ?",
-        )
-        .bind(category_id)
-        .fetch_one(pool)
-        .await?;
+        );
+        let total: (i64,) = sqlx::query_as(&sql)
+            .bind(category_id)
+            .fetch_one(pool)
+            .await?;
 
         (posts, total.0)
     } else {
-        let posts = sqlx::query_as::<_, Post>(
+        let sql = crate::db::dialect::translate(
             "SELECT * FROM posts WHERE status = 'published' ORDER BY is_pinned DESC, created_at DESC LIMIT ? OFFSET ?",
-        )
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
+        );
+        let posts = sqlx::query_as::<_, Post>(&sql)
+            .bind(page_size)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
 
         let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM posts WHERE status = 'published'")
             .fetch_one(pool)
@@ -465,8 +467,11 @@ pub async fn find_published(
 /// 根据 slug 查找已发布文章
 ///
 /// 仅返回状态为 `published` 的文章；若未找到则返回 [`AppError::NotFound`]。
-pub async fn find_published_by_slug(pool: &sqlx::SqlitePool, slug: &str) -> AppResult<Post> {
-    sqlx::query_as::<_, Post>("SELECT * FROM posts WHERE slug = ? AND status = 'published'")
+pub async fn find_published_by_slug(pool: &crate::db::Pool, slug: &str) -> AppResult<Post> {
+    let sql = crate::db::dialect::translate(
+        "SELECT * FROM posts WHERE slug = ? AND status = 'published'",
+    );
+    sqlx::query_as::<_, Post>(&sql)
         .bind(slug)
         .fetch_one(pool)
         .await
@@ -503,8 +508,9 @@ const JOIN_SQL: &str = "\
     LEFT JOIN categories c ON p.category_id = c.id";
 
 /// 根据 ID 用 JOIN 查询单篇文章（含作者名和分类名）
-pub async fn find_joined_by_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<PostJoinedRow> {
+pub async fn find_joined_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<PostJoinedRow> {
     let sql = format!("{} WHERE p.id = ?", JOIN_SQL);
+    let sql = crate::db::dialect::translate(&sql);
     sqlx::query_as::<_, PostJoinedRow>(&sql)
         .bind(id)
         .fetch_one(pool)
@@ -514,10 +520,11 @@ pub async fn find_joined_by_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<P
 
 /// 根据 slug 用 JOIN 查询已发布单篇文章（含作者名和分类名）
 pub async fn find_published_joined_by_slug(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     slug: &str,
 ) -> AppResult<PostJoinedRow> {
     let sql = format!("{} WHERE p.slug = ? AND p.status = 'published'", JOIN_SQL);
+    let sql = crate::db::dialect::translate(&sql);
     sqlx::query_as::<_, PostJoinedRow>(&sql)
         .bind(slug)
         .fetch_one(pool)
@@ -529,7 +536,7 @@ pub async fn find_published_joined_by_slug(
 ///
 /// 返回以 `post_id` 为键的 `HashMap`，每个值是该文章的标签列表。
 pub async fn get_tags_for_posts(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     post_ids: &[String],
 ) -> AppResult<std::collections::HashMap<String, Vec<TagBrief>>> {
     if post_ids.is_empty() {
@@ -553,7 +560,8 @@ pub async fn get_tags_for_posts(
         slug: String,
     }
 
-    let mut query = sqlx::query_as::<_, TagWithPostId>(&sql);
+    let translated = crate::db::dialect::translate(&sql);
+    let mut query = sqlx::query_as::<_, TagWithPostId>(&translated);
     for id in post_ids {
         query = query.bind(id);
     }
@@ -576,7 +584,7 @@ pub async fn get_tags_for_posts(
 /// 与 [`find_published`] 相同的筛选逻辑，但通过 LEFT JOIN 一次性获取
 /// `author_name` 和 `category_name`，避免 N+1 查询。
 pub async fn find_published_joined(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     page: i64,
     page_size: i64,
     category_id: Option<&str>,
@@ -601,6 +609,7 @@ pub async fn find_published_joined(
              ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?",
             base_select
         );
+        let sql = crate::db::dialect::translate(&sql);
         let posts = sqlx::query_as::<_, PostJoinedRow>(&sql)
             .bind(tag_id)
             .bind(page_size)
@@ -608,12 +617,10 @@ pub async fn find_published_joined(
             .fetch_all(pool)
             .await?;
 
-        let total: (i64,) = sqlx::query_as(
+        let sql = crate::db::dialect::translate(
             "SELECT COUNT(*) FROM posts p INNER JOIN posts_tags pt ON p.id = pt.post_id WHERE p.status = 'published' AND pt.tag_id = ?",
-        )
-        .bind(tag_id)
-        .fetch_one(pool)
-        .await?;
+        );
+        let total: (i64,) = sqlx::query_as(&sql).bind(tag_id).fetch_one(pool).await?;
 
         (posts, total.0)
     } else if let Some(q) = q {
@@ -624,6 +631,7 @@ pub async fn find_published_joined(
              ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?",
             base_select
         );
+        let sql = crate::db::dialect::translate(&sql);
         let posts = sqlx::query_as::<_, PostJoinedRow>(&sql)
             .bind(&pattern)
             .bind(&pattern)
@@ -632,13 +640,14 @@ pub async fn find_published_joined(
             .fetch_all(pool)
             .await?;
 
-        let total: (i64,) = sqlx::query_as(
+        let sql = crate::db::dialect::translate(
             "SELECT COUNT(*) FROM posts WHERE status = 'published' AND (title LIKE ? OR content LIKE ?)",
-        )
-        .bind(&pattern)
-        .bind(&pattern)
-        .fetch_one(pool)
-        .await?;
+        );
+        let total: (i64,) = sqlx::query_as(&sql)
+            .bind(&pattern)
+            .bind(&pattern)
+            .fetch_one(pool)
+            .await?;
 
         (posts, total.0)
     } else if let Some(category_id) = category_id {
@@ -648,6 +657,7 @@ pub async fn find_published_joined(
              ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?",
             base_select
         );
+        let sql = crate::db::dialect::translate(&sql);
         let posts = sqlx::query_as::<_, PostJoinedRow>(&sql)
             .bind(category_id)
             .bind(page_size)
@@ -655,12 +665,13 @@ pub async fn find_published_joined(
             .fetch_all(pool)
             .await?;
 
-        let total: (i64,) = sqlx::query_as(
+        let sql = crate::db::dialect::translate(
             "SELECT COUNT(*) FROM posts WHERE status = 'published' AND category_id = ?",
-        )
-        .bind(category_id)
-        .fetch_one(pool)
-        .await?;
+        );
+        let total: (i64,) = sqlx::query_as(&sql)
+            .bind(category_id)
+            .fetch_one(pool)
+            .await?;
 
         (posts, total.0)
     } else {
@@ -670,6 +681,7 @@ pub async fn find_published_joined(
              ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?",
             base_select
         );
+        let sql = crate::db::dialect::translate(&sql);
         let posts = sqlx::query_as::<_, PostJoinedRow>(&sql)
             .bind(page_size)
             .bind(offset)

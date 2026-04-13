@@ -159,8 +159,9 @@ fn validate_password(pwd: &str) -> Result<(), validator::ValidationError> {
 /// 根据邮箱查找用户
 ///
 /// 返回 `Ok(Some(user))` 或 `Ok(None)`（未找到时）。
-pub async fn find_by_email(pool: &sqlx::SqlitePool, email: &str) -> AppResult<Option<User>> {
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = ?")
+pub async fn find_by_email(pool: &crate::db::Pool, email: &str) -> AppResult<Option<User>> {
+    let sql = crate::db::dialect::translate("SELECT * FROM users WHERE email = ?");
+    let user = sqlx::query_as::<_, User>(&sql)
         .bind(email)
         .fetch_optional(pool)
         .await?;
@@ -170,8 +171,9 @@ pub async fn find_by_email(pool: &sqlx::SqlitePool, email: &str) -> AppResult<Op
 /// 根据用户 ID 查找用户
 ///
 /// 返回 `Ok(Some(user))` 或 `Ok(None)`（未找到时）。
-pub async fn find_by_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<Option<User>> {
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = ?")
+pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<User>> {
+    let sql = crate::db::dialect::translate("SELECT * FROM users WHERE id = ?");
+    let user = sqlx::query_as::<_, User>(&sql)
         .bind(id)
         .fetch_optional(pool)
         .await?;
@@ -183,7 +185,7 @@ pub async fn find_by_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<Option<U
 /// 自动生成 UUID v7 作为主键，默认角色为 `reader`。
 /// 创建完成后重新查询并返回完整用户记录。
 pub async fn create(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     email: &str,
     username: &str,
     password_hash: &str,
@@ -214,7 +216,7 @@ pub async fn create(
 /// 仅更新传入的非空字段，其余保留原值。
 /// 自动更新 `updated_at` 时间戳。
 pub async fn update_profile(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     id: &str,
     username: Option<&str>,
     bio: Option<&str>,
@@ -252,7 +254,7 @@ pub async fn update_profile(
 ///
 /// 直接用新的哈希值覆盖 `password_hash`，并更新 `updated_at`。
 pub async fn update_password(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     id: &str,
     new_password_hash: &str,
 ) -> AppResult<()> {
@@ -272,17 +274,19 @@ pub async fn update_password(
 ///
 /// 按 `created_at` 降序排列。返回用户列表和总记录数。
 pub async fn find_all(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<User>, i64)> {
     let offset = (page - 1) * page_size;
-    let users =
-        sqlx::query_as::<_, User>("SELECT * FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?")
-            .bind(page_size)
-            .bind(offset)
-            .fetch_all(pool)
-            .await?;
+    let sql = crate::db::dialect::translate(
+        "SELECT * FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?",
+    );
+    let users = sqlx::query_as::<_, User>(&sql)
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
 
     let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
         .fetch_one(pool)
@@ -292,10 +296,12 @@ pub async fn find_all(
 }
 
 /// 管理员更新用户角色
-pub async fn update_role(pool: &sqlx::SqlitePool, id: &str, role: &str) -> AppResult<User> {
+pub async fn update_role(pool: &crate::db::Pool, id: &str, role: &str) -> AppResult<User> {
+    let now = Utc::now().to_rfc3339();
     let result = sqlx::query!(
-        "UPDATE users SET role = ?, updated_at = datetime('now') WHERE id = ?",
+        "UPDATE users SET role = ?, updated_at = ? WHERE id = ?",
         role,
+        now,
         id,
     )
     .execute(pool)

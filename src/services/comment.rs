@@ -28,7 +28,7 @@ pub struct CommentInput {
 /// 校验通过后以 `"pending"` 状态创建评论。
 #[allow(clippy::too_many_arguments)]
 pub async fn create_comment(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     plugins: &PluginManager,
     post_slug: &str,
     author_id: Option<&str>,
@@ -98,7 +98,7 @@ pub async fn create_comment(
 ///
 /// 仅返回状态为 `"approved"` 的评论，并组织为树形结构。
 pub async fn list_comments_paginated(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     post_slug: &str,
     page: i64,
     page_size: i64,
@@ -116,7 +116,7 @@ pub async fn list_comments_paginated(
 ///
 /// 仅评论作者或管理员有权限执行此操作。
 pub async fn delete_comment(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     comment_id: &str,
     user_id: &str,
     role: &str,
@@ -136,7 +136,7 @@ pub async fn delete_comment(
 ///
 /// 仅接受 `"approved"`、`"spam"`、`"pending"` 三种状态值。
 pub async fn update_comment_status(
-    pool: &sqlx::SqlitePool,
+    pool: &crate::db::Pool,
     comment_id: &str,
     status: &str,
 ) -> AppResult<()> {

@@ -3,6 +3,14 @@ name = "rust-blog"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["db-sqlite"]
+
+# ── Database backend (pick exactly one) ────────────────────────────
+db-sqlite  = ["sqlx/sqlite"]
+db-postgres = ["sqlx/postgres"]
+db-mysql   = ["sqlx/mysql"]
+
 [dependencies]
 # Web framework
 axum = { version = "0.8", features = ["macros", "multipart"] }
@@ -11,7 +19,7 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "limit", "fs"] }
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.8", features = ["runtime-tokio"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
