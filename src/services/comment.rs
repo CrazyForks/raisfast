@@ -6,6 +6,16 @@
 use crate::errors::app_error::{AppError, AppResult};
 use crate::models::comment::{self, CommentResponse};
 use crate::models::post;
+use crate::plugins::{HookPoint, PluginManager};
+
+/// 评论输入数据（用于 Hook 传递）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CommentInput {
+    pub content: String,
+    pub nickname: Option<String>,
+    pub email: Option<String>,
+    pub parent_id: Option<String>,
+}
 
 /// 创建评论。
 ///
@@ -13,10 +23,13 @@ use crate::models::post;
 /// 1. 目标文章必须存在。
 /// 2. 若指定父评论，父评论必须属于同一篇文章。
 /// 3. 嵌套深度不得超过 3 层。
+/// 4. 通过插件 `on_comment_creating` Hook 过滤。
 ///
 /// 校验通过后以 `"pending"` 状态创建评论。
+#[allow(clippy::too_many_arguments)]
 pub async fn create_comment(
     pool: &sqlx::SqlitePool,
+    plugins: &PluginManager,
     post_slug: &str,
     author_id: Option<&str>,
     content: &str,
@@ -42,7 +55,31 @@ pub async fn create_comment(
         comment::validate_depth(&all_comments, pid)?;
     }
 
-    let c = comment::create(pool, &p.id, author_id, nickname, email, content, parent_id).await?;
+    let comment_input = CommentInput {
+        content: content.to_string(),
+        nickname: nickname.map(|s| s.to_string()),
+        email: email.map(|s| s.to_string()),
+        parent_id: parent_id.map(|s| s.to_string()),
+    };
+
+    let filtered = plugins
+        .dispatch_filter(HookPoint::CommentCreating, comment_input)
+        .await?;
+
+    let c = comment::create(
+        pool,
+        &p.id,
+        author_id,
+        filtered.nickname.as_deref(),
+        filtered.email.as_deref(),
+        &filtered.content,
+        filtered.parent_id.as_deref(),
+    )
+    .await?;
+
+    plugins
+        .dispatch_action(HookPoint::CommentCreated, &c.id)
+        .await;
 
     Ok(CommentResponse {
         id: c.id,

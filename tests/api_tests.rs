@@ -24,6 +24,7 @@ use rust_blog::middleware::locale::locale_middleware;
 use rust_blog::middleware::rate_limit::{
     RateLimiterSet, comment_rate_limit, global_rate_limit, login_rate_limit, register_rate_limit,
 };
+use rust_blog::plugins::PluginManager;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -46,8 +47,14 @@ fn test_config() -> AppConfig {
             .to_string_lossy()
             .into(),
         max_upload_size: 5242880,
+        static_dir: "./static".into(),
         base_url: "http://localhost:9000".into(),
         cors_origins: None,
+        plugin_dir: None,
+        plugin_hot_reload: false,
+        plugin_max_memory_mb: 32,
+        plugin_default_timeout_ms: 5000,
+        plugin_disabled: vec![],
     }
 }
 
@@ -67,9 +74,11 @@ async fn test_pool() -> sqlx::SqlitePool {
 async fn test_app() -> (axum::Router, AppState) {
     let pool = test_pool().await;
     let config = test_config();
+    let config = Arc::new(test_config());
     let state = AppState {
         pool,
-        config: Arc::new(config),
+        config: config.clone(),
+        plugins: Arc::new(PluginManager::new(config).await),
     };
     let max_upload = state.config.max_upload_size;
 

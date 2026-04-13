@@ -55,3 +55,56 @@ impl From<Query<PaginationParams>> for PaginationParams {
         params
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn offset_page1() {
+        let p = PaginationParams {
+            page: 1,
+            page_size: 20,
+        };
+        assert_eq!(p.offset(), 0);
+    }
+
+    #[test]
+    fn offset_page3() {
+        let p = PaginationParams {
+            page: 3,
+            page_size: 10,
+        };
+        assert_eq!(p.offset(), 20);
+    }
+
+    #[test]
+    fn sanitize_clamps_page_to_one() {
+        let mut p = PaginationParams {
+            page: -5,
+            page_size: 20,
+        };
+        p.sanitize();
+        assert_eq!(p.page, 1);
+    }
+
+    #[test]
+    fn sanitize_clamps_page_size_to_max() {
+        let mut p = PaginationParams {
+            page: 1,
+            page_size: 999,
+        };
+        p.sanitize();
+        assert_eq!(p.page_size, PaginationParams::MAX_PAGE_SIZE);
+    }
+
+    #[test]
+    fn sanitize_clamps_page_size_to_one() {
+        let mut p = PaginationParams {
+            page: 1,
+            page_size: 0,
+        };
+        p.sanitize();
+        assert_eq!(p.page_size, 1);
+    }
+}

@@ -22,10 +22,12 @@ pub mod errors;
 pub mod handlers;
 pub mod middleware;
 pub mod models;
+pub mod plugins;
 pub mod services;
 pub mod utils;
 
 use config::app::AppConfig;
+use plugins::PluginManager;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
@@ -40,8 +42,7 @@ rust_i18n::i18n!("locales", fallback = "en");
 /// `config` 使用 `Arc` 包装以便在多个请求间零成本共享。
 #[derive(Clone)]
 pub struct AppState {
-    /// SQLite 异步连接池
     pub pool: SqlitePool,
-    /// 应用配置（Arc 包装，共享只读）
     pub config: Arc<AppConfig>,
+    pub plugins: Arc<PluginManager>,
 }

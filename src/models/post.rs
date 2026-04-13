@@ -83,7 +83,7 @@ pub struct TagBrief {
 /// - `content` 不能为空
 /// - `status` 默认为 `draft`
 /// - `tag_ids` 可选，指定关联标签
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Clone, Deserialize, Serialize, Validate)]
 pub struct CreatePostRequest {
     #[validate(length(min = 1, max = 200))]
     pub title: String,

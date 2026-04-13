@@ -14,6 +14,7 @@ use rust_blog::middleware::locale::locale_middleware;
 use rust_blog::middleware::rate_limit::{
     RateLimiterSet, comment_rate_limit, global_rate_limit, login_rate_limit, register_rate_limit,
 };
+use rust_blog::plugins::PluginManager;
 use tokio::net::TcpListener;
 use tower::ServiceBuilder;
 use tower_http::cors::{Any, CorsLayer};
@@ -44,12 +45,14 @@ fn build_cors(config: &AppConfig) -> CorsLayer {
 /// 组装完整的应用路由（含数据库连接池初始化）。
 async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Result<axum::Router> {
     let upload_dir = config.upload_dir.clone();
+    let static_dir = config.static_dir.clone();
     let max_upload = config.max_upload_size;
     let pool = init_pool(&config.database_url, config.db_pool_size).await?;
 
     let state = AppState {
         pool,
         config: Arc::new(config.clone()),
+        plugins: Arc::new(PluginManager::new(Arc::new(config.clone())).await),
     };
 
     let cors = build_cors(config);
@@ -107,6 +110,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         .route("/feed.xml", get(rss::feed))
         .nest("/api/v1", api_v1)
         .nest_service("/uploads", ServeDir::new(&upload_dir))
+        .nest_service("/static", ServeDir::new(&static_dir))
         .layer(from_fn(locale_middleware))
         .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()))
         .layer(cors)

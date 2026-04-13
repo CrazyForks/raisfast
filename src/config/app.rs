@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 /// | `JWT_REFRESH_EXPIRES` | u64 | `604800` (7 天) | Refresh Token 过期时间（秒） |
 /// | `UPLOAD_DIR` | String | `./uploads` | 上传文件存储目录 |
 /// | `MAX_UPLOAD_SIZE` | usize | `5242880` (5 MB) | 上传文件大小上限（字节） |
+/// | `STATIC_DIR` | String | `./static` | 静态文件目录（favicon、robots.txt 等） |
 /// | `BASE_URL` | String | `http://{host}:{port}` | 站点完整 URL（用于生成 RSS/媒体链接） |
 /// | `CORS_ORIGINS` | String | (空=允许所有) | CORS 允许的来源，多个用逗号分隔 |
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,8 +36,26 @@ pub struct AppConfig {
     pub jwt_refresh_expires: u64,
     pub upload_dir: String,
     pub max_upload_size: usize,
+    pub static_dir: String,
     pub base_url: String,
     pub cors_origins: Option<String>,
+    pub plugin_dir: Option<String>,
+    #[serde(default)]
+    pub plugin_hot_reload: bool,
+    #[serde(default = "default_plugin_max_memory")]
+    pub plugin_max_memory_mb: u32,
+    #[serde(default = "default_plugin_timeout")]
+    pub plugin_default_timeout_ms: u64,
+    #[serde(default)]
+    pub plugin_disabled: Vec<String>,
+}
+
+fn default_plugin_max_memory() -> u32 {
+    32
+}
+
+fn default_plugin_timeout() -> u64 {
+    5000
 }
 
 const DEFAULT_JWT_SECRET: &str = "change-me-in-production-at-least-32-chars";
@@ -78,8 +97,26 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(5242880),
+            static_dir: env::var("STATIC_DIR").unwrap_or_else(|_| "./static".into()),
             base_url,
             cors_origins,
+            plugin_dir: env::var("PLUGIN_DIR").ok().filter(|s| !s.is_empty()),
+            plugin_hot_reload: env::var("PLUGIN_HOT_RELOAD")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(false),
+            plugin_max_memory_mb: env::var("PLUGIN_MAX_MEMORY_MB")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_plugin_max_memory()),
+            plugin_default_timeout_ms: env::var("PLUGIN_DEFAULT_TIMEOUT_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_plugin_timeout()),
+            plugin_disabled: env::var("PLUGIN_DISABLED")
+                .ok()
+                .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
+                .unwrap_or_default(),
         }
     }
 

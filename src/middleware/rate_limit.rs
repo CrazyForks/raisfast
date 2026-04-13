@@ -1,3 +1,9 @@
+//! IP 限流中间件
+//!
+//! 基于 sliding window 的请求限流，支持多命名限流器（全局、注册、登录、评论）。
+//! 存储后端通过 [`RateLimitStore`] trait 抽象，当前提供 [`MemoryStore`] 实现，
+//! 未来可扩展 Redis 后端以支持多实例水平扩展。
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -11,38 +17,68 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use tokio::sync::Mutex;
 
+/// 限流窗口配置。
 #[derive(Debug, Clone)]
 pub struct RateLimitConfig {
     pub max_requests: u32,
     pub window_secs: u64,
 }
 
+/// 单个限流键的计数窗口条目。
 #[derive(Debug)]
 struct Entry {
     count: u32,
     window_start: Instant,
 }
 
-#[derive(Debug, Clone)]
-pub struct RateLimiter {
-    entries: Arc<Mutex<HashMap<String, Entry>>>,
-    config: RateLimitConfig,
+/// 限流存储后端 trait。
+///
+/// 抽象限流计数器的读写接口，便于切换不同存储后端。
+/// 当前仅实现 [`MemoryStore`]，未来可添加 Redis 实现。
+#[async_trait::async_trait]
+pub trait RateLimitStore: Send + Sync {
+    /// 对指定键进行一次计数检查。
+    ///
+    /// 若当前窗口内未超过 `max_requests`，计数 +1 并返回 `true`；
+    /// 否则返回 `false` 表示被限流。
+    async fn check(&self, key: &str, config: &RateLimitConfig) -> bool;
+
+    /// 清理过期的计数条目，释放内存。
+    async fn cleanup_expired(&self, window_secs: u64);
 }
 
-impl RateLimiter {
-    pub fn new(config: RateLimitConfig) -> Self {
+/// 基于 `HashMap` 的内存存储实现。
+///
+/// 使用 `tokio::sync::Mutex` 保证并发安全。
+/// 适用于单实例部署；多实例部署应切换为 Redis 后端。
+#[derive(Debug)]
+pub struct MemoryStore {
+    entries: Mutex<HashMap<String, Entry>>,
+}
+
+impl MemoryStore {
+    /// 创建空的内存存储。
+    pub fn new() -> Self {
         Self {
-            entries: Arc::new(Mutex::new(HashMap::new())),
-            config,
+            entries: Mutex::new(HashMap::new()),
         }
     }
+}
 
-    pub async fn check(&self, key: &str) -> bool {
+impl Default for MemoryStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl RateLimitStore for MemoryStore {
+    async fn check(&self, key: &str, config: &RateLimitConfig) -> bool {
         let now = Instant::now();
         let mut entries = self.entries.lock().await;
 
         entries.retain(|_, entry| {
-            now.duration_since(entry.window_start).as_secs() < self.config.window_secs * 2
+            now.duration_since(entry.window_start).as_secs() < config.window_secs * 2
         });
 
         let entry = entries.entry(key.to_string()).or_insert(Entry {
@@ -50,12 +86,12 @@ impl RateLimiter {
             window_start: now,
         });
 
-        if now.duration_since(entry.window_start).as_secs() >= self.config.window_secs {
+        if now.duration_since(entry.window_start).as_secs() >= config.window_secs {
             entry.count = 0;
             entry.window_start = now;
         }
 
-        if entry.count >= self.config.max_requests {
+        if entry.count >= config.max_requests {
             return false;
         }
 
@@ -63,47 +99,95 @@ impl RateLimiter {
         true
     }
 
-    pub async fn cleanup_expired(&self) {
+    async fn cleanup_expired(&self, window_secs: u64) {
         let now = Instant::now();
         let mut entries = self.entries.lock().await;
-        entries.retain(|_, entry| {
-            now.duration_since(entry.window_start).as_secs() < self.config.window_secs * 2
-        });
+        entries
+            .retain(|_, entry| now.duration_since(entry.window_start).as_secs() < window_secs * 2);
+    }
+}
+
+/// 限流器，组合存储后端与配置。
+///
+/// 通过泛型 [`RateLimitStore`] 支持不同存储后端。
+#[derive(Debug)]
+pub struct RateLimiter<S: RateLimitStore> {
+    store: Arc<S>,
+    config: RateLimitConfig,
+}
+
+impl<S: RateLimitStore> Clone for RateLimiter<S> {
+    fn clone(&self) -> Self {
+        Self {
+            store: self.store.clone(),
+            config: self.config.clone(),
+        }
+    }
+}
+
+impl<S: RateLimitStore> RateLimiter<S> {
+    /// 创建新的限流器。
+    pub fn new(store: Arc<S>, config: RateLimitConfig) -> Self {
+        Self { store, config }
+    }
+
+    /// 对指定键执行限流检查。
+    pub async fn check(&self, key: &str) -> bool {
+        self.store.check(key, &self.config).await
+    }
+
+    /// 清理过期条目。
+    pub async fn cleanup_expired(&self) {
+        self.store.cleanup_expired(self.config.window_secs).await;
     }
 }
 
 /// 命名限流器集合，通过 Extension 在路由间共享。
 ///
 /// 每个限流器独立配置 `max_requests` / `window_secs`，
-/// 避免宏中每次请求创建空实例的问题。
+/// 共享同一个存储后端实例。
 #[derive(Debug, Clone)]
 pub struct RateLimiterSet {
-    pub global: RateLimiter,
-    pub register: RateLimiter,
-    pub login: RateLimiter,
-    pub comment: RateLimiter,
+    pub global: RateLimiter<MemoryStore>,
+    pub register: RateLimiter<MemoryStore>,
+    pub login: RateLimiter<MemoryStore>,
+    pub comment: RateLimiter<MemoryStore>,
 }
 
 impl RateLimiterSet {
     /// 创建包含所有命名限流器的默认集合。
+    ///
+    /// 每个限流器拥有独立的 [`MemoryStore`]，互不干扰。
     pub fn new_default() -> Self {
         Self {
-            global: RateLimiter::new(RateLimitConfig {
-                max_requests: 60,
-                window_secs: 60,
-            }),
-            register: RateLimiter::new(RateLimitConfig {
-                max_requests: 5,
-                window_secs: 3600,
-            }),
-            login: RateLimiter::new(RateLimitConfig {
-                max_requests: 10,
-                window_secs: 60,
-            }),
-            comment: RateLimiter::new(RateLimitConfig {
-                max_requests: 3,
-                window_secs: 60,
-            }),
+            global: RateLimiter::new(
+                Arc::new(MemoryStore::new()),
+                RateLimitConfig {
+                    max_requests: 60,
+                    window_secs: 60,
+                },
+            ),
+            register: RateLimiter::new(
+                Arc::new(MemoryStore::new()),
+                RateLimitConfig {
+                    max_requests: 5,
+                    window_secs: 3600,
+                },
+            ),
+            login: RateLimiter::new(
+                Arc::new(MemoryStore::new()),
+                RateLimitConfig {
+                    max_requests: 10,
+                    window_secs: 60,
+                },
+            ),
+            comment: RateLimiter::new(
+                Arc::new(MemoryStore::new()),
+                RateLimitConfig {
+                    max_requests: 3,
+                    window_secs: 60,
+                },
+            ),
         }
     }
 }
@@ -172,3 +256,84 @@ macro_rules! rate_limit_fn {
 rate_limit_fn!(register_rate_limit, register);
 rate_limit_fn!(login_rate_limit, login);
 rate_limit_fn!(comment_rate_limit, comment);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn allows_requests_within_limit() {
+        let store = Arc::new(MemoryStore::new());
+        let limiter = RateLimiter::new(
+            store,
+            RateLimitConfig {
+                max_requests: 3,
+                window_secs: 60,
+            },
+        );
+        assert!(limiter.check("ip1").await);
+        assert!(limiter.check("ip1").await);
+        assert!(limiter.check("ip1").await);
+    }
+
+    #[tokio::test]
+    async fn blocks_requests_over_limit() {
+        let store = Arc::new(MemoryStore::new());
+        let limiter = RateLimiter::new(
+            store,
+            RateLimitConfig {
+                max_requests: 2,
+                window_secs: 60,
+            },
+        );
+        limiter.check("ip1").await;
+        limiter.check("ip1").await;
+        assert!(!limiter.check("ip1").await);
+    }
+
+    #[tokio::test]
+    async fn different_keys_independent() {
+        let store = Arc::new(MemoryStore::new());
+        let limiter = RateLimiter::new(
+            store,
+            RateLimitConfig {
+                max_requests: 1,
+                window_secs: 60,
+            },
+        );
+        limiter.check("ip1").await;
+        assert!(limiter.check("ip2").await);
+        assert!(!limiter.check("ip1").await);
+    }
+
+    #[tokio::test]
+    async fn cleanup_removes_expired() {
+        let store = Arc::new(MemoryStore::new());
+        let config = RateLimitConfig {
+            max_requests: 10,
+            window_secs: 60,
+        };
+        {
+            let mut entries = store.entries.lock().await;
+            entries.insert(
+                "old_key".to_string(),
+                Entry {
+                    count: 1,
+                    window_start: Instant::now() - std::time::Duration::from_secs(200),
+                },
+            );
+            entries.insert(
+                "new_key".to_string(),
+                Entry {
+                    count: 1,
+                    window_start: Instant::now(),
+                },
+            );
+        }
+        store.cleanup_expired(config.window_secs).await;
+        let entries = store.entries.lock().await;
+        assert!(!entries.contains_key("old_key"));
+        assert!(entries.contains_key("new_key"));
+    }
+}

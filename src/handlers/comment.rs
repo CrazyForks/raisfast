@@ -81,6 +81,7 @@ pub async fn create(
 
     let comment = comment_service::create_comment(
         &state.pool,
+        &state.plugins,
         &slug,
         Some(&auth_user.user_id),
         &req.content,
@@ -114,6 +115,7 @@ pub async fn create_guest(
 
     let comment = comment_service::create_comment(
         &state.pool,
+        &state.plugins,
         &slug,
         None,
         &req.content,

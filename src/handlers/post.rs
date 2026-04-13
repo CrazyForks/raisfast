@@ -92,7 +92,7 @@ pub async fn create(
     Json(req): Json<CreatePostRequest>,
 ) -> AppResult<ApiResponse<PostResponse>> {
     validation::validate(&req)?;
-    let post = post_service::create_post(&state.pool, &author.user_id, req).await?;
+    let post = post_service::create_post(&state.pool, &state.plugins, &author.user_id, req).await?;
     Ok(ApiResponse::success(post))
 }
 
@@ -112,6 +112,7 @@ pub async fn update(
     validation::validate(&req)?;
     let post = post_service::update_post_with_auth(
         &state.pool,
+        &state.plugins,
         &slug,
         &auth_user.user_id,
         &auth_user.role,
@@ -132,7 +133,13 @@ pub async fn delete(
     auth_user: AuthUser,
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    post_service::delete_post_with_auth(&state.pool, &slug, &auth_user.user_id, &auth_user.role)
-        .await?;
+    post_service::delete_post_with_auth(
+        &state.pool,
+        &state.plugins,
+        &slug,
+        &auth_user.user_id,
+        &auth_user.role,
+    )
+    .await?;
     Ok(ApiResponse::success(()))
 }

@@ -16,6 +16,7 @@ use crate::models::post::{
     self, CreatePostRequest, PostJoinedRow, PostResponse, UpdatePostRequest,
 };
 use crate::models::tag::{self, CreateTagRequest};
+use crate::plugins::{HookPoint, PluginManager};
 use crate::utils::markdown::render_markdown;
 
 fn joined_row_to_response(r: PostJoinedRow, tags: Vec<post::TagBrief>) -> PostResponse {
@@ -150,9 +151,13 @@ fn extract_excerpt(content: &str, max_len: usize) -> String {
 /// - 同步关联标签。
 pub async fn create_post(
     pool: &sqlx::SqlitePool,
+    plugins: &PluginManager,
     author_id: &str,
     req: CreatePostRequest,
 ) -> AppResult<PostResponse> {
+    let req = plugins
+        .dispatch_filter(HookPoint::PostCreating, req)
+        .await?;
     let base_slug = slugify(&req.title);
     let slug = make_unique_slug(&base_slug, pool).await?;
     let status = req.status.as_deref().unwrap_or("draft");
@@ -179,7 +184,9 @@ pub async fn create_post(
         post::sync_tags(pool, &p.id, tag_ids).await?;
     }
 
-    build_post_response_from_id(pool, &p.id).await
+    let resp = build_post_response_from_id(pool, &p.id).await?;
+    plugins.dispatch_action(HookPoint::PostCreated, &resp).await;
+    Ok(resp)
 }
 
 /// 更新文章。
@@ -243,6 +250,7 @@ pub async fn delete_post(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
 /// 仅文章作者或管理员可执行。
 pub async fn update_post_with_auth(
     pool: &sqlx::SqlitePool,
+    _plugins: &PluginManager,
     slug: &str,
     user_id: &str,
     role: &str,
@@ -264,6 +272,7 @@ pub async fn update_post_with_auth(
 /// 仅文章作者或管理员可执行。
 pub async fn delete_post_with_auth(
     pool: &sqlx::SqlitePool,
+    plugins: &PluginManager,
     slug: &str,
     user_id: &str,
     role: &str,
@@ -276,7 +285,11 @@ pub async fn delete_post_with_auth(
         return Err(AppError::Forbidden);
     }
 
-    delete_post(pool, &existing.id).await
+    delete_post(pool, &existing.id).await?;
+    plugins
+        .dispatch_action(HookPoint::PostDeleted, &existing.id)
+        .await;
+    Ok(())
 }
 
 /// 获取已发布文章的详情。
@@ -344,4 +357,38 @@ pub async fn list_posts(
 /// 与 [`get_post`] 不同，此方法返回文章不论其发布状态，适用于作者编辑草稿。
 pub async fn get_post_for_owner(pool: &sqlx::SqlitePool, id: &str) -> AppResult<PostResponse> {
     build_post_response_from_id(pool, id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_excerpt_short_content() {
+        let content = "short";
+        let result = extract_excerpt(content, 200);
+        assert_eq!(result, "short");
+    }
+
+    #[test]
+    fn extract_excerpt_truncates_long_content() {
+        let content = "a".repeat(300);
+        let result = extract_excerpt(&content, 200);
+        assert!(result.ends_with("..."));
+        assert_eq!(result.len(), 203);
+    }
+
+    #[test]
+    fn extract_excerpt_exact_boundary() {
+        let content = "a".repeat(200);
+        let result = extract_excerpt(&content, 200);
+        assert_eq!(result, "a".repeat(200));
+    }
+
+    #[test]
+    fn extract_excerpt_unicode_safe() {
+        let content = "你好世界".repeat(100);
+        let result = extract_excerpt(&content, 200);
+        assert!(result.ends_with("...") || result.len() <= 200);
+    }
 }

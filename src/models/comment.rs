@@ -335,3 +335,86 @@ pub fn validate_depth(comments: &[Comment], parent_id: &str) -> AppResult<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_comment(id: &str, post_id: &str, parent_id: Option<&str>) -> Comment {
+        Comment {
+            id: id.to_string(),
+            post_id: post_id.to_string(),
+            author_id: None,
+            nickname: None,
+            email: None,
+            content: "test".to_string(),
+            parent_id: parent_id.map(|s| s.to_string()),
+            status: "approved".to_string(),
+            created_at: "2025-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn build_tree_flat_comments() {
+        let comments = vec![make_comment("1", "p1", None), make_comment("2", "p1", None)];
+        let tree = build_tree(&comments);
+        assert_eq!(tree.len(), 2);
+        assert!(tree[0].replies.is_empty());
+        assert!(tree[1].replies.is_empty());
+    }
+
+    #[test]
+    fn build_tree_nested() {
+        let comments = vec![
+            make_comment("1", "p1", None),
+            make_comment("2", "p1", Some("1")),
+            make_comment("3", "p1", Some("2")),
+        ];
+        let tree = build_tree(&comments);
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].id, "1");
+        assert_eq!(tree[0].replies.len(), 1);
+        assert_eq!(tree[0].replies[0].id, "2");
+        assert_eq!(tree[0].replies[0].replies.len(), 1);
+        assert_eq!(tree[0].replies[0].replies[0].id, "3");
+    }
+
+    #[test]
+    fn build_tree_depth_values() {
+        let comments = vec![
+            make_comment("1", "p1", None),
+            make_comment("2", "p1", Some("1")),
+            make_comment("3", "p1", Some("2")),
+        ];
+        let tree = build_tree(&comments);
+        assert_eq!(tree[0].depth, 0);
+        assert_eq!(tree[0].replies[0].depth, 1);
+        assert_eq!(tree[0].replies[0].replies[0].depth, 2);
+    }
+
+    #[test]
+    fn validate_depth_ok_within_limit() {
+        let comments = vec![
+            make_comment("1", "p1", None),
+            make_comment("2", "p1", Some("1")),
+        ];
+        assert!(validate_depth(&comments, "2").is_ok());
+    }
+
+    #[test]
+    fn validate_depth_fails_at_max() {
+        let comments = vec![
+            make_comment("1", "p1", None),
+            make_comment("2", "p1", Some("1")),
+            make_comment("3", "p1", Some("2")),
+            make_comment("4", "p1", Some("3")),
+        ];
+        assert!(validate_depth(&comments, "4").is_err());
+    }
+
+    #[test]
+    fn validate_depth_missing_parent() {
+        let comments = vec![make_comment("1", "p1", None)];
+        assert!(validate_depth(&comments, "nonexistent").is_err());
+    }
+}

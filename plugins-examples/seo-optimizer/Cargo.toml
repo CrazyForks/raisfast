@@ -1,0 +1,11 @@
+[package]
+name = "seo-optimizer"
+version = "1.0.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rust-blog-plugin-sdk = { path = "../../plugins-sdk" }
+serde_json = "1"

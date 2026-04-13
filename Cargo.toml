@@ -31,6 +31,7 @@ ammonia = "4"
 # Error handling
 thiserror = "2"
 anyhow = "1"
+async-trait = "0.1"
 
 # Logging
 tracing = "0.1"
@@ -46,7 +47,8 @@ validator = { version = "0.19", features = ["derive"] }
 serde_urlencoded = "0.7"
 
 # Content
-comrak = "0.36"
+comrak = { version = "0.36", features = ["shortcodes"] }
+syntect = "5"
 slug = "0.1"
 
 # Media
@@ -57,6 +59,12 @@ rss = "2"
 rust-i18n = "3.1.5"
 clap = { version = "4.6.0", features = ["derive"] }
 nix = { version = "0.31.2", features = ["signal"] }
+
+# Plugin system
+wasmtime = "26"
+wasmtime-wasi = "26"
+toml = "0.8"
+notify = { version = "7", features = ["macos_kqueue"] }
 
 [dev-dependencies]
 http-body-util = "0.1.3"
