@@ -88,16 +88,16 @@ pub async fn create(
     let id = Uuid::now_v7().to_string();
     let now = Utc::now().to_rfc3339();
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO categories (id, name, slug, description, parent_id, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        id,
+        name,
+        slug,
+        description,
+        parent_id,
+        sort_order,
+        now,
     )
-    .bind(&id)
-    .bind(name)
-    .bind(slug)
-    .bind(description)
-    .bind(parent_id)
-    .bind(sort_order)
-    .bind(&now)
     .execute(pool)
     .await?;
 
@@ -124,15 +124,15 @@ pub async fn update(
     let parent = parent_id.map(|s| s.to_string()).or(existing.parent_id);
     let sort = sort_order.unwrap_or(existing.sort_order);
 
-    sqlx::query(
+    sqlx::query!(
         "UPDATE categories SET name = ?, slug = ?, description = ?, parent_id = ?, sort_order = ? WHERE id = ?",
+        name,
+        slug,
+        desc,
+        parent,
+        sort,
+        id,
     )
-    .bind(name)
-    .bind(slug)
-    .bind(&desc)
-    .bind(&parent)
-    .bind(sort)
-    .bind(id)
     .execute(pool)
     .await?;
 
@@ -143,8 +143,7 @@ pub async fn update(
 ///
 /// 若分类不存在则返回 [`AppError::NotFound`]。
 pub async fn delete(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
-    let result = sqlx::query("DELETE FROM categories WHERE id = ?")
-        .bind(id)
+    let result = sqlx::query!("DELETE FROM categories WHERE id = ?", id)
         .execute(pool)
         .await?;
 

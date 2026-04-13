@@ -5,6 +5,9 @@
 //! 存储在数据库中支持主动吊销。
 
 use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+
+use crate::errors::app_error::AppResult;
 
 /// 刷新令牌完整数据库行模型
 ///
@@ -19,9 +22,6 @@ pub struct RefreshToken {
     pub created_at: String,
 }
 
-use crate::errors::app_error::AppResult;
-use sqlx::FromRow;
-
 /// 创建新的刷新令牌记录
 ///
 /// 自动生成 UUID v7 作为主键。
@@ -33,14 +33,14 @@ pub async fn create_token(
 ) -> AppResult<()> {
     let id = uuid::Uuid::now_v7().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO refresh_tokens (id, user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
+        id,
+        user_id,
+        token,
+        expires_at,
+        now,
     )
-    .bind(&id)
-    .bind(user_id)
-    .bind(token)
-    .bind(expires_at)
-    .bind(&now)
     .execute(pool)
     .await?;
     Ok(())
@@ -64,8 +64,7 @@ pub async fn find_by_token(
 ///
 /// 用于登出时吊销指定的刷新令牌。
 pub async fn delete_by_token(pool: &sqlx::SqlitePool, token: &str) -> AppResult<()> {
-    sqlx::query("DELETE FROM refresh_tokens WHERE token = ?")
-        .bind(token)
+    sqlx::query!("DELETE FROM refresh_tokens WHERE token = ?", token)
         .execute(pool)
         .await?;
     Ok(())
@@ -75,8 +74,7 @@ pub async fn delete_by_token(pool: &sqlx::SqlitePool, token: &str) -> AppResult<
 ///
 /// 用于登出所有设备或修改密码后强制重新登录。
 pub async fn delete_by_user(pool: &sqlx::SqlitePool, user_id: &str) -> AppResult<()> {
-    sqlx::query("DELETE FROM refresh_tokens WHERE user_id = ?")
-        .bind(user_id)
+    sqlx::query!("DELETE FROM refresh_tokens WHERE user_id = ?", user_id)
         .execute(pool)
         .await?;
     Ok(())

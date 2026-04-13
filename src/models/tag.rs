@@ -59,13 +59,15 @@ pub async fn create(pool: &sqlx::SqlitePool, name: &str, slug: &str) -> AppResul
     let id = Uuid::now_v7().to_string();
     let now = Utc::now().to_rfc3339();
 
-    sqlx::query("INSERT INTO tags (id, name, slug, created_at) VALUES (?, ?, ?, ?)")
-        .bind(&id)
-        .bind(name)
-        .bind(slug)
-        .bind(&now)
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "INSERT INTO tags (id, name, slug, created_at) VALUES (?, ?, ?, ?)",
+        id,
+        name,
+        slug,
+        now,
+    )
+    .execute(pool)
+    .await?;
 
     find_by_id(pool, &id).await
 }
@@ -74,8 +76,7 @@ pub async fn create(pool: &sqlx::SqlitePool, name: &str, slug: &str) -> AppResul
 ///
 /// 若标签不存在则返回 [`AppError::NotFound`]。
 pub async fn delete(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
-    let result = sqlx::query("DELETE FROM tags WHERE id = ?")
-        .bind(id)
+    let result = sqlx::query!("DELETE FROM tags WHERE id = ?", id)
         .execute(pool)
         .await?;
 

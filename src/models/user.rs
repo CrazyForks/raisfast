@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
 
+use crate::errors::app_error::{AppError, AppResult};
+use validator::Validate;
+
 /// 用户完整数据库行模型
 ///
 /// 直接映射 `users` 表的所有字段，包含 `password_hash`。
@@ -141,10 +144,6 @@ pub struct UpdateRoleRequest {
     pub role: String,
 }
 
-use crate::errors::app_error::AppError;
-use crate::errors::app_error::AppResult;
-use validator::Validate;
-
 fn validate_password(pwd: &str) -> Result<(), validator::ValidationError> {
     let has_letter = pwd.chars().any(|c| c.is_ascii_alphabetic());
     let has_digit = pwd.chars().any(|c| c.is_ascii_digit());
@@ -192,15 +191,15 @@ pub async fn create(
     let id = Uuid::now_v7().to_string();
     let now = Utc::now().to_rfc3339();
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO users (id, email, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, 'reader', ?, ?)",
+        id,
+        email,
+        username,
+        password_hash,
+        now,
+        now,
     )
-    .bind(&id)
-    .bind(email)
-    .bind(username)
-    .bind(password_hash)
-    .bind(&now)
-    .bind(&now)
     .execute(pool)
     .await?;
 
@@ -232,15 +231,15 @@ pub async fn update_profile(
     let website = website.map(|s| s.to_string()).or(user.website);
     let avatar = avatar.map(|s| s.to_string()).or(user.avatar);
 
-    sqlx::query(
+    sqlx::query!(
         "UPDATE users SET username = ?, bio = ?, website = ?, avatar = ?, updated_at = ? WHERE id = ?",
+        username,
+        bio,
+        website,
+        avatar,
+        now,
+        id,
     )
-    .bind(username)
-    .bind(&bio)
-    .bind(&website)
-    .bind(&avatar)
-    .bind(&now)
-    .bind(id)
     .execute(pool)
     .await?;
 
@@ -258,12 +257,14 @@ pub async fn update_password(
     new_password_hash: &str,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
-        .bind(new_password_hash)
-        .bind(&now)
-        .bind(id)
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+        new_password_hash,
+        now,
+        id,
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -292,18 +293,19 @@ pub async fn find_all(
 
 /// 管理员更新用户角色
 pub async fn update_role(pool: &sqlx::SqlitePool, id: &str, role: &str) -> AppResult<User> {
-    let result =
-        sqlx::query("UPDATE users SET role = ?, updated_at = datetime('now') WHERE id = ?")
-            .bind(role)
-            .bind(id)
-            .execute(pool)
-            .await?;
+    let result = sqlx::query!(
+        "UPDATE users SET role = ?, updated_at = datetime('now') WHERE id = ?",
+        role,
+        id,
+    )
+    .execute(pool)
+    .await?;
 
     if result.rows_affected() == 0 {
-        return Err(crate::errors::app_error::AppError::NotFound("user".into()));
+        return Err(AppError::NotFound("user".into()));
     }
 
     find_by_id(pool, id)
         .await?
-        .ok_or_else(|| crate::errors::app_error::AppError::NotFound("user".into()))
+        .ok_or_else(|| AppError::NotFound("user".into()))
 }

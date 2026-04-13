@@ -104,17 +104,17 @@ pub async fn create(
     let id = Uuid::now_v7().to_string();
     let now = Utc::now().to_rfc3339();
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO comments (id, post_id, author_id, nickname, email, content, parent_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+        id,
+        post_id,
+        author_id,
+        nickname,
+        email,
+        content,
+        parent_id,
+        now,
     )
-    .bind(&id)
-    .bind(post_id)
-    .bind(author_id)
-    .bind(nickname)
-    .bind(email)
-    .bind(content)
-    .bind(parent_id)
-    .bind(&now)
     .execute(pool)
     .await?;
 
@@ -221,9 +221,7 @@ pub async fn find_all_paginated(
 ///
 /// 若评论不存在则返回 [`AppError::NotFound`]。
 pub async fn update_status(pool: &sqlx::SqlitePool, id: &str, status: &str) -> AppResult<()> {
-    let result = sqlx::query("UPDATE comments SET status = ? WHERE id = ?")
-        .bind(status)
-        .bind(id)
+    let result = sqlx::query!("UPDATE comments SET status = ? WHERE id = ?", status, id,)
         .execute(pool)
         .await?;
 
@@ -237,8 +235,7 @@ pub async fn update_status(pool: &sqlx::SqlitePool, id: &str, status: &str) -> A
 ///
 /// 若评论不存在则返回 [`AppError::NotFound`]。
 pub async fn delete(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
-    let result = sqlx::query("DELETE FROM comments WHERE id = ?")
-        .bind(id)
+    let result = sqlx::query!("DELETE FROM comments WHERE id = ?", id)
         .execute(pool)
         .await?;
 

@@ -158,21 +158,21 @@ pub async fn create(
         None
     };
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO posts (id, title, slug, content, excerpt, cover_image, status, author_id, category_id, published_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        id,
+        title,
+        slug,
+        content,
+        excerpt,
+        cover_image,
+        status,
+        author_id,
+        category_id,
+        published_at,
+        now,
+        now,
     )
-    .bind(&id)
-    .bind(title)
-    .bind(slug)
-    .bind(content)
-    .bind(excerpt)
-    .bind(cover_image)
-    .bind(status)
-    .bind(author_id)
-    .bind(category_id)
-    .bind(&published_at)
-    .bind(&now)
-    .bind(&now)
     .execute(pool)
     .await?;
 
@@ -216,19 +216,19 @@ pub async fn update(
     let category_id = category_id.map(|s| s.to_string()).or(existing.category_id);
     let slug = slug.unwrap_or(&existing.slug);
 
-    sqlx::query(
+    sqlx::query!(
         "UPDATE posts SET title = ?, slug = ?, content = ?, excerpt = ?, cover_image = ?, status = ?, category_id = ?, published_at = ?, updated_at = ? WHERE id = ?",
+        title,
+        slug,
+        content,
+        excerpt,
+        cover_image,
+        new_status,
+        category_id,
+        published_at,
+        now,
+        id,
     )
-    .bind(title)
-    .bind(slug)
-    .bind(content)
-    .bind(&excerpt)
-    .bind(&cover_image)
-    .bind(new_status)
-    .bind(&category_id)
-    .bind(&published_at)
-    .bind(&now)
-    .bind(id)
     .execute(pool)
     .await?;
 
@@ -241,8 +241,7 @@ pub async fn update(
 ///
 /// 若文章不存在则返回 [`AppError::NotFound`]。
 pub async fn delete(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
-    let result = sqlx::query("DELETE FROM posts WHERE id = ?")
-        .bind(id)
+    let result = sqlx::query!("DELETE FROM posts WHERE id = ?", id)
         .execute(pool)
         .await?;
 
@@ -259,10 +258,12 @@ pub async fn increment_view_count_joined(
     pool: &sqlx::SqlitePool,
     slug: &str,
 ) -> AppResult<PostJoinedRow> {
-    let update_sql = "\
-        UPDATE posts SET view_count = view_count + 1 \
-        WHERE slug = ? AND status = 'published'";
-    sqlx::query(update_sql).bind(slug).execute(pool).await?;
+    sqlx::query!(
+        "UPDATE posts SET view_count = view_count + 1 WHERE slug = ? AND status = 'published'",
+        slug
+    )
+    .execute(pool)
+    .await?;
 
     find_published_joined_by_slug(pool, slug).await
 }
@@ -277,17 +278,18 @@ pub async fn sync_tags(
 ) -> AppResult<()> {
     let mut tx = pool.begin().await?;
 
-    sqlx::query("DELETE FROM posts_tags WHERE post_id = ?")
-        .bind(post_id)
+    sqlx::query!("DELETE FROM posts_tags WHERE post_id = ?", post_id)
         .execute(&mut *tx)
         .await?;
 
     for tag_id in tag_ids {
-        sqlx::query("INSERT INTO posts_tags (post_id, tag_id) VALUES (?, ?)")
-            .bind(post_id)
-            .bind(tag_id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query!(
+            "INSERT INTO posts_tags (post_id, tag_id) VALUES (?, ?)",
+            post_id,
+            tag_id,
+        )
+        .execute(&mut *tx)
+        .await?;
     }
 
     tx.commit().await?;
@@ -493,7 +495,9 @@ pub struct PostJoinedRow {
 }
 
 const JOIN_SQL: &str = "\
-    SELECT p.*, u.username AS author_name, c.name AS category_name \
+    SELECT p.id, p.title, p.slug, p.content, p.excerpt, p.cover_image, p.status, \
+    p.author_id, p.category_id, p.view_count, p.is_pinned, p.created_at, p.updated_at, \
+    p.published_at, u.username AS author_name, c.name AS category_name \
     FROM posts p \
     LEFT JOIN users u ON p.author_id = u.id \
     LEFT JOIN categories c ON p.category_id = c.id";
@@ -581,21 +585,28 @@ pub async fn find_published_joined(
 ) -> AppResult<(Vec<PostJoinedRow>, i64)> {
     let offset = (page - 1) * page_size;
 
+    let base_select = "\
+        SELECT p.id, p.title, p.slug, p.content, p.excerpt, p.cover_image, p.status, \
+        p.author_id, p.category_id, p.view_count, p.is_pinned, p.created_at, p.updated_at, \
+        p.published_at, u.username AS author_name, c.name AS category_name \
+        FROM posts p \
+        LEFT JOIN users u ON p.author_id = u.id \
+        LEFT JOIN categories c ON p.category_id = c.id";
+
     let (posts, total) = if let Some(tag_id) = tag_id {
-        let posts = sqlx::query_as::<_, PostJoinedRow>(
-            "SELECT p.*, u.username AS author_name, c.name AS category_name \
-             FROM posts p \
+        let sql = format!(
+            "{} \
              INNER JOIN posts_tags pt ON p.id = pt.post_id \
-             LEFT JOIN users u ON p.author_id = u.id \
-             LEFT JOIN categories c ON p.category_id = c.id \
              WHERE p.status = 'published' AND pt.tag_id = ? \
              ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?",
-        )
-        .bind(tag_id)
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
+            base_select
+        );
+        let posts = sqlx::query_as::<_, PostJoinedRow>(&sql)
+            .bind(tag_id)
+            .bind(page_size)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
 
         let total: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM posts p INNER JOIN posts_tags pt ON p.id = pt.post_id WHERE p.status = 'published' AND pt.tag_id = ?",
@@ -607,20 +618,19 @@ pub async fn find_published_joined(
         (posts, total.0)
     } else if let Some(q) = q {
         let pattern = format!("%{}%", q);
-        let posts = sqlx::query_as::<_, PostJoinedRow>(
-            "SELECT p.*, u.username AS author_name, c.name AS category_name \
-             FROM posts p \
-             LEFT JOIN users u ON p.author_id = u.id \
-             LEFT JOIN categories c ON p.category_id = c.id \
+        let sql = format!(
+            "{} \
              WHERE p.status = 'published' AND (p.title LIKE ? OR p.content LIKE ?) \
              ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?",
-        )
-        .bind(&pattern)
-        .bind(&pattern)
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
+            base_select
+        );
+        let posts = sqlx::query_as::<_, PostJoinedRow>(&sql)
+            .bind(&pattern)
+            .bind(&pattern)
+            .bind(page_size)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
 
         let total: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM posts WHERE status = 'published' AND (title LIKE ? OR content LIKE ?)",
@@ -632,19 +642,18 @@ pub async fn find_published_joined(
 
         (posts, total.0)
     } else if let Some(category_id) = category_id {
-        let posts = sqlx::query_as::<_, PostJoinedRow>(
-            "SELECT p.*, u.username AS author_name, c.name AS category_name \
-             FROM posts p \
-             LEFT JOIN users u ON p.author_id = u.id \
-             LEFT JOIN categories c ON p.category_id = c.id \
+        let sql = format!(
+            "{} \
              WHERE p.status = 'published' AND p.category_id = ? \
              ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?",
-        )
-        .bind(category_id)
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
+            base_select
+        );
+        let posts = sqlx::query_as::<_, PostJoinedRow>(&sql)
+            .bind(category_id)
+            .bind(page_size)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
 
         let total: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM posts WHERE status = 'published' AND category_id = ?",
@@ -655,18 +664,17 @@ pub async fn find_published_joined(
 
         (posts, total.0)
     } else {
-        let posts = sqlx::query_as::<_, PostJoinedRow>(
-            "SELECT p.*, u.username AS author_name, c.name AS category_name \
-             FROM posts p \
-             LEFT JOIN users u ON p.author_id = u.id \
-             LEFT JOIN categories c ON p.category_id = c.id \
+        let sql = format!(
+            "{} \
              WHERE p.status = 'published' \
              ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?",
-        )
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
+            base_select
+        );
+        let posts = sqlx::query_as::<_, PostJoinedRow>(&sql)
+            .bind(page_size)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
 
         let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM posts WHERE status = 'published'")
             .fetch_one(pool)

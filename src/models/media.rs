@@ -74,16 +74,16 @@ pub async fn create(
     let id = Uuid::now_v7().to_string();
     let now = Utc::now().to_rfc3339();
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO media (id, user_id, filename, filepath, mimetype, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        id,
+        user_id,
+        filename,
+        filepath,
+        mimetype,
+        size,
+        now,
     )
-    .bind(&id)
-    .bind(user_id)
-    .bind(filename)
-    .bind(filepath)
-    .bind(mimetype)
-    .bind(size)
-    .bind(&now)
     .execute(pool)
     .await?;
 
@@ -138,8 +138,7 @@ pub async fn find_by_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<Option<M
 /// 仅删除数据库记录，不删除磁盘文件。
 /// 若记录不存在则返回 [`AppError::NotFound`]。
 pub async fn delete(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
-    let result = sqlx::query("DELETE FROM media WHERE id = ?")
-        .bind(id)
+    let result = sqlx::query!("DELETE FROM media WHERE id = ?", id)
         .execute(pool)
         .await?;
 
