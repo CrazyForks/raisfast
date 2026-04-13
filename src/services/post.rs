@@ -19,8 +19,21 @@ use crate::models::tag::{self, CreateTagRequest};
 use crate::plugins::{HookPoint, PluginManager};
 use crate::utils::markdown::render_markdown;
 
-fn joined_row_to_response(r: PostJoinedRow, tags: Vec<post::TagBrief>) -> PostResponse {
-    let html_content = render_markdown(&r.content);
+async fn joined_row_to_response(
+    r: PostJoinedRow,
+    tags: Vec<post::TagBrief>,
+    plugins: &PluginManager,
+) -> PostResponse {
+    let html_content = match plugins.dispatch_render_override(&r.content).await {
+        Some(html) => plugins
+            .dispatch_filter(HookPoint::FilterHtml, html)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("filter_html hook failed: {e}");
+                render_markdown(&r.content)
+            }),
+        None => render_markdown(&r.content),
+    };
     PostResponse {
         id: r.id,
         title: r.title,
@@ -43,10 +56,14 @@ fn joined_row_to_response(r: PostJoinedRow, tags: Vec<post::TagBrief>) -> PostRe
     }
 }
 
-async fn build_post_response_from_id(pool: &crate::db::Pool, id: &str) -> AppResult<PostResponse> {
+async fn build_post_response_from_id(
+    pool: &crate::db::Pool,
+    id: &str,
+    plugins: &PluginManager,
+) -> AppResult<PostResponse> {
     let row = post::find_joined_by_id(pool, id).await?;
     let tags = post::get_post_tags(pool, &row.id).await.unwrap_or_default();
-    Ok(joined_row_to_response(row, tags))
+    Ok(joined_row_to_response(row, tags, plugins).await)
 }
 
 /// 创建分类。
@@ -184,7 +201,7 @@ pub async fn create_post(
         post::sync_tags(pool, &p.id, tag_ids).await?;
     }
 
-    let resp = build_post_response_from_id(pool, &p.id).await?;
+    let resp = build_post_response_from_id(pool, &p.id, plugins).await?;
     plugins.dispatch_action(HookPoint::PostCreated, &resp).await;
     Ok(resp)
 }
@@ -196,9 +213,14 @@ pub async fn create_post(
 /// - 同步关联标签。
 pub async fn update_post(
     pool: &crate::db::Pool,
+    plugins: &PluginManager,
     id: &str,
     req: UpdatePostRequest,
 ) -> AppResult<PostResponse> {
+    let req = plugins
+        .dispatch_filter(HookPoint::PostUpdating, req)
+        .await?;
+
     let existing = post::find_by_id(pool, id)
         .await?
         .ok_or_else(|| AppError::NotFound("post".into()))?;
@@ -237,7 +259,7 @@ pub async fn update_post(
         post::sync_tags(pool, &p.id, tag_ids).await?;
     }
 
-    build_post_response_from_id(pool, &p.id).await
+    build_post_response_from_id(pool, &p.id, plugins).await
 }
 
 /// 删除文章。
@@ -250,7 +272,7 @@ pub async fn delete_post(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
 /// 仅文章作者或管理员可执行。
 pub async fn update_post_with_auth(
     pool: &crate::db::Pool,
-    _plugins: &PluginManager,
+    plugins: &PluginManager,
     slug: &str,
     user_id: &str,
     role: &str,
@@ -264,7 +286,7 @@ pub async fn update_post_with_auth(
         return Err(AppError::Forbidden);
     }
 
-    update_post(pool, &existing.id, req).await
+    update_post(pool, plugins, &existing.id, req).await
 }
 
 /// 带权限校验的文章删除。
@@ -296,10 +318,14 @@ pub async fn delete_post_with_auth(
 ///
 /// 每次访问原子递增文章的浏览计数（`view_count`），
 /// 并通过 JOIN 一次查询获取作者名和分类名。
-pub async fn get_post(pool: &crate::db::Pool, slug: &str) -> AppResult<PostResponse> {
+pub async fn get_post(
+    pool: &crate::db::Pool,
+    slug: &str,
+    plugins: &PluginManager,
+) -> AppResult<PostResponse> {
     let row = post::increment_view_count_joined(pool, slug).await?;
     let tags = post::get_post_tags(pool, &row.id).await.unwrap_or_default();
-    Ok(joined_row_to_response(row, tags))
+    Ok(joined_row_to_response(row, tags, plugins).await)
 }
 
 /// 分页查询已发布文章列表。
@@ -313,6 +339,7 @@ pub async fn list_posts(
     category_id: Option<&str>,
     tag_id: Option<&str>,
     q: Option<&str>,
+    plugins: &PluginManager,
 ) -> AppResult<(Vec<PostResponse>, i64)> {
     let (rows, total) =
         post::find_published_joined(pool, page, page_size, category_id, tag_id, q).await?;
@@ -322,32 +349,39 @@ pub async fn list_posts(
         .await
         .unwrap_or_default();
 
-    let responses = rows
-        .into_iter()
-        .map(|r| {
-            let html_content = render_markdown(&r.content);
-            PostResponse {
-                id: r.id.clone(),
-                title: r.title,
-                slug: r.slug,
-                content: r.content,
-                html_content,
-                excerpt: r.excerpt,
-                cover_image: r.cover_image,
-                status: r.status,
-                author_id: r.author_id,
-                author_name: r.author_name,
-                category_id: r.category_id,
-                category_name: r.category_name,
-                tags: tags_map.get(&r.id).cloned().unwrap_or_default(),
-                view_count: r.view_count,
-                is_pinned: r.is_pinned,
-                created_at: r.created_at,
-                updated_at: r.updated_at,
-                published_at: r.published_at,
-            }
-        })
-        .collect();
+    let mut responses = Vec::with_capacity(rows.len());
+    for r in rows {
+        let html_content = match plugins.dispatch_render_override(&r.content).await {
+            Some(html) => plugins
+                .dispatch_filter(HookPoint::FilterHtml, html)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!("filter_html hook failed: {e}");
+                    render_markdown(&r.content)
+                }),
+            None => render_markdown(&r.content),
+        };
+        responses.push(PostResponse {
+            id: r.id.clone(),
+            title: r.title,
+            slug: r.slug,
+            content: r.content,
+            html_content,
+            excerpt: r.excerpt,
+            cover_image: r.cover_image,
+            status: r.status,
+            author_id: r.author_id,
+            author_name: r.author_name,
+            category_id: r.category_id,
+            category_name: r.category_name,
+            tags: tags_map.get(&r.id).cloned().unwrap_or_default(),
+            view_count: r.view_count,
+            is_pinned: r.is_pinned,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+            published_at: r.published_at,
+        });
+    }
 
     Ok((responses, total))
 }
@@ -355,8 +389,12 @@ pub async fn list_posts(
 /// 获取文章详情（供所有者编辑用）。
 ///
 /// 与 [`get_post`] 不同，此方法返回文章不论其发布状态，适用于作者编辑草稿。
-pub async fn get_post_for_owner(pool: &crate::db::Pool, id: &str) -> AppResult<PostResponse> {
-    build_post_response_from_id(pool, id).await
+pub async fn get_post_for_owner(
+    pool: &crate::db::Pool,
+    id: &str,
+    plugins: &PluginManager,
+) -> AppResult<PostResponse> {
+    build_post_response_from_id(pool, id, plugins).await
 }
 
 #[cfg(test)]

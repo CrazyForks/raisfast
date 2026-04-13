@@ -100,7 +100,7 @@ pub struct CreatePostRequest {
 ///
 /// 所有字段均为可选，仅更新提供的字段。
 /// - `title` 如果提供，长度须在 1–200 个字符之间
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Serialize, Validate, Clone)]
 pub struct UpdatePostRequest {
     #[validate(length(min = 1, max = 200))]
     pub title: Option<String>,

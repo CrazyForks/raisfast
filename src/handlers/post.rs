@@ -54,6 +54,7 @@ pub async fn list(
         query.category_id.as_deref(),
         query.tag_id.as_deref(),
         query.q.as_deref(),
+        &state.plugins,
     )
     .await?;
 
@@ -75,7 +76,7 @@ pub async fn get(
     State(state): State<crate::AppState>,
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<PostResponse>> {
-    let post = post_service::get_post(&state.pool, &slug).await?;
+    let post = post_service::get_post(&state.pool, &slug, &state.plugins).await?;
     Ok(ApiResponse::success(post))
 }
 

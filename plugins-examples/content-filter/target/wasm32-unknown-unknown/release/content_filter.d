@@ -1,0 +1,1 @@
+/Users/chriszhong/work/www/Rust/rust-blog/plugins-examples/content-filter/target/wasm32-unknown-unknown/release/content_filter.wasm: /Users/chriszhong/work/www/Rust/rust-blog/plugins-examples/content-filter/src/lib.rs /Users/chriszhong/work/www/Rust/rust-blog/plugins-sdk/src/lib.rs

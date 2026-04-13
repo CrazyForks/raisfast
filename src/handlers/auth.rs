@@ -42,6 +42,7 @@ pub async fn login(
     validation::validate(&req)?;
     let resp = auth::login(
         &state.pool,
+        &state.plugins,
         &req,
         &state.config.jwt_secret,
         state.config.jwt_access_expires,

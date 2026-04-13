@@ -89,4 +89,145 @@ impl HookPoint {
             HookPoint::OnLogin => "on_login",
         }
     }
+
+    /// 返回所有 Hook 点，用于遍历测试
+    pub fn all() -> &'static [HookPoint] {
+        &[
+            HookPoint::PostCreating,
+            HookPoint::PostCreated,
+            HookPoint::PostUpdating,
+            HookPoint::PostUpdated,
+            HookPoint::PostDeleted,
+            HookPoint::CommentCreating,
+            HookPoint::CommentCreated,
+            HookPoint::RenderMarkdown,
+            HookPoint::FilterHtml,
+            HookPoint::HandleRoute,
+            HookPoint::OnLogin,
+        ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_minimal_manifest() {
+        let toml = r#"
+[plugin]
+id = "com.example.test"
+name = "Test Plugin"
+version = "1.0.0"
+"#;
+        let m: PluginManifest = toml::from_str(toml).unwrap();
+        assert_eq!(m.plugin.id, "com.example.test");
+        assert_eq!(m.plugin.name, "Test Plugin");
+        assert_eq!(m.plugin.version, "1.0.0");
+        assert_eq!(m.plugin.description, "");
+        assert!(m.plugin.author.is_none());
+        assert_eq!(m.plugin.runtime, "wasm");
+        assert_eq!(m.plugin.language, "rust");
+        assert!(m.permissions.http.is_empty());
+        assert!(m.permissions.config.is_empty());
+        assert!(m.permissions.max_memory_mb.is_none());
+        assert!(m.permissions.timeout_ms.is_none());
+        assert!(m.hooks.is_empty());
+    }
+
+    #[test]
+    fn parse_full_manifest() {
+        let toml = r#"
+[plugin]
+id = "com.example.seo"
+name = "SEO Optimizer"
+version = "2.1.0"
+description = "Auto-generate meta descriptions"
+author = "Example Corp"
+license = "MIT"
+runtime = "wasi"
+language = "assemblyscript"
+
+[permissions]
+http = ["cdn.example.com/*", "api.example.com/v1/*"]
+config = ["seo.*"]
+max_memory_mb = 64
+timeout_ms = 3000
+
+[hooks.on-post-creating]
+priority = 10
+
+[hooks.render-markdown]
+priority = 20
+
+[hooks.handle-route]
+match = "/api/v1/plugins/seo/*"
+priority = 5
+"#;
+        let m: PluginManifest = toml::from_str(toml).unwrap();
+
+        assert_eq!(m.plugin.id, "com.example.seo");
+        assert_eq!(m.plugin.author, Some("Example Corp".into()));
+        assert_eq!(m.plugin.license, Some("MIT".into()));
+        assert_eq!(m.plugin.runtime, "wasi");
+        assert_eq!(m.plugin.language, "assemblyscript");
+
+        assert_eq!(
+            m.permissions.http,
+            vec!["cdn.example.com/*", "api.example.com/v1/*"]
+        );
+        assert_eq!(m.permissions.config, vec!["seo.*"]);
+        assert_eq!(m.permissions.max_memory_mb, Some(64));
+        assert_eq!(m.permissions.timeout_ms, Some(3000));
+
+        assert_eq!(m.hooks.len(), 3);
+        let hpc = m.hooks.get("on-post-creating").unwrap();
+        assert_eq!(hpc.priority, Some(10));
+        assert!(hpc.match_pattern.is_none());
+
+        let hrm = m.hooks.get("render-markdown").unwrap();
+        assert_eq!(hrm.priority, Some(20));
+
+        let hhr = m.hooks.get("handle-route").unwrap();
+        assert_eq!(hhr.priority, Some(5));
+        assert_eq!(hhr.match_pattern.as_deref(), Some("/api/v1/plugins/seo/*"));
+    }
+
+    #[test]
+    fn parse_manifest_missing_required_field() {
+        let toml = r#"
+[plugin]
+name = "Missing ID"
+version = "1.0.0"
+"#;
+        assert!(toml::from_str::<PluginManifest>(toml).is_err());
+    }
+
+    #[test]
+    fn hookpoint_wasm_func_name_roundtrip() {
+        for hp in HookPoint::all() {
+            let name = hp.wasm_func_name();
+            assert!(!name.is_empty(), "HookPoint::{hp:?} has empty func name");
+            assert!(
+                name.contains('_')
+                    || name == "render_markdown"
+                    || name == "filter_html"
+                    || name == "handle_route"
+            );
+        }
+    }
+
+    #[test]
+    fn hookpoint_all_has_11_variants() {
+        assert_eq!(HookPoint::all().len(), 11);
+    }
+
+    #[test]
+    fn permissions_default_is_empty() {
+        let p = Permissions::default();
+        assert!(p.http.is_empty());
+        assert!(p.config.is_empty());
+        assert!(p.max_memory_mb.is_none());
+        assert!(p.timeout_ms.is_none());
+    }
 }

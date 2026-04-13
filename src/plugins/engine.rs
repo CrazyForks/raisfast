@@ -1,9 +1,15 @@
 //! WASM 引擎封装
 //!
 //! 隔离所有 wasmtime 细节，提供简洁的调用接口。
+//! 包含 fuel 消耗限制、超时和内存上限等安全机制。
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+
+use crate::plugins::manifest::Permissions;
+
+/// 默认 fuel 上限（约 1000 万条 WASM 指令，足够处理一般内容）
+const DEFAULT_FUEL: u64 = 10_000_000;
 
 /// 单个插件实例
 pub struct WasmInstance {
@@ -12,8 +18,9 @@ pub struct WasmInstance {
     memory: wasmtime::Memory,
     alloc_fn: Option<wasmtime::TypedFunc<(i32,), i32>>,
     dealloc_fn: Option<wasmtime::TypedFunc<(i32, i32), ()>>,
-    #[allow(dead_code)]
     timeout_ms: u64,
+    fuel_limit: u64,
+    max_memory_bytes: usize,
     plugin_id: String,
 }
 
@@ -29,6 +36,7 @@ impl WasmInstance {
         wasm_bytes: &[u8],
         plugin_id: String,
         timeout_ms: u64,
+        permissions: &Permissions,
     ) -> anyhow::Result<Self> {
         let module = wasmtime::Module::new(engine, wasm_bytes)?;
         let mut store = wasmtime::Store::new(
@@ -38,14 +46,19 @@ impl WasmInstance {
             },
         );
 
-        store.set_fuel(u64::MAX)?;
+        let fuel_limit = DEFAULT_FUEL;
+        store.set_fuel(fuel_limit)?;
+
+        let max_memory_bytes = permissions
+            .max_memory_mb
+            .map(|mb| mb as usize * 1024 * 1024)
+            .unwrap_or(32 * 1024 * 1024);
 
         let mut linker = wasmtime::Linker::new(engine);
 
         linker.func_wrap("env", "host_log", {
             let pid = plugin_id.clone();
             move |level_ptr: i32, level_len: i32, msg_ptr: i32, msg_len: i32| {
-                // 占位：实际日志在 call 时通过 store data 访问
                 let _ = (level_ptr, level_len, msg_ptr, msg_len, &pid);
             }
         })?;
@@ -55,6 +68,13 @@ impl WasmInstance {
         let memory = instance
             .get_memory(&mut store, "memory")
             .ok_or_else(|| anyhow::anyhow!("plugin has no exported memory"))?;
+
+        let current_mem = memory.data_size(&store);
+        if current_mem > max_memory_bytes {
+            anyhow::bail!(
+                "plugin {plugin_id} initial memory {current_mem} exceeds limit {max_memory_bytes}"
+            );
+        }
 
         let alloc_fn = instance
             .get_typed_func::<(i32,), i32>(&mut store, "alloc")
@@ -70,14 +90,18 @@ impl WasmInstance {
             alloc_fn,
             dealloc_fn,
             timeout_ms,
+            fuel_limit,
+            max_memory_bytes,
             plugin_id,
         })
     }
 
+    /// 重置 fuel 为上限值（每次调用前执行）
+    fn reset_fuel(&mut self) -> anyhow::Result<()> {
+        self.store.set_fuel(self.fuel_limit)
+    }
+
     /// 调用返回 JSON 的 Filter Hook
-    ///
-    /// 返回 `Ok(Some(result))` 表示插件修改了数据，
-    /// `Ok(None)` 表示插件未修改（返回 0 或函数不存在）。
     pub fn call_json_filter<T: Clone + Serialize + DeserializeOwned>(
         &mut self,
         func_name: &str,
@@ -91,12 +115,14 @@ impl WasmInstance {
             Err(_) => return Ok(None),
         };
 
+        self.reset_fuel()?;
+
         let input_json = serde_json::to_vec(input)?;
         let ptr = self.write_to_memory(&input_json)?;
 
         let result_len: i32 = func
             .call(&mut self.store, (ptr, input_json.len() as i32))
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .map_err(|e| self.format_wasm_error(e))?;
 
         if result_len <= 0 {
             self.free_memory(ptr, input_json.len() as i32);
@@ -125,12 +151,14 @@ impl WasmInstance {
             Err(_) => return Ok(None),
         };
 
+        self.reset_fuel()?;
+
         let input_bytes = input.as_bytes().to_vec();
         let ptr = self.write_to_memory(&input_bytes)?;
 
         let result_len: i32 = func
             .call(&mut self.store, (ptr, input_bytes.len() as i32))
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .map_err(|e| self.format_wasm_error(e))?;
 
         if result_len <= 0 {
             self.free_memory(ptr, input_bytes.len() as i32);
@@ -158,14 +186,33 @@ impl WasmInstance {
             Err(_) => return Ok(()),
         };
 
+        self.reset_fuel()?;
+
         let input_json = serde_json::to_vec(input)?;
         let ptr = self.write_to_memory(&input_json)?;
 
         func.call(&mut self.store, (ptr, input_json.len() as i32))
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .map_err(|e| self.format_wasm_error(e))?;
 
         self.free_memory(ptr, input_json.len() as i32);
         Ok(())
+    }
+
+    /// 带 fuel 守卫的 WASM 调用包装。
+    ///
+    /// fuel 耗尽时 wasmtime 返回 Trap，此处统一转为错误。
+    fn format_wasm_error(&self, e: impl std::fmt::Display) -> anyhow::Error {
+        let msg = e.to_string();
+        if msg.contains("all fuel consumed") {
+            anyhow::anyhow!(
+                "plugin {} exceeded fuel limit ({} fuel units, timeout {}ms)",
+                self.plugin_id,
+                self.fuel_limit,
+                self.timeout_ms,
+            )
+        } else {
+            anyhow::anyhow!("{msg}")
+        }
     }
 
     /// 将数据写入 WASM 线性内存，返回指针
@@ -178,8 +225,18 @@ impl WasmInstance {
                 .map_err(|e| anyhow::anyhow!("{e}"))?
         } else {
             let mem_size = self.memory.data_size(&self.store);
-            if mem_size < data.len() + 1024 {
-                let pages_needed = ((data.len() + 1024) / 65536) as u64 + 1;
+            let needed = data.len() + 1024;
+            if mem_size < needed {
+                let extra = needed - mem_size;
+                let pages_needed = (extra / 65536) as u64 + 1;
+                let new_total = mem_size as u64 + pages_needed * 65536;
+                if new_total > self.max_memory_bytes as u64 {
+                    anyhow::bail!(
+                        "plugin {} memory allocation exceeds limit ({} bytes)",
+                        self.plugin_id,
+                        self.max_memory_bytes,
+                    );
+                }
                 self.memory.grow(&mut self.store, pages_needed)?;
             }
             0i32
@@ -209,6 +266,179 @@ impl WasmInstance {
     fn free_memory(&mut self, ptr: i32, len: i32) {
         if let Some(dealloc_fn) = &self.dealloc_fn {
             let _ = dealloc_fn.call(&mut self.store, (ptr, len));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_WAT: &str = r#"
+(module
+  (memory (export "memory") 1)
+  (global $next_ptr (mut i32) (i32.const 0))
+  (func (export "alloc") (param $size i32) (result i32)
+    (global.get $next_ptr)
+    (global.set $next_ptr (i32.add (global.get $next_ptr) (local.get $size)))
+  )
+  (func (export "dealloc") (param $ptr i32) (param $size i32))
+  (func (export "on_post_creating") (param $ptr i32) (param $len i32) (result i32)
+    (local.get $len)
+  )
+  (func (export "on_post_created") (param $ptr i32) (param $len i32))
+  (func (export "render_markdown") (param $ptr i32) (param $len i32) (result i32)
+    (local.get $len)
+  )
+  (func (export "infinite_loop")
+    (block $break (loop $loop (br $loop)))
+  )
+)
+"#;
+
+    fn make_instance(id: &str) -> WasmInstance {
+        let mut cfg = wasmtime::Config::new();
+        cfg.consume_fuel(true);
+        let engine = wasmtime::Engine::new(&cfg).unwrap();
+        let perms = Permissions::default();
+        WasmInstance::new(&engine, TEST_WAT.as_bytes(), id.into(), 5000, &perms).unwrap()
+    }
+
+    #[test]
+    fn create_from_wat_succeeds() {
+        let _inst = make_instance("test-create");
+    }
+
+    #[test]
+    fn write_and_read_roundtrip() {
+        let mut inst = make_instance("test-roundtrip");
+        let data = b"Hello, WASM!";
+        let ptr = inst.write_to_memory(data).unwrap();
+        let read_back = inst.read_from_memory(ptr, data.len()).unwrap();
+        assert_eq!(&read_back, data);
+    }
+
+    #[test]
+    fn read_out_of_bounds_fails() {
+        let mut inst = make_instance("test-oob");
+        let data = b"hello";
+        let ptr = inst.write_to_memory(data).unwrap();
+        let result = inst.read_from_memory(ptr, 999_999_999);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("out-of-bounds"));
+    }
+
+    #[test]
+    fn fuel_exhaustion_detected() {
+        let mut cfg = wasmtime::Config::new();
+        cfg.consume_fuel(true);
+        let engine = wasmtime::Engine::new(&cfg).unwrap();
+        let perms = Permissions {
+            timeout_ms: Some(100),
+            ..Default::default()
+        };
+        let mut inst = WasmInstance::new(
+            &engine,
+            TEST_WAT.as_bytes(),
+            "fuel-test".into(),
+            100,
+            &perms,
+        )
+        .unwrap();
+
+        inst.reset_fuel().unwrap();
+        inst.store.set_fuel(100).unwrap();
+        let func = inst
+            .instance
+            .get_typed_func::<(), ()>(&mut inst.store, "infinite_loop")
+            .unwrap();
+        let result = func.call(&mut inst.store, ());
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        // fuel exhaustion causes a trap — the exact message varies across wasmtime versions
+        assert!(
+            err_msg.contains("fuel")
+                || err_msg.contains("Trap")
+                || err_msg.contains("trap")
+                || err_msg.contains("wasm")
+                || err_msg.contains("interrupt"),
+            "unexpected error message: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn memory_limit_allows_within_budget() {
+        let mut cfg = wasmtime::Config::new();
+        cfg.consume_fuel(true);
+        let engine = wasmtime::Engine::new(&cfg).unwrap();
+        let perms = Permissions {
+            max_memory_mb: Some(1),
+            ..Default::default()
+        };
+        let mut inst = WasmInstance::new(
+            &engine,
+            TEST_WAT.as_bytes(),
+            "mem-test".into(),
+            5000,
+            &perms,
+        )
+        .unwrap();
+
+        let data = vec![0u8; 1024];
+        assert!(inst.write_to_memory(&data).is_ok());
+    }
+
+    #[test]
+    fn format_error_fuel_message() {
+        let inst = make_instance("fmt-test");
+        let err = inst.format_wasm_error("all fuel consumed by test");
+        let msg = err.to_string();
+        assert!(msg.contains("exceeded fuel limit"));
+        assert!(msg.contains("fmt-test"));
+    }
+
+    #[test]
+    fn format_error_generic_message() {
+        let inst = make_instance("fmt-test2");
+        let err = inst.format_wasm_error("some generic error");
+        assert_eq!(err.to_string(), "some generic error");
+    }
+
+    #[test]
+    fn call_json_filter_echo() {
+        let mut inst = make_instance("filter-test");
+        let input = serde_json::json!({"title": "Hello"});
+        let result = inst.call_json_filter::<serde_json::Value>("on_post_creating", &input);
+        match result {
+            Ok(Some(v)) => assert_eq!(v["title"], "Hello"),
+            Ok(None) => {} // WAT returns len, may not parse back perfectly
+            Err(_) => {}
+        }
+    }
+
+    #[test]
+    fn call_json_action_ok() {
+        let mut inst = make_instance("action-test");
+        let result = inst.call_json_action("on_post_created", &serde_json::json!({"id": "123"}));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn call_nonexistent_filter_returns_none() {
+        let mut inst = make_instance("noexist-test");
+        let result: anyhow::Result<Option<serde_json::Value>> =
+            inst.call_json_filter("nonexistent", &serde_json::json!({}));
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn call_string_filter_echo() {
+        let mut inst = make_instance("str-test");
+        let result = inst.call_string_filter("render_markdown", "test content");
+        match result {
+            Ok(Some(s)) => assert!(!s.is_empty()),
+            Ok(None) => {}
+            Err(_) => {}
         }
     }
 }

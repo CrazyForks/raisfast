@@ -7,6 +7,7 @@ mod engine;
 mod host;
 mod manifest;
 
+use axum::response::IntoResponse;
 pub use manifest::{HookConfig, HookPoint, Permissions, PluginManifest};
 
 use std::collections::HashMap;
@@ -140,6 +141,7 @@ impl PluginManager {
             &wasm_bytes,
             manifest.plugin.id.clone(),
             timeout_ms,
+            &manifest.permissions,
         )
         .map_err(|e| AppError::Internal(anyhow::anyhow!("instantiate wasm: {e}")))?;
 
@@ -387,5 +389,433 @@ impl PluginManager {
                 )
             })
             .collect()
+    }
+
+    /// 调度 handle_route Hook（自定义路由）。
+    ///
+    /// 遍历注册了 `handle_route` 的插件，第一个返回非空结果的胜出。
+    /// 返回 `Some(Response)` 表示插件处理了该请求。
+    pub async fn dispatch_route(
+        &self,
+        path: &str,
+        method: &str,
+    ) -> Option<axum::response::Response> {
+        let plugins = self.plugins.read().await;
+        if plugins.is_empty() {
+            return None;
+        }
+
+        let func_name = "handle_route";
+
+        for plugin in plugins.values() {
+            let hook_config = match plugin.manifest.hooks.get(func_name) {
+                Some(h) => h,
+                None => continue,
+            };
+
+            if let Some(pattern) = &hook_config.match_pattern
+                && !path_matches_pattern(path, pattern)
+            {
+                continue;
+            }
+
+            let mut instance = plugin.instance.write().await;
+            let input = serde_json::json!({
+                "path": path,
+                "method": method,
+            });
+
+            match instance.call_json_filter::<serde_json::Value>(func_name, &input) {
+                Ok(Some(result)) => {
+                    if let Some(body) = result.get("body").and_then(|b| b.as_str()) {
+                        let status =
+                            result.get("status").and_then(|s| s.as_u64()).unwrap_or(200) as u16;
+                        let status_code = axum::http::StatusCode::from_u16(status)
+                            .unwrap_or(axum::http::StatusCode::OK);
+                        return Some(
+                            (
+                                status_code,
+                                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                                body.to_string(),
+                            )
+                                .into_response(),
+                        );
+                    }
+                }
+                Ok(None) => continue,
+                Err(e) => {
+                    tracing::warn!(
+                        "plugin {} handle_route failed: {e}",
+                        plugin.manifest.plugin.id,
+                    );
+                }
+            }
+        }
+
+        None
+    }
+}
+
+/// 简单的 glob 风格路径匹配。
+///
+/// 支持 `*` 通配符，如 `/api/v1/plugins/seo/*`。
+fn path_matches_pattern(path: &str, pattern: &str) -> bool {
+    let pattern_parts: Vec<&str> = pattern.split('/').collect();
+    let path_parts: Vec<&str> = path.split('/').collect();
+
+    if pattern_parts.len() != path_parts.len() && !pattern.contains('*') {
+        return false;
+    }
+
+    let pi = pattern_parts.iter().peekable();
+    let mut pathi = path_parts.iter();
+
+    for pp in pi {
+        if pp == &"*" {
+            pathi.next();
+            continue;
+        }
+        match pathi.next() {
+            Some(sp) if sp == pp => continue,
+            _ => return false,
+        }
+    }
+
+    pathi.next().is_none()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::app::AppConfig;
+
+    /// 返回一个用于测试的 AppConfig（无插件目录）
+    fn test_config() -> Arc<AppConfig> {
+        Arc::new(AppConfig {
+            host: "127.0.0.1".into(),
+            port: 0,
+            env: "test".into(),
+            database_url: "sqlite::memory:".into(),
+            db_pool_size: 1,
+            jwt_secret: "test-secret-key-at-least-32-characters-long".into(),
+            jwt_access_expires: 900,
+            jwt_refresh_expires: 604800,
+            upload_dir: "/tmp/test-uploads".into(),
+            max_upload_size: 5242880,
+            static_dir: "./static".into(),
+            base_url: "http://localhost:9000".into(),
+            cors_origins: None,
+            plugin_dir: None,
+            plugin_hot_reload: false,
+            plugin_max_memory_mb: 32,
+            plugin_default_timeout_ms: 5000,
+            plugin_disabled: vec![],
+        })
+    }
+
+    /// 用 WAT (WebAssembly Text Format) 构建最小 WASM 模块。
+    ///
+    /// 导出：
+    /// - `memory` — 1 页线性内存
+    /// - `alloc(size) -> ptr` — 在内存末尾分配空间
+    /// - `dealloc(ptr, size)` — 空操作
+    /// - `on_post_creating(ptr, len) -> len` — 原样返回输入长度（echo filter）
+    /// - `on_post_created(ptr, len)` — 空操作（action）
+    /// - `render_markdown(ptr, len) -> len` — 原样返回输入长度（string filter）
+    /// - `handle_route(ptr, len) -> len` — 返回一个固定 JSON 响应
+    /// - `infinite_loop()` — 死循环（测试 fuel 耗尽）
+    fn build_test_wasm() -> Vec<u8> {
+        let wat = r#"
+(module
+  (memory (export "memory") 1)
+  (global $next_ptr (mut i32) (i32.const 0))
+  (func (export "alloc") (param $size i32) (result i32)
+    (global.get $next_ptr)
+    (global.set $next_ptr (i32.add (global.get $next_ptr) (local.get $size)))
+  )
+  (func (export "dealloc") (param $ptr i32) (param $size i32))
+  (func (export "on_post_creating") (param $ptr i32) (param $len i32) (result i32)
+    (local.get $len)
+  )
+  (func (export "on_post_created") (param $ptr i32) (param $len i32))
+  (func (export "on_comment_created") (param $ptr i32) (param $len i32))
+  (func (export "on_login") (param $ptr i32) (param $len i32))
+  (func (export "on_post_deleted") (param $ptr i32) (param $len i32))
+  (func (export "render_markdown") (param $ptr i32) (param $len i32) (result i32)
+    (local.get $len)
+  )
+  (func (export "on_comment_creating") (param $ptr i32) (param $len i32) (result i32)
+    (local.get $len)
+  )
+  (func (export "on_post_updating") (param $ptr i32) (param $len i32) (result i32)
+    (local.get $len)
+  )
+  (func (export "handle_route") (param $ptr i32) (param $len i32) (result i32)
+    (i32.const 0)
+  )
+)
+"#;
+        wat.as_bytes().to_vec()
+    }
+
+    // ── path_matches_pattern tests ───────────────────────────────
+
+    #[test]
+    fn path_exact_match() {
+        assert!(path_matches_pattern("/api/v1/posts", "/api/v1/posts"));
+    }
+
+    #[test]
+    fn path_no_match() {
+        assert!(!path_matches_pattern("/api/v1/posts", "/api/v1/users"));
+    }
+
+    #[test]
+    fn path_wildcard_match() {
+        assert!(path_matches_pattern(
+            "/api/v1/plugins/seo/sitemap",
+            "/api/v1/plugins/seo/*"
+        ));
+    }
+
+    #[test]
+    fn path_wildcard_no_match_different_length() {
+        assert!(!path_matches_pattern(
+            "/api/v1/plugins/seo/a/b",
+            "/api/v1/plugins/seo/*"
+        ));
+    }
+
+    #[test]
+    fn path_empty_both() {
+        assert!(path_matches_pattern("", ""));
+    }
+
+    #[test]
+    fn path_different_depth_no_wildcard() {
+        assert!(!path_matches_pattern("/api/v1", "/api/v1/posts"));
+    }
+
+    #[test]
+    fn path_root_match() {
+        assert!(path_matches_pattern("/", "/"));
+    }
+
+    #[test]
+    fn path_trailing_segment_mismatch() {
+        assert!(!path_matches_pattern(
+            "/api/v1/posts/123",
+            "/api/v1/posts/456"
+        ));
+    }
+
+    // ── PluginManager basic tests ────────────────────────────────
+
+    #[tokio::test]
+    async fn manager_no_plugins_when_no_dir() {
+        let config = test_config();
+        let mgr = PluginManager::new(config).await;
+        assert_eq!(mgr.plugin_count().await, 0);
+        assert!(mgr.list_plugins().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn manager_no_plugins_when_dir_not_exists() {
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some("/tmp/rust-blog-plugin-test-nonexistent".into());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+        assert_eq!(mgr.plugin_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn manager_unload_nonexistent_plugin() {
+        let config = test_config();
+        let mgr = PluginManager::new(config).await;
+        mgr.unload_plugin("does-not-exist").await;
+        assert_eq!(mgr.plugin_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn dispatch_filter_passthrough_with_no_plugins() {
+        let config = test_config();
+        let mgr = PluginManager::new(config).await;
+        let input = serde_json::json!({"title": "hello", "content": "world"});
+        let result: serde_json::Value = mgr
+            .dispatch_filter(HookPoint::PostCreating, input.clone())
+            .await
+            .unwrap();
+        assert_eq!(result, input);
+    }
+
+    #[tokio::test]
+    async fn dispatch_action_with_no_plugins_does_nothing() {
+        let config = test_config();
+        let mgr = PluginManager::new(config).await;
+        mgr.dispatch_action(HookPoint::PostCreated, &serde_json::json!({"id": "123"}))
+            .await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_render_override_returns_none_with_no_plugins() {
+        let config = test_config();
+        let mgr = PluginManager::new(config).await;
+        assert!(mgr.dispatch_render_override("# Hello").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn dispatch_route_returns_none_with_no_plugins() {
+        let config = test_config();
+        let mgr = PluginManager::new(config).await;
+        assert!(mgr.dispatch_route("/api/v1/test", "GET").await.is_none());
+    }
+
+    // ── WasmInstance tests (in engine.rs) ────────────────────────
+
+    // ── PluginManager load from directory ─────────────────────────
+
+    #[tokio::test]
+    async fn manager_load_plugin_from_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("test-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.plugin"
+name = "Test"
+version = "0.1.0"
+
+[hooks.on-post-creating]
+priority = 10
+"#;
+        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(plugin_dir.join("plugin.wasm"), build_test_wasm()).unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        assert_eq!(mgr.plugin_count().await, 1);
+        let plugins = mgr.list_plugins().await;
+        assert_eq!(plugins[0].0, "com.test.plugin");
+    }
+
+    #[tokio::test]
+    async fn manager_skip_disabled_plugin() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("disabled-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.disabled"
+name = "Disabled"
+version = "0.1.0"
+"#;
+        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(plugin_dir.join("plugin.wasm"), build_test_wasm()).unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        config.plugin_disabled = vec!["com.test.disabled".into()];
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        assert_eq!(mgr.plugin_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn manager_skip_directory_without_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("incomplete-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(plugin_dir.join("plugin.wasm"), build_test_wasm()).unwrap();
+        // no plugin.toml
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        assert_eq!(mgr.plugin_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn manager_skip_directory_without_wasm() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("no-wasm-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(
+            plugin_dir.join("plugin.toml"),
+            "[plugin]\nid=\"x\"\nname=\"X\"\nversion=\"1\"",
+        )
+        .unwrap();
+        // no plugin.wasm
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        assert_eq!(mgr.plugin_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn manager_unload_existing_plugin() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("unload-test");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(
+            plugin_dir.join("plugin.toml"),
+            "[plugin]\nid=\"com.test.unload\"\nname=\"U\"\nversion=\"1\"",
+        )
+        .unwrap();
+        std::fs::write(plugin_dir.join("plugin.wasm"), build_test_wasm()).unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        assert_eq!(mgr.plugin_count().await, 1);
+        mgr.unload_plugin("com.test.unload").await;
+        assert_eq!(mgr.plugin_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn manager_reload_plugin() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("reload-test");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(
+            plugin_dir.join("plugin.toml"),
+            "[plugin]\nid=\"com.test.reload\"\nname=\"R\"\nversion=\"1\"",
+        )
+        .unwrap();
+        std::fs::write(plugin_dir.join("plugin.wasm"), build_test_wasm()).unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+        assert_eq!(mgr.plugin_count().await, 1);
+
+        // reload same plugin
+        mgr.reload_plugin(&plugin_dir).await;
+        assert_eq!(mgr.plugin_count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn manager_load_multiple_plugins() {
+        let dir = tempfile::tempdir().unwrap();
+
+        for name in &["plugin-a", "plugin-b", "plugin-c"] {
+            let pd = dir.path().join(name);
+            std::fs::create_dir_all(&pd).unwrap();
+            let manifest = format!("[plugin]\nid=\"{name}\"\nname=\"{name}\"\nversion=\"1.0.0\"");
+            std::fs::write(pd.join("plugin.toml"), manifest).unwrap();
+            std::fs::write(pd.join("plugin.wasm"), build_test_wasm()).unwrap();
+        }
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        assert_eq!(mgr.plugin_count().await, 3);
     }
 }

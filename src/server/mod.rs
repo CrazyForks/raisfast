@@ -3,8 +3,10 @@
 use std::sync::Arc;
 
 use axum::Extension;
+use axum::extract::State;
 use axum::http::HeaderValue;
 use axum::middleware::from_fn;
+use axum::response::IntoResponse;
 use axum::routing::{delete, get, post as http_post, put};
 use rust_blog::AppState;
 use rust_blog::config::app::AppConfig;
@@ -111,6 +113,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         .nest("/api/v1", api_v1)
         .nest_service("/uploads", ServeDir::new(&upload_dir))
         .nest_service("/static", ServeDir::new(&static_dir))
+        .fallback(handle_plugin_route)
         .layer(from_fn(locale_middleware))
         .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()))
         .layer(cors)
@@ -171,5 +174,34 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => { tracing::info!("received ctrl+c"); },
         _ = terminate => { tracing::info!("received SIGTERM"); },
+    }
+}
+
+/// 插件路由 fallback。
+///
+/// 当 axum 路由未匹配时，尝试分发给插件的 `handle_route` Hook。
+/// 若所有插件均未处理，返回 404。
+async fn handle_plugin_route(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+) -> axum::response::Response {
+    use serde_json::json;
+
+    let path = req.uri().path().to_string();
+    let method = req.method().to_string();
+
+    let result = state.plugins.dispatch_route(&path, &method).await;
+
+    match result {
+        Some(response) => response,
+        None => (
+            axum::http::StatusCode::NOT_FOUND,
+            axum::Json(json!({
+                "code": 40400,
+                "message": "not found",
+                "data": null
+            })),
+        )
+            .into_response(),
     }
 }

@@ -19,6 +19,7 @@ use crate::models::refresh_token;
 use crate::models::user::{
     self, LoginResponse, RegisterRequest, UpdatePasswordRequest, UpdateUserRequest, UserResponse,
 };
+use crate::plugins::{HookPoint, PluginManager};
 
 /// JWT 令牌载荷（Claims）。
 ///
@@ -149,6 +150,7 @@ pub async fn register(pool: &crate::db::Pool, req: RegisterRequest) -> AppResult
 /// 验证邮箱和密码，成功后生成访问令牌和刷新令牌，将刷新令牌存入数据库。
 pub async fn login(
     pool: &crate::db::Pool,
+    plugins: &PluginManager,
     req: &crate::models::user::LoginRequest,
     jwt_secret: &str,
     jwt_access_expires: u64,
@@ -159,6 +161,12 @@ pub async fn login(
         .ok_or_else(|| AppError::Unauthorized)?;
 
     if !verify_password(&req.password, &user.password_hash)? {
+        plugins
+            .dispatch_action(
+                HookPoint::OnLogin,
+                &serde_json::json!({"email": &req.email, "success": false}),
+            )
+            .await;
         return Err(AppError::Unauthorized);
     }
 
@@ -168,6 +176,13 @@ pub async fn login(
     let expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
     refresh_token::create_token(pool, &user.id, &refresh_token_str, &expires_at.to_rfc3339())
         .await?;
+
+    plugins
+        .dispatch_action(
+            HookPoint::OnLogin,
+            &serde_json::json!({"email": &req.email, "success": true, "user_id": &user.id}),
+        )
+        .await;
 
     Ok(LoginResponse {
         access_token,

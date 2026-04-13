@@ -5,7 +5,7 @@
 use rust_blog_plugin_sdk::*;
 
 /// 创建文章前的过滤器：自动生成 excerpt
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn on_post_creating(ptr: i32, len: i32) -> i32 {
     let mut input: CreatePostInput = read_input(ptr, len);
 
@@ -18,7 +18,7 @@ pub extern "C" fn on_post_creating(ptr: i32, len: i32) -> i32 {
 }
 
 /// Markdown 渲染过滤器：注入 OG 标签
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn filter_html(ptr: i32, len: i32) -> i32 {
     let html = read_string_input(ptr, len);
     let enhanced = inject_meta_tags(&html);
