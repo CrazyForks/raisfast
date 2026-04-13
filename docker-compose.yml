@@ -1,0 +1,13 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file: .env
+    volumes:
+      - blog-data:/app/data
+      - uploads:/app/uploads
+
+volumes:
+  blog-data:
+  uploads:

@@ -1,0 +1,306 @@
+//! 评论模型与数据库查询
+//!
+//! 定义评论（Comment）相关的数据结构，包括完整行模型、支持嵌套树结构的响应模型、
+//! 请求验证结构体，以及对 `comments` 表的增删改查操作。
+//!
+//! 评论支持多级嵌套回复，通过 `parent_id` 构建父子关系。
+//! 树结构由 [`build_tree`] 函数从扁平列表转换而来，
+//! 嵌套深度由 [`validate_depth`] 限制为最多 3 层。
+
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
+use validator::Validate;
+
+use crate::errors::app_error::{AppError, AppResult};
+
+/// 评论完整数据库行模型
+///
+/// 直接映射 `comments` 表的所有字段。
+/// `author_id` 非空表示已登录用户，`nickname`/`email` 用于访客评论。
+/// `status` 可取 `pending`、`approved`、`rejected`。
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+pub struct Comment {
+    pub id: String,
+    pub post_id: String,
+    pub author_id: Option<String>,
+    pub nickname: Option<String>,
+    pub email: Option<String>,
+    pub content: String,
+    pub parent_id: Option<String>,
+    pub status: String,
+    pub created_at: String,
+}
+
+/// 评论 API 响应模型（树形结构）
+///
+/// 在 [`Comment`] 基础上增加 `depth`（嵌套深度）和 `replies`（子评论列表），
+/// 形成递归的树形结构。
+#[derive(Debug, Serialize, Clone)]
+pub struct CommentResponse {
+    pub id: String,
+    pub post_id: String,
+    pub author_id: Option<String>,
+    pub nickname: Option<String>,
+    pub content: String,
+    pub parent_id: Option<String>,
+    pub depth: i32,
+    pub replies: Vec<CommentResponse>,
+    pub created_at: String,
+}
+
+/// 创建评论请求体
+///
+/// - `content` 长度 1–5000 个字符
+/// - `nickname` 长度 1–50 个字符（访客必填）
+/// - `email` 须为合法邮箱格式（访客可选）
+#[derive(Debug, Deserialize, Validate)]
+pub struct CreateCommentRequest {
+    #[validate(length(min = 1, max = 5000))]
+    pub content: String,
+    pub parent_id: Option<String>,
+    #[validate(length(min = 1, max = 50))]
+    pub nickname: Option<String>,
+    #[validate(email)]
+    pub email: Option<String>,
+}
+
+/// 更新评论状态请求体
+///
+/// - `status` 不能为空，可取 `pending`、`approved`、`rejected`
+#[derive(Debug, Deserialize, Validate)]
+pub struct UpdateCommentStatusRequest {
+    #[validate(length(min = 1))]
+    pub status: String,
+}
+
+/// 根据评论 ID 查找评论
+///
+/// 返回 `Ok(Some(comment))` 或 `Ok(None)`（未找到时）。
+pub async fn find_by_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<Option<Comment>> {
+    let comment = sqlx::query_as::<_, Comment>("SELECT * FROM comments WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(comment)
+}
+
+/// 创建新评论
+///
+/// 自动生成 UUID v7 作为主键，初始状态为 `pending`。
+/// 创建完成后重新查询并返回完整评论记录。
+pub async fn create(
+    pool: &sqlx::SqlitePool,
+    post_id: &str,
+    author_id: Option<&str>,
+    nickname: Option<&str>,
+    email: Option<&str>,
+    content: &str,
+    parent_id: Option<&str>,
+) -> AppResult<Comment> {
+    let id = Uuid::now_v7().to_string();
+    let now = Utc::now().to_rfc3339();
+
+    sqlx::query(
+        "INSERT INTO comments (id, post_id, author_id, nickname, email, content, parent_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+    )
+    .bind(&id)
+    .bind(post_id)
+    .bind(author_id)
+    .bind(nickname)
+    .bind(email)
+    .bind(content)
+    .bind(parent_id)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+
+    find_by_id(pool, &id)
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch created comment")))
+}
+
+/// 查询指定文章下已审核通过的评论
+///
+/// 按 `created_at` 升序排列。
+pub async fn find_approved_by_post(
+    pool: &sqlx::SqlitePool,
+    post_id: &str,
+) -> AppResult<Vec<Comment>> {
+    let comments = sqlx::query_as::<_, Comment>(
+        "SELECT * FROM comments WHERE post_id = ? AND status = 'approved' ORDER BY created_at ASC",
+    )
+    .bind(post_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(comments)
+}
+
+/// 查询指定文章下的所有评论（含未审核）
+///
+/// 按 `created_at` 升序排列。仅管理员使用。
+pub async fn find_all_by_post(pool: &sqlx::SqlitePool, post_id: &str) -> AppResult<Vec<Comment>> {
+    let comments = sqlx::query_as::<_, Comment>(
+        "SELECT * FROM comments WHERE post_id = ? ORDER BY created_at ASC",
+    )
+    .bind(post_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(comments)
+}
+
+/// 分页查询全局所有评论（管理员），关联文章标题。
+#[derive(Debug, FromRow, Serialize, Clone)]
+pub struct AdminCommentRow {
+    pub id: String,
+    pub post_id: String,
+    pub post_title: String,
+    pub author_id: Option<String>,
+    pub nickname: Option<String>,
+    pub email: Option<String>,
+    pub content: String,
+    pub parent_id: Option<String>,
+    pub status: String,
+    pub created_at: String,
+}
+
+pub async fn find_all_paginated(
+    pool: &sqlx::SqlitePool,
+    page: i64,
+    page_size: i64,
+) -> AppResult<(Vec<AdminCommentRow>, i64)> {
+    let offset = (page - 1) * page_size;
+    let rows = sqlx::query_as::<_, AdminCommentRow>(
+        "SELECT c.id, c.post_id, p.title AS post_title, c.author_id, c.nickname, c.email, c.content, c.parent_id, c.status, c.created_at FROM comments c JOIN posts p ON c.post_id = p.id ORDER BY c.created_at DESC LIMIT ? OFFSET ?",
+    )
+    .bind(page_size)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM comments")
+        .fetch_one(pool)
+        .await?;
+
+    Ok((rows, total))
+}
+
+/// 更新评论审核状态
+///
+/// 若评论不存在则返回 [`AppError::NotFound`]。
+pub async fn update_status(pool: &sqlx::SqlitePool, id: &str, status: &str) -> AppResult<()> {
+    let result = sqlx::query("UPDATE comments SET status = ? WHERE id = ?")
+        .bind(status)
+        .bind(id)
+        .execute(pool)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound("comment".into()));
+    }
+    Ok(())
+}
+
+/// 删除评论
+///
+/// 若评论不存在则返回 [`AppError::NotFound`]。
+pub async fn delete(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
+    let result = sqlx::query("DELETE FROM comments WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound("comment".into()));
+    }
+    Ok(())
+}
+
+/// 计算评论的嵌套深度
+///
+/// 通过沿 `parent_id` 链向上遍历来计算当前评论的嵌套层级。
+/// 使用 `visited` 集合防止循环引用，深度超过 10 时自动中断。
+fn get_depth(comments: &[Comment], comment: &Comment) -> i32 {
+    let mut depth = 0;
+    let mut current_parent = comment.parent_id.clone();
+    let mut visited = std::collections::HashSet::new();
+    while let Some(pid) = current_parent {
+        if visited.contains(&pid) || depth > 10 {
+            break;
+        }
+        visited.insert(pid.clone());
+        depth += 1;
+        current_parent = comments
+            .iter()
+            .find(|c| c.id == pid)
+            .and_then(|c| c.parent_id.clone());
+    }
+    depth
+}
+
+/// 将扁平评论列表构建为嵌套树结构
+///
+/// 使用 `HashMap` 按 `parent_id` 分组，然后递归构建子评论树。
+/// 顶层评论的 `parent_id` 为 `None`（用空字符串作为 key）。
+pub fn build_tree(comments: &[Comment]) -> Vec<CommentResponse> {
+    let map: std::collections::HashMap<String, Vec<Comment>> =
+        comments
+            .iter()
+            .fold(std::collections::HashMap::new(), |mut acc, c| {
+                let key = c.parent_id.clone().unwrap_or_default();
+                acc.entry(key).or_default().push(c.clone());
+                acc
+            });
+
+    fn build(
+        parent_id: &str,
+        map: &std::collections::HashMap<String, Vec<Comment>>,
+        comments: &[Comment],
+    ) -> Vec<CommentResponse> {
+        map.get(parent_id)
+            .map(|children| {
+                children
+                    .iter()
+                    .map(|c| {
+                        let depth = get_depth(comments, c);
+                        let replies = build(&c.id, map, comments);
+                        CommentResponse {
+                            id: c.id.clone(),
+                            post_id: c.post_id.clone(),
+                            author_id: c.author_id.clone(),
+                            nickname: c.nickname.clone(),
+                            content: c.content.clone(),
+                            parent_id: c.parent_id.clone(),
+                            depth,
+                            replies,
+                            created_at: c.created_at.clone(),
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    build("", &map, comments)
+}
+
+/// 评论嵌套最大深度限制
+const MAX_DEPTH: i32 = 3;
+
+/// 验证评论嵌套深度不超过最大限制
+///
+/// 检查父评论的当前深度，若已达到或超过 [`MAX_DEPTH`]（3 层），
+/// 则返回 [`AppError::BadRequest`]。
+pub fn validate_depth(comments: &[Comment], parent_id: &str) -> AppResult<()> {
+    let parent = comments
+        .iter()
+        .find(|c| c.id == parent_id)
+        .ok_or_else(|| AppError::NotFound("parent comment".into()))?;
+
+    let depth = get_depth(comments, parent);
+    if depth >= MAX_DEPTH {
+        return Err(AppError::BadRequest("comment_depth".into()));
+    }
+    Ok(())
+}
