@@ -55,7 +55,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
     let state = AppState {
         pool,
         config: Arc::new(config.clone()),
-        plugins: Arc::new(PluginManager::new(Arc::new(config.clone())).await),
+        plugins: PluginManager::new(Arc::new(config.clone())).await,
     };
 
     let cors = build_cors(config);

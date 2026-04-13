@@ -91,7 +91,7 @@ async fn test_app() -> (axum::Router, AppState) {
     let state = AppState {
         pool,
         config: config.clone(),
-        plugins: Arc::new(PluginManager::new(config).await),
+        plugins: PluginManager::new(config).await,
     };
     let max_upload = state.config.max_upload_size;
 

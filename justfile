@@ -106,7 +106,7 @@ ci: fmt-check lint test
 
 # ── 插件 ──────────────────────────────────────────────────────────
 
-# 编译所有示例插件为 WASM 并复制到 plugins/ 目录
+# 编译所有示例 WASM 插件并复制到 plugins/ 目录
 plugins-build:
     @echo "Building seo-optimizer..."
     cd plugins-examples/seo-optimizer && cargo build --target wasm32-unknown-unknown --release
@@ -117,4 +117,34 @@ plugins-build:
     cp plugins-examples/seo-optimizer/plugin.toml plugins/seo-optimizer/
     cp plugins-examples/content-filter/target/wasm32-unknown-unknown/release/content_filter.wasm plugins/content-filter/
     cp plugins-examples/content-filter/plugin.toml plugins/content-filter/
-    @echo "Done. Plugins ready in plugins/"
+    @echo "Done. WASM plugins ready in plugins/"
+
+# 复制 JS 插件到 plugins/ 目录
+plugins-js-build:
+    @echo "Copying JS plugins..."
+    @mkdir -p plugins/welcome-email
+    @cp plugins-examples-js/welcome-email/plugin.toml plugins/welcome-email/
+    @cp plugins-examples-js/welcome-email/index.js plugins/welcome-email/
+    @mkdir -p plugins/seo-optimizer-js
+    @cp plugins-examples-js/seo-optimizer-js/plugin.toml plugins/seo-optimizer-js/
+    @cp plugins-examples-js/seo-optimizer-js/index.js plugins/seo-optimizer-js/
+    @echo "Done. JS plugins ready in plugins/"
+
+# 编译 TypeScript JS 插件（需要 esbuild）
+plugins-ts-build:
+    @echo "Compiling TypeScript plugins..."
+    @npx esbuild plugins-examples-js/seo-optimizer-js/src/index.ts \
+        --outfile=plugins-examples-js/seo-optimizer-js/index.js \
+        --bundle --format=iife --target=es2021
+    @echo "Done."
+
+# 复制 Lua 插件到 plugins/ 目录
+plugins-lua-build:
+    @echo "Copying Lua plugins..."
+    @mkdir -p plugins/excerpt-generator
+    @cp plugins-examples-lua/excerpt-generator/plugin.toml plugins/excerpt-generator/
+    @cp plugins-examples-lua/excerpt-generator/init.lua plugins/excerpt-generator/
+    @echo "Done. Lua plugins ready in plugins/"
+
+# 编译/复制所有插件（WASM + JS + Lua）
+plugins-all: plugins-build plugins-js-build plugins-lua-build

@@ -9,8 +9,19 @@ pub struct PluginManifest {
     pub plugin: PluginInfo,
     #[serde(default)]
     pub permissions: Permissions,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_hooks")]
     pub hooks: HashMap<String, HookConfig>,
+}
+
+fn deserialize_hooks<'de, D>(de: D) -> Result<HashMap<String, HookConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: HashMap<String, HookConfig> = HashMap::deserialize(de)?;
+    Ok(raw
+        .into_iter()
+        .map(|(k, v)| (k.replace('-', "_"), v))
+        .collect())
 }
 
 /// 插件基本信息
@@ -29,6 +40,8 @@ pub struct PluginInfo {
     pub language: String,
     #[serde(default = "default_wasm")]
     pub wasm: String,
+    #[serde(default = "default_entry")]
+    pub entry: String,
 }
 
 fn default_runtime() -> String {
@@ -41,6 +54,10 @@ fn default_language() -> String {
 
 fn default_wasm() -> String {
     "plugin.wasm".into()
+}
+
+fn default_entry() -> String {
+    "index.js".into()
 }
 
 /// 插件权限声明
@@ -140,6 +157,7 @@ version = "1.0.0"
         assert!(m.permissions.timeout_ms.is_none());
         assert!(m.hooks.is_empty());
         assert_eq!(m.plugin.wasm, "plugin.wasm");
+        assert_eq!(m.plugin.entry, "index.js");
     }
 
     #[test]
@@ -190,14 +208,14 @@ priority = 5
         assert_eq!(m.permissions.timeout_ms, Some(3000));
 
         assert_eq!(m.hooks.len(), 3);
-        let hpc = m.hooks.get("on-post-creating").unwrap();
+        let hpc = m.hooks.get("on_post_creating").unwrap();
         assert_eq!(hpc.priority, Some(10));
         assert!(hpc.match_pattern.is_none());
 
-        let hrm = m.hooks.get("render-markdown").unwrap();
+        let hrm = m.hooks.get("render_markdown").unwrap();
         assert_eq!(hrm.priority, Some(20));
 
-        let hhr = m.hooks.get("handle-route").unwrap();
+        let hhr = m.hooks.get("handle_route").unwrap();
         assert_eq!(hhr.priority, Some(5));
         assert_eq!(hhr.match_pattern.as_deref(), Some("/api/v1/plugins/seo/*"));
     }

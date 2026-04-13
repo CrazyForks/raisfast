@@ -1,0 +1,17 @@
+[plugin]
+id = "com.rust-blog.excerpt-generator"
+name = "Excerpt Generator"
+version = "1.0.0"
+description = "自动从内容生成文章摘要"
+author = "rust-blog"
+license = "MIT"
+runtime = "lua"
+language = "lua"
+entry = "init.lua"
+
+[permissions]
+max_memory_mb = 4
+timeout_ms = 1000
+
+[hooks.on_post_creating]
+priority = 10

@@ -4,12 +4,18 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["db-sqlite"]
+default = ["db-sqlite", "plugin-all"]
 
 # ── Database backend (pick exactly one) ────────────────────────────
 db-sqlite  = ["sqlx/sqlite"]
 db-postgres = ["sqlx/postgres"]
 db-mysql   = ["sqlx/mysql"]
+
+# ── Plugin runtimes ────────────────────────────────────────────────
+plugin-wasm = ["wasmtime", "wasmtime-wasi"]
+plugin-js   = ["rquickjs"]
+plugin-lua  = ["mlua"]
+plugin-all  = ["plugin-wasm", "plugin-js", "plugin-lua"]
 
 [dependencies]
 # Web framework
@@ -70,8 +76,10 @@ clap = { version = "4.6.0", features = ["derive"] }
 nix = { version = "0.31.2", features = ["signal"] }
 
 # Plugin system
-wasmtime = "26"
-wasmtime-wasi = "26"
+wasmtime = { version = "26", optional = true }
+wasmtime-wasi = { version = "26", optional = true }
+rquickjs = { version = "0.11", features = ["futures", "parallel", "loader", "macro"], optional = true }
+mlua = { version = "0.11", features = ["lua54", "vendored", "send", "serde", "macros"], optional = true }
 toml = "0.8"
 notify = { version = "7", features = ["macos_kqueue"] }
 

@@ -1,0 +1,20 @@
+[plugin]
+id = "com.rust-blog.seo-optimizer-js"
+name = "SEO Optimizer (JS)"
+version = "1.0.0"
+description = "自动优化文章 SEO：生成 meta description、OG 标签"
+author = "rust-blog"
+license = "MIT"
+runtime = "js"
+language = "typescript"
+entry = "index.js"
+
+[permissions]
+max_memory_mb = 8
+timeout_ms = 2000
+
+[hooks.on_post_creating]
+priority = 10
+
+[hooks.filter_html]
+priority = 5

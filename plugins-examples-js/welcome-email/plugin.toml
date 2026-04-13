@@ -1,0 +1,12 @@
+[plugin]
+id = "com.rust-blog.welcome-email"
+name = "Welcome Email"
+version = "1.0.0"
+description = "用户登录后发送欢迎邮件"
+author = "rust-blog"
+license = "MIT"
+runtime = "js"
+language = "javascript"
+
+[hooks.on-login]
+priority = 20

@@ -1,0 +1,6 @@
+{
+  "name": "rust-blog-plugin-sdk",
+  "version": "1.0.0",
+  "description": "TypeScript type definitions for rust-blog JS plugins",
+  "types": "index.d.ts"
+}

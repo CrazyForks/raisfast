@@ -1,32 +1,60 @@
-//! WASM 插件系统
+//! 插件系统
 //!
-//! 基于 wasmtime 运行时，支持热加载的插件架构。
+//! 支持三运行时：WASM (wasmtime)、JavaScript (QuickJS/rquickjs)、Lua (mlua)。
+//! 通过 feature flag `plugin-wasm` / `plugin-js` / `plugin-lua` 控制编译。
 //! 插件通过 Hook 点与宿主交互，运行在沙箱中。
 
+#[cfg(feature = "plugin-wasm")]
 mod engine;
+#[cfg(feature = "plugin-js")]
+mod engine_js;
+#[cfg(feature = "plugin-lua")]
+mod engine_lua;
+#[cfg(feature = "plugin-wasm")]
 mod host;
+#[cfg(feature = "plugin-js")]
+mod js_host;
+#[cfg(feature = "plugin-lua")]
+mod lua_host;
+
 mod manifest;
 
-use axum::response::IntoResponse;
 pub use manifest::{HookConfig, HookPoint, Permissions, PluginManifest};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use engine::WasmInstance;
+use axum::response::IntoResponse;
 use notify::Watcher;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::RwLock;
 
+#[cfg(feature = "plugin-wasm")]
+use engine::WasmInstance;
+#[cfg(feature = "plugin-js")]
+use engine_js::JsEngine;
+#[cfg(feature = "plugin-lua")]
+use engine_lua::LuaEngine;
+
 use crate::config::app::AppConfig;
 use crate::errors::app_error::{AppError, AppResult};
 
-/// 已加载的插件实例
+/// 已加载的插件实例（WASM、JS 或 Lua）
+enum LoadedPluginInstance {
+    #[cfg(feature = "plugin-wasm")]
+    Wasm(Box<RwLock<WasmInstance>>),
+    #[cfg(feature = "plugin-js")]
+    Js(String),
+    #[cfg(feature = "plugin-lua")]
+    Lua(String),
+}
+
+/// 已加载的插件
 struct LoadedPlugin {
     manifest: PluginManifest,
-    instance: RwLock<WasmInstance>,
+    instance: LoadedPluginInstance,
 }
 
 /// 插件系统核心管理器
@@ -34,31 +62,63 @@ struct LoadedPlugin {
 /// 负责插件的加载、卸载、Hook 调度。
 /// 通过 `Arc<PluginManager>` 共享在 AppState 中。
 pub struct PluginManager {
+    #[cfg(feature = "plugin-wasm")]
     engine: wasmtime::Engine,
+    #[cfg(feature = "plugin-js")]
+    js_engine: JsEngine,
+    #[cfg(feature = "plugin-lua")]
+    lua_engine: LuaEngine,
     plugins: RwLock<HashMap<String, LoadedPlugin>>,
     config: Arc<AppConfig>,
     watcher: RwLock<Option<notify::RecommendedWatcher>>,
+    reload_tx: tokio::sync::mpsc::Sender<PathBuf>,
 }
 
 impl PluginManager {
-    /// 创建新的 PluginManager 并加载插件目录
-    pub async fn new(config: Arc<AppConfig>) -> Self {
-        let mut engine_config = wasmtime::Config::new();
-        engine_config.consume_fuel(true);
-        engine_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
-        let engine =
-            wasmtime::Engine::new(&engine_config).expect("failed to create wasmtime engine");
+    /// 创建新的 PluginManager 并加载插件目录，返回 `Arc<Self>`。
+    ///
+    /// 返回 `Arc` 是因为热重载 watcher 需要持有自引用来执行 reload。
+    pub async fn new(config: Arc<AppConfig>) -> Arc<Self> {
+        #[cfg(feature = "plugin-wasm")]
+        let engine = {
+            let mut engine_config = wasmtime::Config::new();
+            engine_config.consume_fuel(true);
+            engine_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
+            wasmtime::Engine::new(&engine_config).expect("failed to create wasmtime engine")
+        };
 
-        let manager = Self {
+        #[cfg(feature = "plugin-js")]
+        let js_engine = JsEngine::new(&config)
+            .await
+            .expect("failed to create js engine");
+
+        #[cfg(feature = "plugin-lua")]
+        let lua_engine = LuaEngine::new(&config).expect("failed to create lua engine");
+
+        let (reload_tx, mut reload_rx) = tokio::sync::mpsc::channel::<PathBuf>(32);
+
+        let manager = Arc::new(Self {
+            #[cfg(feature = "plugin-wasm")]
             engine,
+            #[cfg(feature = "plugin-js")]
+            js_engine,
+            #[cfg(feature = "plugin-lua")]
+            lua_engine,
             plugins: RwLock::new(HashMap::new()),
             config,
             watcher: RwLock::new(None),
-        };
+            reload_tx,
+        });
 
         if manager.config.plugin_dir.is_some() {
             manager.load_all().await;
             if manager.config.plugin_hot_reload {
+                let mgr = manager.clone();
+                tokio::spawn(async move {
+                    while let Some(path) = reload_rx.recv().await {
+                        mgr.reload_changed_file(&path).await;
+                    }
+                });
                 manager.start_watcher().await;
             }
         }
@@ -112,7 +172,7 @@ impl PluginManager {
         }
     }
 
-    /// 从 plugin.toml 路径加载插件，wasm 文件名从清单中读取
+    /// 从 plugin.toml 路径加载插件，根据 runtime 字段选择引擎
     async fn load_plugin_from_dir(&self, manifest_path: &Path) -> AppResult<String> {
         let dir = manifest_path.parent().ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!("manifest has no parent directory"))
@@ -123,25 +183,68 @@ impl PluginManager {
         let manifest: PluginManifest = toml::from_str(&manifest_content)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("parse manifest: {e}")))?;
 
-        let wasm_path = dir.join(&manifest.plugin.wasm);
-        if !wasm_path.exists() {
-            return Err(AppError::Internal(anyhow::anyhow!(
-                "wasm file not found: {}",
-                wasm_path.display()
-            )));
+        if self.config.plugin_disabled.contains(&manifest.plugin.id) {
+            tracing::info!("plugin {} is disabled, skipping", manifest.plugin.id);
+            return Ok(manifest.plugin.id);
         }
 
-        self.load_plugin(manifest, &wasm_path).await
+        match manifest.plugin.runtime.as_str() {
+            #[cfg(feature = "plugin-wasm")]
+            "wasm" => {
+                let wasm_path = dir.join(&manifest.plugin.wasm);
+                if !wasm_path.exists() {
+                    return Err(AppError::Internal(anyhow::anyhow!(
+                        "wasm file not found: {}",
+                        wasm_path.display()
+                    )));
+                }
+                self.load_wasm_plugin(manifest, &wasm_path).await
+            }
+            #[cfg(feature = "plugin-js")]
+            "js" => {
+                let entry_path = dir.join(&manifest.plugin.entry);
+                if !entry_path.exists() {
+                    return Err(AppError::Internal(anyhow::anyhow!(
+                        "js entry file not found: {}",
+                        entry_path.display()
+                    )));
+                }
+                self.load_js_plugin(manifest, &entry_path).await
+            }
+            #[cfg(feature = "plugin-lua")]
+            "lua" => {
+                let entry_file = if manifest.plugin.entry == "index.js" {
+                    "init.lua"
+                } else {
+                    &manifest.plugin.entry
+                };
+                let entry_path = dir.join(entry_file);
+                if !entry_path.exists() {
+                    return Err(AppError::Internal(anyhow::anyhow!(
+                        "lua entry file not found: {}",
+                        entry_path.display()
+                    )));
+                }
+                self.load_lua_plugin(manifest, &entry_path).await
+            }
+            runtime => {
+                tracing::warn!(
+                    "plugin {} has unsupported runtime '{runtime}', skipping",
+                    manifest.plugin.id
+                );
+                Ok(manifest.plugin.id)
+            }
+        }
     }
 
-    /// 加载单个插件（manifest 已解析）
-    async fn load_plugin(&self, manifest: PluginManifest, wasm_path: &Path) -> AppResult<String> {
+    /// 加载 WASM 插件
+    #[cfg(feature = "plugin-wasm")]
+    async fn load_wasm_plugin(
+        &self,
+        manifest: PluginManifest,
+        wasm_path: &Path,
+    ) -> AppResult<String> {
         let id = manifest.plugin.id.clone();
-
-        if self.config.plugin_disabled.contains(&id) {
-            tracing::info!("plugin {id} is disabled, skipping");
-            return Ok(id);
-        }
 
         let wasm_bytes = std::fs::read(wasm_path)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("read wasm: {e}")))?;
@@ -165,7 +268,65 @@ impl PluginManager {
             id.clone(),
             LoadedPlugin {
                 manifest,
-                instance: RwLock::new(instance),
+                instance: LoadedPluginInstance::Wasm(Box::new(RwLock::new(instance))),
+            },
+        );
+
+        Ok(id)
+    }
+
+    /// 加载 JS 插件
+    #[cfg(feature = "plugin-js")]
+    async fn load_js_plugin(
+        &self,
+        manifest: PluginManifest,
+        entry_path: &Path,
+    ) -> AppResult<String> {
+        let id = manifest.plugin.id.clone();
+
+        let code = std::fs::read_to_string(entry_path)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("read js entry: {e}")))?;
+
+        self.js_engine
+            .load_plugin(&id, &code)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("load js plugin: {e}")))?;
+
+        let mut plugins = self.plugins.write().await;
+        plugins.insert(
+            id.clone(),
+            LoadedPlugin {
+                manifest,
+                instance: LoadedPluginInstance::Js(id.clone()),
+            },
+        );
+
+        Ok(id)
+    }
+
+    /// 加载 Lua 插件
+    #[cfg(feature = "plugin-lua")]
+    async fn load_lua_plugin(
+        &self,
+        manifest: PluginManifest,
+        entry_path: &Path,
+    ) -> AppResult<String> {
+        let id = manifest.plugin.id.clone();
+
+        let code = std::fs::read_to_string(entry_path)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("read lua entry: {e}")))?;
+
+        self.lua_engine
+            .load_plugin(&id, &code)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("load lua plugin: {e}")))?;
+
+        let mut plugins = self.plugins.write().await;
+        plugins.insert(
+            id.clone(),
+            LoadedPlugin {
+                manifest,
+                instance: LoadedPluginInstance::Lua(id.clone()),
             },
         );
 
@@ -175,7 +336,21 @@ impl PluginManager {
     /// 卸载指定插件
     pub async fn unload_plugin(&self, id: &str) {
         let mut plugins = self.plugins.write().await;
-        if plugins.remove(id).is_some() {
+        if let Some(removed) = plugins.remove(id) {
+            match &removed.instance {
+                #[cfg(feature = "plugin-js")]
+                LoadedPluginInstance::Js(_) => {
+                    drop(removed);
+                    self.js_engine.unload_plugin(id).await;
+                }
+                #[cfg(feature = "plugin-lua")]
+                LoadedPluginInstance::Lua(_) => {
+                    drop(removed);
+                    self.lua_engine.unload_plugin(id).await;
+                }
+                #[cfg(feature = "plugin-wasm")]
+                LoadedPluginInstance::Wasm(_) => {}
+            }
             tracing::info!("unloaded plugin: {id}");
         }
     }
@@ -205,7 +380,9 @@ impl PluginManager {
         }
     }
 
-    /// 启动文件监听器
+    /// 启动文件监听器。
+    ///
+    /// 检测 `.wasm` / `.js` 文件变化，通过 channel 通知 reload task。
     async fn start_watcher(&self) {
         let plugin_dir = match &self.config.plugin_dir {
             Some(d) => d.clone(),
@@ -222,6 +399,7 @@ impl PluginManager {
         let debounced: Arc<std::sync::Mutex<Option<std::time::Instant>>> =
             Arc::new(std::sync::Mutex::new(None));
 
+        let tx = self.reload_tx.clone();
         let mut watcher = notify::RecommendedWatcher::new(
             move |res: Result<notify::Event, notify::Error>| {
                 let event = match res {
@@ -229,25 +407,26 @@ impl PluginManager {
                     Err(_) => return,
                 };
 
-                let is_wasm = event
-                    .paths
-                    .iter()
-                    .any(|p| p.extension().is_some_and(|ext| ext == "wasm"));
+                for changed in &event.paths {
+                    let is_relevant = changed
+                        .extension()
+                        .is_some_and(|ext| ext == "wasm" || ext == "js" || ext == "lua");
+                    if !is_relevant {
+                        continue;
+                    }
 
-                if !is_wasm {
-                    return;
+                    let mut last = debounced.lock().unwrap();
+                    let now = std::time::Instant::now();
+                    if let Some(t) = *last
+                        && now.duration_since(t).as_millis() < 1000
+                    {
+                        return;
+                    }
+                    *last = Some(now);
+
+                    let _ = tx.blocking_send(changed.clone());
+                    break;
                 }
-
-                let mut last = debounced.lock().unwrap();
-                let now = std::time::Instant::now();
-                if let Some(t) = *last
-                    && now.duration_since(t).as_millis() < 1000
-                {
-                    return;
-                }
-                *last = Some(now);
-
-                tracing::info!("plugin file change detected, reloading...");
             },
             notify::Config::default().with_poll_interval(std::time::Duration::from_secs(2)),
         )
@@ -261,11 +440,54 @@ impl PluginManager {
         *w = Some(watcher);
     }
 
-    /// 调度 Filter 类型 Hook（链式调用，每个插件接收上一个的输出）
-    ///
-    /// 如果没有任何插件注册此 Hook，直接返回输入值（零开销）。
-    /// 如果插件返回 None 或出错，跳过该插件继续链式传递。
-    pub async fn dispatch_filter<T: Clone + Serialize + DeserializeOwned>(
+    /// 处理文件变化事件，找到并重载对应插件目录。
+    async fn reload_changed_file(&self, changed_file: &Path) {
+        let plugin_dir = match &self.config.plugin_dir {
+            Some(d) => PathBuf::from(d),
+            None => return,
+        };
+
+        let changed_name = match changed_file.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => return,
+        };
+
+        for entry in match std::fs::read_dir(&plugin_dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        }
+        .flatten()
+        {
+            if !entry.file_type().is_ok_and(|ft| ft.is_dir()) {
+                continue;
+            }
+
+            let manifest_path = entry.path().join("plugin.toml");
+            if !manifest_path.exists() {
+                continue;
+            }
+
+            let dir_path = entry.path();
+            let candidate = dir_path.join(changed_name);
+            if candidate.exists() || Some(dir_path.as_path()) == changed_file.parent() {
+                let id = dir_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+                tracing::info!("hot-reloading plugin from {id}...");
+                self.reload_plugin(&dir_path).await;
+                return;
+            }
+        }
+
+        tracing::warn!(
+            "file change detected but no matching plugin directory found: {}",
+            changed_file.display()
+        );
+    }
+
+    /// 调度 Filter 类型 Hook（链式调用）
+    pub async fn dispatch_filter<T: Clone + Serialize + DeserializeOwned + Send>(
         &self,
         hook: HookPoint,
         input: T,
@@ -288,22 +510,61 @@ impl PluginManager {
         });
 
         for plugin in sorted {
-            let hook_config = match plugin.manifest.hooks.get(func_name) {
-                Some(h) => h,
-                None => continue,
-            };
-            let _ = hook_config;
+            if !plugin.manifest.hooks.contains_key(func_name) {
+                continue;
+            }
 
-            let mut instance = plugin.instance.write().await;
-            match instance.call_json_filter(func_name, &current) {
-                Ok(Some(result)) => current = result,
-                Ok(None) => {}
-                Err(e) => {
-                    tracing::warn!(
-                        "plugin {} hook {} failed: {e}",
-                        plugin.manifest.plugin.id,
-                        func_name,
-                    );
+            match &plugin.instance {
+                #[cfg(feature = "plugin-wasm")]
+                LoadedPluginInstance::Wasm(wasm) => {
+                    let mut instance = wasm.write().await;
+                    match instance.call_json_filter(func_name, &current) {
+                        Ok(Some(result)) => current = result,
+                        Ok(None) => {}
+                        Err(e) => {
+                            tracing::warn!(
+                                "plugin {} hook {} failed: {e}",
+                                plugin.manifest.plugin.id,
+                                func_name,
+                            );
+                        }
+                    }
+                }
+                #[cfg(feature = "plugin-js")]
+                LoadedPluginInstance::Js(plugin_id) => {
+                    match self
+                        .js_engine
+                        .call_filter(plugin_id, func_name, &current)
+                        .await
+                    {
+                        Ok(Some(result)) => current = result,
+                        Ok(None) => {}
+                        Err(e) => {
+                            tracing::warn!(
+                                "plugin {} hook {} failed: {e}",
+                                plugin.manifest.plugin.id,
+                                func_name,
+                            );
+                        }
+                    }
+                }
+                #[cfg(feature = "plugin-lua")]
+                LoadedPluginInstance::Lua(plugin_id) => {
+                    match self
+                        .lua_engine
+                        .call_filter(plugin_id, func_name, &current)
+                        .await
+                    {
+                        Ok(Some(result)) => current = result,
+                        Ok(None) => {}
+                        Err(e) => {
+                            tracing::warn!(
+                                "plugin {} hook {} failed: {e}",
+                                plugin.manifest.plugin.id,
+                                func_name,
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -334,13 +595,42 @@ impl PluginManager {
                 continue;
             }
 
-            let mut instance = plugin.instance.write().await;
-            if let Err(e) = instance.call_json_action(func_name, data) {
-                tracing::warn!(
-                    "plugin {} action {} failed: {e}",
-                    plugin.manifest.plugin.id,
-                    func_name,
-                );
+            match &plugin.instance {
+                #[cfg(feature = "plugin-wasm")]
+                LoadedPluginInstance::Wasm(wasm) => {
+                    let mut instance = wasm.write().await;
+                    if let Err(e) = instance.call_json_action(func_name, data) {
+                        tracing::warn!(
+                            "plugin {} action {} failed: {e}",
+                            plugin.manifest.plugin.id,
+                            func_name,
+                        );
+                    }
+                }
+                #[cfg(feature = "plugin-js")]
+                LoadedPluginInstance::Js(plugin_id) => {
+                    if let Err(e) = self.js_engine.call_action(plugin_id, func_name, data).await {
+                        tracing::warn!(
+                            "plugin {} action {} failed: {e}",
+                            plugin.manifest.plugin.id,
+                            func_name,
+                        );
+                    }
+                }
+                #[cfg(feature = "plugin-lua")]
+                LoadedPluginInstance::Lua(plugin_id) => {
+                    if let Err(e) = self
+                        .lua_engine
+                        .call_action(plugin_id, func_name, data)
+                        .await
+                    {
+                        tracing::warn!(
+                            "plugin {} action {} failed: {e}",
+                            plugin.manifest.plugin.id,
+                            func_name,
+                        );
+                    }
+                }
             }
         }
     }
@@ -368,15 +658,54 @@ impl PluginManager {
                 continue;
             }
 
-            let mut instance = plugin.instance.write().await;
-            match instance.call_string_filter(func_name, content) {
-                Ok(Some(result)) => return Some(result),
-                Ok(None) => continue,
-                Err(e) => {
-                    tracing::warn!(
-                        "plugin {} render_markdown failed: {e}",
-                        plugin.manifest.plugin.id,
-                    );
+            match &plugin.instance {
+                #[cfg(feature = "plugin-wasm")]
+                LoadedPluginInstance::Wasm(wasm) => {
+                    let mut instance = wasm.write().await;
+                    match instance.call_string_filter(func_name, content) {
+                        Ok(Some(result)) => return Some(result),
+                        Ok(None) => continue,
+                        Err(e) => {
+                            tracing::warn!(
+                                "plugin {} render_markdown failed: {e}",
+                                plugin.manifest.plugin.id,
+                            );
+                        }
+                    }
+                }
+                #[cfg(feature = "plugin-js")]
+                LoadedPluginInstance::Js(plugin_id) => {
+                    match self
+                        .js_engine
+                        .call_string_filter(plugin_id, func_name, content)
+                        .await
+                    {
+                        Ok(Some(result)) => return Some(result),
+                        Ok(None) => continue,
+                        Err(e) => {
+                            tracing::warn!(
+                                "plugin {} render_markdown failed: {e}",
+                                plugin.manifest.plugin.id,
+                            );
+                        }
+                    }
+                }
+                #[cfg(feature = "plugin-lua")]
+                LoadedPluginInstance::Lua(plugin_id) => {
+                    match self
+                        .lua_engine
+                        .call_string_filter(plugin_id, func_name, content)
+                        .await
+                    {
+                        Ok(Some(result)) => return Some(result),
+                        Ok(None) => continue,
+                        Err(e) => {
+                            tracing::warn!(
+                                "plugin {} render_markdown failed: {e}",
+                                plugin.manifest.plugin.id,
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -404,10 +733,7 @@ impl PluginManager {
             .collect()
     }
 
-    /// 调度 handle_route Hook（自定义路由）。
-    ///
-    /// 遍历注册了 `handle_route` 的插件，第一个返回非空结果的胜出。
-    /// 返回 `Some(Response)` 表示插件处理了该请求。
+    /// 调度 handle_route Hook（自定义路由）
     pub async fn dispatch_route(
         &self,
         path: &str,
@@ -432,35 +758,107 @@ impl PluginManager {
                 continue;
             }
 
-            let mut instance = plugin.instance.write().await;
             let input = serde_json::json!({
                 "path": path,
                 "method": method,
             });
 
-            match instance.call_json_filter::<serde_json::Value>(func_name, &input) {
-                Ok(Some(result)) => {
-                    if let Some(body) = result.get("body").and_then(|b| b.as_str()) {
-                        let status =
-                            result.get("status").and_then(|s| s.as_u64()).unwrap_or(200) as u16;
-                        let status_code = axum::http::StatusCode::from_u16(status)
-                            .unwrap_or(axum::http::StatusCode::OK);
-                        return Some(
-                            (
-                                status_code,
-                                [(axum::http::header::CONTENT_TYPE, "application/json")],
-                                body.to_string(),
-                            )
-                                .into_response(),
-                        );
+            match &plugin.instance {
+                #[cfg(feature = "plugin-wasm")]
+                LoadedPluginInstance::Wasm(wasm) => {
+                    let mut instance = wasm.write().await;
+                    match instance.call_json_filter::<serde_json::Value>(func_name, &input) {
+                        Ok(Some(result)) => {
+                            if let Some(body) = result.get("body").and_then(|b| b.as_str()) {
+                                let status =
+                                    result.get("status").and_then(|s| s.as_u64()).unwrap_or(200)
+                                        as u16;
+                                let status_code = axum::http::StatusCode::from_u16(status)
+                                    .unwrap_or(axum::http::StatusCode::OK);
+                                return Some(
+                                    (
+                                        status_code,
+                                        [(axum::http::header::CONTENT_TYPE, "application/json")],
+                                        body.to_string(),
+                                    )
+                                        .into_response(),
+                                );
+                            }
+                        }
+                        Ok(None) => continue,
+                        Err(e) => {
+                            tracing::warn!(
+                                "plugin {} handle_route failed: {e}",
+                                plugin.manifest.plugin.id,
+                            );
+                        }
                     }
                 }
-                Ok(None) => continue,
-                Err(e) => {
-                    tracing::warn!(
-                        "plugin {} handle_route failed: {e}",
-                        plugin.manifest.plugin.id,
-                    );
+                #[cfg(feature = "plugin-js")]
+                LoadedPluginInstance::Js(plugin_id) => {
+                    match self
+                        .js_engine
+                        .call_filter::<serde_json::Value>(plugin_id, func_name, &input)
+                        .await
+                    {
+                        Ok(Some(result)) => {
+                            if let Some(body) = result.get("body").and_then(|b| b.as_str()) {
+                                let status =
+                                    result.get("status").and_then(|s| s.as_u64()).unwrap_or(200)
+                                        as u16;
+                                let status_code = axum::http::StatusCode::from_u16(status)
+                                    .unwrap_or(axum::http::StatusCode::OK);
+                                return Some(
+                                    (
+                                        status_code,
+                                        [(axum::http::header::CONTENT_TYPE, "application/json")],
+                                        body.to_string(),
+                                    )
+                                        .into_response(),
+                                );
+                            }
+                        }
+                        Ok(None) => continue,
+                        Err(e) => {
+                            tracing::warn!(
+                                "plugin {} handle_route failed: {e}",
+                                plugin.manifest.plugin.id,
+                            );
+                        }
+                    }
+                }
+                #[cfg(feature = "plugin-lua")]
+                LoadedPluginInstance::Lua(plugin_id) => {
+                    match self
+                        .lua_engine
+                        .call_filter::<serde_json::Value>(plugin_id, func_name, &input)
+                        .await
+                    {
+                        Ok(Some(result)) => {
+                            if let Some(body) = result.get("body").and_then(|b| b.as_str()) {
+                                let status =
+                                    result.get("status").and_then(|s| s.as_u64()).unwrap_or(200)
+                                        as u16;
+                                let status_code = axum::http::StatusCode::from_u16(status)
+                                    .unwrap_or(axum::http::StatusCode::OK);
+                                return Some(
+                                    (
+                                        status_code,
+                                        [(axum::http::header::CONTENT_TYPE, "application/json")],
+                                        body.to_string(),
+                                    )
+                                        .into_response(),
+                                );
+                            }
+                        }
+                        Ok(None) => continue,
+                        Err(e) => {
+                            tracing::warn!(
+                                "plugin {} handle_route failed: {e}",
+                                plugin.manifest.plugin.id,
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -469,9 +867,7 @@ impl PluginManager {
     }
 }
 
-/// 简单的 glob 风格路径匹配。
-///
-/// 支持 `*` 通配符，如 `/api/v1/plugins/seo/*`。
+/// 简单的 glob 风格路径匹配
 fn path_matches_pattern(path: &str, pattern: &str) -> bool {
     let pattern_parts: Vec<&str> = pattern.split('/').collect();
     let path_parts: Vec<&str> = path.split('/').collect();
@@ -502,7 +898,6 @@ mod tests {
     use super::*;
     use crate::config::app::AppConfig;
 
-    /// 返回一个用于测试的 AppConfig（无插件目录）
     fn test_config() -> Arc<AppConfig> {
         Arc::new(AppConfig {
             host: "127.0.0.1".into(),
@@ -536,17 +931,7 @@ mod tests {
         })
     }
 
-    /// 用 WAT (WebAssembly Text Format) 构建最小 WASM 模块。
-    ///
-    /// 导出：
-    /// - `memory` — 1 页线性内存
-    /// - `alloc(size) -> ptr` — 在内存末尾分配空间
-    /// - `dealloc(ptr, size)` — 空操作
-    /// - `on_post_creating(ptr, len) -> ptr` — echo filter（将输入写为长度前缀格式并返回指针）
-    /// - `on_post_created(ptr, len)` — 空操作（action）
-    /// - `render_markdown(ptr, len) -> ptr` — echo string filter
-    /// - `handle_route(ptr, len) -> ptr` — 返回空（0）
-    /// - `infinite_loop()` — 死循环（测试 fuel 耗尽）
+    #[cfg(feature = "plugin-wasm")]
     fn build_test_wasm() -> Vec<u8> {
         let wat = r#"
 (module
@@ -557,23 +942,16 @@ mod tests {
     (global.set $next_ptr (i32.add (global.get $next_ptr) (local.get $size)))
   )
   (func (export "dealloc") (param $ptr i32) (param $size i32))
-
-  ;; helper: write length-prefix + copy input to new allocation, return ptr
-  ;; layout: [4 bytes LE length][input data]
-  ;; uses $next_ptr bump allocator: allocate 4+len, write len at ptr, copy input at ptr+4
   (func $echo_lp (param $ptr i32) (param $len i32) (result i32)
     (local $out i32)
     (local $total i32)
     (local.set $total (i32.add (i32.const 4) (local.get $len)))
     (local.set $out (global.get $next_ptr))
     (global.set $next_ptr (i32.add (global.get $next_ptr) (local.get $total)))
-    ;; write length as LE u32 at out[0..4]
     (i32.store (local.get $out) (local.get $len))
-    ;; copy input[ptr..ptr+len] to out+4
     (memory.copy (i32.add (local.get $out) (i32.const 4)) (local.get $ptr) (local.get $len))
     (local.get $out)
   )
-
   (func (export "on_post_creating") (param $ptr i32) (param $len i32) (result i32)
     (call $echo_lp (local.get $ptr) (local.get $len))
   )
@@ -712,12 +1090,11 @@ mod tests {
         assert!(mgr.dispatch_route("/api/v1/test", "GET").await.is_none());
     }
 
-    // ── WasmInstance tests (in engine.rs) ────────────────────────
+    // ── WASM plugin tests ────────────────────────────────────────
 
-    // ── PluginManager load from directory ─────────────────────────
-
+    #[cfg(feature = "plugin-wasm")]
     #[tokio::test]
-    async fn manager_load_plugin_from_directory() {
+    async fn manager_load_wasm_plugin_from_directory() {
         let dir = tempfile::tempdir().unwrap();
         let plugin_dir = dir.path().join("test-plugin");
         std::fs::create_dir_all(&plugin_dir).unwrap();
@@ -743,8 +1120,9 @@ priority = 10
         assert_eq!(plugins[0].0, "com.test.plugin");
     }
 
+    #[cfg(feature = "plugin-wasm")]
     #[tokio::test]
-    async fn manager_skip_disabled_plugin() {
+    async fn manager_skip_disabled_wasm_plugin() {
         let dir = tempfile::tempdir().unwrap();
         let plugin_dir = dir.path().join("disabled-plugin");
         std::fs::create_dir_all(&plugin_dir).unwrap();
@@ -766,13 +1144,13 @@ version = "0.1.0"
         assert_eq!(mgr.plugin_count().await, 0);
     }
 
+    #[cfg(feature = "plugin-wasm")]
     #[tokio::test]
     async fn manager_skip_directory_without_manifest() {
         let dir = tempfile::tempdir().unwrap();
         let plugin_dir = dir.path().join("incomplete-plugin");
         std::fs::create_dir_all(&plugin_dir).unwrap();
         std::fs::write(plugin_dir.join("plugin.wasm"), build_test_wasm()).unwrap();
-        // no plugin.toml
 
         let mut config = (*test_config()).clone();
         config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
@@ -781,6 +1159,7 @@ version = "0.1.0"
         assert_eq!(mgr.plugin_count().await, 0);
     }
 
+    #[cfg(feature = "plugin-wasm")]
     #[tokio::test]
     async fn manager_skip_directory_without_wasm() {
         let dir = tempfile::tempdir().unwrap();
@@ -791,7 +1170,6 @@ version = "0.1.0"
             "[plugin]\nid=\"x\"\nname=\"X\"\nversion=\"1\"",
         )
         .unwrap();
-        // no plugin.wasm
 
         let mut config = (*test_config()).clone();
         config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
@@ -800,8 +1178,9 @@ version = "0.1.0"
         assert_eq!(mgr.plugin_count().await, 0);
     }
 
+    #[cfg(feature = "plugin-wasm")]
     #[tokio::test]
-    async fn manager_unload_existing_plugin() {
+    async fn manager_unload_wasm_plugin() {
         let dir = tempfile::tempdir().unwrap();
         let plugin_dir = dir.path().join("unload-test");
         std::fs::create_dir_all(&plugin_dir).unwrap();
@@ -821,8 +1200,9 @@ version = "0.1.0"
         assert_eq!(mgr.plugin_count().await, 0);
     }
 
+    #[cfg(feature = "plugin-wasm")]
     #[tokio::test]
-    async fn manager_reload_plugin() {
+    async fn manager_reload_wasm_plugin() {
         let dir = tempfile::tempdir().unwrap();
         let plugin_dir = dir.path().join("reload-test");
         std::fs::create_dir_all(&plugin_dir).unwrap();
@@ -838,13 +1218,13 @@ version = "0.1.0"
         let mgr = PluginManager::new(Arc::new(config)).await;
         assert_eq!(mgr.plugin_count().await, 1);
 
-        // reload same plugin
         mgr.reload_plugin(&plugin_dir).await;
         assert_eq!(mgr.plugin_count().await, 1);
     }
 
+    #[cfg(feature = "plugin-wasm")]
     #[tokio::test]
-    async fn manager_load_multiple_plugins() {
+    async fn manager_load_multiple_wasm_plugins() {
         let dir = tempfile::tempdir().unwrap();
 
         for name in &["plugin-a", "plugin-b", "plugin-c"] {
@@ -860,5 +1240,705 @@ version = "0.1.0"
         let mgr = PluginManager::new(Arc::new(config)).await;
 
         assert_eq!(mgr.plugin_count().await, 3);
+    }
+
+    // ── JS plugin tests ──────────────────────────────────────────
+
+    #[cfg(feature = "plugin-js")]
+    #[tokio::test]
+    async fn manager_load_js_plugin_from_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("js-test-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.js-plugin"
+name = "JS Test"
+version = "1.0.0"
+runtime = "js"
+
+[hooks.on-post-creating]
+priority = 10
+"#;
+        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(
+            plugin_dir.join("index.js"),
+            r#"var Plugin = { on_post_creating: function(j) { return j; } };"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        assert_eq!(mgr.plugin_count().await, 1);
+        let plugins = mgr.list_plugins().await;
+        assert_eq!(plugins[0].0, "com.test.js-plugin");
+    }
+
+    #[cfg(feature = "plugin-js")]
+    #[tokio::test]
+    async fn manager_js_plugin_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("js-filter-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.js-filter"
+name = "JS Filter"
+version = "1.0.0"
+runtime = "js"
+
+[hooks.on-post-creating]
+priority = 10
+"#;
+        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(
+            plugin_dir.join("index.js"),
+            r#"
+var Plugin = {
+    on_post_creating: function(inputJson) {
+        var input = JSON.parse(inputJson);
+        input.title = input.title.toUpperCase();
+        return JSON.stringify(input);
+    }
+};
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        let input = serde_json::json!({"title": "hello", "content": "world"});
+        let result: serde_json::Value = mgr
+            .dispatch_filter(HookPoint::PostCreating, input)
+            .await
+            .unwrap();
+        assert_eq!(result["title"], "HELLO");
+    }
+
+    #[cfg(feature = "plugin-js")]
+    #[tokio::test]
+    async fn manager_js_plugin_string_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("js-strfilter-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.js-strfilter"
+name = "JS String Filter"
+version = "1.0.0"
+runtime = "js"
+
+[hooks.render_markdown]
+priority = 5
+"#;
+        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(
+            plugin_dir.join("index.js"),
+            r#"
+var Plugin = {
+    render_markdown: function(content) {
+        return content.replace("<head>", '<head><meta property="og:type" content="article">');
+    }
+};
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        let result = mgr
+            .dispatch_render_override("<head><title>Test</title></head>")
+            .await;
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("og:type"));
+    }
+
+    // ── Mixed WASM + JS plugin tests ─────────────────────────────
+
+    #[cfg(all(feature = "plugin-wasm", feature = "plugin-js"))]
+    #[tokio::test]
+    async fn manager_load_mixed_plugins() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // WASM plugin
+        let wasm_dir = dir.path().join("wasm-plugin");
+        std::fs::create_dir_all(&wasm_dir).unwrap();
+        std::fs::write(
+            wasm_dir.join("plugin.toml"),
+            "[plugin]\nid=\"com.test.wasm\"\nname=\"WASM\"\nversion=\"1.0.0\"\nruntime=\"wasm\"",
+        )
+        .unwrap();
+        std::fs::write(wasm_dir.join("plugin.wasm"), build_test_wasm()).unwrap();
+
+        // JS plugin
+        let js_dir = dir.path().join("js-plugin");
+        std::fs::create_dir_all(&js_dir).unwrap();
+        std::fs::write(
+            js_dir.join("plugin.toml"),
+            "[plugin]\nid=\"com.test.js\"\nname=\"JS\"\nversion=\"1.0.0\"\nruntime=\"js\"",
+        )
+        .unwrap();
+        std::fs::write(
+            js_dir.join("index.js"),
+            r#"var Plugin = { on_post_creating: function(j) { return j; } };"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        assert_eq!(mgr.plugin_count().await, 2);
+    }
+
+    // ── JS plugin advanced tests ─────────────────────────────────
+
+    #[cfg(feature = "plugin-js")]
+    #[tokio::test]
+    async fn manager_js_plugin_action_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("js-action-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.js-action"
+name = "JS Action"
+version = "1.0.0"
+runtime = "js"
+
+[hooks.on_post_created]
+priority = 10
+"#;
+        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(
+            plugin_dir.join("index.js"),
+            r#"
+var Plugin = {
+    on_post_created: function(dataJson) {
+        Host.log("info", "post created");
+    }
+};
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        mgr.dispatch_action(HookPoint::PostCreated, &serde_json::json!({"id": "abc"}))
+            .await;
+    }
+
+    #[cfg(feature = "plugin-js")]
+    #[tokio::test]
+    async fn manager_js_plugin_route_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("js-route-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.js-route"
+name = "JS Route"
+version = "1.0.0"
+runtime = "js"
+
+[hooks.handle_route]
+match = "/api/v1/custom/*"
+priority = 5
+"#;
+        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(
+            plugin_dir.join("index.js"),
+            r#"
+var Plugin = {
+    handle_route: function(routeJson) {
+        return JSON.stringify({ status: 200, body: '{"hello":"world"}' });
+    }
+};
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        let result = mgr.dispatch_route("/api/v1/custom/test", "GET").await;
+        assert!(result.is_some());
+    }
+
+    #[cfg(feature = "plugin-js")]
+    #[tokio::test]
+    async fn manager_js_plugin_unload() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("js-unload");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        std::fs::write(
+            plugin_dir.join("plugin.toml"),
+            "[plugin]\nid=\"com.test.js-unload\"\nname=\"JSU\"\nversion=\"1.0.0\"\nruntime=\"js\"",
+        )
+        .unwrap();
+        std::fs::write(plugin_dir.join("index.js"), r#"var Plugin = {};"#).unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        assert_eq!(mgr.plugin_count().await, 1);
+        mgr.unload_plugin("com.test.js-unload").await;
+        assert_eq!(mgr.plugin_count().await, 0);
+    }
+
+    #[cfg(feature = "plugin-js")]
+    #[tokio::test]
+    async fn manager_js_plugin_skip_directory_without_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("js-noentry");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        std::fs::write(
+            plugin_dir.join("plugin.toml"),
+            "[plugin]\nid=\"com.test.noentry\"\nname=\"NE\"\nversion=\"1.0.0\"\nruntime=\"js\"",
+        )
+        .unwrap();
+        // no index.js
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        assert_eq!(mgr.plugin_count().await, 0);
+    }
+
+    #[cfg(feature = "plugin-js")]
+    #[tokio::test]
+    async fn manager_js_plugin_get_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("js-config-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.js-config"
+name = "JS Config"
+version = "1.0.0"
+runtime = "js"
+
+[hooks.on-post-creating]
+priority = 10
+"#;
+        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(
+            plugin_dir.join("index.js"),
+            r#"
+var Plugin = {
+    on_post_creating: function(inputJson) {
+        var input = JSON.parse(inputJson);
+        var env = Host.getConfig("app.env");
+        if (env) {
+            input.env = env;
+        }
+        return JSON.stringify(input);
+    }
+};
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        let input = serde_json::json!({"title": "hello"});
+        let result: serde_json::Value = mgr
+            .dispatch_filter(HookPoint::PostCreating, input)
+            .await
+            .unwrap();
+        assert_eq!(result["env"], "test");
+    }
+
+    #[cfg(all(feature = "plugin-wasm", feature = "plugin-js"))]
+    #[tokio::test]
+    async fn manager_mixed_wasm_js_filter_chain() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let wasm_dir = dir.path().join("wasm-chain");
+        std::fs::create_dir_all(&wasm_dir).unwrap();
+        std::fs::write(
+            wasm_dir.join("plugin.toml"),
+            "[plugin]\nid=\"com.chain.wasm\"\nname=\"WC\"\nversion=\"1.0.0\"\nruntime=\"wasm\"\n\n[hooks.on_post_creating]\npriority=10",
+        )
+        .unwrap();
+        std::fs::write(wasm_dir.join("plugin.wasm"), build_test_wasm()).unwrap();
+
+        let js_dir = dir.path().join("js-chain");
+        std::fs::create_dir_all(&js_dir).unwrap();
+        std::fs::write(
+            js_dir.join("plugin.toml"),
+            "[plugin]\nid=\"com.chain.js\"\nname=\"JC\"\nversion=\"1.0.0\"\nruntime=\"js\"\n\n[hooks.on_post_creating]\npriority=20",
+        )
+        .unwrap();
+        std::fs::write(
+            js_dir.join("index.js"),
+            r#"
+var Plugin = {
+    on_post_creating: function(inputJson) {
+        var input = JSON.parse(inputJson);
+        input.js_processed = true;
+        return JSON.stringify(input);
+    }
+};
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        assert_eq!(mgr.plugin_count().await, 2);
+
+        let input = serde_json::json!({"title": "chain-test"});
+        let result: serde_json::Value = mgr
+            .dispatch_filter(HookPoint::PostCreating, input)
+            .await
+            .unwrap();
+
+        assert_eq!(result["js_processed"], true);
+    }
+
+    // ── Lua plugin tests ─────────────────────────────────────────
+
+    #[cfg(feature = "plugin-lua")]
+    #[tokio::test]
+    async fn manager_load_lua_plugin_from_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("lua-test-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.lua-plugin"
+name = "Lua Test"
+version = "1.0.0"
+runtime = "lua"
+entry = "init.lua"
+
+[hooks.on_post_creating]
+priority = 10
+"#;
+        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(
+            plugin_dir.join("init.lua"),
+            r#"Plugin = { on_post_creating = function(input) return input end }"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        assert_eq!(mgr.plugin_count().await, 1);
+        let plugins = mgr.list_plugins().await;
+        assert_eq!(plugins[0].0, "com.test.lua-plugin");
+    }
+
+    #[cfg(feature = "plugin-lua")]
+    #[tokio::test]
+    async fn manager_lua_plugin_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("lua-filter-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.lua-filter"
+name = "Lua Filter"
+version = "1.0.0"
+runtime = "lua"
+entry = "init.lua"
+
+[hooks.on_post_creating]
+priority = 10
+"#;
+        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(
+            plugin_dir.join("init.lua"),
+            r#"
+Plugin = {
+    on_post_creating = function(input)
+        input.title = input.title:upper()
+        return input
+    end
+}
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        let input = serde_json::json!({"title": "hello", "content": "world"});
+        let result: serde_json::Value = mgr
+            .dispatch_filter(HookPoint::PostCreating, input)
+            .await
+            .unwrap();
+        assert_eq!(result["title"], "HELLO");
+    }
+
+    #[cfg(feature = "plugin-lua")]
+    #[tokio::test]
+    async fn manager_lua_plugin_string_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("lua-strfilter-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.lua-strfilter"
+name = "Lua String Filter"
+version = "1.0.0"
+runtime = "lua"
+entry = "init.lua"
+
+[hooks.render_markdown]
+priority = 5
+"#;
+        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(
+            plugin_dir.join("init.lua"),
+            r#"
+Plugin = {
+    render_markdown = function(html)
+        return html:gsub("<head>", '<head><meta property="og:type" content="article">')
+    end
+}
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        let result = mgr
+            .dispatch_render_override("<head><title>Test</title></head>")
+            .await;
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("og:type"));
+    }
+
+    #[cfg(feature = "plugin-lua")]
+    #[tokio::test]
+    async fn manager_lua_plugin_action_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("lua-action-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.lua-action"
+name = "Lua Action"
+version = "1.0.0"
+runtime = "lua"
+entry = "init.lua"
+
+[hooks.on_post_created]
+priority = 10
+"#;
+        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(
+            plugin_dir.join("init.lua"),
+            r#"
+Plugin = {
+    on_post_created = function(data)
+        Host.log("info", "post created")
+    end
+}
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        mgr.dispatch_action(HookPoint::PostCreated, &serde_json::json!({"id": "abc"}))
+            .await;
+    }
+
+    #[cfg(feature = "plugin-lua")]
+    #[tokio::test]
+    async fn manager_lua_plugin_unload() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("lua-unload");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        std::fs::write(
+            plugin_dir.join("plugin.toml"),
+            "[plugin]\nid=\"com.test.lua-unload\"\nname=\"LU\"\nversion=\"1.0.0\"\nruntime=\"lua\"\nentry=\"init.lua\"",
+        )
+        .unwrap();
+        std::fs::write(plugin_dir.join("init.lua"), "Plugin = {}").unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        assert_eq!(mgr.plugin_count().await, 1);
+        mgr.unload_plugin("com.test.lua-unload").await;
+        assert_eq!(mgr.plugin_count().await, 0);
+    }
+
+    #[cfg(feature = "plugin-lua")]
+    #[tokio::test]
+    async fn manager_lua_plugin_skip_directory_without_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("lua-noentry");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        std::fs::write(
+            plugin_dir.join("plugin.toml"),
+            "[plugin]\nid=\"com.test.noentry\"\nname=\"NE\"\nversion=\"1.0.0\"\nruntime=\"lua\"\nentry=\"init.lua\"",
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        assert_eq!(mgr.plugin_count().await, 0);
+    }
+
+    #[cfg(feature = "plugin-lua")]
+    #[tokio::test]
+    async fn manager_lua_plugin_get_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("lua-config-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.lua-config"
+name = "Lua Config"
+version = "1.0.0"
+runtime = "lua"
+entry = "init.lua"
+
+[hooks.on_post_creating]
+priority = 10
+"#;
+        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(
+            plugin_dir.join("init.lua"),
+            r#"
+Plugin = {
+    on_post_creating = function(input)
+        local env = Host.getConfig("app.env")
+        if env then
+            input.env = env
+        end
+        return input
+    end
+}
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        let input = serde_json::json!({"title": "hello"});
+        let result: serde_json::Value = mgr
+            .dispatch_filter(HookPoint::PostCreating, input)
+            .await
+            .unwrap();
+        assert_eq!(result["env"], "test");
+    }
+
+    #[cfg(all(feature = "plugin-wasm", feature = "plugin-js", feature = "plugin-lua"))]
+    #[tokio::test]
+    async fn manager_triple_engine_filter_chain() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let wasm_dir = dir.path().join("wasm-chain");
+        std::fs::create_dir_all(&wasm_dir).unwrap();
+        std::fs::write(
+            wasm_dir.join("plugin.toml"),
+            "[plugin]\nid=\"com.chain.wasm\"\nname=\"WC\"\nversion=\"1.0.0\"\nruntime=\"wasm\"\n\n[hooks.on_post_creating]\npriority=10",
+        )
+        .unwrap();
+        std::fs::write(wasm_dir.join("plugin.wasm"), build_test_wasm()).unwrap();
+
+        let js_dir = dir.path().join("js-chain");
+        std::fs::create_dir_all(&js_dir).unwrap();
+        std::fs::write(
+            js_dir.join("plugin.toml"),
+            "[plugin]\nid=\"com.chain.js\"\nname=\"JC\"\nversion=\"1.0.0\"\nruntime=\"js\"\n\n[hooks.on_post_creating]\npriority=20",
+        )
+        .unwrap();
+        std::fs::write(
+            js_dir.join("index.js"),
+            r#"
+var Plugin = {
+    on_post_creating: function(inputJson) {
+        var input = JSON.parse(inputJson);
+        input.js_processed = true;
+        return JSON.stringify(input);
+    }
+};
+"#,
+        )
+        .unwrap();
+
+        let lua_dir = dir.path().join("lua-chain");
+        std::fs::create_dir_all(&lua_dir).unwrap();
+        std::fs::write(
+            lua_dir.join("plugin.toml"),
+            "[plugin]\nid=\"com.chain.lua\"\nname=\"LC\"\nversion=\"1.0.0\"\nruntime=\"lua\"\nentry=\"init.lua\"\n\n[hooks.on_post_creating]\npriority=30",
+        )
+        .unwrap();
+        std::fs::write(
+            lua_dir.join("init.lua"),
+            r#"
+Plugin = {
+    on_post_creating = function(input)
+        input.lua_processed = true
+        return input
+    end
+}
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        assert_eq!(mgr.plugin_count().await, 3);
+
+        let input = serde_json::json!({"title": "chain-test"});
+        let result: serde_json::Value = mgr
+            .dispatch_filter(HookPoint::PostCreating, input)
+            .await
+            .unwrap();
+
+        assert_eq!(result["js_processed"], true);
+        assert_eq!(result["lua_processed"], true);
     }
 }
