@@ -55,6 +55,16 @@ fn test_config() -> AppConfig {
         plugin_max_memory_mb: 32,
         plugin_default_timeout_ms: 5000,
         plugin_disabled: vec![],
+        log_dir: "./logs".into(),
+        log_max_files: 7,
+        rate_limit_global_max: 60,
+        rate_limit_global_window: 60,
+        rate_limit_register_max: 5,
+        rate_limit_register_window: 3600,
+        rate_limit_login_max: 10,
+        rate_limit_login_window: 60,
+        rate_limit_comment_max: 3,
+        rate_limit_comment_window: 60,
     }
 }
 

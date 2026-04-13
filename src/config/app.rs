@@ -48,6 +48,66 @@ pub struct AppConfig {
     pub plugin_default_timeout_ms: u64,
     #[serde(default)]
     pub plugin_disabled: Vec<String>,
+    #[serde(default = "default_log_dir")]
+    pub log_dir: String,
+    #[serde(default = "default_log_max_files")]
+    pub log_max_files: usize,
+    #[serde(default = "default_rate_limit_global_max")]
+    pub rate_limit_global_max: u32,
+    #[serde(default = "default_rate_limit_global_window")]
+    pub rate_limit_global_window: u64,
+    #[serde(default = "default_rate_limit_register_max")]
+    pub rate_limit_register_max: u32,
+    #[serde(default = "default_rate_limit_register_window")]
+    pub rate_limit_register_window: u64,
+    #[serde(default = "default_rate_limit_login_max")]
+    pub rate_limit_login_max: u32,
+    #[serde(default = "default_rate_limit_login_window")]
+    pub rate_limit_login_window: u64,
+    #[serde(default = "default_rate_limit_comment_max")]
+    pub rate_limit_comment_max: u32,
+    #[serde(default = "default_rate_limit_comment_window")]
+    pub rate_limit_comment_window: u64,
+}
+
+fn default_log_dir() -> String {
+    "./logs".into()
+}
+
+fn default_log_max_files() -> usize {
+    7
+}
+
+fn default_rate_limit_global_max() -> u32 {
+    60
+}
+
+fn default_rate_limit_global_window() -> u64 {
+    60
+}
+
+fn default_rate_limit_register_max() -> u32 {
+    5
+}
+
+fn default_rate_limit_register_window() -> u64 {
+    3600
+}
+
+fn default_rate_limit_login_max() -> u32 {
+    10
+}
+
+fn default_rate_limit_login_window() -> u64 {
+    60
+}
+
+fn default_rate_limit_comment_max() -> u32 {
+    3
+}
+
+fn default_rate_limit_comment_window() -> u64 {
+    60
 }
 
 fn default_plugin_max_memory() -> u32 {
@@ -129,6 +189,43 @@ impl AppConfig {
                 .ok()
                 .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
                 .unwrap_or_default(),
+            log_dir: env::var("LOG_DIR").unwrap_or_else(|_| default_log_dir()),
+            log_max_files: env::var("LOG_MAX_FILES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_log_max_files()),
+            rate_limit_global_max: env::var("RATE_LIMIT_GLOBAL_MAX")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_rate_limit_global_max()),
+            rate_limit_global_window: env::var("RATE_LIMIT_GLOBAL_WINDOW")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_rate_limit_global_window()),
+            rate_limit_register_max: env::var("RATE_LIMIT_REGISTER_MAX")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_rate_limit_register_max()),
+            rate_limit_register_window: env::var("RATE_LIMIT_REGISTER_WINDOW")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_rate_limit_register_window()),
+            rate_limit_login_max: env::var("RATE_LIMIT_LOGIN_MAX")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_rate_limit_login_max()),
+            rate_limit_login_window: env::var("RATE_LIMIT_LOGIN_WINDOW")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_rate_limit_login_window()),
+            rate_limit_comment_max: env::var("RATE_LIMIT_COMMENT_MAX")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_rate_limit_comment_max()),
+            rate_limit_comment_window: env::var("RATE_LIMIT_COMMENT_WINDOW")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_rate_limit_comment_window()),
         }
     }
 

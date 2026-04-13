@@ -7,6 +7,7 @@ author = "rust-blog"
 license = "MIT"
 runtime = "wasm"
 language = "rust"
+wasm = "content_filter.wasm"
 
 [permissions]
 http = []

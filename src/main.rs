@@ -17,24 +17,30 @@ rust_i18n::i18n!("locales", fallback = "en");
 
 use clap::Parser;
 use rust_blog::config::app::AppConfig;
-use tracing_subscriber::EnvFilter;
 
 mod cli;
+mod logging;
 mod server;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = cli::Cli::parse();
 
-    if let Err(e) = dotenvy::dotenv() {
-        eprintln!(".env file not loaded: {}", e);
-    }
-
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
-
     let config = AppConfig::init();
+
+    let _log_guard = logging::init(&config.log_dir);
+
+    logging::cleanup_old_logs(&config.log_dir, config.log_max_files);
+
+    let log_dir = config.log_dir.clone();
+    let max_files = config.log_max_files;
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        loop {
+            interval.tick().await;
+            logging::cleanup_old_logs(&log_dir, max_files);
+        }
+    });
 
     cli::run(cli, &config).await?;
 

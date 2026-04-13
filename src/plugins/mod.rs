@@ -96,13 +96,11 @@ impl PluginManager {
             }
 
             let manifest_path = entry.path().join("plugin.toml");
-            let wasm_path = entry.path().join("plugin.wasm");
-
-            if !manifest_path.exists() || !wasm_path.exists() {
+            if !manifest_path.exists() {
                 continue;
             }
 
-            match self.load_plugin(&manifest_path, &wasm_path).await {
+            match self.load_plugin_from_dir(&manifest_path).await {
                 Ok(id) => tracing::info!("loaded plugin: {id}"),
                 Err(err) => {
                     tracing::error!(
@@ -114,13 +112,30 @@ impl PluginManager {
         }
     }
 
-    /// 加载单个插件
-    async fn load_plugin(&self, manifest_path: &Path, wasm_path: &Path) -> AppResult<String> {
+    /// 从 plugin.toml 路径加载插件，wasm 文件名从清单中读取
+    async fn load_plugin_from_dir(&self, manifest_path: &Path) -> AppResult<String> {
+        let dir = manifest_path.parent().ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!("manifest has no parent directory"))
+        })?;
+
         let manifest_content = std::fs::read_to_string(manifest_path)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("read manifest: {e}")))?;
         let manifest: PluginManifest = toml::from_str(&manifest_content)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("parse manifest: {e}")))?;
 
+        let wasm_path = dir.join(&manifest.plugin.wasm);
+        if !wasm_path.exists() {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "wasm file not found: {}",
+                wasm_path.display()
+            )));
+        }
+
+        self.load_plugin(manifest, &wasm_path).await
+    }
+
+    /// 加载单个插件（manifest 已解析）
+    async fn load_plugin(&self, manifest: PluginManifest, wasm_path: &Path) -> AppResult<String> {
         let id = manifest.plugin.id.clone();
 
         if self.config.plugin_disabled.contains(&id) {
@@ -168,9 +183,7 @@ impl PluginManager {
     /// 重新加载指定插件（热更新）
     pub async fn reload_plugin(&self, plugin_dir: &Path) {
         let manifest_path = plugin_dir.join("plugin.toml");
-        let wasm_path = plugin_dir.join("plugin.wasm");
-
-        if !manifest_path.exists() || !wasm_path.exists() {
+        if !manifest_path.exists() {
             return;
         }
 
@@ -186,7 +199,7 @@ impl PluginManager {
         let id = manifest.plugin.id.clone();
         self.unload_plugin(&id).await;
 
-        match self.load_plugin(&manifest_path, &wasm_path).await {
+        match self.load_plugin_from_dir(&manifest_path).await {
             Ok(_) => tracing::info!("reloaded plugin: {id}"),
             Err(e) => tracing::error!("failed to reload plugin {id}: {e}"),
         }
@@ -510,6 +523,16 @@ mod tests {
             plugin_max_memory_mb: 32,
             plugin_default_timeout_ms: 5000,
             plugin_disabled: vec![],
+            log_dir: "./logs".into(),
+            log_max_files: 7,
+            rate_limit_global_max: 60,
+            rate_limit_global_window: 60,
+            rate_limit_register_max: 5,
+            rate_limit_register_window: 3600,
+            rate_limit_login_max: 10,
+            rate_limit_login_window: 60,
+            rate_limit_comment_max: 3,
+            rate_limit_comment_window: 60,
         })
     }
 
@@ -519,10 +542,10 @@ mod tests {
     /// - `memory` — 1 页线性内存
     /// - `alloc(size) -> ptr` — 在内存末尾分配空间
     /// - `dealloc(ptr, size)` — 空操作
-    /// - `on_post_creating(ptr, len) -> len` — 原样返回输入长度（echo filter）
+    /// - `on_post_creating(ptr, len) -> ptr` — echo filter（将输入写为长度前缀格式并返回指针）
     /// - `on_post_created(ptr, len)` — 空操作（action）
-    /// - `render_markdown(ptr, len) -> len` — 原样返回输入长度（string filter）
-    /// - `handle_route(ptr, len) -> len` — 返回一个固定 JSON 响应
+    /// - `render_markdown(ptr, len) -> ptr` — echo string filter
+    /// - `handle_route(ptr, len) -> ptr` — 返回空（0）
     /// - `infinite_loop()` — 死循环（测试 fuel 耗尽）
     fn build_test_wasm() -> Vec<u8> {
         let wat = r#"
@@ -534,24 +557,44 @@ mod tests {
     (global.set $next_ptr (i32.add (global.get $next_ptr) (local.get $size)))
   )
   (func (export "dealloc") (param $ptr i32) (param $size i32))
+
+  ;; helper: write length-prefix + copy input to new allocation, return ptr
+  ;; layout: [4 bytes LE length][input data]
+  ;; uses $next_ptr bump allocator: allocate 4+len, write len at ptr, copy input at ptr+4
+  (func $echo_lp (param $ptr i32) (param $len i32) (result i32)
+    (local $out i32)
+    (local $total i32)
+    (local.set $total (i32.add (i32.const 4) (local.get $len)))
+    (local.set $out (global.get $next_ptr))
+    (global.set $next_ptr (i32.add (global.get $next_ptr) (local.get $total)))
+    ;; write length as LE u32 at out[0..4]
+    (i32.store (local.get $out) (local.get $len))
+    ;; copy input[ptr..ptr+len] to out+4
+    (memory.copy (i32.add (local.get $out) (i32.const 4)) (local.get $ptr) (local.get $len))
+    (local.get $out)
+  )
+
   (func (export "on_post_creating") (param $ptr i32) (param $len i32) (result i32)
-    (local.get $len)
+    (call $echo_lp (local.get $ptr) (local.get $len))
   )
   (func (export "on_post_created") (param $ptr i32) (param $len i32))
   (func (export "on_comment_created") (param $ptr i32) (param $len i32))
   (func (export "on_login") (param $ptr i32) (param $len i32))
   (func (export "on_post_deleted") (param $ptr i32) (param $len i32))
   (func (export "render_markdown") (param $ptr i32) (param $len i32) (result i32)
-    (local.get $len)
+    (call $echo_lp (local.get $ptr) (local.get $len))
   )
   (func (export "on_comment_creating") (param $ptr i32) (param $len i32) (result i32)
-    (local.get $len)
+    (call $echo_lp (local.get $ptr) (local.get $len))
   )
   (func (export "on_post_updating") (param $ptr i32) (param $len i32) (result i32)
-    (local.get $len)
+    (call $echo_lp (local.get $ptr) (local.get $len))
   )
   (func (export "handle_route") (param $ptr i32) (param $len i32) (result i32)
     (i32.const 0)
+  )
+  (func (export "filter_html") (param $ptr i32) (param $len i32) (result i32)
+    (call $echo_lp (local.get $ptr) (local.get $len))
   )
 )
 "#;

@@ -4,6 +4,8 @@
 //! 存储后端通过 [`RateLimitStore`] trait 抽象，当前提供 [`MemoryStore`] 实现，
 //! 未来可扩展 Redis 后端以支持多实例水平扩展。
 
+use crate::config::app::AppConfig;
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -155,9 +157,41 @@ pub struct RateLimiterSet {
 }
 
 impl RateLimiterSet {
-    /// 创建包含所有命名限流器的默认集合。
-    ///
-    /// 每个限流器拥有独立的 [`MemoryStore`]，互不干扰。
+    /// 根据应用配置创建限流器集合。
+    pub fn from_config(config: &AppConfig) -> Self {
+        Self {
+            global: RateLimiter::new(
+                Arc::new(MemoryStore::new()),
+                RateLimitConfig {
+                    max_requests: config.rate_limit_global_max,
+                    window_secs: config.rate_limit_global_window,
+                },
+            ),
+            register: RateLimiter::new(
+                Arc::new(MemoryStore::new()),
+                RateLimitConfig {
+                    max_requests: config.rate_limit_register_max,
+                    window_secs: config.rate_limit_register_window,
+                },
+            ),
+            login: RateLimiter::new(
+                Arc::new(MemoryStore::new()),
+                RateLimitConfig {
+                    max_requests: config.rate_limit_login_max,
+                    window_secs: config.rate_limit_login_window,
+                },
+            ),
+            comment: RateLimiter::new(
+                Arc::new(MemoryStore::new()),
+                RateLimitConfig {
+                    max_requests: config.rate_limit_comment_max,
+                    window_secs: config.rate_limit_comment_window,
+                },
+            ),
+        }
+    }
+
+    /// 创建包含默认配置的限流器集合（用于测试）。
     pub fn new_default() -> Self {
         Self {
             global: RateLimiter::new(

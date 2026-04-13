@@ -102,6 +102,10 @@ impl WasmInstance {
     }
 
     /// 调用返回 JSON 的 Filter Hook
+    ///
+    /// ABI 协议：函数签名 `(ptr: i32, len: i32) -> i32`
+    /// 返回值 = 输出数据的指针，该指针处前 4 字节为 LE 长度，后面是数据。
+    /// 返回 0 表示插件未处理（None）。
     pub fn call_json_filter<T: Clone + Serialize + DeserializeOwned>(
         &mut self,
         func_name: &str,
@@ -120,24 +124,24 @@ impl WasmInstance {
         let input_json = serde_json::to_vec(input)?;
         let ptr = self.write_to_memory(&input_json)?;
 
-        let result_len: i32 = func
+        let result_ptr: i32 = func
             .call(&mut self.store, (ptr, input_json.len() as i32))
             .map_err(|e| self.format_wasm_error(e))?;
 
-        if result_len <= 0 {
-            self.free_memory(ptr, input_json.len() as i32);
+        self.free_memory(ptr, input_json.len() as i32);
+
+        if result_ptr <= 0 {
             return Ok(None);
         }
 
-        let result_len = result_len as usize;
-        let output = self.read_from_memory(ptr, result_len)?;
-        self.free_memory(ptr, std::cmp::max(input_json.len(), result_len) as i32);
-
+        let output = self.read_length_prefixed(result_ptr)?;
         let result: T = serde_json::from_slice(&output)?;
         Ok(Some(result))
     }
 
     /// 调用返回 String 的 Filter Hook（如 render_markdown）
+    ///
+    /// ABI 协议同 [`call_json_filter`]。
     pub fn call_string_filter(
         &mut self,
         func_name: &str,
@@ -156,19 +160,17 @@ impl WasmInstance {
         let input_bytes = input.as_bytes().to_vec();
         let ptr = self.write_to_memory(&input_bytes)?;
 
-        let result_len: i32 = func
+        let result_ptr: i32 = func
             .call(&mut self.store, (ptr, input_bytes.len() as i32))
             .map_err(|e| self.format_wasm_error(e))?;
 
-        if result_len <= 0 {
-            self.free_memory(ptr, input_bytes.len() as i32);
+        self.free_memory(ptr, input_bytes.len() as i32);
+
+        if result_ptr <= 0 {
             return Ok(None);
         }
 
-        let result_len = result_len as usize;
-        let output = self.read_from_memory(ptr, result_len)?;
-        self.free_memory(ptr, std::cmp::max(input_bytes.len(), result_len) as i32);
-
+        let output = self.read_length_prefixed(result_ptr)?;
         Ok(Some(String::from_utf8(output)?))
     }
 
@@ -262,6 +264,19 @@ impl WasmInstance {
         Ok(mem_data[start..end].to_vec())
     }
 
+    /// 从 WASM 内存读取长度前缀编码的数据。
+    ///
+    /// 布局：`[4 字节 LE 长度][数据]`
+    fn read_length_prefixed(&self, ptr: i32) -> anyhow::Result<Vec<u8>> {
+        let len_bytes = self.read_from_memory(ptr, 4)?;
+        let len = u32::from_le_bytes(
+            len_bytes
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("invalid length prefix"))?,
+        ) as usize;
+        self.read_from_memory(ptr + 4, len)
+    }
+
     /// 释放 WASM 内存
     fn free_memory(&mut self, ptr: i32, len: i32) {
         if let Some(dealloc_fn) = &self.dealloc_fn {
@@ -283,12 +298,20 @@ mod tests {
     (global.set $next_ptr (i32.add (global.get $next_ptr) (local.get $size)))
   )
   (func (export "dealloc") (param $ptr i32) (param $size i32))
+  (func $echo_lp (param $ptr i32) (param $len i32) (result i32)
+    (local $out i32)
+    (local.set $out (global.get $next_ptr))
+    (global.set $next_ptr (i32.add (global.get $next_ptr) (i32.add (i32.const 4) (local.get $len))))
+    (i32.store (local.get $out) (local.get $len))
+    (memory.copy (i32.add (local.get $out) (i32.const 4)) (local.get $ptr) (local.get $len))
+    (local.get $out)
+  )
   (func (export "on_post_creating") (param $ptr i32) (param $len i32) (result i32)
-    (local.get $len)
+    (call $echo_lp (local.get $ptr) (local.get $len))
   )
   (func (export "on_post_created") (param $ptr i32) (param $len i32))
   (func (export "render_markdown") (param $ptr i32) (param $len i32) (result i32)
-    (local.get $len)
+    (call $echo_lp (local.get $ptr) (local.get $len))
   )
   (func (export "infinite_loop")
     (block $break (loop $loop (br $loop)))

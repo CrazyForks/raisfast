@@ -27,6 +27,8 @@ pub struct PluginInfo {
     pub runtime: String,
     #[serde(default = "default_language")]
     pub language: String,
+    #[serde(default = "default_wasm")]
+    pub wasm: String,
 }
 
 fn default_runtime() -> String {
@@ -35,6 +37,10 @@ fn default_runtime() -> String {
 
 fn default_language() -> String {
     "rust".into()
+}
+
+fn default_wasm() -> String {
+    "plugin.wasm".into()
 }
 
 /// 插件权限声明
@@ -133,6 +139,7 @@ version = "1.0.0"
         assert!(m.permissions.max_memory_mb.is_none());
         assert!(m.permissions.timeout_ms.is_none());
         assert!(m.hooks.is_empty());
+        assert_eq!(m.plugin.wasm, "plugin.wasm");
     }
 
     #[test]
@@ -147,6 +154,7 @@ author = "Example Corp"
 license = "MIT"
 runtime = "wasi"
 language = "assemblyscript"
+wasm = "seo_optimizer.wasm"
 
 [permissions]
 http = ["cdn.example.com/*", "api.example.com/v1/*"]
@@ -171,6 +179,7 @@ priority = 5
         assert_eq!(m.plugin.license, Some("MIT".into()));
         assert_eq!(m.plugin.runtime, "wasi");
         assert_eq!(m.plugin.language, "assemblyscript");
+        assert_eq!(m.plugin.wasm, "seo_optimizer.wasm");
 
         assert_eq!(
             m.permissions.http,

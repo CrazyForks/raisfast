@@ -1,6 +1,7 @@
 //! HTTP 服务器：路由组装、中间件、启动与优雅关闭。
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Extension;
 use axum::extract::State;
@@ -18,11 +19,11 @@ use rust_blog::middleware::rate_limit::{
 };
 use rust_blog::plugins::PluginManager;
 use tokio::net::TcpListener;
-use tower::ServiceBuilder;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
+use tracing::Level;
 
 /// 构建 CORS 中间件。
 fn build_cors(config: &AppConfig) -> CorsLayer {
@@ -87,11 +88,10 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
             "/posts/{slug}",
             get(post::get).put(post::update).delete(post::delete),
         )
+        .route("/posts/{slug}/comments", get(comment::list))
         .route(
             "/posts/{slug}/comments",
-            get(comment::list)
-                .post(comment::create_guest)
-                .layer(from_fn(comment_rate_limit)),
+            http_post(comment::create_guest).layer(from_fn(comment_rate_limit)),
         )
         .route("/posts/{slug}/comments/authed", http_post(comment::create))
         .route("/comments/{id}", delete(comment::delete))
@@ -115,7 +115,40 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         .nest_service("/static", ServeDir::new(&static_dir))
         .fallback(handle_plugin_route)
         .layer(from_fn(locale_middleware))
-        .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &axum::extract::Request| {
+                    let method = request.method().as_str();
+                    let uri = request.uri().path();
+                    let version = match request.version() {
+                        axum::http::Version::HTTP_09 => "0.9",
+                        axum::http::Version::HTTP_10 => "1.0",
+                        axum::http::Version::HTTP_11 => "1.1",
+                        axum::http::Version::HTTP_2 => "2.0",
+                        axum::http::Version::HTTP_3 => "3.0",
+                        _ => "unknown",
+                    };
+                    tracing::span!(Level::INFO, "request", method, uri, version)
+                })
+                .on_request(|request: &axum::extract::Request, _span: &tracing::Span| {
+                    tracing::info!(
+                        method = %request.method(),
+                        path = %request.uri().path(),
+                        "--> request start"
+                    );
+                })
+                .on_response(
+                    |response: &axum::response::Response,
+                     latency: Duration,
+                     _span: &tracing::Span| {
+                        tracing::info!(
+                            status = %response.status().as_u16(),
+                            latency_ms = latency.as_millis() as u64,
+                            "<-- request done"
+                        );
+                    },
+                ),
+        )
         .layer(cors)
         .with_state(state);
 
@@ -125,7 +158,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
 /// 启动 HTTP 服务器，监听请求直到收到关闭信号。
 pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
     let addr = format!("{}:{}", config.host, config.port);
-    let limiters = RateLimiterSet::new_default();
+    let limiters = RateLimiterSet::from_config(config);
 
     let cleanup_limiters = limiters.clone();
     tokio::spawn(async move {
