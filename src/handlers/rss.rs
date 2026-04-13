@@ -20,7 +20,7 @@ use crate::models::post;
 pub async fn feed(State(state): State<crate::AppState>) -> AppResult<Response> {
     let locale = current_locale();
     rust_i18n::set_locale(&locale);
-    let posts = post::find_published(&state.pool, 1, 20, None, None, None)
+    let posts = post::find_published_joined(&state.pool, 1, 20, None, None, None)
         .await?
         .0;
 

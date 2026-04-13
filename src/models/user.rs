@@ -14,6 +14,7 @@ use uuid::Uuid;
 /// 直接映射 `users` 表的所有字段，包含 `password_hash`。
 /// 该结构体仅在内部使用，不应直接返回给前端。
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+#[non_exhaustive]
 pub struct User {
     pub id: String,
     pub email: String,
@@ -32,6 +33,7 @@ pub struct User {
 /// 与 [`User`] 相比去除了 `password_hash` 字段，用于 API 响应。
 /// 通过 `From<User>` 自动转换。
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[non_exhaustive]
 pub struct UserResponse {
     pub id: String,
     pub email: String,
@@ -71,7 +73,7 @@ pub struct RegisterRequest {
     pub email: String,
     #[validate(length(min = 2, max = 50))]
     pub username: String,
-    #[validate(length(min = 8, max = 128))]
+    #[validate(length(min = 8, max = 128), custom(function = "validate_password"))]
     pub password: String,
 }
 
@@ -97,6 +99,7 @@ pub struct RefreshRequest {
 ///
 /// 包含访问令牌、刷新令牌、过期时间以及用户公开信息。
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct LoginResponse {
     pub access_token: String,
     pub refresh_token: String,
@@ -120,18 +123,39 @@ pub struct UpdateUserRequest {
 /// 修改密码请求体
 ///
 /// - `old_password` 不能为空
-/// - `new_password` 最少 8 个字符
+/// - `new_password` 最少 8 个字符，且必须包含字母和数字
 #[derive(Debug, Deserialize, Validate)]
 pub struct UpdatePasswordRequest {
     #[validate(length(min = 1, max = 128))]
     pub old_password: String,
-    #[validate(length(min = 8, max = 128))]
+    #[validate(length(min = 8, max = 128), custom(function = "validate_password"))]
     pub new_password: String,
+}
+
+/// 管理员更新角色请求体
+///
+/// - `role` 不能为空，可取 `reader`、`author`、`admin`
+#[derive(Debug, Deserialize, Validate)]
+pub struct UpdateRoleRequest {
+    #[validate(length(min = 1))]
+    pub role: String,
 }
 
 use crate::errors::app_error::AppError;
 use crate::errors::app_error::AppResult;
 use validator::Validate;
+
+fn validate_password(pwd: &str) -> Result<(), validator::ValidationError> {
+    let has_letter = pwd.chars().any(|c| c.is_ascii_alphabetic());
+    let has_digit = pwd.chars().any(|c| c.is_ascii_digit());
+    if has_letter && has_digit {
+        Ok(())
+    } else {
+        let mut err = validator::ValidationError::new("password_strength");
+        err.message = Some("password must contain both letters and digits".into());
+        Err(err)
+    }
+}
 
 /// 根据邮箱查找用户
 ///

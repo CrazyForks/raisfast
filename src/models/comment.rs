@@ -21,6 +21,7 @@ use crate::errors::app_error::{AppError, AppResult};
 /// `author_id` 非空表示已登录用户，`nickname`/`email` 用于访客评论。
 /// `status` 可取 `pending`、`approved`、`rejected`。
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+#[non_exhaustive]
 pub struct Comment {
     pub id: String,
     pub post_id: String,
@@ -38,6 +39,7 @@ pub struct Comment {
 /// 在 [`Comment`] 基础上增加 `depth`（嵌套深度）和 `replies`（子评论列表），
 /// 形成递归的树形结构。
 #[derive(Debug, Serialize, Clone)]
+#[non_exhaustive]
 pub struct CommentResponse {
     pub id: String,
     pub post_id: String,
@@ -135,6 +137,35 @@ pub async fn find_approved_by_post(
     .fetch_all(pool)
     .await?;
     Ok(comments)
+}
+
+/// 分页查询指定文章下已审核通过的评论
+///
+/// 按 `created_at` 升序排列。返回评论列表和总记录数。
+pub async fn find_approved_by_post_paginated(
+    pool: &sqlx::SqlitePool,
+    post_id: &str,
+    page: i64,
+    page_size: i64,
+) -> AppResult<(Vec<Comment>, i64)> {
+    let offset = (page - 1) * page_size;
+    let comments = sqlx::query_as::<_, Comment>(
+        "SELECT * FROM comments WHERE post_id = ? AND status = 'approved' ORDER BY created_at ASC LIMIT ? OFFSET ?",
+    )
+    .bind(post_id)
+    .bind(page_size)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM comments WHERE post_id = ? AND status = 'approved'",
+    )
+    .bind(post_id)
+    .fetch_one(pool)
+    .await?;
+
+    Ok((comments, total))
 }
 
 /// 查询指定文章下的所有评论（含未审核）

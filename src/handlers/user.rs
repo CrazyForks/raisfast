@@ -5,11 +5,13 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 
-use crate::errors::app_error::{AppError, AppResult};
+use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::middleware::auth::{AdminUser, AuthUser};
-use crate::models::user::{UpdatePasswordRequest, UpdateUserRequest, UserResponse};
+use crate::models::user::{
+    UpdatePasswordRequest, UpdateRoleRequest, UpdateUserRequest, UserResponse,
+};
 use crate::services::auth;
 use crate::utils::pagination::PaginationParams;
 
@@ -101,22 +103,15 @@ pub async fn list_users(
 /// - **方法/路径：** `PUT /api/users/:id/role`
 /// - **认证：** 需要管理员权限
 /// - **请求体：** `{ "role": "reader" | "author" | "admin" }`
+/// - **验证：** 通过 `validation::validate()` 校验请求体
 pub async fn update_role(
     _admin: AdminUser,
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
-    Json(body): Json<serde_json::Value>,
+    Json(req): Json<UpdateRoleRequest>,
 ) -> AppResult<ApiResponse<UserResponse>> {
-    let role = body["role"]
-        .as_str()
-        .ok_or_else(|| AppError::BadRequest("role is required".into()))?;
+    validation::validate(&req)?;
 
-    if !["reader", "author", "admin"].contains(&role) {
-        return Err(AppError::BadRequest(
-            "role must be reader, author, or admin".into(),
-        ));
-    }
-
-    let user = crate::models::user::update_role(&state.pool, &id, role).await?;
+    let user = crate::models::user::update_role(&state.pool, &id, &req.role).await?;
     Ok(ApiResponse::success(user.into()))
 }

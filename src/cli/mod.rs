@@ -5,7 +5,7 @@
 mod db_cmd;
 mod server_cmd;
 
-use hello_axum::config::app::AppConfig;
+use rust_blog::config::app::AppConfig;
 
 use clap::{Parser, Subcommand};
 

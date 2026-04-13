@@ -45,6 +45,7 @@ use crate::middleware::locale::current_locale;
 /// - [`Conflict`](AppError::Conflict)：409 — 资源冲突（如唯一约束违反），附带消息键
 /// - [`Internal`](AppError::Internal)：500 — 服务器内部错误，包装 `anyhow::Error`
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum AppError {
     /// 400 Bad Request — 请求参数校验失败或业务规则不满足
     ///
@@ -142,7 +143,18 @@ impl IntoResponse for AppError {
         let locale = current_locale();
         let message = self.i18n_message(&locale);
 
-        tracing::error!(%code, %message, "request error");
+        match status {
+            StatusCode::BAD_REQUEST
+            | StatusCode::UNAUTHORIZED
+            | StatusCode::FORBIDDEN
+            | StatusCode::NOT_FOUND
+            | StatusCode::CONFLICT => {
+                tracing::warn!(%code, %message, "client error");
+            }
+            _ => {
+                tracing::error!(%code, %message, "server error");
+            }
+        }
 
         let body = ErrorBody {
             code,

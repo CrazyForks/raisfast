@@ -31,6 +31,7 @@ use serde::Serialize;
 ///
 /// - `T` — 响应数据的序列化类型，必须实现 [`Serialize`]
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct ApiResponse<T: Serialize> {
     pub code: i32,
     pub message: String,
@@ -117,6 +118,7 @@ impl ApiResponse<()> {
 /// Ok(ApiResponse::success(paginated))
 /// ```
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct PaginatedData<T: Serialize> {
     pub items: Vec<T>,
     pub total: i64,

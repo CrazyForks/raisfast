@@ -14,18 +14,32 @@ use crate::models::comment::{CreateCommentRequest, UpdateCommentStatusRequest};
 use crate::services::comment as comment_service;
 use crate::utils::pagination::PaginationParams;
 
-/// 获取指定文章的评论列表（树形结构）
+/// 获取指定文章的评论列表（树形结构，分页）
 ///
 /// - **方法/路径：** `GET /api/posts/:slug/comments`
 /// - **认证：** 无需认证
 /// - **说明：** 返回指定文章下已审核通过的评论，以嵌套树形结构返回。
-/// - **返回：** `ApiResponse<Vec<CommentResponse>>`
+/// - **查询参数：** `page`, `page_size`（可选，默认全部返回）
+/// - **返回：** `ApiResponse<PaginatedData<CommentResponse>>` 或 `ApiResponse<Vec<CommentResponse>>`
 pub async fn list(
     State(state): State<crate::AppState>,
     Path(slug): Path<String>,
-) -> AppResult<ApiResponse<Vec<crate::models::comment::CommentResponse>>> {
-    let comments = comment_service::list_comments(&state.pool, &slug).await?;
-    Ok(ApiResponse::success(comments))
+    axum::extract::Query(params): axum::extract::Query<crate::utils::pagination::PaginationParams>,
+) -> AppResult<
+    ApiResponse<crate::errors::response::PaginatedData<crate::models::comment::CommentResponse>>,
+> {
+    let mut p = params;
+    p.sanitize();
+    let (comments, total) =
+        comment_service::list_comments_paginated(&state.pool, &slug, p.page, p.page_size).await?;
+    Ok(ApiResponse::success(
+        crate::errors::response::PaginatedData {
+            items: comments,
+            total,
+            page: p.page,
+            page_size: p.page_size,
+        },
+    ))
 }
 
 /// 管理员获取全局评论列表（分页）

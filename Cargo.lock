@@ -1341,42 +1341,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
-name = "hello-axum"
-version = "0.1.0"
-dependencies = [
- "ammonia",
- "anyhow",
- "argon2",
- "axum",
- "chrono",
- "clap",
- "comrak",
- "dotenvy",
- "getrandom 0.2.17",
- "hex",
- "http-body-util",
- "image",
- "jsonwebtoken",
- "nix",
- "rss",
- "rstest",
- "rust-i18n",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "slug",
- "sqlx",
- "thiserror",
- "tokio",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "validator",
-]
-
-[[package]]
 name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2827,6 +2791,42 @@ dependencies = [
  "rustc_version",
  "syn",
  "unicode-ident",
+]
+
+[[package]]
+name = "rust-blog"
+version = "0.1.0"
+dependencies = [
+ "ammonia",
+ "anyhow",
+ "argon2",
+ "axum",
+ "chrono",
+ "clap",
+ "comrak",
+ "dotenvy",
+ "getrandom 0.2.17",
+ "hex",
+ "http-body-util",
+ "image",
+ "jsonwebtoken",
+ "nix",
+ "rss",
+ "rstest",
+ "rust-i18n",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "slug",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "validator",
 ]
 
 [[package]]

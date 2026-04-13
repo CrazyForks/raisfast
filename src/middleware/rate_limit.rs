@@ -62,6 +62,50 @@ impl RateLimiter {
         entry.count += 1;
         true
     }
+
+    pub async fn cleanup_expired(&self) {
+        let now = Instant::now();
+        let mut entries = self.entries.lock().await;
+        entries.retain(|_, entry| {
+            now.duration_since(entry.window_start).as_secs() < self.config.window_secs * 2
+        });
+    }
+}
+
+/// 命名限流器集合，通过 Extension 在路由间共享。
+///
+/// 每个限流器独立配置 `max_requests` / `window_secs`，
+/// 避免宏中每次请求创建空实例的问题。
+#[derive(Debug, Clone)]
+pub struct RateLimiterSet {
+    pub global: RateLimiter,
+    pub register: RateLimiter,
+    pub login: RateLimiter,
+    pub comment: RateLimiter,
+}
+
+impl RateLimiterSet {
+    /// 创建包含所有命名限流器的默认集合。
+    pub fn new_default() -> Self {
+        Self {
+            global: RateLimiter::new(RateLimitConfig {
+                max_requests: 60,
+                window_secs: 60,
+            }),
+            register: RateLimiter::new(RateLimitConfig {
+                max_requests: 5,
+                window_secs: 3600,
+            }),
+            login: RateLimiter::new(RateLimitConfig {
+                max_requests: 10,
+                window_secs: 60,
+            }),
+            comment: RateLimiter::new(RateLimitConfig {
+                max_requests: 3,
+                window_secs: 60,
+            }),
+        }
+    }
 }
 
 fn extract_client_ip(req: &Request) -> String {
@@ -78,57 +122,46 @@ fn extract_client_ip(req: &Request) -> String {
         .unwrap_or_default()
 }
 
+fn rate_limited_response() -> Response {
+    let locale = crate::middleware::locale::current_locale();
+    rust_i18n::set_locale(&locale);
+    let message = rust_i18n::t!("errors.too_many_requests");
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(serde_json::json!({
+            "code": 42900,
+            "message": message,
+            "data": null
+        })),
+    )
+        .into_response()
+}
+
 pub async fn global_rate_limit(
-    Extension(limiter): axum::extract::Extension<RateLimiter>,
+    Extension(limiters): Extension<RateLimiterSet>,
     req: Request,
     next: Next,
 ) -> Response {
     let ip = extract_client_ip(&req);
 
-    if limiter.check(&ip).await {
+    if limiters.global.check(&ip).await {
         next.run(req).await
     } else {
-        let locale = crate::middleware::locale::current_locale();
-        rust_i18n::set_locale(&locale);
-        let message = rust_i18n::t!("errors.too_many_requests");
-        (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({
-                "code": 42900,
-                "message": message,
-                "data": null
-            })),
-        )
-            .into_response()
+        rate_limited_response()
     }
 }
 
 macro_rules! rate_limit_fn {
-    ($name:ident, $max:expr, $window:expr) => {
+    ($name:ident, $specific:ident) => {
         pub async fn $name(
-            axum::extract::Extension(global): axum::extract::Extension<RateLimiter>,
+            axum::extract::Extension(limiters): axum::extract::Extension<RateLimiterSet>,
             req: Request,
             next: Next,
         ) -> Response {
             let ip = extract_client_ip(&req);
-            let specific = RateLimiter::new(RateLimitConfig {
-                max_requests: $max,
-                window_secs: $window,
-            });
 
-            if !global.check(&ip).await || !specific.check(&ip).await {
-                let locale = crate::middleware::locale::current_locale();
-                rust_i18n::set_locale(&locale);
-                let message = rust_i18n::t!("errors.too_many_requests");
-                return (
-                    StatusCode::TOO_MANY_REQUESTS,
-                    Json(serde_json::json!({
-                        "code": 42900,
-                        "message": message,
-                        "data": null
-                    })),
-                )
-                    .into_response();
+            if !limiters.global.check(&ip).await || !limiters.$specific.check(&ip).await {
+                return rate_limited_response();
             }
 
             next.run(req).await
@@ -136,6 +169,6 @@ macro_rules! rate_limit_fn {
     };
 }
 
-rate_limit_fn!(register_rate_limit, 5, 3600);
-rate_limit_fn!(login_rate_limit, 10, 60);
-rate_limit_fn!(comment_rate_limit, 3, 60);
+rate_limit_fn!(register_rate_limit, register);
+rate_limit_fn!(login_rate_limit, login);
+rate_limit_fn!(comment_rate_limit, comment);

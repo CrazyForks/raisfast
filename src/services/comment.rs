@@ -57,19 +57,22 @@ pub async fn create_comment(
     })
 }
 
-/// 获取指定文章的评论列表。
+/// 分页获取指定文章的评论列表。
 ///
 /// 仅返回状态为 `"approved"` 的评论，并组织为树形结构。
-pub async fn list_comments(
+pub async fn list_comments_paginated(
     pool: &sqlx::SqlitePool,
     post_slug: &str,
-) -> AppResult<Vec<CommentResponse>> {
+    page: i64,
+    page_size: i64,
+) -> AppResult<(Vec<CommentResponse>, i64)> {
     let p = post::find_by_slug(pool, post_slug)
         .await?
         .ok_or_else(|| AppError::NotFound("post".into()))?;
 
-    let comments = comment::find_approved_by_post(pool, &p.id).await?;
-    Ok(comment::build_tree(&comments))
+    let (comments, total) =
+        comment::find_approved_by_post_paginated(pool, &p.id, page, page_size).await?;
+    Ok((comment::build_tree(&comments), total))
 }
 
 /// 删除评论。

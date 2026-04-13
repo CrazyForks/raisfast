@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use hello_axum::config::app::AppConfig;
-use hello_axum::db::connection::init_pool;
+use rust_blog::config::app::AppConfig;
+use rust_blog::db::connection::init_pool;
 
 // ── migrate ──────────────────────────────────────────────────────
 
@@ -96,9 +96,7 @@ pub fn backup(config: &AppConfig, output_dir: &str) -> anyhow::Result<()> {
 
     std::fs::copy(db_path, &backup_path)?;
     let now = std::time::SystemTime::now();
-    let _ = std::fs::File::open(&backup_path).and_then(|f| {
-        f.set_modified(now)
-    });
+    let _ = std::fs::File::open(&backup_path).and_then(|f| f.set_modified(now));
     let size = std::fs::metadata(&backup_path)?.len();
 
     println!("backed up to {} ({} bytes)", backup_path.display(), size);

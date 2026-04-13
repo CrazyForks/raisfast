@@ -13,18 +13,17 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use axum::middleware::from_fn;
 use axum::routing::{delete, get, post as http_post, put};
-use hello_axum::AppState;
-use hello_axum::config::app::AppConfig;
-use hello_axum::handlers::{
+use http_body_util::BodyExt;
+use rust_blog::AppState;
+use rust_blog::config::app::AppConfig;
+use rust_blog::handlers::{
     auth as h_auth, category as h_cat, comment as h_cmt, health as h_health, media as h_media,
     post as h_post, rss as h_rss, tag as h_tag, user as h_user,
 };
-use hello_axum::middleware::locale::locale_middleware;
-use hello_axum::middleware::rate_limit::{
-    RateLimitConfig, RateLimiter, comment_rate_limit, global_rate_limit, login_rate_limit,
-    register_rate_limit,
+use rust_blog::middleware::locale::locale_middleware;
+use rust_blog::middleware::rate_limit::{
+    RateLimiterSet, comment_rate_limit, global_rate_limit, login_rate_limit, register_rate_limit,
 };
-use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -114,10 +113,7 @@ async fn test_app() -> (axum::Router, AppState) {
         .route("/media", get(h_media::list))
         .route("/media/{id}", delete(h_media::delete))
         .layer(from_fn(global_rate_limit))
-        .layer(axum::Extension(RateLimiter::new(RateLimitConfig {
-            max_requests: 9999,
-            window_secs: 60,
-        })));
+        .layer(axum::Extension(RateLimiterSet::new_default()));
 
     let app = axum::Router::new()
         .route("/health", get(h_health::health))
@@ -202,7 +198,7 @@ fn delete_auth(path: &str, token: &str) -> Request<Body> {
 }
 
 fn make_token(user_id: &str, role: &str) -> String {
-    hello_axum::services::auth::generate_access_token_for_test(user_id, role)
+    rust_blog::services::auth::generate_access_token_for_test(user_id, role)
 }
 
 async fn register_and_login(
@@ -238,7 +234,7 @@ async fn register_and_login(
 }
 
 async fn create_admin(pool: &sqlx::SqlitePool) -> String {
-    let hash = hello_axum::services::auth::hash_password("AdminPass123!").unwrap();
+    let hash = rust_blog::services::auth::hash_password("AdminPass123!").unwrap();
     let id = uuid::Uuid::now_v7().to_string();
     sqlx::query(
         "INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, 'admin')",
@@ -254,7 +250,7 @@ async fn create_admin(pool: &sqlx::SqlitePool) -> String {
 }
 
 async fn create_author(pool: &sqlx::SqlitePool) -> String {
-    let hash = hello_axum::services::auth::hash_password("AuthorPass123!").unwrap();
+    let hash = rust_blog::services::auth::hash_password("AuthorPass123!").unwrap();
     let id = uuid::Uuid::now_v7().to_string();
     sqlx::query("INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, 'author')")
         .bind(&id)
@@ -889,10 +885,10 @@ mod post {
         let slug = create_published_post(&mut c.app, &c.tok).await;
         let (_, b1): (StatusCode, Value) =
             send(&mut c.app, get_req(&format!("/api/v1/posts/{slug}"))).await;
-        assert_eq!(b1["data"]["view_count"], 0);
+        assert_eq!(b1["data"]["view_count"], 1);
         let (_, b2): (StatusCode, Value) =
             send(&mut c.app, get_req(&format!("/api/v1/posts/{slug}"))).await;
-        assert_eq!(b2["data"]["view_count"], 1);
+        assert_eq!(b2["data"]["view_count"], 2);
     }
 
     #[tokio::test]
@@ -1178,7 +1174,8 @@ mod comment {
         let (status, body): (StatusCode, Value) =
             send(&mut app, get_req(&format!("/api/v1/posts/{slug}/comments"))).await;
         assert!(status.is_success());
-        assert!(body["data"].as_array().unwrap().len() >= 2);
+        let items = body["data"]["items"].as_array().unwrap();
+        assert!(items.len() >= 2);
     }
 
     #[tokio::test]

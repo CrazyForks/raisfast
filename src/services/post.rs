@@ -12,9 +12,41 @@ use slug::slugify;
 
 use crate::errors::app_error::{AppError, AppResult};
 use crate::models::category::{self, CreateCategoryRequest, UpdateCategoryRequest};
-use crate::models::post::{self, CreatePostRequest, PostResponse, UpdatePostRequest};
+use crate::models::post::{
+    self, CreatePostRequest, PostJoinedRow, PostResponse, UpdatePostRequest,
+};
 use crate::models::tag::{self, CreateTagRequest};
 use crate::utils::markdown::render_markdown;
+
+fn joined_row_to_response(r: PostJoinedRow, tags: Vec<post::TagBrief>) -> PostResponse {
+    let html_content = render_markdown(&r.content);
+    PostResponse {
+        id: r.id,
+        title: r.title,
+        slug: r.slug,
+        content: r.content,
+        html_content,
+        excerpt: r.excerpt,
+        cover_image: r.cover_image,
+        status: r.status,
+        author_id: r.author_id,
+        author_name: r.author_name,
+        category_id: r.category_id,
+        category_name: r.category_name,
+        tags,
+        view_count: r.view_count,
+        is_pinned: r.is_pinned,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+        published_at: r.published_at,
+    }
+}
+
+async fn build_post_response_from_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<PostResponse> {
+    let row = post::find_joined_by_id(pool, id).await?;
+    let tags = post::get_post_tags(pool, &row.id).await.unwrap_or_default();
+    Ok(joined_row_to_response(row, tags))
+}
 
 /// 创建分类。
 ///
@@ -111,45 +143,6 @@ fn extract_excerpt(content: &str, max_len: usize) -> String {
     }
 }
 
-/// 组装文章响应对象。
-///
-/// 将原始文章记录转换为完整的 [`PostResponse`]，包括：
-/// - Markdown 内容渲染为 HTML
-/// - 关联的标签列表
-/// - 作者名称和分类名称
-async fn build_post_response(pool: &sqlx::SqlitePool, p: post::Post) -> AppResult<PostResponse> {
-    let html_content = render_markdown(&p.content);
-    let tags = post::get_post_tags(pool, &p.id).await.unwrap_or_default();
-    let author_name = post::get_author_name(pool, &p.author_id)
-        .await
-        .unwrap_or(None);
-    let category_name = match &p.category_id {
-        Some(cid) => post::get_category_name(pool, cid).await.unwrap_or(None),
-        None => None,
-    };
-
-    Ok(PostResponse {
-        id: p.id,
-        title: p.title,
-        slug: p.slug,
-        content: p.content,
-        html_content,
-        excerpt: p.excerpt,
-        cover_image: p.cover_image,
-        status: p.status,
-        author_id: p.author_id,
-        author_name,
-        category_id: p.category_id,
-        category_name,
-        tags,
-        view_count: p.view_count,
-        is_pinned: p.is_pinned,
-        created_at: p.created_at,
-        updated_at: p.updated_at,
-        published_at: p.published_at,
-    })
-}
-
 /// 创建文章。
 ///
 /// - 从标题自动生成唯一 slug。
@@ -186,7 +179,7 @@ pub async fn create_post(
         post::sync_tags(pool, &p.id, tag_ids).await?;
     }
 
-    build_post_response(pool, p).await
+    build_post_response_from_id(pool, &p.id).await
 }
 
 /// 更新文章。
@@ -237,7 +230,7 @@ pub async fn update_post(
         post::sync_tags(pool, &p.id, tag_ids).await?;
     }
 
-    build_post_response(pool, p).await
+    build_post_response_from_id(pool, &p.id).await
 }
 
 /// 删除文章。
@@ -288,17 +281,18 @@ pub async fn delete_post_with_auth(
 
 /// 获取已发布文章的详情。
 ///
-/// 每次访问自动递增文章的浏览计数（`view_count`）。
+/// 每次访问原子递增文章的浏览计数（`view_count`），
+/// 并通过 JOIN 一次查询获取作者名和分类名。
 pub async fn get_post(pool: &sqlx::SqlitePool, slug: &str) -> AppResult<PostResponse> {
-    let p = post::find_published_by_slug(pool, slug).await?;
-    let _ = post::increment_view_count(pool, &p.id).await;
-    build_post_response(pool, p).await
+    let row = post::increment_view_count_joined(pool, slug).await?;
+    let tags = post::get_post_tags(pool, &row.id).await.unwrap_or_default();
+    Ok(joined_row_to_response(row, tags))
 }
 
 /// 分页查询已发布文章列表。
 ///
 /// 支持按分类、标签和关键词进行可选过滤。
-/// 返回文章响应列表和总记录数。
+/// 使用 JOIN 查询和批量标签获取，将查询次数从 3N+1 降至 2~3 次。
 pub async fn list_posts(
     pool: &sqlx::SqlitePool,
     page: i64,
@@ -307,13 +301,40 @@ pub async fn list_posts(
     tag_id: Option<&str>,
     q: Option<&str>,
 ) -> AppResult<(Vec<PostResponse>, i64)> {
-    let (posts, total) =
-        post::find_published(pool, page, page_size, category_id, tag_id, q).await?;
+    let (rows, total) =
+        post::find_published_joined(pool, page, page_size, category_id, tag_id, q).await?;
 
-    let mut responses = Vec::with_capacity(posts.len());
-    for p in posts {
-        responses.push(build_post_response(pool, p).await?);
-    }
+    let post_ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+    let tags_map = post::get_tags_for_posts(pool, &post_ids)
+        .await
+        .unwrap_or_default();
+
+    let responses = rows
+        .into_iter()
+        .map(|r| {
+            let html_content = render_markdown(&r.content);
+            PostResponse {
+                id: r.id.clone(),
+                title: r.title,
+                slug: r.slug,
+                content: r.content,
+                html_content,
+                excerpt: r.excerpt,
+                cover_image: r.cover_image,
+                status: r.status,
+                author_id: r.author_id,
+                author_name: r.author_name,
+                category_id: r.category_id,
+                category_name: r.category_name,
+                tags: tags_map.get(&r.id).cloned().unwrap_or_default(),
+                view_count: r.view_count,
+                is_pinned: r.is_pinned,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+                published_at: r.published_at,
+            }
+        })
+        .collect();
 
     Ok((responses, total))
 }
@@ -322,8 +343,5 @@ pub async fn list_posts(
 ///
 /// 与 [`get_post`] 不同，此方法返回文章不论其发布状态，适用于作者编辑草稿。
 pub async fn get_post_for_owner(pool: &sqlx::SqlitePool, id: &str) -> AppResult<PostResponse> {
-    let p = post::find_by_id(pool, id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("post".into()))?;
-    build_post_response(pool, p).await
+    build_post_response_from_id(pool, id).await
 }

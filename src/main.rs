@@ -16,7 +16,7 @@
 rust_i18n::i18n!("locales", fallback = "en");
 
 use clap::Parser;
-use hello_axum::config::app::AppConfig;
+use rust_blog::config::app::AppConfig;
 use tracing_subscriber::EnvFilter;
 
 mod cli;

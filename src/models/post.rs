@@ -19,6 +19,7 @@ use crate::errors::app_error::{AppError, AppResult};
 /// 直接映射 `posts` 表的所有字段。
 /// 首次发布时自动填充 `published_at`；`status` 可取 `draft`、`published` 等。
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+#[non_exhaustive]
 pub struct Post {
     pub id: String,
     pub title: String,
@@ -44,6 +45,7 @@ pub struct Post {
 /// - `category_name`：所属分类名称
 /// - `tags`：关联标签列表
 #[derive(Debug, Serialize, Clone)]
+#[non_exhaustive]
 pub struct PostResponse {
     pub id: String,
     pub title: String,
@@ -250,15 +252,19 @@ pub async fn delete(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// 增加文章浏览量
+/// 原子性地增加文章浏览量并返回 JOIN 查询结果。
 ///
-/// 将指定文章的 `view_count` 加 1。
-pub async fn increment_view_count(pool: &sqlx::SqlitePool, id: &str) -> AppResult<()> {
-    sqlx::query("UPDATE posts SET view_count = view_count + 1 WHERE id = ?")
-        .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(())
+/// 单条 SQL 完成 UPDATE + SELECT，避免 get_post 中查询与更新之间的竞态。
+pub async fn increment_view_count_joined(
+    pool: &sqlx::SqlitePool,
+    slug: &str,
+) -> AppResult<PostJoinedRow> {
+    let update_sql = "\
+        UPDATE posts SET view_count = view_count + 1 \
+        WHERE slug = ? AND status = 'published'";
+    sqlx::query(update_sql).bind(slug).execute(pool).await?;
+
+    find_published_joined_by_slug(pool, slug).await
 }
 
 /// 同步文章与标签的关联关系
@@ -463,4 +469,211 @@ pub async fn find_published_by_slug(pool: &sqlx::SqlitePool, slug: &str) -> AppR
         .fetch_one(pool)
         .await
         .map_err(Into::into)
+}
+
+/// JOIN 查询中间行类型（含作者名和分类名）
+#[derive(Debug, FromRow)]
+pub struct PostJoinedRow {
+    pub id: String,
+    pub title: String,
+    pub slug: String,
+    pub content: String,
+    pub excerpt: Option<String>,
+    pub cover_image: Option<String>,
+    pub status: String,
+    pub author_id: String,
+    pub category_id: Option<String>,
+    pub view_count: i64,
+    pub is_pinned: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    pub published_at: Option<String>,
+    pub author_name: Option<String>,
+    pub category_name: Option<String>,
+}
+
+const JOIN_SQL: &str = "\
+    SELECT p.*, u.username AS author_name, c.name AS category_name \
+    FROM posts p \
+    LEFT JOIN users u ON p.author_id = u.id \
+    LEFT JOIN categories c ON p.category_id = c.id";
+
+/// 根据 ID 用 JOIN 查询单篇文章（含作者名和分类名）
+pub async fn find_joined_by_id(pool: &sqlx::SqlitePool, id: &str) -> AppResult<PostJoinedRow> {
+    let sql = format!("{} WHERE p.id = ?", JOIN_SQL);
+    sqlx::query_as::<_, PostJoinedRow>(&sql)
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .map_err(Into::into)
+}
+
+/// 根据 slug 用 JOIN 查询已发布单篇文章（含作者名和分类名）
+pub async fn find_published_joined_by_slug(
+    pool: &sqlx::SqlitePool,
+    slug: &str,
+) -> AppResult<PostJoinedRow> {
+    let sql = format!("{} WHERE p.slug = ? AND p.status = 'published'", JOIN_SQL);
+    sqlx::query_as::<_, PostJoinedRow>(&sql)
+        .bind(slug)
+        .fetch_one(pool)
+        .await
+        .map_err(Into::into)
+}
+
+/// 批量获取多篇文章的标签
+///
+/// 返回以 `post_id` 为键的 `HashMap`，每个值是该文章的标签列表。
+pub async fn get_tags_for_posts(
+    pool: &sqlx::SqlitePool,
+    post_ids: &[String],
+) -> AppResult<std::collections::HashMap<String, Vec<TagBrief>>> {
+    if post_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let placeholders: Vec<&str> = post_ids.iter().map(|_| "?").collect();
+    let sql = format!(
+        "SELECT pt.post_id, t.id, t.name, t.slug \
+         FROM posts_tags pt \
+         JOIN tags t ON pt.tag_id = t.id \
+         WHERE pt.post_id IN ({})",
+        placeholders.join(",")
+    );
+
+    #[derive(Debug, FromRow)]
+    struct TagWithPostId {
+        post_id: String,
+        id: String,
+        name: String,
+        slug: String,
+    }
+
+    let mut query = sqlx::query_as::<_, TagWithPostId>(&sql);
+    for id in post_ids {
+        query = query.bind(id);
+    }
+    let rows = query.fetch_all(pool).await?;
+
+    let mut map: std::collections::HashMap<String, Vec<TagBrief>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        map.entry(row.post_id).or_default().push(TagBrief {
+            id: row.id,
+            name: row.name,
+            slug: row.slug,
+        });
+    }
+    Ok(map)
+}
+
+/// 分页查询已发布文章（JOIN 用户和分类表）
+///
+/// 与 [`find_published`] 相同的筛选逻辑，但通过 LEFT JOIN 一次性获取
+/// `author_name` 和 `category_name`，避免 N+1 查询。
+pub async fn find_published_joined(
+    pool: &sqlx::SqlitePool,
+    page: i64,
+    page_size: i64,
+    category_id: Option<&str>,
+    tag_id: Option<&str>,
+    q: Option<&str>,
+) -> AppResult<(Vec<PostJoinedRow>, i64)> {
+    let offset = (page - 1) * page_size;
+
+    let (posts, total) = if let Some(tag_id) = tag_id {
+        let posts = sqlx::query_as::<_, PostJoinedRow>(
+            "SELECT p.*, u.username AS author_name, c.name AS category_name \
+             FROM posts p \
+             INNER JOIN posts_tags pt ON p.id = pt.post_id \
+             LEFT JOIN users u ON p.author_id = u.id \
+             LEFT JOIN categories c ON p.category_id = c.id \
+             WHERE p.status = 'published' AND pt.tag_id = ? \
+             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?",
+        )
+        .bind(tag_id)
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+
+        let total: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM posts p INNER JOIN posts_tags pt ON p.id = pt.post_id WHERE p.status = 'published' AND pt.tag_id = ?",
+        )
+        .bind(tag_id)
+        .fetch_one(pool)
+        .await?;
+
+        (posts, total.0)
+    } else if let Some(q) = q {
+        let pattern = format!("%{}%", q);
+        let posts = sqlx::query_as::<_, PostJoinedRow>(
+            "SELECT p.*, u.username AS author_name, c.name AS category_name \
+             FROM posts p \
+             LEFT JOIN users u ON p.author_id = u.id \
+             LEFT JOIN categories c ON p.category_id = c.id \
+             WHERE p.status = 'published' AND (p.title LIKE ? OR p.content LIKE ?) \
+             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?",
+        )
+        .bind(&pattern)
+        .bind(&pattern)
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+
+        let total: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM posts WHERE status = 'published' AND (title LIKE ? OR content LIKE ?)",
+        )
+        .bind(&pattern)
+        .bind(&pattern)
+        .fetch_one(pool)
+        .await?;
+
+        (posts, total.0)
+    } else if let Some(category_id) = category_id {
+        let posts = sqlx::query_as::<_, PostJoinedRow>(
+            "SELECT p.*, u.username AS author_name, c.name AS category_name \
+             FROM posts p \
+             LEFT JOIN users u ON p.author_id = u.id \
+             LEFT JOIN categories c ON p.category_id = c.id \
+             WHERE p.status = 'published' AND p.category_id = ? \
+             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?",
+        )
+        .bind(category_id)
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+
+        let total: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM posts WHERE status = 'published' AND category_id = ?",
+        )
+        .bind(category_id)
+        .fetch_one(pool)
+        .await?;
+
+        (posts, total.0)
+    } else {
+        let posts = sqlx::query_as::<_, PostJoinedRow>(
+            "SELECT p.*, u.username AS author_name, c.name AS category_name \
+             FROM posts p \
+             LEFT JOIN users u ON p.author_id = u.id \
+             LEFT JOIN categories c ON p.category_id = c.id \
+             WHERE p.status = 'published' \
+             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?",
+        )
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+
+        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM posts WHERE status = 'published'")
+            .fetch_one(pool)
+            .await?;
+
+        (posts, total.0)
+    };
+
+    Ok((posts, total))
 }

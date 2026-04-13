@@ -6,14 +6,13 @@ use axum::Extension;
 use axum::http::HeaderValue;
 use axum::middleware::from_fn;
 use axum::routing::{delete, get, post as http_post, put};
-use hello_axum::AppState;
-use hello_axum::config::app::AppConfig;
-use hello_axum::db::connection::init_pool;
-use hello_axum::handlers::{auth, category, comment, health, media, post, rss, tag, user};
-use hello_axum::middleware::locale::locale_middleware;
-use hello_axum::middleware::rate_limit::{
-    RateLimitConfig, RateLimiter, comment_rate_limit, global_rate_limit, login_rate_limit,
-    register_rate_limit,
+use rust_blog::AppState;
+use rust_blog::config::app::AppConfig;
+use rust_blog::db::connection::init_pool;
+use rust_blog::handlers::{auth, category, comment, health, media, post, rss, tag, user};
+use rust_blog::middleware::locale::locale_middleware;
+use rust_blog::middleware::rate_limit::{
+    RateLimiterSet, comment_rate_limit, global_rate_limit, login_rate_limit, register_rate_limit,
 };
 use tokio::net::TcpListener;
 use tower::ServiceBuilder;
@@ -28,7 +27,7 @@ fn build_cors(config: &AppConfig) -> CorsLayer {
         Some(origins) => {
             let allow: Vec<HeaderValue> = origins
                 .split(',')
-                .filter_map(|o| o.trim().parse().ok())
+                .filter_map(|o: &str| o.trim().parse().ok())
                 .collect();
             CorsLayer::new()
                 .allow_origin(allow)
@@ -43,7 +42,7 @@ fn build_cors(config: &AppConfig) -> CorsLayer {
 }
 
 /// 组装完整的应用路由（含数据库连接池初始化）。
-async fn build_app(config: &AppConfig) -> anyhow::Result<axum::Router> {
+async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Result<axum::Router> {
     let upload_dir = config.upload_dir.clone();
     let max_upload = config.max_upload_size;
     let pool = init_pool(&config.database_url, config.db_pool_size).await?;
@@ -100,10 +99,8 @@ async fn build_app(config: &AppConfig) -> anyhow::Result<axum::Router> {
         .route("/media", get(media::list))
         .route("/media/{id}", delete(media::delete))
         .layer(from_fn(global_rate_limit))
-        .layer(Extension(RateLimiter::new(RateLimitConfig {
-            max_requests: 60,
-            window_secs: 60,
-        })));
+        .layer(Extension(limiters))
+        .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024));
 
     let app = axum::Router::new()
         .route("/health", get(health::health))
@@ -121,7 +118,21 @@ async fn build_app(config: &AppConfig) -> anyhow::Result<axum::Router> {
 /// 启动 HTTP 服务器，监听请求直到收到关闭信号。
 pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
     let addr = format!("{}:{}", config.host, config.port);
-    let app = build_app(config).await?;
+    let limiters = RateLimiterSet::new_default();
+
+    let cleanup_limiters = limiters.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+        loop {
+            interval.tick().await;
+            cleanup_limiters.global.cleanup_expired().await;
+            cleanup_limiters.register.cleanup_expired().await;
+            cleanup_limiters.login.cleanup_expired().await;
+            cleanup_limiters.comment.cleanup_expired().await;
+        }
+    });
+
+    let app = build_app(config, limiters).await?;
     let listener = TcpListener::bind(&addr).await?;
 
     tracing::info!("server listening on {}", addr);

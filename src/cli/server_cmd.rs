@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use hello_axum::config::app::AppConfig;
+use rust_blog::config::app::AppConfig;
 
 use crate::server;
 
