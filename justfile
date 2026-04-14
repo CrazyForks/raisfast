@@ -14,15 +14,17 @@ plugin_type := "all"
 default:
     @just --list
 
+features := "db-" + db + " plugin-" + plugin_type + " search-tantivy"
+
 # ── 编译 ──────────────────────────────────────────────────────────
 
 # 编译检查（默认 SQLite）
 check *FLAGS:
-    DATABASE_URL={{db_url}} cargo check --features "db-{{db}} plugin-{{plugin_type}}" {{FLAGS}}
+    DATABASE_URL={{db_url}} cargo check --features "{{features}}" {{FLAGS}}
 
 # 编译发布版本
 build *FLAGS:
-    DATABASE_URL={{db_url}} cargo build --release --features "db-{{db}} plugin-{{plugin_type}}" {{FLAGS}}
+    DATABASE_URL={{db_url}} cargo build --release --features "{{features}}" {{FLAGS}}
 
 # ── 代码质量 ──────────────────────────────────────────────────────
 
@@ -36,11 +38,7 @@ fmt-check:
 
 # Lint
 lint:
-    DATABASE_URL={{db_url}} cargo clippy --features "db-{{db}} plugin-{{plugin_type}}" -- -D warnings
-
-# Lint（含 Tantivy 搜索）
-lint-search:
-    DATABASE_URL={{db_url}} cargo clippy --features "db-{{db}} plugin-{{plugin_type}} search-tantivy" -- -D warnings
+    DATABASE_URL={{db_url}} cargo clippy --features "{{features}}" -- -D warnings
 
 # 全部质量检查（fmt + lint）
 qa: fmt-check lint
@@ -49,19 +47,15 @@ qa: fmt-check lint
 
 # 运行所有测试
 test *FLAGS:
-    DATABASE_URL={{db_url}} cargo test --features "db-{{db}} plugin-{{plugin_type}}" {{FLAGS}}
-
-# 运行所有测试（含 Tantivy 搜索）
-test-search *FLAGS:
-    DATABASE_URL={{db_url}} cargo test --features "db-{{db}} plugin-{{plugin_type}} search-tantivy" {{FLAGS}}
+    DATABASE_URL={{db_url}} cargo test --features "{{features}}" {{FLAGS}}
 
 # 仅运行单元测试
 test-unit:
-    DATABASE_URL={{db_url}} cargo test --lib --features "db-{{db}} plugin-{{plugin_type}}"
+    DATABASE_URL={{db_url}} cargo test --lib --features "{{features}}"
 
 # 仅运行集成测试
 test-integration:
-    DATABASE_URL={{db_url}} cargo test --test api_tests --features "db-{{db}} plugin-{{plugin_type}}"
+    DATABASE_URL={{db_url}} cargo test --test api_tests --features "{{features}}"
 
 # ── 数据库 ────────────────────────────────────────────────────────
 
@@ -86,17 +80,17 @@ db-backup:
 
 # 生成 sqlx 离线查询元数据
 db-prepare:
-    DATABASE_URL={{db_url}} cargo sqlx prepare --features "db-{{db}} plugin-{{plugin_type}}"
+    DATABASE_URL={{db_url}} cargo sqlx prepare --features "{{features}}"
 
 # 验证离线编译（不依赖 DATABASE_URL）
 check-offline:
-    cargo check --features "db-{{db}} plugin-{{plugin_type}}"
+    cargo check --features "{{features}}"
 
 # ── 运行 ──────────────────────────────────────────────────────────
 
 # 启动开发服务器
 dev:
-    DATABASE_URL={{db_url}} cargo run --features "db-{{db}} plugin-{{plugin_type}}"
+    DATABASE_URL={{db_url}} cargo run --features "{{features}}"
 
 # ── 数据库后端切换 ────────────────────────────────────────────────
 

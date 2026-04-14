@@ -59,6 +59,15 @@ impl PostRepository for SqlxPostRepository {
         .await
     }
 
+    async fn find_all_joined(
+        &self,
+        page: i64,
+        page_size: i64,
+        status: Option<&str>,
+    ) -> AppResult<(Vec<PostJoinedRow>, i64)> {
+        post::find_all_joined(&self.pool, page, page_size, status).await
+    }
+
     async fn increment_view_count_joined(&self, slug: &str) -> AppResult<PostJoinedRow> {
         post::increment_view_count_joined(&self.pool, slug).await
     }

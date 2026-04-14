@@ -179,6 +179,8 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         .route("/media", get(media::list))
         .route("/media/{id}", delete(media::delete))
         .route("/events", get(sse::subscribe))
+        .route("/admin/posts", get(post::admin_list))
+        .route("/admin/posts/{slug}", get(post::admin_get))
         .route("/admin/plugins", get(plugin::list))
         .route(
             "/admin/plugins/{id}",

@@ -54,7 +54,7 @@ export default function EditPostPage() {
 
   const postQuery = useQuery({
     queryKey: ["post", slug],
-    queryFn: () => api.get<Post>(`/posts/${slug}`),
+    queryFn: () => api.get<Post>(`/admin/posts/${slug}`),
   });
 
   const categoriesQuery = useQuery({

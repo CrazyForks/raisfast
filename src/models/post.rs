@@ -435,6 +435,64 @@ pub async fn find_published(
     Ok((posts, total))
 }
 
+/// 查询全部文章（包含所有状态），用于后台管理
+///
+/// 支持按 `status` 筛选，`None` 表示返回全部状态。
+/// 通过 LEFT JOIN 获取 `author_name` 和 `category_name`。
+pub async fn find_all_joined(
+    pool: &crate::db::Pool,
+    page: i64,
+    page_size: i64,
+    status: Option<&str>,
+) -> AppResult<(Vec<PostJoinedRow>, i64)> {
+    let offset = (page - 1) * page_size;
+
+    let base_select = "\
+        SELECT p.id, p.title, p.slug, p.content, p.excerpt, p.cover_image, p.status, \
+        p.author_id, p.category_id, p.view_count, p.is_pinned, p.created_at, p.updated_at, \
+        p.published_at, u.username AS author_name, c.name AS category_name \
+        FROM posts p \
+        LEFT JOIN users u ON p.author_id = u.id \
+        LEFT JOIN categories c ON p.category_id = c.id";
+
+    let (posts, total) = if let Some(status) = status {
+        let sql = format!(
+            "{base_select} \
+             WHERE p.status = ? \
+             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?"
+        );
+        let sql = crate::db::dialect::translate(&sql);
+        let posts = sqlx::query_as::<_, PostJoinedRow>(&sql)
+            .bind(status)
+            .bind(page_size)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
+        let sql = crate::db::dialect::translate("SELECT COUNT(*) FROM posts WHERE status = ?");
+        let total: (i64,) = sqlx::query_as(&sql)
+        .bind(status)
+        .fetch_one(pool)
+        .await?;
+        (posts, total.0)
+    } else {
+        let sql = format!(
+            "{base_select} \
+             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?"
+        );
+        let sql = crate::db::dialect::translate(&sql);
+        let posts = sqlx::query_as::<_, PostJoinedRow>(&sql)
+            .bind(page_size)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
+        let total: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM posts").fetch_one(pool).await?;
+        (posts, total.0)
+    };
+
+    Ok((posts, total))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

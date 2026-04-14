@@ -27,6 +27,14 @@ pub struct PostListQuery {
     pub q: Option<String>,
 }
 
+/// 后台管理文章列表查询参数
+#[derive(Debug, Deserialize, Default)]
+pub struct AdminPostListQuery {
+    pub page: Option<i64>,
+    pub page_size: Option<i64>,
+    pub status: Option<String>,
+}
+
 /// 获取已发布文章列表（分页）
 ///
 /// - **方法/路径：** `GET /api/posts`
@@ -153,4 +161,61 @@ pub async fn delete(
     )
     .await?;
     Ok(ApiResponse::success(()))
+}
+
+/// 后台管理：按 slug 获取文章详情（含所有状态）
+///
+/// - **方法/路径：** `GET /api/v1/admin/posts/{slug}`
+/// - **认证：** 需要作者或以上权限（`AuthorUser`）
+/// - **说明：** 根据 slug 获取任意状态的文章详情，不增加浏览量。
+/// - **返回：** `ApiResponse<PostResponse>`
+pub async fn admin_get(
+    State(state): State<crate::AppState>,
+    _author: AuthorUser,
+    Path(slug): Path<String>,
+) -> AppResult<ApiResponse<PostResponse>> {
+    let post = post_service::get_post_any_status(
+        state.post_repo.as_ref(),
+        &slug,
+        &state.plugins,
+    )
+    .await?;
+    Ok(ApiResponse::success(post))
+}
+
+/// 后台管理：获取全部文章列表（含所有状态）
+///
+/// - **方法/路径：** `GET /api/v1/admin/posts`
+/// - **认证：** 需要作者或以上权限（`AuthorUser`）
+/// - **说明：** 分页查询全部文章（含 draft/published），支持按 `status` 筛选。
+/// - **返回：** `ApiResponse<PaginatedData<PostResponse>>`
+pub async fn admin_list(
+    State(state): State<crate::AppState>,
+    _author: AuthorUser,
+    Query(query): Query<AdminPostListQuery>,
+) -> AppResult<ApiResponse<PaginatedData<PostResponse>>> {
+    let mut pagination = PaginationParams::default();
+    if let Some(page) = query.page {
+        pagination.page = page.max(1);
+    }
+    if let Some(page_size) = query.page_size {
+        pagination.page_size = page_size.clamp(1, 100);
+    }
+    pagination.sanitize();
+
+    let (posts, total) = post_service::list_all_posts(
+        state.post_repo.as_ref(),
+        pagination.page,
+        pagination.page_size,
+        query.status.as_deref(),
+        &state.plugins,
+    )
+    .await?;
+
+    Ok(ApiResponse::success(PaginatedData {
+        items: posts,
+        total,
+        page: pagination.page,
+        page_size: pagination.page_size,
+    }))
 }

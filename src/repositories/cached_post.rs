@@ -156,6 +156,15 @@ impl<P: PostRepository + 'static> PostRepository for CachedPostRepository<P> {
         Ok(result)
     }
 
+    async fn find_all_joined(
+        &self,
+        page: i64,
+        page_size: i64,
+        status: Option<&str>,
+    ) -> AppResult<(Vec<PostJoinedRow>, i64)> {
+        self.inner.find_all_joined(page, page_size, status).await
+    }
+
     async fn increment_view_count_joined(&self, slug: &str) -> AppResult<PostJoinedRow> {
         let result = self.inner.increment_view_count_joined(slug).await?;
         self.invalidate_all().await;

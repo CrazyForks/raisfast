@@ -41,13 +41,14 @@ export default function PostsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
+  const [statusFilter, setStatusFilter] = useState<string>("");
   const pageSize = 20;
 
   const postsQuery = useQuery({
-    queryKey: ["admin-posts", page],
+    queryKey: ["admin-posts", page, statusFilter],
     queryFn: () =>
       api.get<PaginatedData<Post>>(
-        `/posts?page=${page}&page_size=${pageSize}`,
+        `/admin/posts?page=${page}&page_size=${pageSize}${statusFilter ? `&status=${statusFilter}` : ""}`,
       ),
   });
 
@@ -79,12 +80,23 @@ export default function PostsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Posts</h1>
-        <Link href="/admin/posts/new">
-          <Button>
-            <Plus className="size-4" />
-            New Post
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          <select
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            value={statusFilter}
+            onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+          >
+            <option value="">All Status</option>
+            <option value="published">Published</option>
+            <option value="draft">Draft</option>
+          </select>
+          <Link href="/admin/posts/new">
+            <Button>
+              <Plus className="size-4" />
+              New Post
+            </Button>
+          </Link>
+        </div>
       </div>
 
       <Card>

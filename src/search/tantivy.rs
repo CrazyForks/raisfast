@@ -73,8 +73,12 @@ impl TantivyEngine {
     }
 
     fn register_tokenizers(index: &tantivy::Index) {
-        let ngram = tantivy::tokenizer::NgramTokenizer::all_ngrams(2, 5)
-            .expect("ngram params valid");
+        let ngram = tantivy::tokenizer::TextAnalyzer::builder(
+            tantivy::tokenizer::NgramTokenizer::all_ngrams(2, 5)
+                .expect("ngram params valid"),
+        )
+        .filter(tantivy::tokenizer::LowerCaser)
+        .build();
         index.tokenizers().register("ngram", ngram);
     }
 }

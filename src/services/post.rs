@@ -448,6 +448,73 @@ pub async fn list_posts(
     Ok((responses, total))
 }
 
+/// 后台管理：按 slug 获取文章详情（不过滤状态，不增加浏览量）
+pub async fn get_post_any_status(
+    repo: &dyn PostRepository,
+    slug: &str,
+    plugins: &PluginManager,
+) -> AppResult<PostResponse> {
+    let post = repo.find_by_slug(slug).await?;
+    let post = post.ok_or_else(|| {
+        crate::errors::app_error::AppError::NotFound("post not found".into())
+    })?;
+    let row = repo.find_joined_by_id(&post.id).await?;
+    let tags = repo.get_post_tags(&row.id).await.unwrap_or_default();
+    Ok(joined_row_to_response(row, tags, plugins).await)
+}
+
+/// 后台管理：分页查询全部文章（含所有状态）
+pub async fn list_all_posts(
+    repo: &dyn PostRepository,
+    page: i64,
+    page_size: i64,
+    status: Option<&str>,
+    plugins: &PluginManager,
+) -> AppResult<(Vec<PostResponse>, i64)> {
+    let (rows, total) = repo.find_all_joined(page, page_size, status).await?;
+
+    let post_ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+    let tags_map = repo.get_tags_for_posts(&post_ids).await.unwrap_or_default();
+
+    let mut responses = Vec::with_capacity(rows.len());
+    for r in rows {
+        let html_content = match plugins.dispatch_render_override(&r.content).await {
+            Some(html) => plugins
+                .dispatch_filter(HookPoint::FilterHtml, html)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!("filter_html hook failed: {e}");
+                    render_markdown(&r.content)
+                }),
+            None => render_markdown(&r.content),
+        };
+        responses.push(PostResponse {
+            id: r.id.clone(),
+            title: r.title,
+            slug: r.slug,
+            content: r.content,
+            html_content,
+            excerpt: r.excerpt,
+            cover_image: r.cover_image,
+            status: r.status,
+            author_id: r.author_id,
+            author_name: r.author_name,
+            category_id: r.category_id,
+            category_name: r.category_name,
+            tags: tags_map.get(&r.id).cloned().unwrap_or_default(),
+            view_count: r.view_count,
+            is_pinned: r.is_pinned,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+            published_at: r.published_at,
+            title_highlight: None,
+            excerpt_highlight: None,
+        });
+    }
+
+    Ok((responses, total))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

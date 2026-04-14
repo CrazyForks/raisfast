@@ -58,6 +58,14 @@ pub trait PostRepository: Send + Sync {
         query: FindPublishedQuery,
     ) -> AppResult<(Vec<PostJoinedRow>, i64)>;
 
+    /// 查询全部文章（含所有状态），用于后台管理
+    async fn find_all_joined(
+        &self,
+        page: i64,
+        page_size: i64,
+        status: Option<&str>,
+    ) -> AppResult<(Vec<PostJoinedRow>, i64)>;
+
     /// 原子性增加浏览量并返回 JOIN 查询结果
     async fn increment_view_count_joined(&self, slug: &str) -> AppResult<PostJoinedRow>;
 
