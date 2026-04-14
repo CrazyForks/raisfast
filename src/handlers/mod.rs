@@ -21,6 +21,7 @@ pub mod category;
 pub mod comment;
 pub mod health;
 pub mod media;
+pub mod plugin;
 pub mod post;
 pub mod rss;
 pub mod tag;

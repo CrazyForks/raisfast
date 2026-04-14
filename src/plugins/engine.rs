@@ -2,18 +2,21 @@
 //!
 //! 隔离所有 wasmtime 细节，提供简洁的调用接口。
 //! 包含 fuel 消耗限制、超时和内存上限等安全机制。
+//! Store 数据类型为 [`Arc<HostContext>`]，所有 Host Function 共享公共业务逻辑。
+
+use std::sync::Arc;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::plugins::manifest::Permissions;
+use crate::plugins::host_common::HostContext;
 
 /// 默认 fuel 上限（约 1000 万条 WASM 指令，足够处理一般内容）
 const DEFAULT_FUEL: u64 = 10_000_000;
 
 /// 单个插件实例
 pub struct WasmInstance {
-    store: wasmtime::Store<InstanceState>,
+    store: wasmtime::Store<Arc<HostContext>>,
     instance: wasmtime::Instance,
     memory: wasmtime::Memory,
     alloc_fn: Option<wasmtime::TypedFunc<(i32,), i32>>,
@@ -24,44 +27,25 @@ pub struct WasmInstance {
     plugin_id: String,
 }
 
-struct InstanceState {
-    #[allow(dead_code)]
-    plugin_id: String,
-}
-
 impl WasmInstance {
     /// 从 WASM 字节码创建实例
     pub fn new(
         engine: &wasmtime::Engine,
         wasm_bytes: &[u8],
-        plugin_id: String,
+        host_ctx: Arc<HostContext>,
         timeout_ms: u64,
-        permissions: &Permissions,
     ) -> anyhow::Result<Self> {
+        let plugin_id = host_ctx.plugin_id().to_string();
+        let max_memory_bytes = host_ctx.max_memory_bytes();
+
         let module = wasmtime::Module::new(engine, wasm_bytes)?;
-        let mut store = wasmtime::Store::new(
-            engine,
-            InstanceState {
-                plugin_id: plugin_id.clone(),
-            },
-        );
+        let mut store = wasmtime::Store::new(engine, host_ctx);
 
         let fuel_limit = DEFAULT_FUEL;
         store.set_fuel(fuel_limit)?;
 
-        let max_memory_bytes = permissions
-            .max_memory_mb
-            .map(|mb| mb as usize * 1024 * 1024)
-            .unwrap_or(32 * 1024 * 1024);
-
         let mut linker = wasmtime::Linker::new(engine);
-
-        linker.func_wrap("env", "host_log", {
-            let pid = plugin_id.clone();
-            move |level_ptr: i32, level_len: i32, msg_ptr: i32, msg_len: i32| {
-                let _ = (level_ptr, level_len, msg_ptr, msg_len, &pid);
-            }
-        })?;
+        super::host::register_host_functions(&mut linker)?;
 
         let instance = linker.instantiate(&mut store, &module)?;
 
@@ -287,7 +271,12 @@ impl WasmInstance {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::config::app::AppConfig;
+    use crate::db::Pool;
+    use crate::plugins::Permissions;
 
     const TEST_WAT: &str = r#"
 (module
@@ -319,12 +308,58 @@ mod tests {
 )
 "#;
 
+    fn make_test_config() -> Arc<AppConfig> {
+        Arc::new(AppConfig {
+            host: "127.0.0.1".into(),
+            port: 3000,
+            env: "test".into(),
+            database_url: "sqlite::memory:".into(),
+            db_pool_size: 1,
+            jwt_secret: "test-secret-key-at-least-32-characters-long".into(),
+            jwt_access_expires: 900,
+            jwt_refresh_expires: 604800,
+            upload_dir: "./uploads".into(),
+            max_upload_size: 5242880,
+            static_dir: "./static".into(),
+            base_url: "http://localhost:3000".into(),
+            cors_origins: None,
+            plugin_dir: None,
+            plugin_hot_reload: false,
+            plugin_max_memory_mb: 32,
+            plugin_default_timeout_ms: 5000,
+            plugin_disabled: vec![],
+            plugin_vfs_root: "./plugins-data".into(),
+            plugin_vfs_max_file_size: 1048576,
+            plugin_vfs_max_total_size: 10485760,
+            log_dir: "./logs".into(),
+            log_max_files: 7,
+            rate_limit_global_max: 60,
+            rate_limit_global_window: 60,
+            rate_limit_register_max: 5,
+            rate_limit_register_window: 3600,
+            rate_limit_login_max: 10,
+            rate_limit_login_window: 60,
+            rate_limit_comment_max: 3,
+            rate_limit_comment_window: 60,
+        })
+    }
+
+    fn make_host_ctx(id: &str, perms: Permissions) -> Arc<HostContext> {
+        Arc::new(HostContext::new(
+            "wasm",
+            make_test_config(),
+            id.into(),
+            perms,
+            None::<Pool>,
+        ))
+    }
+
     fn make_instance(id: &str) -> WasmInstance {
         let mut cfg = wasmtime::Config::new();
         cfg.consume_fuel(true);
         let engine = wasmtime::Engine::new(&cfg).unwrap();
-        let perms = Permissions::default();
-        WasmInstance::new(&engine, TEST_WAT.as_bytes(), id.into(), 5000, &perms).unwrap()
+        let host_ctx = make_host_ctx(id, Permissions::default());
+        WasmInstance::new(&engine, TEST_WAT.as_bytes(), host_ctx, 5000).unwrap()
     }
 
     #[test]
@@ -360,14 +395,8 @@ mod tests {
             timeout_ms: Some(100),
             ..Default::default()
         };
-        let mut inst = WasmInstance::new(
-            &engine,
-            TEST_WAT.as_bytes(),
-            "fuel-test".into(),
-            100,
-            &perms,
-        )
-        .unwrap();
+        let host_ctx = make_host_ctx("fuel-test", perms);
+        let mut inst = WasmInstance::new(&engine, TEST_WAT.as_bytes(), host_ctx, 100).unwrap();
 
         inst.reset_fuel().unwrap();
         inst.store.set_fuel(100).unwrap();
@@ -378,7 +407,6 @@ mod tests {
         let result = func.call(&mut inst.store, ());
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
-        // fuel exhaustion causes a trap — the exact message varies across wasmtime versions
         assert!(
             err_msg.contains("fuel")
                 || err_msg.contains("Trap")
@@ -398,14 +426,8 @@ mod tests {
             max_memory_mb: Some(1),
             ..Default::default()
         };
-        let mut inst = WasmInstance::new(
-            &engine,
-            TEST_WAT.as_bytes(),
-            "mem-test".into(),
-            5000,
-            &perms,
-        )
-        .unwrap();
+        let host_ctx = make_host_ctx("mem-test", perms);
+        let mut inst = WasmInstance::new(&engine, TEST_WAT.as_bytes(), host_ctx, 5000).unwrap();
 
         let data = vec![0u8; 1024];
         assert!(inst.write_to_memory(&data).is_ok());
@@ -434,7 +456,7 @@ mod tests {
         let result = inst.call_json_filter::<serde_json::Value>("on_post_creating", &input);
         match result {
             Ok(Some(v)) => assert_eq!(v["title"], "Hello"),
-            Ok(None) => {} // WAT returns len, may not parse back perfectly
+            Ok(None) => {}
             Err(_) => {}
         }
     }
@@ -463,5 +485,73 @@ mod tests {
             Ok(None) => {}
             Err(_) => {}
         }
+    }
+
+    #[test]
+    fn wasm_instance_stores_host_context() {
+        let mut cfg = wasmtime::Config::new();
+        cfg.consume_fuel(true);
+        let engine = wasmtime::Engine::new(&cfg).unwrap();
+        let perms = Permissions {
+            database: vec!["posts".into()],
+            ..Permissions::default()
+        };
+        let host_ctx = make_host_ctx("ctx-test", perms);
+        let inst = WasmInstance::new(&engine, TEST_WAT.as_bytes(), host_ctx, 5000).unwrap();
+
+        assert_eq!(inst.store.data().plugin_id(), "ctx-test");
+        assert_eq!(inst.store.data().runtime_label, "wasm");
+    }
+
+    #[test]
+    fn wasm_host_context_memory_limit_from_permissions() {
+        let mut cfg = wasmtime::Config::new();
+        cfg.consume_fuel(true);
+        let engine = wasmtime::Engine::new(&cfg).unwrap();
+        let perms = Permissions {
+            max_memory_mb: Some(16),
+            ..Permissions::default()
+        };
+        let host_ctx = make_host_ctx("mem-limit-test", perms);
+        assert_eq!(host_ctx.max_memory_bytes(), 16 * 1024 * 1024);
+        let _inst = WasmInstance::new(&engine, TEST_WAT.as_bytes(), host_ctx, 5000).unwrap();
+    }
+
+    #[test]
+    fn wasm_host_context_config_accessible() {
+        let mut cfg = wasmtime::Config::new();
+        cfg.consume_fuel(true);
+        let engine = wasmtime::Engine::new(&cfg).unwrap();
+        let host_ctx = make_host_ctx("config-test", Permissions::default());
+        assert!(host_ctx.get_config("app.env").is_some());
+        assert_eq!(host_ctx.get_config("app.env"), Some("test".into()));
+        let _inst = WasmInstance::new(&engine, TEST_WAT.as_bytes(), host_ctx, 5000).unwrap();
+    }
+
+    #[test]
+    fn wasm_host_context_log_does_not_crash() {
+        let mut cfg = wasmtime::Config::new();
+        cfg.consume_fuel(true);
+        let engine = wasmtime::Engine::new(&cfg).unwrap();
+        let host_ctx = make_host_ctx("log-test", Permissions::default());
+        host_ctx.log("info", "test message");
+        host_ctx.log("warn", "warning message");
+        host_ctx.log("error", "error message");
+        let _inst = WasmInstance::new(&engine, TEST_WAT.as_bytes(), host_ctx, 5000).unwrap();
+    }
+
+    #[test]
+    fn wasm_host_context_no_pool_returns_gracefully() {
+        let mut cfg = wasmtime::Config::new();
+        cfg.consume_fuel(true);
+        let engine = wasmtime::Engine::new(&cfg).unwrap();
+        let host_ctx = make_host_ctx("no-pool-test", Permissions::default());
+
+        assert!(host_ctx.get_data("key").is_none());
+        assert!(!host_ctx.set_data("key", "val"));
+        assert!(host_ctx.get_post("slug").is_none());
+        assert!(host_ctx.db_query("SELECT 1").contains("no database access"));
+
+        let _inst = WasmInstance::new(&engine, TEST_WAT.as_bytes(), host_ctx, 5000).unwrap();
     }
 }

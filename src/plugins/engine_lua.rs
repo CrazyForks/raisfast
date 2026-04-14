@@ -14,6 +14,8 @@ use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
 use crate::config::app::AppConfig;
+use crate::db::Pool;
+use crate::plugins::Permissions;
 
 /// 默认超时指令数（约 2-5 秒执行时间）
 const DEFAULT_TIMEOUT_INSTRUCTIONS: i64 = 5_000_000;
@@ -23,15 +25,19 @@ const DEFAULT_TIMEOUT_INSTRUCTIONS: i64 = 5_000_000;
 /// 管理所有 Lua 插件的独立 Lua 状态。
 pub struct LuaEngine {
     states: Mutex<HashMap<String, Lua>>,
+    permissions_map: Mutex<HashMap<String, Permissions>>,
     config: Arc<AppConfig>,
+    pool: Option<Pool>,
 }
 
 impl LuaEngine {
     /// 创建新的 Lua 引擎
-    pub fn new(config: &AppConfig) -> anyhow::Result<Self> {
+    pub fn new(config: &AppConfig, pool: Option<Pool>) -> anyhow::Result<Self> {
         Ok(Self {
             states: Mutex::new(HashMap::new()),
+            permissions_map: Mutex::new(HashMap::new()),
             config: Arc::new(config.clone()),
+            pool,
         })
     }
 
@@ -46,16 +52,39 @@ impl LuaEngine {
     }
 
     /// 加载 Lua 插件代码
-    pub async fn load_plugin(&self, id: &str, code: &str) -> anyhow::Result<()> {
+    pub async fn load_plugin(
+        &self,
+        id: &str,
+        code: &str,
+        permissions: Permissions,
+    ) -> anyhow::Result<()> {
         let memory_limit = (self.config.plugin_max_memory_mb as usize) * 1024 * 1024;
         let lua = Self::create_sandboxed_lua(memory_limit)?;
         let config = self.config.clone();
+        let plugin_id = id.to_string();
+        let perms = permissions.clone();
 
-        super::lua_host::register_host_functions(&lua, config)?;
+        super::lua_host::register_host_functions(
+            &lua,
+            config,
+            plugin_id,
+            perms,
+            self.pool.clone(),
+        )?;
         lua.load(code).exec()?;
 
+        self.permissions_map
+            .lock()
+            .await
+            .insert(id.to_string(), permissions);
         self.states.lock().await.insert(id.to_string(), lua);
         Ok(())
+    }
+
+    /// 加载 Lua 插件（兼容旧的无权限接口）
+    #[cfg(test)]
+    pub async fn load_plugin_default(&self, id: &str, code: &str) -> anyhow::Result<()> {
+        self.load_plugin(id, code, Permissions::default()).await
     }
 
     /// 卸载插件（移除 Lua 状态）
@@ -207,6 +236,9 @@ mod tests {
             plugin_max_memory_mb: 8,
             plugin_default_timeout_ms: 2000,
             plugin_disabled: vec![],
+            plugin_vfs_root: "./plugins-data".into(),
+            plugin_vfs_max_file_size: 1048576,
+            plugin_vfs_max_total_size: 10485760,
             log_dir: "./logs".into(),
             log_max_files: 7,
             rate_limit_global_max: 60,
@@ -222,13 +254,13 @@ mod tests {
 
     #[tokio::test]
     async fn lua_engine_create() {
-        let engine = LuaEngine::new(&test_config());
+        let engine = LuaEngine::new(&test_config(), None);
         assert!(engine.is_ok());
     }
 
     #[tokio::test]
     async fn lua_engine_load_and_call_filter() {
-        let engine = LuaEngine::new(&test_config()).unwrap();
+        let engine = LuaEngine::new(&test_config(), None).unwrap();
 
         let code = r#"
 Plugin = {
@@ -238,7 +270,10 @@ Plugin = {
     end
 }
 "#;
-        engine.load_plugin("test-filter", code).await.unwrap();
+        engine
+            .load_plugin_default("test-filter", code)
+            .await
+            .unwrap();
 
         let input = serde_json::json!({"title": "hello", "content": "world"});
         let result: Option<serde_json::Value> = engine
@@ -254,7 +289,7 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_call_filter_missing_plugin() {
-        let engine = LuaEngine::new(&test_config()).unwrap();
+        let engine = LuaEngine::new(&test_config(), None).unwrap();
         let result: Option<serde_json::Value> = engine
             .call_filter("nonexistent", "on_post_creating", &serde_json::json!({}))
             .await
@@ -264,9 +299,9 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_call_filter_missing_function() {
-        let engine = LuaEngine::new(&test_config()).unwrap();
+        let engine = LuaEngine::new(&test_config(), None).unwrap();
         engine
-            .load_plugin("test-nofunc", "Plugin = {}")
+            .load_plugin_default("test-nofunc", "Plugin = {}")
             .await
             .unwrap();
 
@@ -279,7 +314,7 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_call_action() {
-        let engine = LuaEngine::new(&test_config()).unwrap();
+        let engine = LuaEngine::new(&test_config(), None).unwrap();
 
         let code = r#"
 Plugin = {
@@ -288,7 +323,10 @@ Plugin = {
     end
 }
 "#;
-        engine.load_plugin("test-action", code).await.unwrap();
+        engine
+            .load_plugin_default("test-action", code)
+            .await
+            .unwrap();
 
         let result = engine
             .call_action(
@@ -302,7 +340,7 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_call_string_filter() {
-        let engine = LuaEngine::new(&test_config()).unwrap();
+        let engine = LuaEngine::new(&test_config(), None).unwrap();
 
         let code = r#"
 Plugin = {
@@ -311,7 +349,10 @@ Plugin = {
     end
 }
 "#;
-        engine.load_plugin("test-strfilter", code).await.unwrap();
+        engine
+            .load_plugin_default("test-strfilter", code)
+            .await
+            .unwrap();
 
         let result = engine
             .call_string_filter(
@@ -328,9 +369,9 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_unload_plugin() {
-        let engine = LuaEngine::new(&test_config()).unwrap();
+        let engine = LuaEngine::new(&test_config(), None).unwrap();
         engine
-            .load_plugin("test-unload", "Plugin = {}")
+            .load_plugin_default("test-unload", "Plugin = {}")
             .await
             .unwrap();
         assert_eq!(engine.plugin_count().await, 1);
@@ -341,14 +382,14 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_multiple_plugins() {
-        let engine = LuaEngine::new(&test_config()).unwrap();
+        let engine = LuaEngine::new(&test_config(), None).unwrap();
 
         for i in 0..3 {
             let code = format!(
                 r#"Plugin = {{ on_post_creating = function(input) input.idx = {i}; return input end }}"#
             );
             engine
-                .load_plugin(&format!("plugin-{i}"), &code)
+                .load_plugin_default(&format!("plugin-{i}"), &code)
                 .await
                 .unwrap();
         }
@@ -358,9 +399,9 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_syntax_error_fails_load() {
-        let engine = LuaEngine::new(&test_config()).unwrap();
+        let engine = LuaEngine::new(&test_config(), None).unwrap();
         let result = engine
-            .load_plugin("test-bad", "function !!!invalid!!!")
+            .load_plugin_default("test-bad", "function !!!invalid!!!")
             .await;
         assert!(result.is_err());
     }
@@ -369,7 +410,7 @@ Plugin = {
     async fn lua_engine_timeout_interrupts_long_execution() {
         let mut config = (*test_config()).clone();
         config.plugin_default_timeout_ms = 100;
-        let engine = LuaEngine::new(&Arc::new(config)).unwrap();
+        let engine = LuaEngine::new(&Arc::new(config), None).unwrap();
 
         let code = r#"
 Plugin = {
@@ -380,7 +421,10 @@ Plugin = {
     end
 }
 "#;
-        engine.load_plugin("test-timeout", code).await.unwrap();
+        engine
+            .load_plugin_default("test-timeout", code)
+            .await
+            .unwrap();
 
         let result: anyhow::Result<Option<serde_json::Value>> = engine
             .call_filter("test-timeout", "on_post_creating", &serde_json::json!({}))
@@ -390,7 +434,7 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_action_exception_does_not_crash() {
-        let engine = LuaEngine::new(&test_config()).unwrap();
+        let engine = LuaEngine::new(&test_config(), None).unwrap();
 
         let code = r#"
 Plugin = {
@@ -399,7 +443,10 @@ Plugin = {
     end
 }
 "#;
-        engine.load_plugin("test-throw", code).await.unwrap();
+        engine
+            .load_plugin_default("test-throw", code)
+            .await
+            .unwrap();
 
         let result = engine
             .call_action(
@@ -413,7 +460,7 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_host_get_config_returns_value() {
-        let engine = LuaEngine::new(&test_config()).unwrap();
+        let engine = LuaEngine::new(&test_config(), None).unwrap();
 
         let code = r#"
 Plugin = {
@@ -429,7 +476,7 @@ Plugin = {
     end
 }
 "#;
-        engine.load_plugin("test-cfg", code).await.unwrap();
+        engine.load_plugin_default("test-cfg", code).await.unwrap();
 
         let result = engine
             .call_action("test-cfg", "on_post_created", &serde_json::json!({}))
@@ -439,7 +486,7 @@ Plugin = {
 
     #[tokio::test]
     async fn lua_engine_no_io_os_libs() {
-        let engine = LuaEngine::new(&test_config()).unwrap();
+        let engine = LuaEngine::new(&test_config(), None).unwrap();
 
         let code = r#"
 Plugin = {}
@@ -447,7 +494,7 @@ if io ~= nil then error("io should not be available") end
 if os ~= nil then error("os should not be available") end
 if debug ~= nil then error("debug should not be available") end
 "#;
-        let result = engine.load_plugin("test-sandbox", code).await;
+        let result = engine.load_plugin_default("test-sandbox", code).await;
         assert!(result.is_ok());
     }
 
@@ -455,7 +502,7 @@ if debug ~= nil then error("debug should not be available") end
     async fn lua_engine_memory_limit_enforced() {
         let mut config = (*test_config()).clone();
         config.plugin_max_memory_mb = 1;
-        let engine = LuaEngine::new(&Arc::new(config)).unwrap();
+        let engine = LuaEngine::new(&Arc::new(config), None).unwrap();
 
         let code = r#"
 local t = {}
@@ -464,7 +511,7 @@ for i = 1, 1000000 do
 end
 Plugin = {}
 "#;
-        let result = engine.load_plugin("test-memlimit", code).await;
+        let result = engine.load_plugin_default("test-memlimit", code).await;
         assert!(result.is_err());
     }
 }

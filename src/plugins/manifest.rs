@@ -1,6 +1,6 @@
 //! 插件清单 (plugin.toml) 解析
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// 插件清单顶层结构
@@ -11,6 +11,8 @@ pub struct PluginManifest {
     pub permissions: Permissions,
     #[serde(default, deserialize_with = "deserialize_hooks")]
     pub hooks: HashMap<String, HookConfig>,
+    #[serde(default)]
+    pub dependencies: HashMap<String, String>,
 }
 
 fn deserialize_hooks<'de, D>(de: D) -> Result<HashMap<String, HookConfig>, D::Error>
@@ -61,12 +63,16 @@ fn default_entry() -> String {
 }
 
 /// 插件权限声明
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Permissions {
     #[serde(default)]
     pub http: Vec<String>,
     #[serde(default)]
     pub config: Vec<String>,
+    #[serde(default)]
+    pub database: Vec<String>,
+    #[serde(default)]
+    pub filesystem: Vec<String>,
     pub max_memory_mb: Option<u32>,
     pub timeout_ms: Option<u64>,
 }
@@ -254,7 +260,88 @@ version = "1.0.0"
         let p = Permissions::default();
         assert!(p.http.is_empty());
         assert!(p.config.is_empty());
+        assert!(p.database.is_empty());
         assert!(p.max_memory_mb.is_none());
         assert!(p.timeout_ms.is_none());
+    }
+
+    #[test]
+    fn parse_manifest_with_database_permissions() {
+        let toml = r#"
+[plugin]
+id = "com.example.analytics"
+name = "Analytics"
+version = "1.0.0"
+
+[permissions]
+http = ["api.analytics.com/*"]
+config = ["seo.*"]
+database = ["read:posts", "read:comments", "write:analytics"]
+max_memory_mb = 64
+timeout_ms = 3000
+"#;
+        let m: PluginManifest = toml::from_str(toml).unwrap();
+        assert_eq!(
+            m.permissions.database,
+            vec!["read:posts", "read:comments", "write:analytics"]
+        );
+        assert_eq!(m.permissions.http, vec!["api.analytics.com/*"]);
+        assert_eq!(m.permissions.config, vec!["seo.*"]);
+    }
+
+    #[test]
+    fn parse_manifest_database_defaults_empty() {
+        let toml = r#"
+[plugin]
+id = "com.example.basic"
+name = "Basic"
+version = "1.0.0"
+"#;
+        let m: PluginManifest = toml::from_str(toml).unwrap();
+        assert!(m.permissions.database.is_empty());
+        assert!(m.permissions.http.is_empty());
+        assert!(m.permissions.config.is_empty());
+    }
+
+    #[test]
+    fn parse_manifest_with_filesystem_permissions() {
+        let toml = r#"
+[plugin]
+id = "com.example.cache"
+name = "Cache"
+version = "1.0.0"
+
+[permissions]
+filesystem = ["read-write"]
+"#;
+        let m: PluginManifest = toml::from_str(toml).unwrap();
+        assert_eq!(m.permissions.filesystem, vec!["read-write"]);
+    }
+
+    #[test]
+    fn parse_manifest_filesystem_defaults_empty() {
+        let toml = r#"
+[plugin]
+id = "com.example.basic"
+name = "Basic"
+version = "1.0.0"
+"#;
+        let m: PluginManifest = toml::from_str(toml).unwrap();
+        assert!(m.permissions.filesystem.is_empty());
+    }
+
+    #[test]
+    fn parse_manifest_filesystem_wildcard() {
+        let toml = r#"
+[plugin]
+id = "com.example.admin"
+name = "Admin"
+version = "1.0.0"
+
+[permissions]
+filesystem = ["*"]
+"#;
+        let m: PluginManifest = toml::from_str(toml).unwrap();
+        assert_eq!(m.permissions.filesystem, vec!["*"]);
     }
 }

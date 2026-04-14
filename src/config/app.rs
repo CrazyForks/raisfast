@@ -48,6 +48,12 @@ pub struct AppConfig {
     pub plugin_default_timeout_ms: u64,
     #[serde(default)]
     pub plugin_disabled: Vec<String>,
+    #[serde(default = "default_plugin_vfs_root")]
+    pub plugin_vfs_root: String,
+    #[serde(default = "default_plugin_vfs_max_file_size")]
+    pub plugin_vfs_max_file_size: usize,
+    #[serde(default = "default_plugin_vfs_max_total_size")]
+    pub plugin_vfs_max_total_size: usize,
     #[serde(default = "default_log_dir")]
     pub log_dir: String,
     #[serde(default = "default_log_max_files")]
@@ -116,6 +122,18 @@ fn default_plugin_max_memory() -> u32 {
 
 fn default_plugin_timeout() -> u64 {
     5000
+}
+
+fn default_plugin_vfs_root() -> String {
+    "./plugins-data".into()
+}
+
+fn default_plugin_vfs_max_file_size() -> usize {
+    1048576 // 1 MB
+}
+
+fn default_plugin_vfs_max_total_size() -> usize {
+    10485760 // 10 MB
 }
 
 const DEFAULT_JWT_SECRET: &str = "change-me-in-production-at-least-32-chars";
@@ -226,6 +244,16 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default_rate_limit_comment_window()),
+            plugin_vfs_root: env::var("PLUGIN_VFS_ROOT")
+                .unwrap_or_else(|_| default_plugin_vfs_root()),
+            plugin_vfs_max_file_size: env::var("PLUGIN_VFS_MAX_FILE_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_plugin_vfs_max_file_size()),
+            plugin_vfs_max_total_size: env::var("PLUGIN_VFS_MAX_TOTAL_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_plugin_vfs_max_total_size()),
         }
     }
 

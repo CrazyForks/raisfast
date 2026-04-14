@@ -1,0 +1,28 @@
+[plugin]
+id = "com.rust-blog.page-cache"
+name = "Page Cache"
+version = "1.0.0"
+description = "使用 VFS 缓存渲染后的文章内容，演示所有文件系统 Host API"
+author = "rust-blog"
+license = "MIT"
+runtime = "lua"
+language = "lua"
+entry = "init.lua"
+
+[permissions]
+max_memory_mb = 8
+timeout_ms = 2000
+filesystem = ["read-write"]
+database = ["read:posts"]
+
+[hooks.on_post_created]
+priority = 10
+
+[hooks.on_post_updated]
+priority = 10
+
+[hooks.on_post_deleted]
+priority = 10
+
+[hooks.on_post_creating]
+priority = 20

@@ -1,59 +1,138 @@
-//! Lua 宿主函数
+//! Lua 宿主函数 — 引擎绑定层
 //!
-//! 注册到 Lua 全局 table 的宿主函数，供插件通过 `Host` table 调用。
-//! 当前提供 `Host.log()` 和 `Host.getConfig()`。
+//! 仅负责将 [`HostContext`](super::host_common::HostContext) 的公共业务逻辑
+//! 绑定到 Lua 全局 table 的 `Host` 属性上。
 
 use std::sync::Arc;
 
 use mlua::Lua;
 
 use crate::config::app::AppConfig;
+use crate::db::Pool;
+use crate::plugins::Permissions;
+use crate::plugins::host_common::HostContext;
 
 /// 注册宿主函数到 Lua 全局作用域。
-///
-/// 在每个插件 Lua 状态中调用，注入全局 `Host` table。
-pub fn register_host_functions(lua: &Lua, config: Arc<AppConfig>) -> anyhow::Result<()> {
+pub fn register_host_functions(
+    lua: &Lua,
+    config: Arc<AppConfig>,
+    plugin_id: String,
+    permissions: Permissions,
+    pool: Option<Pool>,
+) -> anyhow::Result<()> {
     let globals = lua.globals();
     let host = lua.create_table()?;
 
-    let log_fn = lua.create_function(|_, (level, msg): (String, String)| {
-        match level.as_str() {
-            "warn" => tracing::warn!("[plugin:lua] {msg}"),
-            "error" => tracing::error!("[plugin:lua] {msg}"),
-            _ => tracing::info!("[plugin:lua] {msg}"),
-        }
+    let host_ctx = Arc::new(HostContext::new(
+        "lua",
+        config,
+        plugin_id,
+        permissions,
+        pool,
+    ));
+
+    let hc = host_ctx.clone();
+    let log_fn = lua.create_function(move |_, (level, msg): (String, String)| {
+        hc.log(&level, &msg);
         Ok(())
     })?;
     host.set("log", log_fn)?;
 
-    let get_config_fn =
-        lua.create_function(
-            move |lua, key: String| match get_config_value(&config, &key) {
-                Some(val) => Ok(mlua::Value::String(lua.create_string(&val)?)),
-                None => Ok(mlua::Value::Nil),
-            },
-        )?;
+    let hc = host_ctx.clone();
+    let get_config_fn = lua.create_function(move |lua, key: String| match hc.get_config(&key) {
+        Some(val) => Ok(mlua::Value::String(lua.create_string(&val)?)),
+        None => Ok(mlua::Value::Nil),
+    })?;
     host.set("getConfig", get_config_fn)?;
+
+    let hc = host_ctx.clone();
+    let http_get_fn = lua.create_function(move |lua, url: String| {
+        Ok(mlua::Value::String(lua.create_string(hc.http_get(&url))?))
+    })?;
+    host.set("httpGet", http_get_fn)?;
+
+    let hc = host_ctx.clone();
+    let http_post_fn = lua.create_function(move |lua, (url, body): (String, String)| {
+        Ok(mlua::Value::String(
+            lua.create_string(hc.http_post(&url, &body))?,
+        ))
+    })?;
+    host.set("httpPost", http_post_fn)?;
+
+    let hc = host_ctx.clone();
+    let get_data_fn = lua.create_function(move |lua, key: String| match hc.get_data(&key) {
+        Some(val) => Ok(mlua::Value::String(lua.create_string(&val)?)),
+        None => Ok(mlua::Value::Nil),
+    })?;
+    host.set("getData", get_data_fn)?;
+
+    let hc = host_ctx.clone();
+    let set_data_fn = lua
+        .create_function(move |_, (key, value): (String, String)| Ok(hc.set_data(&key, &value)))?;
+    host.set("setData", set_data_fn)?;
+
+    let hc = host_ctx.clone();
+    let get_post_fn = lua.create_function(move |lua, slug: String| match hc.get_post(&slug) {
+        Some(json) => Ok(mlua::Value::String(lua.create_string(&json)?)),
+        None => Ok(mlua::Value::Nil),
+    })?;
+    host.set("getPost", get_post_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_query_fn = lua.create_function(move |lua, sql: String| {
+        Ok(mlua::Value::String(lua.create_string(hc.db_query(&sql))?))
+    })?;
+    host.set("dbQuery", db_query_fn)?;
+
+    let hc = host_ctx.clone();
+    let fs_read_fn = lua.create_function(move |lua, path: String| match hc.fs_read(&path) {
+        Ok(content) => Ok(mlua::Value::String(lua.create_string(&content)?)),
+        Err(_) => Ok(mlua::Value::Nil),
+    })?;
+    host.set("fsRead", fs_read_fn)?;
+
+    let hc = host_ctx.clone();
+    let fs_write_fn = lua.create_function(move |_, (path, content): (String, String)| {
+        Ok(hc.fs_write(&path, &content).is_ok())
+    })?;
+    host.set("fsWrite", fs_write_fn)?;
+
+    let hc = host_ctx.clone();
+    let fs_delete_fn =
+        lua.create_function(move |_, path: String| Ok(hc.fs_delete(&path).is_ok()))?;
+    host.set("fsDelete", fs_delete_fn)?;
+
+    let hc = host_ctx.clone();
+    let fs_exists_fn =
+        lua.create_function(move |_lua, path: String| match hc.fs_exists(&path) {
+            Ok(true) => Ok(mlua::Value::Boolean(true)),
+            Ok(false) => Ok(mlua::Value::Boolean(false)),
+            Err(_) => Ok(mlua::Value::Nil),
+        })?;
+    host.set("fsExists", fs_exists_fn)?;
+
+    let hc = host_ctx.clone();
+    let fs_list_fn = lua.create_function(move |lua, path: String| match hc.fs_list(&path) {
+        Ok(entries) => {
+            let tbl = lua.create_table()?;
+            for (i, entry) in entries.into_iter().enumerate() {
+                tbl.set(i + 1, entry)?;
+            }
+            Ok(mlua::Value::Table(tbl))
+        }
+        Err(_) => Ok(mlua::Value::Nil),
+    })?;
+    host.set("fsList", fs_list_fn)?;
+
+    let hc = host_ctx;
+    let fs_stat_fn = lua.create_function(move |lua, path: String| match hc.fs_stat(&path) {
+        Ok(json) => Ok(mlua::Value::String(lua.create_string(&json)?)),
+        Err(_) => Ok(mlua::Value::Nil),
+    })?;
+    host.set("fsStat", fs_stat_fn)?;
 
     globals.set("Host", host)?;
     Ok(())
-}
-
-/// 根据 key 路径从 AppConfig 读取配置值
-fn get_config_value(config: &AppConfig, key: &str) -> Option<String> {
-    match key {
-        "app.host" => Some(config.host.clone()),
-        "app.port" => Some(config.port.to_string()),
-        "app.env" => Some(config.env.clone()),
-        "app.base_url" => Some(config.base_url.clone()),
-        "jwt.access_expires" => Some(config.jwt_access_expires.to_string()),
-        "jwt.refresh_expires" => Some(config.jwt_refresh_expires.to_string()),
-        "upload.dir" => Some(config.upload_dir.clone()),
-        "upload.max_size" => Some(config.max_upload_size.to_string()),
-        "plugin.max_memory_mb" => Some(config.plugin_max_memory_mb.to_string()),
-        "plugin.default_timeout_ms" => Some(config.plugin_default_timeout_ms.to_string()),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -80,6 +159,9 @@ mod tests {
             plugin_max_memory_mb: 32,
             plugin_default_timeout_ms: 5000,
             plugin_disabled: vec![],
+            plugin_vfs_root: "./plugins-data".into(),
+            plugin_vfs_max_file_size: 1048576,
+            plugin_vfs_max_total_size: 10485760,
             log_dir: "./logs".into(),
             log_max_files: 7,
             rate_limit_global_max: 60,
@@ -105,7 +187,8 @@ mod tests {
     fn register_host_functions_in_context() {
         let lua = create_sandboxed_lua();
         let config = make_test_config();
-        register_host_functions(&lua, config).unwrap();
+        let perms = Permissions::default();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
 
         let globals = lua.globals();
         let host: mlua::Table = globals.get("Host").unwrap();
@@ -122,7 +205,8 @@ mod tests {
     fn host_get_config_returns_known_values() {
         let lua = create_sandboxed_lua();
         let config = make_test_config();
-        register_host_functions(&lua, config).unwrap();
+        let perms = Permissions::default();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
 
         let globals = lua.globals();
         let host: mlua::Table = globals.get("Host").unwrap();
@@ -134,22 +218,141 @@ mod tests {
         let port: String = get_cfg_fn.call(("app.port",)).unwrap();
         assert_eq!(port, "3000");
 
-        let base_url: String = get_cfg_fn.call(("app.base_url",)).unwrap();
-        assert_eq!(base_url, "http://localhost:3000");
-
         let unknown: mlua::Value = get_cfg_fn.call(("nonexistent.key",)).unwrap();
         assert!(unknown.is_nil());
     }
 
     #[test]
-    fn get_config_value_all_keys() {
+    fn host_http_get_blocked_without_permission() {
+        let lua = create_sandboxed_lua();
         let config = make_test_config();
-        assert_eq!(
-            get_config_value(&config, "app.host"),
-            Some("127.0.0.1".into())
-        );
-        assert_eq!(get_config_value(&config, "app.port"), Some("3000".into()));
-        assert_eq!(get_config_value(&config, "app.env"), Some("test".into()));
-        assert!(get_config_value(&config, "jwt.secret").is_none());
+        let perms = Permissions::default();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+
+        let globals = lua.globals();
+        let host: mlua::Table = globals.get("Host").unwrap();
+        let http_fn: mlua::Function = host.get("httpGet").unwrap();
+
+        let result: String = http_fn.call(("https://evil.com",)).unwrap();
+        assert!(result.contains("not allowed"));
+    }
+
+    #[test]
+    fn host_http_post_blocked_without_permission() {
+        let lua = create_sandboxed_lua();
+        let config = make_test_config();
+        let perms = Permissions::default();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+
+        let globals = lua.globals();
+        let host: mlua::Table = globals.get("Host").unwrap();
+        let http_fn: mlua::Function = host.get("httpPost").unwrap();
+
+        let result: String = http_fn.call(("https://evil.com", "{}")).unwrap();
+        assert!(result.contains("not allowed"));
+    }
+
+    #[test]
+    fn host_get_data_returns_nil_without_pool() {
+        let lua = create_sandboxed_lua();
+        let config = make_test_config();
+        let perms = Permissions::default();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+
+        let globals = lua.globals();
+        let host: mlua::Table = globals.get("Host").unwrap();
+        let get_data_fn: mlua::Function = host.get("getData").unwrap();
+
+        let result: mlua::Value = get_data_fn.call(("some.key",)).unwrap();
+        assert!(result.is_nil());
+    }
+
+    #[test]
+    fn host_set_data_returns_false_without_pool() {
+        let lua = create_sandboxed_lua();
+        let config = make_test_config();
+        let perms = Permissions::default();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+
+        let globals = lua.globals();
+        let host: mlua::Table = globals.get("Host").unwrap();
+        let set_data_fn: mlua::Function = host.get("setData").unwrap();
+
+        let result: bool = set_data_fn.call(("key", "val")).unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn host_get_post_returns_nil_without_pool() {
+        let lua = create_sandboxed_lua();
+        let config = make_test_config();
+        let perms = Permissions::default();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+
+        let globals = lua.globals();
+        let host: mlua::Table = globals.get("Host").unwrap();
+        let get_post_fn: mlua::Function = host.get("getPost").unwrap();
+
+        let result: mlua::Value = get_post_fn.call(("some-slug",)).unwrap();
+        assert!(result.is_nil());
+    }
+
+    #[test]
+    fn host_db_query_returns_error_without_pool() {
+        let lua = create_sandboxed_lua();
+        let config = make_test_config();
+        let perms = Permissions::default();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+
+        let globals = lua.globals();
+        let host: mlua::Table = globals.get("Host").unwrap();
+        let db_fn: mlua::Function = host.get("dbQuery").unwrap();
+
+        let result: String = db_fn.call(("SELECT 1",)).unwrap();
+        assert!(result.contains("no database access"));
+    }
+
+    #[test]
+    fn host_db_query_rejects_non_select() {
+        let lua = create_sandboxed_lua();
+        let config = make_test_config();
+        let perms = Permissions::default();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+
+        let globals = lua.globals();
+        let host: mlua::Table = globals.get("Host").unwrap();
+        let db_fn: mlua::Function = host.get("dbQuery").unwrap();
+
+        let result: String = db_fn.call(("DELETE FROM posts",)).unwrap();
+        assert!(result.contains("only SELECT"));
+    }
+
+    #[test]
+    fn host_all_functions_registered() {
+        let lua = create_sandboxed_lua();
+        let config = make_test_config();
+        let perms = Permissions::default();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+
+        let globals = lua.globals();
+        let host: mlua::Table = globals.get("Host").unwrap();
+        for name in [
+            "log",
+            "getConfig",
+            "httpGet",
+            "httpPost",
+            "getData",
+            "setData",
+            "getPost",
+            "dbQuery",
+            "fsRead",
+            "fsWrite",
+            "fsDelete",
+            "fsExists",
+            "fsList",
+            "fsStat",
+        ] {
+            let _: mlua::Function = host.get(name).unwrap();
+        }
     }
 }

@@ -12,12 +12,11 @@ use axum::routing::{delete, get, post as http_post, put};
 use rust_blog::AppState;
 use rust_blog::config::app::AppConfig;
 use rust_blog::db::connection::init_pool;
-use rust_blog::handlers::{auth, category, comment, health, media, post, rss, tag, user};
+use rust_blog::handlers::{auth, category, comment, health, media, plugin, post, rss, tag, user};
 use rust_blog::middleware::locale::locale_middleware;
 use rust_blog::middleware::rate_limit::{
     RateLimiterSet, comment_rate_limit, global_rate_limit, login_rate_limit, register_rate_limit,
 };
-use rust_blog::plugins::PluginManager;
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
@@ -53,9 +52,13 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
     let pool = init_pool(&config.database_url, config.db_pool_size).await?;
 
     let state = AppState {
-        pool,
+        pool: pool.clone(),
         config: Arc::new(config.clone()),
-        plugins: PluginManager::new(Arc::new(config.clone())).await,
+        plugins: rust_blog::plugins::PluginManager::new_with_options(
+            Arc::new(config.clone()),
+            rust_blog::plugins::PluginManagerOptions { pool: Some(pool) },
+        )
+        .await,
     };
 
     let cors = build_cors(config);
@@ -103,6 +106,14 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         )
         .route("/media", get(media::list))
         .route("/media/{id}", delete(media::delete))
+        .route("/admin/plugins", get(plugin::list))
+        .route(
+            "/admin/plugins/{id}",
+            get(plugin::get).delete(plugin::remove),
+        )
+        .route("/admin/plugins/{id}/enable", http_post(plugin::enable))
+        .route("/admin/plugins/{id}/disable", http_post(plugin::disable))
+        .route("/admin/plugins/{id}/reload", http_post(plugin::reload))
         .layer(from_fn(global_rate_limit))
         .layer(Extension(limiters))
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024));

@@ -20,6 +20,7 @@
 pub mod category;
 pub mod comment;
 pub mod media;
+pub mod plugin_storage;
 pub mod post;
 pub mod refresh_token;
 pub mod tag;

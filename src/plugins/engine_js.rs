@@ -14,6 +14,8 @@ use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
 use crate::config::app::AppConfig;
+use crate::db::Pool;
+use crate::plugins::Permissions;
 
 /// JS 插件引擎
 ///
@@ -21,15 +23,17 @@ use crate::config::app::AppConfig;
 pub struct JsEngine {
     runtime: AsyncRuntime,
     contexts: Mutex<HashMap<String, AsyncContext>>,
+    permissions_map: Mutex<HashMap<String, Permissions>>,
     #[allow(dead_code)]
     memory_limit_bytes: usize,
     timeout_ms: u64,
     config: Arc<AppConfig>,
+    pool: Option<Pool>,
 }
 
 impl JsEngine {
     /// 创建新的 JS 引擎
-    pub async fn new(config: &AppConfig) -> anyhow::Result<Self> {
+    pub async fn new(config: &AppConfig, pool: Option<Pool>) -> anyhow::Result<Self> {
         let runtime = AsyncRuntime::new()?;
         let memory_limit_bytes = (config.plugin_max_memory_mb as usize) * 1024 * 1024;
         runtime.set_memory_limit(memory_limit_bytes).await;
@@ -38,25 +42,50 @@ impl JsEngine {
         Ok(Self {
             runtime,
             contexts: Mutex::new(HashMap::new()),
+            permissions_map: Mutex::new(HashMap::new()),
             memory_limit_bytes,
             timeout_ms: config.plugin_default_timeout_ms,
             config: Arc::new(config.clone()),
+            pool,
         })
     }
 
     /// 加载 JS 插件代码到独立上下文
-    pub async fn load_plugin(&self, id: &str, code: &str) -> anyhow::Result<()> {
+    pub async fn load_plugin(
+        &self,
+        id: &str,
+        code: &str,
+        permissions: Permissions,
+    ) -> anyhow::Result<()> {
         let ctx = AsyncContext::full(&self.runtime).await?;
         let config = self.config.clone();
+        let plugin_id = id.to_string();
+        let perms = permissions.clone();
         ctx.with(|ctx| {
-            super::js_host::register_host_functions(ctx.clone(), config)?;
+            super::js_host::register_host_functions(
+                ctx.clone(),
+                config,
+                plugin_id,
+                perms,
+                self.pool.clone(),
+            )?;
             ctx.eval::<(), _>(code)?;
             Ok::<_, rquickjs::Error>(())
         })
         .await?;
 
+        self.permissions_map
+            .lock()
+            .await
+            .insert(id.to_string(), permissions);
         self.contexts.lock().await.insert(id.to_string(), ctx);
         Ok(())
+    }
+
+    /// 加载 JS 插件（兼容旧的无权限接口）
+    #[cfg(test)]
+    pub async fn load_plugin_default(&self, id: &str, code: &str) -> anyhow::Result<()> {
+        self.load_plugin(id, code, Permissions::default()).await
     }
 
     /// 卸载插件（移除上下文）
@@ -227,6 +256,9 @@ mod tests {
             plugin_max_memory_mb: 8,
             plugin_default_timeout_ms: 2000,
             plugin_disabled: vec![],
+            plugin_vfs_root: "./plugins-data".into(),
+            plugin_vfs_max_file_size: 1048576,
+            plugin_vfs_max_total_size: 10485760,
             log_dir: "./logs".into(),
             log_max_files: 7,
             rate_limit_global_max: 60,
@@ -242,13 +274,13 @@ mod tests {
 
     #[tokio::test]
     async fn js_engine_create() {
-        let engine = JsEngine::new(&test_config()).await;
+        let engine = JsEngine::new(&test_config(), None).await;
         assert!(engine.is_ok());
     }
 
     #[tokio::test]
     async fn js_engine_load_and_call_filter() {
-        let engine = JsEngine::new(&test_config()).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None).await.unwrap();
 
         let code = r#"
 var Plugin = {
@@ -259,7 +291,10 @@ var Plugin = {
     }
 };
 "#;
-        engine.load_plugin("test-filter", code).await.unwrap();
+        engine
+            .load_plugin_default("test-filter", code)
+            .await
+            .unwrap();
 
         let input = serde_json::json!({"title": "hello", "content": "world"});
         let result: Option<serde_json::Value> = engine
@@ -275,7 +310,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_call_filter_missing_plugin() {
-        let engine = JsEngine::new(&test_config()).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None).await.unwrap();
         let result: Option<serde_json::Value> = engine
             .call_filter("nonexistent", "on_post_creating", &serde_json::json!({}))
             .await
@@ -285,10 +320,13 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_call_filter_missing_function() {
-        let engine = JsEngine::new(&test_config()).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None).await.unwrap();
 
         let code = r#"var Plugin = {};"#;
-        engine.load_plugin("test-nofunc", code).await.unwrap();
+        engine
+            .load_plugin_default("test-nofunc", code)
+            .await
+            .unwrap();
 
         let result: Option<serde_json::Value> = engine
             .call_filter("test-nofunc", "on_post_creating", &serde_json::json!({}))
@@ -299,7 +337,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_call_action() {
-        let engine = JsEngine::new(&test_config()).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None).await.unwrap();
 
         let code = r#"
 var Plugin = {
@@ -309,7 +347,10 @@ var Plugin = {
     }
 };
 "#;
-        engine.load_plugin("test-action", code).await.unwrap();
+        engine
+            .load_plugin_default("test-action", code)
+            .await
+            .unwrap();
 
         let result = engine
             .call_action(
@@ -323,7 +364,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_call_string_filter() {
-        let engine = JsEngine::new(&test_config()).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None).await.unwrap();
 
         let code = r#"
 var Plugin = {
@@ -332,7 +373,10 @@ var Plugin = {
     }
 };
 "#;
-        engine.load_plugin("test-strfilter", code).await.unwrap();
+        engine
+            .load_plugin_default("test-strfilter", code)
+            .await
+            .unwrap();
 
         let result = engine
             .call_string_filter(
@@ -349,10 +393,13 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_unload_plugin() {
-        let engine = JsEngine::new(&test_config()).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None).await.unwrap();
 
         let code = r#"var Plugin = {};"#;
-        engine.load_plugin("test-unload", code).await.unwrap();
+        engine
+            .load_plugin_default("test-unload", code)
+            .await
+            .unwrap();
         assert_eq!(engine.plugin_count().await, 1);
 
         engine.unload_plugin("test-unload").await;
@@ -361,14 +408,14 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_multiple_plugins() {
-        let engine = JsEngine::new(&test_config()).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None).await.unwrap();
 
         for i in 0..3 {
             let code = format!(
                 r#"var Plugin = {{ on_post_creating: function(j) {{ var d = JSON.parse(j); d.idx = {i}; return JSON.stringify(d); }} }};"#
             );
             engine
-                .load_plugin(&format!("plugin-{i}"), &code)
+                .load_plugin_default(&format!("plugin-{i}"), &code)
                 .await
                 .unwrap();
         }
@@ -378,7 +425,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_host_log_available() {
-        let engine = JsEngine::new(&test_config()).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None).await.unwrap();
 
         let code = r#"
 var Plugin = {
@@ -387,7 +434,7 @@ var Plugin = {
     }
 };
 "#;
-        engine.load_plugin("test-host", code).await.unwrap();
+        engine.load_plugin_default("test-host", code).await.unwrap();
 
         let result = engine
             .call_action("test-host", "on_post_created", &serde_json::json!({}))
@@ -397,7 +444,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_host_get_config_returns_value() {
-        let engine = JsEngine::new(&test_config()).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None).await.unwrap();
 
         let code = r#"
 var Plugin = {
@@ -413,7 +460,7 @@ var Plugin = {
     }
 };
 "#;
-        engine.load_plugin("test-cfg", code).await.unwrap();
+        engine.load_plugin_default("test-cfg", code).await.unwrap();
 
         let result = engine
             .call_action("test-cfg", "on_post_created", &serde_json::json!({}))
@@ -423,9 +470,9 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_syntax_error_fails_load() {
-        let engine = JsEngine::new(&test_config()).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None).await.unwrap();
         let result = engine
-            .load_plugin("test-bad-syntax", "var !!!invalid!!!")
+            .load_plugin_default("test-bad-syntax", "var !!!invalid!!!")
             .await;
         assert!(result.is_err());
     }
@@ -434,7 +481,7 @@ var Plugin = {
     async fn js_engine_timeout_interrupts_long_execution() {
         let mut config = (*test_config()).clone();
         config.plugin_default_timeout_ms = 100;
-        let engine = JsEngine::new(&Arc::new(config)).await.unwrap();
+        let engine = JsEngine::new(&Arc::new(config), None).await.unwrap();
 
         let code = r#"
 var Plugin = {
@@ -445,7 +492,10 @@ var Plugin = {
     }
 };
 "#;
-        engine.load_plugin("test-timeout", code).await.unwrap();
+        engine
+            .load_plugin_default("test-timeout", code)
+            .await
+            .unwrap();
 
         let result: anyhow::Result<Option<serde_json::Value>> = engine
             .call_filter("test-timeout", "on_post_creating", &serde_json::json!({}))
@@ -455,7 +505,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_filter_chain_multiple_plugins() {
-        let engine = JsEngine::new(&test_config()).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None).await.unwrap();
 
         let code_a = r#"
 var Plugin = {
@@ -475,8 +525,8 @@ var Plugin = {
     }
 };
 "#;
-        engine.load_plugin("chain-a", code_a).await.unwrap();
-        engine.load_plugin("chain-b", code_b).await.unwrap();
+        engine.load_plugin_default("chain-a", code_a).await.unwrap();
+        engine.load_plugin_default("chain-b", code_b).await.unwrap();
 
         let input = serde_json::json!({"title": "test"});
         let result_a: Option<serde_json::Value> = engine
@@ -497,7 +547,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_action_exception_does_not_crash() {
-        let engine = JsEngine::new(&test_config()).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None).await.unwrap();
 
         let code = r#"
 var Plugin = {
@@ -506,7 +556,10 @@ var Plugin = {
     }
 };
 "#;
-        engine.load_plugin("test-throw", code).await.unwrap();
+        engine
+            .load_plugin_default("test-throw", code)
+            .await
+            .unwrap();
 
         let result = engine
             .call_action(

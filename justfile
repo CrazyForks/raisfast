@@ -138,13 +138,24 @@ plugins-ts-build:
         --bundle --format=iife --target=es2021
     @echo "Done."
 
-# 复制 Lua 插件到 plugins/ 目录
+# 扫描 plugins-examples-lua/ 下所有含 plugin.toml 的子目录，复制到 plugins/
+# 扫描 plugins-examples-lua/ 下含 plugin.toml 的子目录，复制到 plugins/
 plugins-lua-build:
-    @echo "Copying Lua plugins..."
-    @mkdir -p plugins/excerpt-generator
-    @cp plugins-examples-lua/excerpt-generator/plugin.toml plugins/excerpt-generator/
-    @cp plugins-examples-lua/excerpt-generator/init.lua plugins/excerpt-generator/
-    @echo "Done. Lua plugins ready in plugins/"
+    #!/usr/bin/env bash
+    echo "Scanning plugins-examples-lua/..."
+    count=0
+    for dir in plugins-examples-lua/*/; do
+        if [ -f "${dir}plugin.toml" ]; then
+            name=$(basename "$dir")
+            echo "  $name"
+            mkdir -p "plugins/$name"
+            cp -r "$dir"* "plugins/$name/"
+            count=$((count + 1))
+        else
+            echo "  Skipping $(basename "$dir"): missing plugin.toml"
+        fi
+    done
+    echo "Done. $count Lua plugin(s) copied to plugins/"
 
 # 编译/复制所有插件（WASM + JS + Lua）
 plugins-all: plugins-build plugins-js-build plugins-lua-build

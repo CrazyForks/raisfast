@@ -193,7 +193,7 @@ pub async fn create_post(
         req.cover_image.as_deref(),
         status,
         author_id,
-        req.category_id.as_deref(),
+        req.category_id.as_deref().filter(|s| !s.is_empty()),
     )
     .await?;
 
@@ -251,7 +251,7 @@ pub async fn update_post(
         Some(&excerpt),
         req.cover_image.as_deref(),
         req.status.as_deref(),
-        req.category_id.as_deref(),
+        req.category_id.as_deref().filter(|s| !s.is_empty()),
     )
     .await?;
 
