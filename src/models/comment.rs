@@ -11,7 +11,6 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
-use validator::Validate;
 
 use crate::errors::app_error::{AppError, AppResult};
 
@@ -52,31 +51,6 @@ pub struct CommentResponse {
     pub created_at: String,
 }
 
-/// 创建评论请求体
-///
-/// - `content` 长度 1–5000 个字符
-/// - `nickname` 长度 1–50 个字符（访客必填）
-/// - `email` 须为合法邮箱格式（访客可选）
-#[derive(Debug, Deserialize, Validate)]
-pub struct CreateCommentRequest {
-    #[validate(length(min = 1, max = 5000))]
-    pub content: String,
-    pub parent_id: Option<String>,
-    #[validate(length(min = 1, max = 50))]
-    pub nickname: Option<String>,
-    #[validate(email)]
-    pub email: Option<String>,
-}
-
-/// 更新评论状态请求体
-///
-/// - `status` 不能为空，可取 `pending`、`approved`、`rejected`
-#[derive(Debug, Deserialize, Validate)]
-pub struct UpdateCommentStatusRequest {
-    #[validate(length(min = 1))]
-    pub status: String,
-}
-
 /// 根据评论 ID 查找评论
 ///
 /// 返回 `Ok(Some(comment))` 或 `Ok(None)`（未找到时）。
@@ -95,12 +69,7 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<Co
 /// 创建完成后重新查询并返回完整评论记录。
 pub async fn create(
     pool: &crate::db::Pool,
-    post_id: &str,
-    author_id: Option<&str>,
-    nickname: Option<&str>,
-    email: Option<&str>,
-    content: &str,
-    parent_id: Option<&str>,
+    cmd: &crate::commands::CreateCommentCmd,
 ) -> AppResult<Comment> {
     let id = Uuid::now_v7().to_string();
     let now = Utc::now().to_rfc3339();
@@ -108,12 +77,12 @@ pub async fn create(
     sqlx::query!(
         "INSERT INTO comments (id, post_id, author_id, nickname, email, content, parent_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
         id,
-        post_id,
-        author_id,
-        nickname,
-        email,
-        content,
-        parent_id,
+        cmd.post_id,
+        cmd.author_id,
+        cmd.nickname,
+        cmd.email,
+        cmd.content,
+        cmd.parent_id,
         now,
     )
     .execute(pool)

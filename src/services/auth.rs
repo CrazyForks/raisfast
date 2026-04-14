@@ -14,13 +14,14 @@ use chrono::Utc;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 
+use crate::commands::{CreateUserCmd, UpdateProfileCmd};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::eventbus::{Event, EventBus};
-use crate::models::refresh_token;
-use crate::models::user::{
-    self, LoginResponse, RegisterRequest, UpdatePasswordRequest, UpdateUserRequest, UserResponse,
+use crate::handlers::dto::{
+    LoginResponse, RegisterRequest, UpdatePasswordRequest, UpdateUserRequest, UserResponse,
 };
 use crate::plugins::{HookPoint, PluginManager};
+use crate::repositories::{RefreshTokenRepository, UserRepository};
 
 /// JWT 令牌载荷（Claims）。
 ///
@@ -64,27 +65,6 @@ pub fn verify_password(password: &str, hash: &str) -> AppResult<bool> {
 }
 
 /// 生成 HS256 签名的 JWT 访问令牌。
-///
-/// # 参数
-///
-/// - `user_id`：用户 ID，将作为 `sub` 字段。
-/// - `role`：用户角色，将作为 `role` 字段。
-/// - `secret`：JWT 签名密钥。
-/// - `expires_in`：有效期（秒）。
-/// 测试辅助：使用固定 secret 生成 JWT token。
-///
-/// 仅用于集成测试，不应在生产代码中调用。
-#[allow(clippy::doc_lazy_continuation)]
-pub fn generate_access_token_for_test(user_id: &str, role: &str) -> String {
-    generate_access_token(
-        user_id,
-        role,
-        "test-secret-key-at-least-32-characters-long",
-        900,
-    )
-    .unwrap()
-}
-
 fn generate_access_token(
     user_id: &str,
     role: &str,
@@ -133,20 +113,38 @@ fn generate_refresh_token_string() -> AppResult<String> {
     Ok(hex::encode(bytes))
 }
 
+/// 测试辅助：使用固定 secret 生成 JWT token。
+#[allow(clippy::doc_lazy_continuation)]
+pub fn generate_access_token_for_test(user_id: &str, role: &str) -> String {
+    generate_access_token(
+        user_id,
+        role,
+        "test-secret-key-at-least-32-characters-long",
+        900,
+    )
+    .unwrap()
+}
+
 /// 用户注册。
 ///
 /// 检查邮箱是否已被注册，若唯一则哈希密码并创建用户记录。
 pub async fn register(
-    pool: &crate::db::Pool,
+    user_repo: &dyn UserRepository,
     eventbus: &EventBus,
     req: RegisterRequest,
 ) -> AppResult<UserResponse> {
-    if user::find_by_email(pool, &req.email).await?.is_some() {
+    if user_repo.find_by_email(&req.email).await?.is_some() {
         return Err(AppError::Conflict("email_registered".into()));
     }
 
     let password_hash = hash_password(&req.password)?;
-    let user = user::create(pool, &req.email, &req.username, &password_hash).await?;
+    let user = user_repo
+        .create(CreateUserCmd {
+            email: req.email,
+            username: req.username,
+            password_hash,
+        })
+        .await?;
     eventbus.emit(Event::UserRegistered {
         id: user.id.clone(),
         username: user.username.clone(),
@@ -158,16 +156,19 @@ pub async fn register(
 /// 用户登录。
 ///
 /// 验证邮箱和密码，成功后生成访问令牌和刷新令牌，将刷新令牌存入数据库。
+#[allow(clippy::too_many_arguments)]
 pub async fn login(
-    pool: &crate::db::Pool,
+    user_repo: &dyn UserRepository,
+    refresh_token_repo: &dyn RefreshTokenRepository,
     plugins: &PluginManager,
     eventbus: &EventBus,
-    req: &crate::models::user::LoginRequest,
+    req: &crate::handlers::dto::LoginRequest,
     jwt_secret: &str,
     jwt_access_expires: u64,
     jwt_refresh_expires: u64,
 ) -> AppResult<LoginResponse> {
-    let user = user::find_by_email(pool, &req.email)
+    let user = user_repo
+        .find_by_email(&req.email)
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
 
@@ -185,7 +186,8 @@ pub async fn login(
     let refresh_token_str = generate_refresh_token_string()?;
 
     let expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
-    refresh_token::create_token(pool, &user.id, &refresh_token_str, &expires_at.to_rfc3339())
+    refresh_token_repo
+        .create_token(&user.id, &refresh_token_str, &expires_at.to_rfc3339())
         .await?;
 
     plugins
@@ -213,13 +215,16 @@ pub async fn login(
 /// 验证刷新令牌的有效性，执行令牌轮换：在事务中删除旧刷新令牌，
 /// 生成新的访问令牌和刷新令牌，确保原子性。
 pub async fn refresh(
+    user_repo: &dyn UserRepository,
+    refresh_token_repo: &dyn RefreshTokenRepository,
     pool: &crate::db::Pool,
     refresh_token_str: &str,
     jwt_secret: &str,
     jwt_access_expires: u64,
     jwt_refresh_expires: u64,
 ) -> AppResult<LoginResponse> {
-    let stored = refresh_token::find_by_token(pool, refresh_token_str)
+    let stored = refresh_token_repo
+        .find_by_token(refresh_token_str)
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
 
@@ -227,11 +232,12 @@ pub async fn refresh(
         .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid token expiry")))?;
 
     if expires_at < Utc::now() {
-        let _ = refresh_token::delete_by_token(pool, refresh_token_str).await;
+        let _ = refresh_token_repo.delete_by_token(refresh_token_str).await;
         return Err(AppError::Unauthorized);
     }
 
-    let user = user::find_by_id(pool, &stored.user_id)
+    let user = user_repo
+        .find_by_id(&stored.user_id)
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
 
@@ -275,13 +281,17 @@ pub async fn refresh(
 /// 用户登出。
 ///
 /// 删除该用户的所有刷新令牌，使其所有设备上的会话失效。
-pub async fn logout(pool: &crate::db::Pool, user_id: &str) -> AppResult<()> {
-    refresh_token::delete_by_user(pool, user_id).await
+pub async fn logout(
+    refresh_token_repo: &dyn RefreshTokenRepository,
+    user_id: &str,
+) -> AppResult<()> {
+    refresh_token_repo.delete_by_user(user_id).await
 }
 
 /// 获取当前用户资料。
-pub async fn get_me(pool: &crate::db::Pool, user_id: &str) -> AppResult<UserResponse> {
-    let user = user::find_by_id(pool, user_id)
+pub async fn get_me(user_repo: &dyn UserRepository, user_id: &str) -> AppResult<UserResponse> {
+    let user = user_repo
+        .find_by_id(user_id)
         .await?
         .ok_or_else(|| AppError::NotFound("user".into()))?;
     Ok(user.into())
@@ -289,19 +299,19 @@ pub async fn get_me(pool: &crate::db::Pool, user_id: &str) -> AppResult<UserResp
 
 /// 更新当前用户资料（用户名、简介、网站、头像）。
 pub async fn update_me(
-    pool: &crate::db::Pool,
+    user_repo: &dyn UserRepository,
     user_id: &str,
     req: UpdateUserRequest,
 ) -> AppResult<UserResponse> {
-    let user = user::update_profile(
-        pool,
-        user_id,
-        req.username.as_deref(),
-        req.bio.as_deref(),
-        req.website.as_deref(),
-        req.avatar.as_deref(),
-    )
-    .await?;
+    let user = user_repo
+        .update_profile(UpdateProfileCmd {
+            id: user_id.to_string(),
+            username: req.username,
+            bio: req.bio,
+            website: req.website,
+            avatar: req.avatar,
+        })
+        .await?;
     Ok(user.into())
 }
 
@@ -310,11 +320,13 @@ pub async fn update_me(
 /// 验证旧密码正确后，在事务中用新密码的哈希替换旧哈希，
 /// 并删除所有刷新令牌，确保旧会话全部失效。
 pub async fn change_password(
+    user_repo: &dyn UserRepository,
     pool: &crate::db::Pool,
     user_id: &str,
     req: UpdatePasswordRequest,
 ) -> AppResult<()> {
-    let user = user::find_by_id(pool, user_id)
+    let user = user_repo
+        .find_by_id(user_id)
         .await?
         .ok_or_else(|| AppError::NotFound("user".into()))?;
 
@@ -345,8 +357,9 @@ pub async fn change_password(
 }
 
 /// 获取指定用户的公开资料。
-pub async fn get_public_user(pool: &crate::db::Pool, id: &str) -> AppResult<UserResponse> {
-    let user = user::find_by_id(pool, id)
+pub async fn get_public_user(user_repo: &dyn UserRepository, id: &str) -> AppResult<UserResponse> {
+    let user = user_repo
+        .find_by_id(id)
         .await?
         .ok_or_else(|| AppError::NotFound("user".into()))?;
     Ok(user.into())
@@ -356,11 +369,11 @@ pub async fn get_public_user(pool: &crate::db::Pool, id: &str) -> AppResult<User
 ///
 /// 返回用户响应列表和总记录数。
 pub async fn list_users(
-    pool: &crate::db::Pool,
+    user_repo: &dyn UserRepository,
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<UserResponse>, i64)> {
-    let (users, total) = user::find_all(pool, page, page_size).await?;
+    let (users, total) = user_repo.find_all(page, page_size).await?;
     let responses = users.into_iter().map(UserResponse::from).collect();
     Ok((responses, total))
 }

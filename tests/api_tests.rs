@@ -15,6 +15,7 @@ use axum::middleware::from_fn;
 use axum::routing::{delete, get, post as http_post, put};
 use http_body_util::BodyExt;
 use rust_blog::AppState;
+use rust_blog::cache::MemoryCache;
 use rust_blog::config::app::AppConfig;
 use rust_blog::handlers::{
     auth as h_auth, category as h_cat, comment as h_cmt, cron as h_cron, health as h_health,
@@ -25,6 +26,10 @@ use rust_blog::middleware::rate_limit::{
     RateLimiterSet, comment_rate_limit, global_rate_limit, login_rate_limit, register_rate_limit,
 };
 use rust_blog::plugins::PluginManager;
+use rust_blog::repositories::{
+    CachedPostRepository, SqlxCategoryRepository, SqlxCommentRepository, SqlxMediaRepository,
+    SqlxPostRepository, SqlxRefreshTokenRepository, SqlxTagRepository, SqlxUserRepository,
+};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -115,10 +120,21 @@ async fn test_app() -> (axum::Router, AppState) {
     let pool = test_pool().await;
     let config = Arc::new(test_config());
     let state = AppState {
-        pool,
+        pool: pool.clone(),
         config: config.clone(),
         plugins: PluginManager::new(config).await,
         eventbus: rust_blog::eventbus::EventBus::new(256),
+        post_repo: Arc::new(CachedPostRepository::new(
+            SqlxPostRepository::new(pool.clone()),
+            Arc::new(MemoryCache::new()),
+            None,
+        )),
+        user_repo: Arc::new(SqlxUserRepository::new(pool.clone())),
+        category_repo: Arc::new(SqlxCategoryRepository::new(pool.clone())),
+        tag_repo: Arc::new(SqlxTagRepository::new(pool.clone())),
+        comment_repo: Arc::new(SqlxCommentRepository::new(pool.clone())),
+        media_repo: Arc::new(SqlxMediaRepository::new(pool.clone())),
+        refresh_token_repo: Arc::new(SqlxRefreshTokenRepository::new(pool)),
     };
     let max_upload = state.config.max_upload_size;
 

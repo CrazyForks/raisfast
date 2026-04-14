@@ -10,6 +10,7 @@ use axum::middleware::from_fn;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post as http_post, put};
 use rust_blog::AppState;
+use rust_blog::cache::MemoryCache;
 use rust_blog::config::app::AppConfig;
 use rust_blog::db::connection::init_pool;
 use rust_blog::handlers::{
@@ -18,6 +19,11 @@ use rust_blog::handlers::{
 use rust_blog::middleware::locale::locale_middleware;
 use rust_blog::middleware::rate_limit::{
     RateLimiterSet, comment_rate_limit, global_rate_limit, login_rate_limit, register_rate_limit,
+};
+use rust_blog::repositories::{
+    CachedPostRepository, PostRepository, SqlxCategoryRepository, SqlxCommentRepository,
+    SqlxMediaRepository, SqlxPostRepository, SqlxRefreshTokenRepository, SqlxTagRepository,
+    SqlxUserRepository,
 };
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
@@ -56,6 +62,26 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
     let eventbus = rust_blog::eventbus::EventBus::new(256);
 
     let worker_pool = pool.clone();
+
+    let sqlx_repo = SqlxPostRepository::new(pool.clone());
+    let cache: std::sync::Arc<dyn rust_blog::cache::CacheStore> =
+        std::sync::Arc::new(MemoryCache::new());
+    let post_repo: Arc<dyn PostRepository> =
+        Arc::new(CachedPostRepository::new(sqlx_repo, cache, None));
+
+    let user_repo: Arc<dyn rust_blog::repositories::UserRepository> =
+        Arc::new(SqlxUserRepository::new(pool.clone()));
+    let category_repo: Arc<dyn rust_blog::repositories::CategoryRepository> =
+        Arc::new(SqlxCategoryRepository::new(pool.clone()));
+    let tag_repo: Arc<dyn rust_blog::repositories::TagRepository> =
+        Arc::new(SqlxTagRepository::new(pool.clone()));
+    let comment_repo: Arc<dyn rust_blog::repositories::CommentRepository> =
+        Arc::new(SqlxCommentRepository::new(pool.clone()));
+    let media_repo: Arc<dyn rust_blog::repositories::MediaRepository> =
+        Arc::new(SqlxMediaRepository::new(pool.clone()));
+    let refresh_token_repo: Arc<dyn rust_blog::repositories::RefreshTokenRepository> =
+        Arc::new(SqlxRefreshTokenRepository::new(pool.clone()));
+
     let state = AppState {
         pool: pool.clone(),
         config: Arc::new(config.clone()),
@@ -65,6 +91,13 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         )
         .await,
         eventbus: eventbus.clone(),
+        post_repo,
+        user_repo,
+        category_repo,
+        tag_repo,
+        comment_repo,
+        media_repo,
+        refresh_token_repo,
     };
 
     spawn_event_subscriber(eventbus.clone(), state.plugins.clone());

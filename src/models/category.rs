@@ -7,7 +7,6 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
-use validator::Validate;
 
 use crate::errors::app_error::{AppError, AppResult};
 
@@ -24,32 +23,6 @@ pub struct Category {
     pub parent_id: Option<String>,
     pub sort_order: i64,
     pub created_at: String,
-}
-
-/// 创建分类请求体
-///
-/// - `name` 长度 1–100 个字符
-/// - `sort_order` 可选，默认为 0
-#[derive(Debug, Deserialize, Validate)]
-pub struct CreateCategoryRequest {
-    #[validate(length(min = 1, max = 100))]
-    pub name: String,
-    pub description: Option<String>,
-    pub parent_id: Option<String>,
-    pub sort_order: Option<i64>,
-}
-
-/// 更新分类请求体
-///
-/// 所有字段均为可选，仅更新提供的字段。
-/// - `name` 如果提供，长度须在 1–100 个字符之间
-#[derive(Debug, Deserialize, Validate)]
-pub struct UpdateCategoryRequest {
-    #[validate(length(min = 1, max = 100))]
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub parent_id: Option<String>,
-    pub sort_order: Option<i64>,
 }
 
 /// 查询所有分类
@@ -80,11 +53,7 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Category>
 /// 自动生成 UUID v7 作为主键。创建完成后重新查询并返回完整分类记录。
 pub async fn create(
     pool: &crate::db::Pool,
-    name: &str,
-    slug: &str,
-    description: Option<&str>,
-    parent_id: Option<&str>,
-    sort_order: i64,
+    cmd: &crate::commands::CreateCategoryCmd,
 ) -> AppResult<Category> {
     let id = Uuid::now_v7().to_string();
     let now = Utc::now().to_rfc3339();
@@ -92,11 +61,11 @@ pub async fn create(
     sqlx::query!(
         "INSERT INTO categories (id, name, slug, description, parent_id, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         id,
-        name,
-        slug,
-        description,
-        parent_id,
-        sort_order,
+        cmd.name,
+        cmd.slug,
+        cmd.description,
+        cmd.parent_id,
+        cmd.sort_order,
         now,
     )
     .execute(pool)
@@ -110,20 +79,23 @@ pub async fn create(
 /// 仅更新传入的非空字段，其余保留原值。
 pub async fn update(
     pool: &crate::db::Pool,
-    id: &str,
-    name: Option<&str>,
-    slug: Option<&str>,
-    description: Option<&str>,
-    parent_id: Option<&str>,
-    sort_order: Option<i64>,
+    cmd: &crate::commands::UpdateCategoryCmd,
 ) -> AppResult<Category> {
-    let existing = find_by_id(pool, id).await?;
+    let existing = find_by_id(pool, &cmd.id).await?;
 
-    let name = name.unwrap_or(&existing.name);
-    let slug = slug.unwrap_or(&existing.slug);
-    let desc = description.map(|s| s.to_string()).or(existing.description);
-    let parent = parent_id.map(|s| s.to_string()).or(existing.parent_id);
-    let sort = sort_order.unwrap_or(existing.sort_order);
+    let name = cmd.name.as_deref().unwrap_or(&existing.name);
+    let slug = cmd.slug.as_deref().unwrap_or(&existing.slug);
+    let desc = cmd
+        .description
+        .as_deref()
+        .map(|s| s.to_string())
+        .or(existing.description);
+    let parent = cmd
+        .parent_id
+        .as_deref()
+        .map(|s| s.to_string())
+        .or(existing.parent_id);
+    let sort = cmd.sort_order.unwrap_or(existing.sort_order);
 
     sqlx::query!(
         "UPDATE categories SET name = ?, slug = ?, description = ?, parent_id = ?, sort_order = ? WHERE id = ?",
@@ -132,12 +104,12 @@ pub async fn update(
         desc,
         parent,
         sort,
-        id,
+        cmd.id,
     )
     .execute(pool)
     .await?;
 
-    find_by_id(pool, id).await
+    find_by_id(pool, &cmd.id).await
 }
 
 /// 删除分类

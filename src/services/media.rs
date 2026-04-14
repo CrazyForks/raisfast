@@ -4,8 +4,10 @@
 
 use std::path::Path;
 
+use crate::commands::CreateMediaCmd;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::models::media;
+use crate::repositories::MediaRepository;
 
 /// 允许上传的 MIME 类型白名单。
 const ALLOWED_TYPES: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
@@ -26,7 +28,7 @@ const MAGIC_SIGNATURES: &[(&str, &[u8])] = &[
 /// 3. 使用 UUID v7 生成文件名，写入磁盘。
 /// 4. 在数据库中创建媒体记录。
 pub async fn save_file(
-    pool: &crate::db::Pool,
+    media_repo: &dyn MediaRepository,
     user_id: &str,
     upload_dir: &str,
     max_size: usize,
@@ -66,40 +68,41 @@ pub async fn save_file(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to write file: {}", e)))?;
 
-    media::create(
-        pool,
-        user_id,
-        filename,
-        &stored_name,
-        content_type,
-        data.len() as i64,
-    )
-    .await
+    media_repo
+        .create(CreateMediaCmd {
+            user_id: user_id.to_string(),
+            filename: filename.to_string(),
+            filepath: stored_name,
+            mimetype: content_type.to_string(),
+            size: data.len() as i64,
+        })
+        .await
 }
 
 /// 分页查询指定用户的媒体文件列表。
 ///
 /// 返回媒体列表和总记录数。
 pub async fn list(
-    pool: &crate::db::Pool,
+    media_repo: &dyn MediaRepository,
     user_id: &str,
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<media::Media>, i64)> {
-    media::find_all(pool, user_id, page, page_size).await
+    media_repo.find_all(user_id, page, page_size).await
 }
 
 /// 删除媒体文件。
 ///
 /// 仅文件所有者或管理员可执行。同时删除磁盘文件和数据库记录。
 pub async fn delete_media(
-    pool: &crate::db::Pool,
+    media_repo: &dyn MediaRepository,
     upload_dir: &str,
     media_id: &str,
     user_id: &str,
     role: &str,
 ) -> AppResult<()> {
-    let m = media::find_by_id(pool, media_id)
+    let m = media_repo
+        .find_by_id(media_id)
         .await?
         .ok_or_else(|| AppError::NotFound("media".into()))?;
 
@@ -110,7 +113,7 @@ pub async fn delete_media(
     let filepath = Path::new(upload_dir).join(&m.filepath);
     let _ = tokio::fs::remove_file(filepath).await;
 
-    media::delete(pool, media_id).await
+    media_repo.delete(media_id).await
 }
 
 /// 校验文件实际内容的 magic bytes 是否与声明的 Content-Type 匹配。

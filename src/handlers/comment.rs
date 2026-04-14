@@ -9,18 +9,12 @@ use axum::extract::{Path, State};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
+use crate::handlers::dto::{CreateCommentRequest, UpdateCommentStatusRequest};
 use crate::middleware::auth::{AdminUser, AuthUser};
-use crate::models::comment::{CreateCommentRequest, UpdateCommentStatusRequest};
 use crate::services::comment as comment_service;
 use crate::utils::pagination::PaginationParams;
 
 /// 获取指定文章的评论列表（树形结构，分页）
-///
-/// - **方法/路径：** `GET /api/posts/:slug/comments`
-/// - **认证：** 无需认证
-/// - **说明：** 返回指定文章下已审核通过的评论，以嵌套树形结构返回。
-/// - **查询参数：** `page`, `page_size`（可选，默认全部返回）
-/// - **返回：** `ApiResponse<PaginatedData<CommentResponse>>` 或 `ApiResponse<Vec<CommentResponse>>`
 pub async fn list(
     State(state): State<crate::AppState>,
     Path(slug): Path<String>,
@@ -30,8 +24,14 @@ pub async fn list(
 > {
     let mut p = params;
     p.sanitize();
-    let (comments, total) =
-        comment_service::list_comments_paginated(&state.pool, &slug, p.page, p.page_size).await?;
+    let (comments, total) = comment_service::list_comments_paginated(
+        state.post_repo.as_ref(),
+        state.comment_repo.as_ref(),
+        &slug,
+        p.page,
+        p.page_size,
+    )
+    .await?;
     Ok(ApiResponse::success(
         crate::errors::response::PaginatedData {
             items: comments,
@@ -43,10 +43,6 @@ pub async fn list(
 }
 
 /// 管理员获取全局评论列表（分页）
-///
-/// - **方法/路径：** `GET /api/v1/comments`
-/// - **认证：** 需要管理员权限
-/// - **查询参数：** `page`, `page_size`
 pub async fn list_all(
     _admin: AdminUser,
     State(state): State<crate::AppState>,
@@ -54,8 +50,10 @@ pub async fn list_all(
 ) -> AppResult<ApiResponse<PaginatedData<crate::models::comment::AdminCommentRow>>> {
     let mut p = params;
     p.sanitize();
-    let (comments, total) =
-        crate::models::comment::find_all_paginated(&state.pool, p.page, p.page_size).await?;
+    let (comments, total) = state
+        .comment_repo
+        .find_all_paginated(p.page, p.page_size)
+        .await?;
     Ok(ApiResponse::success(PaginatedData {
         items: comments,
         total,
@@ -65,12 +63,6 @@ pub async fn list_all(
 }
 
 /// 创建评论（已登录用户）
-///
-/// - **方法/路径：** `POST /api/posts/:slug/comments`
-/// - **认证：** 需要登录（`AuthUser`）
-/// - **说明：** 已登录用户创建评论，自动关联 `author_id`，支持回复（`parent_id`）。
-/// - **验证：** 通过 `validation::validate()` 校验请求体，验证错误消息通过 i18n 翻译。
-/// - **返回：** `ApiResponse<CommentResponse>`
 pub async fn create(
     State(state): State<crate::AppState>,
     Path(slug): Path<String>,
@@ -80,7 +72,8 @@ pub async fn create(
     validation::validate(&req)?;
 
     let comment = comment_service::create_comment(
-        &state.pool,
+        state.post_repo.as_ref(),
+        state.comment_repo.as_ref(),
         &state.plugins,
         &state.eventbus,
         &slug,
@@ -96,12 +89,6 @@ pub async fn create(
 }
 
 /// 创建评论（访客）
-///
-/// - **方法/路径：** `POST /api/posts/:slug/comments/guest`
-/// - **认证：** 无需认证
-/// - **说明：** 访客创建评论，`nickname` 为必填字段，`email` 可选。
-/// - **验证：** 通过 `validation::validate()` 校验请求体，验证错误消息通过 i18n 翻译。
-/// - **返回：** `ApiResponse<CommentResponse>`
 pub async fn create_guest(
     State(state): State<crate::AppState>,
     Path(slug): Path<String>,
@@ -115,7 +102,8 @@ pub async fn create_guest(
         .ok_or_else(|| AppError::BadRequest("nickname_required".into()))?;
 
     let comment = comment_service::create_comment(
-        &state.pool,
+        state.post_repo.as_ref(),
+        state.comment_repo.as_ref(),
         &state.plugins,
         &state.eventbus,
         &slug,
@@ -131,27 +119,22 @@ pub async fn create_guest(
 }
 
 /// 删除评论
-///
-/// - **方法/路径：** `DELETE /api/comments/:id`
-/// - **认证：** 需要登录（`AuthUser`）
-/// - **说明：** 评论作者或管理员可删除评论。
-/// - **返回：** `ApiResponse<()>`
 pub async fn delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
     auth_user: AuthUser,
 ) -> AppResult<ApiResponse<()>> {
-    comment_service::delete_comment(&state.pool, &id, &auth_user.user_id, &auth_user.role).await?;
+    comment_service::delete_comment(
+        state.comment_repo.as_ref(),
+        &id,
+        &auth_user.user_id,
+        &auth_user.role,
+    )
+    .await?;
     Ok(ApiResponse::success(()))
 }
 
 /// 更新评论审核状态（管理员）
-///
-/// - **方法/路径：** `PUT /api/comments/:id/status`
-/// - **认证：** 需要管理员权限（`AdminUser`）
-/// - **说明：** 更新评论的审核状态（`pending`/`approved`/`rejected`）。
-/// - **验证：** 通过 `validation::validate()` 校验请求体，验证错误消息通过 i18n 翻译。
-/// - **返回：** `ApiResponse<()>`
 pub async fn update_status(
     State(state): State<crate::AppState>,
     _admin: AdminUser,
@@ -159,6 +142,6 @@ pub async fn update_status(
     Json(req): Json<UpdateCommentStatusRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
-    comment_service::update_comment_status(&state.pool, &id, &req.status).await?;
+    comment_service::update_comment_status(state.comment_repo.as_ref(), &id, &req.status).await?;
     Ok(ApiResponse::success(()))
 }

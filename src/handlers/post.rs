@@ -10,8 +10,8 @@ use serde::Deserialize;
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
+use crate::handlers::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::middleware::auth::{AuthUser, AuthorUser};
-use crate::models::post::{CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::services::post as post_service;
 use crate::utils::pagination::PaginationParams;
 
@@ -48,7 +48,7 @@ pub async fn list(
     pagination.sanitize();
 
     let (posts, total) = post_service::list_posts(
-        &state.pool,
+        state.post_repo.as_ref(),
         pagination.page,
         pagination.page_size,
         query.category_id.as_deref(),
@@ -76,7 +76,7 @@ pub async fn get(
     State(state): State<crate::AppState>,
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<PostResponse>> {
-    let post = post_service::get_post(&state.pool, &slug, &state.plugins).await?;
+    let post = post_service::get_post(state.post_repo.as_ref(), &slug, &state.plugins).await?;
     Ok(ApiResponse::success(post))
 }
 
@@ -94,7 +94,7 @@ pub async fn create(
 ) -> AppResult<ApiResponse<PostResponse>> {
     validation::validate(&req)?;
     let post = post_service::create_post(
-        &state.pool,
+        state.post_repo.as_ref(),
         &state.plugins,
         &state.eventbus,
         &author.user_id,
@@ -119,7 +119,7 @@ pub async fn update(
 ) -> AppResult<ApiResponse<PostResponse>> {
     validation::validate(&req)?;
     let post = post_service::update_post_with_auth(
-        &state.pool,
+        state.post_repo.as_ref(),
         &state.plugins,
         &state.eventbus,
         &slug,
@@ -143,7 +143,7 @@ pub async fn delete(
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     post_service::delete_post_with_auth(
-        &state.pool,
+        state.post_repo.as_ref(),
         &state.plugins,
         &state.eventbus,
         &slug,

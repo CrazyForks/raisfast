@@ -7,6 +7,7 @@ set dotenv-load
 
 db        := "sqlite"
 db_url    := "sqlite:./data/blog.db"
+plugin_type := "all"
 
 # ── 默认 ──────────────────────────────────────────────────────────
 
@@ -17,11 +18,11 @@ default:
 
 # 编译检查（默认 SQLite）
 check *FLAGS:
-    DATABASE_URL={{db_url}} cargo check --features "db-{{db}}" {{FLAGS}}
+    DATABASE_URL={{db_url}} cargo check --features "db-{{db}} plugin-{{plugin_type}}" {{FLAGS}}
 
 # 编译发布版本
 build *FLAGS:
-    DATABASE_URL={{db_url}} cargo build --release --features "db-{{db}}" {{FLAGS}}
+    DATABASE_URL={{db_url}} cargo build --release --features "db-{{db}} plugin-{{plugin_type}}" {{FLAGS}}
 
 # ── 代码质量 ──────────────────────────────────────────────────────
 
@@ -35,7 +36,7 @@ fmt-check:
 
 # Lint
 lint:
-    DATABASE_URL={{db_url}} cargo clippy --features "db-{{db}}" -- -D warnings
+    DATABASE_URL={{db_url}} cargo clippy --features "db-{{db}} plugin-{{plugin_type}}" -- -D warnings
 
 # 全部质量检查（fmt + lint）
 qa: fmt-check lint
@@ -44,15 +45,15 @@ qa: fmt-check lint
 
 # 运行所有测试
 test *FLAGS:
-    DATABASE_URL={{db_url}} cargo test --features "db-{{db}}" {{FLAGS}}
+    DATABASE_URL={{db_url}} cargo test --features "db-{{db}} plugin-{{plugin_type}}" {{FLAGS}}
 
 # 仅运行单元测试
 test-unit:
-    DATABASE_URL={{db_url}} cargo test --lib --features "db-{{db}}"
+    DATABASE_URL={{db_url}} cargo test --lib --features "db-{{db}} plugin-{{plugin_type}}"
 
 # 仅运行集成测试
 test-integration:
-    DATABASE_URL={{db_url}} cargo test --test api_tests --features "db-{{db}}"
+    DATABASE_URL={{db_url}} cargo test --test api_tests --features "db-{{db}} plugin-{{plugin_type}}"
 
 # ── 数据库 ────────────────────────────────────────────────────────
 
@@ -77,17 +78,17 @@ db-backup:
 
 # 生成 sqlx 离线查询元数据
 db-prepare:
-    DATABASE_URL={{db_url}} cargo sqlx prepare
+    DATABASE_URL={{db_url}} cargo sqlx prepare --features "db-{{db}} plugin-{{plugin_type}}"
 
 # 验证离线编译（不依赖 DATABASE_URL）
 check-offline:
-    cargo check --features "db-{{db}}"
+    cargo check --features "db-{{db}} plugin-{{plugin_type}}"
 
 # ── 运行 ──────────────────────────────────────────────────────────
 
 # 启动开发服务器
 dev:
-    DATABASE_URL={{db_url}} cargo run --features "db-{{db}}"
+    DATABASE_URL={{db_url}} cargo run --features "db-{{db}} plugin-{{plugin_type}}"
 
 # ── 数据库后端切换 ────────────────────────────────────────────────
 

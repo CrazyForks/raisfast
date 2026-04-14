@@ -10,7 +10,6 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::errors::app_error::{AppError, AppResult};
-use validator::Validate;
 
 /// 用户完整数据库行模型
 ///
@@ -29,131 +28,6 @@ pub struct User {
     pub website: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-}
-
-/// 用户公开信息响应模型
-///
-/// 与 [`User`] 相比去除了 `password_hash` 字段，用于 API 响应。
-/// 通过 `From<User>` 自动转换。
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[non_exhaustive]
-pub struct UserResponse {
-    pub id: String,
-    pub email: String,
-    pub username: String,
-    pub role: String,
-    pub avatar: Option<String>,
-    pub bio: Option<String>,
-    pub website: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-impl From<User> for UserResponse {
-    fn from(user: User) -> Self {
-        Self {
-            id: user.id,
-            email: user.email,
-            username: user.username,
-            role: user.role,
-            avatar: user.avatar,
-            bio: user.bio,
-            website: user.website,
-            created_at: user.created_at,
-            updated_at: user.updated_at,
-        }
-    }
-}
-
-/// 注册请求体
-///
-/// - `email` 必须为合法邮箱格式
-/// - `username` 长度 2–50 个字符
-/// - `password` 最少 8 个字符
-#[derive(Debug, Deserialize, Validate)]
-pub struct RegisterRequest {
-    #[validate(email)]
-    pub email: String,
-    #[validate(length(min = 2, max = 50))]
-    pub username: String,
-    #[validate(length(min = 8, max = 128), custom(function = "validate_password"))]
-    pub password: String,
-}
-
-/// 登录请求体
-///
-/// - `email` 必须为合法邮箱格式
-/// - `password` 不能为空
-#[derive(Debug, Deserialize, Validate)]
-pub struct LoginRequest {
-    #[validate(email)]
-    pub email: String,
-    #[validate(length(min = 1, max = 128))]
-    pub password: String,
-}
-
-/// 刷新令牌请求体
-#[derive(Debug, Deserialize)]
-pub struct RefreshRequest {
-    pub refresh_token: String,
-}
-
-/// 登录成功响应体
-///
-/// 包含访问令牌、刷新令牌、过期时间以及用户公开信息。
-#[derive(Debug, Serialize)]
-#[non_exhaustive]
-pub struct LoginResponse {
-    pub access_token: String,
-    pub refresh_token: String,
-    pub expires_in: u64,
-    pub user: UserResponse,
-}
-
-/// 更新用户资料请求体
-///
-/// 所有字段均为可选，仅更新提供的字段。
-/// - `username` 如果提供，长度须在 2–50 个字符之间
-#[derive(Debug, Deserialize, Validate)]
-pub struct UpdateUserRequest {
-    #[validate(length(min = 2, max = 50))]
-    pub username: Option<String>,
-    pub bio: Option<String>,
-    pub website: Option<String>,
-    pub avatar: Option<String>,
-}
-
-/// 修改密码请求体
-///
-/// - `old_password` 不能为空
-/// - `new_password` 最少 8 个字符，且必须包含字母和数字
-#[derive(Debug, Deserialize, Validate)]
-pub struct UpdatePasswordRequest {
-    #[validate(length(min = 1, max = 128))]
-    pub old_password: String,
-    #[validate(length(min = 8, max = 128), custom(function = "validate_password"))]
-    pub new_password: String,
-}
-
-/// 管理员更新角色请求体
-///
-/// - `role` 不能为空，可取 `reader`、`author`、`admin`
-#[derive(Debug, Deserialize, Validate)]
-pub struct UpdateRoleRequest {
-    #[validate(length(min = 1))]
-    pub role: String,
-}
-
-fn validate_password(pwd: &str) -> Result<(), validator::ValidationError> {
-    let has_letter = pwd.chars().any(|c| c.is_ascii_alphabetic());
-    let has_digit = pwd.chars().any(|c| c.is_ascii_digit());
-    if has_letter && has_digit {
-        Ok(())
-    } else {
-        let mut err = validator::ValidationError::new("password_strength");
-        err.message = Some("password must contain both letters and digits".into());
-        Err(err)
-    }
 }
 
 /// 根据邮箱查找用户
@@ -186,9 +60,7 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<Us
 /// 创建完成后重新查询并返回完整用户记录。
 pub async fn create(
     pool: &crate::db::Pool,
-    email: &str,
-    username: &str,
-    password_hash: &str,
+    cmd: &crate::commands::CreateUserCmd,
 ) -> AppResult<User> {
     let id = Uuid::now_v7().to_string();
     let now = Utc::now().to_rfc3339();
@@ -196,9 +68,9 @@ pub async fn create(
     sqlx::query!(
         "INSERT INTO users (id, email, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, 'reader', ?, ?)",
         id,
-        email,
-        username,
-        password_hash,
+        cmd.email,
+        cmd.username,
+        cmd.password_hash,
         now,
         now,
     )
@@ -217,21 +89,21 @@ pub async fn create(
 /// 自动更新 `updated_at` 时间戳。
 pub async fn update_profile(
     pool: &crate::db::Pool,
-    id: &str,
-    username: Option<&str>,
-    bio: Option<&str>,
-    website: Option<&str>,
-    avatar: Option<&str>,
+    cmd: &crate::commands::UpdateProfileCmd,
 ) -> AppResult<User> {
     let now = Utc::now().to_rfc3339();
-    let user = find_by_id(pool, id)
+    let user = find_by_id(pool, &cmd.id)
         .await?
         .ok_or_else(|| AppError::NotFound("user".into()))?;
 
-    let username = username.unwrap_or(&user.username);
-    let bio = bio.map(|s| s.to_string()).or(user.bio);
-    let website = website.map(|s| s.to_string()).or(user.website);
-    let avatar = avatar.map(|s| s.to_string()).or(user.avatar);
+    let username = cmd.username.as_deref().unwrap_or(&user.username);
+    let bio = cmd.bio.as_deref().map(|s| s.to_string()).or(user.bio);
+    let website = cmd
+        .website
+        .as_deref()
+        .map(|s| s.to_string())
+        .or(user.website);
+    let avatar = cmd.avatar.as_deref().map(|s| s.to_string()).or(user.avatar);
 
     sqlx::query!(
         "UPDATE users SET username = ?, bio = ?, website = ?, avatar = ?, updated_at = ? WHERE id = ?",
@@ -240,12 +112,12 @@ pub async fn update_profile(
         website,
         avatar,
         now,
-        id,
+        cmd.id,
     )
     .execute(pool)
     .await?;
 
-    find_by_id(pool, id)
+    find_by_id(pool, &cmd.id)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch updated user")))
 }

@@ -27,49 +27,13 @@ pub struct Media {
     pub created_at: String,
 }
 
-/// 媒体文件 API 响应模型
-///
-/// 将 `filepath` 转换为完整的访问 URL，便于前端直接使用。
-#[derive(Debug, Serialize)]
-pub struct MediaResponse {
-    pub id: String,
-    pub user_id: String,
-    pub filename: String,
-    pub url: String,
-    pub mimetype: String,
-    pub size: i64,
-    pub created_at: String,
-}
-
-impl Media {
-    /// 将数据库行模型转换为响应模型
-    ///
-    /// `base_url` 为服务器地址（如 `http://localhost:3000`），
-    /// 拼接 `/uploads/` 前缀和文件路径生成完整访问 URL。
-    pub fn to_response(&self, base_url: &str) -> MediaResponse {
-        MediaResponse {
-            id: self.id.clone(),
-            user_id: self.user_id.clone(),
-            filename: self.filename.clone(),
-            url: format!("{}/uploads/{}", base_url, self.filepath),
-            mimetype: self.mimetype.clone(),
-            size: self.size,
-            created_at: self.created_at.clone(),
-        }
-    }
-}
-
 /// 创建媒体文件记录
 ///
 /// 自动生成 UUID v7 作为主键。
 /// 创建完成后重新查询并返回完整媒体文件记录。
 pub async fn create(
     pool: &crate::db::Pool,
-    user_id: &str,
-    filename: &str,
-    filepath: &str,
-    mimetype: &str,
-    size: i64,
+    cmd: &crate::commands::CreateMediaCmd,
 ) -> AppResult<Media> {
     let id = Uuid::now_v7().to_string();
     let now = Utc::now().to_rfc3339();
@@ -77,11 +41,11 @@ pub async fn create(
     sqlx::query!(
         "INSERT INTO media (id, user_id, filename, filepath, mimetype, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         id,
-        user_id,
-        filename,
-        filepath,
-        mimetype,
-        size,
+        cmd.user_id,
+        cmd.filename,
+        cmd.filepath,
+        cmd.mimetype,
+        cmd.size,
         now,
     )
     .execute(pool)

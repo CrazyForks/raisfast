@@ -3,11 +3,12 @@
 //! 处理评论相关的业务逻辑，包括评论创建（含嵌套深度校验）、
 //! 评论列表获取（树形结构）、评论删除和状态管理。
 
+use crate::commands::CreateCommentCmd;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::eventbus::{Event, EventBus};
 use crate::models::comment::{self, CommentResponse};
-use crate::models::post;
 use crate::plugins::{HookPoint, PluginManager};
+use crate::repositories::{CommentRepository, PostRepository};
 
 /// 评论输入数据（用于 Hook 传递）
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -29,7 +30,8 @@ pub struct CommentInput {
 /// 校验通过后以 `"pending"` 状态创建评论。
 #[allow(clippy::too_many_arguments)]
 pub async fn create_comment(
-    pool: &crate::db::Pool,
+    post_repo: &dyn PostRepository,
+    comment_repo: &dyn CommentRepository,
     plugins: &PluginManager,
     eventbus: &EventBus,
     post_slug: &str,
@@ -39,12 +41,13 @@ pub async fn create_comment(
     nickname: Option<&str>,
     email: Option<&str>,
 ) -> AppResult<CommentResponse> {
-    let p = post::find_by_slug(pool, post_slug)
+    let p = post_repo
+        .find_by_slug(post_slug)
         .await?
         .ok_or_else(|| AppError::NotFound("post".into()))?;
 
     if let Some(pid) = parent_id {
-        let all_comments = comment::find_approved_by_post(pool, &p.id).await?;
+        let all_comments = comment_repo.find_approved_by_post(&p.id).await?;
         let parent = all_comments
             .iter()
             .find(|c| c.id == pid)
@@ -68,16 +71,16 @@ pub async fn create_comment(
         .dispatch_filter(HookPoint::CommentCreating, comment_input)
         .await?;
 
-    let c = comment::create(
-        pool,
-        &p.id,
-        author_id,
-        filtered.nickname.as_deref(),
-        filtered.email.as_deref(),
-        &filtered.content,
-        filtered.parent_id.as_deref(),
-    )
-    .await?;
+    let c = comment_repo
+        .create(CreateCommentCmd {
+            post_id: p.id,
+            author_id: author_id.map(|s| s.to_string()),
+            nickname: filtered.nickname,
+            email: filtered.email,
+            content: filtered.content,
+            parent_id: filtered.parent_id,
+        })
+        .await?;
 
     eventbus.emit(Event::CommentCreated {
         id: c.id.clone(),
@@ -102,17 +105,20 @@ pub async fn create_comment(
 ///
 /// 仅返回状态为 `"approved"` 的评论，并组织为树形结构。
 pub async fn list_comments_paginated(
-    pool: &crate::db::Pool,
+    post_repo: &dyn PostRepository,
+    comment_repo: &dyn CommentRepository,
     post_slug: &str,
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<CommentResponse>, i64)> {
-    let p = post::find_by_slug(pool, post_slug)
+    let p = post_repo
+        .find_by_slug(post_slug)
         .await?
         .ok_or_else(|| AppError::NotFound("post".into()))?;
 
-    let (comments, total) =
-        comment::find_approved_by_post_paginated(pool, &p.id, page, page_size).await?;
+    let (comments, total) = comment_repo
+        .find_approved_by_post_paginated(&p.id, page, page_size)
+        .await?;
     Ok((comment::build_tree(&comments), total))
 }
 
@@ -120,12 +126,13 @@ pub async fn list_comments_paginated(
 ///
 /// 仅评论作者或管理员有权限执行此操作。
 pub async fn delete_comment(
-    pool: &crate::db::Pool,
+    comment_repo: &dyn CommentRepository,
     comment_id: &str,
     user_id: &str,
     role: &str,
 ) -> AppResult<()> {
-    let c = comment::find_by_id(pool, comment_id)
+    let c = comment_repo
+        .find_by_id(comment_id)
         .await?
         .ok_or_else(|| AppError::NotFound("comment".into()))?;
 
@@ -133,19 +140,19 @@ pub async fn delete_comment(
         return Err(AppError::Forbidden);
     }
 
-    comment::delete(pool, comment_id).await
+    comment_repo.delete(comment_id).await
 }
 
 /// 更新评论状态。
 ///
 /// 仅接受 `"approved"`、`"spam"`、`"pending"` 三种状态值。
 pub async fn update_comment_status(
-    pool: &crate::db::Pool,
+    comment_repo: &dyn CommentRepository,
     comment_id: &str,
     status: &str,
 ) -> AppResult<()> {
     if status != "approved" && status != "spam" && status != "pending" {
         return Err(AppError::BadRequest("invalid_comment_status".into()));
     }
-    comment::update_status(pool, comment_id, status).await
+    comment_repo.update_status(comment_id, status).await
 }

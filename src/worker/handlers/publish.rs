@@ -39,14 +39,17 @@ impl JobHandler for ScheduledPublishHandler {
 
         crate::models::post::update(
             &self.pool,
-            post_id,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some("published"),
-            None,
+            &crate::commands::UpdatePostCmd {
+                id: post_id.clone(),
+                title: None,
+                slug: None,
+                content: None,
+                excerpt: None,
+                cover_image: None,
+                status: Some("published".to_string()),
+                category_id: None,
+                tag_ids: None,
+            },
         )
         .await?;
 
@@ -75,9 +78,16 @@ mod tests {
     }
 
     async fn create_author(pool: &Pool) -> String {
-        let u = user::create(pool, "author@test.com", "author", "hash")
-            .await
-            .unwrap();
+        let u = user::create(
+            pool,
+            &crate::commands::CreateUserCmd {
+                email: "author@test.com".to_string(),
+                username: "author".to_string(),
+                password_hash: "hash".to_string(),
+            },
+        )
+        .await
+        .unwrap();
         user::update_role(pool, &u.id, "author").await.unwrap();
         u.id
     }
@@ -89,14 +99,17 @@ mod tests {
 
         let p = post::create(
             &pool,
-            "Test",
-            "test-slug",
-            "content",
-            None,
-            None,
-            "draft",
-            &author_id,
-            None,
+            &crate::commands::CreatePostCmd {
+                title: "Test".to_string(),
+                slug: "test-slug".to_string(),
+                content: "content".to_string(),
+                excerpt: None,
+                cover_image: None,
+                status: "draft".to_string(),
+                author_id,
+                category_id: None,
+                tag_ids: None,
+            },
         )
         .await
         .unwrap();
@@ -119,14 +132,17 @@ mod tests {
 
         let p = post::create(
             &pool,
-            "Test",
-            "test-slug-2",
-            "content",
-            None,
-            None,
-            "published",
-            &author_id,
-            None,
+            &crate::commands::CreatePostCmd {
+                title: "Test".to_string(),
+                slug: "test-slug-2".to_string(),
+                content: "content".to_string(),
+                excerpt: None,
+                cover_image: None,
+                status: "published".to_string(),
+                author_id,
+                category_id: None,
+                tag_ids: None,
+            },
         )
         .await
         .unwrap();

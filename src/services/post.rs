@@ -10,19 +10,22 @@
 
 use slug::slugify;
 
+use crate::commands::{
+    CreateCategoryCmd, CreatePostCmd, FindPublishedQuery, UpdateCategoryCmd, UpdatePostCmd,
+};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::eventbus::{Event, EventBus};
-use crate::models::category::{self, CreateCategoryRequest, UpdateCategoryRequest};
-use crate::models::post::{
-    self, CreatePostRequest, PostJoinedRow, PostResponse, UpdatePostRequest,
-};
-use crate::models::tag::{self, CreateTagRequest};
+use crate::handlers::dto::CreateTagRequest;
+use crate::handlers::dto::{CreateCategoryRequest, UpdateCategoryRequest};
+use crate::handlers::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
+use crate::models::post::PostJoinedRow;
 use crate::plugins::{HookPoint, PluginManager};
+use crate::repositories::{CategoryRepository, PostRepository, TagRepository};
 use crate::utils::markdown::render_markdown;
 
 async fn joined_row_to_response(
     r: PostJoinedRow,
-    tags: Vec<post::TagBrief>,
+    tags: Vec<crate::models::post::TagBrief>,
     plugins: &PluginManager,
 ) -> PostResponse {
     let html_content = match plugins.dispatch_render_override(&r.content).await {
@@ -57,13 +60,13 @@ async fn joined_row_to_response(
     }
 }
 
-async fn build_post_response_from_id(
-    pool: &crate::db::Pool,
+async fn build_post_response_from_repo(
+    repo: &dyn PostRepository,
     id: &str,
     plugins: &PluginManager,
 ) -> AppResult<PostResponse> {
-    let row = post::find_joined_by_id(pool, id).await?;
-    let tags = post::get_post_tags(pool, &row.id).await.unwrap_or_default();
+    let row = repo.find_joined_by_id(id).await?;
+    let tags = repo.get_post_tags(&row.id).await.unwrap_or_default();
     Ok(joined_row_to_response(row, tags, plugins).await)
 }
 
@@ -71,79 +74,84 @@ async fn build_post_response_from_id(
 ///
 /// 从分类名称自动生成 slug。
 pub async fn create_category(
-    pool: &crate::db::Pool,
+    category_repo: &dyn CategoryRepository,
     req: CreateCategoryRequest,
-) -> AppResult<category::Category> {
+) -> AppResult<crate::models::category::Category> {
     let slug = slugify(&req.name);
-    category::create(
-        pool,
-        &req.name,
-        &slug,
-        req.description.as_deref(),
-        req.parent_id.as_deref(),
-        req.sort_order.unwrap_or(0),
-    )
-    .await
+    category_repo
+        .create(CreateCategoryCmd {
+            name: req.name,
+            slug,
+            description: req.description,
+            parent_id: req.parent_id,
+            sort_order: req.sort_order.unwrap_or(0),
+        })
+        .await
 }
 
 /// 更新分类。
 ///
 /// 若名称变更，自动重新生成 slug。
 pub async fn update_category(
-    pool: &crate::db::Pool,
+    category_repo: &dyn CategoryRepository,
     id: &str,
     req: UpdateCategoryRequest,
-) -> AppResult<category::Category> {
-    let existing = category::find_by_id(pool, id).await?;
+) -> AppResult<crate::models::category::Category> {
+    let existing = category_repo.find_by_id(id).await?;
     let new_slug = req.name.as_ref().map(slugify).unwrap_or(existing.slug);
 
-    category::update(
-        pool,
-        id,
-        req.name.as_deref(),
-        Some(&new_slug),
-        req.description.as_deref(),
-        req.parent_id.as_deref(),
-        req.sort_order,
-    )
-    .await
+    category_repo
+        .update(UpdateCategoryCmd {
+            id: id.to_string(),
+            name: req.name,
+            slug: Some(new_slug),
+            description: req.description,
+            parent_id: req.parent_id,
+            sort_order: req.sort_order,
+        })
+        .await
 }
 
 /// 删除分类。
-pub async fn delete_category(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
-    category::delete(pool, id).await
+pub async fn delete_category(category_repo: &dyn CategoryRepository, id: &str) -> AppResult<()> {
+    category_repo.delete(id).await
 }
 
 /// 获取所有分类列表。
-pub async fn list_categories(pool: &crate::db::Pool) -> AppResult<Vec<category::Category>> {
-    category::find_all(pool).await
+pub async fn list_categories(
+    category_repo: &dyn CategoryRepository,
+) -> AppResult<Vec<crate::models::category::Category>> {
+    category_repo.find_all().await
 }
 
 /// 创建标签。
 ///
 /// 从标签名称自动生成 slug。
-pub async fn create_tag(pool: &crate::db::Pool, req: CreateTagRequest) -> AppResult<tag::Tag> {
+pub async fn create_tag(
+    tag_repo: &dyn TagRepository,
+    req: CreateTagRequest,
+) -> AppResult<crate::models::tag::Tag> {
     let slug = slugify(&req.name);
-    tag::create(pool, &req.name, &slug).await
+    tag_repo.create(&req.name, &slug).await
 }
 
 /// 删除标签。
-pub async fn delete_tag(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
-    tag::delete(pool, id).await
+pub async fn delete_tag(tag_repo: &dyn TagRepository, id: &str) -> AppResult<()> {
+    tag_repo.delete(id).await
 }
 
 /// 获取所有标签列表。
-pub async fn list_tags(pool: &crate::db::Pool) -> AppResult<Vec<tag::Tag>> {
-    tag::find_all(pool).await
+pub async fn list_tags(tag_repo: &dyn TagRepository) -> AppResult<Vec<crate::models::tag::Tag>> {
+    tag_repo.find_all().await
 }
 
 /// 生成唯一的 slug。
 ///
 /// 若基础 slug 已被占用，则追加递增后缀（`-2`、`-3`、...）直到唯一。
-async fn make_unique_slug(base_slug: &str, pool: &crate::db::Pool) -> AppResult<String> {
+async fn make_unique_slug(base_slug: &str, repo: &dyn PostRepository) -> AppResult<String> {
     let mut slug = base_slug.to_string();
     let mut counter = 1;
-    while post::find_by_slug(pool, &slug).await?.is_some() {
+    while repo.find_by_slug(&slug).await?.is_some() {
         slug = format!("{}-{}", base_slug, counter);
         counter += 1;
     }
@@ -166,9 +174,9 @@ fn extract_excerpt(content: &str, max_len: usize) -> String {
 ///
 /// - 从标题自动生成唯一 slug。
 /// - 若未提供摘要，从内容中自动提取前 200 字符。
-/// - 在单个事务中创建文章并同步关联标签，确保原子性。
+/// - 通过 Repository 创建文章并同步关联标签，确保原子性。
 pub async fn create_post(
-    pool: &crate::db::Pool,
+    repo: &dyn PostRepository,
     plugins: &PluginManager,
     eventbus: &EventBus,
     author_id: &str,
@@ -178,7 +186,7 @@ pub async fn create_post(
         .dispatch_filter(HookPoint::PostCreating, req)
         .await?;
     let base_slug = slugify(&req.title);
-    let slug = make_unique_slug(&base_slug, pool).await?;
+    let slug = make_unique_slug(&base_slug, repo).await?;
     let status = req.status.as_deref().unwrap_or("draft");
     let excerpt = req
         .excerpt
@@ -186,39 +194,21 @@ pub async fn create_post(
         .map(|s| s.to_string())
         .unwrap_or_else(|| extract_excerpt(&req.content, 200));
 
-    let p = if let Some(tag_ids) = &req.tag_ids {
-        let mut tx = pool.begin().await?;
-        let post = post::create_tx(
-            &mut tx,
-            &req.title,
-            &slug,
-            &req.content,
-            Some(&excerpt),
-            req.cover_image.as_deref(),
-            status,
-            author_id,
-            req.category_id.as_deref().filter(|s| !s.is_empty()),
-        )
+    let p = repo
+        .create(CreatePostCmd {
+            title: req.title,
+            slug,
+            content: req.content,
+            excerpt: Some(excerpt),
+            cover_image: req.cover_image,
+            status: status.to_string(),
+            author_id: author_id.to_string(),
+            category_id: req.category_id.filter(|s| !s.is_empty()),
+            tag_ids: req.tag_ids,
+        })
         .await?;
-        post::sync_tags_tx(&mut tx, &post.id, tag_ids).await?;
-        tx.commit().await?;
-        post
-    } else {
-        post::create(
-            pool,
-            &req.title,
-            &slug,
-            &req.content,
-            Some(&excerpt),
-            req.cover_image.as_deref(),
-            status,
-            author_id,
-            req.category_id.as_deref().filter(|s| !s.is_empty()),
-        )
-        .await?
-    };
 
-    let resp = build_post_response_from_id(pool, &p.id, plugins).await?;
+    let resp = build_post_response_from_repo(repo, &p.id, plugins).await?;
     eventbus.emit(Event::PostCreated {
         id: p.id.clone(),
         slug: resp.slug.clone(),
@@ -232,9 +222,9 @@ pub async fn create_post(
 ///
 /// - 若标题变更，重新生成唯一 slug。
 /// - 重新生成摘要（若内容变更）。
-/// - 在单个事务中更新文章并同步关联标签，确保原子性。
+/// - 通过 Repository 更新文章并同步关联标签，确保原子性。
 pub async fn update_post(
-    pool: &crate::db::Pool,
+    repo: &dyn PostRepository,
     plugins: &PluginManager,
     id: &str,
     req: UpdatePostRequest,
@@ -243,7 +233,8 @@ pub async fn update_post(
         .dispatch_filter(HookPoint::PostUpdating, req)
         .await?;
 
-    let existing = post::find_by_id(pool, id)
+    let existing = repo
+        .find_by_id(id)
         .await?
         .ok_or_else(|| AppError::NotFound("post".into()))?;
 
@@ -254,7 +245,7 @@ pub async fn update_post(
         .filter(|s| s != &existing.slug);
 
     let slug = match new_slug {
-        Some(s) => Some(make_unique_slug(&s, pool).await?),
+        Some(s) => Some(make_unique_slug(&s, repo).await?),
         None => None,
     };
 
@@ -264,50 +255,32 @@ pub async fn update_post(
         .clone()
         .unwrap_or_else(|| extract_excerpt(content, 200));
 
-    if let Some(tag_ids) = &req.tag_ids {
-        let mut tx = pool.begin().await?;
-        post::update_tx(
-            &mut tx,
-            id,
-            req.title.as_deref(),
-            slug.as_deref(),
-            Some(content),
-            Some(&excerpt),
-            req.cover_image.as_deref(),
-            req.status.as_deref(),
-            req.category_id.as_deref().filter(|s| !s.is_empty()),
-        )
-        .await?;
-        post::sync_tags_tx(&mut tx, id, tag_ids).await?;
-        tx.commit().await?;
-    } else {
-        post::update(
-            pool,
-            id,
-            req.title.as_deref(),
-            slug.as_deref(),
-            Some(content),
-            Some(&excerpt),
-            req.cover_image.as_deref(),
-            req.status.as_deref(),
-            req.category_id.as_deref().filter(|s| !s.is_empty()),
-        )
-        .await?;
-    }
+    repo.update(UpdatePostCmd {
+        id: id.to_string(),
+        title: req.title,
+        slug,
+        content: Some(content.to_string()),
+        excerpt: Some(excerpt),
+        cover_image: req.cover_image,
+        status: req.status,
+        category_id: req.category_id.filter(|s| !s.is_empty()),
+        tag_ids: req.tag_ids,
+    })
+    .await?;
 
-    build_post_response_from_id(pool, id, plugins).await
+    build_post_response_from_repo(repo, id, plugins).await
 }
 
 /// 删除文章。
-pub async fn delete_post(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
-    post::delete(pool, id).await
+pub async fn delete_post(repo: &dyn PostRepository, id: &str) -> AppResult<()> {
+    repo.delete(id).await
 }
 
 /// 带权限校验的文章更新。
 ///
 /// 仅文章作者或管理员可执行。
 pub async fn update_post_with_auth(
-    pool: &crate::db::Pool,
+    repo: &dyn PostRepository,
     plugins: &PluginManager,
     eventbus: &EventBus,
     slug: &str,
@@ -315,7 +288,8 @@ pub async fn update_post_with_auth(
     role: &str,
     req: UpdatePostRequest,
 ) -> AppResult<PostResponse> {
-    let existing = post::find_by_slug(pool, slug)
+    let existing = repo
+        .find_by_slug(slug)
         .await?
         .ok_or_else(|| AppError::NotFound("post".into()))?;
 
@@ -323,7 +297,7 @@ pub async fn update_post_with_auth(
         return Err(AppError::Forbidden);
     }
 
-    let resp = update_post(pool, plugins, &existing.id, req).await?;
+    let resp = update_post(repo, plugins, &existing.id, req).await?;
     eventbus.emit(Event::PostUpdated {
         id: existing.id.clone(),
         slug: resp.slug.clone(),
@@ -335,14 +309,15 @@ pub async fn update_post_with_auth(
 ///
 /// 仅文章作者或管理员可执行。
 pub async fn delete_post_with_auth(
-    pool: &crate::db::Pool,
+    repo: &dyn PostRepository,
     _plugins: &PluginManager,
     eventbus: &EventBus,
     slug: &str,
     user_id: &str,
     role: &str,
 ) -> AppResult<()> {
-    let existing = post::find_by_slug(pool, slug)
+    let existing = repo
+        .find_by_slug(slug)
         .await?
         .ok_or_else(|| AppError::NotFound("post".into()))?;
 
@@ -352,7 +327,7 @@ pub async fn delete_post_with_auth(
 
     let id = existing.id.clone();
     let slug = slug.to_string();
-    delete_post(pool, &existing.id).await?;
+    delete_post(repo, &existing.id).await?;
     eventbus.emit(Event::PostDeleted { id, slug });
     Ok(())
 }
@@ -362,12 +337,12 @@ pub async fn delete_post_with_auth(
 /// 每次访问原子递增文章的浏览计数（`view_count`），
 /// 并通过 JOIN 一次查询获取作者名和分类名。
 pub async fn get_post(
-    pool: &crate::db::Pool,
+    repo: &dyn PostRepository,
     slug: &str,
     plugins: &PluginManager,
 ) -> AppResult<PostResponse> {
-    let row = post::increment_view_count_joined(pool, slug).await?;
-    let tags = post::get_post_tags(pool, &row.id).await.unwrap_or_default();
+    let row = repo.increment_view_count_joined(slug).await?;
+    let tags = repo.get_post_tags(&row.id).await.unwrap_or_default();
     Ok(joined_row_to_response(row, tags, plugins).await)
 }
 
@@ -376,7 +351,7 @@ pub async fn get_post(
 /// 支持按分类、标签和关键词进行可选过滤。
 /// 使用 JOIN 查询和批量标签获取，将查询次数从 3N+1 降至 2~3 次。
 pub async fn list_posts(
-    pool: &crate::db::Pool,
+    repo: &dyn PostRepository,
     page: i64,
     page_size: i64,
     category_id: Option<&str>,
@@ -384,13 +359,18 @@ pub async fn list_posts(
     q: Option<&str>,
     plugins: &PluginManager,
 ) -> AppResult<(Vec<PostResponse>, i64)> {
-    let (rows, total) =
-        post::find_published_joined(pool, page, page_size, category_id, tag_id, q).await?;
+    let (rows, total) = repo
+        .find_published_joined(FindPublishedQuery {
+            page,
+            page_size,
+            category_id: category_id.map(|s| s.to_string()),
+            tag_id: tag_id.map(|s| s.to_string()),
+            q: q.map(|s| s.to_string()),
+        })
+        .await?;
 
     let post_ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
-    let tags_map = post::get_tags_for_posts(pool, &post_ids)
-        .await
-        .unwrap_or_default();
+    let tags_map = repo.get_tags_for_posts(&post_ids).await.unwrap_or_default();
 
     let mut responses = Vec::with_capacity(rows.len());
     for r in rows {
@@ -427,17 +407,6 @@ pub async fn list_posts(
     }
 
     Ok((responses, total))
-}
-
-/// 获取文章详情（供所有者编辑用）。
-///
-/// 与 [`get_post`] 不同，此方法返回文章不论其发布状态，适用于作者编辑草稿。
-pub async fn get_post_for_owner(
-    pool: &crate::db::Pool,
-    id: &str,
-    plugins: &PluginManager,
-) -> AppResult<PostResponse> {
-    build_post_response_from_id(pool, id, plugins).await
 }
 
 #[cfg(test)]

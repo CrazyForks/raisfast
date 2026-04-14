@@ -10,7 +10,6 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
-use validator::Validate;
 
 use crate::errors::app_error::{AppError, AppResult};
 
@@ -37,36 +36,6 @@ pub struct Post {
     pub published_at: Option<String>,
 }
 
-/// 文章 API 响应模型
-///
-/// 在 [`Post`] 基础上增加：
-/// - `html_content`：Markdown 渲染后的 HTML 内容
-/// - `author_name`：作者用户名
-/// - `category_name`：所属分类名称
-/// - `tags`：关联标签列表
-#[derive(Debug, Serialize, Clone)]
-#[non_exhaustive]
-pub struct PostResponse {
-    pub id: String,
-    pub title: String,
-    pub slug: String,
-    pub content: String,
-    pub html_content: String,
-    pub excerpt: Option<String>,
-    pub cover_image: Option<String>,
-    pub status: String,
-    pub author_id: String,
-    pub author_name: Option<String>,
-    pub category_id: Option<String>,
-    pub category_name: Option<String>,
-    pub tags: Vec<TagBrief>,
-    pub view_count: i64,
-    pub is_pinned: bool,
-    pub created_at: String,
-    pub updated_at: String,
-    pub published_at: Option<String>,
-}
-
 /// 标签摘要
 ///
 /// 用于文章响应中展示标签的简要信息，包含 ID、名称和 slug。
@@ -75,41 +44,6 @@ pub struct TagBrief {
     pub id: String,
     pub name: String,
     pub slug: String,
-}
-
-/// 创建文章请求体
-///
-/// - `title` 长度 1–200 个字符
-/// - `content` 不能为空
-/// - `status` 默认为 `draft`
-/// - `tag_ids` 可选，指定关联标签
-#[derive(Debug, Clone, Deserialize, Serialize, Validate)]
-pub struct CreatePostRequest {
-    #[validate(length(min = 1, max = 200))]
-    pub title: String,
-    #[validate(length(min = 1))]
-    pub content: String,
-    pub excerpt: Option<String>,
-    pub cover_image: Option<String>,
-    pub status: Option<String>,
-    pub category_id: Option<String>,
-    pub tag_ids: Option<Vec<String>>,
-}
-
-/// 更新文章请求体
-///
-/// 所有字段均为可选，仅更新提供的字段。
-/// - `title` 如果提供，长度须在 1–200 个字符之间
-#[derive(Debug, Deserialize, Serialize, Validate, Clone)]
-pub struct UpdatePostRequest {
-    #[validate(length(min = 1, max = 200))]
-    pub title: Option<String>,
-    pub content: Option<String>,
-    pub excerpt: Option<String>,
-    pub cover_image: Option<String>,
-    pub status: Option<String>,
-    pub category_id: Option<String>,
-    pub tag_ids: Option<Vec<String>>,
 }
 
 /// 根据 slug 查找文章
@@ -140,51 +74,24 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<Po
 ///
 /// 自动生成 UUID v7 作为主键；若 `status` 为 `published` 则同时设置 `published_at`。
 /// 创建完成后重新查询并返回完整文章记录。
-#[allow(clippy::too_many_arguments)]
 pub async fn create(
     pool: &crate::db::Pool,
-    title: &str,
-    slug: &str,
-    content: &str,
-    excerpt: Option<&str>,
-    cover_image: Option<&str>,
-    status: &str,
-    author_id: &str,
-    category_id: Option<&str>,
+    cmd: &crate::commands::CreatePostCmd,
 ) -> AppResult<Post> {
     let mut tx = pool.begin().await?;
-    let post = create_tx(
-        &mut tx,
-        title,
-        slug,
-        content,
-        excerpt,
-        cover_image,
-        status,
-        author_id,
-        category_id,
-    )
-    .await?;
+    let post = create_tx(&mut tx, cmd).await?;
     tx.commit().await?;
     Ok(post)
 }
 
 /// 在已有事务中创建新文章
-#[allow(clippy::too_many_arguments)]
 pub async fn create_tx(
     tx: &mut crate::db::Transaction<'_>,
-    title: &str,
-    slug: &str,
-    content: &str,
-    excerpt: Option<&str>,
-    cover_image: Option<&str>,
-    status: &str,
-    author_id: &str,
-    category_id: Option<&str>,
+    cmd: &crate::commands::CreatePostCmd,
 ) -> AppResult<Post> {
     let id = Uuid::now_v7().to_string();
     let now = Utc::now().to_rfc3339();
-    let published_at = if status == "published" {
+    let published_at = if cmd.status == "published" {
         Some(now.clone())
     } else {
         None
@@ -193,14 +100,14 @@ pub async fn create_tx(
     sqlx::query!(
         "INSERT INTO posts (id, title, slug, content, excerpt, cover_image, status, author_id, category_id, published_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         id,
-        title,
-        slug,
-        content,
-        excerpt,
-        cover_image,
-        status,
-        author_id,
-        category_id,
+        cmd.title,
+        cmd.slug,
+        cmd.content,
+        cmd.excerpt,
+        cmd.cover_image,
+        cmd.status,
+        cmd.author_id,
+        cmd.category_id,
         published_at,
         now,
         now,
@@ -221,69 +128,54 @@ pub async fn create_tx(
 ///
 /// 仅更新传入的非空字段，其余保留原值。
 /// 若文章首次从草稿变为已发布状态，自动填充 `published_at`。
-#[allow(clippy::too_many_arguments)]
 pub async fn update(
     pool: &crate::db::Pool,
-    id: &str,
-    title: Option<&str>,
-    slug: Option<&str>,
-    content: Option<&str>,
-    excerpt: Option<&str>,
-    cover_image: Option<&str>,
-    status: Option<&str>,
-    category_id: Option<&str>,
+    cmd: &crate::commands::UpdatePostCmd,
 ) -> AppResult<Post> {
     let mut tx = pool.begin().await?;
-    let post = update_tx(
-        &mut tx,
-        id,
-        title,
-        slug,
-        content,
-        excerpt,
-        cover_image,
-        status,
-        category_id,
-    )
-    .await?;
+    let post = update_tx(&mut tx, cmd).await?;
     tx.commit().await?;
     Ok(post)
 }
 
 /// 在已有事务中更新文章
-#[allow(clippy::too_many_arguments)]
 pub async fn update_tx(
     tx: &mut crate::db::Transaction<'_>,
-    id: &str,
-    title: Option<&str>,
-    slug: Option<&str>,
-    content: Option<&str>,
-    excerpt: Option<&str>,
-    cover_image: Option<&str>,
-    status: Option<&str>,
-    category_id: Option<&str>,
+    cmd: &crate::commands::UpdatePostCmd,
 ) -> AppResult<Post> {
     let sql = crate::db::dialect::translate("SELECT * FROM posts WHERE id = ?");
     let existing = sqlx::query_as::<_, Post>(&sql)
-        .bind(id)
+        .bind(&cmd.id)
         .fetch_optional(&mut **tx)
         .await?
         .ok_or_else(|| AppError::NotFound("post".into()))?;
 
     let now = Utc::now().to_rfc3339();
-    let new_status = status.unwrap_or(&existing.status);
+    let new_status = cmd.status.as_deref().unwrap_or(&existing.status);
     let published_at = if new_status == "published" && existing.published_at.is_none() {
         Some(now.clone())
     } else {
         existing.published_at
     };
 
-    let title = title.unwrap_or(&existing.title);
-    let content = content.unwrap_or(&existing.content);
-    let excerpt = excerpt.map(|s| s.to_string()).or(existing.excerpt);
-    let cover_image = cover_image.map(|s| s.to_string()).or(existing.cover_image);
-    let category_id = category_id.map(|s| s.to_string()).or(existing.category_id);
-    let slug = slug.unwrap_or(&existing.slug);
+    let title = cmd.title.as_deref().unwrap_or(&existing.title);
+    let content = cmd.content.as_deref().unwrap_or(&existing.content);
+    let excerpt = cmd
+        .excerpt
+        .as_deref()
+        .map(|s| s.to_string())
+        .or(existing.excerpt);
+    let cover_image = cmd
+        .cover_image
+        .as_deref()
+        .map(|s| s.to_string())
+        .or(existing.cover_image);
+    let category_id = cmd
+        .category_id
+        .as_deref()
+        .map(|s| s.to_string())
+        .or(existing.category_id);
+    let slug = cmd.slug.as_deref().unwrap_or(&existing.slug);
 
     sqlx::query!(
         "UPDATE posts SET title = ?, slug = ?, content = ?, excerpt = ?, cover_image = ?, status = ?, category_id = ?, published_at = ?, updated_at = ? WHERE id = ?",
@@ -296,14 +188,14 @@ pub async fn update_tx(
         category_id,
         published_at,
         now,
-        id,
+        cmd.id,
     )
     .execute(&mut **tx)
     .await?;
 
     let sql = crate::db::dialect::translate("SELECT * FROM posts WHERE id = ?");
     sqlx::query_as::<_, Post>(&sql)
-        .bind(id)
+        .bind(&cmd.id)
         .fetch_one(&mut **tx)
         .await
         .map_err(|_| AppError::Internal(anyhow::anyhow!("failed to fetch updated post")))
@@ -558,7 +450,7 @@ pub async fn find_published_by_slug(pool: &crate::db::Pool, slug: &str) -> AppRe
 }
 
 /// JOIN 查询中间行类型（含作者名和分类名）
-#[derive(Debug, FromRow)]
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct PostJoinedRow {
     pub id: String,
     pub title: String,

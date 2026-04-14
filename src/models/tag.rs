@@ -7,7 +7,6 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
-use validator::Validate;
 
 use crate::errors::app_error::{AppError, AppResult};
 
@@ -20,15 +19,6 @@ pub struct Tag {
     pub name: String,
     pub slug: String,
     pub created_at: String,
-}
-
-/// 创建标签请求体
-///
-/// - `name` 长度 1–50 个字符
-#[derive(Debug, Deserialize, Validate)]
-pub struct CreateTagRequest {
-    #[validate(length(min = 1, max = 50))]
-    pub name: String,
 }
 
 /// 查询所有标签
