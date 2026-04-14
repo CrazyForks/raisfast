@@ -26,5 +26,6 @@ pub mod media;
 pub mod plugin;
 pub mod post;
 pub mod rss;
+pub mod sse;
 pub mod tag;
 pub mod user;

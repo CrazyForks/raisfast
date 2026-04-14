@@ -3824,6 +3824,7 @@ dependencies = [
  "comrak",
  "cron",
  "dotenvy",
+ "futures",
  "getrandom 0.2.17",
  "hex",
  "http-body-util",
@@ -3846,6 +3847,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-stream",
  "toml",
  "tower",
  "tower-http",
@@ -4836,6 +4838,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

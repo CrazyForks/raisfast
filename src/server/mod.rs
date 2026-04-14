@@ -14,7 +14,7 @@ use rust_blog::cache::MemoryCache;
 use rust_blog::config::app::AppConfig;
 use rust_blog::db::connection::init_pool;
 use rust_blog::handlers::{
-    auth, category, comment, cron, health, media, plugin, post, rss, tag, user,
+    auth, category, comment, cron, health, media, plugin, post, rss, sse, tag, user,
 };
 use rust_blog::middleware::locale::locale_middleware;
 use rust_blog::middleware::rate_limit::{
@@ -151,6 +151,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         )
         .route("/media", get(media::list))
         .route("/media/{id}", delete(media::delete))
+        .route("/events", get(sse::subscribe))
         .route("/admin/plugins", get(plugin::list))
         .route(
             "/admin/plugins/{id}",

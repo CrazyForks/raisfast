@@ -19,7 +19,7 @@ use rust_blog::cache::MemoryCache;
 use rust_blog::config::app::AppConfig;
 use rust_blog::handlers::{
     auth as h_auth, category as h_cat, comment as h_cmt, cron as h_cron, health as h_health,
-    media as h_media, post as h_post, rss as h_rss, tag as h_tag, user as h_user,
+    media as h_media, post as h_post, rss as h_rss, sse as h_sse, tag as h_tag, user as h_user,
 };
 use rust_blog::middleware::locale::locale_middleware;
 use rust_blog::middleware::rate_limit::{
@@ -177,6 +177,7 @@ async fn test_app() -> (axum::Router, AppState) {
         )
         .route("/media", get(h_media::list))
         .route("/media/{id}", delete(h_media::delete))
+        .route("/events", get(h_sse::subscribe))
         .route("/admin/crons", get(h_cron::list).post(h_cron::create))
         .route(
             "/admin/crons/{id}",
@@ -1696,5 +1697,27 @@ mod cron {
     async fn create_admin_helper() -> String {
         let pool = test_pool().await;
         create_admin(&pool).await
+    }
+}
+
+mod sse {
+    use super::*;
+
+    #[tokio::test]
+    async fn sse_endpoint_returns_ok() {
+        let (mut app, _) = test_app().await;
+        let req = Request::builder()
+            .uri("/api/v1/events")
+            .header("accept", "text/event-stream")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert!(resp.status().is_success());
+        assert_eq!(
+            resp.headers()
+                .get("content-type")
+                .map(|v| v.to_str().unwrap()),
+            Some("text/event-stream")
+        );
     }
 }
