@@ -268,6 +268,8 @@ mod tests {
             static_dir: "./static".into(),
             base_url: "http://localhost:3000".into(),
             cors_origins: None,
+            tls_cert_path: None,
+            tls_key_path: None,
             plugin_dir: None,
             plugin_hot_reload: false,
             plugin_max_memory_mb: 32,
@@ -531,18 +533,24 @@ mod tests {
     #[test]
     fn error_display_human_readable() {
         assert!(VfsError::PathEscape.to_string().contains("escape"));
-        assert!(VfsError::PermissionDenied
+        assert!(
+            VfsError::PermissionDenied
+                .to_string()
+                .contains("permission")
+        );
+        assert!(
+            VfsError::FileTooLarge { max: 1024 }
+                .to_string()
+                .contains("1024")
+        );
+        assert!(
+            VfsError::QuotaExceeded {
+                used: 100,
+                max: 200,
+                need: 150,
+            }
             .to_string()
-            .contains("permission"));
-        assert!(VfsError::FileTooLarge { max: 1024 }
-            .to_string()
-            .contains("1024"));
-        assert!(VfsError::QuotaExceeded {
-            used: 100,
-            max: 200,
-            need: 150,
-        }
-        .to_string()
-        .contains("quota"));
+            .contains("quota")
+        );
     }
 }

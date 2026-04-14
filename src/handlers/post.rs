@@ -174,12 +174,8 @@ pub async fn admin_get(
     _author: AuthorUser,
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<PostResponse>> {
-    let post = post_service::get_post_any_status(
-        state.post_repo.as_ref(),
-        &slug,
-        &state.plugins,
-    )
-    .await?;
+    let post =
+        post_service::get_post_any_status(state.post_repo.as_ref(), &slug, &state.plugins).await?;
     Ok(ApiResponse::success(post))
 }
 

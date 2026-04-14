@@ -56,6 +56,8 @@ fn test_config() -> AppConfig {
         static_dir: "./static".into(),
         base_url: "http://localhost:9000".into(),
         cors_origins: None,
+        tls_cert_path: None,
+        tls_key_path: None,
         plugin_dir: None,
         plugin_hot_reload: false,
         plugin_max_memory_mb: 32,

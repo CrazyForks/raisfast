@@ -147,10 +147,33 @@ local handlers = {
 
 -- ── Hook 入口 ─────────────────────────────────────────────────
 
+local function to_json_str(val)
+    if val == nil then
+        return ""
+    end
+    if type(val) == "string" then
+        return val
+    end
+    if type(val) == "table" then
+        local parts = {}
+        for k, v in pairs(val) do
+            if type(v) == "number" then
+                parts[#parts + 1] = '"' .. k .. '":' .. tostring(v)
+            elseif type(v) == "string" then
+                parts[#parts + 1] = '"' .. k .. '":"' .. v .. '"'
+            elseif type(v) == "boolean" then
+                parts[#parts + 1] = '"' .. k .. '":' .. tostring(v)
+            end
+        end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+    return tostring(val)
+end
+
 Plugin = {
     on_cron_tick = function(data)
         local job_type = data.job_type or ""
-        local payload = data.payload
+        local payload = to_json_str(data.payload)
         local ts = data.timestamp or ""
 
         local handler = handlers[job_type]

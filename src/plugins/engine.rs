@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::plugins::host_common::HostContext;
 
@@ -323,6 +323,8 @@ mod tests {
             static_dir: "./static".into(),
             base_url: "http://localhost:3000".into(),
             cors_origins: None,
+            tls_cert_path: None,
+            tls_key_path: None,
             plugin_dir: None,
             plugin_hot_reload: false,
             plugin_max_memory_mb: 32,

@@ -37,18 +37,19 @@ use tracing::Level;
 fn build_search_engine(config: &AppConfig) -> Arc<dyn SearchEngine> {
     match config.search_engine.as_str() {
         #[cfg(feature = "search-tantivy")]
-        "tantivy" => {
-            match rust_blog::search::TantivyEngine::open(&config.search_index_dir) {
-                Ok(engine) => {
-                    tracing::info!("search engine: tantivy (index: {})", config.search_index_dir);
-                    Arc::new(engine)
-                }
-                Err(e) => {
-                    tracing::error!("failed to open tantivy index: {e}, falling back to noop");
-                    Arc::new(NoopSearchEngine)
-                }
+        "tantivy" => match rust_blog::search::TantivyEngine::open(&config.search_index_dir) {
+            Ok(engine) => {
+                tracing::info!(
+                    "search engine: tantivy (index: {})",
+                    config.search_index_dir
+                );
+                Arc::new(engine)
             }
-        }
+            Err(e) => {
+                tracing::error!("failed to open tantivy index: {e}, falling back to noop");
+                Arc::new(NoopSearchEngine)
+            }
+        },
         _ => {
             tracing::info!("search engine: none (LIKE fallback)");
             Arc::new(NoopSearchEngine)
@@ -130,7 +131,14 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
     spawn_event_subscriber(eventbus.clone(), state.plugins.clone());
 
     if config.worker_enabled {
-        spawn_workers(worker_pool, &eventbus, config, state.plugins.clone(), state.search.clone()).await;
+        spawn_workers(
+            worker_pool,
+            &eventbus,
+            config,
+            state.plugins.clone(),
+            state.search.clone(),
+        )
+        .await;
     }
 
     let cors = build_cors(config);
@@ -267,14 +275,43 @@ pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
     });
 
     let app = build_app(config, limiters).await?;
-    let listener = TcpListener::bind(&addr).await?;
 
-    tracing::info!("server listening on {}", addr);
-    println!("server listening on http://{}", addr);
-
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    match (&config.tls_cert_path, &config.tls_key_path) {
+        (Some(_cert), Some(_key)) => {
+            #[cfg(feature = "tls")]
+            {
+                use axum_server::tls_rustls::RustlsConfig;
+                let tls_config = RustlsConfig::from_pem_file(_cert, _key).await?;
+                tracing::info!("server listening on https://{}", addr);
+                println!("server listening on https://{}", addr);
+                let socket_addr: std::net::SocketAddr = addr.parse()?;
+                axum_server::bind_rustls(socket_addr, tls_config)
+                    .serve(app.into_make_service())
+                    .await?;
+            }
+            #[cfg(not(feature = "tls"))]
+            {
+                tracing::warn!(
+                    "TLS_CERT_PATH and TLS_KEY_PATH set but 'tls' feature not enabled. \
+                      Falling back to HTTP."
+                );
+                tracing::info!("server listening on http://{}", addr);
+                println!("server listening on http://{}", addr);
+                let listener = TcpListener::bind(&addr).await?;
+                axum::serve(listener, app)
+                    .with_graceful_shutdown(shutdown_signal())
+                    .await?;
+            }
+        }
+        _ => {
+            tracing::info!("server listening on http://{}", addr);
+            println!("server listening on http://{}", addr);
+            let listener = TcpListener::bind(&addr).await?;
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_signal())
+                .await?;
+        }
+    }
 
     Ok(())
 }

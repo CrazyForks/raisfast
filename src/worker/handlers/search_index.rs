@@ -147,9 +147,7 @@ mod tests {
         let uid = create_user(&pool).await;
         let post_id = create_post(&pool, &uid, "Rust编程入门").await;
 
-        let engine = Arc::new(
-            crate::search::TantivyEngine::open_in_memory().unwrap(),
-        );
+        let engine = Arc::new(crate::search::TantivyEngine::open_in_memory().unwrap());
         let handler = RebuildSearchIndexHandler::new(pool, engine.clone());
         let job = Job::RebuildSearchIndex {
             post_ids: vec![post_id.clone()],
@@ -169,9 +167,7 @@ mod tests {
         let p1 = create_post(&pool, &uid, "Rust入门").await;
         let p2 = create_post(&pool, &uid, "Go进阶").await;
 
-        let engine = Arc::new(
-            crate::search::TantivyEngine::open_in_memory().unwrap(),
-        );
+        let engine = Arc::new(crate::search::TantivyEngine::open_in_memory().unwrap());
         let handler = RebuildSearchIndexHandler::new(pool, engine.clone());
         let job = Job::RebuildSearchIndex {
             post_ids: vec![p1.clone(), p2.clone()],
@@ -188,9 +184,7 @@ mod tests {
     #[tokio::test]
     async fn deletes_nonexistent_post_from_index() {
         let pool = setup_pool().await;
-        let engine = Arc::new(
-            crate::search::TantivyEngine::open_in_memory().unwrap(),
-        );
+        let engine = Arc::new(crate::search::TantivyEngine::open_in_memory().unwrap());
 
         engine
             .index_post(&SearchablePost {
@@ -217,13 +211,9 @@ mod tests {
     #[tokio::test]
     async fn handles_empty_post_ids() {
         let pool = setup_pool().await;
-        let engine = Arc::new(
-            crate::search::TantivyEngine::open_in_memory().unwrap(),
-        );
+        let engine = Arc::new(crate::search::TantivyEngine::open_in_memory().unwrap());
         let handler = RebuildSearchIndexHandler::new(pool, engine);
-        let job = Job::RebuildSearchIndex {
-            post_ids: vec![],
-        };
+        let job = Job::RebuildSearchIndex { post_ids: vec![] };
         assert!(handler.handle(&job).await.is_ok());
     }
 
@@ -234,9 +224,7 @@ mod tests {
         let uid = create_user(&pool).await;
         let real_id = create_post(&pool, &uid, "真实文章").await;
 
-        let engine = Arc::new(
-            crate::search::TantivyEngine::open_in_memory().unwrap(),
-        );
+        let engine = Arc::new(crate::search::TantivyEngine::open_in_memory().unwrap());
         let handler = RebuildSearchIndexHandler::new(pool, engine.clone());
         let job = Job::RebuildSearchIndex {
             post_ids: vec![real_id.clone(), "fake-id".into()],

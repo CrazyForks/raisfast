@@ -20,6 +20,9 @@ plugin-all  = ["plugin-wasm", "plugin-js", "plugin-lua"]
 # ── Search engine ────────────────────────────────────────────────────
 search-tantivy = ["tantivy"]
 
+# ── TLS (HTTPS) ─────────────────────────────────────────────────────
+tls = ["axum-server", "rustls", "tokio-rustls"]
+
 [dependencies]
 # Web framework
 axum = { version = "0.8", features = ["macros", "multipart"] }
@@ -94,6 +97,11 @@ notify = { version = "7", features = ["macos_kqueue"] }
 
 # Search engine (optional)
 tantivy = { version = "0.26", optional = true }
+
+# TLS (optional, for HTTPS)
+axum-server = { version = "0.7", features = ["tls-rustls"], optional = true }
+rustls = { version = "0.23", optional = true }
+tokio-rustls = { version = "0.26", optional = true }
 
 [dev-dependencies]
 http-body-util = "0.1.3"

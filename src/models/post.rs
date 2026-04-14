@@ -469,10 +469,7 @@ pub async fn find_all_joined(
             .fetch_all(pool)
             .await?;
         let sql = crate::db::dialect::translate("SELECT COUNT(*) FROM posts WHERE status = ?");
-        let total: (i64,) = sqlx::query_as(&sql)
-        .bind(status)
-        .fetch_one(pool)
-        .await?;
+        let total: (i64,) = sqlx::query_as(&sql).bind(status).fetch_one(pool).await?;
         (posts, total.0)
     } else {
         let sql = format!(
@@ -485,8 +482,9 @@ pub async fn find_all_joined(
             .bind(offset)
             .fetch_all(pool)
             .await?;
-        let total: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM posts").fetch_one(pool).await?;
+        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM posts")
+            .fetch_one(pool)
+            .await?;
         (posts, total.0)
     };
 
@@ -573,7 +571,9 @@ mod tests {
         let p1 = create_test_post(&pool, &uid, "published", "文章A").await;
         let p2 = create_test_post(&pool, &uid, "published", "文章B").await;
         let p3 = create_test_post(&pool, &uid, "published", "文章C").await;
-        let result = find_joined_by_ids(&pool, &[p1.id.clone(), p3.id.clone()]).await.unwrap();
+        let result = find_joined_by_ids(&pool, &[p1.id.clone(), p3.id.clone()])
+            .await
+            .unwrap();
         assert_eq!(result.len(), 2);
         let ids: Vec<&str> = result.iter().map(|r| r.id.as_str()).collect();
         assert!(ids.contains(&p1.id.as_str()));
@@ -593,8 +593,9 @@ mod tests {
     #[tokio::test]
     async fn find_joined_by_ids_nonexistent() {
         let pool = setup_pool().await;
-        let result =
-            find_joined_by_ids(&pool, &["nonexistent-id".to_string()]).await.unwrap();
+        let result = find_joined_by_ids(&pool, &["nonexistent-id".to_string()])
+            .await
+            .unwrap();
         assert!(result.is_empty());
     }
 
@@ -604,12 +605,9 @@ mod tests {
         let uid = create_user(&pool).await;
         let pub_post = create_test_post(&pool, &uid, "published", "已发布").await;
         let draft_post = create_test_post(&pool, &uid, "draft", "草稿").await;
-        let result = find_joined_by_ids(
-            &pool,
-            &[pub_post.id.clone(), draft_post.id.clone()],
-        )
-        .await
-        .unwrap();
+        let result = find_joined_by_ids(&pool, &[pub_post.id.clone(), draft_post.id.clone()])
+            .await
+            .unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].title, "已发布");
     }
@@ -677,16 +675,18 @@ mod tests {
         let p1 = create_test_post(&pool, &uid, "published", "A").await;
         let p2 = create_test_post(&pool, &uid, "draft", "B").await;
         let p3 = create_test_post(&pool, &uid, "published", "C").await;
-        let count =
-            count_published_by_ids(&pool, &[p1.id, p2.id, p3.id]).await.unwrap();
+        let count = count_published_by_ids(&pool, &[p1.id, p2.id, p3.id])
+            .await
+            .unwrap();
         assert_eq!(count, 2);
     }
 
     #[tokio::test]
     async fn count_published_by_ids_nonexistent() {
         let pool = setup_pool().await;
-        let count =
-            count_published_by_ids(&pool, &["fake-id".to_string()]).await.unwrap();
+        let count = count_published_by_ids(&pool, &["fake-id".to_string()])
+            .await
+            .unwrap();
         assert_eq!(count, 0);
     }
 }
@@ -825,10 +825,7 @@ pub async fn find_joined_by_ids(
 /// 根据 ID 列表统计已发布文章数量
 ///
 /// 用于搜索引擎返回总数时进行验证，或作为后备计数。
-pub async fn count_published_by_ids(
-    pool: &crate::db::Pool,
-    ids: &[String],
-) -> AppResult<i64> {
+pub async fn count_published_by_ids(pool: &crate::db::Pool, ids: &[String]) -> AppResult<i64> {
     if ids.is_empty() {
         return Ok(0);
     }

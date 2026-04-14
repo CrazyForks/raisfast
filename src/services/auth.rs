@@ -37,6 +37,37 @@ pub struct Claims {
     pub iat: usize,
 }
 
+/// 校验密码强度。
+///
+/// 要求：
+/// - 最少 8 个字符
+/// - 至少包含一个大写字母
+/// - 至少包含一个小写字母
+/// - 至少包含一个数字
+pub fn validate_password_strength(password: &str) -> AppResult<()> {
+    if password.len() < 8 {
+        return Err(AppError::BadRequest(
+            "password must be at least 8 characters".into(),
+        ));
+    }
+    if !password.chars().any(|c| c.is_uppercase()) {
+        return Err(AppError::BadRequest(
+            "password must contain at least one uppercase letter".into(),
+        ));
+    }
+    if !password.chars().any(|c| c.is_lowercase()) {
+        return Err(AppError::BadRequest(
+            "password must contain at least one lowercase letter".into(),
+        ));
+    }
+    if !password.chars().any(|c| c.is_ascii_digit()) {
+        return Err(AppError::BadRequest(
+            "password must contain at least one digit".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// 使用 Argon2id 算法对密码进行哈希。
 ///
 /// 通过 `getrandom` 生成 32 字节随机盐值，返回 PHC 格式的哈希字符串。
@@ -137,6 +168,7 @@ pub async fn register(
         return Err(AppError::Conflict("email_registered".into()));
     }
 
+    validate_password_strength(&req.password)?;
     let password_hash = hash_password(&req.password)?;
     let user = user_repo
         .create(CreateUserCmd {
@@ -334,6 +366,7 @@ pub async fn change_password(
         return Err(AppError::BadRequest("incorrect_password".into()));
     }
 
+    validate_password_strength(&req.new_password)?;
     let new_hash = hash_password(&req.new_password)?;
     let now = Utc::now().to_rfc3339();
 

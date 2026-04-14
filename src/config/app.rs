@@ -24,6 +24,8 @@ use serde::{Deserialize, Serialize};
 /// | `STATIC_DIR` | String | `./static` | 静态文件目录（favicon、robots.txt 等） |
 /// | `BASE_URL` | String | `http://{host}:{port}` | 站点完整 URL（用于生成 RSS/媒体链接） |
 /// | `CORS_ORIGINS` | String | (空=允许所有) | CORS 允许的来源，多个用逗号分隔 |
+/// | `TLS_CERT_PATH` | String | (空=HTTP) | TLS 证书文件路径（PEM 格式） |
+/// | `TLS_KEY_PATH` | String | (空=HTTP) | TLS 私钥文件路径（PEM 格式） |
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub host: String,
@@ -39,6 +41,8 @@ pub struct AppConfig {
     pub static_dir: String,
     pub base_url: String,
     pub cors_origins: Option<String>,
+    pub tls_cert_path: Option<String>,
+    pub tls_key_path: Option<String>,
     pub plugin_dir: Option<String>,
     #[serde(default)]
     pub plugin_hot_reload: bool,
@@ -232,6 +236,8 @@ impl AppConfig {
         let base_url = env::var("BASE_URL").unwrap_or_else(|_| format!("http://{}:{}", host, port));
 
         let cors_origins = env::var("CORS_ORIGINS").ok().filter(|s| !s.is_empty());
+        let tls_cert_path = env::var("TLS_CERT_PATH").ok().filter(|s| !s.is_empty());
+        let tls_key_path = env::var("TLS_KEY_PATH").ok().filter(|s| !s.is_empty());
 
         Self {
             host,
@@ -272,6 +278,8 @@ impl AppConfig {
             static_dir: env::var("STATIC_DIR").unwrap_or_else(|_| "./static".into()),
             base_url,
             cors_origins,
+            tls_cert_path,
+            tls_key_path,
             plugin_dir: env::var("PLUGIN_DIR").ok().filter(|s| !s.is_empty()),
             plugin_hot_reload: env::var("PLUGIN_HOT_RELOAD")
                 .ok()
@@ -393,8 +401,9 @@ impl AppConfig {
                 );
             }
             if config.cors_origins.is_none() {
-                tracing::warn!(
-                    "CORS_ORIGINS not set in production — all origins allowed. This is insecure."
+                panic!(
+                    "FATAL: CORS_ORIGINS must be set in production. \
+                     Refusing to start with wildcard CORS."
                 );
             }
         }

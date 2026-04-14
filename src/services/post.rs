@@ -380,25 +380,31 @@ pub async fn list_posts(
             let rows = repo.find_joined_by_ids(&ids).await?;
             (rows, total, hmap)
         } else {
-            let (rows, total) = repo.find_published_joined(FindPublishedQuery {
+            let (rows, total) = repo
+                .find_published_joined(FindPublishedQuery {
+                    page,
+                    page_size,
+                    category_id: category_id.map(|s| s.to_string()),
+                    tag_id: tag_id.map(|s| s.to_string()),
+                    q: if keyword.is_empty() {
+                        None
+                    } else {
+                        Some(keyword.to_string())
+                    },
+                })
+                .await?;
+            (rows, total, std::collections::HashMap::new())
+        }
+    } else {
+        let (rows, total) = repo
+            .find_published_joined(FindPublishedQuery {
                 page,
                 page_size,
                 category_id: category_id.map(|s| s.to_string()),
                 tag_id: tag_id.map(|s| s.to_string()),
-                q: if keyword.is_empty() { None } else { Some(keyword.to_string()) },
+                q: q.map(|s| s.to_string()),
             })
             .await?;
-            (rows, total, std::collections::HashMap::new())
-        }
-    } else {
-        let (rows, total) = repo.find_published_joined(FindPublishedQuery {
-            page,
-            page_size,
-            category_id: category_id.map(|s| s.to_string()),
-            tag_id: tag_id.map(|s| s.to_string()),
-            q: q.map(|s| s.to_string()),
-        })
-        .await?;
         (rows, total, std::collections::HashMap::new())
     };
 
@@ -455,9 +461,8 @@ pub async fn get_post_any_status(
     plugins: &PluginManager,
 ) -> AppResult<PostResponse> {
     let post = repo.find_by_slug(slug).await?;
-    let post = post.ok_or_else(|| {
-        crate::errors::app_error::AppError::NotFound("post not found".into())
-    })?;
+    let post =
+        post.ok_or_else(|| crate::errors::app_error::AppError::NotFound("post not found".into()))?;
     let row = repo.find_joined_by_id(&post.id).await?;
     let tags = repo.get_post_tags(&row.id).await.unwrap_or_default();
     Ok(joined_row_to_response(row, tags, plugins).await)
