@@ -2732,10 +2732,7 @@ Plugin = {
         let result = mgr
             .dispatch_route("/api/v1/plugins/stats/unknown", "GET")
             .await;
-        assert!(
-            result.is_none(),
-            "should return nil for unknown endpoint"
-        );
+        assert!(result.is_none(), "should return nil for unknown endpoint");
 
         let result = mgr
             .dispatch_route("/api/v1/plugins/stats/ping", "POST")

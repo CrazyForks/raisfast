@@ -15,6 +15,7 @@ use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::eventbus::{Event, EventBus};
 use crate::models::refresh_token;
 use crate::models::user::{
     self, LoginResponse, RegisterRequest, UpdatePasswordRequest, UpdateUserRequest, UserResponse,
@@ -135,13 +136,22 @@ fn generate_refresh_token_string() -> AppResult<String> {
 /// 用户注册。
 ///
 /// 检查邮箱是否已被注册，若唯一则哈希密码并创建用户记录。
-pub async fn register(pool: &crate::db::Pool, req: RegisterRequest) -> AppResult<UserResponse> {
+pub async fn register(
+    pool: &crate::db::Pool,
+    eventbus: &EventBus,
+    req: RegisterRequest,
+) -> AppResult<UserResponse> {
     if user::find_by_email(pool, &req.email).await?.is_some() {
         return Err(AppError::Conflict("email_registered".into()));
     }
 
     let password_hash = hash_password(&req.password)?;
     let user = user::create(pool, &req.email, &req.username, &password_hash).await?;
+    eventbus.emit(Event::UserRegistered {
+        id: user.id.clone(),
+        username: user.username.clone(),
+        email: user.email.clone(),
+    });
     Ok(user.into())
 }
 
@@ -151,6 +161,7 @@ pub async fn register(pool: &crate::db::Pool, req: RegisterRequest) -> AppResult
 pub async fn login(
     pool: &crate::db::Pool,
     plugins: &PluginManager,
+    eventbus: &EventBus,
     req: &crate::models::user::LoginRequest,
     jwt_secret: &str,
     jwt_access_expires: u64,
@@ -183,6 +194,11 @@ pub async fn login(
             &serde_json::json!({"email": &req.email, "success": true, "user_id": &user.id}),
         )
         .await;
+
+    eventbus.emit(Event::UserLoggedIn {
+        id: user.id.clone(),
+        success: true,
+    });
 
     Ok(LoginResponse {
         access_token,

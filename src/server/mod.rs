@@ -51,6 +51,8 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
     let max_upload = config.max_upload_size;
     let pool = init_pool(&config.database_url, config.db_pool_size).await?;
 
+    let eventbus = rust_blog::eventbus::EventBus::new(256);
+
     let state = AppState {
         pool: pool.clone(),
         config: Arc::new(config.clone()),
@@ -59,7 +61,10 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
             rust_blog::plugins::PluginManagerOptions { pool: Some(pool) },
         )
         .await,
+        eventbus: eventbus.clone(),
     };
+
+    spawn_event_subscriber(eventbus, state.plugins.clone());
 
     let cors = build_cors(config);
 
@@ -248,4 +253,48 @@ async fn handle_plugin_route(
         )
             .into_response(),
     }
+}
+
+/// 启动 EventBus 后台订阅者，将业务事件转发给插件系统。
+fn spawn_event_subscriber(
+    eventbus: rust_blog::eventbus::EventBus,
+    plugins: Arc<rust_blog::plugins::PluginManager>,
+) {
+    use rust_blog::eventbus::Event;
+    use rust_blog::plugins::HookPoint;
+
+    let mut rx = eventbus.subscribe();
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(event) => match event.as_ref() {
+                    Event::PostCreated { .. } => {
+                        let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
+                        plugins.dispatch_action(HookPoint::PostCreated, &json).await;
+                    }
+                    Event::PostUpdated { .. } => {
+                        let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
+                        plugins.dispatch_action(HookPoint::PostUpdated, &json).await;
+                    }
+                    Event::PostDeleted { .. } => {
+                        let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
+                        plugins.dispatch_action(HookPoint::PostDeleted, &json).await;
+                    }
+                    Event::CommentCreated { .. } => {
+                        let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
+                        plugins
+                            .dispatch_action(HookPoint::CommentCreated, &json)
+                            .await;
+                    }
+                    _ => {}
+                },
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("eventbus subscriber lagged, skipped {n} events");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+        }
+    });
 }

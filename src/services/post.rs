@@ -11,6 +11,7 @@
 use slug::slugify;
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::eventbus::{Event, EventBus};
 use crate::models::category::{self, CreateCategoryRequest, UpdateCategoryRequest};
 use crate::models::post::{
     self, CreatePostRequest, PostJoinedRow, PostResponse, UpdatePostRequest,
@@ -169,6 +170,7 @@ fn extract_excerpt(content: &str, max_len: usize) -> String {
 pub async fn create_post(
     pool: &crate::db::Pool,
     plugins: &PluginManager,
+    eventbus: &EventBus,
     author_id: &str,
     req: CreatePostRequest,
 ) -> AppResult<PostResponse> {
@@ -202,7 +204,12 @@ pub async fn create_post(
     }
 
     let resp = build_post_response_from_id(pool, &p.id, plugins).await?;
-    plugins.dispatch_action(HookPoint::PostCreated, &resp).await;
+    eventbus.emit(Event::PostCreated {
+        id: p.id.clone(),
+        slug: resp.slug.clone(),
+        title: resp.title.clone(),
+        author_id: author_id.to_string(),
+    });
     Ok(resp)
 }
 
@@ -273,6 +280,7 @@ pub async fn delete_post(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
 pub async fn update_post_with_auth(
     pool: &crate::db::Pool,
     plugins: &PluginManager,
+    eventbus: &EventBus,
     slug: &str,
     user_id: &str,
     role: &str,
@@ -286,7 +294,12 @@ pub async fn update_post_with_auth(
         return Err(AppError::Forbidden);
     }
 
-    update_post(pool, plugins, &existing.id, req).await
+    let resp = update_post(pool, plugins, &existing.id, req).await?;
+    eventbus.emit(Event::PostUpdated {
+        id: existing.id.clone(),
+        slug: resp.slug.clone(),
+    });
+    Ok(resp)
 }
 
 /// 带权限校验的文章删除。
@@ -294,7 +307,8 @@ pub async fn update_post_with_auth(
 /// 仅文章作者或管理员可执行。
 pub async fn delete_post_with_auth(
     pool: &crate::db::Pool,
-    plugins: &PluginManager,
+    _plugins: &PluginManager,
+    eventbus: &EventBus,
     slug: &str,
     user_id: &str,
     role: &str,
@@ -307,10 +321,10 @@ pub async fn delete_post_with_auth(
         return Err(AppError::Forbidden);
     }
 
+    let id = existing.id.clone();
+    let slug = slug.to_string();
     delete_post(pool, &existing.id).await?;
-    plugins
-        .dispatch_action(HookPoint::PostDeleted, &existing.id)
-        .await;
+    eventbus.emit(Event::PostDeleted { id, slug });
     Ok(())
 }
 

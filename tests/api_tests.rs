@@ -95,6 +95,7 @@ async fn test_app() -> (axum::Router, AppState) {
         pool,
         config: config.clone(),
         plugins: PluginManager::new(config).await,
+        eventbus: rust_blog::eventbus::EventBus::new(256),
     };
     let max_upload = state.config.max_upload_size;
 

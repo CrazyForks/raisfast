@@ -24,7 +24,7 @@ pub async fn register(
     Json(req): Json<RegisterRequest>,
 ) -> AppResult<ApiResponse<crate::models::user::UserResponse>> {
     validation::validate(&req)?;
-    let user = auth::register(&state.pool, req).await?;
+    let user = auth::register(&state.pool, &state.eventbus, req).await?;
     Ok(ApiResponse::success(user))
 }
 
@@ -43,6 +43,7 @@ pub async fn login(
     let resp = auth::login(
         &state.pool,
         &state.plugins,
+        &state.eventbus,
         &req,
         &state.config.jwt_secret,
         state.config.jwt_access_expires,

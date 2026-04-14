@@ -4,6 +4,7 @@
 //! 评论列表获取（树形结构）、评论删除和状态管理。
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::eventbus::{Event, EventBus};
 use crate::models::comment::{self, CommentResponse};
 use crate::models::post;
 use crate::plugins::{HookPoint, PluginManager};
@@ -30,6 +31,7 @@ pub struct CommentInput {
 pub async fn create_comment(
     pool: &crate::db::Pool,
     plugins: &PluginManager,
+    eventbus: &EventBus,
     post_slug: &str,
     author_id: Option<&str>,
     content: &str,
@@ -77,9 +79,11 @@ pub async fn create_comment(
     )
     .await?;
 
-    plugins
-        .dispatch_action(HookPoint::CommentCreated, &c.id)
-        .await;
+    eventbus.emit(Event::CommentCreated {
+        id: c.id.clone(),
+        post_slug: post_slug.to_string(),
+        author_name: c.nickname.clone().unwrap_or_default(),
+    });
 
     Ok(CommentResponse {
         id: c.id,

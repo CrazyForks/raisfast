@@ -19,6 +19,7 @@
 pub mod config;
 pub mod db;
 pub mod errors;
+pub mod eventbus;
 pub mod handlers;
 pub mod middleware;
 pub mod models;
@@ -28,18 +29,16 @@ pub mod utils;
 
 use config::app::AppConfig;
 use db::Pool;
+use eventbus::EventBus;
 use plugins::PluginManager;
 use std::sync::Arc;
 
 rust_i18n::i18n!("locales", fallback = "en");
 
-/// 应用全局共享状态，通过 axum State 注入到每个请求。
-///
-/// 每个请求 handler 可以通过 `State(state): State<AppState>` 获取。
-/// `config` 使用 `Arc` 包装以便在多个请求间零成本共享。
 #[derive(Clone)]
 pub struct AppState {
     pub pool: Pool,
     pub config: Arc<AppConfig>,
     pub plugins: Arc<PluginManager>,
+    pub eventbus: EventBus,
 }
