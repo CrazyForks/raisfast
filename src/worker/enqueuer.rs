@@ -51,6 +51,16 @@ impl JobEnqueuer {
                     post_ids: vec![id.clone()],
                 })]
             }
+            Event::PostUpdated { id, .. } => {
+                vec![NewJob::from(Job::RebuildSearchIndex {
+                    post_ids: vec![id.clone()],
+                })]
+            }
+            Event::PostDeleted { id, .. } => {
+                vec![NewJob::from(Job::RebuildSearchIndex {
+                    post_ids: vec![id.clone()],
+                })]
+            }
             Event::UserRegistered {
                 id,
                 email,
@@ -159,10 +169,6 @@ mod tests {
         let (bus, queue) = setup().await;
         JobEnqueuer::spawn(&bus, queue.clone());
 
-        bus.emit(Event::PostDeleted {
-            id: "p1".into(),
-            slug: "hello".into(),
-        });
         bus.emit(Event::CommentCreated {
             id: "c1".into(),
             post_slug: "hello".into(),

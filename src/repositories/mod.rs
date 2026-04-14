@@ -70,6 +70,9 @@ pub trait PostRepository: Send + Sync {
         post_ids: &[String],
     ) -> AppResult<HashMap<String, Vec<TagBrief>>>;
 
+    /// 根据 ID 列表批量查询已发布文章（JOIN 作者名和分类名）
+    async fn find_joined_by_ids(&self, ids: &[String]) -> AppResult<Vec<PostJoinedRow>>;
+
     /// 创建文章，根据 tag_ids 是否为 Some 决定是否同步标签
     async fn create(&self, cmd: CreatePostCmd) -> AppResult<Post>;
 

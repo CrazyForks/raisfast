@@ -55,6 +55,7 @@ pub async fn list(
         query.tag_id.as_deref(),
         query.q.as_deref(),
         &state.plugins,
+        Some(state.search.as_ref()),
     )
     .await?;
 

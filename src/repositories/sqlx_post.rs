@@ -74,6 +74,10 @@ impl PostRepository for SqlxPostRepository {
         post::get_tags_for_posts(&self.pool, post_ids).await
     }
 
+    async fn find_joined_by_ids(&self, ids: &[String]) -> AppResult<Vec<PostJoinedRow>> {
+        post::find_joined_by_ids(&self.pool, ids).await
+    }
+
     async fn create(&self, cmd: CreatePostCmd) -> AppResult<Post> {
         if let Some(ref tag_ids) = cmd.tag_ids {
             let mut tx = self.pool.begin().await?;

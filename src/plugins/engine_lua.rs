@@ -257,6 +257,8 @@ mod tests {
             cron_seed_enabled: false,
             cron_schedules: vec![],
             cron_log_retention_days: 30,
+            search_engine: "none".into(),
+            search_index_dir: "./data/search_index".into(),
         })
     }
 

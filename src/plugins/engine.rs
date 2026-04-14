@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 use crate::plugins::host_common::HostContext;
 
@@ -349,6 +349,8 @@ mod tests {
             cron_seed_enabled: false,
             cron_schedules: vec![],
             cron_log_retention_days: 30,
+            search_engine: "none".into(),
+            search_index_dir: "./data/search_index".into(),
         })
     }
 

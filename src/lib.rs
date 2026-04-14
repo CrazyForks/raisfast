@@ -16,6 +16,7 @@ pub mod middleware;
 pub mod models;
 pub mod plugins;
 pub mod repositories;
+pub mod search;
 pub mod services;
 pub mod utils;
 pub mod worker;
@@ -28,6 +29,7 @@ use repositories::{
     CategoryRepository, CommentRepository, MediaRepository, PostRepository, RefreshTokenRepository,
     TagRepository, UserRepository,
 };
+use search::SearchEngine;
 use std::sync::Arc;
 
 rust_i18n::i18n!("locales", fallback = "en");
@@ -49,4 +51,5 @@ pub struct AppState {
     pub comment_repo: Arc<dyn CommentRepository>,
     pub media_repo: Arc<dyn MediaRepository>,
     pub refresh_token_repo: Arc<dyn RefreshTokenRepository>,
+    pub search: Arc<dyn SearchEngine>,
 }

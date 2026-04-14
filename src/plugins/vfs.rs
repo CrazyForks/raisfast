@@ -298,6 +298,8 @@ mod tests {
             cron_seed_enabled: false,
             cron_schedules: vec![],
             cron_log_retention_days: 30,
+            search_engine: "none".into(),
+            search_index_dir: "./data/search_index".into(),
         })
     }
 
@@ -529,24 +531,18 @@ mod tests {
     #[test]
     fn error_display_human_readable() {
         assert!(VfsError::PathEscape.to_string().contains("escape"));
-        assert!(
-            VfsError::PermissionDenied
-                .to_string()
-                .contains("permission")
-        );
-        assert!(
-            VfsError::FileTooLarge { max: 1024 }
-                .to_string()
-                .contains("1024")
-        );
-        assert!(
-            VfsError::QuotaExceeded {
-                used: 100,
-                max: 200,
-                need: 150,
-            }
+        assert!(VfsError::PermissionDenied
             .to_string()
-            .contains("quota")
-        );
+            .contains("permission"));
+        assert!(VfsError::FileTooLarge { max: 1024 }
+            .to_string()
+            .contains("1024"));
+        assert!(VfsError::QuotaExceeded {
+            used: 100,
+            max: 200,
+            need: 150,
+        }
+        .to_string()
+        .contains("quota"));
     }
 }

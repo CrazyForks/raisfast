@@ -21,6 +21,7 @@ use crate::handlers::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::models::post::PostJoinedRow;
 use crate::plugins::{HookPoint, PluginManager};
 use crate::repositories::{CategoryRepository, PostRepository, TagRepository};
+use crate::search::SearchEngine;
 use crate::utils::markdown::render_markdown;
 
 async fn joined_row_to_response(
@@ -57,6 +58,8 @@ async fn joined_row_to_response(
         created_at: r.created_at,
         updated_at: r.updated_at,
         published_at: r.published_at,
+        title_highlight: None,
+        excerpt_highlight: None,
     }
 }
 
@@ -349,7 +352,10 @@ pub async fn get_post(
 /// 分页查询已发布文章列表。
 ///
 /// 支持按分类、标签和关键词进行可选过滤。
+/// 当提供 `search` 且有关键词时，优先使用搜索引擎（Tantivy）进行查询；
+/// 若搜索引擎不可用或查询为空，则回退到 SQL LIKE 查询。
 /// 使用 JOIN 查询和批量标签获取，将查询次数从 3N+1 降至 2~3 次。
+#[allow(clippy::too_many_arguments)]
 pub async fn list_posts(
     repo: &dyn PostRepository,
     page: i64,
@@ -358,9 +364,34 @@ pub async fn list_posts(
     tag_id: Option<&str>,
     q: Option<&str>,
     plugins: &PluginManager,
+    search: Option<&dyn SearchEngine>,
 ) -> AppResult<(Vec<PostResponse>, i64)> {
-    let (rows, total) = repo
-        .find_published_joined(FindPublishedQuery {
+    let (rows, total, highlights) = if let (Some(engine), Some(keyword)) = (search, q) {
+        if !engine.is_noop() && !keyword.is_empty() {
+            let (results, total) = engine.search(keyword, page, page_size).await?;
+            let mut hmap = std::collections::HashMap::new();
+            let ids: Vec<String> = results
+                .into_iter()
+                .map(|r| {
+                    hmap.insert(r.post_id.clone(), (r.title_highlight, r.excerpt_highlight));
+                    r.post_id
+                })
+                .collect();
+            let rows = repo.find_joined_by_ids(&ids).await?;
+            (rows, total, hmap)
+        } else {
+            let (rows, total) = repo.find_published_joined(FindPublishedQuery {
+                page,
+                page_size,
+                category_id: category_id.map(|s| s.to_string()),
+                tag_id: tag_id.map(|s| s.to_string()),
+                q: if keyword.is_empty() { None } else { Some(keyword.to_string()) },
+            })
+            .await?;
+            (rows, total, std::collections::HashMap::new())
+        }
+    } else {
+        let (rows, total) = repo.find_published_joined(FindPublishedQuery {
             page,
             page_size,
             category_id: category_id.map(|s| s.to_string()),
@@ -368,6 +399,8 @@ pub async fn list_posts(
             q: q.map(|s| s.to_string()),
         })
         .await?;
+        (rows, total, std::collections::HashMap::new())
+    };
 
     let post_ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
     let tags_map = repo.get_tags_for_posts(&post_ids).await.unwrap_or_default();
@@ -384,6 +417,10 @@ pub async fn list_posts(
                 }),
             None => render_markdown(&r.content),
         };
+        let (title_hl, excerpt_hl) = highlights
+            .get(&r.id)
+            .map(|(t, e)| (t.clone(), e.clone()))
+            .unwrap_or((None, None));
         responses.push(PostResponse {
             id: r.id.clone(),
             title: r.title,
@@ -403,6 +440,8 @@ pub async fn list_posts(
             created_at: r.created_at,
             updated_at: r.updated_at,
             published_at: r.published_at,
+            title_highlight: title_hl,
+            excerpt_highlight: excerpt_hl,
         });
     }
 

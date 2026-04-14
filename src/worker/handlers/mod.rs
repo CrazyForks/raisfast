@@ -15,12 +15,18 @@ use std::sync::Arc;
 
 use crate::config::app::AppConfig;
 use crate::db::Pool;
+use crate::search::SearchEngine;
 use crate::worker::JobHandlerRegistry;
 
 /// 将所有真实 Handler 注册到 Registry
 ///
 /// 在 `server/mod.rs` 的 `spawn_workers()` 中调用，替换 `LogJobHandler` 占位符。
-pub fn register_all(registry: &mut JobHandlerRegistry, pool: Pool, config: Arc<AppConfig>) {
+pub fn register_all(
+    registry: &mut JobHandlerRegistry,
+    pool: Pool,
+    config: Arc<AppConfig>,
+    search: Arc<dyn SearchEngine>,
+) {
     registry.register(
         "send_welcome_email",
         Box::new(email::SendWelcomeEmailHandler::new(config.clone())),
@@ -42,7 +48,10 @@ pub fn register_all(registry: &mut JobHandlerRegistry, pool: Pool, config: Arc<A
     );
     registry.register(
         "rebuild_search_index",
-        Box::new(search_index::RebuildSearchIndexHandler::new(pool.clone())),
+        Box::new(search_index::RebuildSearchIndexHandler::new(
+            pool.clone(),
+            search,
+        )),
     );
     registry.register(
         "invalidate_cache",

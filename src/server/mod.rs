@@ -25,12 +25,36 @@ use rust_blog::repositories::{
     SqlxMediaRepository, SqlxPostRepository, SqlxRefreshTokenRepository, SqlxTagRepository,
     SqlxUserRepository,
 };
+use rust_blog::search::{NoopSearchEngine, SearchEngine};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::Level;
+
+/// 构建搜索引擎实例
+fn build_search_engine(config: &AppConfig) -> Arc<dyn SearchEngine> {
+    match config.search_engine.as_str() {
+        #[cfg(feature = "search-tantivy")]
+        "tantivy" => {
+            match rust_blog::search::TantivyEngine::open(&config.search_index_dir) {
+                Ok(engine) => {
+                    tracing::info!("search engine: tantivy (index: {})", config.search_index_dir);
+                    Arc::new(engine)
+                }
+                Err(e) => {
+                    tracing::error!("failed to open tantivy index: {e}, falling back to noop");
+                    Arc::new(NoopSearchEngine)
+                }
+            }
+        }
+        _ => {
+            tracing::info!("search engine: none (LIKE fallback)");
+            Arc::new(NoopSearchEngine)
+        }
+    }
+}
 
 /// 构建 CORS 中间件。
 fn build_cors(config: &AppConfig) -> CorsLayer {
@@ -82,6 +106,8 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
     let refresh_token_repo: Arc<dyn rust_blog::repositories::RefreshTokenRepository> =
         Arc::new(SqlxRefreshTokenRepository::new(pool.clone()));
 
+    let search: Arc<dyn SearchEngine> = build_search_engine(config);
+
     let state = AppState {
         pool: pool.clone(),
         config: Arc::new(config.clone()),
@@ -98,12 +124,13 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         comment_repo,
         media_repo,
         refresh_token_repo,
+        search,
     };
 
     spawn_event_subscriber(eventbus.clone(), state.plugins.clone());
 
     if config.worker_enabled {
-        spawn_workers(worker_pool, &eventbus, config, state.plugins.clone()).await;
+        spawn_workers(worker_pool, &eventbus, config, state.plugins.clone(), state.search.clone()).await;
     }
 
     let cors = build_cors(config);
@@ -354,6 +381,7 @@ async fn spawn_workers(
     eventbus: &rust_blog::eventbus::EventBus,
     config: &AppConfig,
     plugins: Arc<rust_blog::plugins::PluginManager>,
+    search: Arc<dyn rust_blog::search::SearchEngine>,
 ) {
     use rust_blog::worker::{
         CronScheduler, JobEnqueuer, JobHandlerRegistry, PluginCronDispatcher, SqliteJobQueue,
@@ -389,6 +417,7 @@ async fn spawn_workers(
         &mut registry,
         pool.clone(),
         Arc::new(config.clone()),
+        search,
     );
 
     let cron = CronScheduler::new(

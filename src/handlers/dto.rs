@@ -155,6 +155,10 @@ pub struct PostResponse {
     pub created_at: String,
     pub updated_at: String,
     pub published_at: Option<String>,
+    /// 搜索时标题高亮 HTML（含 `<em>` 标签），非搜索时为 None
+    pub title_highlight: Option<String>,
+    /// 搜索时内容摘要高亮 HTML，非搜索时为 None
+    pub excerpt_highlight: Option<String>,
 }
 
 // ── Category ──────────────────────────────────────────────────

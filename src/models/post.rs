@@ -435,18 +435,202 @@ pub async fn find_published(
     Ok((posts, total))
 }
 
-/// 根据 slug 查找已发布文章
-///
-/// 仅返回状态为 `published` 的文章；若未找到则返回 [`AppError::NotFound`]。
-pub async fn find_published_by_slug(pool: &crate::db::Pool, slug: &str) -> AppResult<Post> {
-    let sql = crate::db::dialect::translate(
-        "SELECT * FROM posts WHERE slug = ? AND status = 'published'",
-    );
-    sqlx::query_as::<_, Post>(&sql)
-        .bind(slug)
-        .fetch_one(pool)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::CreatePostCmd;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(include_str!("../../migrations/001_init.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(include_str!("../../migrations/002_add_indexes.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    async fn create_user(pool: &crate::db::Pool) -> String {
+        let uid = uuid::Uuid::now_v7().to_string();
+        sqlx::query(
+            "INSERT INTO users (id, username, email, password_hash, role) VALUES (?, 'testuser', 'test@test.com', 'hash', 'author')",
+        )
+        .bind(&uid)
+        .execute(pool)
         .await
-        .map_err(Into::into)
+        .unwrap();
+        uid
+    }
+
+    async fn create_test_post(
+        pool: &crate::db::Pool,
+        author_id: &str,
+        status: &str,
+        title: &str,
+    ) -> Post {
+        create(
+            pool,
+            &CreatePostCmd {
+                title: title.to_string(),
+                slug: title.to_lowercase().replace(' ', "-"),
+                content: format!("{title}的内容"),
+                excerpt: None,
+                cover_image: None,
+                status: status.to_string(),
+                author_id: author_id.to_string(),
+                category_id: None,
+                tag_ids: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn find_joined_by_ids_empty() {
+        let pool = setup_pool().await;
+        let result = find_joined_by_ids(&pool, &[]).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn find_joined_by_ids_single() {
+        let pool = setup_pool().await;
+        let uid = create_user(&pool).await;
+        let p = create_test_post(&pool, &uid, "published", "测试文章").await;
+        let result = find_joined_by_ids(&pool, &[p.id.clone()]).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, p.id);
+        assert_eq!(result[0].title, "测试文章");
+        assert_eq!(result[0].author_name.as_deref(), Some("testuser"));
+    }
+
+    #[tokio::test]
+    async fn find_joined_by_ids_multiple() {
+        let pool = setup_pool().await;
+        let uid = create_user(&pool).await;
+        let p1 = create_test_post(&pool, &uid, "published", "文章A").await;
+        let p2 = create_test_post(&pool, &uid, "published", "文章B").await;
+        let p3 = create_test_post(&pool, &uid, "published", "文章C").await;
+        let result = find_joined_by_ids(&pool, &[p1.id.clone(), p3.id.clone()]).await.unwrap();
+        assert_eq!(result.len(), 2);
+        let ids: Vec<&str> = result.iter().map(|r| r.id.as_str()).collect();
+        assert!(ids.contains(&p1.id.as_str()));
+        assert!(ids.contains(&p3.id.as_str()));
+        assert!(!ids.contains(&p2.id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn find_joined_by_ids_filters_draft() {
+        let pool = setup_pool().await;
+        let uid = create_user(&pool).await;
+        let p = create_test_post(&pool, &uid, "draft", "草稿文章").await;
+        let result = find_joined_by_ids(&pool, &[p.id.clone()]).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn find_joined_by_ids_nonexistent() {
+        let pool = setup_pool().await;
+        let result =
+            find_joined_by_ids(&pool, &["nonexistent-id".to_string()]).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn find_joined_by_ids_mixed_published_and_draft() {
+        let pool = setup_pool().await;
+        let uid = create_user(&pool).await;
+        let pub_post = create_test_post(&pool, &uid, "published", "已发布").await;
+        let draft_post = create_test_post(&pool, &uid, "draft", "草稿").await;
+        let result = find_joined_by_ids(
+            &pool,
+            &[pub_post.id.clone(), draft_post.id.clone()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].title, "已发布");
+    }
+
+    #[tokio::test]
+    async fn find_joined_by_ids_with_category() {
+        let pool = setup_pool().await;
+        let uid = create_user(&pool).await;
+        let cat_id = uuid::Uuid::now_v7().to_string();
+        sqlx::query("INSERT INTO categories (id, name, slug) VALUES (?, '技术', 'tech')")
+            .bind(&cat_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let p = create(
+            &pool,
+            &CreatePostCmd {
+                title: "分类文章".to_string(),
+                slug: "cat-post".to_string(),
+                content: "内容".to_string(),
+                excerpt: None,
+                cover_image: None,
+                status: "published".to_string(),
+                author_id: uid,
+                category_id: Some(cat_id),
+                tag_ids: None,
+            },
+        )
+        .await
+        .unwrap();
+        let result = find_joined_by_ids(&pool, &[p.id.clone()]).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].category_name.as_deref(), Some("技术"));
+    }
+
+    #[tokio::test]
+    async fn count_published_by_ids_empty() {
+        let pool = setup_pool().await;
+        let count = count_published_by_ids(&pool, &[]).await.unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn count_published_by_ids_single() {
+        let pool = setup_pool().await;
+        let uid = create_user(&pool).await;
+        let p = create_test_post(&pool, &uid, "published", "计数文章").await;
+        let count = count_published_by_ids(&pool, &[p.id]).await.unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn count_published_by_ids_filters_draft() {
+        let pool = setup_pool().await;
+        let uid = create_user(&pool).await;
+        let p = create_test_post(&pool, &uid, "draft", "草稿").await;
+        let count = count_published_by_ids(&pool, &[p.id]).await.unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn count_published_by_ids_multiple() {
+        let pool = setup_pool().await;
+        let uid = create_user(&pool).await;
+        let p1 = create_test_post(&pool, &uid, "published", "A").await;
+        let p2 = create_test_post(&pool, &uid, "draft", "B").await;
+        let p3 = create_test_post(&pool, &uid, "published", "C").await;
+        let count =
+            count_published_by_ids(&pool, &[p1.id, p2.id, p3.id]).await.unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[tokio::test]
+    async fn count_published_by_ids_nonexistent() {
+        let pool = setup_pool().await;
+        let count =
+            count_published_by_ids(&pool, &["fake-id".to_string()]).await.unwrap();
+        assert_eq!(count, 0);
+    }
 }
 
 /// JOIN 查询中间行类型（含作者名和分类名）
@@ -550,7 +734,60 @@ pub async fn get_tags_for_posts(
     Ok(map)
 }
 
-/// 分页查询已发布文章（JOIN 用户和分类表）
+/// 根据 ID 列表批量查询已发布文章（JOIN 用户和分类表）
+///
+/// 用于搜索引擎返回 ID 后从数据库获取完整行数据。
+/// 按 `is_pinned DESC, created_at DESC` 排序，结果不超出 `ids` 范围。
+pub async fn find_joined_by_ids(
+    pool: &crate::db::Pool,
+    ids: &[String],
+) -> AppResult<Vec<PostJoinedRow>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders: Vec<&str> = ids.iter().map(|_| "?").collect();
+    let sql = format!(
+        "{} \
+         WHERE p.id IN ({}) AND p.status = 'published' \
+         ORDER BY p.is_pinned DESC, p.created_at DESC",
+        JOIN_SQL,
+        placeholders.join(",")
+    );
+
+    let translated = crate::db::dialect::translate(&sql);
+    let mut query = sqlx::query_as::<_, PostJoinedRow>(&translated);
+    for id in ids {
+        query = query.bind(id);
+    }
+    let rows = query.fetch_all(pool).await?;
+    Ok(rows)
+}
+
+/// 根据 ID 列表统计已发布文章数量
+///
+/// 用于搜索引擎返回总数时进行验证，或作为后备计数。
+pub async fn count_published_by_ids(
+    pool: &crate::db::Pool,
+    ids: &[String],
+) -> AppResult<i64> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+
+    let placeholders: Vec<&str> = ids.iter().map(|_| "?").collect();
+    let sql = format!(
+        "SELECT COUNT(*) FROM posts WHERE id IN ({}) AND status = 'published'",
+        placeholders.join(",")
+    );
+    let translated = crate::db::dialect::translate(&sql);
+    let mut query = sqlx::query_as::<_, (i64,)>(&translated);
+    for id in ids {
+        query = query.bind(id);
+    }
+    let (count,) = query.fetch_one(pool).await?;
+    Ok(count)
+}
 ///
 /// 与 [`find_published`] 相同的筛选逻辑，但通过 LEFT JOIN 一次性获取
 /// `author_name` 和 `category_name`，避免 N+1 查询。

@@ -38,6 +38,10 @@ fmt-check:
 lint:
     DATABASE_URL={{db_url}} cargo clippy --features "db-{{db}} plugin-{{plugin_type}}" -- -D warnings
 
+# Lint（含 Tantivy 搜索）
+lint-search:
+    DATABASE_URL={{db_url}} cargo clippy --features "db-{{db}} plugin-{{plugin_type}} search-tantivy" -- -D warnings
+
 # 全部质量检查（fmt + lint）
 qa: fmt-check lint
 
@@ -46,6 +50,10 @@ qa: fmt-check lint
 # 运行所有测试
 test *FLAGS:
     DATABASE_URL={{db_url}} cargo test --features "db-{{db}} plugin-{{plugin_type}}" {{FLAGS}}
+
+# 运行所有测试（含 Tantivy 搜索）
+test-search *FLAGS:
+    DATABASE_URL={{db_url}} cargo test --features "db-{{db}} plugin-{{plugin_type}} search-tantivy" {{FLAGS}}
 
 # 仅运行单元测试
 test-unit:

@@ -90,6 +90,10 @@ pub struct AppConfig {
     pub cron_schedules: Vec<CronScheduleConfig>,
     #[serde(default = "default_cron_log_retention_days")]
     pub cron_log_retention_days: i64,
+    #[serde(default = "default_search_engine")]
+    pub search_engine: String,
+    #[serde(default = "default_search_index_dir")]
+    pub search_index_dir: String,
 }
 
 /// 单条 Cron 调度配置
@@ -113,6 +117,14 @@ fn default_worker_cron_tick_ms() -> u64 {
 
 fn default_cron_log_retention_days() -> i64 {
     30
+}
+
+fn default_search_engine() -> String {
+    "none".into()
+}
+
+fn default_search_index_dir() -> String {
+    "./data/search_index".into()
 }
 
 pub fn default_cron_schedules() -> Vec<CronScheduleConfig> {
@@ -356,6 +368,9 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default_cron_log_retention_days()),
+            search_engine: env::var("SEARCH_ENGINE").unwrap_or_else(|_| default_search_engine()),
+            search_index_dir: env::var("SEARCH_INDEX_DIR")
+                .unwrap_or_else(|_| default_search_index_dir()),
         }
     }
 

@@ -9,8 +9,8 @@ use mlua::Lua;
 
 use crate::config::app::AppConfig;
 use crate::db::Pool;
-use crate::plugins::Permissions;
 use crate::plugins::host_common::HostContext;
+use crate::plugins::Permissions;
 
 /// 注册宿主函数到 Lua 全局作用域。
 pub fn register_host_functions(
@@ -180,6 +180,8 @@ mod tests {
             cron_seed_enabled: false,
             cron_schedules: vec![],
             cron_log_retention_days: 30,
+            search_engine: "none".into(),
+            search_index_dir: "./data/search_index".into(),
         })
     }
 

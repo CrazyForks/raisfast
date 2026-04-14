@@ -30,6 +30,7 @@ use rust_blog::repositories::{
     CachedPostRepository, SqlxCategoryRepository, SqlxCommentRepository, SqlxMediaRepository,
     SqlxPostRepository, SqlxRefreshTokenRepository, SqlxTagRepository, SqlxUserRepository,
 };
+use rust_blog::search::NoopSearchEngine;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -81,6 +82,8 @@ fn test_config() -> AppConfig {
         cron_seed_enabled: false,
         cron_schedules: vec![],
         cron_log_retention_days: 30,
+        search_engine: "none".into(),
+        search_index_dir: "./data/search_index".into(),
     }
 }
 
@@ -135,6 +138,7 @@ async fn test_app() -> (axum::Router, AppState) {
         comment_repo: Arc::new(SqlxCommentRepository::new(pool.clone())),
         media_repo: Arc::new(SqlxMediaRepository::new(pool.clone())),
         refresh_token_repo: Arc::new(SqlxRefreshTokenRepository::new(pool)),
+        search: Arc::new(NoopSearchEngine),
     };
     let max_upload = state.config.max_upload_size;
 

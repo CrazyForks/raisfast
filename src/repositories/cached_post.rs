@@ -173,6 +173,10 @@ impl<P: PostRepository + 'static> PostRepository for CachedPostRepository<P> {
         self.inner.get_tags_for_posts(post_ids).await
     }
 
+    async fn find_joined_by_ids(&self, ids: &[String]) -> AppResult<Vec<PostJoinedRow>> {
+        self.inner.find_joined_by_ids(ids).await
+    }
+
     async fn create(&self, cmd: CreatePostCmd) -> AppResult<Post> {
         let post = self.inner.create(cmd).await?;
         self.invalidate_all().await;
