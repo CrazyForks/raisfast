@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE cron_execution_log SET status = 'failed', duration_ms = ?, error = ?, finished_at = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "e1227a42afbba3af3ca51ecf3b16ab917c152f5e46b1c47720a975c0c293e015"
+}

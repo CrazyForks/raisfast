@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO cron_execution_log (id, schedule_id, job_type, label, status, started_at)\n         VALUES (?, ?, ?, ?, 'running', ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "7b281f2b1cb084814f7ae7e9b2b70e867cfd853569b317ab46d1f6e510fdc1f0"
+}

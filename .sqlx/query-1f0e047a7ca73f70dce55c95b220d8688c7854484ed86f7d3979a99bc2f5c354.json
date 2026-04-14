@@ -1,0 +1,68 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, schedule_id, job_type, label, status, duration_ms, error, started_at, finished_at\n         FROM cron_execution_log\n         WHERE schedule_id = ?\n         ORDER BY started_at DESC LIMIT ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "schedule_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "job_type",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "label",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "status",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "duration_ms",
+        "ordinal": 5,
+        "type_info": "Integer"
+      },
+      {
+        "name": "error",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "started_at",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "finished_at",
+        "ordinal": 8,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "1f0e047a7ca73f70dce55c95b220d8688c7854484ed86f7d3979a99bc2f5c354"
+}

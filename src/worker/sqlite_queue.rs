@@ -30,17 +30,17 @@ impl JobQueue for SqliteJobQueue {
         let max_attempts = new_job.max_attempts.unwrap_or(3);
         let now = Utc::now().to_rfc3339();
 
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO jobs (id, job_type, payload, status, max_attempts, run_after, created_at, updated_at)
              VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)",
+            id,
+            job_type,
+            payload,
+            max_attempts,
+            new_job.run_after,
+            now,
+            now,
         )
-        .bind(&id)
-        .bind(job_type)
-        .bind(&payload)
-        .bind(max_attempts)
-        .bind(&new_job.run_after)
-        .bind(&now)
-        .bind(&now)
         .execute(&self.pool)
         .await?;
 
@@ -50,8 +50,9 @@ impl JobQueue for SqliteJobQueue {
 
     async fn dequeue(&self, limit: usize) -> AppResult<Vec<QueuedJob>> {
         let now = Utc::now().to_rfc3339();
+        let limit_i64 = limit as i64;
 
-        let rows = sqlx::query_as::<_, (String, String, String, u32, u32, String)>(
+        let rows = sqlx::query!(
             "UPDATE jobs SET status = 'running', attempts = attempts + 1, updated_at = ?
              WHERE id IN (
                SELECT id FROM jobs
@@ -59,15 +60,21 @@ impl JobQueue for SqliteJobQueue {
                ORDER BY created_at ASC LIMIT ?
              )
              RETURNING id, job_type, payload, attempts, max_attempts, created_at",
+            now,
+            now,
+            limit_i64,
         )
-        .bind(&now)
-        .bind(&now)
-        .bind(limit as i64)
         .fetch_all(&self.pool)
         .await?;
 
         let mut jobs = Vec::with_capacity(rows.len());
-        for (id, job_type, payload, attempts, max_attempts, created_at) in rows {
+        for row in rows {
+            let id = row.id.unwrap_or_default();
+            let job_type = row.job_type;
+            let payload = row.payload;
+            let attempts = row.attempts as u32;
+            let max_attempts = row.max_attempts as u32;
+            let created_at = row.created_at;
             match parse_job(&job_type, &payload) {
                 Ok(job) => jobs.push(QueuedJob {
                     id,
@@ -88,11 +95,13 @@ impl JobQueue for SqliteJobQueue {
 
     async fn complete(&self, id: &str) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
-        sqlx::query("UPDATE jobs SET status = 'completed', updated_at = ? WHERE id = ?")
-            .bind(&now)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "UPDATE jobs SET status = 'completed', updated_at = ? WHERE id = ?",
+            now,
+            id,
+        )
+        .execute(&self.pool)
+        .await?;
         tracing::debug!("job {id} completed");
         Ok(())
     }
@@ -100,15 +109,16 @@ impl JobQueue for SqliteJobQueue {
     async fn fail(&self, id: &str, error: &str) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
 
-        let row =
-            sqlx::query_as::<_, (u32, u32)>("SELECT attempts, max_attempts FROM jobs WHERE id = ?")
-                .bind(id)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = sqlx::query!("SELECT attempts, max_attempts FROM jobs WHERE id = ?", id,)
+            .fetch_optional(&self.pool)
+            .await?;
 
-        let Some((attempts, max_attempts)) = row else {
+        let Some(r) = row else {
             return Err(AppError::NotFound("job".into()));
         };
+
+        let attempts = r.attempts as u32;
+        let max_attempts = r.max_attempts as u32;
 
         if attempts >= max_attempts {
             return self.dead(id, error).await;
@@ -118,13 +128,13 @@ impl JobQueue for SqliteJobQueue {
         let run_after =
             (Utc::now() + chrono::Duration::from_std(delay).unwrap_or_default()).to_rfc3339();
 
-        sqlx::query(
+        sqlx::query!(
             "UPDATE jobs SET status = 'pending', error = ?, run_after = ?, updated_at = ? WHERE id = ?",
+            error,
+            run_after,
+            now,
+            id,
         )
-        .bind(error)
-        .bind(&run_after)
-        .bind(&now)
-        .bind(id)
         .execute(&self.pool)
         .await?;
 
@@ -136,35 +146,37 @@ impl JobQueue for SqliteJobQueue {
 
     async fn dead(&self, id: &str, error: &str) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
-        sqlx::query("UPDATE jobs SET status = 'dead', error = ?, updated_at = ? WHERE id = ?")
-            .bind(error)
-            .bind(&now)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query!(
+            "UPDATE jobs SET status = 'dead', error = ?, updated_at = ? WHERE id = ?",
+            error,
+            now,
+            id,
+        )
+        .execute(&self.pool)
+        .await?;
         tracing::error!("job {id} dead: {error}");
         Ok(())
     }
 
     async fn stats(&self) -> AppResult<JobStats> {
-        let row = sqlx::query_as::<_, (i64, i64, i64, i64, i64)>(
+        let row = sqlx::query!(
             "SELECT
-                COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN status='running' THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN status='dead' THEN 1 ELSE 0 END), 0)
-             FROM jobs",
+                COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END), 0) as pending,
+                COALESCE(SUM(CASE WHEN status='running' THEN 1 ELSE 0 END), 0) as running,
+                COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END), 0) as completed,
+                COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END), 0) as failed,
+                COALESCE(SUM(CASE WHEN status='dead' THEN 1 ELSE 0 END), 0) as dead
+             FROM jobs"
         )
         .fetch_one(&self.pool)
         .await?;
 
         Ok(JobStats {
-            pending: row.0,
-            running: row.1,
-            completed: row.2,
-            failed: row.3,
-            dead: row.4,
+            pending: row.pending,
+            running: row.running,
+            completed: row.completed,
+            failed: row.failed,
+            dead: row.dead,
         })
     }
 
@@ -176,69 +188,84 @@ impl JobQueue for SqliteJobQueue {
     ) -> AppResult<(Vec<JobRow>, i64)> {
         let offset = (page - 1) * page_size;
 
-        let (rows, total) = if let Some(s) = status {
-            let rows = sqlx::query_as::<_, (String, String, String, String, u32, u32, Option<String>, Option<String>, String, String)>(
+        let (items, total): (Vec<JobRow>, i64) = if let Some(s) = status {
+            let rows = sqlx::query!(
                 "SELECT id, job_type, payload, status, attempts, max_attempts, run_after, error, created_at, updated_at
-                 FROM jobs WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?"
+                 FROM jobs WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                s,
+                page_size,
+                offset,
             )
-            .bind(s)
-            .bind(page_size)
-            .bind(offset)
             .fetch_all(&self.pool)
             .await?;
 
-            let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status = ?")
-                .bind(s)
+            let total: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM jobs WHERE status = ?", s)
                 .fetch_one(&self.pool)
                 .await
                 .unwrap_or(0);
 
-            (rows, total)
+            let items = rows
+                .into_iter()
+                .map(|r| JobRow {
+                    id: r.id.unwrap_or_default(),
+                    job_type: r.job_type,
+                    payload: r.payload,
+                    status: r.status,
+                    attempts: r.attempts as u32,
+                    max_attempts: r.max_attempts as u32,
+                    run_after: r.run_after,
+                    error: r.error,
+                    created_at: r.created_at,
+                    updated_at: r.updated_at,
+                })
+                .collect();
+
+            (items, total)
         } else {
-            let rows = sqlx::query_as::<_, (String, String, String, String, u32, u32, Option<String>, Option<String>, String, String)>(
+            let rows = sqlx::query!(
                 "SELECT id, job_type, payload, status, attempts, max_attempts, run_after, error, created_at, updated_at
-                 FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?"
+                 FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                page_size,
+                offset,
             )
-            .bind(page_size)
-            .bind(offset)
             .fetch_all(&self.pool)
             .await?;
 
-            let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs")
+            let total: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM jobs")
                 .fetch_one(&self.pool)
                 .await
                 .unwrap_or(0);
 
-            (rows, total)
-        };
+            let items = rows
+                .into_iter()
+                .map(|r| JobRow {
+                    id: r.id.unwrap_or_default(),
+                    job_type: r.job_type,
+                    payload: r.payload,
+                    status: r.status,
+                    attempts: r.attempts as u32,
+                    max_attempts: r.max_attempts as u32,
+                    run_after: r.run_after,
+                    error: r.error,
+                    created_at: r.created_at,
+                    updated_at: r.updated_at,
+                })
+                .collect();
 
-        let items = rows
-            .into_iter()
-            .map(|r| JobRow {
-                id: r.0,
-                job_type: r.1,
-                payload: r.2,
-                status: r.3,
-                attempts: r.4,
-                max_attempts: r.5,
-                run_after: r.6,
-                error: r.7,
-                created_at: r.8,
-                updated_at: r.9,
-            })
-            .collect();
+            (items, total)
+        };
 
         Ok((items, total))
     }
 
     async fn retry(&self, id: &str) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
-        let result = sqlx::query(
+        let result = sqlx::query!(
             "UPDATE jobs SET status = 'pending', attempts = 0, error = NULL, run_after = NULL, updated_at = ?
-             WHERE id = ? AND status = 'dead'"
+             WHERE id = ? AND status = 'dead'",
+            now,
+            id,
         )
-        .bind(&now)
-        .bind(id)
         .execute(&self.pool)
         .await?;
 
@@ -251,8 +278,7 @@ impl JobQueue for SqliteJobQueue {
     }
 
     async fn remove(&self, id: &str) -> AppResult<()> {
-        let result = sqlx::query("DELETE FROM jobs WHERE id = ?")
-            .bind(id)
+        let result = sqlx::query!("DELETE FROM jobs WHERE id = ?", id)
             .execute(&self.pool)
             .await?;
 
@@ -264,7 +290,7 @@ impl JobQueue for SqliteJobQueue {
     }
 
     async fn cleanup(&self) -> AppResult<u64> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             "DELETE FROM jobs WHERE status IN ('completed', 'dead') AND updated_at < datetime('now', '-7 days')"
         )
         .execute(&self.pool)
