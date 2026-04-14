@@ -307,37 +307,56 @@ impl CronScheduler {
 
         let elapsed = start.elapsed().as_millis() as i64;
 
+        let now = Utc::now();
+        let next = next_run(&schedule.cron_expr, now).ok();
+        let now_str = now.to_rfc3339();
+        let next_str = next.as_ref().map(|n| n.to_rfc3339());
+
+        let mut tx = self.pool.begin().await?;
+
         match &dispatch_result {
             Ok(()) => {
                 if let Some(ref lid) = log_id {
-                    let _ = complete_execution_log(&self.pool, lid, elapsed).await;
+                    sqlx::query!(
+                        "UPDATE cron_execution_log SET status = 'success', duration_ms = ?, finished_at = ? WHERE id = ?",
+                        elapsed,
+                        now_str,
+                        lid,
+                    )
+                    .execute(&mut *tx)
+                    .await?;
                 }
             }
             Err(e) => {
                 if let Some(ref lid) = log_id {
-                    let _ = fail_execution_log(&self.pool, lid, elapsed, &e.to_string()).await;
+                    let err_str = e.to_string();
+                    sqlx::query!(
+                        "UPDATE cron_execution_log SET status = 'failed', duration_ms = ?, error = ?, finished_at = ? WHERE id = ?",
+                        elapsed,
+                        err_str,
+                        now_str,
+                        lid,
+                    )
+                    .execute(&mut *tx)
+                    .await?;
                 }
                 tracing::error!("cron dispatch failed for '{}': {e}", schedule.label);
             }
         }
 
-        let now = Utc::now();
-        if let Ok(next) = next_run(&schedule.cron_expr, now) {
-            let now_str = now.to_rfc3339();
-            let next_str = next.to_rfc3339();
-            if let Err(e) = sqlx::query!(
+        if let Some(next_str) = &next_str {
+            sqlx::query!(
                 "UPDATE cron_schedules SET last_run_at = ?, next_run_at = ?, updated_at = ? WHERE id = ?",
                 now_str,
                 next_str,
                 now_str,
                 schedule.id,
             )
-            .execute(&self.pool)
-            .await
-            {
-                tracing::warn!("failed to update next_run_at for '{}': {e}", schedule.label);
-            }
+            .execute(&mut *tx)
+            .await?;
         }
+
+        tx.commit().await?;
 
         dispatch_result
     }
@@ -548,6 +567,7 @@ pub async fn cleanup_execution_logs(pool: &Pool, retention_days: i64) -> AppResu
 ///
 /// 插件加载/重载时调用。将 `plugin.cron` 声明写入 `cron_schedules`，
 /// 同时删除该插件之前声明但已不存在的调度条目。
+/// 全部操作在单个事务中完成，确保原子性。
 ///
 /// 使用 `plugin_id` 列关联，不影响内置调度或其他插件的调度。
 pub async fn sync_plugin_crons(
@@ -555,13 +575,14 @@ pub async fn sync_plugin_crons(
     plugin_id: &str,
     entries: &[CronEntry],
 ) -> AppResult<()> {
+    let mut tx = pool.begin().await?;
     let now_str = Utc::now().to_rfc3339();
 
     let old = sqlx::query!(
         "SELECT id, job_type FROM cron_schedules WHERE plugin_id = ?",
         plugin_id,
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await?;
 
     let new_types: Vec<&str> = entries.iter().map(|e| e.job_type.as_str()).collect();
@@ -569,7 +590,7 @@ pub async fn sync_plugin_crons(
     for row in &old {
         if !new_types.contains(&row.job_type.as_str()) {
             sqlx::query!("DELETE FROM cron_schedules WHERE id = ?", row.id,)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
             tracing::info!(
                 "removed stale cron '{}' for plugin {plugin_id}",
@@ -584,7 +605,7 @@ pub async fn sync_plugin_crons(
             plugin_id,
             entry.job_type,
         )
-        .fetch_optional(pool)
+        .fetch_optional(&mut *tx)
         .await?;
 
         if let Some(existing_row) = existing {
@@ -600,26 +621,37 @@ pub async fn sync_plugin_crons(
                 now_str,
                 existing_row.id,
             )
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             tracing::debug!("updated cron '{}' for plugin {plugin_id}", entry.job_type);
         } else {
-            create_schedule_with_plugin(
-                pool,
-                &entry.label,
-                &entry.job_type,
-                entry.payload.as_deref(),
-                &entry.cron_expr,
+            let id = uuid::Uuid::now_v7().to_string();
+            let next = next_run(&entry.cron_expr, Utc::now())?;
+            let next_str = next.to_rfc3339();
+            let now = Utc::now().to_rfc3339();
+            sqlx::query!(
+                "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                id,
+                entry.label,
+                entry.job_type,
+                entry.payload,
+                entry.cron_expr,
                 entry.enabled,
-                Some(plugin_id),
+                next_str,
+                plugin_id,
+                now,
+                now,
             )
+            .execute(&mut *tx)
             .await?;
 
             tracing::info!("created cron '{}' for plugin {plugin_id}", entry.job_type);
         }
     }
 
+    tx.commit().await?;
     Ok(())
 }
 

@@ -7,4 +7,4 @@ pub mod connection;
 pub mod dialect;
 pub mod pool;
 
-pub use pool::Pool;
+pub use pool::{Pool, Transaction};

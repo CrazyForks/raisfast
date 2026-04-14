@@ -109,8 +109,10 @@ impl JobQueue for SqliteJobQueue {
     async fn fail(&self, id: &str, error: &str) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
 
+        let mut tx = self.pool.begin().await?;
+
         let row = sqlx::query!("SELECT attempts, max_attempts FROM jobs WHERE id = ?", id,)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *tx)
             .await?;
 
         let Some(r) = row else {
@@ -121,7 +123,17 @@ impl JobQueue for SqliteJobQueue {
         let max_attempts = r.max_attempts as u32;
 
         if attempts >= max_attempts {
-            return self.dead(id, error).await;
+            sqlx::query!(
+                "UPDATE jobs SET status = 'dead', error = ?, updated_at = ? WHERE id = ?",
+                error,
+                now,
+                id,
+            )
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            tracing::error!("job {id} dead: {error}");
+            return Ok(());
         }
 
         let delay = backoff_duration(attempts);
@@ -135,8 +147,10 @@ impl JobQueue for SqliteJobQueue {
             now,
             id,
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+
+        tx.commit().await?;
 
         tracing::warn!(
             "job {id} failed (attempt {attempts}/{max_attempts}), retry after {run_after}"

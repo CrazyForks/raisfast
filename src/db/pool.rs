@@ -1,7 +1,7 @@
-//! 数据库连接池类型别名。
+//! 数据库连接池与事务类型别名。
 //!
 //! 根据编译时选定的 feature（`db-sqlite`、`db-postgres`、`db-mysql`），
-//! 导出对应的连接池类型 [`Pool`]。
+//! 导出对应的连接池类型 [`Pool`] 和事务类型 [`Transaction`]。
 //!
 //! # 编译时校验
 //!
@@ -26,6 +26,24 @@ pub type Pool = sqlx::PgPool;
     not(any(feature = "db-sqlite", feature = "db-postgres"))
 ))]
 pub type Pool = sqlx::MySqlPool;
+
+#[cfg(all(
+    feature = "db-sqlite",
+    not(any(feature = "db-postgres", feature = "db-mysql"))
+))]
+pub type Transaction<'a> = sqlx::Transaction<'a, sqlx::Sqlite>;
+
+#[cfg(all(
+    feature = "db-postgres",
+    not(any(feature = "db-sqlite", feature = "db-mysql"))
+))]
+pub type Transaction<'a> = sqlx::Transaction<'a, sqlx::Postgres>;
+
+#[cfg(all(
+    feature = "db-mysql",
+    not(any(feature = "db-sqlite", feature = "db-postgres"))
+))]
+pub type Transaction<'a> = sqlx::Transaction<'a, sqlx::MySql>;
 
 #[cfg(not(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql")))]
 compile_error!(

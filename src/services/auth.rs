@@ -210,7 +210,8 @@ pub async fn login(
 
 /// 刷新令牌。
 ///
-/// 验证刷新令牌的有效性，执行令牌轮换：删除旧刷新令牌，生成新的访问令牌和刷新令牌。
+/// 验证刷新令牌的有效性，执行令牌轮换：在事务中删除旧刷新令牌，
+/// 生成新的访问令牌和刷新令牌，确保原子性。
 pub async fn refresh(
     pool: &crate::db::Pool,
     refresh_token_str: &str,
@@ -234,18 +235,34 @@ pub async fn refresh(
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
 
-    refresh_token::delete_by_token(pool, refresh_token_str).await?;
-
     let access_token = generate_access_token(&user.id, &user.role, jwt_secret, jwt_access_expires)?;
     let new_refresh_token = generate_refresh_token_string()?;
     let new_expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
-    refresh_token::create_token(
-        pool,
-        &user.id,
-        &new_refresh_token,
-        &new_expires_at.to_rfc3339(),
+    let new_expires_str = new_expires_at.to_rfc3339();
+    let new_id = uuid::Uuid::now_v7().to_string();
+    let now = Utc::now().to_rfc3339();
+
+    let mut tx = pool.begin().await?;
+
+    sqlx::query!(
+        "DELETE FROM refresh_tokens WHERE token = ?",
+        refresh_token_str,
     )
+    .execute(&mut *tx)
     .await?;
+
+    sqlx::query!(
+        "INSERT INTO refresh_tokens (id, user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
+        new_id,
+        user.id,
+        new_refresh_token,
+        new_expires_str,
+        now,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
 
     Ok(LoginResponse {
         access_token,
@@ -290,7 +307,8 @@ pub async fn update_me(
 
 /// 修改密码。
 ///
-/// 验证旧密码正确后，用新密码的哈希替换旧哈希。
+/// 验证旧密码正确后，在事务中用新密码的哈希替换旧哈希，
+/// 并删除所有刷新令牌，确保旧会话全部失效。
 pub async fn change_password(
     pool: &crate::db::Pool,
     user_id: &str,
@@ -305,8 +323,24 @@ pub async fn change_password(
     }
 
     let new_hash = hash_password(&req.new_password)?;
-    user::update_password(pool, user_id, &new_hash).await?;
-    refresh_token::delete_by_user(pool, user_id).await?;
+    let now = Utc::now().to_rfc3339();
+
+    let mut tx = pool.begin().await?;
+
+    sqlx::query!(
+        "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+        new_hash,
+        now,
+        user_id,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query!("DELETE FROM refresh_tokens WHERE user_id = ?", user_id,)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
     Ok(())
 }
 

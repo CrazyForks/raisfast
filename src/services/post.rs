@@ -166,7 +166,7 @@ fn extract_excerpt(content: &str, max_len: usize) -> String {
 ///
 /// - 从标题自动生成唯一 slug。
 /// - 若未提供摘要，从内容中自动提取前 200 字符。
-/// - 同步关联标签。
+/// - 在单个事务中创建文章并同步关联标签，确保原子性。
 pub async fn create_post(
     pool: &crate::db::Pool,
     plugins: &PluginManager,
@@ -186,22 +186,37 @@ pub async fn create_post(
         .map(|s| s.to_string())
         .unwrap_or_else(|| extract_excerpt(&req.content, 200));
 
-    let p = post::create(
-        pool,
-        &req.title,
-        &slug,
-        &req.content,
-        Some(&excerpt),
-        req.cover_image.as_deref(),
-        status,
-        author_id,
-        req.category_id.as_deref().filter(|s| !s.is_empty()),
-    )
-    .await?;
-
-    if let Some(tag_ids) = &req.tag_ids {
-        post::sync_tags(pool, &p.id, tag_ids).await?;
-    }
+    let p = if let Some(tag_ids) = &req.tag_ids {
+        let mut tx = pool.begin().await?;
+        let post = post::create_tx(
+            &mut tx,
+            &req.title,
+            &slug,
+            &req.content,
+            Some(&excerpt),
+            req.cover_image.as_deref(),
+            status,
+            author_id,
+            req.category_id.as_deref().filter(|s| !s.is_empty()),
+        )
+        .await?;
+        post::sync_tags_tx(&mut tx, &post.id, tag_ids).await?;
+        tx.commit().await?;
+        post
+    } else {
+        post::create(
+            pool,
+            &req.title,
+            &slug,
+            &req.content,
+            Some(&excerpt),
+            req.cover_image.as_deref(),
+            status,
+            author_id,
+            req.category_id.as_deref().filter(|s| !s.is_empty()),
+        )
+        .await?
+    };
 
     let resp = build_post_response_from_id(pool, &p.id, plugins).await?;
     eventbus.emit(Event::PostCreated {
@@ -217,7 +232,7 @@ pub async fn create_post(
 ///
 /// - 若标题变更，重新生成唯一 slug。
 /// - 重新生成摘要（若内容变更）。
-/// - 同步关联标签。
+/// - 在单个事务中更新文章并同步关联标签，确保原子性。
 pub async fn update_post(
     pool: &crate::db::Pool,
     plugins: &PluginManager,
@@ -249,24 +264,38 @@ pub async fn update_post(
         .clone()
         .unwrap_or_else(|| extract_excerpt(content, 200));
 
-    let p = post::update(
-        pool,
-        id,
-        req.title.as_deref(),
-        slug.as_deref(),
-        Some(content),
-        Some(&excerpt),
-        req.cover_image.as_deref(),
-        req.status.as_deref(),
-        req.category_id.as_deref().filter(|s| !s.is_empty()),
-    )
-    .await?;
-
     if let Some(tag_ids) = &req.tag_ids {
-        post::sync_tags(pool, &p.id, tag_ids).await?;
+        let mut tx = pool.begin().await?;
+        post::update_tx(
+            &mut tx,
+            id,
+            req.title.as_deref(),
+            slug.as_deref(),
+            Some(content),
+            Some(&excerpt),
+            req.cover_image.as_deref(),
+            req.status.as_deref(),
+            req.category_id.as_deref().filter(|s| !s.is_empty()),
+        )
+        .await?;
+        post::sync_tags_tx(&mut tx, id, tag_ids).await?;
+        tx.commit().await?;
+    } else {
+        post::update(
+            pool,
+            id,
+            req.title.as_deref(),
+            slug.as_deref(),
+            Some(content),
+            Some(&excerpt),
+            req.cover_image.as_deref(),
+            req.status.as_deref(),
+            req.category_id.as_deref().filter(|s| !s.is_empty()),
+        )
+        .await?;
     }
 
-    build_post_response_from_id(pool, &p.id, plugins).await
+    build_post_response_from_id(pool, id, plugins).await
 }
 
 /// 删除文章。

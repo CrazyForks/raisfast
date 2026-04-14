@@ -152,6 +152,36 @@ pub async fn create(
     author_id: &str,
     category_id: Option<&str>,
 ) -> AppResult<Post> {
+    let mut tx = pool.begin().await?;
+    let post = create_tx(
+        &mut tx,
+        title,
+        slug,
+        content,
+        excerpt,
+        cover_image,
+        status,
+        author_id,
+        category_id,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(post)
+}
+
+/// 在已有事务中创建新文章
+#[allow(clippy::too_many_arguments)]
+pub async fn create_tx(
+    tx: &mut crate::db::Transaction<'_>,
+    title: &str,
+    slug: &str,
+    content: &str,
+    excerpt: Option<&str>,
+    cover_image: Option<&str>,
+    status: &str,
+    author_id: &str,
+    category_id: Option<&str>,
+) -> AppResult<Post> {
     let id = Uuid::now_v7().to_string();
     let now = Utc::now().to_rfc3339();
     let published_at = if status == "published" {
@@ -175,12 +205,16 @@ pub async fn create(
         now,
         now,
     )
-    .execute(pool)
+    .execute(&mut **tx)
     .await?;
 
-    find_by_id(pool, &id)
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch created post")))
+    let sql = crate::db::dialect::translate("SELECT * FROM posts WHERE id = ?");
+    let post = sqlx::query_as::<_, Post>(&sql)
+        .bind(&id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("failed to fetch created post")))?;
+    Ok(post)
 }
 
 /// 更新文章
@@ -199,7 +233,40 @@ pub async fn update(
     status: Option<&str>,
     category_id: Option<&str>,
 ) -> AppResult<Post> {
-    let existing = find_by_id(pool, id)
+    let mut tx = pool.begin().await?;
+    let post = update_tx(
+        &mut tx,
+        id,
+        title,
+        slug,
+        content,
+        excerpt,
+        cover_image,
+        status,
+        category_id,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(post)
+}
+
+/// 在已有事务中更新文章
+#[allow(clippy::too_many_arguments)]
+pub async fn update_tx(
+    tx: &mut crate::db::Transaction<'_>,
+    id: &str,
+    title: Option<&str>,
+    slug: Option<&str>,
+    content: Option<&str>,
+    excerpt: Option<&str>,
+    cover_image: Option<&str>,
+    status: Option<&str>,
+    category_id: Option<&str>,
+) -> AppResult<Post> {
+    let sql = crate::db::dialect::translate("SELECT * FROM posts WHERE id = ?");
+    let existing = sqlx::query_as::<_, Post>(&sql)
+        .bind(id)
+        .fetch_optional(&mut **tx)
         .await?
         .ok_or_else(|| AppError::NotFound("post".into()))?;
 
@@ -231,12 +298,15 @@ pub async fn update(
         now,
         id,
     )
-    .execute(pool)
+    .execute(&mut **tx)
     .await?;
 
-    find_by_id(pool, id)
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch updated post")))
+    let sql = crate::db::dialect::translate("SELECT * FROM posts WHERE id = ?");
+    sqlx::query_as::<_, Post>(&sql)
+        .bind(id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("failed to fetch updated post")))
 }
 
 /// 删除文章
@@ -275,9 +345,19 @@ pub async fn increment_view_count_joined(
 /// 在事务中执行：先删除该文章的所有现有关联，再逐条插入新的关联。
 pub async fn sync_tags(pool: &crate::db::Pool, post_id: &str, tag_ids: &[String]) -> AppResult<()> {
     let mut tx = pool.begin().await?;
+    sync_tags_tx(&mut tx, post_id, tag_ids).await?;
+    tx.commit().await?;
+    Ok(())
+}
 
+/// 在已有事务中同步文章与标签的关联关系
+pub async fn sync_tags_tx(
+    tx: &mut crate::db::Transaction<'_>,
+    post_id: &str,
+    tag_ids: &[String],
+) -> AppResult<()> {
     sqlx::query!("DELETE FROM posts_tags WHERE post_id = ?", post_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     for tag_id in tag_ids {
@@ -286,11 +366,10 @@ pub async fn sync_tags(pool: &crate::db::Pool, post_id: &str, tag_ids: &[String]
             post_id,
             tag_id,
         )
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     }
 
-    tx.commit().await?;
     Ok(())
 }
 
