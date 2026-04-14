@@ -1127,7 +1127,16 @@ impl PluginManager {
 
         let func_name = "handle_route";
 
-        for plugin in plugins.values() {
+        let mut sorted: Vec<_> = plugins.values().collect();
+        sorted.sort_by_key(|p| {
+            p.manifest
+                .hooks
+                .get(func_name)
+                .and_then(|h| h.priority)
+                .unwrap_or(100)
+        });
+
+        for plugin in sorted {
             let hook_config = match plugin.manifest.hooks.get(func_name) {
                 Some(h) => h,
                 None => continue,
@@ -2643,5 +2652,94 @@ Plugin = {
             .await
             .unwrap();
         assert!(result["cache_hit"].is_null());
+    }
+
+    #[cfg(feature = "plugin-lua")]
+    #[tokio::test]
+    async fn manager_lua_plugin_handle_route() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("lua-route-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.lua-route"
+name = "Lua Route"
+version = "1.0.0"
+runtime = "lua"
+entry = "init.lua"
+
+[permissions]
+database = ["read:posts"]
+
+[hooks.handle-route]
+match = "/api/v1/plugins/stats/*"
+priority = 10
+"#;
+        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+
+        let lua_code = r#"
+Plugin = {
+    handle_route = function(input)
+        local path = input.path or ""
+        local method = input.method or ""
+
+        if method ~= "GET" then
+            return nil
+        end
+
+        local name = path:match("/api/v1/plugins/stats/([^/]+)$")
+        if not name then
+            return nil
+        end
+
+        if name == "ping" then
+            return {
+                status = 200,
+                body = '{"code":0,"message":"ok","data":"pong"}'
+            }
+        end
+
+        if name == "count" then
+            local result = Host.dbQuery("SELECT COUNT(*) as total FROM posts")
+            if result and result:sub(1, 6) ~= "error:" then
+                return {
+                    status = 200,
+                    body = '{"code":0,"message":"ok","data":' .. result .. '}'
+                }
+            end
+            return {
+                status = 500,
+                body = '{"code":50000,"message":"query failed","data":null}'
+            }
+        end
+
+        return nil
+    end,
+}
+"#;
+        std::fs::write(plugin_dir.join("init.lua"), lua_code).unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        let result = mgr
+            .dispatch_route("/api/v1/plugins/stats/ping", "GET")
+            .await;
+        assert!(result.is_some(), "should match route pattern");
+
+        let result = mgr
+            .dispatch_route("/api/v1/plugins/stats/unknown", "GET")
+            .await;
+        assert!(
+            result.is_none(),
+            "should return nil for unknown endpoint"
+        );
+
+        let result = mgr
+            .dispatch_route("/api/v1/plugins/stats/ping", "POST")
+            .await;
+        assert!(result.is_none(), "should ignore non-GET");
     }
 }
