@@ -94,6 +94,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore]
     async fn http_get_real_request() {
         let result = http_get("https://httpbin.org/get").await;
         assert!(result.is_ok());
@@ -103,6 +104,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn http_post_real_request() {
         let result = http_post(
             "https://httpbin.org/post",

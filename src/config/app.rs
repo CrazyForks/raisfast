@@ -74,6 +74,64 @@ pub struct AppConfig {
     pub rate_limit_comment_max: u32,
     #[serde(default = "default_rate_limit_comment_window")]
     pub rate_limit_comment_window: u64,
+    #[serde(default)]
+    pub worker_enabled: bool,
+    #[serde(default = "default_worker_concurrency")]
+    pub worker_concurrency: usize,
+    #[serde(default = "default_worker_poll_interval_ms")]
+    pub worker_poll_interval_ms: u64,
+    #[serde(default = "default_worker_max_attempts")]
+    pub worker_default_max_attempts: u32,
+    #[serde(default = "default_worker_cron_tick_ms")]
+    pub worker_cron_tick_ms: u64,
+    #[serde(default)]
+    pub cron_seed_enabled: bool,
+    #[serde(default = "default_cron_schedules")]
+    pub cron_schedules: Vec<CronScheduleConfig>,
+    #[serde(default = "default_cron_log_retention_days")]
+    pub cron_log_retention_days: i64,
+}
+
+/// 单条 Cron 调度配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronScheduleConfig {
+    pub label: String,
+    pub job_type: String,
+    pub payload: Option<String>,
+    pub cron_expr: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_worker_cron_tick_ms() -> u64 {
+    60000
+}
+
+fn default_cron_log_retention_days() -> i64 {
+    30
+}
+
+pub fn default_cron_schedules() -> Vec<CronScheduleConfig> {
+    vec![
+        CronScheduleConfig {
+            label: "Generate Sitemap".into(),
+            job_type: "generate_sitemap".into(),
+            payload: None,
+            cron_expr: "0 0 */6 * * *".into(),
+            enabled: true,
+        },
+        CronScheduleConfig {
+            label: "Cleanup Old Jobs".into(),
+            job_type: "invalidate_cache".into(),
+            payload: Some(r#"{"keys":["jobs:cleanup"]}"#.into()),
+            cron_expr: "0 0 3 * * *".into(),
+            enabled: true,
+        },
+    ]
 }
 
 fn default_log_dir() -> String {
@@ -114,6 +172,18 @@ fn default_rate_limit_comment_max() -> u32 {
 
 fn default_rate_limit_comment_window() -> u64 {
     60
+}
+
+fn default_worker_concurrency() -> usize {
+    2
+}
+
+fn default_worker_poll_interval_ms() -> u64 {
+    500
+}
+
+fn default_worker_max_attempts() -> u32 {
+    3
 }
 
 fn default_plugin_max_memory() -> u32 {
@@ -254,6 +324,38 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default_plugin_vfs_max_total_size()),
+            worker_enabled: env::var("WORKER_ENABLED")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(false),
+            worker_concurrency: env::var("WORKER_CONCURRENCY")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_worker_concurrency()),
+            worker_poll_interval_ms: env::var("WORKER_POLL_INTERVAL_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_worker_poll_interval_ms()),
+            worker_default_max_attempts: env::var("WORKER_DEFAULT_MAX_ATTEMPTS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_worker_max_attempts()),
+            worker_cron_tick_ms: env::var("WORKER_CRON_TICK_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_worker_cron_tick_ms()),
+            cron_seed_enabled: env::var("CRON_SEED_ENABLED")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(false),
+            cron_schedules: env::var("CRON_SCHEDULES")
+                .ok()
+                .and_then(|v| serde_json::from_str(&v).ok())
+                .unwrap_or_default(),
+            cron_log_retention_days: env::var("CRON_LOG_RETENTION_DAYS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_cron_log_retention_days()),
         }
     }
 

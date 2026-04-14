@@ -34,7 +34,7 @@ mod manifest;
 pub mod permissions;
 pub mod vfs;
 
-pub use manifest::{HookConfig, HookPoint, Permissions, PluginManifest};
+pub use manifest::{CronEntry, HookConfig, HookPoint, Permissions, PluginManifest};
 pub use permissions::PermissionChecker;
 
 use std::collections::HashMap;
@@ -474,7 +474,13 @@ impl PluginManager {
                 metrics: RwLock::new(HashMap::new()),
             },
         );
+        let cron_entries = plugins
+            .get(&id)
+            .map(|p| p.manifest.cron.clone())
+            .unwrap_or_default();
         drop(plugins);
+
+        self.sync_crons_for_plugin(&id, &cron_entries).await;
 
         self.emit_event(PluginEvent::PluginLoaded {
             id: id.clone(),
@@ -511,7 +517,13 @@ impl PluginManager {
                 metrics: RwLock::new(HashMap::new()),
             },
         );
+        let cron_entries = plugins
+            .get(&id)
+            .map(|p| p.manifest.cron.clone())
+            .unwrap_or_default();
         drop(plugins);
+
+        self.sync_crons_for_plugin(&id, &cron_entries).await;
 
         self.emit_event(PluginEvent::PluginLoaded {
             id: id.clone(),
@@ -549,7 +561,13 @@ impl PluginManager {
                 metrics: RwLock::new(HashMap::new()),
             },
         );
+        let cron_entries = plugins
+            .get(&id)
+            .map(|p| p.manifest.cron.clone())
+            .unwrap_or_default();
         drop(plugins);
+
+        self.sync_crons_for_plugin(&id, &cron_entries).await;
 
         self.emit_event(PluginEvent::PluginLoaded {
             id: id.clone(),
@@ -578,7 +596,26 @@ impl PluginManager {
             }
             tracing::info!("unloaded plugin: {id}");
             drop(plugins);
+            self.remove_crons_for_plugin(id).await;
             self.emit_event(PluginEvent::PluginUnloaded { id: id.to_string() });
+        }
+    }
+
+    /// 同步插件的 Cron 调度到数据库
+    async fn sync_crons_for_plugin(&self, plugin_id: &str, entries: &[CronEntry]) {
+        if let Some(ref pool) = self.pool
+            && let Err(e) = crate::worker::sync_plugin_crons(pool, plugin_id, entries).await
+        {
+            tracing::warn!("failed to sync crons for plugin {plugin_id}: {e}");
+        }
+    }
+
+    /// 删除插件关联的 Cron 调度
+    async fn remove_crons_for_plugin(&self, plugin_id: &str) {
+        if let Some(ref pool) = self.pool
+            && let Err(e) = crate::worker::remove_plugin_crons(pool, plugin_id).await
+        {
+            tracing::warn!("failed to remove crons for plugin {plugin_id}: {e}");
         }
     }
 
@@ -1336,6 +1373,14 @@ mod tests {
             rate_limit_login_window: 60,
             rate_limit_comment_max: 3,
             rate_limit_comment_window: 60,
+            worker_enabled: false,
+            worker_concurrency: 1,
+            worker_poll_interval_ms: 500,
+            worker_default_max_attempts: 3,
+            worker_cron_tick_ms: 60000,
+            cron_seed_enabled: false,
+            cron_schedules: vec![],
+            cron_log_retention_days: 30,
         })
     }
 
@@ -2508,6 +2553,7 @@ priority = 10
                 .into_iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
+            cron: vec![],
         }
     }
 
@@ -2640,7 +2686,7 @@ Plugin = {
         assert!(result["stats"].is_string());
 
         let delete_input = serde_json::json!({"slug": "hello-world"});
-        let result: serde_json::Value = mgr
+        let _result: serde_json::Value = mgr
             .dispatch_filter(HookPoint::PostDeleted, delete_input)
             .await
             .unwrap();
@@ -2738,5 +2784,135 @@ Plugin = {
             .dispatch_route("/api/v1/plugins/stats/ping", "POST")
             .await;
         assert!(result.is_none(), "should ignore non-GET");
+    }
+
+    #[cfg(feature = "plugin-lua")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn lua_cron_plugin_syncs_schedules() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("cron-test-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = concat!(
+            "[plugin]\n",
+            "id = \"com.test.cron-plugin\"\n",
+            "name = \"Cron Test\"\n",
+            "version = \"1.0.0\"\n",
+            "runtime = \"lua\"\n",
+            "language = \"lua\"\n",
+            "entry = \"init.lua\"\n",
+            "\n",
+            "[hooks.on-cron-tick]\n",
+            "priority = 10\n",
+            "\n",
+            "[[cron]]\n",
+            "label = \"Cleanup\"\n",
+            "job_type = \"cleanup_sessions\"\n",
+            "payload = '{\"max_age_hours\": 12}'\n",
+            "cron_expr = \"0 0 */6 * * *\"\n",
+            "enabled = true\n",
+            "\n",
+            "[[cron]]\n",
+            "label = \"Digest\"\n",
+            "job_type = \"daily_digest\"\n",
+            "cron_expr = \"0 0 3 * * *\"\n",
+            "enabled = false\n",
+        );
+        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+
+        let lua_code = "Plugin = { on_cron_tick = function(data) Host.setData(\"last_job\", data.job_type or \"\") end }";
+        std::fs::write(plugin_dir.join("init.lua"), lua_code).unwrap();
+
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(include_str!("../../migrations/007_cron_schedules.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let config = Arc::new(crate::config::app::AppConfig {
+            host: "0.0.0.0".into(),
+            port: 3000,
+            env: "test".into(),
+            database_url: "sqlite::memory:".into(),
+            db_pool_size: 1,
+            jwt_secret: "test-secret-key-at-least-32-characters!".into(),
+            jwt_access_expires: 900,
+            jwt_refresh_expires: 604800,
+            upload_dir: "./uploads".into(),
+            max_upload_size: 5242880,
+            static_dir: "./static".into(),
+            base_url: "http://localhost:3000".into(),
+            cors_origins: None,
+            plugin_dir: Some(dir.path().to_string_lossy().to_string()),
+            plugin_hot_reload: false,
+            plugin_max_memory_mb: 32,
+            plugin_default_timeout_ms: 5000,
+            plugin_disabled: vec![],
+            plugin_vfs_root: "./plugins-data".into(),
+            plugin_vfs_max_file_size: 1048576,
+            plugin_vfs_max_total_size: 10485760,
+            log_dir: "./logs".into(),
+            log_max_files: 7,
+            rate_limit_global_max: 60,
+            rate_limit_global_window: 60,
+            rate_limit_register_max: 5,
+            rate_limit_register_window: 3600,
+            rate_limit_login_max: 10,
+            rate_limit_login_window: 60,
+            rate_limit_comment_max: 3,
+            rate_limit_comment_window: 60,
+            worker_enabled: false,
+            worker_concurrency: 2,
+            worker_poll_interval_ms: 500,
+            worker_default_max_attempts: 3,
+            worker_cron_tick_ms: 60000,
+            cron_seed_enabled: false,
+            cron_schedules: vec![],
+            cron_log_retention_days: 30,
+        });
+
+        let mgr = PluginManager::new_with_options(
+            config,
+            PluginManagerOptions {
+                pool: Some(pool.clone()),
+            },
+        )
+        .await;
+
+        let schedules = crate::worker::list_schedules(&pool).await.unwrap();
+        assert_eq!(schedules.len(), 2);
+
+        let cleanup = schedules
+            .iter()
+            .find(|s| s.job_type == "cleanup_sessions")
+            .unwrap();
+        assert_eq!(cleanup.label, "Cleanup");
+        assert!(cleanup.enabled);
+        assert_eq!(cleanup.plugin_id, Some("com.test.cron-plugin".into()));
+
+        let digest = schedules
+            .iter()
+            .find(|s| s.job_type == "daily_digest")
+            .unwrap();
+        assert_eq!(digest.label, "Digest");
+        assert!(!digest.enabled);
+
+        mgr.dispatch_action(
+            HookPoint::CronTick,
+            &serde_json::json!({
+                "job_type": "cleanup_sessions",
+                "payload": {"max_age_hours": 12},
+                "timestamp": "2026-01-01T00:00:00Z"
+            }),
+        )
+        .await;
+
+        mgr.unload_plugin("com.test.cron-plugin").await;
+
+        let after_unload = crate::worker::list_schedules(&pool).await.unwrap();
+        assert!(
+            after_unload.is_empty(),
+            "cron schedules should be removed after plugin unload"
+        );
     }
 }

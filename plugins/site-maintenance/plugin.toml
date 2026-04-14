@@ -1,0 +1,39 @@
+[plugin]
+id = "com.rust-blog.site-maintenance"
+name = "Site Maintenance"
+version = "1.0.0"
+description = "定时维护插件：清理过期 Session、同步文章浏览量、生成每日摘要报告"
+author = "rust-blog"
+license = "MIT"
+runtime = "lua"
+language = "lua"
+entry = "init.lua"
+
+[permissions]
+max_memory_mb = 16
+timeout_ms = 10000
+database = ["read:posts", "read:comments", "read:users", "write:posts"]
+http = ["http://localhost:*"]
+
+[hooks.on-cron-tick]
+priority = 10
+
+[[cron]]
+label = "Cleanup Expired Sessions"
+job_type = "cleanup_sessions"
+payload = '{"max_age_hours": 24}'
+cron_expr = "0 0 */6 * * *"
+enabled = true
+
+[[cron]]
+label = "Sync Post View Counts"
+job_type = "sync_view_counts"
+payload = '{"batch_size": 100}'
+cron_expr = "0 */30 * * * *"
+enabled = true
+
+[[cron]]
+label = "Daily Digest Report"
+job_type = "daily_digest"
+cron_expr = "0 0 1 * * *"
+enabled = true

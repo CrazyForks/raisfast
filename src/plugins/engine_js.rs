@@ -269,6 +269,14 @@ mod tests {
             rate_limit_login_window: 60,
             rate_limit_comment_max: 3,
             rate_limit_comment_window: 60,
+            worker_enabled: false,
+            worker_concurrency: 1,
+            worker_poll_interval_ms: 500,
+            worker_default_max_attempts: 3,
+            worker_cron_tick_ms: 60000,
+            cron_seed_enabled: false,
+            cron_schedules: vec![],
+            cron_log_retention_days: 30,
         })
     }
 

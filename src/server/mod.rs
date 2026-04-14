@@ -12,7 +12,9 @@ use axum::routing::{delete, get, post as http_post, put};
 use rust_blog::AppState;
 use rust_blog::config::app::AppConfig;
 use rust_blog::db::connection::init_pool;
-use rust_blog::handlers::{auth, category, comment, health, media, plugin, post, rss, tag, user};
+use rust_blog::handlers::{
+    auth, category, comment, cron, health, media, plugin, post, rss, tag, user,
+};
 use rust_blog::middleware::locale::locale_middleware;
 use rust_blog::middleware::rate_limit::{
     RateLimiterSet, comment_rate_limit, global_rate_limit, login_rate_limit, register_rate_limit,
@@ -53,6 +55,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
 
     let eventbus = rust_blog::eventbus::EventBus::new(256);
 
+    let worker_pool = pool.clone();
     let state = AppState {
         pool: pool.clone(),
         config: Arc::new(config.clone()),
@@ -64,7 +67,11 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         eventbus: eventbus.clone(),
     };
 
-    spawn_event_subscriber(eventbus, state.plugins.clone());
+    spawn_event_subscriber(eventbus.clone(), state.plugins.clone());
+
+    if config.worker_enabled {
+        spawn_workers(worker_pool, &eventbus, config, state.plugins.clone()).await;
+    }
 
     let cors = build_cors(config);
 
@@ -119,6 +126,14 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         .route("/admin/plugins/{id}/enable", http_post(plugin::enable))
         .route("/admin/plugins/{id}/disable", http_post(plugin::disable))
         .route("/admin/plugins/{id}/reload", http_post(plugin::reload))
+        .route("/admin/crons", get(cron::list).post(cron::create))
+        .route(
+            "/admin/crons/{id}",
+            get(cron::get).put(cron::update).delete(cron::delete),
+        )
+        .route("/admin/crons/{id}/toggle", http_post(cron::toggle))
+        .route("/admin/crons/logs", get(cron::logs))
+        .route("/admin/crons/logs/cleanup", http_post(cron::cleanup_logs))
         .layer(from_fn(global_rate_limit))
         .layer(Extension(limiters))
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024));
@@ -297,4 +312,71 @@ fn spawn_event_subscriber(
             }
         }
     });
+}
+
+/// 启动 Worker 子系统（CronScheduler + JobEnqueuer + WorkerRunner）
+async fn spawn_workers(
+    pool: rust_blog::db::Pool,
+    eventbus: &rust_blog::eventbus::EventBus,
+    config: &AppConfig,
+    plugins: Arc<rust_blog::plugins::PluginManager>,
+) {
+    use rust_blog::worker::{
+        CronScheduler, JobEnqueuer, JobHandlerRegistry, PluginCronDispatcher, SqliteJobQueue,
+        WorkerRunner, seed_defaults,
+    };
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let queue = Arc::new(SqliteJobQueue::new(pool.clone()));
+
+    if let Err(e) = async {
+        sqlx::query(include_str!("../../migrations/006_jobs.sql"))
+            .execute(&pool)
+            .await?;
+        sqlx::query(include_str!("../../migrations/007_cron_schedules.sql"))
+            .execute(&pool)
+            .await?;
+        sqlx::query(include_str!("../../migrations/008_cron_execution_log.sql"))
+            .execute(&pool)
+            .await?;
+        if config.cron_seed_enabled {
+            seed_defaults(&pool, &config.cron_schedules).await?;
+        }
+        Ok::<_, anyhow::Error>(())
+    }
+    .await
+    {
+        tracing::warn!("worker migration/seed error: {e}");
+    }
+
+    let mut registry = JobHandlerRegistry::new();
+    rust_blog::worker::handlers::register_all(
+        &mut registry,
+        pool.clone(),
+        Arc::new(config.clone()),
+    );
+
+    let cron = CronScheduler::new(
+        pool,
+        queue.clone(),
+        Duration::from_millis(config.worker_cron_tick_ms),
+    );
+    cron.spawn();
+
+    JobEnqueuer::spawn(eventbus, queue.clone());
+
+    let runner = WorkerRunner::new(
+        queue,
+        Arc::new(registry),
+        Duration::from_millis(config.worker_poll_interval_ms),
+    )
+    .with_plugin_dispatcher(Arc::new(PluginCronDispatcher::new(plugins)));
+    runner.spawn(config.worker_concurrency);
+
+    tracing::info!(
+        "worker system started: concurrency={}, poll={}ms",
+        config.worker_concurrency,
+        config.worker_poll_interval_ms,
+    );
 }

@@ -13,6 +13,40 @@ pub struct PluginManifest {
     pub hooks: HashMap<String, HookConfig>,
     #[serde(default)]
     pub dependencies: HashMap<String, String>,
+    /// 插件声明的 Cron 定时任务
+    ///
+    /// 格式示例（`plugin.toml`）：
+    /// ```toml
+    /// [[cron]]
+    /// label = "Cleanup Data"
+    /// job_type = "cleanup_stale_sessions"
+    /// payload = '{"max_age_hours": 24}'
+    /// cron_expr = "0 0 */6 * * *"
+    /// enabled = true
+    /// ```
+    #[serde(default)]
+    pub cron: Vec<CronEntry>,
+}
+
+/// 插件声明的 Cron 定时任务条目
+#[derive(Debug, Clone, Deserialize)]
+pub struct CronEntry {
+    /// 可读标签
+    pub label: String,
+    /// 自定义 job_type 字符串（任意值，不要求匹配内置枚举）
+    pub job_type: String,
+    /// JSON payload（可选）
+    #[serde(default)]
+    pub payload: Option<String>,
+    /// 七段式 Cron 表达式（含秒）
+    pub cron_expr: String,
+    /// 是否启用（默认 true）
+    #[serde(default = "cron_default_true")]
+    pub enabled: bool,
+}
+
+fn cron_default_true() -> bool {
+    true
 }
 
 fn deserialize_hooks<'de, D>(de: D) -> Result<HashMap<String, HookConfig>, D::Error>
@@ -99,6 +133,8 @@ pub enum HookPoint {
     FilterHtml,
     HandleRoute,
     OnLogin,
+    /// Cron 定时任务触发，传递 job_type + payload + timestamp
+    CronTick,
 }
 
 impl HookPoint {
@@ -116,6 +152,7 @@ impl HookPoint {
             HookPoint::FilterHtml => "filter_html",
             HookPoint::HandleRoute => "handle_route",
             HookPoint::OnLogin => "on_login",
+            HookPoint::CronTick => "on_cron_tick",
         }
     }
 
@@ -133,6 +170,7 @@ impl HookPoint {
             HookPoint::FilterHtml,
             HookPoint::HandleRoute,
             HookPoint::OnLogin,
+            HookPoint::CronTick,
         ]
     }
 }
@@ -251,8 +289,8 @@ version = "1.0.0"
     }
 
     #[test]
-    fn hookpoint_all_has_11_variants() {
-        assert_eq!(HookPoint::all().len(), 11);
+    fn hookpoint_all_has_12_variants() {
+        assert_eq!(HookPoint::all().len(), 12);
     }
 
     #[test]
@@ -343,5 +381,56 @@ filesystem = ["*"]
 "#;
         let m: PluginManifest = toml::from_str(toml).unwrap();
         assert_eq!(m.permissions.filesystem, vec!["*"]);
+    }
+
+    #[test]
+    fn parse_manifest_with_cron_entries() {
+        let toml = r#"
+[plugin]
+id = "com.example.cleanup"
+name = "Cleanup"
+version = "1.0.0"
+
+[[cron]]
+label = "Cleanup Sessions"
+job_type = "cleanup_sessions"
+payload = '{"max_age_hours": 24}'
+cron_expr = "0 0 */6 * * *"
+
+[[cron]]
+label = "Send Digest"
+job_type = "send_digest"
+cron_expr = "0 0 3 * * *"
+enabled = false
+"#;
+        let m: PluginManifest = toml::from_str(toml).unwrap();
+        assert_eq!(m.cron.len(), 2);
+
+        assert_eq!(m.cron[0].label, "Cleanup Sessions");
+        assert_eq!(m.cron[0].job_type, "cleanup_sessions");
+        assert_eq!(
+            m.cron[0].payload,
+            Some(r#"{"max_age_hours": 24}"#.to_string())
+        );
+        assert_eq!(m.cron[0].cron_expr, "0 0 */6 * * *");
+        assert!(m.cron[0].enabled);
+
+        assert_eq!(m.cron[1].label, "Send Digest");
+        assert_eq!(m.cron[1].job_type, "send_digest");
+        assert!(m.cron[1].payload.is_none());
+        assert_eq!(m.cron[1].cron_expr, "0 0 3 * * *");
+        assert!(!m.cron[1].enabled);
+    }
+
+    #[test]
+    fn parse_manifest_cron_defaults_empty() {
+        let toml = r#"
+[plugin]
+id = "com.example.basic"
+name = "Basic"
+version = "1.0.0"
+"#;
+        let m: PluginManifest = toml::from_str(toml).unwrap();
+        assert!(m.cron.is_empty());
     }
 }

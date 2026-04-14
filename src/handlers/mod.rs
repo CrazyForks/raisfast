@@ -19,6 +19,7 @@
 pub mod auth;
 pub mod category;
 pub mod comment;
+pub mod cron;
 pub mod health;
 pub mod media;
 pub mod plugin;
