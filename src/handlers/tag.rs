@@ -1,7 +1,7 @@
 //! 标签相关处理器
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
@@ -10,14 +10,19 @@ use crate::handlers::dto::CreateTagRequest;
 use crate::middleware::auth::AuthorUser;
 use crate::middleware::tenant::ResolvedTenant;
 use crate::services::post;
+use crate::utils::pagination::PaginationParams;
 
-/// 获取所有标签列表
+/// 获取标签列表（分页）
 pub async fn list(
     State(state): State<crate::AppState>,
     tenant: ResolvedTenant,
-) -> AppResult<ApiResponse<Vec<crate::models::tag::Tag>>> {
-    let tags = post::list_tags(state.tag_repo.as_ref(), tenant.as_str()).await?;
-    Ok(ApiResponse::success(tags))
+    Query(mut params): Query<PaginationParams>,
+) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<crate::models::tag::Tag>>> {
+    params.sanitize();
+    let (items, total) =
+        post::list_tags_paginated(state.tag_repo.as_ref(), tenant.as_str(), params.page, params.page_size)
+            .await?;
+    Ok(params.paginate(items, total))
 }
 
 /// 创建新标签

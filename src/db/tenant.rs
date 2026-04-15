@@ -347,6 +347,7 @@ mod tests {
         invalidate_cache().await;
 
         #[derive(sqlx::FromRow)]
+        #[allow(dead_code)]
         struct Post {
             id: String,
             title: String,

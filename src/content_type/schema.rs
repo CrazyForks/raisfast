@@ -299,8 +299,12 @@ impl ContentTypeSchema {
                     .get("max_length")
                     .and_then(toml::Value::as_integer)
                     .map(|v| v as usize),
-                min: field_toml.get("min").and_then(toml::Value::as_float),
-                max: field_toml.get("max").and_then(toml::Value::as_float),
+                min: field_toml
+                    .get("min")
+                    .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64))),
+                max: field_toml
+                    .get("max")
+                    .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64))),
                 pattern: field_toml
                     .get("pattern")
                     .and_then(|v| v.as_str())
@@ -675,6 +679,32 @@ pub struct CreateContentTypeRequest {
     pub soft_delete: bool,
     #[serde(default)]
     pub fields: Vec<FieldSchema>,
+}
+
+/// 更新表单字段（用于 API）
+///
+/// 与 `CreateContentTypeRequest` 不同，所有字段都是可选的，
+/// 只更新请求中提供的字段。`fields` 为整字段列表替换。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateContentTypeRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub draft_publish: Option<bool>,
+    #[serde(default)]
+    pub slug_field: Option<Option<String>>,
+    #[serde(default)]
+    pub timestamps: Option<bool>,
+    #[serde(default)]
+    pub soft_delete: Option<bool>,
+    #[serde(default)]
+    pub fields: Option<Vec<FieldSchema>>,
+    #[serde(default)]
+    pub indexes: Option<Vec<IndexDef>>,
+    #[serde(default)]
+    pub list_view: Option<Option<ListViewConfig>>,
 }
 
 #[cfg(test)]

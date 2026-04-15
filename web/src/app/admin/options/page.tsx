@@ -2,307 +2,290 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Pencil, Save, X } from "lucide-react";
-import { useForm } from "react-hook-form";
-import { z } from "zod";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { Save, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, ApiError } from "@/lib/api";
 
-interface Option {
-  key: string;
-  value: string;
-  public: boolean;
+interface Validation {
+  min?: number;
+  max?: number;
+  max_length?: number;
+  values?: string[];
 }
 
-const optionSchema = z.object({
-  key: z.string().min(1, "Key is required"),
-  value: z.string().min(1, "Value is required"),
-});
+interface OptionEntry {
+  key: string;
+  value: unknown;
+  type: string;
+  label: string;
+  description?: string;
+  validation?: Validation;
+  is_public: boolean;
+}
 
-type OptionForm = z.infer<typeof optionSchema>;
+interface OptionGroup {
+  key: string;
+  label: string;
+  options: OptionEntry[];
+}
+
+const GROUP_LABELS: Record<string, string> = {
+  general: "常规",
+  reading: "阅读",
+  discussion: "讨论",
+  appearance: "外观",
+};
+
+function OptionField({
+  option,
+  value,
+  onChange,
+}: {
+  option: OptionEntry;
+  value: unknown;
+  onChange: (v: unknown) => void;
+}) {
+  const desc = option.description ? (
+    <p className="text-xs text-muted-foreground mt-1">{option.description}</p>
+  ) : null;
+
+  switch (option.type) {
+    case "boolean":
+      return (
+        <div className="flex items-center justify-between rounded-lg border p-3">
+          <div className="space-y-0.5">
+            <Label className="text-base cursor-pointer" htmlFor={`opt-${option.key}`}>
+              {option.label}
+            </Label>
+            {desc}
+          </div>
+          <Checkbox
+            id={`opt-${option.key}`}
+            checked={value === true || value === "true"}
+            onCheckedChange={(checked) => onChange(checked === true)}
+          />
+        </div>
+      );
+
+    case "integer":
+      return (
+        <div className="space-y-2">
+          <Label>{option.label}</Label>
+          <Input
+            type="number"
+            value={String(value ?? "")}
+            min={option.validation?.min}
+            max={option.validation?.max}
+            onChange={(e) => {
+              const v = e.target.value;
+              onChange(v === "" ? "" : Number(v));
+            }}
+          />
+          {desc}
+        </div>
+      );
+
+    case "select":
+      return (
+        <div className="space-y-2">
+          <Label>{option.label}</Label>
+          <Select value={String(value ?? "")} onValueChange={(v) => onChange(v)}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {option.validation?.values?.map((v) => (
+                <SelectItem key={v} value={v}>
+                  {v}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {desc}
+        </div>
+      );
+
+    case "email":
+      return (
+        <div className="space-y-2">
+          <Label>{option.label}</Label>
+          <Input
+            type="email"
+            value={String(value ?? "")}
+            onChange={(e) => onChange(e.target.value)}
+          />
+          {desc}
+        </div>
+      );
+
+    case "url":
+      return (
+        <div className="space-y-2">
+          <Label>{option.label}</Label>
+          <Input
+            type="url"
+            value={String(value ?? "")}
+            onChange={(e) => onChange(e.target.value)}
+          />
+          {desc}
+        </div>
+      );
+
+    default:
+      return (
+        <div className="space-y-2">
+          <Label>{option.label}</Label>
+          <Input
+            type="text"
+            value={String(value ?? "")}
+            maxLength={option.validation?.max_length}
+            onChange={(e) => onChange(e.target.value)}
+          />
+          {desc}
+        </div>
+      );
+  }
+}
 
 export default function OptionsPage() {
   const queryClient = useQueryClient();
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState("");
+  const [dirty, setDirty] = useState<Record<string, unknown>>({});
 
-  const optionsQuery = useQuery({
+  const groupsQuery = useQuery({
     queryKey: ["options"],
-    queryFn: async () => {
-      const data = await api.get<Record<string, unknown>>("/admin/options");
-      return Object.entries(data).map(([key, value]) => ({
-        key,
-        value: typeof value === "string" ? value : JSON.stringify(value),
-        public: false,
-      }));
-    },
+    queryFn: () => api.get<OptionGroup[]>("/admin/options"),
   });
 
-  const {
-    register,
-    handleSubmit,
-    reset,
-    formState: { errors },
-  } = useForm<OptionForm>({
-    resolver: zodResolver(optionSchema as never),
-    defaultValues: { key: "", value: "" },
-  });
+  const groups = groupsQuery.data ?? [];
 
-  const createMutation = useMutation({
-    mutationFn: (data: OptionForm) =>
-      api.put(`/admin/options/${data.key}`, { value: data.value }),
-    onSuccess: () => {
-      toast.success("Option saved");
-      queryClient.invalidateQueries({ queryKey: ["options"] });
-      setDialogOpen(false);
-      reset();
+  const saveMutation = useMutation({
+    mutationFn: (options: Record<string, unknown>) =>
+      api.put<OptionGroup[]>("/admin/options", { options }),
+    onSuccess: (data) => {
+      toast.success("配置已保存");
+      setDirty({});
+      queryClient.setQueryData(["options"], data);
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        toast.error(err.message);
-      } else {
-        toast.error("Failed to save option");
-      }
+      toast.error(err instanceof ApiError ? err.message : "保存失败");
     },
   });
 
-  const updateMutation = useMutation({
-    mutationFn: ({ key, value }: { key: string; value: string }) =>
-      api.put(`/admin/options/${key}`, { value }),
-    onSuccess: () => {
-      toast.success("Option updated");
-      queryClient.invalidateQueries({ queryKey: ["options"] });
-      setEditingKey(null);
-    },
-    onError: (err) => {
-      if (err instanceof ApiError) {
-        toast.error(err.message);
-      } else {
-        toast.error("Failed to update option");
-      }
-    },
-  });
+  function getValue(option: OptionEntry): unknown {
+    if (option.key in dirty) return dirty[option.key];
+    return option.value;
+  }
 
-  const deleteMutation = useMutation({
-    mutationFn: (key: string) => api.delete(`/admin/options/${key}`),
-    onSuccess: () => {
-      toast.success("Option deleted");
-      queryClient.invalidateQueries({ queryKey: ["options"] });
-    },
-    onError: (err) => {
-      if (err instanceof ApiError) {
-        toast.error(err.message);
-      } else {
-        toast.error("Failed to delete option");
-      }
-    },
-  });
+  function handleChange(key: string, value: unknown) {
+    setDirty((prev) => ({ ...prev, [key]: value }));
+  }
 
-  function handleDelete(key: string) {
-    if (confirm(`Delete option "${key}"?`)) {
-      deleteMutation.mutate(key);
+  function handleSave() {
+    const updates: Record<string, unknown> = {};
+    for (const group of groups) {
+      for (const opt of group.options) {
+        if (opt.key in dirty) {
+          updates[opt.key] = dirty[opt.key];
+        }
+      }
     }
-  }
-
-  function startEdit(key: string, value: string) {
-    setEditingKey(key);
-    setEditValue(value);
-  }
-
-  function cancelEdit() {
-    setEditingKey(null);
-    setEditValue("");
-  }
-
-  function saveEdit() {
-    if (editingKey) {
-      updateMutation.mutate({ key: editingKey, value: editValue });
+    if (Object.keys(updates).length === 0) {
+      toast.info("没有修改");
+      return;
     }
+    saveMutation.mutate(updates);
   }
 
-  const options = optionsQuery.data ?? [];
+  function handleReset() {
+    setDirty({});
+  }
+
+  const hasChanges = Object.keys(dirty).length > 0;
+  const firstGroup = groups[0]?.key ?? "general";
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Options</h1>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger render={<Button />}>
-            <Plus className="size-4" />
-            New Option
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>New Option</DialogTitle>
-              <DialogDescription>
-                Add a new site configuration option.
-              </DialogDescription>
-            </DialogHeader>
-            <form
-              onSubmit={handleSubmit((data) => createMutation.mutate(data))}
-              className="space-y-4"
-            >
-              <div className="space-y-2">
-                <Label htmlFor="opt-key">Key</Label>
-                <Input
-                  id="opt-key"
-                  placeholder="site.title"
-                  {...register("key")}
-                />
-                {errors.key && (
-                  <p className="text-sm text-red-500">{errors.key.message}</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="opt-value">Value</Label>
-                <Input
-                  id="opt-value"
-                  placeholder="My Blog"
-                  {...register("value")}
-                />
-                {errors.value && (
-                  <p className="text-sm text-red-500">
-                    {errors.value.message}
-                  </p>
-                )}
-              </div>
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setDialogOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={createMutation.isPending}>
-                  {createMutation.isPending ? "Saving..." : "Save"}
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+        <h1 className="text-2xl font-bold">站点设置</h1>
+        <div className="flex items-center gap-2">
+          {hasChanges && (
+            <Button variant="outline" size="sm" onClick={handleReset}>
+              <RotateCcw className="size-4 mr-1" />
+              撤销
+            </Button>
+          )}
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={!hasChanges || saveMutation.isPending}
+          >
+            <Save className="size-4 mr-1" />
+            {saveMutation.isPending ? "保存中..." : "保存更改"}
+          </Button>
+        </div>
       </div>
 
-      <Card>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[200px]">Key</TableHead>
-                <TableHead>Value</TableHead>
-                <TableHead className="w-[80px]">Public</TableHead>
-                <TableHead className="w-[100px] text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {optionsQuery.isLoading ? (
-                <TableRow>
-                  <TableCell colSpan={4} className="text-center py-8">
-                    Loading...
-                  </TableCell>
-                </TableRow>
-              ) : options.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={4} className="text-center py-8">
-                    No options found.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                options.map((opt) => (
-                  <TableRow key={opt.key}>
-                    <TableCell className="font-mono text-sm font-medium">
-                      {opt.key}
-                    </TableCell>
-                    <TableCell>
-                      {editingKey === opt.key ? (
-                        <div className="flex items-center gap-2">
-                          <Input
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            className="h-8"
-                          />
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            onClick={saveEdit}
-                            disabled={updateMutation.isPending}
-                          >
-                            <Save className="size-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            onClick={cancelEdit}
-                          >
-                            <X className="size-4" />
-                          </Button>
-                        </div>
-                      ) : (
-                        <span className="text-sm">{opt.value}</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {opt.public ? (
-                        <span className="text-xs text-green-600 font-medium">
-                          Yes
-                        </span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">
-                          No
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => startEdit(opt.key, opt.value)}
-                          disabled={editingKey === opt.key}
-                        >
-                          <Pencil className="size-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => handleDelete(opt.key)}
-                          disabled={deleteMutation.isPending}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      {groupsQuery.isLoading ? (
+        <div className="space-y-4">
+          {[1, 2, 3].map((i) => (
+            <Card key={i}>
+              <CardContent className="p-6">
+                <div className="animate-pulse space-y-4">
+                  <div className="h-4 bg-muted rounded w-32" />
+                  <div className="h-10 bg-muted rounded" />
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : groups.length === 0 ? (
+        <p className="text-muted-foreground">暂无配置项</p>
+      ) : (
+        <Tabs defaultValue={firstGroup}>
+          <TabsList>
+            {groups.map((g) => (
+              <TabsTrigger key={g.key} value={g.key}>
+                {GROUP_LABELS[g.key] ?? g.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          {groups.map((group) => (
+            <TabsContent key={group.key} value={group.key} className="mt-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">
+                    {GROUP_LABELS[group.key] ?? group.label}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {group.options.map((opt) => (
+                    <OptionField
+                      key={opt.key}
+                      option={opt}
+                      value={getValue(opt)}
+                      onChange={(v) => handleChange(opt.key, v)}
+                    />
+                  ))}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          ))}
+        </Tabs>
+      )}
     </div>
   );
 }

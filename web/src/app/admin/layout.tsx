@@ -17,12 +17,21 @@ import {
   LogOut,
   Settings,
   Layers,
+  Building2,
+  Globe,
+  X,
+  ShieldCheck,
+  ChevronDown,
+  PenLine,
 } from "lucide-react";
 
 import {
   SidebarProvider,
   Sidebar,
   SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuItem,
@@ -30,24 +39,63 @@ import {
   SidebarFooter,
   SidebarInset,
   SidebarTrigger,
+  SidebarSeparator,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { useAuthStore } from "@/stores/auth";
+import { useTenantStore } from "@/stores/tenant";
 
-const menuItems = [
-  { label: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
+const contentItems = [
   { label: "Posts", href: "/admin/posts", icon: FileText },
   { label: "Categories", href: "/admin/categories", icon: Folder },
   { label: "Tags", href: "/admin/tags", icon: Tag },
   { label: "Comments", href: "/admin/comments", icon: MessageSquare },
   { label: "Media", href: "/admin/media", icon: Image },
+];
+
+const systemItems = [
   { label: "Users", href: "/admin/users", icon: Users },
   { label: "Content Types", href: "/admin/content-types", icon: Layers },
+  { label: "Roles & Permissions", href: "/admin/rbac", icon: ShieldCheck },
   { label: "Plugins", href: "/admin/plugins", icon: Puzzle },
   { label: "Cron", href: "/admin/crons", icon: Clock },
+  { label: "Tenants", href: "/admin/tenants", icon: Building2 },
   { label: "Options", href: "/admin/options", icon: Settings },
 ];
+
+function TenantSwitcher() {
+  const { currentTenantId, setTenant, clearTenant } = useTenantStore();
+  const { isAdmin } = useAuthStore();
+
+  if (!isAdmin()) return null;
+
+  return (
+    <div className="flex items-center gap-2 px-4 py-2">
+      <Globe className="size-3.5 text-muted-foreground shrink-0" />
+      <span className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium">
+        Tenant
+      </span>
+      <div className="flex-1 min-w-0" />
+      {currentTenantId ? (
+        <div className="flex items-center gap-1">
+          <span className="text-xs font-medium truncate max-w-[80px]">
+            {currentTenantId}
+          </span>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={clearTenant}
+            title="Clear tenant filter"
+          >
+            <X className="size-3" />
+          </Button>
+        </div>
+      ) : (
+        <span className="text-xs text-muted-foreground/60 italic">All</span>
+      )}
+    </div>
+  );
+}
 
 export default function AdminLayout({
   children,
@@ -97,40 +145,126 @@ export default function AdminLayout({
   return (
     <SidebarProvider>
       <Sidebar>
-        <SidebarHeader className="p-4">
-          <h2 className="text-lg font-semibold">Admin</h2>
+        <SidebarHeader className="px-4 py-5">
+          <div className="flex items-center gap-2.5">
+            <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+              <PenLine className="size-4" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold leading-tight">Rust Blog</span>
+              <span className="text-[11px] text-muted-foreground leading-tight">Admin Panel</span>
+            </div>
+          </div>
         </SidebarHeader>
-        <Separator />
+
+        <SidebarSeparator />
+        <TenantSwitcher />
+        <SidebarSeparator />
+
         <SidebarContent>
-          <SidebarMenu>
-            {menuItems.map((item) => {
-              const active = getIsActive(item.href);
-              return (
-                <SidebarMenuItem key={item.href}>
+          {/* Dashboard — standalone */}
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
                   <SidebarMenuButton
-                    render={<Link href={item.href} />}
-                    isActive={active}
-                    tooltip={item.label}
+                    render={<Link href="/admin/dashboard" />}
+                    isActive={getIsActive("/admin/dashboard")}
+                    tooltip="Dashboard"
                   >
-                    <item.icon />
-                    <span>{item.label}</span>
+                    <LayoutDashboard />
+                    <span>Dashboard</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-              );
-            })}
-          </SidebarMenu>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          <SidebarSeparator />
+
+          {/* Content section */}
+          <SidebarGroup>
+            <SidebarGroupLabel>
+              <ChevronDown className="size-3" />
+              Content
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {contentItems.map((item) => {
+                  const active = getIsActive(item.href);
+                  return (
+                    <SidebarMenuItem key={item.href}>
+                      <SidebarMenuButton
+                        render={<Link href={item.href} />}
+                        isActive={active}
+                        tooltip={item.label}
+                      >
+                        <item.icon />
+                        <span>{item.label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          <SidebarSeparator />
+
+          {/* System section */}
+          <SidebarGroup>
+            <SidebarGroupLabel>
+              <ChevronDown className="size-3" />
+              System
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {systemItems.map((item) => {
+                  const active = getIsActive(item.href);
+                  return (
+                    <SidebarMenuItem key={item.href}>
+                      <SidebarMenuButton
+                        render={<Link href={item.href} />}
+                        isActive={active}
+                        tooltip={item.label}
+                      >
+                        <item.icon />
+                        <span>{item.label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
         </SidebarContent>
-        <SidebarFooter className="p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground truncate">
-              {user?.username}
-            </span>
-            <Button variant="ghost" size="icon-sm" onClick={logout}>
+
+        <SidebarFooter className="px-3 py-3">
+          <SidebarSeparator className="mb-2" />
+          <div className="flex items-center gap-2.5 rounded-md px-2 py-1.5">
+            <div className="flex size-7 items-center justify-center rounded-full bg-muted text-xs font-medium">
+              {user?.username?.charAt(0).toUpperCase() ?? "U"}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate leading-tight">
+                {user?.username}
+              </p>
+              <p className="text-[11px] text-muted-foreground truncate leading-tight">
+                {user?.role}
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={logout}
+              title="Sign out"
+            >
               <LogOut className="size-4" />
             </Button>
           </div>
         </SidebarFooter>
       </Sidebar>
+
       <SidebarInset>
         <header className="flex h-12 items-center gap-2 border-b px-4">
           <SidebarTrigger />

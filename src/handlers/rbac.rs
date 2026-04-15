@@ -1,7 +1,7 @@
 //! RBAC 管理 API Handler
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 
 use crate::AppState;
 use crate::errors::app_error::AppResult;
@@ -10,11 +10,23 @@ use crate::models::rbac::Role;
 use crate::services::rbac::{
     CreateRoleRequest, PermissionView, SetPermissionsRequest, UpdateRoleRequest,
 };
+use crate::utils::pagination::PaginationParams;
 
-/// GET /admin/rbac/roles — 列出所有角色
-pub async fn list_roles(State(state): State<AppState>) -> AppResult<ApiResponse<Vec<Role>>> {
-    let roles = state.rbac.list_roles().await?;
-    Ok(ApiResponse::success(roles))
+/// GET /admin/rbac/roles — 列出所有角色（分页）
+pub async fn list_roles(
+    State(state): State<AppState>,
+    Query(mut params): Query<PaginationParams>,
+) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<Role>>> {
+    params.sanitize();
+    let all = state.rbac.list_roles().await?;
+    let total = all.len() as i64;
+    let offset = params.offset() as usize;
+    let items: Vec<_> = all
+        .into_iter()
+        .skip(offset)
+        .take(params.page_size as usize)
+        .collect();
+    Ok(params.paginate(items, total))
 }
 
 /// POST /admin/rbac/roles — 创建角色

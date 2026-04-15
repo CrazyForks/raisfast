@@ -42,6 +42,43 @@ pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppRes
     Ok(categories)
 }
 
+/// 分页查询分类
+///
+/// 返回 (当前页数据, 总条数)。
+pub async fn find_paginated(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    page: i64,
+    page_size: i64,
+) -> AppResult<(Vec<Category>, i64)> {
+    let offset = (page - 1).max(0) * page_size;
+
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM categories WHERE 1=1{}",
+        tenant_filter(tenant_id)
+    );
+    let count_sql = crate::db::dialect::translate(&count_sql);
+    let mut cq = sqlx::query_scalar::<_, i64>(&count_sql);
+    if let Some(tid) = tenant_id {
+        cq = cq.bind(tid);
+    }
+    let total = cq.fetch_one(pool).await?;
+
+    let data_sql = format!(
+        "SELECT * FROM categories WHERE 1=1{} ORDER BY sort_order, name LIMIT ? OFFSET ?",
+        tenant_filter(tenant_id)
+    );
+    let data_sql = crate::db::dialect::translate(&data_sql);
+    let mut dq = sqlx::query_as::<_, Category>(&data_sql);
+    if let Some(tid) = tenant_id {
+        dq = dq.bind(tid);
+    }
+    dq = dq.bind(page_size).bind(offset);
+    let items = dq.fetch_all(pool).await?;
+
+    Ok((items, total))
+}
+
 /// 根据分类 ID 查找分类
 ///
 /// 若未找到则返回 [`AppError::NotFound`]。

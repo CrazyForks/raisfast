@@ -40,11 +40,13 @@ export default function MediaPage() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
 
   const mediaQuery = useQuery({
-    queryKey: ["media"],
+    queryKey: ["media", page],
     queryFn: () =>
-      api.get<PaginatedData<MediaResponse>>("/media?page=1&page_size=50"),
+      api.get<PaginatedData<MediaResponse>>(`/media?page=${page}&page_size=${pageSize}`),
   });
 
   const deleteMutation = useMutation({
@@ -92,6 +94,7 @@ export default function MediaPage() {
   }
 
   const items = mediaQuery.data?.items ?? [];
+  const totalPages = Math.ceil((mediaQuery.data?.total ?? 0) / pageSize);
 
   return (
     <div className="space-y-6">
@@ -161,6 +164,30 @@ export default function MediaPage() {
               </CardContent>
             </Card>
           ))}
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => p - 1)}
+          >
+            Previous
+          </Button>
+          <span className="text-sm text-muted-foreground">
+            Page {page} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next
+          </Button>
         </div>
       )}
     </div>

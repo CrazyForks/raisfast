@@ -23,6 +23,7 @@ pub struct ContentQuery {
     pub search: Option<String>,
     pub fields: Option<Vec<String>>,
     pub tenant_id: Option<String>,
+    pub include: Option<Vec<String>>,
 }
 
 /// 泛型内容 Repository
@@ -120,10 +121,20 @@ impl ContentRepository {
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("data query failed: {e}")))?
         };
 
-        let items: Vec<Value> = rows
+        let mut items: Vec<Value> = rows
             .into_iter()
             .filter_map(|(s,)| serde_json::from_str::<Value>(&s).ok())
             .collect();
+
+        if !ct.relation_fields().is_empty() {
+            super::resolver::resolve_relations(
+                &self.pool,
+                ct,
+                &mut items,
+                query.include.as_deref(),
+            )
+            .await?;
+        }
 
         Ok((items, count_row))
     }
@@ -164,7 +175,21 @@ impl ContentRepository {
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
-        Ok(row.and_then(|(s,)| serde_json::from_str::<Value>(&s).ok()))
+        let mut result = row.and_then(|(s,)| serde_json::from_str::<Value>(&s).ok());
+
+        if let Some(ref mut item) = result
+            && !ct.relation_fields().is_empty()
+        {
+            super::resolver::resolve_relations(
+                &self.pool,
+                ct,
+                std::slice::from_mut(item),
+                None,
+            )
+            .await?;
+        }
+
+        Ok(result)
     }
 
     /// 按 slug 查找
@@ -213,16 +238,31 @@ impl ContentRepository {
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
-        Ok(row.and_then(|(s,)| serde_json::from_str::<Value>(&s).ok()))
+        let mut result = row.and_then(|(s,)| serde_json::from_str::<Value>(&s).ok());
+
+        if let Some(ref mut item) = result
+            && !ct.relation_fields().is_empty()
+        {
+            super::resolver::resolve_relations(
+                &self.pool,
+                ct,
+                std::slice::from_mut(item),
+                None,
+            )
+            .await?;
+        }
+
+        Ok(result)
     }
 
-    /// 创建
+    /// 创建（含字段校验）
     pub async fn create(
         &self,
         ct: &ContentTypeSchema,
         mut data: Value,
         tenant_id: Option<&str>,
     ) -> Result<Value, AppError> {
+        super::validation::validate_create(&self.pool, ct, &data).await?;
         let id = uuid::Uuid::now_v7().to_string();
         let now = chrono::Utc::now().to_rfc3339();
 
@@ -286,7 +326,7 @@ impl ContentRepository {
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created record not found")))?
     }
 
-    /// 更新
+    /// 更新（含字段校验）
     pub async fn update(
         &self,
         ct: &ContentTypeSchema,
@@ -294,6 +334,7 @@ impl ContentRepository {
         mut data: Value,
         tenant_id: Option<&str>,
     ) -> Result<Value, AppError> {
+        super::validation::validate_update(&self.pool, ct, id, &data).await?;
         let now = chrono::Utc::now().to_rfc3339();
 
         let obj = data

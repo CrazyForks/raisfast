@@ -41,6 +41,13 @@ interface Category {
   created_at: string;
 }
 
+interface PaginatedData<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 const categorySchema = z.object({
   name: z.string().min(1, "Name is required"),
   description: z.string().optional(),
@@ -52,10 +59,13 @@ type CategoryForm = z.infer<typeof categorySchema>;
 export default function CategoriesPage() {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
 
   const categoriesQuery = useQuery({
-    queryKey: ["categories"],
-    queryFn: () => api.get<Category[]>("/categories"),
+    queryKey: ["categories", page],
+    queryFn: () =>
+      api.get<PaginatedData<Category>>(`/categories?page=${page}&page_size=${pageSize}`),
   });
 
   type FormValues = z.infer<typeof categorySchema>;
@@ -113,7 +123,8 @@ export default function CategoriesPage() {
     }
   }
 
-  const categories = categoriesQuery.data ?? [];
+  const categories = categoriesQuery.data?.items ?? [];
+  const totalPages = Math.ceil((categoriesQuery.data?.total ?? 0) / pageSize);
 
   return (
     <div className="space-y-6">
@@ -233,6 +244,30 @@ export default function CategoriesPage() {
           </Table>
         </CardContent>
       </Card>
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => p - 1)}
+          >
+            Previous
+          </Button>
+          <span className="text-sm text-muted-foreground">
+            Page {page} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

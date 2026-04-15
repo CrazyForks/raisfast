@@ -249,6 +249,7 @@ async fn find_paginated() {
         search: None,
         fields: None,
         tenant_id: None,
+        include: None,
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 15);
@@ -263,6 +264,7 @@ async fn find_paginated() {
         search: None,
         fields: None,
         tenant_id: None,
+        include: None,
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 15);
@@ -302,6 +304,7 @@ async fn find_with_status_filter() {
         search: None,
         fields: None,
         tenant_id: None,
+        include: None,
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 1);
@@ -414,7 +417,7 @@ required = true
 #[tokio::test]
 async fn registry_load_and_lookup() {
     let ct = parse_product();
-    let mut registry = ContentTypeRegistry::new();
+    let registry = ContentTypeRegistry::new();
     registry.register(ct);
 
     assert_eq!(registry.len(), 1);
@@ -482,6 +485,7 @@ async fn tenant_isolation() {
         search: None,
         fields: None,
         tenant_id: Some("tenant_a".into()),
+        include: None,
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 1);
@@ -555,6 +559,7 @@ async fn find_with_custom_sort() {
         search: None,
         fields: None,
         tenant_id: None,
+        include: None,
     };
     let (items, _) = repo.find(&ct, query).await.unwrap();
     assert_eq!(items[0]["title"], "Beta");
@@ -596,6 +601,7 @@ async fn find_with_field_filter() {
         search: None,
         fields: None,
         tenant_id: None,
+        include: None,
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 1);
@@ -626,6 +632,7 @@ async fn partial_field_selection() {
         search: None,
         fields: Some(vec!["title".into()]),
         tenant_id: None,
+        include: None,
     };
     let (items, _) = repo.find(&ct, query).await.unwrap();
     let obj = items[0].as_object().unwrap();

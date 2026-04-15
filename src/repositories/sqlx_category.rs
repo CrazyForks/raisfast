@@ -15,6 +15,15 @@ impl CategoryRepository for SqlxCategoryRepository {
         category::find_all(&self.pool, tenant_id).await
     }
 
+    async fn find_paginated(
+        &self,
+        tenant_id: Option<&str>,
+        page: i64,
+        page_size: i64,
+    ) -> AppResult<(Vec<Category>, i64)> {
+        category::find_paginated(&self.pool, tenant_id, page, page_size).await
+    }
+
     async fn find_by_id(&self, id: &str, tenant_id: Option<&str>) -> AppResult<Category> {
         category::find_by_id(&self.pool, id, tenant_id).await
     }

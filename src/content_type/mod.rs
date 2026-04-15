@@ -17,14 +17,22 @@
 //! 2. 启动时 `ContentTypeRegistry::load_from_dir()` 加载所有 schema
 //! 3. `SchemaMigrator::migrate()` 自动建表/加列
 //! 4. `register_content_routes()` 自动注册 CRUD API
+//!
+//! # 运行时热更新
+//!
+//! `ContentTypeRegistry` 内部使用 `RwLock`，支持运行时增删改 schema。
+//! 新增的 content type 通过 catch-all 动态路由处理，无需重启服务。
 
 pub mod handler;
 pub mod migration;
 pub mod repository;
+pub mod resolver;
 pub mod schema;
+pub mod validation;
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::RwLock;
 
 use schema::ContentTypeSchema;
 
@@ -33,25 +41,30 @@ use crate::errors::app_error::AppError;
 /// 内容类型注册表
 ///
 /// 管理所有已注册的 content type schema，提供按名称/表名查询能力。
-#[derive(Debug, Clone, Default)]
+/// 内部使用 `RwLock` 支持运行时热更新。
+#[derive(Debug, Default)]
 pub struct ContentTypeRegistry {
+    inner: RwLock<RegistryInner>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct RegistryInner {
     types: HashMap<String, ContentTypeSchema>,
+    by_table: HashMap<String, String>,
 }
 
 impl ContentTypeRegistry {
     /// 创建空注册表
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            types: HashMap::new(),
-        }
+        Self::default()
     }
 
     /// 从目录加载所有 TOML 定义
     ///
     /// 扫描 `dir` 下所有 `*.toml` 文件，解析为 `ContentTypeSchema` 并注册。
     pub fn load_from_dir(dir: &Path) -> Result<Self, AppError> {
-        let mut registry = Self::new();
+        let registry = Self::new();
         let entries = std::fs::read_dir(dir).map_err(|e| {
             AppError::Internal(anyhow::anyhow!(
                 "cannot read content_types dir {dir:?}: {e}"
@@ -72,42 +85,74 @@ impl ContentTypeRegistry {
             }
         }
 
-        tracing::info!("loaded {} content type(s)", registry.types.len());
+        let count = registry.len();
+        tracing::info!("loaded {} content type(s)", count);
         Ok(registry)
     }
 
-    /// 注册单个 content type
-    pub fn register(&mut self, schema: ContentTypeSchema) {
-        self.types.insert(schema.singular.clone(), schema);
+    /// 注册单个 content type（线程安全）
+    pub fn register(&self, schema: ContentTypeSchema) {
+        let mut inner = self.inner.write().expect("ContentTypeRegistry lock poisoned");
+        inner.by_table.insert(schema.table.clone(), schema.singular.clone());
+        inner.types.insert(schema.singular.clone(), schema);
     }
 
-    /// 按单数名称查询（如 "post"）
+    /// 按 singular name 查询
     #[must_use]
-    pub fn get(&self, name: &str) -> Option<&ContentTypeSchema> {
-        self.types.get(name)
+    pub fn get(&self, name: &str) -> Option<ContentTypeSchema> {
+        let inner = self.inner.read().expect("ContentTypeRegistry lock poisoned");
+        inner.types.get(name).cloned()
     }
 
     /// 按表名查询
     #[must_use]
-    pub fn get_by_table(&self, table: &str) -> Option<&ContentTypeSchema> {
-        self.types.values().find(|ct| ct.table == table)
+    pub fn get_by_table(&self, table: &str) -> Option<ContentTypeSchema> {
+        let inner = self.inner.read().expect("ContentTypeRegistry lock poisoned");
+        inner
+            .by_table
+            .get(table)
+            .and_then(|singular| inner.types.get(singular).cloned())
     }
 
     /// 获取所有已注册 content type
     #[must_use]
-    pub fn all(&self) -> Vec<&ContentTypeSchema> {
-        self.types.values().collect()
+    pub fn all(&self) -> Vec<ContentTypeSchema> {
+        let inner = self.inner.read().expect("ContentTypeRegistry lock poisoned");
+        inner.types.values().cloned().collect()
     }
 
     /// 已注册数量
     #[must_use]
     pub fn len(&self) -> usize {
-        self.types.len()
+        let inner = self.inner.read().expect("ContentTypeRegistry lock poisoned");
+        inner.types.len()
     }
 
     /// 是否为空
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.types.is_empty()
+        self.len() == 0
+    }
+
+    /// 按 plural name 查询
+    #[must_use]
+    pub fn get_by_plural(&self, plural: &str) -> Option<ContentTypeSchema> {
+        let inner = self.inner.read().expect("ContentTypeRegistry lock poisoned");
+        inner
+            .types
+            .values()
+            .find(|ct| ct.plural == plural)
+            .cloned()
+    }
+
+    /// 注销单个 content type（线程安全）
+    pub fn unregister(&self, singular: &str) -> Option<ContentTypeSchema> {
+        let mut inner = self.inner.write().expect("ContentTypeRegistry lock poisoned");
+        if let Some(schema) = inner.types.remove(singular) {
+            inner.by_table.remove(&schema.table);
+            Some(schema)
+        } else {
+            None
+        }
     }
 }

@@ -14,6 +14,15 @@ impl TagRepository for SqlxTagRepository {
         tag::find_all(&self.pool, tenant_id).await
     }
 
+    async fn find_paginated(
+        &self,
+        tenant_id: Option<&str>,
+        page: i64,
+        page_size: i64,
+    ) -> AppResult<(Vec<Tag>, i64)> {
+        tag::find_paginated(&self.pool, tenant_id, page, page_size).await
+    }
+
     async fn create(&self, name: &str, slug: &str, tenant_id: Option<&str>) -> AppResult<Tag> {
         tag::create(&self.pool, name, slug, tenant_id).await
     }

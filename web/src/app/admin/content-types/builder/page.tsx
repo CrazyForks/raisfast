@@ -248,7 +248,55 @@ export default function ContentTypeBuilderPage() {
 
   const saveMutation = useMutation({
     mutationFn: () => {
-      const body = {
+      const fieldPayloads = fields.map((f) => {
+        const baseField: Record<string, unknown> = {
+          name: f.name,
+          field_type: f.field_type,
+          required: f.required,
+          unique: f.unique,
+          private: f.private,
+          immutable: f.immutable,
+          label: f.label || null,
+          description: f.description || null,
+          default: f.default || null,
+        };
+        if (f.field_type === "text" || f.field_type === "email" || f.field_type === "password") {
+          baseField.max_length = f.max_length;
+        }
+        if (
+          f.field_type === "integer" ||
+          f.field_type === "bigint" ||
+          f.field_type === "decimal" ||
+          f.field_type === "float"
+        ) {
+          baseField.min = f.min;
+          baseField.max = f.max;
+        }
+        if (f.field_type === "enum") {
+          baseField.enum_values = f.enum_values;
+        }
+        if (f.field_type === "relation") {
+          baseField.relation = f.relation;
+        }
+        if (f.field_type === "media") {
+          baseField.media_config = f.media_config;
+        }
+        return baseField;
+      });
+
+      if (isEditMode) {
+        return api.put(`/admin/content-types/${editSingular}`, {
+          name: base.name,
+          description: base.description,
+          draft_publish: base.draft_publish,
+          timestamps: base.timestamps,
+          soft_delete: base.soft_delete,
+          slug_field: base.slug_field || null,
+          fields: fieldPayloads,
+        });
+      }
+
+      return api.post("/admin/content-types", {
         name: base.name,
         singular: base.singular,
         plural: base.plural,
@@ -258,43 +306,8 @@ export default function ContentTypeBuilderPage() {
         timestamps: base.timestamps,
         soft_delete: base.soft_delete,
         slug_field: base.slug_field || null,
-        fields: fields.map((f) => {
-          const baseField: Record<string, unknown> = {
-            name: f.name,
-            field_type: f.field_type,
-            required: f.required,
-            unique: f.unique,
-            private: f.private,
-            immutable: f.immutable,
-            label: f.label || null,
-            description: f.description || null,
-            default: f.default || null,
-          };
-          if (f.field_type === "text" || f.field_type === "email" || f.field_type === "password") {
-            baseField.max_length = f.max_length;
-          }
-          if (
-            f.field_type === "integer" ||
-            f.field_type === "bigint" ||
-            f.field_type === "decimal" ||
-            f.field_type === "float"
-          ) {
-            baseField.min = f.min;
-            baseField.max = f.max;
-          }
-          if (f.field_type === "enum") {
-            baseField.enum_values = f.enum_values;
-          }
-          if (f.field_type === "relation") {
-            baseField.relation = f.relation;
-          }
-          if (f.field_type === "media") {
-            baseField.media_config = f.media_config;
-          }
-          return baseField;
-        }),
-      };
-      return api.post("/admin/content-types", body);
+        fields: fieldPayloads,
+      });
     },
     onSuccess: () => {
       toast.success(

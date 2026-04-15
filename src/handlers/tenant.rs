@@ -1,18 +1,30 @@
 //! 租户管理 API Handler
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 
 use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::models::tenant::Tenant;
 use crate::services::tenant::{CreateTenantRequest, UpdateTenantRequest};
+use crate::utils::pagination::PaginationParams;
 
-/// GET /admin/tenants — 列出所有租户
-pub async fn list_tenants(State(state): State<AppState>) -> AppResult<ApiResponse<Vec<Tenant>>> {
-    let tenants = state.tenant.list().await?;
-    Ok(ApiResponse::success(tenants))
+/// GET /admin/tenants — 列出所有租户（分页）
+pub async fn list_tenants(
+    State(state): State<AppState>,
+    Query(mut params): Query<PaginationParams>,
+) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<Tenant>>> {
+    params.sanitize();
+    let all = state.tenant.list().await?;
+    let total = all.len() as i64;
+    let offset = params.offset() as usize;
+    let items: Vec<_> = all
+        .into_iter()
+        .skip(offset)
+        .take(params.page_size as usize)
+        .collect();
+    Ok(params.paginate(items, total))
 }
 
 /// GET /admin/tenants/:id — 获取租户详情

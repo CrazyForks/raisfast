@@ -4073,6 +4073,7 @@ dependencies = [
  "mlua",
  "nix",
  "notify",
+ "regex",
  "reqwest",
  "rquickjs",
  "rss",

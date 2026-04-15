@@ -2,21 +2,31 @@
 //!
 //! 提供运行时插件管理端点：列表、详情、启用、禁用、重载。
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 
 use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AdminUser;
 use crate::plugins::PluginInfoResponse;
+use crate::utils::pagination::PaginationParams;
 
-/// GET /api/v1/admin/plugins — 列出所有插件及状态
+/// GET /api/v1/admin/plugins — 列出所有插件及状态（分页）
 pub async fn list(
     _admin: AdminUser,
     State(state): State<AppState>,
-) -> AppResult<ApiResponse<Vec<PluginInfoResponse>>> {
-    let plugins = state.plugins.list_plugins_detail().await;
-    Ok(ApiResponse::success(plugins))
+    Query(mut params): Query<PaginationParams>,
+) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PluginInfoResponse>>> {
+    params.sanitize();
+    let all = state.plugins.list_plugins_detail().await;
+    let total = all.len() as i64;
+    let offset = params.offset() as usize;
+    let items: Vec<_> = all
+        .into_iter()
+        .skip(offset)
+        .take(params.page_size as usize)
+        .collect();
+    Ok(params.paginate(items, total))
 }
 
 /// GET /api/v1/admin/plugins/:id — 插件详情

@@ -11,6 +11,7 @@ use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AdminUser;
+use crate::utils::pagination::PaginationParams;
 use crate::worker::{
     CronSchedule, cleanup_execution_logs, create_schedule, delete_schedule, find_by_id,
     list_execution_logs, list_schedules, recent_execution_logs, toggle_schedule, update_schedule,
@@ -58,13 +59,22 @@ fn default_limit() -> i64 {
     20
 }
 
-/// GET /api/v1/admin/crons — 列出所有调度
+/// GET /api/v1/admin/crons — 列出所有调度（分页）
 pub async fn list(
     _admin: AdminUser,
     State(state): State<AppState>,
-) -> AppResult<ApiResponse<Vec<CronSchedule>>> {
-    let schedules = list_schedules(&state.pool).await?;
-    Ok(ApiResponse::success(schedules))
+    Query(mut params): Query<PaginationParams>,
+) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<CronSchedule>>> {
+    params.sanitize();
+    let all = list_schedules(&state.pool).await?;
+    let total = all.len() as i64;
+    let offset = params.offset() as usize;
+    let items: Vec<_> = all
+        .into_iter()
+        .skip(offset)
+        .take(params.page_size as usize)
+        .collect();
+    Ok(params.paginate(items, total))
 }
 
 /// GET /api/v1/admin/crons/{id} — 调度详情

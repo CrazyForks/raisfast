@@ -11,7 +11,7 @@ use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 
-/// GET /options/public — 公开配置
+/// GET /options/public — 公开配置（仅值）
 pub async fn get_public_options(
     State(state): State<AppState>,
 ) -> AppResult<ApiResponse<HashMap<String, Value>>> {
@@ -19,12 +19,12 @@ pub async fn get_public_options(
     Ok(ApiResponse::success(options))
 }
 
-/// GET /admin/options — 所有配置
+/// GET /admin/options — 所有配置（按分组，含元数据）
 pub async fn list_options(
     State(state): State<AppState>,
-) -> AppResult<ApiResponse<HashMap<String, Value>>> {
-    let options = state.options.get_all().await?;
-    Ok(ApiResponse::success(options))
+) -> AppResult<ApiResponse<Vec<crate::services::options::OptionGroup>>> {
+    let groups = state.options.get_grouped().await?;
+    Ok(ApiResponse::success(groups))
 }
 
 /// GET /admin/options/:key — 获取单个配置
@@ -32,13 +32,12 @@ pub async fn get_option(
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    match state.options.get(&key).await {
-        Some(value) => Ok(ApiResponse::success(serde_json::json!({
-            "key": key,
-            "value": value,
-        }))),
-        None => Err(AppError::not_found(&format!("option/{key}"))),
-    }
+    let entry = state
+        .options
+        .get_entry(&key)
+        .await
+        .ok_or_else(|| AppError::not_found(&format!("option/{key}")))?;
+    Ok(ApiResponse::success(serde_json::to_value(entry).map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?))
 }
 
 /// 批量更新请求体
@@ -51,10 +50,10 @@ pub struct UpdateOptionsRequest {
 pub async fn update_options(
     State(state): State<AppState>,
     Json(body): Json<UpdateOptionsRequest>,
-) -> AppResult<ApiResponse<HashMap<String, Value>>> {
+) -> AppResult<ApiResponse<Vec<crate::services::options::OptionGroup>>> {
     state.options.set_batch(body.options).await?;
-    let options = state.options.get_all().await?;
-    Ok(ApiResponse::success(options))
+    let groups = state.options.get_grouped().await?;
+    Ok(ApiResponse::success(groups))
 }
 
 /// 更新单个配置请求体

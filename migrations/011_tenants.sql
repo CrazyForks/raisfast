@@ -23,7 +23,7 @@ ALTER TABLE categories ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
 ALTER TABLE tags ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
 ALTER TABLE comments ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
 ALTER TABLE media ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
-ALTER TABLE options ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
+-- options 表已在 009_options.sql v2 中包含 tenant_id
 
 -- 给 rbac 表加 tenant_id（租户隔离）
 ALTER TABLE roles ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';

@@ -776,7 +776,7 @@ mod category {
         let (status, body): (StatusCode, Value) =
             send(&mut app, get_req("/api/v1/categories")).await;
         assert!(status.is_success());
-        assert_eq!(body["data"].as_array().unwrap().len(), 0);
+        assert_eq!(body["data"]["items"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]
@@ -878,7 +878,7 @@ mod tag {
         let (mut app, _, _) = setup().await;
         let (status, body): (StatusCode, Value) = send(&mut app, get_req("/api/v1/tags")).await;
         assert!(status.is_success());
-        assert_eq!(body["data"].as_array().unwrap().len(), 0);
+        assert_eq!(body["data"]["items"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]
@@ -1580,7 +1580,7 @@ mod cron {
         let (status, body) = send(&mut app, get_auth("/api/v1/admin/crons", &tok)).await;
         assert!(status.is_success());
         assert_eq!(body["code"], 0);
-        assert!(body["data"].as_array().unwrap().is_empty());
+        assert!(body["data"]["items"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1732,7 +1732,7 @@ mod cron {
         assert!(status.is_success());
 
         let (_, list_body) = send(&mut app, get_auth("/api/v1/admin/crons", &tok)).await;
-        let items = list_body["data"].as_array().unwrap();
+        let items = list_body["data"]["items"].as_array().unwrap();
         assert!(items.iter().all(|s| s["id"] != id));
     }
 

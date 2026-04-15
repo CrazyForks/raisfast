@@ -38,6 +38,13 @@ interface Tag {
   created_at: string;
 }
 
+interface PaginatedData<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 const tagSchema = z.object({
   name: z.string().min(1, "Name is required"),
 });
@@ -47,10 +54,13 @@ type TagForm = z.infer<typeof tagSchema>;
 export default function TagsPage() {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
 
   const tagsQuery = useQuery({
-    queryKey: ["tags"],
-    queryFn: () => api.get<Tag[]>("/tags"),
+    queryKey: ["tags", page],
+    queryFn: () =>
+      api.get<PaginatedData<Tag>>(`/tags?page=${page}&page_size=${pageSize}`),
   });
 
   type FormValues = z.infer<typeof tagSchema>;
@@ -103,7 +113,8 @@ export default function TagsPage() {
     }
   }
 
-  const tags = tagsQuery.data ?? [];
+  const tags = tagsQuery.data?.items ?? [];
+  const totalPages = Math.ceil((tagsQuery.data?.total ?? 0) / pageSize);
 
   return (
     <div className="space-y-6">
@@ -202,6 +213,30 @@ export default function TagsPage() {
           </Table>
         </CardContent>
       </Card>
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => p - 1)}
+          >
+            Previous
+          </Button>
+          <span className="text-sm text-muted-foreground">
+            Page {page} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

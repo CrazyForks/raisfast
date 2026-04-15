@@ -148,6 +148,16 @@ pub async fn list_categories(
     category_repo.find_all(tenant_id).await
 }
 
+/// 分页查询分类。
+pub async fn list_categories_paginated(
+    category_repo: &dyn CategoryRepository,
+    tenant_id: Option<&str>,
+    page: i64,
+    page_size: i64,
+) -> AppResult<(Vec<crate::models::category::Category>, i64)> {
+    category_repo.find_paginated(tenant_id, page, page_size).await
+}
+
 /// 创建标签。
 ///
 /// 从标签名称自动生成 slug。
@@ -175,6 +185,16 @@ pub async fn list_tags(
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<crate::models::tag::Tag>> {
     tag_repo.find_all(tenant_id).await
+}
+
+/// 分页查询标签。
+pub async fn list_tags_paginated(
+    tag_repo: &dyn TagRepository,
+    tenant_id: Option<&str>,
+    page: i64,
+    page_size: i64,
+) -> AppResult<(Vec<crate::models::tag::Tag>, i64)> {
+    tag_repo.find_paginated(tenant_id, page, page_size).await
 }
 
 /// 生成唯一的 slug。

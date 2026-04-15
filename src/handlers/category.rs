@@ -1,7 +1,7 @@
 //! 分类相关处理器
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
@@ -10,14 +10,19 @@ use crate::handlers::dto::{CreateCategoryRequest, UpdateCategoryRequest};
 use crate::middleware::auth::AuthorUser;
 use crate::middleware::tenant::ResolvedTenant;
 use crate::services::post;
+use crate::utils::pagination::PaginationParams;
 
-/// 获取所有分类列表
+/// 获取分类列表（分页）
 pub async fn list(
     State(state): State<crate::AppState>,
     tenant: ResolvedTenant,
-) -> AppResult<ApiResponse<Vec<crate::models::category::Category>>> {
-    let categories = post::list_categories(state.category_repo.as_ref(), tenant.as_str()).await?;
-    Ok(ApiResponse::success(categories))
+    Query(mut params): Query<PaginationParams>,
+) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<crate::models::category::Category>>> {
+    params.sanitize();
+    let (items, total) =
+        post::list_categories_paginated(state.category_repo.as_ref(), tenant.as_str(), params.page, params.page_size)
+            .await?;
+    Ok(params.paginate(items, total))
 }
 
 /// 创建新分类

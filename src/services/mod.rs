@@ -12,4 +12,5 @@ pub mod media;
 pub mod options;
 pub mod post;
 pub mod rbac;
+pub mod stats;
 pub mod tenant;

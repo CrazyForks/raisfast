@@ -75,11 +75,13 @@ export default function UsersPage() {
   const { isAdmin, user: currentUser } = useAuthStore();
   const queryClient = useQueryClient();
   const [editUser, setEditUser] = useState<UserItem | null>(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
 
   const usersQuery = useQuery({
-    queryKey: ["users"],
+    queryKey: ["users", page],
     queryFn: () =>
-      api.get<PaginatedData<UserItem>>("/users?page=1&page_size=50"),
+      api.get<PaginatedData<UserItem>>(`/users?page=${page}&page_size=${pageSize}`),
   });
 
   type RoleForm = { role: string };
@@ -131,6 +133,7 @@ export default function UsersPage() {
   }
 
   const users = usersQuery.data?.items ?? [];
+  const totalPages = Math.ceil((usersQuery.data?.total ?? 0) / pageSize);
 
   return (
     <div className="space-y-6">
@@ -198,6 +201,30 @@ export default function UsersPage() {
           </Table>
         </CardContent>
       </Card>
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => p - 1)}
+          >
+            Previous
+          </Button>
+          <span className="text-sm text-muted-foreground">
+            Page {page} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      )}
 
       <Dialog open={!!editUser} onOpenChange={(open) => !open && setEditUser(null)}>
         <DialogContent>

@@ -2,6 +2,7 @@
 //!
 //! 启动时将 `autoload=true` 的配置预加载到内存，
 //! 后续读取优先走缓存，写入时同步更新缓存和数据库。
+//! 每条配置含完整元数据（类型、分组、标签、校验规则）。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,32 +11,55 @@ use serde_json::Value;
 use tokio::sync::RwLock;
 
 use crate::errors::app_error::AppError;
+use crate::models::options::OptionRow;
 use crate::repositories::OptionsRepository;
 
-/// 公开配置 key 白名单（前端可通过 `/api/v1/options/public` 读取）
-pub static PUBLIC_OPTIONS: &[&str] = &[
-    "site_title",
-    "site_description",
-    "posts_per_page",
-    "comment_order",
-    "theme",
-    "timezone",
-    "date_format",
-    "permalink_structure",
-    "rss_items",
-    "maintenance_mode",
-];
+/// 将数据库中的配置值字符串解析为 `serde_json::Value`
+fn parse_value(value_str: &str) -> Value {
+    serde_json::from_str::<Value>(value_str).unwrap_or(Value::String(value_str.to_string()))
+}
 
-/// 将数据库中的配置值字符串解析为 `serde_json::Value`。
-///
-/// 若字符串是合法 JSON 则解析为对应的值类型，否则作为纯字符串返回。
-fn parse_value(value_str: String) -> Value {
-    serde_json::from_str::<Value>(&value_str).unwrap_or(Value::String(value_str))
+/// 分组信息
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct OptionGroup {
+    pub key: String,
+    pub label: String,
+    pub options: Vec<OptionEntry>,
+}
+
+/// 单条配置（值 + 元数据）
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct OptionEntry {
+    pub key: String,
+    pub value: Value,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub label: String,
+    pub description: Option<String>,
+    pub validation: Option<Value>,
+    pub is_public: bool,
+}
+
+impl From<&OptionRow> for OptionEntry {
+    fn from(row: &OptionRow) -> Self {
+        Self {
+            key: row.key.clone(),
+            value: parse_value(&row.value),
+            type_: row.type_.clone(),
+            label: row.label.clone(),
+            description: row.description.clone(),
+            validation: row
+                .validation
+                .as_ref()
+                .and_then(|v| serde_json::from_str::<Value>(v).ok()),
+            is_public: row.is_public,
+        }
+    }
 }
 
 /// 站点配置服务
 pub struct OptionsService {
-    cache: Arc<RwLock<HashMap<String, Value>>>,
+    cache: Arc<RwLock<HashMap<String, OptionEntry>>>,
     repo: Arc<dyn OptionsRepository>,
 }
 
@@ -58,42 +82,52 @@ impl OptionsService {
 
         let mut cache = self.cache.write().await;
         cache.clear();
-        for (key, value_str) in rows {
-            let value = parse_value(value_str);
-            cache.insert(key, value);
+        for row in &rows {
+            let entry = OptionEntry::from(row);
+            cache.insert(row.key.clone(), entry);
         }
 
         tracing::info!("loaded {} option(s) into cache", cache.len());
         Ok(())
     }
 
-    /// 获取配置（优先查缓存，miss 时查 DB 并缓存）
+    /// 获取配置值（优先查缓存）
     pub async fn get(&self, key: &str) -> Option<Value> {
-        if let Some(v) = self.cache.read().await.get(key).cloned() {
-            return Some(v);
-        }
-
-        match self.repo.find_by_key(key).await.ok().flatten() {
-            Some(value_str) => {
-                let value = parse_value(value_str);
-                self.cache
-                    .write()
-                    .await
-                    .insert(key.to_string(), value.clone());
-                Some(value)
-            }
-            None => None,
-        }
+        self.cache.read().await.get(key).map(|e| e.value.clone())
     }
 
-    /// 设置配置（写入 DB + 更新缓存）
+    /// 获取配置条目（含元数据）
+    pub async fn get_entry(&self, key: &str) -> Option<OptionEntry> {
+        if let Some(entry) = self.cache.read().await.get(key).cloned() {
+            return Some(entry);
+        }
+        let row: crate::models::options::OptionRow = self
+            .repo
+            .find_by_key(key, "default")
+            .await
+            .ok()
+            .flatten()?;
+        let entry = OptionEntry::from(&row);
+        self.cache
+            .write()
+            .await
+            .insert(key.to_string(), entry.clone());
+        Some(entry)
+    }
+
+    /// 设置配置值（写入 DB + 更新缓存）
     pub async fn set(&self, key: &str, value: Value) -> Result<(), AppError> {
         let value_str = serde_json::to_string(&value)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("json serialize failed: {e}")))?;
         let now = chrono::Utc::now().to_rfc3339();
 
-        self.repo.upsert(key, &value_str, &now).await?;
-        self.cache.write().await.insert(key.to_string(), value);
+        self.repo
+            .upsert_value(key, &value_str, "default", &now)
+            .await?;
+
+        if let Some(entry) = self.cache.write().await.get_mut(key) {
+            entry.value = value;
+        }
         Ok(())
     }
 
@@ -107,32 +141,81 @@ impl OptionsService {
 
     /// 删除配置
     pub async fn delete(&self, key: &str) -> Result<(), AppError> {
-        self.repo.delete_by_key(key).await?;
+        self.repo.delete_by_key(key, "default").await?;
         self.cache.write().await.remove(key);
         Ok(())
     }
 
-    /// 获取所有配置（含非 autoload 的）
-    pub async fn get_all(&self) -> Result<HashMap<String, Value>, AppError> {
-        let rows = self.repo.find_all().await?;
+    /// 获取所有配置（按分组组织）
+    pub async fn get_grouped(&self) -> Result<Vec<OptionGroup>, AppError> {
+        let rows = self.repo.find_all("default").await?;
+        let mut group_map: HashMap<String, Vec<OptionEntry>> = HashMap::new();
+        let mut group_labels: HashMap<String, String> = HashMap::new();
+        let mut group_order: Vec<String> = Vec::new();
 
-        let mut map = HashMap::new();
-        for (key, value_str) in rows {
-            let value = parse_value(value_str);
-            map.insert(key, value);
+        for row in &rows {
+            let entry = OptionEntry::from(row);
+            if !group_map.contains_key(&row.group_name) {
+                group_order.push(row.group_name.clone());
+            }
+            group_map
+                .entry(row.group_name.clone())
+                .or_default()
+                .push(entry);
+            group_labels.insert(row.group_name.clone(), row.group_name.clone());
         }
-        Ok(map)
+
+        let groups = group_order
+            .into_iter()
+            .map(|key| OptionGroup {
+                label: group_labels.get(&key).cloned().unwrap_or_else(|| key.clone()),
+                key: key.clone(),
+                options: group_map.remove(&key).unwrap_or_default(),
+            })
+            .collect();
+
+        Ok(groups)
     }
 
-    /// 获取公开配置（前端可见）
+    /// 获取公开配置（前端可见，仅值）
     pub async fn get_public(&self) -> HashMap<String, Value> {
-        let mut result = HashMap::new();
-        for &key in PUBLIC_OPTIONS {
-            if let Some(value) = self.get(key).await {
-                result.insert(key.to_string(), value);
+        let cache = self.cache.read().await;
+        cache
+            .values()
+            .filter(|e| e.is_public)
+            .map(|e| (e.key.clone(), e.value.clone()))
+            .collect()
+    }
+
+    /// 获取公开配置（含元数据，按分组）
+    pub async fn get_public_grouped(&self) -> Vec<OptionGroup> {
+        let rows: Vec<crate::models::options::OptionRow> =
+            self.repo.find_all("default").await.unwrap_or_default();
+        let mut group_map: HashMap<String, Vec<OptionEntry>> = HashMap::new();
+        let mut group_order: Vec<String> = Vec::new();
+
+        for row in &rows {
+            if !row.is_public {
+                continue;
             }
+            let entry = OptionEntry::from(row);
+            if !group_map.contains_key(&row.group_name) {
+                group_order.push(row.group_name.clone());
+            }
+            group_map
+                .entry(row.group_name.clone())
+                .or_default()
+                .push(entry);
         }
-        result
+
+        group_order
+            .into_iter()
+            .map(|key| OptionGroup {
+                label: key.clone(),
+                key: key.clone(),
+                options: group_map.remove(&key).unwrap_or_default(),
+            })
+            .collect()
     }
 }
 
@@ -141,10 +224,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn public_options_whitelist() {
-        assert!(PUBLIC_OPTIONS.contains(&"site_title"));
-        assert!(PUBLIC_OPTIONS.contains(&"theme"));
-        assert!(!PUBLIC_OPTIONS.contains(&"default_role"));
-        assert!(!PUBLIC_OPTIONS.contains(&"comment_moderation"));
+    fn parse_value_handles_json_string() {
+        assert_eq!(parse_value(r#""hello""#), Value::String("hello".to_string()));
+    }
+
+    #[test]
+    fn parse_value_handles_json_number() {
+        assert_eq!(parse_value("42"), Value::Number(42.into()));
+    }
+
+    #[test]
+    fn parse_value_handles_json_bool() {
+        assert_eq!(parse_value("true"), Value::Bool(true));
+    }
+
+    #[test]
+    fn parse_value_falls_back_to_string() {
+        assert_eq!(parse_value("plain text"), Value::String("plain text".to_string()));
     }
 }

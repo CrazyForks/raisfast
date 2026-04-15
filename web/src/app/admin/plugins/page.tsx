@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Puzzle,
@@ -57,6 +58,13 @@ interface PluginItem {
   metrics: Record<string, PluginMetrics>;
 }
 
+interface PaginatedData<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 function runtimeBadge(runtime: string) {
   switch (runtime) {
     case "wasm":
@@ -78,10 +86,13 @@ function formatDuration(us: number): string {
 
 export default function PluginsPage() {
   const queryClient = useQueryClient();
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
 
   const pluginsQuery = useQuery({
-    queryKey: ["plugins"],
-    queryFn: () => api.get<PluginItem[]>("/admin/plugins"),
+    queryKey: ["plugins", page],
+    queryFn: () =>
+      api.get<PaginatedData<PluginItem>>(`/admin/plugins?page=${page}&page_size=${pageSize}`),
   });
 
   const enableMutation = useMutation({
@@ -128,7 +139,8 @@ export default function PluginsPage() {
     },
   });
 
-  const plugins = pluginsQuery.data ?? [];
+  const plugins = pluginsQuery.data?.items ?? [];
+  const totalPages = Math.ceil((pluginsQuery.data?.total ?? 0) / pageSize);
 
   return (
     <div className="space-y-6">
@@ -346,6 +358,30 @@ export default function PluginsPage() {
           </Table>
         </CardContent>
       </Card>
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => p - 1)}
+          >
+            Previous
+          </Button>
+          <span className="text-sm text-muted-foreground">
+            Page {page} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

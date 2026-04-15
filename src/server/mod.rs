@@ -15,8 +15,8 @@ use rust_blog::config::app::AppConfig;
 use rust_blog::content_type::ContentTypeRegistry;
 use rust_blog::db::connection::init_pool;
 use rust_blog::handlers::{
-    auth, category, comment, cron, health, media, options, plugin, post, rbac, rss, sse, tag,
-    tenant, user,
+    auth, category, comment, cron, health, media, options, plugin, post, rbac, rss, sse, stats,
+    tag, tenant, user,
 };
 use rust_blog::middleware::locale::locale_middleware;
 use rust_blog::middleware::rate_limit::{
@@ -111,7 +111,7 @@ async fn load_content_types(config: &AppConfig, pool: &rust_blog::db::Pool) -> C
 
     let repo = rust_blog::content_type::repository::ContentRepository::new(pool.clone());
     for ct in registry.all() {
-        if let Err(e) = repo.migrate(ct).await {
+        if let Err(e) = repo.migrate(&ct).await {
             tracing::error!("migration failed for content type '{}': {}", ct.name, e);
         }
     }
@@ -275,6 +275,9 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
             "/admin/rbac/roles/{id}/permissions",
             get(rbac::get_permissions).put(rbac::set_permissions),
         )
+        .route("/admin/stats", get(stats::overview))
+        .route("/admin/stats/content/{table}", get(stats::content_stats))
+        .route("/admin/stats/trends", get(stats::trends))
         .route("/options/public", get(options::get_public_options))
         .route(
             "/admin/options",
@@ -304,6 +307,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         .route(
             "/admin/content-types/{singular}",
             get(rust_blog::content_type::handler::get_schema)
+                .put(rust_blog::content_type::handler::update_schema)
                 .delete(rust_blog::content_type::handler::delete_schema),
         )
         .layer(from_fn(global_rate_limit))
@@ -314,6 +318,16 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         api_v1,
         &state.content_type_registry,
     );
+
+    let api_v1 = api_v1
+        .route(
+            "/cms/{*path}",
+            axum::routing::any(rust_blog::content_type::handler::dynamic_cms_handler),
+        )
+        .route(
+            "/admin/cms/{*path}",
+            axum::routing::any(rust_blog::content_type::handler::dynamic_admin_cms_handler),
+        );
 
     let app = axum::Router::new()
         .route("/health", get(health::health))

@@ -186,6 +186,14 @@ pub trait CategoryRepository: Send + Sync {
     /// 查询所有分类
     async fn find_all(&self, tenant_id: Option<&str>) -> AppResult<Vec<Category>>;
 
+    /// 分页查询分类
+    async fn find_paginated(
+        &self,
+        tenant_id: Option<&str>,
+        page: i64,
+        page_size: i64,
+    ) -> AppResult<(Vec<Category>, i64)>;
+
     /// 根据 ID 查找分类
     async fn find_by_id(&self, id: &str, tenant_id: Option<&str>) -> AppResult<Category>;
 
@@ -204,6 +212,14 @@ pub trait CategoryRepository: Send + Sync {
 pub trait TagRepository: Send + Sync {
     /// 查询所有标签
     async fn find_all(&self, tenant_id: Option<&str>) -> AppResult<Vec<Tag>>;
+
+    /// 分页查询标签
+    async fn find_paginated(
+        &self,
+        tenant_id: Option<&str>,
+        page: i64,
+        page_size: i64,
+    ) -> AppResult<(Vec<Tag>, i64)>;
 
     /// 创建新标签
     async fn create(&self, name: &str, slug: &str, tenant_id: Option<&str>) -> AppResult<Tag>;
@@ -294,20 +310,20 @@ pub trait RefreshTokenRepository: Send + Sync {
 /// 站点配置 Repository 接口
 #[async_trait::async_trait]
 pub trait OptionsRepository: Send + Sync {
-    /// 查询所有 autoload 配置
-    async fn find_autoload(&self) -> AppResult<Vec<(String, String)>>;
+    /// 查询所有 autoload 配置（含元数据）
+    async fn find_autoload(&self) -> AppResult<Vec<crate::models::options::OptionRow>>;
 
-    /// 根据 key 查询单条配置值
-    async fn find_by_key(&self, key: &str) -> AppResult<Option<String>>;
+    /// 根据 key 查询单条配置（含元数据）
+    async fn find_by_key(&self, key: &str, tenant_id: &str) -> AppResult<Option<crate::models::options::OptionRow>>;
 
-    /// 查询所有配置
-    async fn find_all(&self) -> AppResult<Vec<(String, String)>>;
+    /// 查询所有配置（含元数据）
+    async fn find_all(&self, tenant_id: &str) -> AppResult<Vec<crate::models::options::OptionRow>>;
 
-    /// 插入或更新配置
-    async fn upsert(&self, key: &str, value: &str, updated_at: &str) -> AppResult<()>;
+    /// 更新配置值
+    async fn upsert_value(&self, key: &str, value: &str, tenant_id: &str, updated_at: &str) -> AppResult<()>;
 
     /// 根据 key 删除配置
-    async fn delete_by_key(&self, key: &str) -> AppResult<()>;
+    async fn delete_by_key(&self, key: &str, tenant_id: &str) -> AppResult<()>;
 }
 
 /// RBAC Repository 接口

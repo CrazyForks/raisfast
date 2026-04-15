@@ -55,6 +55,13 @@ interface CronSchedule {
   updated_at: string;
 }
 
+interface PaginatedData<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 function formatTime(iso: string | null): string {
   if (!iso) return "-";
   try {
@@ -79,6 +86,8 @@ function cronHuman(expr: string): string {
 export default function CronsPage() {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
   const [form, setForm] = useState({
     label: "",
     job_type: "",
@@ -88,8 +97,9 @@ export default function CronsPage() {
   });
 
   const cronsQuery = useQuery({
-    queryKey: ["crons"],
-    queryFn: () => api.get<CronSchedule[]>("/admin/crons"),
+    queryKey: ["crons", page],
+    queryFn: () =>
+      api.get<PaginatedData<CronSchedule>>(`/admin/crons?page=${page}&page_size=${pageSize}`),
   });
 
   const createMutation = useMutation({
@@ -129,7 +139,8 @@ export default function CronsPage() {
     },
   });
 
-  const crons = cronsQuery.data ?? [];
+  const crons = cronsQuery.data?.items ?? [];
+  const totalPages = Math.ceil((cronsQuery.data?.total ?? 0) / pageSize);
 
   return (
     <div className="space-y-6">
@@ -374,6 +385,30 @@ export default function CronsPage() {
           </Table>
         </CardContent>
       </Card>
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => p - 1)}
+          >
+            Previous
+          </Button>
+          <span className="text-sm text-muted-foreground">
+            Page {page} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
