@@ -27,6 +27,7 @@ pub struct HostContext {
 
 impl HostContext {
     /// 创建新的宿主上下文
+    #[must_use]
     pub fn new(
         runtime_label: &'static str,
         config: Arc<AppConfig>,
@@ -44,16 +45,17 @@ impl HostContext {
     }
 
     /// 返回插件 ID
+    #[must_use]
     pub fn plugin_id(&self) -> &str {
         &self.plugin_id
     }
 
     /// 返回内存上限（字节），基于 permissions 或默认 32 MB
+    #[must_use]
     pub fn max_memory_bytes(&self) -> usize {
         self.permissions
             .max_memory_mb
-            .map(|mb| mb as usize * 1024 * 1024)
-            .unwrap_or(32 * 1024 * 1024)
+            .map_or(32 * 1024 * 1024, |mb| mb as usize * 1024 * 1024)
     }
 
     /// 日志输出
@@ -67,6 +69,7 @@ impl HostContext {
     }
 
     /// 读取配置项
+    #[must_use]
     pub fn get_config(&self, key: &str) -> Option<String> {
         if !PermissionChecker::is_config_key_allowed(&self.permissions, key) {
             return None;
@@ -75,6 +78,7 @@ impl HostContext {
     }
 
     /// HTTP GET 请求
+    #[must_use]
     pub fn http_get(&self, url: &str) -> String {
         if !PermissionChecker::is_url_allowed(&self.permissions, url) {
             return format!("error: URL not allowed: {url}");
@@ -89,6 +93,7 @@ impl HostContext {
     }
 
     /// HTTP POST 请求
+    #[must_use]
     pub fn http_post(&self, url: &str, body: &str) -> String {
         if !PermissionChecker::is_url_allowed(&self.permissions, url) {
             return format!("error: URL not allowed: {url}");
@@ -169,7 +174,11 @@ impl HostContext {
         }
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
-            match handle.block_on(crate::models::post::find_by_slug(pool, slug)) {
+            match handle.block_on(crate::models::post::find_by_slug(
+                pool,
+                slug,
+                Some(crate::db::tenant::DEFAULT_TENANT),
+            )) {
                 Ok(Some(post)) => serde_json::to_string(&post).ok(),
                 Ok(None) => None,
                 Err(e) => {
@@ -181,6 +190,7 @@ impl HostContext {
     }
 
     /// 执行只读 SQL 查询（返回 JSON 数组字符串）
+    #[must_use]
     pub fn db_query(&self, sql: &str) -> String {
         if !PermissionChecker::is_readonly_query(sql) {
             return "error: only SELECT queries are allowed".to_string();
@@ -246,7 +256,8 @@ impl HostContext {
     }
 }
 
-/// 根据 key 路径从 AppConfig 读取配置值
+/// 根据 key 路径从 `AppConfig` 读取配置值
+#[must_use]
 pub fn get_config_value(config: &AppConfig, key: &str) -> Option<String> {
     match key {
         "app.host" => Some(config.host.clone()),
@@ -312,6 +323,7 @@ mod tests {
             cron_log_retention_days: 30,
             search_engine: "none".into(),
             search_index_dir: "./data/search_index".into(),
+            content_type_dir: "./content_types".into(),
         })
     }
 

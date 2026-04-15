@@ -18,6 +18,7 @@ pub struct JobHandlerRegistry {
 }
 
 impl JobHandlerRegistry {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             handlers: HashMap::new(),
@@ -29,18 +30,18 @@ impl JobHandlerRegistry {
     }
 
     /// 检查是否有注册的 Handler
+    #[must_use]
     pub fn has_handler(&self, job_type: &str) -> bool {
         self.handlers.contains_key(job_type)
     }
 
     pub async fn handle(&self, job: &Job) -> AppResult<()> {
         let job_type = job.job_type();
-        match self.handlers.get(job_type) {
-            Some(handler) => handler.handle(job).await,
-            None => {
-                tracing::warn!("no handler registered for job type: {job_type}");
-                Ok(())
-            }
+        if let Some(handler) = self.handlers.get(job_type) {
+            handler.handle(job).await
+        } else {
+            tracing::warn!("no handler registered for job type: {job_type}");
+            Ok(())
         }
     }
 }

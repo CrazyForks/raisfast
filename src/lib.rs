@@ -1,13 +1,15 @@
 //! 博客系统核心库 (rust-blog)
 //!
-//! 基于 Rust + Axum 构建的功能完整的博客系统，支持 SQLite / PostgreSQL / MySQL。
+//! 基于 Rust + Axum 构建的功能完整的博客系统，支持 `SQLite` / `PostgreSQL` / `MySQL`。
 //! 架构分层：Handler → Service → Repository → Model → DB。
 
 #![deny(unsafe_code)]
+#![allow(clippy::missing_errors_doc)]
 
 pub mod cache;
 pub mod commands;
 pub mod config;
+pub mod content_type;
 pub mod db;
 pub mod errors;
 pub mod eventbus;
@@ -22,6 +24,7 @@ pub mod utils;
 pub mod worker;
 
 use config::app::AppConfig;
+use content_type::ContentTypeRegistry;
 use db::Pool;
 use eventbus::EventBus;
 use plugins::PluginManager;
@@ -30,6 +33,9 @@ use repositories::{
     TagRepository, UserRepository,
 };
 use search::SearchEngine;
+use services::options::OptionsService;
+use services::rbac::RbacService;
+use services::tenant::TenantService;
 use std::sync::Arc;
 
 rust_i18n::i18n!("locales", fallback = "en");
@@ -52,4 +58,8 @@ pub struct AppState {
     pub media_repo: Arc<dyn MediaRepository>,
     pub refresh_token_repo: Arc<dyn RefreshTokenRepository>,
     pub search: Arc<dyn SearchEngine>,
+    pub content_type_registry: Arc<ContentTypeRegistry>,
+    pub options: Arc<OptionsService>,
+    pub rbac: Arc<RbacService>,
+    pub tenant: Arc<TenantService>,
 }

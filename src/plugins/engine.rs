@@ -123,7 +123,7 @@ impl WasmInstance {
         Ok(Some(result))
     }
 
-    /// 调用返回 String 的 Filter Hook（如 render_markdown）
+    /// 调用返回 String 的 Filter Hook（如 `render_markdown`）
     ///
     /// ABI 协议同 [`call_json_filter`]。
     pub fn call_string_filter(
@@ -353,6 +353,7 @@ mod tests {
             cron_log_retention_days: 30,
             search_engine: "none".into(),
             search_index_dir: "./data/search_index".into(),
+            content_type_dir: "./content_types".into(),
         })
     }
 

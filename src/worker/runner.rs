@@ -16,7 +16,7 @@ pub struct WorkerRunner {
 }
 
 impl WorkerRunner {
-    /// 创建新的 WorkerRunner
+    /// 创建新的 `WorkerRunner`
     ///
     /// `plugin_dispatcher` 为 `None` 时，未匹配的任务直接标记 dead。
     pub fn new(
@@ -33,6 +33,7 @@ impl WorkerRunner {
     }
 
     /// 设置插件 Cron 分发器
+    #[must_use]
     pub fn with_plugin_dispatcher(mut self, dispatcher: Arc<PluginCronDispatcher>) -> Self {
         self.plugin_dispatcher = Some(dispatcher);
         self

@@ -10,21 +10,30 @@ use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
 use crate::handlers::dto::{LoginRequest, RefreshRequest, RegisterRequest};
+use crate::middleware::tenant::ResolvedTenant;
 use crate::services::auth;
 
 /// 用户注册
 pub async fn register(
     State(state): State<crate::AppState>,
+    tenant: ResolvedTenant,
     Json(req): Json<RegisterRequest>,
 ) -> AppResult<ApiResponse<crate::handlers::dto::UserResponse>> {
     validation::validate(&req)?;
-    let user = auth::register(state.user_repo.as_ref(), &state.eventbus, req).await?;
+    let user = auth::register(
+        state.user_repo.as_ref(),
+        &state.eventbus,
+        req,
+        tenant.as_str(),
+    )
+    .await?;
     Ok(ApiResponse::success(user))
 }
 
 /// 用户登录
 pub async fn login(
     State(state): State<crate::AppState>,
+    tenant: ResolvedTenant,
     Json(req): Json<LoginRequest>,
 ) -> AppResult<ApiResponse<crate::handlers::dto::LoginResponse>> {
     validation::validate(&req)?;
@@ -37,6 +46,7 @@ pub async fn login(
         &state.config.jwt_secret,
         state.config.jwt_access_expires,
         state.config.jwt_refresh_expires,
+        tenant.as_str(),
     )
     .await?;
     Ok(ApiResponse::success(resp))
@@ -55,6 +65,7 @@ pub async fn refresh(
         &state.config.jwt_secret,
         state.config.jwt_access_expires,
         state.config.jwt_refresh_expires,
+        None,
     )
     .await?;
     Ok(ApiResponse::success(resp))

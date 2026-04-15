@@ -18,6 +18,7 @@ pub struct GenerateSitemapHandler {
 
 impl GenerateSitemapHandler {
     /// 创建新的 Sitemap 生成处理器
+    #[must_use]
     pub fn new(pool: Pool, config: Arc<AppConfig>) -> Self {
         Self { pool, config }
     }
@@ -61,8 +62,16 @@ impl JobHandler for GenerateSitemapHandler {
             return Ok(());
         };
 
-        let (posts, _) =
-            crate::models::post::find_published(&self.pool, 1, 50000, None, None, None).await?;
+        let (posts, _) = crate::models::post::find_published(
+            &self.pool,
+            1,
+            50000,
+            None,
+            None,
+            None,
+            Some(crate::db::tenant::DEFAULT_TENANT),
+        )
+        .await?;
 
         let xml = Self::build_xml(&self.config.base_url, &posts);
         let path = std::path::PathBuf::from(&self.config.static_dir).join("sitemap.xml");
@@ -70,16 +79,14 @@ impl JobHandler for GenerateSitemapHandler {
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|e| {
                 crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
-                    "create dir {:?}: {e}",
-                    parent
+                    "create dir {parent:?}: {e}"
                 ))
             })?;
         }
 
         tokio::fs::write(&path, &xml).await.map_err(|e| {
             crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
-                "write sitemap {:?}: {e}",
-                path
+                "write sitemap {path:?}: {e}"
             ))
         })?;
 
@@ -104,6 +111,7 @@ mod tests {
         use crate::models::post::Post;
         let posts = vec![Post {
             id: "p1".into(),
+            tenant_id: crate::db::tenant::DEFAULT_TENANT.into(),
             title: "Hello".into(),
             slug: "hello".into(),
             content: "".into(),
@@ -181,6 +189,7 @@ mod tests {
             cron_log_retention_days: 30,
             search_engine: "none".into(),
             search_index_dir: "./data/search_index".into(),
+            content_type_dir: "./content_types".into(),
         }
     }
 }

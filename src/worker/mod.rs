@@ -1,6 +1,6 @@
 //! 后台任务队列
 //!
-//! 基于 SQLite 持久化的异步任务系统，通过 EventBus 与业务层解耦。
+//! 基于 `SQLite` 持久化的异步任务系统，通过 `EventBus` 与业务层解耦。
 //!
 //! 数据流：
 //! ```text
@@ -26,6 +26,7 @@ pub use scheduler::{
     create_execution_log, create_schedule, create_schedule_with_plugin, delete_schedule,
     fail_execution_log, find_by_id, list_execution_logs, list_schedules, next_run,
     recent_execution_logs, remove_plugin_crons, seed_defaults, sync_plugin_crons, toggle_schedule,
+    update_schedule,
 };
 pub use sqlite_queue::SqliteJobQueue;
 
@@ -59,7 +60,7 @@ pub enum Job {
         keys: Vec<String>,
     },
     GenerateSitemap,
-    /// 自定义任务类型，支持任意 job_type + JSON payload
+    /// 自定义任务类型，支持任意 `job_type` + JSON payload
     ///
     /// 内置 Handler 无法匹配时，WorkerRunner 会 fallback 到插件调度。
     Custom {
@@ -69,7 +70,8 @@ pub enum Job {
 }
 
 impl Job {
-    /// 返回 job_type 字符串（serde tag）
+    /// 返回 `job_type` 字符串（serde tag）
+    #[must_use]
     pub fn job_type(&self) -> &str {
         match self {
             Job::SendWelcomeEmail { .. } => "send_welcome_email",
@@ -158,10 +160,11 @@ pub struct JobRow {
 }
 
 /// 退避时间：指数退避 + 抖动
+#[must_use]
 pub fn backoff_duration(attempts: u32) -> std::time::Duration {
     let base_secs: u64 = 10;
     let delay_secs = base_secs.saturating_mul(1u64 << attempts.min(6));
-    let jitter = 0.85 + (rand_id(attempts) as f64 / u32::MAX as f64) * 0.3;
+    let jitter = 0.85 + (f64::from(rand_id(attempts)) / f64::from(u32::MAX)) * 0.3;
     std::time::Duration::from_secs_f64(delay_secs as f64 * jitter)
 }
 
@@ -202,20 +205,17 @@ fn parse_job(job_type: &str, payload: &str) -> AppResult<Job> {
 
 /// 将 Job 序列化为 payload JSON
 fn serialize_job(job: &Job) -> String {
-    match job {
-        Job::Custom { payload, .. } => {
-            if payload.is_null() {
-                "null".to_string()
-            } else {
-                payload.to_string()
-            }
+    if let Job::Custom { payload, .. } = job {
+        if payload.is_null() {
+            "null".to_string()
+        } else {
+            payload.to_string()
         }
-        _ => {
-            let full = serde_json::to_value(job).unwrap_or_default();
-            match full.get("payload") {
-                Some(v) => v.to_string(),
-                None => "null".to_string(),
-            }
+    } else {
+        let full = serde_json::to_value(job).unwrap_or_default();
+        match full.get("payload") {
+            Some(v) => v.to_string(),
+            None => "null".to_string(),
         }
     }
 }

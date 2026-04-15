@@ -5,6 +5,7 @@ use axum::extract::{Multipart, Path, Query, State};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::middleware::auth::AuthUser;
+use crate::middleware::tenant::ResolvedTenant;
 use crate::services::media as media_service;
 use crate::utils::pagination::PaginationParams;
 
@@ -12,6 +13,7 @@ use crate::utils::pagination::PaginationParams;
 pub async fn upload(
     State(state): State<crate::AppState>,
     auth_user: AuthUser,
+    tenant: ResolvedTenant,
     mut multipart: Multipart,
 ) -> AppResult<ApiResponse<crate::handlers::dto::MediaResponse>> {
     let field = multipart
@@ -38,6 +40,7 @@ pub async fn upload(
         &filename,
         &content_type,
         &data,
+        tenant.as_str(),
     )
     .await?;
 
@@ -51,6 +54,7 @@ pub async fn upload(
 pub async fn list(
     State(state): State<crate::AppState>,
     auth_user: AuthUser,
+    tenant: ResolvedTenant,
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<crate::handlers::dto::MediaResponse>>> {
     params.sanitize();
@@ -60,6 +64,7 @@ pub async fn list(
         &auth_user.user_id,
         params.page,
         params.page_size,
+        tenant.as_str(),
     )
     .await?;
     let responses = items
@@ -67,18 +72,14 @@ pub async fn list(
         .map(|m| crate::handlers::dto::media_to_response(m, base_url))
         .collect();
 
-    Ok(ApiResponse::success(PaginatedData {
-        items: responses,
-        total,
-        page: params.page,
-        page_size: params.page_size,
-    }))
+    Ok(params.paginate(responses, total))
 }
 
 /// 删除媒体文件
 pub async fn delete(
     State(state): State<crate::AppState>,
     auth_user: AuthUser,
+    tenant: ResolvedTenant,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     media_service::delete_media(
@@ -87,6 +88,7 @@ pub async fn delete(
         &id,
         &auth_user.user_id,
         &auth_user.role,
+        tenant.as_str(),
     )
     .await?;
     Ok(ApiResponse::success(()))

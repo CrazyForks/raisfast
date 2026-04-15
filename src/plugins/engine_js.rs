@@ -1,6 +1,6 @@
-//! QuickJS 引擎封装
+//! `QuickJS` 引擎封装
 //!
-//! 基于 rquickjs 的 AsyncRuntime / AsyncContext，
+//! 基于 rquickjs 的 `AsyncRuntime` / `AsyncContext`，
 //! 支持 JavaScript 插件在 tokio 异步环境中运行。
 //! 每个插件拥有独立的 AsyncContext（隔离的全局作用域）。
 
@@ -19,7 +19,7 @@ use crate::plugins::Permissions;
 
 /// JS 插件引擎
 ///
-/// 管理 QuickJS 运行时和所有 JS 插件上下文。
+/// 管理 `QuickJS` 运行时和所有 JS 插件上下文。
 pub struct JsEngine {
     runtime: AsyncRuntime,
     contexts: Mutex<HashMap<String, AsyncContext>>,
@@ -111,7 +111,7 @@ impl JsEngine {
         let start = Instant::now();
         self.runtime
             .set_interrupt_handler(Some(Box::new(move || {
-                start.elapsed().as_millis() > timeout as u128
+                start.elapsed().as_millis() > u128::from(timeout)
             })))
             .await;
 
@@ -155,7 +155,7 @@ impl JsEngine {
         let start = Instant::now();
         self.runtime
             .set_interrupt_handler(Some(Box::new(move || {
-                start.elapsed().as_millis() > timeout as u128
+                start.elapsed().as_millis() > u128::from(timeout)
             })))
             .await;
 
@@ -180,7 +180,7 @@ impl JsEngine {
         result
     }
 
-    /// 调用 String Filter Hook（如 render_markdown、filter_html）
+    /// 调用 String Filter Hook（如 `render_markdown、filter_html`）
     pub async fn call_string_filter(
         &self,
         plugin_id: &str,
@@ -197,7 +197,7 @@ impl JsEngine {
         let start = Instant::now();
         self.runtime
             .set_interrupt_handler(Some(Box::new(move || {
-                start.elapsed().as_millis() > timeout as u128
+                start.elapsed().as_millis() > u128::from(timeout)
             })))
             .await;
 
@@ -281,6 +281,7 @@ mod tests {
             cron_log_retention_days: 30,
             search_engine: "none".into(),
             search_index_dir: "./data/search_index".into(),
+            content_type_dir: "./content_types".into(),
         })
     }
 

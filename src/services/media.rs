@@ -27,6 +27,7 @@ const MAGIC_SIGNATURES: &[(&str, &[u8])] = &[
 /// 2. 校验文件大小是否超过 `max_size`。
 /// 3. 使用 UUID v7 生成文件名，写入磁盘。
 /// 4. 在数据库中创建媒体记录。
+#[allow(clippy::too_many_arguments)]
 pub async fn save_file(
     media_repo: &dyn MediaRepository,
     user_id: &str,
@@ -35,6 +36,7 @@ pub async fn save_file(
     filename: &str,
     content_type: &str,
     data: &[u8],
+    tenant_id: Option<&str>,
 ) -> AppResult<media::Media> {
     if !ALLOWED_TYPES.contains(&content_type) {
         return Err(AppError::BadRequest("file_type_not_allowed".into()));
@@ -57,25 +59,28 @@ pub async fn save_file(
     };
 
     let file_id = uuid::Uuid::now_v7().to_string();
-    let stored_name = format!("{}.{}", file_id, ext);
+    let stored_name = format!("{file_id}.{ext}");
     let dir = Path::new(upload_dir);
     tokio::fs::create_dir_all(dir)
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to create upload dir: {}", e)))?;
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to create upload dir: {e}")))?;
 
     let filepath = dir.join(&stored_name);
     tokio::fs::write(&filepath, data)
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to write file: {}", e)))?;
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to write file: {e}")))?;
 
     media_repo
-        .create(CreateMediaCmd {
-            user_id: user_id.to_string(),
-            filename: filename.to_string(),
-            filepath: stored_name,
-            mimetype: content_type.to_string(),
-            size: data.len() as i64,
-        })
+        .create(
+            CreateMediaCmd {
+                user_id: user_id.to_string(),
+                filename: filename.to_string(),
+                filepath: stored_name,
+                mimetype: content_type.to_string(),
+                size: data.len() as i64,
+            },
+            tenant_id,
+        )
         .await
 }
 
@@ -87,8 +92,11 @@ pub async fn list(
     user_id: &str,
     page: i64,
     page_size: i64,
+    tenant_id: Option<&str>,
 ) -> AppResult<(Vec<media::Media>, i64)> {
-    media_repo.find_all(user_id, page, page_size).await
+    media_repo
+        .find_all(user_id, page, page_size, tenant_id)
+        .await
 }
 
 /// 删除媒体文件。
@@ -100,20 +108,19 @@ pub async fn delete_media(
     media_id: &str,
     user_id: &str,
     role: &str,
+    tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let m = media_repo
-        .find_by_id(media_id)
+        .find_by_id(media_id, tenant_id)
         .await?
-        .ok_or_else(|| AppError::NotFound("media".into()))?;
+        .ok_or_else(|| AppError::not_found("media"))?;
 
-    if role != "admin" && m.user_id != user_id {
-        return Err(AppError::Forbidden);
-    }
+    crate::utils::auth::require_owner_or_admin(role, user_id, &m.user_id)?;
 
     let filepath = Path::new(upload_dir).join(&m.filepath);
     let _ = tokio::fs::remove_file(filepath).await;
 
-    media_repo.delete(media_id).await
+    media_repo.delete(media_id, tenant_id).await
 }
 
 /// 校验文件实际内容的 magic bytes 是否与声明的 Content-Type 匹配。

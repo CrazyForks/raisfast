@@ -15,6 +15,8 @@ import {
   Puzzle,
   Clock,
   LogOut,
+  Settings,
+  Layers,
 } from "lucide-react";
 
 import {
@@ -41,8 +43,10 @@ const menuItems = [
   { label: "Comments", href: "/admin/comments", icon: MessageSquare },
   { label: "Media", href: "/admin/media", icon: Image },
   { label: "Users", href: "/admin/users", icon: Users },
+  { label: "Content Types", href: "/admin/content-types", icon: Layers },
   { label: "Plugins", href: "/admin/plugins", icon: Puzzle },
   { label: "Cron", href: "/admin/crons", icon: Clock },
+  { label: "Options", href: "/admin/options", icon: Settings },
 ];
 
 export default function AdminLayout({

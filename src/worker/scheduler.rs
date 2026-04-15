@@ -129,7 +129,7 @@ pub async fn create_schedule(
     create_schedule_with_plugin(pool, label, job_type, payload, cron_expr, enabled, None).await
 }
 
-/// 创建新的 Cron 调度（带 plugin_id）
+/// 创建新的 Cron 调度（带 `plugin_id`）
 pub async fn create_schedule_with_plugin(
     pool: &Pool,
     label: &str,
@@ -205,9 +205,64 @@ pub async fn toggle_schedule(pool: &Pool, id: &str, enabled: bool) -> AppResult<
     .await?;
 
     if result.rows_affected() == 0 {
-        return Err(AppError::NotFound("cron_schedule".into()));
+        return Err(AppError::not_found("cron_schedule"));
     }
     Ok(())
+}
+
+/// 更新调度字段
+///
+/// 合并提供的字段，重新计算 `next_run_at`，持久化并返回更新后的调度。
+pub async fn update_schedule(
+    pool: &Pool,
+    id: &str,
+    label: Option<String>,
+    job_type: Option<String>,
+    payload: Option<Option<String>>,
+    cron_expr: Option<String>,
+    enabled: Option<bool>,
+) -> AppResult<CronSchedule> {
+    let mut schedule = find_by_id(pool, id)
+        .await?
+        .ok_or_else(|| AppError::not_found("cron_schedule"))?;
+
+    if let Some(v) = label {
+        schedule.label = v;
+    }
+    if let Some(v) = job_type {
+        schedule.job_type = v;
+    }
+    if let Some(v) = payload {
+        schedule.payload = v;
+    }
+    if let Some(v) = cron_expr {
+        schedule.cron_expr = v;
+    }
+    if let Some(v) = enabled {
+        schedule.enabled = v;
+    }
+
+    let next = next_run(&schedule.cron_expr, Utc::now())?;
+    let now_str = Utc::now().to_rfc3339();
+    let next_str = next.to_rfc3339();
+
+    sqlx::query(
+        "UPDATE cron_schedules SET label = ?, job_type = ?, payload = ?, cron_expr = ?, enabled = ?, next_run_at = ?, updated_at = ? WHERE id = ?",
+    )
+    .bind(&schedule.label)
+    .bind(&schedule.job_type)
+    .bind(&schedule.payload)
+    .bind(&schedule.cron_expr)
+    .bind(schedule.enabled)
+    .bind(&next_str)
+    .bind(&now_str)
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    Ok(find_by_id(pool, id)
+        .await?
+        .unwrap_or(schedule))
 }
 
 /// 删除调度
@@ -217,14 +272,14 @@ pub async fn delete_schedule(pool: &Pool, id: &str) -> AppResult<()> {
         .await?;
 
     if result.rows_affected() == 0 {
-        return Err(AppError::NotFound("cron_schedule".into()));
+        return Err(AppError::not_found("cron_schedule"));
     }
     Ok(())
 }
 
 /// Cron 调度器后台任务
 ///
-/// 循环扫描到期的 cron_schedules，入队对应 Job，
+/// 循环扫描到期的 `cron_schedules，入队对应` Job，
 /// 并更新 `last_run_at` / `next_run_at`。
 pub struct CronScheduler {
     pool: Pool,
@@ -310,7 +365,7 @@ impl CronScheduler {
         let now = Utc::now();
         let next = next_run(&schedule.cron_expr, now).ok();
         let now_str = now.to_rfc3339();
-        let next_str = next.as_ref().map(|n| n.to_rfc3339());
+        let next_str = next.as_ref().map(chrono::DateTime::to_rfc3339);
 
         let mut tx = self.pool.begin().await?;
 

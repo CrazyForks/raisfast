@@ -13,7 +13,7 @@ use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AdminUser;
 use crate::worker::{
     CronSchedule, cleanup_execution_logs, create_schedule, delete_schedule, find_by_id,
-    list_execution_logs, list_schedules, recent_execution_logs, toggle_schedule,
+    list_execution_logs, list_schedules, recent_execution_logs, toggle_schedule, update_schedule,
 };
 
 /// 创建调度请求体
@@ -75,7 +75,7 @@ pub async fn get(
 ) -> AppResult<ApiResponse<CronSchedule>> {
     let schedule = find_by_id(&state.pool, &id)
         .await?
-        .ok_or_else(|| AppError::NotFound("cron_schedule".into()))?;
+        .ok_or_else(|| AppError::not_found("cron_schedule"))?;
     Ok(ApiResponse::success(schedule))
 }
 
@@ -106,46 +106,16 @@ pub async fn update(
     Json(req): Json<UpdateCronRequest>,
 ) -> AppResult<ApiResponse<CronSchedule>> {
     crate::errors::validation::validate(&req)?;
-
-    let mut schedule = find_by_id(&state.pool, &id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("cron_schedule".into()))?;
-
-    if let Some(label) = req.label {
-        schedule.label = label;
-    }
-    if let Some(job_type) = req.job_type {
-        schedule.job_type = job_type;
-    }
-    if let Some(payload) = req.payload {
-        schedule.payload = payload;
-    }
-    if let Some(cron_expr) = req.cron_expr {
-        schedule.cron_expr = cron_expr;
-    }
-    if let Some(enabled) = req.enabled {
-        schedule.enabled = enabled;
-    }
-
-    let now = chrono::Utc::now().to_rfc3339();
-    let next = crate::worker::next_run(&schedule.cron_expr, chrono::Utc::now())
-        .map_err(|e| AppError::BadRequest(format!("invalid cron_expr: {e}")))?;
-
-    sqlx::query(
-        "UPDATE cron_schedules SET label = ?, job_type = ?, payload = ?, cron_expr = ?, enabled = ?, next_run_at = ?, updated_at = ? WHERE id = ?",
+    let updated = update_schedule(
+        &state.pool,
+        &id,
+        req.label,
+        req.job_type,
+        req.payload,
+        req.cron_expr,
+        req.enabled,
     )
-    .bind(&schedule.label)
-    .bind(&schedule.job_type)
-    .bind(&schedule.payload)
-    .bind(&schedule.cron_expr)
-    .bind(schedule.enabled)
-    .bind(next.to_rfc3339())
-    .bind(&now)
-    .bind(&id)
-    .execute(&state.pool)
     .await?;
-
-    let updated = find_by_id(&state.pool, &id).await?.unwrap_or(schedule);
     Ok(ApiResponse::success(updated))
 }
 

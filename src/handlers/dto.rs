@@ -228,6 +228,7 @@ pub struct MediaResponse {
 }
 
 /// 将 Media 数据库模型转换为 API 响应
+#[must_use]
 pub fn media_to_response(media: &Media, base_url: &str) -> MediaResponse {
     MediaResponse {
         id: media.id.clone(),

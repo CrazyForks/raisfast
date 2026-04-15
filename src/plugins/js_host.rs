@@ -1,7 +1,7 @@
 //! JS 宿主函数 — 引擎绑定层
 //!
 //! 仅负责将 [`HostContext`](super::host_common::HostContext) 的公共业务逻辑
-//! 绑定到 QuickJS 全局对象的 `Host` 属性上。
+//! 绑定到 `QuickJS` 全局对象的 `Host` 属性上。
 
 use std::sync::Arc;
 
@@ -163,6 +163,7 @@ mod tests {
             cron_log_retention_days: 30,
             search_engine: "none".into(),
             search_index_dir: "./data/search_index".into(),
+            content_type_dir: "./content_types".into(),
         })
     }
 

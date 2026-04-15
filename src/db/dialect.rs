@@ -1,11 +1,11 @@
 //! SQL 方言适配层。
 //!
 //! 提供：
-//! - [`translate`]：将 `?` 占位符翻译为 PostgreSQL 的 `$1, $2, ...` 格式
+//! - [`translate`]：将 `?` 占位符翻译为 `PostgreSQL` 的 `$1, $2, ...` 格式
 //! - [`now_fn`]：返回当前数据库的时间函数名（`datetime('now')` / `NOW()`）
 //!
-//! SQLite 和 MySQL 使用 `?` 占位符，无需翻译；
-//! PostgreSQL 使用 `$N` 位置参数，需要运行时转换。
+//! `SQLite` 和 `MySQL` 使用 `?` 占位符，无需翻译；
+//! `PostgreSQL` 使用 `$N` 位置参数，需要运行时转换。
 //! `sqlx::query!` 宏会自动处理占位符，但 `sqlx::query()` /
 //! `sqlx::query_as()` 等运行时调用需手动翻译。
 
@@ -13,8 +13,9 @@ use std::borrow::Cow;
 
 /// 将 SQL 中的 `?` 占位符翻译为目标数据库格式。
 ///
-/// - SQLite / MySQL：原样返回
-/// - PostgreSQL：`?` → `$1`, `$2`, ...
+/// - `SQLite` / MySQL：原样返回
+/// - `PostgreSQL`：`?` → `$1`, `$2`, ...
+#[must_use]
 pub fn translate(sql: &str) -> Cow<'_, str> {
     #[cfg(not(feature = "db-postgres"))]
     {
@@ -46,8 +47,9 @@ pub fn translate(sql: &str) -> Cow<'_, str> {
 
 /// 返回当前数据库获取当前时间的 SQL 函数。
 ///
-/// - SQLite：`datetime('now')`
-/// - PostgreSQL / MySQL：`NOW()`
+/// - `SQLite`：`datetime('now')`
+/// - `PostgreSQL` / `MySQL`：`NOW()`
+#[must_use]
 pub fn now_fn() -> &'static str {
     #[cfg(feature = "db-sqlite")]
     {
@@ -56,6 +58,23 @@ pub fn now_fn() -> &'static str {
     #[cfg(not(feature = "db-sqlite"))]
     {
         "NOW()"
+    }
+}
+
+/// 返回指定位置序号的占位符。
+///
+/// - `SQLite` / MySQL：`?`
+/// - PostgreSQL：`$N`
+#[must_use]
+pub fn translate_placeholder(idx: usize) -> String {
+    #[cfg(feature = "db-postgres")]
+    {
+        format!("${idx}")
+    }
+    #[cfg(not(feature = "db-postgres"))]
+    {
+        let _ = idx;
+        "?".to_string()
     }
 }
 

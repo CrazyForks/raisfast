@@ -1,6 +1,6 @@
 //! 欢迎邮件 Handler
 //!
-//! 开发阶段仅记录日志。生产环境需接入 SMTP（如 `lettre` crate）或外部邮件 API（如 SendGrid）。
+//! 开发阶段仅记录日志。生产环境需接入 SMTP（如 `lettre` crate）或外部邮件 API（如 `SendGrid`）。
 //!
 //! # 配置
 //!
@@ -23,6 +23,7 @@ pub struct SendWelcomeEmailHandler {
 
 impl SendWelcomeEmailHandler {
     /// 创建新的欢迎邮件处理器
+    #[must_use]
     pub fn new(config: Arc<AppConfig>) -> Self {
         Self { config }
     }
@@ -107,6 +108,7 @@ mod tests {
             cron_log_retention_days: 30,
             search_engine: "none".into(),
             search_index_dir: "./data/search_index".into(),
+            content_type_dir: "./content_types".into(),
         })
     }
 

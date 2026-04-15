@@ -7,9 +7,9 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use uuid::Uuid;
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::db::tenant::{resolve_tenant, tenant_filter};
 
 /// 用户完整数据库行模型
 ///
@@ -19,6 +19,7 @@ use crate::errors::app_error::{AppError, AppResult};
 #[non_exhaustive]
 pub struct User {
     pub id: String,
+    pub tenant_id: String,
     pub email: String,
     pub username: String,
     pub password_hash: String,
@@ -33,24 +34,43 @@ pub struct User {
 /// 根据邮箱查找用户
 ///
 /// 返回 `Ok(Some(user))` 或 `Ok(None)`（未找到时）。
-pub async fn find_by_email(pool: &crate::db::Pool, email: &str) -> AppResult<Option<User>> {
-    let sql = crate::db::dialect::translate("SELECT * FROM users WHERE email = ?");
-    let user = sqlx::query_as::<_, User>(&sql)
-        .bind(email)
-        .fetch_optional(pool)
-        .await?;
+/// `tenant_id` 为 `None` 时（超管）不过滤租户。
+pub async fn find_by_email(
+    pool: &crate::db::Pool,
+    email: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<User>> {
+    let sql_str = format!(
+        "SELECT * FROM users WHERE email = ?{}",
+        tenant_filter(tenant_id)
+    );
+    let sql = crate::db::dialect::translate(&sql_str);
+    let mut q = sqlx::query_as::<_, User>(&sql).bind(email);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let user = q.fetch_optional(pool).await?;
     Ok(user)
 }
 
 /// 根据用户 ID 查找用户
 ///
 /// 返回 `Ok(Some(user))` 或 `Ok(None)`（未找到时）。
-pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<User>> {
-    let sql = crate::db::dialect::translate("SELECT * FROM users WHERE id = ?");
-    let user = sqlx::query_as::<_, User>(&sql)
-        .bind(id)
-        .fetch_optional(pool)
-        .await?;
+pub async fn find_by_id(
+    pool: &crate::db::Pool,
+    id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<User>> {
+    let sql_str = format!(
+        "SELECT * FROM users WHERE id = ?{}",
+        tenant_filter(tenant_id)
+    );
+    let sql = crate::db::dialect::translate(&sql_str);
+    let mut q = sqlx::query_as::<_, User>(&sql).bind(id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let user = q.fetch_optional(pool).await?;
     Ok(user)
 }
 
@@ -61,23 +81,26 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<Us
 pub async fn create(
     pool: &crate::db::Pool,
     cmd: &crate::commands::CreateUserCmd,
+    tenant_id: Option<&str>,
 ) -> AppResult<User> {
-    let id = Uuid::now_v7().to_string();
-    let now = Utc::now().to_rfc3339();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let tid = resolve_tenant(tenant_id);
 
-    sqlx::query!(
-        "INSERT INTO users (id, email, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, 'reader', ?, ?)",
-        id,
-        cmd.email,
-        cmd.username,
-        cmd.password_hash,
-        now,
-        now,
-    )
-    .execute(pool)
-    .await?;
+    let sql = crate::db::dialect::translate(
+        "INSERT INTO users (id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'reader', ?, ?)",
+    );
+    sqlx::query(&sql)
+        .bind(&id)
+        .bind(tid)
+        .bind(&cmd.email)
+        .bind(&cmd.username)
+        .bind(&cmd.password_hash)
+        .bind(&now)
+        .bind(&now)
+        .execute(pool)
+        .await?;
 
-    let user = find_by_id(pool, &id)
+    let user = find_by_id(pool, &id, tenant_id)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch newly created user")))?;
     Ok(user)
@@ -90,34 +113,48 @@ pub async fn create(
 pub async fn update_profile(
     pool: &crate::db::Pool,
     cmd: &crate::commands::UpdateProfileCmd,
+    tenant_id: Option<&str>,
 ) -> AppResult<User> {
     let now = Utc::now().to_rfc3339();
-    let user = find_by_id(pool, &cmd.id)
+    let user = find_by_id(pool, &cmd.id, tenant_id)
         .await?
-        .ok_or_else(|| AppError::NotFound("user".into()))?;
+        .ok_or_else(|| AppError::not_found("user"))?;
 
     let username = cmd.username.as_deref().unwrap_or(&user.username);
-    let bio = cmd.bio.as_deref().map(|s| s.to_string()).or(user.bio);
+    let bio = cmd
+        .bio
+        .as_deref()
+        .map(std::string::ToString::to_string)
+        .or(user.bio);
     let website = cmd
         .website
         .as_deref()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .or(user.website);
-    let avatar = cmd.avatar.as_deref().map(|s| s.to_string()).or(user.avatar);
+    let avatar = cmd
+        .avatar
+        .as_deref()
+        .map(std::string::ToString::to_string)
+        .or(user.avatar);
 
-    sqlx::query!(
-        "UPDATE users SET username = ?, bio = ?, website = ?, avatar = ?, updated_at = ? WHERE id = ?",
-        username,
-        bio,
-        website,
-        avatar,
-        now,
-        cmd.id,
-    )
-    .execute(pool)
-    .await?;
+    let sql = format!(
+        "UPDATE users SET username = ?, bio = ?, website = ?, avatar = ?, updated_at = ? WHERE id = ?{}",
+        tenant_filter(tenant_id)
+    );
+    let sql = crate::db::dialect::translate(&sql);
+    let mut q = sqlx::query(&sql)
+        .bind(username)
+        .bind(bio)
+        .bind(website)
+        .bind(avatar)
+        .bind(now)
+        .bind(&cmd.id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    q.execute(pool).await?;
 
-    find_by_id(pool, &cmd.id)
+    find_by_id(pool, &cmd.id, tenant_id)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch updated user")))
 }
@@ -129,16 +166,16 @@ pub async fn update_password(
     pool: &crate::db::Pool,
     id: &str,
     new_password_hash: &str,
+    tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    sqlx::query!(
-        "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
-        new_password_hash,
-        now,
-        id,
-    )
-    .execute(pool)
-    .await?;
+    let sql = format!("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?{}", tenant_filter(tenant_id));
+    let sql = crate::db::dialect::translate(&sql);
+    let mut q = sqlx::query(&sql).bind(new_password_hash).bind(now).bind(id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    q.execute(pool).await?;
     Ok(())
 }
 
@@ -149,41 +186,50 @@ pub async fn find_all(
     pool: &crate::db::Pool,
     page: i64,
     page_size: i64,
+    tenant_id: Option<&str>,
 ) -> AppResult<(Vec<User>, i64)> {
     let offset = (page - 1) * page_size;
-    let sql = crate::db::dialect::translate(
-        "SELECT * FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?",
-    );
-    let users = sqlx::query_as::<_, User>(&sql)
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
+    let filter = tenant_filter(tenant_id);
 
-    let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
-        .fetch_one(pool)
-        .await?;
+    let sql_q =
+        format!("SELECT * FROM users WHERE 1=1{filter} ORDER BY created_at DESC LIMIT ? OFFSET ?");
+    let sql = crate::db::dialect::translate(&sql_q);
+    let mut q = sqlx::query_as::<_, User>(&sql);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let users = q.bind(page_size).bind(offset).fetch_all(pool).await?;
+
+    let count_q = format!("SELECT COUNT(*) FROM users WHERE 1=1{filter}");
+    let sql = crate::db::dialect::translate(&count_q);
+    let mut q = sqlx::query_as::<_, (i64,)>(&sql);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let total = q.fetch_one(pool).await?;
 
     Ok((users, total.0))
 }
 
 /// 管理员更新用户角色
-pub async fn update_role(pool: &crate::db::Pool, id: &str, role: &str) -> AppResult<User> {
+pub async fn update_role(
+    pool: &crate::db::Pool,
+    id: &str,
+    role: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<User> {
     let now = Utc::now().to_rfc3339();
-    let result = sqlx::query!(
-        "UPDATE users SET role = ?, updated_at = ? WHERE id = ?",
-        role,
-        now,
-        id,
-    )
-    .execute(pool)
-    .await?;
-
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound("user".into()));
+    let sql = format!("UPDATE users SET role = ?, updated_at = ? WHERE id = ?{}", tenant_filter(tenant_id));
+    let sql = crate::db::dialect::translate(&sql);
+    let mut q = sqlx::query(&sql).bind(role).bind(now).bind(id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
     }
+    let result = q.execute(pool).await?;
 
-    find_by_id(pool, id)
+    AppError::expect_affected(&result, "user")?;
+
+    find_by_id(pool, id, tenant_id)
         .await?
-        .ok_or_else(|| AppError::NotFound("user".into()))
+        .ok_or_else(|| AppError::not_found("user"))
 }

@@ -6,6 +6,8 @@
 use axum::extract::Query;
 use serde::Deserialize;
 
+use crate::errors::response::{ApiResponse, PaginatedData};
+
 /// 分页查询参数。
 ///
 /// - `page`：当前页码，默认为 1。
@@ -30,9 +32,27 @@ impl PaginationParams {
     /// 允许的最大每页条数。
     pub const MAX_PAGE_SIZE: i64 = 100;
 
+    /// 将分页结果包装为标准 API 响应。
+    ///
+    /// 将 `items` 列表和 `total` 总数与当前分页参数组合为 [`PaginatedData`]，
+    /// 再包装为 [`ApiResponse::success`]，供 handler 直接返回。
+    pub fn paginate<T: serde::Serialize>(
+        self,
+        items: Vec<T>,
+        total: i64,
+    ) -> ApiResponse<PaginatedData<T>> {
+        ApiResponse::success(PaginatedData {
+            items,
+            total,
+            page: self.page,
+            page_size: self.page_size,
+        })
+    }
+
     /// 计算 SQL `OFFSET` 值。
     ///
     /// 公式：`(page - 1) * page_size`。
+    #[must_use]
     pub fn offset(&self) -> i64 {
         (self.page - 1) * self.page_size
     }

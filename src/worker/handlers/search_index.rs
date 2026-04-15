@@ -45,7 +45,7 @@ impl JobHandler for RebuildSearchIndexHandler {
 
         let mut posts = Vec::with_capacity(post_ids.len());
         for id in post_ids {
-            match crate::models::post::find_by_id(&self.pool, id).await {
+            match crate::models::post::find_by_id(&self.pool, id, Some(crate::db::tenant::DEFAULT_TENANT)).await {
                 Ok(Some(post)) => posts.push(SearchablePost {
                     id: post.id,
                     title: post.title,
@@ -100,6 +100,18 @@ mod tests {
             .await
             .unwrap();
         sqlx::query(include_str!("../../../migrations/002_add_indexes.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(include_str!("../../../migrations/009_options.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(include_str!("../../../migrations/010_rbac.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(include_str!("../../../migrations/011_tenants.sql"))
             .execute(&pool)
             .await
             .unwrap();

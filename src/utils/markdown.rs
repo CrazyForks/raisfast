@@ -14,6 +14,7 @@ use comrak::{ComrakOptions, Plugins, RenderPlugins, markdown_to_html_with_plugin
 ///
 /// 1. 使用 comrak 将 Markdown 转为原始 HTML（含 syntect 代码高亮）。
 /// 2. 使用 ammonia 对 HTML 进行消毒处理，移除危险标签和属性。
+#[must_use]
 pub fn render_markdown(content: &str) -> String {
     let mut options = ComrakOptions::default();
     options.render.unsafe_ = true;

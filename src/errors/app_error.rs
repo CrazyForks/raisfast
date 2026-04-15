@@ -79,6 +79,31 @@ pub enum AppError {
 }
 
 impl AppError {
+    /// 快捷构造 `NotFound` 错误。
+    ///
+    /// # 参数
+    ///
+    /// - `resource` — 资源名称键（如 `"post"`），用于 i18n 翻译
+    #[must_use]
+    pub fn not_found(resource: &str) -> Self {
+        AppError::NotFound(resource.into())
+    }
+
+    /// 检查 DELETE/UPDATE 影响行数，为 0 时返回 `NotFound`。
+    ///
+    /// 用于 model 层的 `delete()` 和 `update_status()` 函数，
+    /// 避免每次手动检查 `rows_affected() == 0`。
+    pub fn expect_affected(
+        result: &sqlx::sqlite::SqliteQueryResult,
+        resource: &str,
+    ) -> AppResult<()> {
+        if result.rows_affected() == 0 {
+            Err(AppError::NotFound(resource.into()))
+        } else {
+            Ok(())
+        }
+    }
+
     /// 根据当前 locale 翻译错误消息
     ///
     /// 每个 `AppError` 变体都有对应的 i18n 翻译键。此方法根据传入的 `locale`
@@ -100,12 +125,12 @@ impl AppError {
             AppError::Unauthorized => rust_i18n::t!("errors.unauthorized").to_string(),
             AppError::Forbidden => rust_i18n::t!("errors.forbidden").to_string(),
             AppError::NotFound(resource_key) => {
-                let res_key = format!("resources.{}", resource_key);
+                let res_key = format!("resources.{resource_key}");
                 let resource = rust_i18n::t!(&res_key);
                 rust_i18n::t!("errors.not_found", resource = resource).to_string()
             }
             AppError::Conflict(msg_key) => {
-                let msg_key_full = format!("messages.{}", msg_key);
+                let msg_key_full = format!("messages.{msg_key}");
                 let message = rust_i18n::t!(&msg_key_full);
                 rust_i18n::t!("errors.conflict", message = message).to_string()
             }

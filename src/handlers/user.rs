@@ -12,6 +12,7 @@ use crate::handlers::dto::{
     UpdatePasswordRequest, UpdateRoleRequest, UpdateUserRequest, UserResponse,
 };
 use crate::middleware::auth::{AdminUser, AuthUser};
+use crate::middleware::tenant::ResolvedTenant;
 use crate::services::auth;
 use crate::utils::pagination::PaginationParams;
 
@@ -19,8 +20,14 @@ use crate::utils::pagination::PaginationParams;
 pub async fn get_me(
     State(state): State<crate::AppState>,
     auth_user: AuthUser,
+    tenant: ResolvedTenant,
 ) -> AppResult<ApiResponse<UserResponse>> {
-    let user = auth::get_me(state.user_repo.as_ref(), &auth_user.user_id).await?;
+    let user = auth::get_me(
+        state.user_repo.as_ref(),
+        &auth_user.user_id,
+        tenant.as_str(),
+    )
+    .await?;
     Ok(ApiResponse::success(user))
 }
 
@@ -28,10 +35,17 @@ pub async fn get_me(
 pub async fn update_me(
     State(state): State<crate::AppState>,
     auth_user: AuthUser,
+    tenant: ResolvedTenant,
     Json(req): Json<UpdateUserRequest>,
 ) -> AppResult<ApiResponse<UserResponse>> {
     validation::validate(&req)?;
-    let user = auth::update_me(state.user_repo.as_ref(), &auth_user.user_id, req).await?;
+    let user = auth::update_me(
+        state.user_repo.as_ref(),
+        &auth_user.user_id,
+        req,
+        tenant.as_str(),
+    )
+    .await?;
     Ok(ApiResponse::success(user))
 }
 
@@ -39,6 +53,7 @@ pub async fn update_me(
 pub async fn change_password(
     State(state): State<crate::AppState>,
     auth_user: AuthUser,
+    tenant: ResolvedTenant,
     Json(req): Json<UpdatePasswordRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
@@ -47,6 +62,7 @@ pub async fn change_password(
         &state.pool,
         &auth_user.user_id,
         req,
+        tenant.as_str(),
     )
     .await?;
     Ok(ApiResponse::success(()))
@@ -55,9 +71,10 @@ pub async fn change_password(
 /// 获取指定用户的公开资料
 pub async fn get_user(
     State(state): State<crate::AppState>,
+    tenant: ResolvedTenant,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<UserResponse>> {
-    let user = auth::get_public_user(state.user_repo.as_ref(), &id).await?;
+    let user = auth::get_public_user(state.user_repo.as_ref(), &id, tenant.as_str()).await?;
     Ok(ApiResponse::success(user))
 }
 
@@ -65,28 +82,33 @@ pub async fn get_user(
 pub async fn list_users(
     State(state): State<crate::AppState>,
     _admin: AdminUser,
+    tenant: ResolvedTenant,
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<UserResponse>>> {
     params.sanitize();
-    let (users, total) =
-        auth::list_users(state.user_repo.as_ref(), params.page, params.page_size).await?;
-    Ok(ApiResponse::success(PaginatedData {
-        items: users,
-        total,
-        page: params.page,
-        page_size: params.page_size,
-    }))
+    let (users, total) = auth::list_users(
+        state.user_repo.as_ref(),
+        params.page,
+        params.page_size,
+        tenant.as_str(),
+    )
+    .await?;
+    Ok(params.paginate(users, total))
 }
 
 /// 管理员更新用户角色
 pub async fn update_role(
     _admin: AdminUser,
     State(state): State<crate::AppState>,
+    tenant: ResolvedTenant,
     Path(id): Path<String>,
     Json(req): Json<UpdateRoleRequest>,
 ) -> AppResult<ApiResponse<UserResponse>> {
     validation::validate(&req)?;
 
-    let user = state.user_repo.update_role(&id, &req.role).await?;
+    let user = state
+        .user_repo
+        .update_role(&id, &req.role, tenant.as_str())
+        .await?;
     Ok(ApiResponse::success(user.into()))
 }

@@ -1,7 +1,7 @@
 //! 全局事件总线
 //!
 //! 基于 `tokio::sync::broadcast` 的发布-订阅事件系统。
-//! 所有业务事件（文章创建、评论、用户注册等）通过 EventBus 广播，
+//! 所有业务事件（文章创建、评论、用户注册等）通过 `EventBus` 广播，
 //! 各子系统（插件、通知、审计、缓存）订阅感兴趣的事件。
 
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use tokio::sync::broadcast;
 #[non_exhaustive]
 #[serde(tag = "type", content = "data")]
 pub enum Event {
+    // ── 内容生命周期（泛化，兼容旧事件） ──
     PostCreating {
         id: String,
         title: String,
@@ -40,6 +41,33 @@ pub enum Event {
     CommentDeleted {
         id: String,
     },
+
+    // ── 通用内容事件（Phase 10 新增） ──
+    ContentCreating {
+        content_type: String,
+        id: String,
+        data: serde_json::Value,
+    },
+    ContentCreated {
+        content_type: String,
+        id: String,
+        slug: Option<String>,
+    },
+    ContentUpdating {
+        content_type: String,
+        id: String,
+        data: serde_json::Value,
+    },
+    ContentUpdated {
+        content_type: String,
+        id: String,
+    },
+    ContentDeleted {
+        content_type: String,
+        id: String,
+    },
+
+    // ── 用户/媒体 ──
     UserRegistered {
         id: String,
         username: String,
@@ -73,7 +101,8 @@ pub struct EventBus {
 }
 
 impl EventBus {
-    /// 创建指定容量的 EventBus
+    /// 创建指定容量的 `EventBus`
+    #[must_use]
     pub fn new(capacity: usize) -> Self {
         let (tx, _) = broadcast::channel(capacity);
         Self { tx }
@@ -85,11 +114,13 @@ impl EventBus {
     }
 
     /// 订阅事件流
+    #[must_use]
     pub fn subscribe(&self) -> EventReceiver {
         self.tx.subscribe()
     }
 
     /// 当前订阅者数量
+    #[must_use]
     pub fn subscriber_count(&self) -> usize {
         self.tx.receiver_count()
     }

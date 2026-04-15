@@ -1,22 +1,12 @@
-//! 基于 sqlx 的 RefreshTokenRepository 实现
+//! 基于 sqlx 的 `RefreshTokenRepository` 实现
 
-use crate::db::Pool;
 use crate::errors::app_error::AppResult;
 use crate::models::refresh_token::{self, RefreshToken};
 
 use super::RefreshTokenRepository;
+use crate::repositories::define_sqlx_repo;
 
-/// 基于 sqlx 的刷新令牌 Repository
-pub struct SqlxRefreshTokenRepository {
-    pool: Pool,
-}
-
-impl SqlxRefreshTokenRepository {
-    /// 创建新的 SqlxRefreshTokenRepository
-    pub fn new(pool: Pool) -> Self {
-        Self { pool }
-    }
-}
+define_sqlx_repo!(SqlxRefreshTokenRepository);
 
 #[async_trait::async_trait]
 impl RefreshTokenRepository for SqlxRefreshTokenRepository {

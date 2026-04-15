@@ -65,6 +65,7 @@ impl VirtualFs {
     /// 从配置和权限创建 VFS 实例
     ///
     /// 会自动创建沙箱根目录。
+    #[must_use]
     pub fn new(config: &AppConfig, plugin_id: &str, permissions: &Permissions) -> Self {
         let root = PathBuf::from(&config.plugin_vfs_root).join(plugin_id);
         let can_read = permissions
@@ -212,6 +213,7 @@ impl VirtualFs {
     }
 
     /// 返回沙箱根目录路径
+    #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -302,6 +304,7 @@ mod tests {
             cron_log_retention_days: 30,
             search_engine: "none".into(),
             search_index_dir: "./data/search_index".into(),
+            content_type_dir: "./content_types".into(),
         })
     }
 

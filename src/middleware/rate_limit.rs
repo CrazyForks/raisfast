@@ -60,6 +60,7 @@ pub struct MemoryStore {
 
 impl MemoryStore {
     /// 创建空的内存存储。
+    #[must_use]
     pub fn new() -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
@@ -158,6 +159,7 @@ pub struct RateLimiterSet {
 
 impl RateLimiterSet {
     /// 根据应用配置创建限流器集合。
+    #[must_use]
     pub fn from_config(config: &AppConfig) -> Self {
         Self {
             global: RateLimiter::new(
@@ -192,6 +194,7 @@ impl RateLimiterSet {
     }
 
     /// 创建包含默认配置的限流器集合（用于测试）。
+    #[must_use]
     pub fn new_default() -> Self {
         Self {
             global: RateLimiter::new(

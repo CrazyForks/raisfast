@@ -12,20 +12,26 @@ use axum::routing::{delete, get, post as http_post, put};
 use rust_blog::AppState;
 use rust_blog::cache::MemoryCache;
 use rust_blog::config::app::AppConfig;
+use rust_blog::content_type::ContentTypeRegistry;
 use rust_blog::db::connection::init_pool;
 use rust_blog::handlers::{
-    auth, category, comment, cron, health, media, plugin, post, rss, sse, tag, user,
+    auth, category, comment, cron, health, media, options, plugin, post, rbac, rss, sse, tag,
+    tenant, user,
 };
 use rust_blog::middleware::locale::locale_middleware;
 use rust_blog::middleware::rate_limit::{
     RateLimiterSet, comment_rate_limit, global_rate_limit, login_rate_limit, register_rate_limit,
 };
 use rust_blog::repositories::{
-    CachedPostRepository, PostRepository, SqlxCategoryRepository, SqlxCommentRepository,
-    SqlxMediaRepository, SqlxPostRepository, SqlxRefreshTokenRepository, SqlxTagRepository,
-    SqlxUserRepository,
+    CachedPostRepository, OptionsRepository, PostRepository, RbacRepository,
+    SqlxCategoryRepository, SqlxCommentRepository, SqlxMediaRepository, SqlxOptionsRepository,
+    SqlxPostRepository, SqlxRbacRepository, SqlxRefreshTokenRepository, SqlxTagRepository,
+    SqlxTenantRepository, SqlxUserRepository, TenantRepository,
 };
 use rust_blog::search::{NoopSearchEngine, SearchEngine};
+use rust_blog::services::options::OptionsService;
+use rust_blog::services::rbac::RbacService;
+use rust_blog::services::tenant::TenantService;
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
@@ -77,6 +83,42 @@ fn build_cors(config: &AppConfig) -> CorsLayer {
     }
 }
 
+/// 加载内容类型定义并自动执行 migration
+async fn load_content_types(config: &AppConfig, pool: &rust_blog::db::Pool) -> ContentTypeRegistry {
+    let ct_dir = std::path::Path::new(&config.content_type_dir);
+    let registry = if ct_dir.exists() {
+        match ContentTypeRegistry::load_from_dir(ct_dir) {
+            Ok(reg) => {
+                tracing::info!(
+                    "loaded {} content type(s) from {}",
+                    reg.len(),
+                    config.content_type_dir
+                );
+                reg
+            }
+            Err(e) => {
+                tracing::error!("failed to load content types: {}", e);
+                ContentTypeRegistry::new()
+            }
+        }
+    } else {
+        tracing::info!(
+            "content_type_dir '{}' not found, skipping",
+            config.content_type_dir
+        );
+        ContentTypeRegistry::new()
+    };
+
+    let repo = rust_blog::content_type::repository::ContentRepository::new(pool.clone());
+    for ct in registry.all() {
+        if let Err(e) = repo.migrate(ct).await {
+            tracing::error!("migration failed for content type '{}': {}", ct.name, e);
+        }
+    }
+
+    registry
+}
+
 /// 组装完整的应用路由（含数据库连接池初始化）。
 async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Result<axum::Router> {
     let upload_dir = config.upload_dir.clone();
@@ -109,6 +151,18 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
 
     let search: Arc<dyn SearchEngine> = build_search_engine(config);
 
+    let content_type_registry = load_content_types(config, &pool).await;
+
+    let options_repo: Arc<dyn OptionsRepository> =
+        Arc::new(SqlxOptionsRepository::new(pool.clone()));
+    let options_service = Arc::new(OptionsService::new(options_repo).await);
+
+    let rbac_repo: Arc<dyn RbacRepository> = Arc::new(SqlxRbacRepository::new(pool.clone()));
+    let rbac_service = Arc::new(RbacService::new(rbac_repo));
+
+    let tenant_repo: Arc<dyn TenantRepository> = Arc::new(SqlxTenantRepository::new(pool.clone()));
+    let tenant_service = Arc::new(TenantService::new(tenant_repo));
+
     let state = AppState {
         pool: pool.clone(),
         config: Arc::new(config.clone()),
@@ -126,6 +180,10 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         media_repo,
         refresh_token_repo,
         search,
+        content_type_registry: Arc::new(content_type_registry),
+        options: options_service,
+        rbac: rbac_service,
+        tenant: tenant_service,
     };
 
     spawn_event_subscriber(eventbus.clone(), state.plugins.clone());
@@ -205,9 +263,57 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         .route("/admin/crons/{id}/toggle", http_post(cron::toggle))
         .route("/admin/crons/logs", get(cron::logs))
         .route("/admin/crons/logs/cleanup", http_post(cron::cleanup_logs))
+        .route(
+            "/admin/rbac/roles",
+            get(rbac::list_roles).post(rbac::create_role),
+        )
+        .route(
+            "/admin/rbac/roles/{id}",
+            put(rbac::update_role).delete(rbac::delete_role),
+        )
+        .route(
+            "/admin/rbac/roles/{id}/permissions",
+            get(rbac::get_permissions).put(rbac::set_permissions),
+        )
+        .route("/options/public", get(options::get_public_options))
+        .route(
+            "/admin/options",
+            get(options::list_options).put(options::update_options),
+        )
+        .route(
+            "/admin/options/{key}",
+            get(options::get_option)
+                .put(options::set_option)
+                .delete(options::delete_option),
+        )
+        .route(
+            "/admin/tenants",
+            get(tenant::list_tenants).post(tenant::create_tenant),
+        )
+        .route(
+            "/admin/tenants/{id}",
+            get(tenant::get_tenant)
+                .put(tenant::update_tenant)
+                .delete(tenant::delete_tenant),
+        )
+        .route(
+            "/admin/content-types",
+            get(rust_blog::content_type::handler::list_schemas)
+                .post(rust_blog::content_type::handler::create_schema),
+        )
+        .route(
+            "/admin/content-types/{singular}",
+            get(rust_blog::content_type::handler::get_schema)
+                .delete(rust_blog::content_type::handler::delete_schema),
+        )
         .layer(from_fn(global_rate_limit))
         .layer(Extension(limiters))
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024));
+
+    let api_v1 = rust_blog::content_type::handler::register_content_routes(
+        api_v1,
+        &state.content_type_registry,
+    );
 
     let app = axum::Router::new()
         .route("/health", get(health::health))

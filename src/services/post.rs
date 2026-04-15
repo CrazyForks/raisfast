@@ -24,21 +24,25 @@ use crate::repositories::{CategoryRepository, PostRepository, TagRepository};
 use crate::search::SearchEngine;
 use crate::utils::markdown::render_markdown;
 
-async fn joined_row_to_response(
-    r: PostJoinedRow,
-    tags: Vec<crate::models::post::TagBrief>,
-    plugins: &PluginManager,
-) -> PostResponse {
-    let html_content = match plugins.dispatch_render_override(&r.content).await {
+async fn render_content(content: &str, plugins: &PluginManager) -> String {
+    match plugins.dispatch_render_override(content).await {
         Some(html) => plugins
             .dispatch_filter(HookPoint::FilterHtml, html)
             .await
             .unwrap_or_else(|e| {
                 tracing::warn!("filter_html hook failed: {e}");
-                render_markdown(&r.content)
+                render_markdown(content)
             }),
-        None => render_markdown(&r.content),
-    };
+        None => render_markdown(content),
+    }
+}
+
+async fn joined_row_to_response(
+    r: PostJoinedRow,
+    tags: Vec<crate::models::post::TagBrief>,
+    plugins: &PluginManager,
+) -> PostResponse {
+    let html_content = render_content(&r.content, plugins).await;
     PostResponse {
         id: r.id,
         title: r.title,
@@ -67,9 +71,13 @@ async fn build_post_response_from_repo(
     repo: &dyn PostRepository,
     id: &str,
     plugins: &PluginManager,
+    tenant_id: Option<&str>,
 ) -> AppResult<PostResponse> {
-    let row = repo.find_joined_by_id(id).await?;
-    let tags = repo.get_post_tags(&row.id).await.unwrap_or_default();
+    let row = repo.find_joined_by_id(id, tenant_id).await?;
+    let tags = repo
+        .get_post_tags(&row.id, tenant_id)
+        .await
+        .unwrap_or_default();
     Ok(joined_row_to_response(row, tags, plugins).await)
 }
 
@@ -79,16 +87,20 @@ async fn build_post_response_from_repo(
 pub async fn create_category(
     category_repo: &dyn CategoryRepository,
     req: CreateCategoryRequest,
+    tenant_id: Option<&str>,
 ) -> AppResult<crate::models::category::Category> {
     let slug = slugify(&req.name);
     category_repo
-        .create(CreateCategoryCmd {
-            name: req.name,
-            slug,
-            description: req.description,
-            parent_id: req.parent_id,
-            sort_order: req.sort_order.unwrap_or(0),
-        })
+        .create(
+            CreateCategoryCmd {
+                name: req.name,
+                slug,
+                description: req.description,
+                parent_id: req.parent_id,
+                sort_order: req.sort_order.unwrap_or(0),
+            },
+            tenant_id,
+        )
         .await
 }
 
@@ -99,32 +111,41 @@ pub async fn update_category(
     category_repo: &dyn CategoryRepository,
     id: &str,
     req: UpdateCategoryRequest,
+    tenant_id: Option<&str>,
 ) -> AppResult<crate::models::category::Category> {
-    let existing = category_repo.find_by_id(id).await?;
+    let existing = category_repo.find_by_id(id, tenant_id).await?;
     let new_slug = req.name.as_ref().map(slugify).unwrap_or(existing.slug);
 
     category_repo
-        .update(UpdateCategoryCmd {
-            id: id.to_string(),
-            name: req.name,
-            slug: Some(new_slug),
-            description: req.description,
-            parent_id: req.parent_id,
-            sort_order: req.sort_order,
-        })
+        .update(
+            UpdateCategoryCmd {
+                id: id.to_string(),
+                name: req.name,
+                slug: Some(new_slug),
+                description: req.description,
+                parent_id: req.parent_id,
+                sort_order: req.sort_order,
+            },
+            tenant_id,
+        )
         .await
 }
 
 /// 删除分类。
-pub async fn delete_category(category_repo: &dyn CategoryRepository, id: &str) -> AppResult<()> {
-    category_repo.delete(id).await
+pub async fn delete_category(
+    category_repo: &dyn CategoryRepository,
+    id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    category_repo.delete(id, tenant_id).await
 }
 
 /// 获取所有分类列表。
 pub async fn list_categories(
     category_repo: &dyn CategoryRepository,
+    tenant_id: Option<&str>,
 ) -> AppResult<Vec<crate::models::category::Category>> {
-    category_repo.find_all().await
+    category_repo.find_all(tenant_id).await
 }
 
 /// 创建标签。
@@ -133,29 +154,41 @@ pub async fn list_categories(
 pub async fn create_tag(
     tag_repo: &dyn TagRepository,
     req: CreateTagRequest,
+    tenant_id: Option<&str>,
 ) -> AppResult<crate::models::tag::Tag> {
     let slug = slugify(&req.name);
-    tag_repo.create(&req.name, &slug).await
+    tag_repo.create(&req.name, &slug, tenant_id).await
 }
 
 /// 删除标签。
-pub async fn delete_tag(tag_repo: &dyn TagRepository, id: &str) -> AppResult<()> {
-    tag_repo.delete(id).await
+pub async fn delete_tag(
+    tag_repo: &dyn TagRepository,
+    id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    tag_repo.delete(id, tenant_id).await
 }
 
 /// 获取所有标签列表。
-pub async fn list_tags(tag_repo: &dyn TagRepository) -> AppResult<Vec<crate::models::tag::Tag>> {
-    tag_repo.find_all().await
+pub async fn list_tags(
+    tag_repo: &dyn TagRepository,
+    tenant_id: Option<&str>,
+) -> AppResult<Vec<crate::models::tag::Tag>> {
+    tag_repo.find_all(tenant_id).await
 }
 
 /// 生成唯一的 slug。
 ///
 /// 若基础 slug 已被占用，则追加递增后缀（`-2`、`-3`、...）直到唯一。
-async fn make_unique_slug(base_slug: &str, repo: &dyn PostRepository) -> AppResult<String> {
+async fn make_unique_slug(
+    base_slug: &str,
+    repo: &dyn PostRepository,
+    tenant_id: Option<&str>,
+) -> AppResult<String> {
     let mut slug = base_slug.to_string();
     let mut counter = 1;
-    while repo.find_by_slug(&slug).await?.is_some() {
-        slug = format!("{}-{}", base_slug, counter);
+    while repo.find_by_slug(&slug, tenant_id).await?.is_some() {
+        slug = format!("{base_slug}-{counter}");
         counter += 1;
     }
     Ok(slug)
@@ -184,34 +217,37 @@ pub async fn create_post(
     eventbus: &EventBus,
     author_id: &str,
     req: CreatePostRequest,
+    tenant_id: Option<&str>,
 ) -> AppResult<PostResponse> {
     let req = plugins
         .dispatch_filter(HookPoint::PostCreating, req)
         .await?;
     let base_slug = slugify(&req.title);
-    let slug = make_unique_slug(&base_slug, repo).await?;
+    let slug = make_unique_slug(&base_slug, repo, tenant_id).await?;
     let status = req.status.as_deref().unwrap_or("draft");
-    let excerpt = req
-        .excerpt
-        .as_deref()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| extract_excerpt(&req.content, 200));
+    let excerpt = req.excerpt.as_deref().map_or_else(
+        || extract_excerpt(&req.content, 200),
+        std::string::ToString::to_string,
+    );
 
     let p = repo
-        .create(CreatePostCmd {
-            title: req.title,
-            slug,
-            content: req.content,
-            excerpt: Some(excerpt),
-            cover_image: req.cover_image,
-            status: status.to_string(),
-            author_id: author_id.to_string(),
-            category_id: req.category_id.filter(|s| !s.is_empty()),
-            tag_ids: req.tag_ids,
-        })
+        .create(
+            CreatePostCmd {
+                title: req.title,
+                slug,
+                content: req.content,
+                excerpt: Some(excerpt),
+                cover_image: req.cover_image,
+                status: status.to_string(),
+                author_id: author_id.to_string(),
+                category_id: req.category_id.filter(|s| !s.is_empty()),
+                tag_ids: req.tag_ids,
+            },
+            tenant_id,
+        )
         .await?;
 
-    let resp = build_post_response_from_repo(repo, &p.id, plugins).await?;
+    let resp = build_post_response_from_repo(repo, &p.id, plugins, tenant_id).await?;
     eventbus.emit(Event::PostCreated {
         id: p.id.clone(),
         slug: resp.slug.clone(),
@@ -231,15 +267,16 @@ pub async fn update_post(
     plugins: &PluginManager,
     id: &str,
     req: UpdatePostRequest,
+    tenant_id: Option<&str>,
 ) -> AppResult<PostResponse> {
     let req = plugins
         .dispatch_filter(HookPoint::PostUpdating, req)
         .await?;
 
     let existing = repo
-        .find_by_id(id)
+        .find_by_id(id, tenant_id)
         .await?
-        .ok_or_else(|| AppError::NotFound("post".into()))?;
+        .ok_or_else(|| AppError::not_found("post"))?;
 
     let new_slug = req
         .title
@@ -248,7 +285,7 @@ pub async fn update_post(
         .filter(|s| s != &existing.slug);
 
     let slug = match new_slug {
-        Some(s) => Some(make_unique_slug(&s, repo).await?),
+        Some(s) => Some(make_unique_slug(&s, repo, tenant_id).await?),
         None => None,
     };
 
@@ -258,30 +295,38 @@ pub async fn update_post(
         .clone()
         .unwrap_or_else(|| extract_excerpt(content, 200));
 
-    repo.update(UpdatePostCmd {
-        id: id.to_string(),
-        title: req.title,
-        slug,
-        content: Some(content.to_string()),
-        excerpt: Some(excerpt),
-        cover_image: req.cover_image,
-        status: req.status,
-        category_id: req.category_id.filter(|s| !s.is_empty()),
-        tag_ids: req.tag_ids,
-    })
+    repo.update(
+        UpdatePostCmd {
+            id: id.to_string(),
+            title: req.title,
+            slug,
+            content: Some(content.to_string()),
+            excerpt: Some(excerpt),
+            cover_image: req.cover_image,
+            status: req.status,
+            category_id: req.category_id.filter(|s| !s.is_empty()),
+            tag_ids: req.tag_ids,
+        },
+        tenant_id,
+    )
     .await?;
 
-    build_post_response_from_repo(repo, id, plugins).await
+    build_post_response_from_repo(repo, id, plugins, tenant_id).await
 }
 
 /// 删除文章。
-pub async fn delete_post(repo: &dyn PostRepository, id: &str) -> AppResult<()> {
-    repo.delete(id).await
+pub async fn delete_post(
+    repo: &dyn PostRepository,
+    id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    repo.delete(id, tenant_id).await
 }
 
 /// 带权限校验的文章更新。
 ///
 /// 仅文章作者或管理员可执行。
+#[allow(clippy::too_many_arguments)]
 pub async fn update_post_with_auth(
     repo: &dyn PostRepository,
     plugins: &PluginManager,
@@ -290,17 +335,16 @@ pub async fn update_post_with_auth(
     user_id: &str,
     role: &str,
     req: UpdatePostRequest,
+    tenant_id: Option<&str>,
 ) -> AppResult<PostResponse> {
     let existing = repo
-        .find_by_slug(slug)
+        .find_by_slug(slug, tenant_id)
         .await?
-        .ok_or_else(|| AppError::NotFound("post".into()))?;
+        .ok_or_else(|| AppError::not_found("post"))?;
 
-    if role != "admin" && existing.author_id != user_id {
-        return Err(AppError::Forbidden);
-    }
+    crate::utils::auth::require_owner_or_admin(role, user_id, &existing.author_id)?;
 
-    let resp = update_post(repo, plugins, &existing.id, req).await?;
+    let resp = update_post(repo, plugins, &existing.id, req, tenant_id).await?;
     eventbus.emit(Event::PostUpdated {
         id: existing.id.clone(),
         slug: resp.slug.clone(),
@@ -311,6 +355,7 @@ pub async fn update_post_with_auth(
 /// 带权限校验的文章删除。
 ///
 /// 仅文章作者或管理员可执行。
+#[allow(clippy::too_many_arguments)]
 pub async fn delete_post_with_auth(
     repo: &dyn PostRepository,
     _plugins: &PluginManager,
@@ -318,19 +363,18 @@ pub async fn delete_post_with_auth(
     slug: &str,
     user_id: &str,
     role: &str,
+    tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let existing = repo
-        .find_by_slug(slug)
+        .find_by_slug(slug, tenant_id)
         .await?
-        .ok_or_else(|| AppError::NotFound("post".into()))?;
+        .ok_or_else(|| AppError::not_found("post"))?;
 
-    if role != "admin" && existing.author_id != user_id {
-        return Err(AppError::Forbidden);
-    }
+    crate::utils::auth::require_owner_or_admin(role, user_id, &existing.author_id)?;
 
     let id = existing.id.clone();
     let slug = slug.to_string();
-    delete_post(repo, &existing.id).await?;
+    delete_post(repo, &existing.id, tenant_id).await?;
     eventbus.emit(Event::PostDeleted { id, slug });
     Ok(())
 }
@@ -343,9 +387,13 @@ pub async fn get_post(
     repo: &dyn PostRepository,
     slug: &str,
     plugins: &PluginManager,
+    tenant_id: Option<&str>,
 ) -> AppResult<PostResponse> {
-    let row = repo.increment_view_count_joined(slug).await?;
-    let tags = repo.get_post_tags(&row.id).await.unwrap_or_default();
+    let row = repo.increment_view_count_joined(slug, tenant_id).await?;
+    let tags = repo
+        .get_post_tags(&row.id, tenant_id)
+        .await
+        .unwrap_or_default();
     Ok(joined_row_to_response(row, tags, plugins).await)
 }
 
@@ -365,6 +413,7 @@ pub async fn list_posts(
     q: Option<&str>,
     plugins: &PluginManager,
     search: Option<&dyn SearchEngine>,
+    tenant_id: Option<&str>,
 ) -> AppResult<(Vec<PostResponse>, i64)> {
     let (rows, total, highlights) = if let (Some(engine), Some(keyword)) = (search, q) {
         if !engine.is_noop() && !keyword.is_empty() {
@@ -377,56 +426,55 @@ pub async fn list_posts(
                     r.post_id
                 })
                 .collect();
-            let rows = repo.find_joined_by_ids(&ids).await?;
+            let rows = repo.find_joined_by_ids(&ids, tenant_id).await?;
             (rows, total, hmap)
         } else {
             let (rows, total) = repo
-                .find_published_joined(FindPublishedQuery {
-                    page,
-                    page_size,
-                    category_id: category_id.map(|s| s.to_string()),
-                    tag_id: tag_id.map(|s| s.to_string()),
-                    q: if keyword.is_empty() {
-                        None
-                    } else {
-                        Some(keyword.to_string())
+                .find_published_joined(
+                    FindPublishedQuery {
+                        page,
+                        page_size,
+                        category_id: category_id.map(std::string::ToString::to_string),
+                        tag_id: tag_id.map(std::string::ToString::to_string),
+                        q: if keyword.is_empty() {
+                            None
+                        } else {
+                            Some(keyword.to_string())
+                        },
                     },
-                })
+                    tenant_id,
+                )
                 .await?;
             (rows, total, std::collections::HashMap::new())
         }
     } else {
         let (rows, total) = repo
-            .find_published_joined(FindPublishedQuery {
-                page,
-                page_size,
-                category_id: category_id.map(|s| s.to_string()),
-                tag_id: tag_id.map(|s| s.to_string()),
-                q: q.map(|s| s.to_string()),
-            })
+            .find_published_joined(
+                FindPublishedQuery {
+                    page,
+                    page_size,
+                    category_id: category_id.map(std::string::ToString::to_string),
+                    tag_id: tag_id.map(std::string::ToString::to_string),
+                    q: q.map(std::string::ToString::to_string),
+                },
+                tenant_id,
+            )
             .await?;
         (rows, total, std::collections::HashMap::new())
     };
 
     let post_ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
-    let tags_map = repo.get_tags_for_posts(&post_ids).await.unwrap_or_default();
+    let tags_map = repo
+        .get_tags_for_posts(&post_ids, tenant_id)
+        .await
+        .unwrap_or_default();
 
     let mut responses = Vec::with_capacity(rows.len());
     for r in rows {
-        let html_content = match plugins.dispatch_render_override(&r.content).await {
-            Some(html) => plugins
-                .dispatch_filter(HookPoint::FilterHtml, html)
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::warn!("filter_html hook failed: {e}");
-                    render_markdown(&r.content)
-                }),
-            None => render_markdown(&r.content),
-        };
+        let html_content = render_content(&r.content, plugins).await;
         let (title_hl, excerpt_hl) = highlights
             .get(&r.id)
-            .map(|(t, e)| (t.clone(), e.clone()))
-            .unwrap_or((None, None));
+            .map_or((None, None), |(t, e)| (t.clone(), e.clone()));
         responses.push(PostResponse {
             id: r.id.clone(),
             title: r.title,
@@ -459,12 +507,16 @@ pub async fn get_post_any_status(
     repo: &dyn PostRepository,
     slug: &str,
     plugins: &PluginManager,
+    tenant_id: Option<&str>,
 ) -> AppResult<PostResponse> {
-    let post = repo.find_by_slug(slug).await?;
+    let post = repo.find_by_slug(slug, tenant_id).await?;
     let post =
-        post.ok_or_else(|| crate::errors::app_error::AppError::NotFound("post not found".into()))?;
-    let row = repo.find_joined_by_id(&post.id).await?;
-    let tags = repo.get_post_tags(&row.id).await.unwrap_or_default();
+        post.ok_or_else(|| crate::errors::app_error::AppError::not_found("post not found"))?;
+    let row = repo.find_joined_by_id(&post.id, tenant_id).await?;
+    let tags = repo
+        .get_post_tags(&row.id, tenant_id)
+        .await
+        .unwrap_or_default();
     Ok(joined_row_to_response(row, tags, plugins).await)
 }
 
@@ -475,24 +527,21 @@ pub async fn list_all_posts(
     page_size: i64,
     status: Option<&str>,
     plugins: &PluginManager,
+    tenant_id: Option<&str>,
 ) -> AppResult<(Vec<PostResponse>, i64)> {
-    let (rows, total) = repo.find_all_joined(page, page_size, status).await?;
+    let (rows, total) = repo
+        .find_all_joined(page, page_size, status, tenant_id)
+        .await?;
 
     let post_ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
-    let tags_map = repo.get_tags_for_posts(&post_ids).await.unwrap_or_default();
+    let tags_map = repo
+        .get_tags_for_posts(&post_ids, tenant_id)
+        .await
+        .unwrap_or_default();
 
     let mut responses = Vec::with_capacity(rows.len());
     for r in rows {
-        let html_content = match plugins.dispatch_render_override(&r.content).await {
-            Some(html) => plugins
-                .dispatch_filter(HookPoint::FilterHtml, html)
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::warn!("filter_html hook failed: {e}");
-                    render_markdown(&r.content)
-                }),
-            None => render_markdown(&r.content),
-        };
+        let html_content = render_content(&r.content, plugins).await;
         responses.push(PostResponse {
             id: r.id.clone(),
             title: r.title,

@@ -1,6 +1,6 @@
-//! EventBus → JobQueue 桥接
+//! `EventBus` → `JobQueue` 桥接
 //!
-//! 订阅 EventBus 事件，自动创建对应的异步任务。
+//! 订阅 `EventBus` 事件，自动创建对应的异步任务。
 
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ use crate::eventbus::{Event, EventBus};
 
 use super::{Job, JobQueue, NewJob};
 
-/// EventBus 事件到任务的桥接器
+/// `EventBus` 事件到任务的桥接器
 pub struct JobEnqueuer {
     queue: Arc<dyn JobQueue>,
 }

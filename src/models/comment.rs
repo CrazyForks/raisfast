@@ -7,12 +7,11 @@
 //! 树结构由 [`build_tree`] 函数从扁平列表转换而来，
 //! 嵌套深度由 [`validate_depth`] 限制为最多 3 层。
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use uuid::Uuid;
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::db::tenant::{resolve_tenant, tenant_filter, tenant_filter_aliased};
 
 /// 评论完整数据库行模型
 ///
@@ -23,6 +22,7 @@ use crate::errors::app_error::{AppError, AppResult};
 #[non_exhaustive]
 pub struct Comment {
     pub id: String,
+    pub tenant_id: String,
     pub post_id: String,
     pub author_id: Option<String>,
     pub nickname: Option<String>,
@@ -54,12 +54,21 @@ pub struct CommentResponse {
 /// 根据评论 ID 查找评论
 ///
 /// 返回 `Ok(Some(comment))` 或 `Ok(None)`（未找到时）。
-pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<Comment>> {
-    let sql = crate::db::dialect::translate("SELECT * FROM comments WHERE id = ?");
-    let comment = sqlx::query_as::<_, Comment>(&sql)
-        .bind(id)
-        .fetch_optional(pool)
-        .await?;
+pub async fn find_by_id(
+    pool: &crate::db::Pool,
+    id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<Comment>> {
+    let sql_str = format!(
+        "SELECT * FROM comments WHERE id = ?{}",
+        tenant_filter(tenant_id)
+    );
+    let sql = crate::db::dialect::translate(&sql_str);
+    let mut q = sqlx::query_as::<_, Comment>(&sql).bind(id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let comment = q.fetch_optional(pool).await?;
     Ok(comment)
 }
 
@@ -70,25 +79,28 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<Co
 pub async fn create(
     pool: &crate::db::Pool,
     cmd: &crate::commands::CreateCommentCmd,
+    tenant_id: Option<&str>,
 ) -> AppResult<Comment> {
-    let id = Uuid::now_v7().to_string();
-    let now = Utc::now().to_rfc3339();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let tid = resolve_tenant(tenant_id);
 
-    sqlx::query!(
-        "INSERT INTO comments (id, post_id, author_id, nickname, email, content, parent_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
-        id,
-        cmd.post_id,
-        cmd.author_id,
-        cmd.nickname,
-        cmd.email,
-        cmd.content,
-        cmd.parent_id,
-        now,
-    )
-    .execute(pool)
-    .await?;
+    let sql = crate::db::dialect::translate(
+        "INSERT INTO comments (id, tenant_id, post_id, author_id, nickname, email, content, parent_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+    );
+    sqlx::query(&sql)
+        .bind(&id)
+        .bind(tid)
+        .bind(&cmd.post_id)
+        .bind(&cmd.author_id)
+        .bind(&cmd.nickname)
+        .bind(&cmd.email)
+        .bind(&cmd.content)
+        .bind(&cmd.parent_id)
+        .bind(&now)
+        .execute(pool)
+        .await?;
 
-    find_by_id(pool, &id)
+    find_by_id(pool, &id, Some(tid))
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch created comment")))
 }
@@ -99,14 +111,18 @@ pub async fn create(
 pub async fn find_approved_by_post(
     pool: &crate::db::Pool,
     post_id: &str,
+    tenant_id: Option<&str>,
 ) -> AppResult<Vec<Comment>> {
-    let sql = crate::db::dialect::translate(
-        "SELECT * FROM comments WHERE post_id = ? AND status = 'approved' ORDER BY created_at ASC",
+    let sql_str = format!(
+        "SELECT * FROM comments WHERE post_id = ? AND status = 'approved'{} ORDER BY created_at ASC",
+        tenant_filter(tenant_id)
     );
-    let comments = sqlx::query_as::<_, Comment>(&sql)
-        .bind(post_id)
-        .fetch_all(pool)
-        .await?;
+    let sql = crate::db::dialect::translate(&sql_str);
+    let mut q = sqlx::query_as::<_, Comment>(&sql).bind(post_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let comments = q.fetch_all(pool).await?;
     Ok(comments)
 }
 
@@ -118,25 +134,31 @@ pub async fn find_approved_by_post_paginated(
     post_id: &str,
     page: i64,
     page_size: i64,
+    tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Comment>, i64)> {
     let offset = (page - 1) * page_size;
-    let sql = crate::db::dialect::translate(
-        "SELECT * FROM comments WHERE post_id = ? AND status = 'approved' ORDER BY created_at ASC LIMIT ? OFFSET ?",
+    let sql_str = format!(
+        "SELECT * FROM comments WHERE post_id = ? AND status = 'approved'{} ORDER BY created_at ASC LIMIT ? OFFSET ?",
+        tenant_filter(tenant_id)
     );
-    let comments = sqlx::query_as::<_, Comment>(&sql)
-        .bind(post_id)
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
+    let sql = crate::db::dialect::translate(&sql_str);
+    let mut q = sqlx::query_as::<_, Comment>(&sql).bind(post_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    q = q.bind(page_size).bind(offset);
+    let comments = q.fetch_all(pool).await?;
 
-    let sql = crate::db::dialect::translate(
-        "SELECT COUNT(*) FROM comments WHERE post_id = ? AND status = 'approved'",
+    let sql_str = format!(
+        "SELECT COUNT(*) FROM comments WHERE post_id = ? AND status = 'approved'{}",
+        tenant_filter(tenant_id)
     );
-    let total: i64 = sqlx::query_scalar(&sql)
-        .bind(post_id)
-        .fetch_one(pool)
-        .await?;
+    let sql = crate::db::dialect::translate(&sql_str);
+    let mut q2 = sqlx::query_scalar::<_, i64>(&sql).bind(post_id);
+    if let Some(tid) = tenant_id {
+        q2 = q2.bind(tid);
+    }
+    let total: i64 = q2.fetch_one(pool).await?;
 
     Ok((comments, total))
 }
@@ -144,14 +166,21 @@ pub async fn find_approved_by_post_paginated(
 /// 查询指定文章下的所有评论（含未审核）
 ///
 /// 按 `created_at` 升序排列。仅管理员使用。
-pub async fn find_all_by_post(pool: &crate::db::Pool, post_id: &str) -> AppResult<Vec<Comment>> {
-    let sql = crate::db::dialect::translate(
-        "SELECT * FROM comments WHERE post_id = ? ORDER BY created_at ASC",
+pub async fn find_all_by_post(
+    pool: &crate::db::Pool,
+    post_id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Vec<Comment>> {
+    let sql_str = format!(
+        "SELECT * FROM comments WHERE post_id = ?{} ORDER BY created_at ASC",
+        tenant_filter(tenant_id)
     );
-    let comments = sqlx::query_as::<_, Comment>(&sql)
-        .bind(post_id)
-        .fetch_all(pool)
-        .await?;
+    let sql = crate::db::dialect::translate(&sql_str);
+    let mut q = sqlx::query_as::<_, Comment>(&sql).bind(post_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let comments = q.fetch_all(pool).await?;
     Ok(comments)
 }
 
@@ -174,20 +203,28 @@ pub async fn find_all_paginated(
     pool: &crate::db::Pool,
     page: i64,
     page_size: i64,
+    tenant_id: Option<&str>,
 ) -> AppResult<(Vec<AdminCommentRow>, i64)> {
     let offset = (page - 1) * page_size;
-    let sql = crate::db::dialect::translate(
-        "SELECT c.id, c.post_id, p.title AS post_title, c.author_id, c.nickname, c.email, c.content, c.parent_id, c.status, c.created_at FROM comments c JOIN posts p ON c.post_id = p.id ORDER BY c.created_at DESC LIMIT ? OFFSET ?",
+    let sql_str = format!(
+        "SELECT c.id, c.post_id, p.title AS post_title, c.author_id, c.nickname, c.email, c.content, c.parent_id, c.status, c.created_at FROM comments c JOIN posts p ON c.post_id = p.id WHERE 1=1{} ORDER BY c.created_at DESC LIMIT ? OFFSET ?",
+        tenant_filter_aliased("c", tenant_id)
     );
-    let rows = sqlx::query_as::<_, AdminCommentRow>(&sql)
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
+    let sql = crate::db::dialect::translate(&sql_str);
+    let mut q = sqlx::query_as::<_, AdminCommentRow>(&sql);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    q = q.bind(page_size).bind(offset);
+    let rows = q.fetch_all(pool).await?;
 
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM comments")
-        .fetch_one(pool)
-        .await?;
+    let sql2 = format!("SELECT COUNT(*) FROM comments WHERE 1=1{}", tenant_filter(tenant_id));
+    let sql2 = crate::db::dialect::translate(&sql2);
+    let mut q2 = sqlx::query_scalar::<_, i64>(&sql2);
+    if let Some(tid) = tenant_id {
+        q2 = q2.bind(tid);
+    }
+    let total: i64 = q2.fetch_one(pool).await?;
 
     Ok((rows, total))
 }
@@ -195,29 +232,36 @@ pub async fn find_all_paginated(
 /// 更新评论审核状态
 ///
 /// 若评论不存在则返回 [`AppError::NotFound`]。
-pub async fn update_status(pool: &crate::db::Pool, id: &str, status: &str) -> AppResult<()> {
-    let result = sqlx::query!("UPDATE comments SET status = ? WHERE id = ?", status, id,)
-        .execute(pool)
-        .await?;
-
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound("comment".into()));
+pub async fn update_status(
+    pool: &crate::db::Pool,
+    id: &str,
+    status: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    let sql = format!("UPDATE comments SET status = ? WHERE id = ?{}", tenant_filter(tenant_id));
+    let sql = crate::db::dialect::translate(&sql);
+    let mut q = sqlx::query(&sql).bind(status).bind(id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
     }
-    Ok(())
+    let result = q.execute(pool).await?;
+
+    AppError::expect_affected(&result, "comment")
 }
 
 /// 删除评论
 ///
 /// 若评论不存在则返回 [`AppError::NotFound`]。
-pub async fn delete(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
-    let result = sqlx::query!("DELETE FROM comments WHERE id = ?", id)
-        .execute(pool)
-        .await?;
-
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound("comment".into()));
+pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
+    let sql = format!("DELETE FROM comments WHERE id = ?{}", tenant_filter(tenant_id));
+    let sql = crate::db::dialect::translate(&sql);
+    let mut q = sqlx::query(&sql).bind(id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
     }
-    Ok(())
+    let result = q.execute(pool).await?;
+
+    AppError::expect_affected(&result, "comment")
 }
 
 /// 计算评论的嵌套深度
@@ -246,6 +290,7 @@ fn get_depth(comments: &[Comment], comment: &Comment) -> i32 {
 ///
 /// 使用 `HashMap` 按 `parent_id` 分组，然后递归构建子评论树。
 /// 顶层评论的 `parent_id` 为 `None`（用空字符串作为 key）。
+#[must_use]
 pub fn build_tree(comments: &[Comment]) -> Vec<CommentResponse> {
     let map: std::collections::HashMap<String, Vec<Comment>> =
         comments
@@ -299,7 +344,7 @@ pub fn validate_depth(comments: &[Comment], parent_id: &str) -> AppResult<()> {
     let parent = comments
         .iter()
         .find(|c| c.id == parent_id)
-        .ok_or_else(|| AppError::NotFound("parent comment".into()))?;
+        .ok_or_else(|| AppError::not_found("parent comment"))?;
 
     let depth = get_depth(comments, parent);
     if depth >= MAX_DEPTH {
@@ -315,6 +360,7 @@ mod tests {
     fn make_comment(id: &str, post_id: &str, parent_id: Option<&str>) -> Comment {
         Comment {
             id: id.to_string(),
+            tenant_id: crate::db::tenant::DEFAULT_TENANT.to_string(),
             post_id: post_id.to_string(),
             author_id: None,
             nickname: None,

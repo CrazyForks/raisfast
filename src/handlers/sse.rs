@@ -1,6 +1,6 @@
 //! SSE（Server-Sent Events）实时推送处理器
 //!
-//! 将 EventBus 的事件流转换为 HTTP SSE 推送，供前端实时接收业务事件。
+//! 将 `EventBus` 的事件流转换为 HTTP SSE 推送，供前端实时接收业务事件。
 //! 支持按事件类型过滤和心跳保活。
 
 use std::convert::Infallible;
@@ -33,6 +33,11 @@ fn event_type_name(event: &Event) -> &'static str {
         Event::PostDeleted { .. } => "PostDeleted",
         Event::CommentCreated { .. } => "CommentCreated",
         Event::CommentDeleted { .. } => "CommentDeleted",
+        Event::ContentCreating { .. } => "ContentCreating",
+        Event::ContentCreated { .. } => "ContentCreated",
+        Event::ContentUpdating { .. } => "ContentUpdating",
+        Event::ContentUpdated { .. } => "ContentUpdated",
+        Event::ContentDeleted { .. } => "ContentDeleted",
         Event::UserRegistered { .. } => "UserRegistered",
         Event::UserLoggedIn { .. } => "UserLoggedIn",
         Event::MediaUploaded { .. } => "MediaUploaded",

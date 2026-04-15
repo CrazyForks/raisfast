@@ -31,8 +31,7 @@ pub async fn create_token(
     token: &str,
     expires_at: &str,
 ) -> AppResult<()> {
-    let id = uuid::Uuid::now_v7().to_string();
-    let now = chrono::Utc::now().to_rfc3339();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     sqlx::query!(
         "INSERT INTO refresh_tokens (id, user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
         id,

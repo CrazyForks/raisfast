@@ -9,4 +9,7 @@
 pub mod auth;
 pub mod comment;
 pub mod media;
+pub mod options;
 pub mod post;
+pub mod rbac;
+pub mod tenant;

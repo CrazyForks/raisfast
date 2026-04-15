@@ -14,6 +14,7 @@ pub struct ScheduledPublishHandler {
 
 impl ScheduledPublishHandler {
     /// 创建新的定时发布处理器
+    #[must_use]
     pub fn new(pool: Pool) -> Self {
         Self { pool }
     }
@@ -26,7 +27,7 @@ impl JobHandler for ScheduledPublishHandler {
             return Ok(());
         };
 
-        let post = crate::models::post::find_by_id(&self.pool, post_id).await?;
+        let post = crate::models::post::find_by_id(&self.pool, post_id, Some(crate::db::tenant::DEFAULT_TENANT)).await?;
         let Some(post) = post else {
             tracing::warn!("[publish] post {} not found, skipping", post_id);
             return Ok(());
@@ -50,6 +51,7 @@ impl JobHandler for ScheduledPublishHandler {
                 category_id: None,
                 tag_ids: None,
             },
+            Some(crate::db::tenant::DEFAULT_TENANT),
         )
         .await?;
 
@@ -74,6 +76,18 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(include_str!("../../../migrations/009_options.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(include_str!("../../../migrations/010_rbac.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(include_str!("../../../migrations/011_tenants.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
         pool
     }
 
@@ -85,10 +99,13 @@ mod tests {
                 username: "author".to_string(),
                 password_hash: "hash".to_string(),
             },
+            Some(crate::db::tenant::DEFAULT_TENANT),
         )
         .await
         .unwrap();
-        user::update_role(pool, &u.id, "author").await.unwrap();
+        user::update_role(pool, &u.id, "author", Some(crate::db::tenant::DEFAULT_TENANT))
+            .await
+            .unwrap();
         u.id
     }
 
@@ -110,6 +127,7 @@ mod tests {
                 category_id: None,
                 tag_ids: None,
             },
+            Some(crate::db::tenant::DEFAULT_TENANT),
         )
         .await
         .unwrap();
@@ -120,7 +138,10 @@ mod tests {
         };
         assert!(handler.handle(&job).await.is_ok());
 
-        let updated = post::find_by_id(&pool, &p.id).await.unwrap().unwrap();
+        let updated = post::find_by_id(&pool, &p.id, Some(crate::db::tenant::DEFAULT_TENANT))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(updated.status, "published");
         assert!(updated.published_at.is_some());
     }
@@ -143,6 +164,7 @@ mod tests {
                 category_id: None,
                 tag_ids: None,
             },
+            Some(crate::db::tenant::DEFAULT_TENANT),
         )
         .await
         .unwrap();

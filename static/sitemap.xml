@@ -4,6 +4,18 @@
     <loc>http://0.0.0.0:9000</loc>
   </url>
   <url>
+    <loc>http://0.0.0.0:9000/posts/rustyou-shen-me-you-xiu-de-xiang-liang-cun-chu-ku-ma-2</loc>
+    <lastmod>2026-04-14T14:25:47.261466+00:00</lastmod>
+  </url>
+  <url>
+    <loc>http://0.0.0.0:9000/posts/rustbian-cheng-ru-men</loc>
+    <lastmod>2026-04-14T13:57:47.350577+00:00</lastmod>
+  </url>
+  <url>
+    <loc>http://0.0.0.0:9000/posts/test-post</loc>
+    <lastmod>2026-04-14T13:57:17.027894+00:00</lastmod>
+  </url>
+  <url>
     <loc>http://0.0.0.0:9000/posts/test-post-debug</loc>
     <lastmod>2026-04-14T02:21:40.474129+00:00</lastmod>
   </url>

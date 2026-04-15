@@ -1,8 +1,12 @@
 //! JWT 认证提取器
 //!
 //! 本模块提供基于 JWT（HS256）Bearer Token 的身份验证中间件。
-//! 通过实现 Axum 的 [`FromRequestParts`] trait，将三个提取器作为 handler 参数使用，
+//! 通过实现 Axum 的 [`FromRequestParts`] trait，将提取器作为 handler 参数使用，
 //! 框架会自动从请求头中解析并验证令牌，提取用户身份与角色信息。
+//!
+//! # 核心类型
+//!
+//! - [`AuthIdentity`] — 通用身份信息（`user_id` + `role`）
 //!
 //! # 提取器
 //!
@@ -17,32 +21,47 @@ use axum::http::request::Parts;
 
 use crate::AppState;
 use crate::errors::app_error::AppError;
-use crate::services::auth::Claims;
+use crate::utils::auth::extract_claims;
 
-/// 从请求头中提取并验证 JWT claims。
+/// 通用已认证用户身份
 ///
-/// 公共逻辑：读取 `Authorization: Bearer <token>` 头，验证签名和有效期。
-/// 三个提取器共用此函数，避免重复代码。
-fn extract_claims(parts: &mut Parts, state: &AppState) -> Result<Claims, AppError> {
-    let secret = &state.config.jwt_secret;
-    let auth_header = parts
-        .headers
-        .get("Authorization")
-        .and_then(|v| v.to_str().ok())
-        .ok_or(AppError::Unauthorized)?;
+/// 从 JWT claims 中提取的 `user_id`（`sub` 声明）和 `role`（`role` 声明）。
+/// 各角色提取器共用此结构体，通过 `Deref` 便捷访问字段。
+#[derive(Debug, Clone)]
+pub struct AuthIdentity {
+    pub user_id: String,
+    pub role: String,
+    pub tenant_id: String,
+}
 
-    let token = auth_header
-        .strip_prefix("Bearer ")
-        .ok_or(AppError::Unauthorized)?;
+impl std::ops::Deref for AuthUser {
+    type Target = AuthIdentity;
 
-    crate::services::auth::verify_token(token, secret)
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for AdminUser {
+    type Target = AuthIdentity;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for AuthorUser {
+    type Target = AuthIdentity;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 /// 已认证用户提取器
 ///
 /// 从请求的 `Authorization` 头中提取 Bearer Token，验证 JWT 签名后
-/// 解析出用户 ID（`sub` 声明）和角色（`role` 声明）。
-/// 适用于任何需要登录身份的路由，不限制角色。
+/// 解析出用户 ID 和角色。适用于任何需要登录身份的路由，不限制角色。
 ///
 /// # 示例
 ///
@@ -50,10 +69,7 @@ fn extract_claims(parts: &mut Parts, state: &AppState) -> Result<Claims, AppErro
 /// async fn get_profile(user: AuthUser) -> Json<Profile> { ... }
 /// ```
 #[derive(Debug, Clone)]
-pub struct AuthUser {
-    pub user_id: String,
-    pub role: String,
-}
+pub struct AuthUser(pub AuthIdentity);
 
 impl FromRequestParts<AppState> for AuthUser {
     type Rejection = AppError;
@@ -65,10 +81,11 @@ impl FromRequestParts<AppState> for AuthUser {
         let result = extract_claims(parts, state);
         async move {
             let claims = result?;
-            Ok(AuthUser {
+            Ok(AuthUser(AuthIdentity {
                 user_id: claims.sub,
                 role: claims.role,
-            })
+                tenant_id: claims.tenant_id,
+            }))
         }
     }
 }
@@ -84,10 +101,7 @@ impl FromRequestParts<AppState> for AuthUser {
 /// async fn delete_user(admin: AdminUser) -> StatusCode { ... }
 /// ```
 #[derive(Debug, Clone)]
-pub struct AdminUser {
-    pub user_id: String,
-    pub role: String,
-}
+pub struct AdminUser(pub AuthIdentity);
 
 impl FromRequestParts<AppState> for AdminUser {
     type Rejection = AppError;
@@ -102,10 +116,11 @@ impl FromRequestParts<AppState> for AdminUser {
             if claims.role != "admin" {
                 return Err(AppError::Forbidden);
             }
-            Ok(AdminUser {
+            Ok(AdminUser(AuthIdentity {
                 user_id: claims.sub,
                 role: claims.role,
-            })
+                tenant_id: claims.tenant_id,
+            }))
         }
     }
 }
@@ -121,10 +136,7 @@ impl FromRequestParts<AppState> for AdminUser {
 /// async fn create_post(author: AuthorUser) -> Json<Post> { ... }
 /// ```
 #[derive(Debug, Clone)]
-pub struct AuthorUser {
-    pub user_id: String,
-    pub role: String,
-}
+pub struct AuthorUser(pub AuthIdentity);
 
 impl FromRequestParts<AppState> for AuthorUser {
     type Rejection = AppError;
@@ -139,10 +151,11 @@ impl FromRequestParts<AppState> for AuthorUser {
             if claims.role != "admin" && claims.role != "author" {
                 return Err(AppError::Forbidden);
             }
-            Ok(AuthorUser {
+            Ok(AuthorUser(AuthIdentity {
                 user_id: claims.sub,
                 role: claims.role,
-            })
+                tenant_id: claims.tenant_id,
+            }))
         }
     }
 }

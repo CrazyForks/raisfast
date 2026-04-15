@@ -80,17 +80,17 @@ fn translate_errors(errors: &ValidationErrors) -> AppResult<()> {
                     let min = error
                         .params
                         .get("min")
-                        .and_then(|v| v.as_u64())
+                        .and_then(serde_json::Value::as_u64)
                         .map(|v| v.to_string());
                     let max = error
                         .params
                         .get("max")
-                        .and_then(|v| v.as_u64())
+                        .and_then(serde_json::Value::as_u64)
                         .map(|v| v.to_string());
                     let exact = error
                         .params
                         .get("value")
-                        .and_then(|v| v.as_u64())
+                        .and_then(serde_json::Value::as_u64)
                         .map(|v| v.to_string());
 
                     match (min.as_deref(), max.as_deref()) {
@@ -148,7 +148,7 @@ fn translate_errors(errors: &ValidationErrors) -> AppResult<()> {
 /// - 若 `fields.{field}` 键存在，返回翻译后的字段名
 /// - 若键不存在（`rust_i18n::t!` 回退为键名本身），则返回原始字段名作为兜底
 fn translate_field(field: &str) -> String {
-    let key = format!("fields.{}", field);
+    let key = format!("fields.{field}");
     let translated = rust_i18n::t!(&key);
     if translated == key {
         field.to_string()

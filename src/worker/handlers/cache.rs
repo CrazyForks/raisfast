@@ -17,6 +17,7 @@ impl Default for InvalidateCacheHandler {
 
 impl InvalidateCacheHandler {
     /// 创建新的缓存失效处理器
+    #[must_use]
     pub fn new() -> Self {
         Self
     }

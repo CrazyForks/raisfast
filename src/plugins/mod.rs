@@ -10,7 +10,7 @@
 //! - **权限执行**: manifest 声明的 permissions 在运行时强制校验
 //! - **生命周期 Hook**: `on_load` / `on_unload` 回调
 //! - **错误恢复**: 连续错误达到阈值自动禁用插件
-//! - **EventBus**: 事件驱动架构，插件可订阅内部事件
+//! - **`EventBus`**: 事件驱动架构，插件可订阅内部事件
 //! - **性能指标**: 每个插件的 Hook 执行耗时、错误次数统计
 //! - **依赖管理**: manifest 可声明插件依赖，加载时检测
 //! - **管理 API**: 运行时启用/禁用/重载插件
@@ -146,7 +146,7 @@ struct LoadedPlugin {
 /// 插件系统核心管理器
 ///
 /// 负责插件的加载、卸载、Hook 调度。
-/// 通过 `Arc<PluginManager>` 共享在 AppState 中。
+/// 通过 `Arc<PluginManager>` 共享在 `AppState` 中。
 pub struct PluginManager {
     #[cfg(feature = "plugin-wasm")]
     engine: wasmtime::Engine,
@@ -202,20 +202,20 @@ pub struct PluginInfoResponse {
     pub permissions: Permissions,
 }
 
-/// 设置 PluginManager 的可选依赖
+/// 设置 `PluginManager` 的可选依赖
 pub struct PluginManagerOptions {
     pub pool: Option<Pool>,
 }
 
 impl PluginManager {
-    /// 创建新的 PluginManager 并加载插件目录，返回 `Arc<Self>`。
+    /// 创建新的 `PluginManager` 并加载插件目录，返回 `Arc<Self>`。
     ///
     /// 返回 `Arc` 是因为热重载 watcher 需要持有自引用来执行 reload。
     pub async fn new(config: Arc<AppConfig>) -> Arc<Self> {
         Self::new_with_options(config, PluginManagerOptions { pool: None }).await
     }
 
-    /// 带可选依赖创建 PluginManager
+    /// 带可选依赖创建 `PluginManager`
     pub async fn new_with_options(config: Arc<AppConfig>, opts: PluginManagerOptions) -> Arc<Self> {
         #[cfg(feature = "plugin-wasm")]
         let engine = {
@@ -900,7 +900,7 @@ impl PluginManager {
         }
     }
 
-    /// 调度 render_markdown Hook（第一个返回 Some 的插件胜出）
+    /// 调度 `render_markdown` Hook（第一个返回 Some 的插件胜出）
     pub async fn dispatch_render_override(&self, content: &str) -> Option<String> {
         let plugins = self.plugins.read().await;
         if plugins.is_empty() {
@@ -1049,7 +1049,7 @@ impl PluginManager {
         let plugins = self.plugins.read().await;
         let plugin = plugins
             .get(id)
-            .ok_or_else(|| AppError::NotFound("plugin".into()))?;
+            .ok_or_else(|| AppError::not_found("plugin"))?;
         let mut health = plugin.health.write().await;
         health.auto_disabled = false;
         health.error_count = 0;
@@ -1063,7 +1063,7 @@ impl PluginManager {
         let plugins = self.plugins.read().await;
         let plugin = plugins
             .get(id)
-            .ok_or_else(|| AppError::NotFound("plugin".into()))?;
+            .ok_or_else(|| AppError::not_found("plugin"))?;
         let mut health = plugin.health.write().await;
         health.auto_disabled = true;
         Ok(())
@@ -1151,7 +1151,7 @@ impl PluginManager {
         self.pool.as_ref()
     }
 
-    /// 调度 handle_route Hook（自定义路由）
+    /// 调度 `handle_route` Hook（自定义路由）
     pub async fn dispatch_route(
         &self,
         path: &str,
@@ -1223,8 +1223,10 @@ impl PluginManager {
             match result {
                 Ok(Some(result)) => {
                     if let Some(body) = result.get("body").and_then(|b| b.as_str()) {
-                        let status =
-                            result.get("status").and_then(|s| s.as_u64()).unwrap_or(200) as u16;
+                        let status = result
+                            .get("status")
+                            .and_then(serde_json::Value::as_u64)
+                            .unwrap_or(200) as u16;
                         let status_code = axum::http::StatusCode::from_u16(status)
                             .unwrap_or(axum::http::StatusCode::OK);
                         self.reset_error_count(&plugin_id).await;
@@ -1314,7 +1316,7 @@ fn topological_sort(manifests: &HashMap<String, PluginManifest>) -> Vec<String> 
         .filter(|(_, deg)| **deg == 0)
         .map(|(&id, _)| id)
         .collect();
-    queue.sort();
+    queue.sort_unstable();
 
     let mut result = Vec::new();
     while let Some(id) = queue.pop() {
@@ -1325,7 +1327,7 @@ fn topological_sort(manifests: &HashMap<String, PluginManifest>) -> Vec<String> 
                     *deg -= 1;
                     if *deg == 0 {
                         queue.push(dep);
-                        queue.sort();
+                        queue.sort_unstable();
                     }
                 }
             }
@@ -1385,6 +1387,7 @@ mod tests {
             cron_log_retention_days: 30,
             search_engine: "none".into(),
             search_index_dir: "./data/search_index".into(),
+            content_type_dir: "./content_types".into(),
         })
     }
 
@@ -2558,6 +2561,9 @@ priority = 10
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
             cron: vec![],
+            content_types: vec![],
+            routes: vec![],
+            admin_pages: vec![],
         }
     }
 
@@ -2877,6 +2883,7 @@ Plugin = {
             cron_log_retention_days: 30,
             search_engine: "none".into(),
             search_index_dir: "./data/search_index".into(),
+            content_type_dir: "./content_types".into(),
         });
 
         let mgr = PluginManager::new_with_options(

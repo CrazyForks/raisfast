@@ -98,6 +98,8 @@ pub struct AppConfig {
     pub search_engine: String,
     #[serde(default = "default_search_index_dir")]
     pub search_index_dir: String,
+    #[serde(default = "default_content_type_dir")]
+    pub content_type_dir: String,
 }
 
 /// 单条 Cron 调度配置
@@ -131,6 +133,11 @@ fn default_search_index_dir() -> String {
     "./data/search_index".into()
 }
 
+fn default_content_type_dir() -> String {
+    "./content_types".into()
+}
+
+#[must_use]
 pub fn default_cron_schedules() -> Vec<CronScheduleConfig> {
     vec![
         CronScheduleConfig {
@@ -226,6 +233,7 @@ const DEFAULT_JWT_SECRET: &str = "change-me-in-production-at-least-32-chars";
 
 impl AppConfig {
     /// 从环境变量构建配置，缺失变量使用默认值。
+    #[must_use]
     pub fn from_env() -> Self {
         let host = env::var("APP_HOST").unwrap_or_else(|_| "0.0.0.0".into());
         let port: u16 = env::var("APP_PORT")
@@ -233,7 +241,7 @@ impl AppConfig {
             .and_then(|v| v.parse().ok())
             .unwrap_or(3000);
 
-        let base_url = env::var("BASE_URL").unwrap_or_else(|_| format!("http://{}:{}", host, port));
+        let base_url = env::var("BASE_URL").unwrap_or_else(|_| format!("http://{host}:{port}"));
 
         let cors_origins = env::var("CORS_ORIGINS").ok().filter(|s| !s.is_empty());
         let tls_cert_path = env::var("TLS_CERT_PATH").ok().filter(|s| !s.is_empty());
@@ -379,6 +387,8 @@ impl AppConfig {
             search_engine: env::var("SEARCH_ENGINE").unwrap_or_else(|_| default_search_engine()),
             search_index_dir: env::var("SEARCH_INDEX_DIR")
                 .unwrap_or_else(|_| default_search_index_dir()),
+            content_type_dir: env::var("CONTENT_TYPE_DIR")
+                .unwrap_or_else(|_| default_content_type_dir()),
         }
     }
 
@@ -395,17 +405,15 @@ impl AppConfig {
         let config = Self::from_env();
 
         if config.env == "production" {
-            if config.jwt_secret == DEFAULT_JWT_SECRET {
-                panic!(
-                    "FATAL: JWT_SECRET must be set in production. Refusing to start with default secret."
-                );
-            }
-            if config.cors_origins.is_none() {
-                panic!(
-                    "FATAL: CORS_ORIGINS must be set in production. \
-                     Refusing to start with wildcard CORS."
-                );
-            }
+            assert!(
+                config.jwt_secret != DEFAULT_JWT_SECRET,
+                "FATAL: JWT_SECRET must be set in production. Refusing to start with default secret."
+            );
+            assert!(
+                config.cors_origins.is_some(),
+                "FATAL: CORS_ORIGINS must be set in production. \
+                 Refusing to start with wildcard CORS."
+            );
         }
 
         tracing::info!(

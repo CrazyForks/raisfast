@@ -27,14 +27,21 @@ use crate::repositories::{RefreshTokenRepository, UserRepository};
 ///
 /// - `sub`：用户 ID。
 /// - `role`：用户角色（如 `"admin"`、`"author"`）。
+/// - `tenant_id`：所属租户 ID（默认 `"default"`）。
 /// - `exp`：过期时间（UNIX 时间戳）。
 /// - `iat`：签发时间（UNIX 时间戳）。
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     pub sub: String,
     pub role: String,
+    #[serde(default = "default_tenant_id")]
+    pub tenant_id: String,
     pub exp: usize,
     pub iat: usize,
+}
+
+fn default_tenant_id() -> String {
+    crate::db::tenant::DEFAULT_TENANT.to_string()
 }
 
 /// 校验密码强度。
@@ -50,12 +57,12 @@ pub fn validate_password_strength(password: &str) -> AppResult<()> {
             "password must be at least 8 characters".into(),
         ));
     }
-    if !password.chars().any(|c| c.is_uppercase()) {
+    if !password.chars().any(char::is_uppercase) {
         return Err(AppError::BadRequest(
             "password must contain at least one uppercase letter".into(),
         ));
     }
-    if !password.chars().any(|c| c.is_lowercase()) {
+    if !password.chars().any(char::is_lowercase) {
         return Err(AppError::BadRequest(
             "password must contain at least one lowercase letter".into(),
         ));
@@ -74,13 +81,13 @@ pub fn validate_password_strength(password: &str) -> AppResult<()> {
 pub fn hash_password(password: &str) -> AppResult<String> {
     let mut salt_bytes = [0u8; 32];
     getrandom::getrandom(&mut salt_bytes)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("salt generation failed: {}", e)))?;
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("salt generation failed: {e}")))?;
     let salt = SaltString::encode_b64(&salt_bytes)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("salt encoding failed: {}", e)))?;
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("salt encoding failed: {e}")))?;
     let argon2 = Argon2::default();
     let hash = argon2
         .hash_password(password.as_bytes(), &salt)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("password hashing failed: {}", e)))?;
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("password hashing failed: {e}")))?;
     Ok(hash.to_string())
 }
 
@@ -89,7 +96,7 @@ pub fn hash_password(password: &str) -> AppResult<String> {
 /// 返回 `Ok(true)` 表示匹配，`Ok(false)` 表示不匹配。
 pub fn verify_password(password: &str, hash: &str) -> AppResult<bool> {
     let parsed = PasswordHash::new(hash)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid password hash: {}", e)))?;
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid password hash: {e}")))?;
     Ok(Argon2::default()
         .verify_password(password.as_bytes(), &parsed)
         .is_ok())
@@ -99,6 +106,7 @@ pub fn verify_password(password: &str, hash: &str) -> AppResult<bool> {
 fn generate_access_token(
     user_id: &str,
     role: &str,
+    tenant_id: &str,
     secret: &str,
     expires_in: u64,
 ) -> AppResult<String> {
@@ -108,6 +116,7 @@ fn generate_access_token(
     let claims = Claims {
         sub: user_id.to_string(),
         role: role.to_string(),
+        tenant_id: tenant_id.to_string(),
         exp,
         iat,
     };
@@ -116,7 +125,7 @@ fn generate_access_token(
         &claims,
         &EncodingKey::from_secret(secret.as_bytes()),
     )
-    .map_err(|e| AppError::Internal(anyhow::anyhow!("token encoding failed: {}", e)))
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("token encoding failed: {e}")))
 }
 
 /// 验证并解码 JWT 令牌。
@@ -138,18 +147,19 @@ pub fn verify_token(token: &str, secret: &str) -> AppResult<Claims> {
 /// 生成 32 字节随机刷新令牌，以十六进制字符串返回。
 fn generate_refresh_token_string() -> AppResult<String> {
     let mut bytes = [0u8; 32];
-    getrandom::getrandom(&mut bytes).map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("refresh token generation failed: {}", e))
-    })?;
+    getrandom::getrandom(&mut bytes)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("refresh token generation failed: {e}")))?;
     Ok(hex::encode(bytes))
 }
 
 /// 测试辅助：使用固定 secret 生成 JWT token。
 #[allow(clippy::doc_lazy_continuation)]
+#[must_use]
 pub fn generate_access_token_for_test(user_id: &str, role: &str) -> String {
     generate_access_token(
         user_id,
         role,
+        crate::db::tenant::DEFAULT_TENANT,
         "test-secret-key-at-least-32-characters-long",
         900,
     )
@@ -163,19 +173,27 @@ pub async fn register(
     user_repo: &dyn UserRepository,
     eventbus: &EventBus,
     req: RegisterRequest,
+    tenant_id: Option<&str>,
 ) -> AppResult<UserResponse> {
-    if user_repo.find_by_email(&req.email).await?.is_some() {
+    if user_repo
+        .find_by_email(&req.email, tenant_id)
+        .await?
+        .is_some()
+    {
         return Err(AppError::Conflict("email_registered".into()));
     }
 
     validate_password_strength(&req.password)?;
     let password_hash = hash_password(&req.password)?;
     let user = user_repo
-        .create(CreateUserCmd {
-            email: req.email,
-            username: req.username,
-            password_hash,
-        })
+        .create(
+            CreateUserCmd {
+                email: req.email,
+                username: req.username,
+                password_hash,
+            },
+            tenant_id,
+        )
         .await?;
     eventbus.emit(Event::UserRegistered {
         id: user.id.clone(),
@@ -198,9 +216,10 @@ pub async fn login(
     jwt_secret: &str,
     jwt_access_expires: u64,
     jwt_refresh_expires: u64,
+    tenant_id: Option<&str>,
 ) -> AppResult<LoginResponse> {
     let user = user_repo
-        .find_by_email(&req.email)
+        .find_by_email(&req.email, tenant_id)
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
 
@@ -214,7 +233,13 @@ pub async fn login(
         return Err(AppError::Unauthorized);
     }
 
-    let access_token = generate_access_token(&user.id, &user.role, jwt_secret, jwt_access_expires)?;
+    let access_token = generate_access_token(
+        &user.id,
+        &user.role,
+        &user.tenant_id,
+        jwt_secret,
+        jwt_access_expires,
+    )?;
     let refresh_token_str = generate_refresh_token_string()?;
 
     let expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
@@ -246,6 +271,7 @@ pub async fn login(
 ///
 /// 验证刷新令牌的有效性，执行令牌轮换：在事务中删除旧刷新令牌，
 /// 生成新的访问令牌和刷新令牌，确保原子性。
+#[allow(clippy::too_many_arguments)]
 pub async fn refresh(
     user_repo: &dyn UserRepository,
     refresh_token_repo: &dyn RefreshTokenRepository,
@@ -254,6 +280,7 @@ pub async fn refresh(
     jwt_secret: &str,
     jwt_access_expires: u64,
     jwt_refresh_expires: u64,
+    tenant_id: Option<&str>,
 ) -> AppResult<LoginResponse> {
     let stored = refresh_token_repo
         .find_by_token(refresh_token_str)
@@ -269,11 +296,17 @@ pub async fn refresh(
     }
 
     let user = user_repo
-        .find_by_id(&stored.user_id)
+        .find_by_id(&stored.user_id, tenant_id)
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
 
-    let access_token = generate_access_token(&user.id, &user.role, jwt_secret, jwt_access_expires)?;
+    let access_token = generate_access_token(
+        &user.id,
+        &user.role,
+        &user.tenant_id,
+        jwt_secret,
+        jwt_access_expires,
+    )?;
     let new_refresh_token = generate_refresh_token_string()?;
     let new_expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
     let new_expires_str = new_expires_at.to_rfc3339();
@@ -321,11 +354,15 @@ pub async fn logout(
 }
 
 /// 获取当前用户资料。
-pub async fn get_me(user_repo: &dyn UserRepository, user_id: &str) -> AppResult<UserResponse> {
+pub async fn get_me(
+    user_repo: &dyn UserRepository,
+    user_id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<UserResponse> {
     let user = user_repo
-        .find_by_id(user_id)
+        .find_by_id(user_id, tenant_id)
         .await?
-        .ok_or_else(|| AppError::NotFound("user".into()))?;
+        .ok_or_else(|| AppError::not_found("user"))?;
     Ok(user.into())
 }
 
@@ -334,15 +371,19 @@ pub async fn update_me(
     user_repo: &dyn UserRepository,
     user_id: &str,
     req: UpdateUserRequest,
+    tenant_id: Option<&str>,
 ) -> AppResult<UserResponse> {
     let user = user_repo
-        .update_profile(UpdateProfileCmd {
-            id: user_id.to_string(),
-            username: req.username,
-            bio: req.bio,
-            website: req.website,
-            avatar: req.avatar,
-        })
+        .update_profile(
+            UpdateProfileCmd {
+                id: user_id.to_string(),
+                username: req.username,
+                bio: req.bio,
+                website: req.website,
+                avatar: req.avatar,
+            },
+            tenant_id,
+        )
         .await?;
     Ok(user.into())
 }
@@ -356,11 +397,12 @@ pub async fn change_password(
     pool: &crate::db::Pool,
     user_id: &str,
     req: UpdatePasswordRequest,
+    tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let user = user_repo
-        .find_by_id(user_id)
+        .find_by_id(user_id, tenant_id)
         .await?
-        .ok_or_else(|| AppError::NotFound("user".into()))?;
+        .ok_or_else(|| AppError::not_found("user"))?;
 
     if !verify_password(&req.old_password, &user.password_hash)? {
         return Err(AppError::BadRequest("incorrect_password".into()));
@@ -368,33 +410,26 @@ pub async fn change_password(
 
     validate_password_strength(&req.new_password)?;
     let new_hash = hash_password(&req.new_password)?;
-    let now = Utc::now().to_rfc3339();
-
-    let mut tx = pool.begin().await?;
-
-    sqlx::query!(
-        "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
-        new_hash,
-        now,
-        user_id,
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    sqlx::query!("DELETE FROM refresh_tokens WHERE user_id = ?", user_id,)
-        .execute(&mut *tx)
+    user_repo
+        .update_password(user_id, &new_hash, tenant_id)
         .await?;
 
-    tx.commit().await?;
+    sqlx::query!("DELETE FROM refresh_tokens WHERE user_id = ?", user_id,)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
 /// 获取指定用户的公开资料。
-pub async fn get_public_user(user_repo: &dyn UserRepository, id: &str) -> AppResult<UserResponse> {
+pub async fn get_public_user(
+    user_repo: &dyn UserRepository,
+    id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<UserResponse> {
     let user = user_repo
-        .find_by_id(id)
+        .find_by_id(id, tenant_id)
         .await?
-        .ok_or_else(|| AppError::NotFound("user".into()))?;
+        .ok_or_else(|| AppError::not_found("user"))?;
     Ok(user.into())
 }
 
@@ -405,8 +440,9 @@ pub async fn list_users(
     user_repo: &dyn UserRepository,
     page: i64,
     page_size: i64,
+    tenant_id: Option<&str>,
 ) -> AppResult<(Vec<UserResponse>, i64)> {
-    let (users, total) = user_repo.find_all(page, page_size).await?;
+    let (users, total) = user_repo.find_all(page, page_size, tenant_id).await?;
     let responses = users.into_iter().map(UserResponse::from).collect();
     Ok((responses, total))
 }

@@ -6,5 +6,6 @@
 pub mod connection;
 pub mod dialect;
 pub mod pool;
+pub mod tenant;
 
 pub use pool::{Pool, Transaction};

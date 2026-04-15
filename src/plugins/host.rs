@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use wasmtime::*;
+use wasmtime::{Caller, Linker};
 
 use crate::plugins::host_common::HostContext;
 
@@ -51,7 +51,10 @@ fn read_string(caller: &mut Caller<'_, Arc<HostContext>>, ptr: i32, len: i32) ->
 fn write_string(caller: &mut Caller<'_, Arc<HostContext>>, s: &str) -> i32 {
     let bytes = s.as_bytes();
     let total_len = 4 + bytes.len();
-    let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+    let mem = match caller
+        .get_export("memory")
+        .and_then(wasmtime::Extern::into_memory)
+    {
         Some(m) => m,
         None => return 0,
     };
@@ -160,11 +163,7 @@ fn host_set_data(
         Some(v) => v,
         None => return 0,
     };
-    if caller.data().set_data(&key, &value) {
-        1
-    } else {
-        0
-    }
+    i32::from(caller.data().set_data(&key, &value))
 }
 
 fn host_get_post(caller: Caller<'_, Arc<HostContext>>, slug_ptr: i32, slug_len: i32) -> i32 {
@@ -217,11 +216,7 @@ fn host_fs_write(
         Some(s) => s,
         None => return 0,
     };
-    if caller.data().fs_write(&path, &content).is_ok() {
-        1
-    } else {
-        0
-    }
+    i32::from(caller.data().fs_write(&path, &content).is_ok())
 }
 
 fn host_fs_delete(caller: Caller<'_, Arc<HostContext>>, path_ptr: i32, path_len: i32) -> i32 {
@@ -230,11 +225,7 @@ fn host_fs_delete(caller: Caller<'_, Arc<HostContext>>, path_ptr: i32, path_len:
         Some(s) => s,
         None => return 0,
     };
-    if caller.data().fs_delete(&path).is_ok() {
-        1
-    } else {
-        0
-    }
+    i32::from(caller.data().fs_delete(&path).is_ok())
 }
 
 fn host_fs_exists(caller: Caller<'_, Arc<HostContext>>, path_ptr: i32, path_len: i32) -> i32 {

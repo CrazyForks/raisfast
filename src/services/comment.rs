@@ -40,18 +40,19 @@ pub async fn create_comment(
     parent_id: Option<&str>,
     nickname: Option<&str>,
     email: Option<&str>,
+    tenant_id: Option<&str>,
 ) -> AppResult<CommentResponse> {
     let p = post_repo
-        .find_by_slug(post_slug)
+        .find_by_slug(post_slug, tenant_id)
         .await?
-        .ok_or_else(|| AppError::NotFound("post".into()))?;
+        .ok_or_else(|| AppError::not_found("post"))?;
 
     if let Some(pid) = parent_id {
-        let all_comments = comment_repo.find_approved_by_post(&p.id).await?;
+        let all_comments = comment_repo.find_approved_by_post(&p.id, tenant_id).await?;
         let parent = all_comments
             .iter()
             .find(|c| c.id == pid)
-            .ok_or_else(|| AppError::NotFound("parent_comment".into()))?;
+            .ok_or_else(|| AppError::not_found("parent_comment"))?;
 
         if parent.post_id != p.id {
             return Err(AppError::BadRequest("parent_comment_mismatch".into()));
@@ -62,9 +63,9 @@ pub async fn create_comment(
 
     let comment_input = CommentInput {
         content: content.to_string(),
-        nickname: nickname.map(|s| s.to_string()),
-        email: email.map(|s| s.to_string()),
-        parent_id: parent_id.map(|s| s.to_string()),
+        nickname: nickname.map(std::string::ToString::to_string),
+        email: email.map(std::string::ToString::to_string),
+        parent_id: parent_id.map(std::string::ToString::to_string),
     };
 
     let filtered = plugins
@@ -72,14 +73,17 @@ pub async fn create_comment(
         .await?;
 
     let c = comment_repo
-        .create(CreateCommentCmd {
-            post_id: p.id,
-            author_id: author_id.map(|s| s.to_string()),
-            nickname: filtered.nickname,
-            email: filtered.email,
-            content: filtered.content,
-            parent_id: filtered.parent_id,
-        })
+        .create(
+            CreateCommentCmd {
+                post_id: p.id,
+                author_id: author_id.map(std::string::ToString::to_string),
+                nickname: filtered.nickname,
+                email: filtered.email,
+                content: filtered.content,
+                parent_id: filtered.parent_id,
+            },
+            tenant_id,
+        )
         .await?;
 
     eventbus.emit(Event::CommentCreated {
@@ -110,14 +114,15 @@ pub async fn list_comments_paginated(
     post_slug: &str,
     page: i64,
     page_size: i64,
+    tenant_id: Option<&str>,
 ) -> AppResult<(Vec<CommentResponse>, i64)> {
     let p = post_repo
-        .find_by_slug(post_slug)
+        .find_by_slug(post_slug, tenant_id)
         .await?
-        .ok_or_else(|| AppError::NotFound("post".into()))?;
+        .ok_or_else(|| AppError::not_found("post"))?;
 
     let (comments, total) = comment_repo
-        .find_approved_by_post_paginated(&p.id, page, page_size)
+        .find_approved_by_post_paginated(&p.id, page, page_size, tenant_id)
         .await?;
     Ok((comment::build_tree(&comments), total))
 }
@@ -130,17 +135,16 @@ pub async fn delete_comment(
     comment_id: &str,
     user_id: &str,
     role: &str,
+    tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let c = comment_repo
-        .find_by_id(comment_id)
+        .find_by_id(comment_id, tenant_id)
         .await?
-        .ok_or_else(|| AppError::NotFound("comment".into()))?;
+        .ok_or_else(|| AppError::not_found("comment"))?;
 
-    if role != "admin" && c.author_id.as_deref() != Some(user_id) {
-        return Err(AppError::Forbidden);
-    }
+    crate::utils::auth::require_owner_or_admin_opt(role, user_id, c.author_id.as_deref())?;
 
-    comment_repo.delete(comment_id).await
+    comment_repo.delete(comment_id, tenant_id).await
 }
 
 /// 更新评论状态。
@@ -150,9 +154,12 @@ pub async fn update_comment_status(
     comment_repo: &dyn CommentRepository,
     comment_id: &str,
     status: &str,
+    tenant_id: Option<&str>,
 ) -> AppResult<()> {
     if status != "approved" && status != "spam" && status != "pending" {
         return Err(AppError::BadRequest("invalid_comment_status".into()));
     }
-    comment_repo.update_status(comment_id, status).await
+    comment_repo
+        .update_status(comment_id, status, tenant_id)
+        .await
 }

@@ -17,6 +17,7 @@ impl Default for WebhookNotifyHandler {
 
 impl WebhookNotifyHandler {
     /// 创建新的 Webhook 通知处理器
+    #[must_use]
     pub fn new() -> Self {
         Self
     }

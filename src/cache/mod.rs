@@ -31,7 +31,7 @@ pub trait CacheStore: Send + Sync {
 
 type CacheMap = std::collections::HashMap<String, (String, Option<tokio::time::Instant>)>;
 
-/// 基于 HashMap 的内存缓存实现
+/// 基于 `HashMap` 的内存缓存实现
 ///
 /// 使用 `tokio::sync::RwLock` 保证并发安全，惰性清理过期条目。
 /// 适用于开发环境和单实例部署。
@@ -42,6 +42,7 @@ pub struct MemoryCache {
 
 impl MemoryCache {
     /// 创建新的内存缓存
+    #[must_use]
     pub fn new() -> Self {
         Self {
             inner: Arc::new(RwLock::new(std::collections::HashMap::new())),

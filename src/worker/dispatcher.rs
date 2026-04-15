@@ -1,7 +1,7 @@
 //! 插件 Cron 调度分发器
 //!
 //! 当内置 Handler 注册表没有匹配的 Handler 时，
-//! WorkerRunner 会 fallback 到此分发器，将任务数据传递给插件系统。
+//! `WorkerRunner` 会 fallback 到此分发器，将任务数据传递给插件系统。
 //!
 //! 插件通过在 `plugin.toml` 中声明 `[hooks.on-cron-tick]` 来接收定时任务。
 
@@ -105,6 +105,7 @@ mod tests {
             cron_log_retention_days: 30,
             search_engine: "none".into(),
             search_index_dir: "./data/search_index".into(),
+            content_type_dir: "./content_types".into(),
         });
         let mgr = PluginManager::new_with_options(
             config,

@@ -20,8 +20,11 @@
 pub mod category;
 pub mod comment;
 pub mod media;
+pub mod options;
 pub mod plugin_storage;
 pub mod post;
+pub mod rbac;
 pub mod refresh_token;
 pub mod tag;
+pub mod tenant;
 pub mod user;

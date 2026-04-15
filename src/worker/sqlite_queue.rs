@@ -1,4 +1,4 @@
-//! SQLite 持久化任务队列
+//! `SQLite` 持久化任务队列
 
 use chrono::Utc;
 use uuid::Uuid;
@@ -10,12 +10,13 @@ use super::{
     JobQueue, JobRow, JobStats, NewJob, QueuedJob, backoff_duration, parse_job, serialize_job,
 };
 
-/// SQLite 持久化任务队列
+/// `SQLite` 持久化任务队列
 pub struct SqliteJobQueue {
     pool: Pool,
 }
 
 impl SqliteJobQueue {
+    #[must_use]
     pub fn new(pool: Pool) -> Self {
         Self { pool }
     }
@@ -116,7 +117,7 @@ impl JobQueue for SqliteJobQueue {
             .await?;
 
         let Some(r) = row else {
-            return Err(AppError::NotFound("job".into()));
+            return Err(AppError::not_found("job"));
         };
 
         let attempts = r.attempts as u32;
@@ -284,7 +285,7 @@ impl JobQueue for SqliteJobQueue {
         .await?;
 
         if result.rows_affected() == 0 {
-            return Err(AppError::NotFound("job".into()));
+            return Err(AppError::not_found("job"));
         }
 
         tracing::info!("job {id} retried (reset to pending)");
@@ -297,7 +298,7 @@ impl JobQueue for SqliteJobQueue {
             .await?;
 
         if result.rows_affected() == 0 {
-            return Err(AppError::NotFound("job".into()));
+            return Err(AppError::not_found("job"));
         }
 
         Ok(())

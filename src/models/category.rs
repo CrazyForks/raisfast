@@ -3,12 +3,11 @@
 //! 定义博客文章分类的数据结构以及对 `categories` 表的增删改查操作。
 //! 分类支持嵌套（通过 `parent_id`）和自定义排序（通过 `sort_order`）。
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use uuid::Uuid;
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::db::tenant::{resolve_tenant, tenant_filter};
 
 /// 分类完整数据库行模型
 ///
@@ -17,6 +16,7 @@ use crate::errors::app_error::{AppError, AppResult};
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct Category {
     pub id: String,
+    pub tenant_id: String,
     pub name: String,
     pub slug: String,
     pub description: Option<String>,
@@ -28,24 +28,38 @@ pub struct Category {
 /// 查询所有分类
 ///
 /// 按 `sort_order` 和 `name` 排序返回完整分类列表。
-pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Category>> {
-    let categories =
-        sqlx::query_as::<_, Category>("SELECT * FROM categories ORDER BY sort_order, name")
-            .fetch_all(pool)
-            .await?;
+pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppResult<Vec<Category>> {
+    let sql_str = format!(
+        "SELECT * FROM categories WHERE 1=1{} ORDER BY sort_order, name",
+        tenant_filter(tenant_id)
+    );
+    let sql = crate::db::dialect::translate(&sql_str);
+    let mut q = sqlx::query_as::<_, Category>(&sql);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let categories = q.fetch_all(pool).await?;
     Ok(categories)
 }
 
 /// 根据分类 ID 查找分类
 ///
 /// 若未找到则返回 [`AppError::NotFound`]。
-pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Category> {
-    let sql = crate::db::dialect::translate("SELECT * FROM categories WHERE id = ?");
-    sqlx::query_as::<_, Category>(&sql)
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .map_err(Into::into)
+pub async fn find_by_id(
+    pool: &crate::db::Pool,
+    id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Category> {
+    let sql_str = format!(
+        "SELECT * FROM categories WHERE id = ?{}",
+        tenant_filter(tenant_id)
+    );
+    let sql = crate::db::dialect::translate(&sql_str);
+    let mut q = sqlx::query_as::<_, Category>(&sql).bind(id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    q.fetch_one(pool).await.map_err(Into::into)
 }
 
 /// 创建新分类
@@ -54,24 +68,27 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Category>
 pub async fn create(
     pool: &crate::db::Pool,
     cmd: &crate::commands::CreateCategoryCmd,
+    tenant_id: Option<&str>,
 ) -> AppResult<Category> {
-    let id = Uuid::now_v7().to_string();
-    let now = Utc::now().to_rfc3339();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let tid = resolve_tenant(tenant_id);
 
-    sqlx::query!(
-        "INSERT INTO categories (id, name, slug, description, parent_id, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        id,
-        cmd.name,
-        cmd.slug,
-        cmd.description,
-        cmd.parent_id,
-        cmd.sort_order,
-        now,
-    )
-    .execute(pool)
-    .await?;
+    let sql = crate::db::dialect::translate(
+        "INSERT INTO categories (id, tenant_id, name, slug, description, parent_id, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    sqlx::query(&sql)
+        .bind(&id)
+        .bind(tid)
+        .bind(&cmd.name)
+        .bind(&cmd.slug)
+        .bind(&cmd.description)
+        .bind(&cmd.parent_id)
+        .bind(cmd.sort_order)
+        .bind(&now)
+        .execute(pool)
+        .await?;
 
-    find_by_id(pool, &id).await
+    find_by_id(pool, &id, Some(tid)).await
 }
 
 /// 更新分类
@@ -80,48 +97,55 @@ pub async fn create(
 pub async fn update(
     pool: &crate::db::Pool,
     cmd: &crate::commands::UpdateCategoryCmd,
+    tenant_id: Option<&str>,
 ) -> AppResult<Category> {
-    let existing = find_by_id(pool, &cmd.id).await?;
+    let existing = find_by_id(pool, &cmd.id, tenant_id).await?;
 
     let name = cmd.name.as_deref().unwrap_or(&existing.name);
     let slug = cmd.slug.as_deref().unwrap_or(&existing.slug);
     let desc = cmd
         .description
         .as_deref()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .or(existing.description);
     let parent = cmd
         .parent_id
         .as_deref()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .or(existing.parent_id);
     let sort = cmd.sort_order.unwrap_or(existing.sort_order);
 
-    sqlx::query!(
-        "UPDATE categories SET name = ?, slug = ?, description = ?, parent_id = ?, sort_order = ? WHERE id = ?",
-        name,
-        slug,
-        desc,
-        parent,
-        sort,
-        cmd.id,
-    )
-    .execute(pool)
-    .await?;
+    let sql = format!(
+        "UPDATE categories SET name = ?, slug = ?, description = ?, parent_id = ?, sort_order = ? WHERE id = ?{}",
+        tenant_filter(tenant_id)
+    );
+    let sql = crate::db::dialect::translate(&sql);
+    let mut q = sqlx::query(&sql)
+        .bind(name)
+        .bind(slug)
+        .bind(desc)
+        .bind(parent)
+        .bind(sort)
+        .bind(&cmd.id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    q.execute(pool).await?;
 
-    find_by_id(pool, &cmd.id).await
+    find_by_id(pool, &cmd.id, tenant_id).await
 }
 
 /// 删除分类
 ///
 /// 若分类不存在则返回 [`AppError::NotFound`]。
-pub async fn delete(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
-    let result = sqlx::query!("DELETE FROM categories WHERE id = ?", id)
-        .execute(pool)
-        .await?;
-
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound("category".into()));
+pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
+    let sql = format!("DELETE FROM categories WHERE id = ?{}", tenant_filter(tenant_id));
+    let sql = crate::db::dialect::translate(&sql);
+    let mut q = sqlx::query(&sql).bind(id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
     }
-    Ok(())
+    let result = q.execute(pool).await?;
+
+    AppError::expect_affected(&result, "category")
 }

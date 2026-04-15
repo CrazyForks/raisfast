@@ -8,13 +8,15 @@ use crate::errors::response::ApiResponse;
 use crate::errors::validation;
 use crate::handlers::dto::{CreateCategoryRequest, UpdateCategoryRequest};
 use crate::middleware::auth::AuthorUser;
+use crate::middleware::tenant::ResolvedTenant;
 use crate::services::post;
 
 /// 获取所有分类列表
 pub async fn list(
     State(state): State<crate::AppState>,
+    tenant: ResolvedTenant,
 ) -> AppResult<ApiResponse<Vec<crate::models::category::Category>>> {
-    let categories = post::list_categories(state.category_repo.as_ref()).await?;
+    let categories = post::list_categories(state.category_repo.as_ref(), tenant.as_str()).await?;
     Ok(ApiResponse::success(categories))
 }
 
@@ -22,10 +24,12 @@ pub async fn list(
 pub async fn create(
     State(state): State<crate::AppState>,
     _author: AuthorUser,
+    tenant: ResolvedTenant,
     Json(req): Json<CreateCategoryRequest>,
 ) -> AppResult<ApiResponse<crate::models::category::Category>> {
     validation::validate(&req)?;
-    let category = post::create_category(state.category_repo.as_ref(), req).await?;
+    let category =
+        post::create_category(state.category_repo.as_ref(), req, tenant.as_str()).await?;
     Ok(ApiResponse::success(category))
 }
 
@@ -33,11 +37,13 @@ pub async fn create(
 pub async fn update(
     State(state): State<crate::AppState>,
     _author: AuthorUser,
+    tenant: ResolvedTenant,
     Path(id): Path<String>,
     Json(req): Json<UpdateCategoryRequest>,
 ) -> AppResult<ApiResponse<crate::models::category::Category>> {
     validation::validate(&req)?;
-    let category = post::update_category(state.category_repo.as_ref(), &id, req).await?;
+    let category =
+        post::update_category(state.category_repo.as_ref(), &id, req, tenant.as_str()).await?;
     Ok(ApiResponse::success(category))
 }
 
@@ -45,8 +51,9 @@ pub async fn update(
 pub async fn delete(
     State(state): State<crate::AppState>,
     _author: AuthorUser,
+    tenant: ResolvedTenant,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    post::delete_category(state.category_repo.as_ref(), &id).await?;
+    post::delete_category(state.category_repo.as_ref(), &id, tenant.as_str()).await?;
     Ok(ApiResponse::success(()))
 }

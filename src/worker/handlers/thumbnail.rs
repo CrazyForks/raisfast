@@ -19,6 +19,7 @@ pub struct GenerateThumbnailHandler {
 
 impl GenerateThumbnailHandler {
     /// 创建新的缩略图生成处理器
+    #[must_use]
     pub fn new(pool: Pool, config: Arc<AppConfig>) -> Self {
         Self { pool, config }
     }
@@ -37,9 +38,9 @@ impl JobHandler for GenerateThumbnailHandler {
             return Ok(());
         };
 
-        let media = crate::models::media::find_by_id(&self.pool, media_id)
+        let media = crate::models::media::find_by_id(&self.pool, media_id, Some(crate::db::tenant::DEFAULT_TENANT))
             .await?
-            .ok_or_else(|| crate::errors::app_error::AppError::NotFound("media".into()))?;
+            .ok_or_else(|| crate::errors::app_error::AppError::not_found("media"))?;
 
         if !media.mimetype.starts_with("image/") {
             tracing::warn!(
@@ -60,16 +61,14 @@ impl JobHandler for GenerateThumbnailHandler {
         tokio::task::spawn_blocking(move || -> AppResult<()> {
             let img = image::open(&src).map_err(|e| {
                 crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
-                    "open image {:?}: {e}",
-                    src
+                    "open image {src:?}: {e}"
                 ))
             })?;
 
             if let Some(parent) = dst.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| {
                     crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
-                        "create dir {:?}: {e}",
-                        parent
+                        "create dir {parent:?}: {e}"
                     ))
                 })?;
             }
@@ -77,8 +76,7 @@ impl JobHandler for GenerateThumbnailHandler {
             let thumb = img.thumbnail(target_size, target_size);
             thumb.save(&dst).map_err(|e| {
                 crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
-                    "save thumbnail {:?}: {e}",
-                    dst
+                    "save thumbnail {dst:?}: {e}"
                 ))
             })?;
 
@@ -150,6 +148,7 @@ mod tests {
             cron_log_retention_days: 30,
             search_engine: "none".into(),
             search_index_dir: "./data/search_index".into(),
+            content_type_dir: "./content_types".into(),
         });
         let handler = GenerateThumbnailHandler::new(pool, config);
         let job = Job::GenerateSitemap;

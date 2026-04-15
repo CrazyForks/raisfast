@@ -84,6 +84,7 @@ impl ApiResponse<()> {
     /// 此方法定义在 `ApiResponse<()>` 上，仅用于构造无数据的错误响应。
     /// 正常的错误处理流程应优先使用 [`AppError`](crate::errors::AppError)
     /// 及其 [`IntoResponse`] 实现，它会自动设置正确的 HTTP 状态码。
+    #[must_use]
     pub fn error(code: i32, message: String) -> Response {
         let body = Self {
             code,

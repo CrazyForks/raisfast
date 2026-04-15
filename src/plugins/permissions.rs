@@ -13,6 +13,7 @@ impl PermissionChecker {
     ///
     /// 白名单规则支持 `*` 通配符（如 `*.example.com`、`api.example.com/*`）。
     /// 若白名单为空，拒绝所有 HTTP 请求。
+    #[must_use]
     pub fn is_url_allowed(permissions: &Permissions, url: &str) -> bool {
         if permissions.http.is_empty() {
             return false;
@@ -50,6 +51,7 @@ impl PermissionChecker {
     ///
     /// 白名单支持前缀匹配（如 `seo.*` 匹配 `seo.title`、`seo.description`）。
     /// 若白名单为空，允许读取所有配置项（向后兼容）。
+    #[must_use]
     pub fn is_config_key_allowed(permissions: &Permissions, key: &str) -> bool {
         if permissions.config.is_empty() {
             return true;
@@ -65,6 +67,7 @@ impl PermissionChecker {
     }
 
     /// 检查数据表是否允许只读访问
+    #[must_use]
     pub fn is_table_readable(permissions: &Permissions, table: &str) -> bool {
         if permissions.database.is_empty() {
             return false;
@@ -77,6 +80,7 @@ impl PermissionChecker {
     }
 
     /// 检查数据表是否允许写操作
+    #[must_use]
     pub fn is_table_writable(permissions: &Permissions, table: &str) -> bool {
         if permissions.database.is_empty() {
             return false;
@@ -89,6 +93,7 @@ impl PermissionChecker {
     }
 
     /// 校验 SQL 是否为只读语句（SELECT only）
+    #[must_use]
     pub fn is_readonly_query(sql: &str) -> bool {
         let trimmed = sql.trim().to_uppercase();
         trimmed.starts_with("SELECT")
@@ -96,6 +101,7 @@ impl PermissionChecker {
 }
 
 /// 从 SQL 语句中提取表名（简单启发式，取 FROM 后的第一个标识符）
+#[must_use]
 pub fn extract_table_name(sql: &str) -> Option<String> {
     let trimmed = sql.trim();
     let upper = trimmed.to_uppercase();

@@ -1,7 +1,7 @@
 //! 插件 KV 存储模型
 //!
 //! 插件通过 Host API (`setData`/`getData`) 存取持久化数据。
-//! 每个插件只能访问自己 plugin_id 下的键值对。
+//! 每个插件只能访问自己 `plugin_id` 下的键值对。
 
 use sqlx::FromRow;
 

@@ -29,9 +29,10 @@ tokio::task_local! {
 ///
 /// 从 task-local 上下文中读取 locale；若在请求作用域外调用
 /// （如后台任务、测试），则回退为默认值 `"en"`。
+#[must_use]
 pub fn current_locale() -> String {
     CURRENT_LOCALE
-        .try_with(|l| l.clone())
+        .try_with(std::clone::Clone::clone)
         .unwrap_or_else(|_| "en".to_string())
 }
 

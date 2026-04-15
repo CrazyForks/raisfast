@@ -13,19 +13,43 @@ pub struct PluginManifest {
     pub hooks: HashMap<String, HookConfig>,
     #[serde(default)]
     pub dependencies: HashMap<String, String>,
-    /// 插件声明的 Cron 定时任务
-    ///
-    /// 格式示例（`plugin.toml`）：
-    /// ```toml
-    /// [[cron]]
-    /// label = "Cleanup Data"
-    /// job_type = "cleanup_stale_sessions"
-    /// payload = '{"max_age_hours": 24}'
-    /// cron_expr = "0 0 */6 * * *"
-    /// enabled = true
-    /// ```
     #[serde(default)]
     pub cron: Vec<CronEntry>,
+    /// 插件声明的内容类型文件（Phase 10 新增）
+    #[serde(default)]
+    pub content_types: Vec<ContentTypeRef>,
+    /// 插件注册的自定义路由（Phase 10 新增）
+    #[serde(default)]
+    pub routes: Vec<RouteDef>,
+    /// 插件注册的 Admin 页面（Phase 10 新增）
+    #[serde(default)]
+    pub admin_pages: Vec<AdminPageDef>,
+}
+
+/// 内容类型引用
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContentTypeRef {
+    pub file: String,
+}
+
+/// 路由定义
+#[derive(Debug, Clone, Deserialize)]
+pub struct RouteDef {
+    pub method: String,
+    pub path: String,
+    pub handler: String,
+    #[serde(default)]
+    pub auth: bool,
+    pub permission: Option<String>,
+}
+
+/// Admin 页面定义
+#[derive(Debug, Clone, Deserialize)]
+pub struct AdminPageDef {
+    pub path: String,
+    pub label: String,
+    pub icon: Option<String>,
+    pub component: Option<String>,
 }
 
 /// 插件声明的 Cron 定时任务条目
@@ -33,7 +57,7 @@ pub struct PluginManifest {
 pub struct CronEntry {
     /// 可读标签
     pub label: String,
-    /// 自定义 job_type 字符串（任意值，不要求匹配内置枚举）
+    /// 自定义 `job_type` 字符串（任意值，不要求匹配内置枚举）
     pub job_type: String,
     /// JSON payload（可选）
     #[serde(default)]
@@ -122,6 +146,7 @@ pub struct HookConfig {
 /// Hook 点枚举
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HookPoint {
+    // ── 内容生命周期（旧，兼容） ──
     PostCreating,
     PostCreated,
     PostUpdating,
@@ -129,16 +154,29 @@ pub enum HookPoint {
     PostDeleted,
     CommentCreating,
     CommentCreated,
+
+    // ── 通用 CMS 事件（Phase 10 新增） ──
+    ContentCreating,
+    ContentCreated,
+    ContentUpdating,
+    ContentUpdated,
+    ContentDeleted,
+
+    // ── 字段级 ──
     RenderMarkdown,
     FilterHtml,
+
+    // ── 路由/认证 ──
     HandleRoute,
     OnLogin,
-    /// Cron 定时任务触发，传递 job_type + payload + timestamp
+
+    // ── 定时任务 ──
     CronTick,
 }
 
 impl HookPoint {
     /// 返回对应的 WASM 导出函数名
+    #[must_use]
     pub fn wasm_func_name(self) -> &'static str {
         match self {
             HookPoint::PostCreating => "on_post_creating",
@@ -148,6 +186,11 @@ impl HookPoint {
             HookPoint::PostDeleted => "on_post_deleted",
             HookPoint::CommentCreating => "on_comment_creating",
             HookPoint::CommentCreated => "on_comment_created",
+            HookPoint::ContentCreating => "on_content_creating",
+            HookPoint::ContentCreated => "on_content_created",
+            HookPoint::ContentUpdating => "on_content_updating",
+            HookPoint::ContentUpdated => "on_content_updated",
+            HookPoint::ContentDeleted => "on_content_deleted",
             HookPoint::RenderMarkdown => "render_markdown",
             HookPoint::FilterHtml => "filter_html",
             HookPoint::HandleRoute => "handle_route",
@@ -157,6 +200,7 @@ impl HookPoint {
     }
 
     /// 返回所有 Hook 点，用于遍历测试
+    #[must_use]
     pub fn all() -> &'static [HookPoint] {
         &[
             HookPoint::PostCreating,
@@ -166,6 +210,11 @@ impl HookPoint {
             HookPoint::PostDeleted,
             HookPoint::CommentCreating,
             HookPoint::CommentCreated,
+            HookPoint::ContentCreating,
+            HookPoint::ContentCreated,
+            HookPoint::ContentUpdating,
+            HookPoint::ContentUpdated,
+            HookPoint::ContentDeleted,
             HookPoint::RenderMarkdown,
             HookPoint::FilterHtml,
             HookPoint::HandleRoute,
@@ -289,8 +338,8 @@ version = "1.0.0"
     }
 
     #[test]
-    fn hookpoint_all_has_12_variants() {
-        assert_eq!(HookPoint::all().len(), 12);
+    fn hookpoint_all_has_17_variants() {
+        assert_eq!(HookPoint::all().len(), 17);
     }
 
     #[test]

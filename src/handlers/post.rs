@@ -12,6 +12,7 @@ use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::handlers::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::middleware::auth::{AuthUser, AuthorUser};
+use crate::middleware::tenant::ResolvedTenant;
 use crate::services::post as post_service;
 use crate::utils::pagination::PaginationParams;
 
@@ -44,6 +45,7 @@ pub struct AdminPostListQuery {
 /// - **返回：** `ApiResponse<PaginatedData<PostResponse>>`
 pub async fn list(
     State(state): State<crate::AppState>,
+    tenant: ResolvedTenant,
     Query(query): Query<PostListQuery>,
 ) -> AppResult<ApiResponse<PaginatedData<PostResponse>>> {
     let mut pagination = PaginationParams::default();
@@ -64,15 +66,11 @@ pub async fn list(
         query.q.as_deref(),
         &state.plugins,
         Some(state.search.as_ref()),
+        tenant.as_str(),
     )
     .await?;
 
-    Ok(ApiResponse::success(PaginatedData {
-        items: posts,
-        total,
-        page: pagination.page,
-        page_size: pagination.page_size,
-    }))
+    Ok(pagination.paginate(posts, total))
 }
 
 /// 获取文章详情（按 slug）
@@ -83,9 +81,16 @@ pub async fn list(
 /// - **返回：** `ApiResponse<PostResponse>`
 pub async fn get(
     State(state): State<crate::AppState>,
+    tenant: ResolvedTenant,
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<PostResponse>> {
-    let post = post_service::get_post(state.post_repo.as_ref(), &slug, &state.plugins).await?;
+    let post = post_service::get_post(
+        state.post_repo.as_ref(),
+        &slug,
+        &state.plugins,
+        tenant.as_str(),
+    )
+    .await?;
     Ok(ApiResponse::success(post))
 }
 
@@ -99,6 +104,7 @@ pub async fn get(
 pub async fn create(
     State(state): State<crate::AppState>,
     author: AuthorUser,
+    tenant: ResolvedTenant,
     Json(req): Json<CreatePostRequest>,
 ) -> AppResult<ApiResponse<PostResponse>> {
     validation::validate(&req)?;
@@ -108,6 +114,7 @@ pub async fn create(
         &state.eventbus,
         &author.user_id,
         req,
+        tenant.as_str(),
     )
     .await?;
     Ok(ApiResponse::success(post))
@@ -123,6 +130,7 @@ pub async fn create(
 pub async fn update(
     State(state): State<crate::AppState>,
     auth_user: AuthUser,
+    tenant: ResolvedTenant,
     Path(slug): Path<String>,
     Json(req): Json<UpdatePostRequest>,
 ) -> AppResult<ApiResponse<PostResponse>> {
@@ -135,6 +143,7 @@ pub async fn update(
         &auth_user.user_id,
         &auth_user.role,
         req,
+        tenant.as_str(),
     )
     .await?;
     Ok(ApiResponse::success(post))
@@ -149,6 +158,7 @@ pub async fn update(
 pub async fn delete(
     State(state): State<crate::AppState>,
     auth_user: AuthUser,
+    tenant: ResolvedTenant,
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     post_service::delete_post_with_auth(
@@ -158,6 +168,7 @@ pub async fn delete(
         &slug,
         &auth_user.user_id,
         &auth_user.role,
+        tenant.as_str(),
     )
     .await?;
     Ok(ApiResponse::success(()))
@@ -172,10 +183,16 @@ pub async fn delete(
 pub async fn admin_get(
     State(state): State<crate::AppState>,
     _author: AuthorUser,
+    tenant: ResolvedTenant,
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<PostResponse>> {
-    let post =
-        post_service::get_post_any_status(state.post_repo.as_ref(), &slug, &state.plugins).await?;
+    let post = post_service::get_post_any_status(
+        state.post_repo.as_ref(),
+        &slug,
+        &state.plugins,
+        tenant.as_str(),
+    )
+    .await?;
     Ok(ApiResponse::success(post))
 }
 
@@ -188,6 +205,7 @@ pub async fn admin_get(
 pub async fn admin_list(
     State(state): State<crate::AppState>,
     _author: AuthorUser,
+    tenant: ResolvedTenant,
     Query(query): Query<AdminPostListQuery>,
 ) -> AppResult<ApiResponse<PaginatedData<PostResponse>>> {
     let mut pagination = PaginationParams::default();
@@ -205,13 +223,9 @@ pub async fn admin_list(
         pagination.page_size,
         query.status.as_deref(),
         &state.plugins,
+        tenant.as_str(),
     )
     .await?;
 
-    Ok(ApiResponse::success(PaginatedData {
-        items: posts,
-        total,
-        page: pagination.page,
-        page_size: pagination.page_size,
-    }))
+    Ok(pagination.paginate(posts, total))
 }

@@ -3,8 +3,6 @@
 //! 提供运行时插件管理端点：列表、详情、启用、禁用、重载。
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
 
 use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
@@ -31,7 +29,7 @@ pub async fn get(
         .plugins
         .get_plugin_detail(&id)
         .await
-        .ok_or_else(|| AppError::NotFound("plugin".into()))?;
+        .ok_or_else(|| AppError::not_found("plugin"))?;
     Ok(ApiResponse::success(detail))
 }
 
@@ -63,10 +61,10 @@ pub async fn reload(
 ) -> AppResult<ApiResponse<()>> {
     let plugin_dir = match &state.config.plugin_dir {
         Some(d) => std::path::PathBuf::from(d).join(&id),
-        None => return Err(AppError::NotFound("plugin".into())),
+        None => return Err(AppError::not_found("plugin")),
     };
     if !plugin_dir.exists() {
-        return Err(AppError::NotFound("plugin".into()));
+        return Err(AppError::not_found("plugin"));
     }
     state.plugins.reload_plugin(&plugin_dir).await;
     Ok(ApiResponse::success(()))
@@ -77,7 +75,7 @@ pub async fn remove(
     _admin: AdminUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> impl IntoResponse {
+) -> AppResult<ApiResponse<()>> {
     state.plugins.unload_plugin(&id).await;
-    (StatusCode::NO_CONTENT, ())
+    Ok(ApiResponse::success(()))
 }
