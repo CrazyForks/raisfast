@@ -235,10 +235,16 @@ async fn do_get(
     id_or_slug: &str,
 ) -> Result<serde_json::Value, AppError> {
     let repo = ContentRepository::new(state.pool.clone());
-    let status = if ct.draft_publish { Some("published") } else { None };
+    let status = if ct.draft_publish {
+        Some("published")
+    } else {
+        None
+    };
 
     let item = if id_or_slug.contains('-') && !id_or_slug.contains('/') {
-        repo.find_by_slug(ct, id_or_slug, status, None).await?.or(None)
+        repo.find_by_slug(ct, id_or_slug, status, None)
+            .await?
+            .or(None)
     } else {
         None
     };
@@ -270,11 +276,7 @@ async fn do_update(
     repo.update(ct, id, data, None).await
 }
 
-async fn do_delete(
-    state: &AppState,
-    ct: &ContentTypeSchema,
-    id: &str,
-) -> Result<(), AppError> {
+async fn do_delete(state: &AppState, ct: &ContentTypeSchema, id: &str) -> Result<(), AppError> {
     let repo = ContentRepository::new(state.pool.clone());
     repo.delete(ct, id, None).await
 }
@@ -413,9 +415,7 @@ async fn admin_get_handler(
 // ── Schema 管理 API ──────────────────────────────────────────
 
 /// GET /admin/content-types — 列出所有已注册 content type 的 schema 定义
-pub async fn list_schemas(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, AppError> {
+pub async fn list_schemas(State(state): State<AppState>) -> Result<impl IntoResponse, AppError> {
     let schemas = state.content_type_registry.all();
     Ok(Json(crate::errors::response::ApiResponse::success(schemas)))
 }
@@ -498,9 +498,8 @@ pub async fn delete_schema(
     let path =
         std::path::Path::new(&state.config.content_type_dir).join(format!("{singular}.toml"));
     if path.exists() {
-        std::fs::remove_file(&path).map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("cannot delete {:?}: {e}", path))
-        })?;
+        std::fs::remove_file(&path)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("cannot delete {:?}: {e}", path)))?;
     }
 
     state.content_type_registry.unregister(&singular);

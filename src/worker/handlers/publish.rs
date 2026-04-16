@@ -27,7 +27,12 @@ impl JobHandler for ScheduledPublishHandler {
             return Ok(());
         };
 
-        let post = crate::models::post::find_by_id(&self.pool, post_id, Some(crate::db::tenant::DEFAULT_TENANT)).await?;
+        let post = crate::models::post::find_by_id(
+            &self.pool,
+            post_id,
+            Some(crate::db::tenant::DEFAULT_TENANT),
+        )
+        .await?;
         let Some(post) = post else {
             tracing::warn!("[publish] post {} not found, skipping", post_id);
             return Ok(());
@@ -103,9 +108,14 @@ mod tests {
         )
         .await
         .unwrap();
-        user::update_role(pool, &u.id, "author", Some(crate::db::tenant::DEFAULT_TENANT))
-            .await
-            .unwrap();
+        user::update_role(
+            pool,
+            &u.id,
+            "author",
+            Some(crate::db::tenant::DEFAULT_TENANT),
+        )
+        .await
+        .unwrap();
         u.id
     }
 

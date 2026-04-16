@@ -8,8 +8,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use crate::errors::app_error::{AppError, AppResult};
 use crate::db::tenant::{resolve_tenant, tenant_filter};
+use crate::errors::app_error::{AppError, AppResult};
 
 /// 用户完整数据库行模型
 ///
@@ -169,7 +169,10 @@ pub async fn update_password(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    let sql = format!("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?{}", tenant_filter(tenant_id));
+    let sql = format!(
+        "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?{}",
+        tenant_filter(tenant_id)
+    );
     let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql).bind(new_password_hash).bind(now).bind(id);
     if let Some(tid) = tenant_id {
@@ -219,7 +222,10 @@ pub async fn update_role(
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
     let now = Utc::now().to_rfc3339();
-    let sql = format!("UPDATE users SET role = ?, updated_at = ? WHERE id = ?{}", tenant_filter(tenant_id));
+    let sql = format!(
+        "UPDATE users SET role = ?, updated_at = ? WHERE id = ?{}",
+        tenant_filter(tenant_id)
+    );
     let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql).bind(role).bind(now).bind(id);
     if let Some(tid) = tenant_id {

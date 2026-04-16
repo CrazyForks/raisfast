@@ -37,7 +37,9 @@ pub async fn get_option(
         .get_entry(&key)
         .await
         .ok_or_else(|| AppError::not_found(&format!("option/{key}")))?;
-    Ok(ApiResponse::success(serde_json::to_value(entry).map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?))
+    Ok(ApiResponse::success(
+        serde_json::to_value(entry).map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?,
+    ))
 }
 
 /// 批量更新请求体

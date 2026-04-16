@@ -8,14 +8,18 @@
 //!
 //! 错误码遵循 `docs/guide.md` 中的规范，范围 40000–50000：
 //!
-//! | 变体           | HTTP 状态码               | 错误码  |
-//! |---------------|--------------------------|---------|
-//! | `BadRequest`  | 400 Bad Request          | 40000   |
-//! | `Unauthorized`| 401 Unauthorized         | 40100   |
-//! | `Forbidden`   | 403 Forbidden            | 40300   |
-//! | `NotFound`    | 404 Not Found            | 40400   |
-//! | `Conflict`    | 409 Conflict             | 40900   |
-//! | `Internal`    | 500 Internal Server Error| 50000   |
+//! | 变体               | HTTP 状态码               | 错误码  |
+//! |-------------------|--------------------------|---------|
+//! | `BadRequest`      | 400 Bad Request          | 40000   |
+//! | `Unauthorized`    | 401 Unauthorized         | 40100   |
+//! | `Forbidden`       | 403 Forbidden            | 40300   |
+//! | `NotFound`        | 404 Not Found            | 40400   |
+//! | `MethodNotAllowed`| 405 Method Not Allowed   | 40500   |
+//! | `Conflict`        | 409 Conflict             | 40900   |
+//! | `PayloadTooLarge` | 413 Payload Too Large    | 41300   |
+//! | `TooManyRequests` | 429 Too Many Requests    | 42900   |
+//! | `Internal`        | 500 Internal Server Error| 50000   |
+//! | `ServiceUnavailable`| 503 Service Unavailable | 50300   |
 //!
 //! # i18n 消息格式
 //!
@@ -70,6 +74,18 @@ pub enum AppError {
     /// `messages.{key}` 翻译为本地化消息，再代入 `errors.conflict` 模板。
     #[error("conflict: {0}")]
     Conflict(String),
+    /// 413 Payload Too Large — 请求体超过大小限制
+    #[error("payload too large")]
+    PayloadTooLarge,
+    /// 429 Too Many Requests — 请求频率超过限流阈值
+    #[error("too many requests")]
+    TooManyRequests,
+    /// 405 Method Not Allowed — 请求方法不被允许
+    #[error("method not allowed")]
+    MethodNotAllowed,
+    /// 503 Service Unavailable — 服务暂时不可用
+    #[error("service unavailable")]
+    ServiceUnavailable,
     /// 500 Internal Server Error — 服务器内部未预期的错误
     ///
     /// 通过 `#[from]` 自动从 `anyhow::Error` 转换，避免手动映射。
@@ -134,6 +150,10 @@ impl AppError {
                 let message = rust_i18n::t!(&msg_key_full);
                 rust_i18n::t!("errors.conflict", message = message).to_string()
             }
+            AppError::PayloadTooLarge => rust_i18n::t!("errors.payload_too_large").to_string(),
+            AppError::TooManyRequests => rust_i18n::t!("errors.too_many_requests").to_string(),
+            AppError::MethodNotAllowed => rust_i18n::t!("errors.method_not_allowed").to_string(),
+            AppError::ServiceUnavailable => rust_i18n::t!("errors.service_unavailable").to_string(),
             AppError::Internal(_) => rust_i18n::t!("errors.internal").to_string(),
         }
     }
@@ -161,8 +181,12 @@ impl IntoResponse for AppError {
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, 40100),
             AppError::Forbidden => (StatusCode::FORBIDDEN, 40300),
             AppError::NotFound(_) => (StatusCode::NOT_FOUND, 40400),
+            AppError::MethodNotAllowed => (StatusCode::METHOD_NOT_ALLOWED, 40500),
             AppError::Conflict(_) => (StatusCode::CONFLICT, 40900),
+            AppError::PayloadTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, 41300),
+            AppError::TooManyRequests => (StatusCode::TOO_MANY_REQUESTS, 42900),
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, 50000),
+            AppError::ServiceUnavailable => (StatusCode::SERVICE_UNAVAILABLE, 50300),
         };
 
         let locale = current_locale();

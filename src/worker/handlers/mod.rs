@@ -13,6 +13,7 @@ pub mod webhook;
 
 use std::sync::Arc;
 
+use crate::cache::CacheStore;
 use crate::config::app::AppConfig;
 use crate::db::Pool;
 use crate::search::SearchEngine;
@@ -26,6 +27,7 @@ pub fn register_all(
     pool: Pool,
     config: Arc<AppConfig>,
     search: Arc<dyn SearchEngine>,
+    cache: Arc<dyn CacheStore>,
 ) {
     registry.register(
         "send_welcome_email",
@@ -55,7 +57,7 @@ pub fn register_all(
     );
     registry.register(
         "invalidate_cache",
-        Box::new(cache::InvalidateCacheHandler::new()),
+        Box::new(cache::InvalidateCacheHandler::new(cache)),
     );
     registry.register(
         "generate_sitemap",

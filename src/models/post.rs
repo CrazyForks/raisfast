@@ -10,8 +10,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use crate::errors::app_error::{AppError, AppResult};
 use crate::db::tenant::{resolve_tenant, tenant_filter, tenant_filter_aliased};
+use crate::errors::app_error::{AppError, AppResult};
 
 /// 文章完整数据库行模型
 ///
@@ -255,10 +255,7 @@ pub async fn update_tx(
 ///
 /// 若文章不存在则返回 [`AppError::NotFound`]。
 pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
-    let sql = format!(
-        "DELETE FROM posts WHERE id = ?{}",
-        tenant_filter(tenant_id)
-    );
+    let sql = format!("DELETE FROM posts WHERE id = ?{}", tenant_filter(tenant_id));
     let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql).bind(id);
     if let Some(tid) = tenant_id {
@@ -588,7 +585,10 @@ pub async fn find_all_joined(
             query = query.bind(tid);
         }
         let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
-        let sql = format!("SELECT COUNT(*) FROM posts WHERE 1=1{}", tenant_filter(tenant_id));
+        let sql = format!(
+            "SELECT COUNT(*) FROM posts WHERE 1=1{}",
+            tenant_filter(tenant_id)
+        );
         let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
         if let Some(tid) = tenant_id {
@@ -682,9 +682,13 @@ mod tests {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
         let p = create_test_post(&pool, &uid, "published", "测试文章").await;
-        let result = find_joined_by_ids(&pool, &[p.id.clone()], Some(crate::db::tenant::DEFAULT_TENANT))
-            .await
-            .unwrap();
+        let result = find_joined_by_ids(
+            &pool,
+            &[p.id.clone()],
+            Some(crate::db::tenant::DEFAULT_TENANT),
+        )
+        .await
+        .unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, p.id);
         assert_eq!(result[0].title, "测试文章");
@@ -698,9 +702,13 @@ mod tests {
         let p1 = create_test_post(&pool, &uid, "published", "文章A").await;
         let p2 = create_test_post(&pool, &uid, "published", "文章B").await;
         let p3 = create_test_post(&pool, &uid, "published", "文章C").await;
-        let result = find_joined_by_ids(&pool, &[p1.id.clone(), p3.id.clone()], Some(crate::db::tenant::DEFAULT_TENANT))
-            .await
-            .unwrap();
+        let result = find_joined_by_ids(
+            &pool,
+            &[p1.id.clone(), p3.id.clone()],
+            Some(crate::db::tenant::DEFAULT_TENANT),
+        )
+        .await
+        .unwrap();
         assert_eq!(result.len(), 2);
         let ids: Vec<&str> = result.iter().map(|r| r.id.as_str()).collect();
         assert!(ids.contains(&p1.id.as_str()));
@@ -713,18 +721,26 @@ mod tests {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
         let p = create_test_post(&pool, &uid, "draft", "草稿文章").await;
-        let result = find_joined_by_ids(&pool, &[p.id.clone()], Some(crate::db::tenant::DEFAULT_TENANT))
-            .await
-            .unwrap();
+        let result = find_joined_by_ids(
+            &pool,
+            &[p.id.clone()],
+            Some(crate::db::tenant::DEFAULT_TENANT),
+        )
+        .await
+        .unwrap();
         assert!(result.is_empty());
     }
 
     #[tokio::test]
     async fn find_joined_by_ids_nonexistent() {
         let pool = setup_pool().await;
-        let result = find_joined_by_ids(&pool, &["nonexistent-id".to_string()], Some(crate::db::tenant::DEFAULT_TENANT))
-            .await
-            .unwrap();
+        let result = find_joined_by_ids(
+            &pool,
+            &["nonexistent-id".to_string()],
+            Some(crate::db::tenant::DEFAULT_TENANT),
+        )
+        .await
+        .unwrap();
         assert!(result.is_empty());
     }
 
@@ -772,9 +788,13 @@ mod tests {
         )
         .await
         .unwrap();
-        let result = find_joined_by_ids(&pool, &[p.id.clone()], Some(crate::db::tenant::DEFAULT_TENANT))
-            .await
-            .unwrap();
+        let result = find_joined_by_ids(
+            &pool,
+            &[p.id.clone()],
+            Some(crate::db::tenant::DEFAULT_TENANT),
+        )
+        .await
+        .unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].category_name.as_deref(), Some("技术"));
     }
@@ -817,18 +837,26 @@ mod tests {
         let p1 = create_test_post(&pool, &uid, "published", "A").await;
         let p2 = create_test_post(&pool, &uid, "draft", "B").await;
         let p3 = create_test_post(&pool, &uid, "published", "C").await;
-        let count = count_published_by_ids(&pool, &[p1.id, p2.id, p3.id], Some(crate::db::tenant::DEFAULT_TENANT))
-            .await
-            .unwrap();
+        let count = count_published_by_ids(
+            &pool,
+            &[p1.id, p2.id, p3.id],
+            Some(crate::db::tenant::DEFAULT_TENANT),
+        )
+        .await
+        .unwrap();
         assert_eq!(count, 2);
     }
 
     #[tokio::test]
     async fn count_published_by_ids_nonexistent() {
         let pool = setup_pool().await;
-        let count = count_published_by_ids(&pool, &["fake-id".to_string()], Some(crate::db::tenant::DEFAULT_TENANT))
-            .await
-            .unwrap();
+        let count = count_published_by_ids(
+            &pool,
+            &["fake-id".to_string()],
+            Some(crate::db::tenant::DEFAULT_TENANT),
+        )
+        .await
+        .unwrap();
         assert_eq!(count, 0);
     }
 }

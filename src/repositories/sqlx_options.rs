@@ -22,10 +22,7 @@ impl OptionsRepository for SqlxOptionsRepository {
         options::find_by_key(&self.pool, key, tenant_id).await
     }
 
-    async fn find_all(
-        &self,
-        tenant_id: &str,
-    ) -> AppResult<Vec<crate::models::options::OptionRow>> {
+    async fn find_all(&self, tenant_id: &str) -> AppResult<Vec<crate::models::options::OptionRow>> {
         options::find_all(&self.pool, tenant_id).await
     }
 

@@ -12,9 +12,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use axum::Extension;
-use axum::Json;
 use axum::extract::{ConnectInfo, Request};
-use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use tokio::sync::Mutex;
@@ -244,18 +242,7 @@ fn extract_client_ip(req: &Request) -> String {
 }
 
 fn rate_limited_response() -> Response {
-    let locale = crate::middleware::locale::current_locale();
-    rust_i18n::set_locale(&locale);
-    let message = rust_i18n::t!("errors.too_many_requests");
-    (
-        StatusCode::TOO_MANY_REQUESTS,
-        Json(serde_json::json!({
-            "code": 42900,
-            "message": message,
-            "data": null
-        })),
-    )
-        .into_response()
+    crate::errors::app_error::AppError::TooManyRequests.into_response()
 }
 
 pub async fn global_rate_limit(

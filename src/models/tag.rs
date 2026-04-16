@@ -6,8 +6,8 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use crate::errors::app_error::{AppError, AppResult};
 use crate::db::tenant::{resolve_tenant, tenant_filter};
+use crate::errors::app_error::{AppError, AppResult};
 
 /// 标签完整数据库行模型
 ///

@@ -7,6 +7,9 @@ en:
     conflict: "%{message}"
     internal: "internal server error"
     too_many_requests: "too many requests"
+    payload_too_large: "request payload too large"
+    method_not_allowed: "method not allowed"
+    service_unavailable: "service temporarily unavailable"
   resources:
     user: "user"
     post: "post"

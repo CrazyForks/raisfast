@@ -6,6 +6,7 @@
 #![deny(unsafe_code)]
 #![allow(clippy::missing_errors_doc)]
 
+pub mod audit;
 pub mod cache;
 pub mod commands;
 pub mod config;
@@ -21,8 +22,10 @@ pub mod repositories;
 pub mod search;
 pub mod services;
 pub mod utils;
+pub mod webhook;
 pub mod worker;
 
+use audit::AuditService;
 use config::app::AppConfig;
 use content_type::ContentTypeRegistry;
 use db::Pool;
@@ -37,6 +40,7 @@ use services::options::OptionsService;
 use services::rbac::RbacService;
 use services::tenant::TenantService;
 use std::sync::Arc;
+use webhook::WebhookService;
 
 rust_i18n::i18n!("locales", fallback = "en");
 
@@ -62,4 +66,6 @@ pub struct AppState {
     pub options: Arc<OptionsService>,
     pub rbac: Arc<RbacService>,
     pub tenant: Arc<TenantService>,
+    pub audit: Arc<AuditService>,
+    pub webhook: Arc<WebhookService>,
 }

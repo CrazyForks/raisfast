@@ -38,9 +38,13 @@ impl JobHandler for GenerateThumbnailHandler {
             return Ok(());
         };
 
-        let media = crate::models::media::find_by_id(&self.pool, media_id, Some(crate::db::tenant::DEFAULT_TENANT))
-            .await?
-            .ok_or_else(|| crate::errors::app_error::AppError::not_found("media"))?;
+        let media = crate::models::media::find_by_id(
+            &self.pool,
+            media_id,
+            Some(crate::db::tenant::DEFAULT_TENANT),
+        )
+        .await?
+        .ok_or_else(|| crate::errors::app_error::AppError::not_found("media"))?;
 
         if !media.mimetype.starts_with("image/") {
             tracing::warn!(

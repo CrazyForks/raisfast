@@ -57,6 +57,7 @@ pub async fn refresh(
     State(state): State<crate::AppState>,
     Json(req): Json<RefreshRequest>,
 ) -> AppResult<ApiResponse<crate::handlers::dto::LoginResponse>> {
+    validation::validate(&req)?;
     let resp = auth::refresh(
         state.user_repo.as_ref(),
         state.refresh_token_repo.as_ref(),

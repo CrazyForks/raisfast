@@ -162,6 +162,8 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
 
     let tenant_repo: Arc<dyn TenantRepository> = Arc::new(SqlxTenantRepository::new(pool.clone()));
     let tenant_service = Arc::new(TenantService::new(tenant_repo));
+    let audit_service = Arc::new(rust_blog::audit::AuditService::new(pool.clone()));
+    let webhook_service = Arc::new(rust_blog::webhook::WebhookService::new(pool.clone()));
 
     let state = AppState {
         pool: pool.clone(),
@@ -184,17 +186,23 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         options: options_service,
         rbac: rbac_service,
         tenant: tenant_service,
+        audit: audit_service,
+        webhook: webhook_service.clone(),
     };
 
     spawn_event_subscriber(eventbus.clone(), state.plugins.clone());
+    spawn_audit_subscriber(eventbus.clone(), state.audit.clone(), state.tenant.clone());
+    spawn_webhook_subscriber(eventbus.clone(), state.webhook.clone());
 
     if config.worker_enabled {
+        let cache_for_workers: Arc<dyn rust_blog::cache::CacheStore> = Arc::new(MemoryCache::new());
         spawn_workers(
             worker_pool,
             &eventbus,
             config,
             state.plugins.clone(),
             state.search.clone(),
+            cache_for_workers,
         )
         .await;
     }
@@ -299,6 +307,18 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
                 .put(tenant::update_tenant)
                 .delete(tenant::delete_tenant),
         )
+        .route("/admin/audit", get(rust_blog::audit::handler::list))
+        .route("/admin/audit/{id}", get(rust_blog::audit::handler::get))
+        .route(
+            "/admin/webhooks",
+            get(rust_blog::webhook::handler::list).post(rust_blog::webhook::handler::create),
+        )
+        .route(
+            "/admin/webhooks/{id}",
+            get(rust_blog::webhook::handler::get)
+                .put(rust_blog::webhook::handler::update)
+                .delete(rust_blog::webhook::handler::delete),
+        )
         .route(
             "/admin/content-types",
             get(rust_blog::content_type::handler::list_schemas)
@@ -337,6 +357,9 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         .nest_service("/static", ServeDir::new(&static_dir))
         .fallback(handle_plugin_route)
         .layer(from_fn(locale_middleware))
+        .layer(from_fn(
+            rust_blog::middleware::request_id::inject_request_id,
+        ))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|request: &axum::extract::Request| {
@@ -350,7 +373,14 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
                         axum::http::Version::HTTP_3 => "3.0",
                         _ => "unknown",
                     };
-                    tracing::span!(Level::INFO, "request", method, uri, version)
+                    tracing::span!(
+                        Level::INFO,
+                        "request",
+                        method,
+                        uri,
+                        version,
+                        request_id = tracing::field::Empty
+                    )
                 })
                 .on_request(|request: &axum::extract::Request, _span: &tracing::Span| {
                     tracing::info!(
@@ -534,6 +564,245 @@ fn spawn_event_subscriber(
     });
 }
 
+/// 启动审计日志订阅者，将所有业务事件写入 `audit_log` 表。
+fn spawn_audit_subscriber(
+    eventbus: rust_blog::eventbus::EventBus,
+    audit: Arc<rust_blog::audit::AuditService>,
+    tenant_service: Arc<rust_blog::services::tenant::TenantService>,
+) {
+    use rust_blog::eventbus::Event;
+
+    let mut rx = eventbus.subscribe();
+    tokio::spawn(async move {
+        let default_tenant: &str = "default";
+        let _ = tenant_service;
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    let (action, subject, subject_id, actor_id, detail): (
+                        &str,
+                        &str,
+                        String,
+                        Option<String>,
+                        Option<String>,
+                    ) = match event.as_ref() {
+                        Event::PostCreated {
+                            id,
+                            title,
+                            author_id,
+                            ..
+                        } => (
+                            "create",
+                            "post",
+                            id.clone(),
+                            Some(author_id.clone()),
+                            Some(format!("title={title}")),
+                        ),
+                        Event::PostUpdated { id, slug } => (
+                            "update",
+                            "post",
+                            id.clone(),
+                            None,
+                            Some(format!("slug={slug}")),
+                        ),
+                        Event::PostDeleted { id, slug } => (
+                            "delete",
+                            "post",
+                            id.clone(),
+                            None,
+                            Some(format!("slug={slug}")),
+                        ),
+                        Event::CommentCreated {
+                            id, author_name, ..
+                        } => (
+                            "create",
+                            "comment",
+                            id.clone(),
+                            None,
+                            Some(format!("author={author_name}")),
+                        ),
+                        Event::CommentDeleted { id } => {
+                            ("delete", "comment", id.clone(), None, None)
+                        }
+                        Event::ContentCreated {
+                            content_type, id, ..
+                        } => ("create", content_type.as_str(), id.clone(), None, None),
+                        Event::ContentUpdated { content_type, id } => {
+                            ("update", content_type.as_str(), id.clone(), None, None)
+                        }
+                        Event::ContentDeleted { content_type, id } => {
+                            ("delete", content_type.as_str(), id.clone(), None, None)
+                        }
+                        Event::UserRegistered { id, username, .. } => (
+                            "register",
+                            "user",
+                            id.clone(),
+                            None,
+                            Some(format!("username={username}")),
+                        ),
+                        Event::UserLoggedIn { id, success } => (
+                            "login",
+                            "user",
+                            id.clone(),
+                            Some(id.clone()),
+                            Some(format!("success={success}")),
+                        ),
+                        Event::MediaUploaded {
+                            id,
+                            filename,
+                            uploader_id,
+                        } => (
+                            "upload",
+                            "media",
+                            id.clone(),
+                            Some(uploader_id.clone()),
+                            Some(format!("filename={filename}")),
+                        ),
+                        Event::MediaDeleted { id } => ("delete", "media", id.clone(), None, None),
+                        _ => continue,
+                    };
+
+                    if let Err(e) = audit
+                        .log(
+                            default_tenant,
+                            actor_id.as_deref(),
+                            None,
+                            action,
+                            subject,
+                            Some(&subject_id),
+                            detail.as_deref(),
+                            None,
+                            None,
+                        )
+                        .await
+                    {
+                        tracing::warn!(%action, %subject, error = %e, "failed to write audit log");
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("audit subscriber lagged, skipped {n} events");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+        }
+    });
+}
+
+/// 启动 Webhook 事件投递订阅者
+fn spawn_webhook_subscriber(
+    eventbus: rust_blog::eventbus::EventBus,
+    webhook_service: Arc<rust_blog::webhook::WebhookService>,
+) {
+    use rust_blog::eventbus::Event;
+
+    let mut rx = eventbus.subscribe();
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    let event_type = match event.as_ref() {
+                        Event::PostCreated { .. } => "post.created",
+                        Event::PostUpdated { .. } => "post.updated",
+                        Event::PostDeleted { .. } => "post.deleted",
+                        Event::CommentCreated { .. } => "comment.created",
+                        Event::CommentDeleted { .. } => "comment.deleted",
+                        Event::ContentCreated { .. } => {
+                            continue;
+                        }
+                        Event::ContentUpdated { .. } => {
+                            continue;
+                        }
+                        Event::ContentDeleted { .. } => {
+                            continue;
+                        }
+                        Event::UserRegistered { .. } => "user.registered",
+                        Event::UserLoggedIn { .. } => "user.loggedIn",
+                        Event::MediaUploaded { .. } => "media.uploaded",
+                        Event::MediaDeleted { .. } => "media.deleted",
+                        _ => continue,
+                    };
+
+                    let payload_value = serde_json::to_value(event.as_ref()).unwrap_or_default();
+                    let timestamp = chrono::Utc::now().to_rfc3339();
+                    let webhook_payload = rust_blog::webhook::model::WebhookPayload {
+                        event: event_type.to_string(),
+                        data: payload_value,
+                        timestamp,
+                    };
+                    let body = match serde_json::to_vec(&webhook_payload) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            tracing::warn!("webhook payload serialize error: {e}");
+                            continue;
+                        }
+                    };
+
+                    let subs = match webhook_service.find_enabled("default").await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!("webhook find_enabled error: {e}");
+                            continue;
+                        }
+                    };
+
+                    for sub in subs {
+                        let events: Vec<String> =
+                            serde_json::from_str(&sub.events).unwrap_or_default();
+                        if !events.iter().any(|e| {
+                            e == event_type || e == "*" || event_type.starts_with(&format!("{e}."))
+                        }) {
+                            continue;
+                        }
+
+                        let signature = rust_blog::webhook::service::WebhookService::sign_payload(
+                            &sub.secret,
+                            &body,
+                        );
+                        let url = sub.url.clone();
+                        let body_clone = body.clone();
+                        tokio::spawn(async move {
+                            let client = reqwest::Client::new();
+                            let result = client
+                                .post(&url)
+                                .header("Content-Type", "application/json")
+                                .header("X-Webhook-Signature", format!("sha256={signature}"))
+                                .header("X-Webhook-Event", event_type)
+                                .body(body_clone)
+                                .timeout(std::time::Duration::from_secs(10))
+                                .send()
+                                .await;
+                            match result {
+                                Ok(resp) => {
+                                    tracing::debug!(
+                                        url = %url,
+                                        status = %resp.status(),
+                                        "webhook delivered"
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        url = %url,
+                                        error = %e,
+                                        "webhook delivery failed"
+                                    );
+                                }
+                            }
+                        });
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("webhook subscriber lagged, skipped {n} events");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+        }
+    });
+}
+
 /// 启动 Worker 子系统（CronScheduler + JobEnqueuer + WorkerRunner）
 async fn spawn_workers(
     pool: rust_blog::db::Pool,
@@ -541,6 +810,7 @@ async fn spawn_workers(
     config: &AppConfig,
     plugins: Arc<rust_blog::plugins::PluginManager>,
     search: Arc<dyn rust_blog::search::SearchEngine>,
+    cache: Arc<dyn rust_blog::cache::CacheStore>,
 ) {
     use rust_blog::worker::{
         CronScheduler, JobEnqueuer, JobHandlerRegistry, PluginCronDispatcher, SqliteJobQueue,
@@ -577,6 +847,7 @@ async fn spawn_workers(
         pool.clone(),
         Arc::new(config.clone()),
         search,
+        cache,
     );
 
     let cron = CronScheduler::new(

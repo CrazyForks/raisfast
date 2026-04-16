@@ -70,7 +70,8 @@ impl FromRequestParts<AppState> for TenantContext {
         parts: &mut Parts,
         _state: &AppState,
     ) -> impl std::future::Future<Output = Result<Self, Self::Rejection>> + Send {
-        let tenant_id = extract_header_tenant(parts).unwrap_or_else(|| crate::db::tenant::DEFAULT_TENANT.to_string());
+        let tenant_id = extract_header_tenant(parts)
+            .unwrap_or_else(|| crate::db::tenant::DEFAULT_TENANT.to_string());
 
         async move { Ok(TenantContext { tenant_id }) }
     }

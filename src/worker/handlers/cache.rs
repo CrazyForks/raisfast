@@ -1,25 +1,23 @@
 //! 缓存失效 Handler
 //!
-//! 当前仅记录需要失效的缓存键。
-//! 生产环境需接入缓存后端（如 `moka`、Redis）后替换实现。
+//! 接收 `InvalidateCache` job，按 key 或前缀删除缓存条目。
 
+use std::sync::Arc;
+
+use crate::cache::CacheStore;
 use crate::errors::app_error::AppResult;
 use crate::worker::{Job, JobHandler};
 
 /// 缓存失效处理器
-pub struct InvalidateCacheHandler;
-
-impl Default for InvalidateCacheHandler {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct InvalidateCacheHandler {
+    cache: Arc<dyn CacheStore>,
 }
 
 impl InvalidateCacheHandler {
     /// 创建新的缓存失效处理器
     #[must_use]
-    pub fn new() -> Self {
-        Self
+    pub fn new(cache: Arc<dyn CacheStore>) -> Self {
+        Self { cache }
     }
 }
 
@@ -30,12 +28,16 @@ impl JobHandler for InvalidateCacheHandler {
             return Ok(());
         };
 
-        tracing::info!("[cache] invalidating {} key(s): {:?}", keys.len(), keys);
-
-        // TODO: 生产环境替换为真实缓存失效
-        // for key in keys {
-        //     cache.delete(key).await?;
-        // }
+        for key in keys {
+            if key.ends_with('*') {
+                let prefix = &key[..key.len() - 1];
+                let n = self.cache.delete_prefix(prefix).await?;
+                tracing::info!("[cache] invalidated {n} key(s) with prefix '{prefix}'");
+            } else {
+                self.cache.delete(key).await?;
+                tracing::info!("[cache] invalidated key '{key}'");
+            }
+        }
 
         Ok(())
     }
@@ -44,19 +46,57 @@ impl JobHandler for InvalidateCacheHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cache::MemoryCache;
+    use std::time::Duration;
 
     #[tokio::test]
-    async fn logs_cache_invalidation() {
-        let handler = InvalidateCacheHandler::new();
+    async fn invalidates_cache_keys() {
+        let cache = Arc::new(MemoryCache::new());
+        cache
+            .set("post:1", "data", Some(Duration::from_secs(60)))
+            .await
+            .unwrap();
+        cache
+            .set("post:2", "data", Some(Duration::from_secs(60)))
+            .await
+            .unwrap();
+
+        let handler = InvalidateCacheHandler::new(cache.clone());
         let job = Job::InvalidateCache {
-            keys: vec!["post:slug-hello".into(), "rss:feed".into()],
+            keys: vec!["post:1".into()],
         };
-        assert!(handler.handle(&job).await.is_ok());
+        handler.handle(&job).await.unwrap();
+
+        assert!(cache.get("post:1").await.is_none());
+        assert!(cache.get("post:2").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn invalidates_by_prefix() {
+        let cache = Arc::new(MemoryCache::new());
+        cache
+            .set("post:1", "data", Some(Duration::from_secs(60)))
+            .await
+            .unwrap();
+        cache
+            .set("post:2", "data", Some(Duration::from_secs(60)))
+            .await
+            .unwrap();
+
+        let handler = InvalidateCacheHandler::new(cache.clone());
+        let job = Job::InvalidateCache {
+            keys: vec!["post:*".into()],
+        };
+        handler.handle(&job).await.unwrap();
+
+        assert!(cache.get("post:1").await.is_none());
+        assert!(cache.get("post:2").await.is_none());
     }
 
     #[tokio::test]
     async fn ignores_wrong_job_type() {
-        let handler = InvalidateCacheHandler::new();
+        let cache = Arc::new(MemoryCache::new());
+        let handler = InvalidateCacheHandler::new(cache);
         let job = Job::GenerateSitemap;
         assert!(handler.handle(&job).await.is_ok());
     }

@@ -19,9 +19,13 @@ pub async fn list(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<crate::models::tag::Tag>>> {
     params.sanitize();
-    let (items, total) =
-        post::list_tags_paginated(state.tag_repo.as_ref(), tenant.as_str(), params.page, params.page_size)
-            .await?;
+    let (items, total) = post::list_tags_paginated(
+        state.tag_repo.as_ref(),
+        tenant.as_str(),
+        params.page,
+        params.page_size,
+    )
+    .await?;
     Ok(params.paginate(items, total))
 }
 

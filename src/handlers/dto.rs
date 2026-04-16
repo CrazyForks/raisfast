@@ -32,8 +32,9 @@ pub struct LoginRequest {
 }
 
 /// 刷新令牌请求体
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct RefreshRequest {
+    #[validate(length(min = 1))]
     pub refresh_token: String,
 }
 
@@ -115,8 +116,11 @@ pub struct CreatePostRequest {
     pub content: String,
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
+    #[validate(custom(function = "validate_post_status"))]
     pub status: Option<String>,
+    #[validate(custom(function = "validate_optional_uuid"))]
     pub category_id: Option<String>,
+    #[validate(custom(function = "validate_uuid_vec"))]
     pub tag_ids: Option<Vec<String>>,
 }
 
@@ -128,8 +132,11 @@ pub struct UpdatePostRequest {
     pub content: Option<String>,
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
+    #[validate(custom(function = "validate_post_status"))]
     pub status: Option<String>,
+    #[validate(custom(function = "validate_optional_uuid"))]
     pub category_id: Option<String>,
+    #[validate(custom(function = "validate_uuid_vec"))]
     pub tag_ids: Option<Vec<String>>,
 }
 
@@ -169,6 +176,7 @@ pub struct CreateCategoryRequest {
     #[validate(length(min = 1, max = 100))]
     pub name: String,
     pub description: Option<String>,
+    #[validate(custom(function = "validate_optional_uuid"))]
     pub parent_id: Option<String>,
     pub sort_order: Option<i64>,
 }
@@ -179,6 +187,7 @@ pub struct UpdateCategoryRequest {
     #[validate(length(min = 1, max = 100))]
     pub name: Option<String>,
     pub description: Option<String>,
+    #[validate(custom(function = "validate_optional_uuid"))]
     pub parent_id: Option<String>,
     pub sort_order: Option<i64>,
 }
@@ -199,6 +208,7 @@ pub struct CreateTagRequest {
 pub struct CreateCommentRequest {
     #[validate(length(min = 1, max = 5000))]
     pub content: String,
+    #[validate(custom(function = "validate_optional_uuid"))]
     pub parent_id: Option<String>,
     #[validate(length(min = 1, max = 50))]
     pub nickname: Option<String>,
@@ -209,7 +219,7 @@ pub struct CreateCommentRequest {
 /// 更新评论状态请求体
 #[derive(Debug, Deserialize, Validate)]
 pub struct UpdateCommentStatusRequest {
-    #[validate(length(min = 1))]
+    #[validate(custom(function = "validate_comment_status"))]
     pub status: String,
 }
 
@@ -253,4 +263,46 @@ fn validate_password(pwd: &str) -> Result<(), validator::ValidationError> {
         err.message = Some("password must contain both letters and digits".into());
         Err(err)
     }
+}
+
+fn validate_post_status(status: &str) -> Result<(), validator::ValidationError> {
+    match status {
+        "draft" | "published" => Ok(()),
+        _ => {
+            let mut err = validator::ValidationError::new("invalid_status");
+            err.message = Some("status must be 'draft' or 'published'".into());
+            Err(err)
+        }
+    }
+}
+
+fn validate_comment_status(status: &str) -> Result<(), validator::ValidationError> {
+    match status {
+        "approved" | "pending" | "spam" => Ok(()),
+        _ => {
+            let mut err = validator::ValidationError::new("invalid_status");
+            err.message = Some("status must be 'approved', 'pending', or 'spam'".into());
+            Err(err)
+        }
+    }
+}
+
+fn validate_optional_uuid(id: &str) -> Result<(), validator::ValidationError> {
+    if id.parse::<uuid::Uuid>().is_err() {
+        let mut err = validator::ValidationError::new("invalid_uuid");
+        err.message = Some("invalid UUID format".into());
+        return Err(err);
+    }
+    Ok(())
+}
+
+fn validate_uuid_vec(ids: &[String]) -> Result<(), validator::ValidationError> {
+    for id in ids {
+        if id.parse::<uuid::Uuid>().is_err() {
+            let mut err = validator::ValidationError::new("invalid_uuid");
+            err.message = Some("invalid UUID format".into());
+            return Err(err);
+        }
+    }
+    Ok(())
 }

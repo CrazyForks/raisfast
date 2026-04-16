@@ -6,8 +6,8 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use crate::errors::app_error::{AppError, AppResult};
 use crate::db::tenant::{resolve_tenant, tenant_filter};
+use crate::errors::app_error::{AppError, AppResult};
 
 /// 分类完整数据库行模型
 ///
@@ -176,7 +176,10 @@ pub async fn update(
 ///
 /// 若分类不存在则返回 [`AppError::NotFound`]。
 pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
-    let sql = format!("DELETE FROM categories WHERE id = ?{}", tenant_filter(tenant_id));
+    let sql = format!(
+        "DELETE FROM categories WHERE id = ?{}",
+        tenant_filter(tenant_id)
+    );
     let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql).bind(id);
     if let Some(tid) = tenant_id {

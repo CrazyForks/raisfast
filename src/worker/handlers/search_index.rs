@@ -45,7 +45,13 @@ impl JobHandler for RebuildSearchIndexHandler {
 
         let mut posts = Vec::with_capacity(post_ids.len());
         for id in post_ids {
-            match crate::models::post::find_by_id(&self.pool, id, Some(crate::db::tenant::DEFAULT_TENANT)).await {
+            match crate::models::post::find_by_id(
+                &self.pool,
+                id,
+                Some(crate::db::tenant::DEFAULT_TENANT),
+            )
+            .await
+            {
                 Ok(Some(post)) => posts.push(SearchablePost {
                     id: post.id,
                     title: post.title,

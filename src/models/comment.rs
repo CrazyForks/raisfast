@@ -10,8 +10,8 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use crate::errors::app_error::{AppError, AppResult};
 use crate::db::tenant::{resolve_tenant, tenant_filter, tenant_filter_aliased};
+use crate::errors::app_error::{AppError, AppResult};
 
 /// 评论完整数据库行模型
 ///
@@ -218,7 +218,10 @@ pub async fn find_all_paginated(
     q = q.bind(page_size).bind(offset);
     let rows = q.fetch_all(pool).await?;
 
-    let sql2 = format!("SELECT COUNT(*) FROM comments WHERE 1=1{}", tenant_filter(tenant_id));
+    let sql2 = format!(
+        "SELECT COUNT(*) FROM comments WHERE 1=1{}",
+        tenant_filter(tenant_id)
+    );
     let sql2 = crate::db::dialect::translate(&sql2);
     let mut q2 = sqlx::query_scalar::<_, i64>(&sql2);
     if let Some(tid) = tenant_id {
@@ -238,7 +241,10 @@ pub async fn update_status(
     status: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let sql = format!("UPDATE comments SET status = ? WHERE id = ?{}", tenant_filter(tenant_id));
+    let sql = format!(
+        "UPDATE comments SET status = ? WHERE id = ?{}",
+        tenant_filter(tenant_id)
+    );
     let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql).bind(status).bind(id);
     if let Some(tid) = tenant_id {
@@ -253,7 +259,10 @@ pub async fn update_status(
 ///
 /// 若评论不存在则返回 [`AppError::NotFound`]。
 pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
-    let sql = format!("DELETE FROM comments WHERE id = ?{}", tenant_filter(tenant_id));
+    let sql = format!(
+        "DELETE FROM comments WHERE id = ?{}",
+        tenant_filter(tenant_id)
+    );
     let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql).bind(id);
     if let Some(tid) = tenant_id {

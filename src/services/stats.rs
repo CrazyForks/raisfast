@@ -83,14 +83,19 @@ impl StatsService {
                     "SELECT status, COUNT(*) as cnt FROM {table} WHERE tenant_id = ? GROUP BY status"
                 );
                 let sql = crate::db::dialect::translate(&sql);
-                let rows: Vec<(String, i64)> =
-                    sqlx::query_as::<_, (String, i64)>(&sql).bind(&tid).fetch_all(&self.pool).await.map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+                let rows: Vec<(String, i64)> = sqlx::query_as::<_, (String, i64)>(&sql)
+                    .bind(&tid)
+                    .fetch_all(&self.pool)
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
                 rows
             } else {
                 let sql = format!("SELECT status, COUNT(*) as cnt FROM {table} GROUP BY status");
                 let sql = crate::db::dialect::translate(&sql);
-                let rows: Vec<(String, i64)> =
-                    sqlx::query_as::<_, (String, i64)>(&sql).fetch_all(&self.pool).await.map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+                let rows: Vec<(String, i64)> = sqlx::query_as::<_, (String, i64)>(&sql)
+                    .fetch_all(&self.pool)
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
                 rows
             };
 
@@ -98,7 +103,10 @@ impl StatsService {
             for (status, count) in status_sql {
                 by_status.insert(status, json!(count));
             }
-            result.as_object_mut().unwrap().insert("by_status".into(), json!(by_status));
+            result
+                .as_object_mut()
+                .unwrap()
+                .insert("by_status".into(), json!(by_status));
         }
 
         Ok(result)
@@ -377,20 +385,24 @@ mod tests {
         .await
         .unwrap();
 
-        sqlx::query("CREATE TABLE media (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'default')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "CREATE TABLE media (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'default')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         sqlx::query("CREATE TABLE categories (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'default')")
             .execute(&pool)
             .await
             .unwrap();
 
-        sqlx::query("CREATE TABLE tags (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'default')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "CREATE TABLE tags (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'default')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let svc = StatsService::new(pool);
         let result = svc.overview(None).await.unwrap();
@@ -426,20 +438,24 @@ mod tests {
         .await
         .unwrap();
 
-        sqlx::query("CREATE TABLE media (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'default')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "CREATE TABLE media (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'default')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         sqlx::query("CREATE TABLE categories (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'default')")
             .execute(&pool)
             .await
             .unwrap();
 
-        sqlx::query("CREATE TABLE tags (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'default')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "CREATE TABLE tags (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'default')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         sqlx::query("INSERT INTO posts (id, title, slug, created_at) VALUES ('p1', 'Hello', 'hello', '2024-01-01T00:00:00Z')")
             .execute(&pool)

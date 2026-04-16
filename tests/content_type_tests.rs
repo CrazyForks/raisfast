@@ -7,9 +7,9 @@ use std::collections::HashMap;
 
 use serde_json::json;
 
+use rust_blog::content_type::ContentTypeRegistry;
 use rust_blog::content_type::repository::{ContentQuery, ContentRepository};
 use rust_blog::content_type::schema::ContentTypeSchema;
-use rust_blog::content_type::ContentTypeRegistry;
 use rust_blog::db::tenant;
 
 const PRODUCT_TOML: &str = r#"
@@ -110,7 +110,10 @@ async fn migrate_creates_table() {
             .await
             .unwrap();
 
-    let col_names: Vec<&str> = rows.iter().map(|(_, name, _, _, _, _)| name.as_str()).collect();
+    let col_names: Vec<&str> = rows
+        .iter()
+        .map(|(_, name, _, _, _, _)| name.as_str())
+        .collect();
     assert!(col_names.contains(&"id"));
     assert!(col_names.contains(&"title"));
     assert!(col_names.contains(&"slug"));
@@ -329,12 +332,7 @@ async fn update_changes_fields() {
     let id = created["id"].as_str().unwrap().to_string();
 
     let updated = repo
-        .update(
-            &ct,
-            &id,
-            json!({"title": "Updated", "price": 99}),
-            None,
-        )
+        .update(&ct, &id, json!({"title": "Updated", "price": 99}), None)
         .await
         .unwrap();
 
@@ -403,12 +401,11 @@ required = true
 
     repo.delete(&ct, &id, None).await.unwrap();
 
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT deleted_at FROM ct_notes WHERE id = ?")
-            .bind(&id)
-            .fetch_optional(&repo.pool)
-            .await
-            .unwrap();
+    let row: Option<(String,)> = sqlx::query_as("SELECT deleted_at FROM ct_notes WHERE id = ?")
+        .bind(&id)
+        .fetch_optional(&repo.pool)
+        .await
+        .unwrap();
 
     let deleted_at = row.unwrap().0;
     assert!(!deleted_at.is_empty());
@@ -509,9 +506,7 @@ async fn delete_respects_tenant() {
         .unwrap();
     let id_a = a["id"].as_str().unwrap();
 
-    repo.delete(&ct, id_a, Some("tenant_b"))
-        .await
-        .unwrap();
+    repo.delete(&ct, id_a, Some("tenant_b")).await.unwrap();
 
     assert!(
         repo.find_by_id(&ct, id_a, Some("tenant_a"))
@@ -521,9 +516,7 @@ async fn delete_respects_tenant() {
         "tenant_b should not be able to delete tenant_a's data"
     );
 
-    repo.delete(&ct, id_a, Some("tenant_a"))
-        .await
-        .unwrap();
+    repo.delete(&ct, id_a, Some("tenant_a")).await.unwrap();
     assert!(
         repo.find_by_id(&ct, id_a, Some("tenant_a"))
             .await
@@ -682,16 +675,14 @@ async fn update_with_no_fields_returns_error() {
     repo.migrate(&ct).await.unwrap();
 
     let created = repo
-        .create(
-            &ct,
-            json!({"title": "X", "slug": "x", "price": 1}),
-            None,
-        )
+        .create(&ct, json!({"title": "X", "slug": "x", "price": 1}), None)
         .await
         .unwrap();
     let id = created["id"].as_str().unwrap().to_string();
 
-    let result = repo.update(&ct, &id, json!({"nonexistent_field": "v"}), None).await;
+    let result = repo
+        .update(&ct, &id, json!({"nonexistent_field": "v"}), None)
+        .await;
     assert!(result.is_err());
 }
 
@@ -742,7 +733,11 @@ default = 0
     repo.migrate(&ct_v2).await.unwrap();
 
     let created = repo
-        .create(&ct_v2, json!({"title": "V2", "body": "hello", "priority": 5}), None)
+        .create(
+            &ct_v2,
+            json!({"title": "V2", "body": "hello", "priority": 5}),
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(created["body"], "hello");

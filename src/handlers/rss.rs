@@ -20,9 +20,17 @@ use crate::models::post;
 pub async fn feed(State(state): State<crate::AppState>) -> AppResult<Response> {
     let locale = current_locale();
     rust_i18n::set_locale(&locale);
-    let posts = post::find_published_joined(&state.pool, 1, 20, None, None, None, Some(crate::db::tenant::DEFAULT_TENANT))
-        .await?
-        .0;
+    let posts = post::find_published_joined(
+        &state.pool,
+        1,
+        20,
+        None,
+        None,
+        None,
+        Some(crate::db::tenant::DEFAULT_TENANT),
+    )
+    .await?
+    .0;
 
     let base_url = &state.config.base_url;
 

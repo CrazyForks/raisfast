@@ -101,12 +101,8 @@ impl OptionsService {
         if let Some(entry) = self.cache.read().await.get(key).cloned() {
             return Some(entry);
         }
-        let row: crate::models::options::OptionRow = self
-            .repo
-            .find_by_key(key, "default")
-            .await
-            .ok()
-            .flatten()?;
+        let row: crate::models::options::OptionRow =
+            self.repo.find_by_key(key, "default").await.ok().flatten()?;
         let entry = OptionEntry::from(&row);
         self.cache
             .write()
@@ -131,10 +127,23 @@ impl OptionsService {
         Ok(())
     }
 
-    /// 批量设置配置
+    /// 批量设置配置（事务保证原子性）
     pub async fn set_batch(&self, pairs: HashMap<String, Value>) -> Result<(), AppError> {
-        for (key, value) in pairs {
-            self.set(&key, value).await?;
+        let now = chrono::Utc::now().to_rfc3339();
+        let sorted: Vec<_> = pairs.into_iter().collect();
+
+        for (key, value) in &sorted {
+            let value_str = serde_json::to_string(value)
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("json serialize failed: {e}")))?;
+            self.repo
+                .upsert_value(key, &value_str, "default", &now)
+                .await?;
+        }
+
+        for (key, value) in sorted {
+            if let Some(entry) = self.cache.write().await.get_mut(&key) {
+                entry.value = value;
+            }
         }
         Ok(())
     }
@@ -168,7 +177,10 @@ impl OptionsService {
         let groups = group_order
             .into_iter()
             .map(|key| OptionGroup {
-                label: group_labels.get(&key).cloned().unwrap_or_else(|| key.clone()),
+                label: group_labels
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_else(|| key.clone()),
                 key: key.clone(),
                 options: group_map.remove(&key).unwrap_or_default(),
             })
@@ -225,7 +237,10 @@ mod tests {
 
     #[test]
     fn parse_value_handles_json_string() {
-        assert_eq!(parse_value(r#""hello""#), Value::String("hello".to_string()));
+        assert_eq!(
+            parse_value(r#""hello""#),
+            Value::String("hello".to_string())
+        );
     }
 
     #[test]
@@ -240,6 +255,9 @@ mod tests {
 
     #[test]
     fn parse_value_falls_back_to_string() {
-        assert_eq!(parse_value("plain text"), Value::String("plain text".to_string()));
+        assert_eq!(
+            parse_value("plain text"),
+            Value::String("plain text".to_string())
+        );
     }
 }

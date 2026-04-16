@@ -260,9 +260,7 @@ pub async fn update_schedule(
     .execute(pool)
     .await?;
 
-    Ok(find_by_id(pool, id)
-        .await?
-        .unwrap_or(schedule))
+    Ok(find_by_id(pool, id).await?.unwrap_or(schedule))
 }
 
 /// 删除调度

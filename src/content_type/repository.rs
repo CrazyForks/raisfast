@@ -180,13 +180,8 @@ impl ContentRepository {
         if let Some(ref mut item) = result
             && !ct.relation_fields().is_empty()
         {
-            super::resolver::resolve_relations(
-                &self.pool,
-                ct,
-                std::slice::from_mut(item),
-                None,
-            )
-            .await?;
+            super::resolver::resolve_relations(&self.pool, ct, std::slice::from_mut(item), None)
+                .await?;
         }
 
         Ok(result)
@@ -243,26 +238,27 @@ impl ContentRepository {
         if let Some(ref mut item) = result
             && !ct.relation_fields().is_empty()
         {
-            super::resolver::resolve_relations(
-                &self.pool,
-                ct,
-                std::slice::from_mut(item),
-                None,
-            )
-            .await?;
+            super::resolver::resolve_relations(&self.pool, ct, std::slice::from_mut(item), None)
+                .await?;
         }
 
         Ok(result)
     }
 
-    /// 创建（含字段校验）
+    /// 创建（含字段校验，事务保护）
     pub async fn create(
         &self,
         ct: &ContentTypeSchema,
         mut data: Value,
         tenant_id: Option<&str>,
     ) -> Result<Value, AppError> {
-        super::validation::validate_create(&self.pool, ct, &data).await?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("begin tx: {e}")))?;
+
+        super::validation::validate_create_tx(&self.pool, ct, &data).await?;
         let id = uuid::Uuid::now_v7().to_string();
         let now = chrono::Utc::now().to_rfc3339();
 
@@ -316,9 +312,13 @@ impl ContentRepository {
         }
 
         query
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("insert failed: {e}")))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("commit failed: {e}")))?;
 
         self.find_by_id(ct, &id, tenant_id)
             .await
@@ -326,7 +326,7 @@ impl ContentRepository {
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created record not found")))?
     }
 
-    /// 更新（含字段校验）
+    /// 更新（含字段校验，事务保护）
     pub async fn update(
         &self,
         ct: &ContentTypeSchema,
@@ -334,7 +334,13 @@ impl ContentRepository {
         mut data: Value,
         tenant_id: Option<&str>,
     ) -> Result<Value, AppError> {
-        super::validation::validate_update(&self.pool, ct, id, &data).await?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("begin tx: {e}")))?;
+
+        super::validation::validate_update_tx(&self.pool, ct, id, &data).await?;
         let now = chrono::Utc::now().to_rfc3339();
 
         let obj = data
@@ -352,10 +358,7 @@ impl ContentRepository {
         let mut idx = 1;
 
         for (key, val) in obj.iter() {
-            if ct.get_field(key).is_some()
-                || key == "status"
-                || key == "published_at"
-            {
+            if ct.get_field(key).is_some() || key == "status" || key == "published_at" {
                 set_clauses.push(format!("{} = {}", key, placeholder(idx)));
                 idx += 1;
                 values.push(value_to_string(val));
@@ -395,9 +398,13 @@ impl ContentRepository {
         }
 
         query
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("update failed: {e}")))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("commit failed: {e}")))?;
 
         self.find_by_id(ct, id, tenant_id)
             .await

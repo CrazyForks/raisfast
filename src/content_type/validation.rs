@@ -22,6 +22,23 @@ pub async fn validate_create(
     ct: &ContentTypeSchema,
     data: &Value,
 ) -> Result<(), AppError> {
+    do_validate_create(pool, ct, data).await
+}
+
+/// 校验创建数据（事务内）
+pub async fn validate_create_tx(
+    pool: &sqlx::SqlitePool,
+    ct: &ContentTypeSchema,
+    data: &Value,
+) -> Result<(), AppError> {
+    do_validate_create(pool, ct, data).await
+}
+
+async fn do_validate_create(
+    pool: &sqlx::SqlitePool,
+    ct: &ContentTypeSchema,
+    data: &Value,
+) -> Result<(), AppError> {
     let obj = data
         .as_object()
         .ok_or_else(|| AppError::BadRequest("request body must be a JSON object".into()))?;
@@ -119,6 +136,25 @@ pub async fn validate_update(
     id: &str,
     data: &Value,
 ) -> Result<(), AppError> {
+    do_validate_update(pool, ct, id, data).await
+}
+
+/// 校验更新数据（事务内）
+pub async fn validate_update_tx(
+    pool: &sqlx::SqlitePool,
+    ct: &ContentTypeSchema,
+    id: &str,
+    data: &Value,
+) -> Result<(), AppError> {
+    do_validate_update(pool, ct, id, data).await
+}
+
+async fn do_validate_update(
+    pool: &sqlx::SqlitePool,
+    ct: &ContentTypeSchema,
+    id: &str,
+    data: &Value,
+) -> Result<(), AppError> {
     let obj = data
         .as_object()
         .ok_or_else(|| AppError::BadRequest("request body must be a JSON object".into()))?;
@@ -132,7 +168,9 @@ pub async fn validate_update(
     }
 
     for field in &ct.fields {
-        let Some(val) = obj.get(&field.name) else { continue };
+        let Some(val) = obj.get(&field.name) else {
+            continue;
+        };
         if is_empty_value(val) {
             continue;
         }
@@ -220,7 +258,9 @@ async fn check_unique_fields(
         if !field.unique {
             continue;
         }
-        let Some(val) = obj.get(&field.name) else { continue };
+        let Some(val) = obj.get(&field.name) else {
+            continue;
+        };
         if is_empty_value(val) {
             continue;
         }
@@ -247,10 +287,7 @@ async fn check_unique_fields(
                 .fetch_one(pool)
                 .await
         } else {
-            sqlx::query(&sql)
-                .bind(&val_str)
-                .fetch_one(pool)
-                .await
+            sqlx::query(&sql).bind(&val_str).fetch_one(pool).await
         }
         .map_err(|e| AppError::Internal(anyhow::anyhow!("unique check failed: {e}")))?;
 
@@ -445,7 +482,10 @@ immutable = true
         let result = validate_create(&pool, &ct, &data).await;
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("max_length"), "expected max_length error in: {msg}");
+        assert!(
+            msg.contains("max_length"),
+            "expected max_length error in: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -477,7 +517,10 @@ immutable = true
         let result = validate_create(&pool, &ct, &data).await;
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("already exists"), "expected unique error in: {msg}");
+        assert!(
+            msg.contains("already exists"),
+            "expected unique error in: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -496,7 +539,10 @@ immutable = true
         let result = validate_update(&pool, &ct, &id, &json!({"secret": "new"})).await;
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("immutable"), "expected immutable error in: {msg}");
+        assert!(
+            msg.contains("immutable"),
+            "expected immutable error in: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -512,8 +558,8 @@ immutable = true
             .unwrap();
         let id = created["id"].as_str().unwrap().to_string();
 
-        let result = validate_update(&pool, &ct, &id, &json!({"name": "Updated", "code": "XYZ"}))
-            .await;
+        let result =
+            validate_update(&pool, &ct, &id, &json!({"name": "Updated", "code": "XYZ"})).await;
         assert!(result.is_ok(), "updating same unique value should be ok");
     }
 }

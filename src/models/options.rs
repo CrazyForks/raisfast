@@ -33,9 +33,7 @@ pub async fn find_autoload(pool: &crate::db::Pool) -> AppResult<Vec<OptionRow>> 
     let sql = crate::db::dialect::translate(
         "SELECT id, tenant_id, key, value, type, group_name, label, description, validation, is_public, autoload, sort_order, updated_at FROM options WHERE autoload = 1 AND tenant_id = 'default'",
     );
-    let rows = sqlx::query_as::<_, OptionRow>(&sql)
-        .fetch_all(pool)
-        .await?;
+    let rows = sqlx::query_as::<_, OptionRow>(&sql).fetch_all(pool).await?;
     Ok(rows)
 }
 
@@ -90,14 +88,8 @@ pub async fn upsert_value(
 }
 
 /// 根据 key 删除配置
-pub async fn delete_by_key(
-    pool: &crate::db::Pool,
-    key: &str,
-    tenant_id: &str,
-) -> AppResult<()> {
-    let sql = crate::db::dialect::translate(
-        "DELETE FROM options WHERE tenant_id = ? AND key = ?",
-    );
+pub async fn delete_by_key(pool: &crate::db::Pool, key: &str, tenant_id: &str) -> AppResult<()> {
+    let sql = crate::db::dialect::translate("DELETE FROM options WHERE tenant_id = ? AND key = ?");
     sqlx::query(&sql)
         .bind(tenant_id)
         .bind(key)

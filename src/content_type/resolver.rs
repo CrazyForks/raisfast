@@ -24,8 +24,8 @@ pub async fn resolve_relations(
     items: &mut [Value],
     include: Option<&[String]>,
 ) -> Result<(), AppError> {
-    let include_set: Option<std::collections::HashSet<&str>> = include
-        .map(|list| list.iter().map(|s| s.as_str()).collect());
+    let include_set: Option<std::collections::HashSet<&str>> =
+        include.map(|list| list.iter().map(|s| s.as_str()).collect());
 
     for item in items {
         resolve_item_relations(pool, ct, item, include_set.as_ref()).await?;
@@ -86,7 +86,9 @@ async fn resolve_item_relations(
                     .bind(fk_id)
                     .fetch_optional(pool)
                     .await
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("relation query failed: {e}")))?;
+                    .map_err(|e| {
+                        AppError::Internal(anyhow::anyhow!("relation query failed: {e}"))
+                    })?;
 
                 if let Some((Some(json_str),)) = row
                     && let Ok(target_data) = serde_json::from_str::<Value>(&json_str)
@@ -116,7 +118,9 @@ async fn resolve_item_relations(
                     .bind(item_id)
                     .fetch_all(pool)
                     .await
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("relation query failed: {e}")))?;
+                    .map_err(|e| {
+                        AppError::Internal(anyhow::anyhow!("relation query failed: {e}"))
+                    })?;
 
                 let targets: Vec<Value> = rows
                     .into_iter()
@@ -152,7 +156,9 @@ async fn resolve_item_relations(
                     .bind(item_id)
                     .fetch_all(pool)
                     .await
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("relation query failed: {e}")))?;
+                    .map_err(|e| {
+                        AppError::Internal(anyhow::anyhow!("relation query failed: {e}"))
+                    })?;
 
                 let targets: Vec<Value> = rows
                     .into_iter()
@@ -188,7 +194,9 @@ async fn resolve_item_relations(
                     .bind(fk_id)
                     .fetch_optional(pool)
                     .await
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("relation query failed: {e}")))?;
+                    .map_err(|e| {
+                        AppError::Internal(anyhow::anyhow!("relation query failed: {e}"))
+                    })?;
 
                 if let Some((Some(json_str),)) = row
                     && let Ok(target_data) = serde_json::from_str::<Value>(&json_str)
@@ -203,7 +211,8 @@ async fn resolve_item_relations(
 }
 
 fn build_star_columns(_table: &str) -> String {
-    "'id', id, 'name', COALESCE(name, ''), 'slug', COALESCE(slug, ''), 'title', COALESCE(title, '')".to_string()
+    "'id', id, 'name', COALESCE(name, ''), 'slug', COALESCE(slug, ''), 'title', COALESCE(title, '')"
+        .to_string()
 }
 
 #[cfg(test)]
@@ -277,15 +286,19 @@ through = "ct_resolve_posts_tags"
             .await
             .unwrap();
 
-        sqlx::query("INSERT INTO ct_resolve_tags (id, name, slug, title) VALUES ('t1', 'Rust', 'rust', '')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO ct_resolve_tags (id, name, slug, title) VALUES ('t1', 'Rust', 'rust', '')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
-        sqlx::query("INSERT INTO ct_resolve_tags (id, name, slug, title) VALUES ('t2', 'Web', 'web', '')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO ct_resolve_tags (id, name, slug, title) VALUES ('t2', 'Web', 'web', '')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         pool
     }
@@ -303,7 +316,9 @@ through = "ct_resolve_posts_tags"
             "updated_at": "2024-01-01T00:00:00Z"
         })];
 
-        resolve_relations(&pool, &ct, &mut items, None).await.unwrap();
+        resolve_relations(&pool, &ct, &mut items, None)
+            .await
+            .unwrap();
 
         let author = items[0].get("author").unwrap();
         assert_eq!(author["name"], "Alice");
@@ -314,14 +329,18 @@ through = "ct_resolve_posts_tags"
         let pool = setup_test_db().await;
         let ct = make_ct_with_relations();
 
-        sqlx::query("INSERT INTO ct_resolve_posts_tags (post_id, ct_resolve_tags_id) VALUES ('p1', 't1')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO ct_resolve_posts_tags (post_id, ct_resolve_tags_id) VALUES ('p1', 't2')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO ct_resolve_posts_tags (post_id, ct_resolve_tags_id) VALUES ('p1', 't1')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO ct_resolve_posts_tags (post_id, ct_resolve_tags_id) VALUES ('p1', 't2')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let mut items = vec![serde_json::json!({
             "id": "p1",
@@ -331,7 +350,9 @@ through = "ct_resolve_posts_tags"
             "updated_at": "2024-01-01T00:00:00Z"
         })];
 
-        resolve_relations(&pool, &ct, &mut items, None).await.unwrap();
+        resolve_relations(&pool, &ct, &mut items, None)
+            .await
+            .unwrap();
 
         let tags = items[0].get("tags").unwrap().as_array().unwrap();
         assert_eq!(tags.len(), 2);

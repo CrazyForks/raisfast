@@ -18,7 +18,6 @@ const MAGIC_SIGNATURES: &[(&str, &[u8])] = &[
     ("image/png", b"\x89PNG\r\n\x1a\n"),
     ("image/gif", b"GIF87a"),
     ("image/gif", b"GIF89a"),
-    ("image/webp", b"RIFF"),
 ];
 
 /// 保存上传的媒体文件。
@@ -101,7 +100,8 @@ pub async fn list(
 
 /// 删除媒体文件。
 ///
-/// 仅文件所有者或管理员可执行。同时删除磁盘文件和数据库记录。
+/// 仅文件所有者或管理员可执行。先删除数据库记录，再删除磁盘文件。
+/// 若磁盘文件删除失败，仅记录日志不阻断（可后续手动清理）。
 pub async fn delete_media(
     media_repo: &dyn MediaRepository,
     upload_dir: &str,
@@ -117,20 +117,28 @@ pub async fn delete_media(
 
     crate::utils::auth::require_owner_or_admin(role, user_id, &m.user_id)?;
 
-    let filepath = Path::new(upload_dir).join(&m.filepath);
-    let _ = tokio::fs::remove_file(filepath).await;
+    media_repo.delete(media_id, tenant_id).await?;
 
-    media_repo.delete(media_id, tenant_id).await
+    let filepath = Path::new(upload_dir).join(&m.filepath);
+    if let Err(e) = tokio::fs::remove_file(&filepath).await {
+        tracing::warn!(path = %filepath.display(), error = %e, "failed to delete media file from disk");
+    }
+
+    Ok(())
 }
 
 /// 校验文件实际内容的 magic bytes 是否与声明的 Content-Type 匹配。
 ///
 /// 防止攻击者伪造 `Content-Type` 上传非图片文件。
+/// WebP 格式特殊处理：校验 bytes 0-3 = `RIFF` + bytes 8-11 = `WEBP`。
 fn validate_magic_bytes(content_type: &str, data: &[u8]) -> bool {
     for (ct, magic) in MAGIC_SIGNATURES {
         if ct == &content_type && data.len() >= magic.len() && &data[..magic.len()] == *magic {
             return true;
         }
+    }
+    if content_type == "image/webp" && data.len() >= 12 {
+        return &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP";
     }
     false
 }

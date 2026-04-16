@@ -169,6 +169,7 @@ pub fn generate_access_token_for_test(user_id: &str, role: &str) -> String {
 /// 用户注册。
 ///
 /// 检查邮箱是否已被注册，若唯一则哈希密码并创建用户记录。
+#[tracing::instrument(skip(user_repo, eventbus), fields(username = tracing::field::Empty))]
 pub async fn register(
     user_repo: &dyn UserRepository,
     eventbus: &EventBus,
@@ -207,6 +208,7 @@ pub async fn register(
 ///
 /// 验证邮箱和密码，成功后生成访问令牌和刷新令牌，将刷新令牌存入数据库。
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(user_repo, refresh_token_repo, plugins, eventbus), fields(email = %req.email))]
 pub async fn login(
     user_repo: &dyn UserRepository,
     refresh_token_repo: &dyn RefreshTokenRepository,

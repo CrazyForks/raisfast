@@ -155,7 +155,9 @@ pub async fn list_categories_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<crate::models::category::Category>, i64)> {
-    category_repo.find_paginated(tenant_id, page, page_size).await
+    category_repo
+        .find_paginated(tenant_id, page, page_size)
+        .await
 }
 
 /// 创建标签。
@@ -231,6 +233,7 @@ fn extract_excerpt(content: &str, max_len: usize) -> String {
 /// - 从标题自动生成唯一 slug。
 /// - 若未提供摘要，从内容中自动提取前 200 字符。
 /// - 通过 Repository 创建文章并同步关联标签，确保原子性。
+#[tracing::instrument(skip(repo, plugins, eventbus), fields(slug = tracing::field::Empty))]
 pub async fn create_post(
     repo: &dyn PostRepository,
     plugins: &PluginManager,
@@ -268,6 +271,7 @@ pub async fn create_post(
         .await?;
 
     let resp = build_post_response_from_repo(repo, &p.id, plugins, tenant_id).await?;
+    tracing::Span::current().record("slug", &resp.slug);
     eventbus.emit(Event::PostCreated {
         id: p.id.clone(),
         slug: resp.slug.clone(),

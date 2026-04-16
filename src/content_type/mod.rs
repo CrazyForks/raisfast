@@ -92,22 +92,33 @@ impl ContentTypeRegistry {
 
     /// 注册单个 content type（线程安全）
     pub fn register(&self, schema: ContentTypeSchema) {
-        let mut inner = self.inner.write().expect("ContentTypeRegistry lock poisoned");
-        inner.by_table.insert(schema.table.clone(), schema.singular.clone());
+        let mut inner = self
+            .inner
+            .write()
+            .expect("ContentTypeRegistry lock poisoned");
+        inner
+            .by_table
+            .insert(schema.table.clone(), schema.singular.clone());
         inner.types.insert(schema.singular.clone(), schema);
     }
 
     /// 按 singular name 查询
     #[must_use]
     pub fn get(&self, name: &str) -> Option<ContentTypeSchema> {
-        let inner = self.inner.read().expect("ContentTypeRegistry lock poisoned");
+        let inner = self
+            .inner
+            .read()
+            .expect("ContentTypeRegistry lock poisoned");
         inner.types.get(name).cloned()
     }
 
     /// 按表名查询
     #[must_use]
     pub fn get_by_table(&self, table: &str) -> Option<ContentTypeSchema> {
-        let inner = self.inner.read().expect("ContentTypeRegistry lock poisoned");
+        let inner = self
+            .inner
+            .read()
+            .expect("ContentTypeRegistry lock poisoned");
         inner
             .by_table
             .get(table)
@@ -117,14 +128,20 @@ impl ContentTypeRegistry {
     /// 获取所有已注册 content type
     #[must_use]
     pub fn all(&self) -> Vec<ContentTypeSchema> {
-        let inner = self.inner.read().expect("ContentTypeRegistry lock poisoned");
+        let inner = self
+            .inner
+            .read()
+            .expect("ContentTypeRegistry lock poisoned");
         inner.types.values().cloned().collect()
     }
 
     /// 已注册数量
     #[must_use]
     pub fn len(&self) -> usize {
-        let inner = self.inner.read().expect("ContentTypeRegistry lock poisoned");
+        let inner = self
+            .inner
+            .read()
+            .expect("ContentTypeRegistry lock poisoned");
         inner.types.len()
     }
 
@@ -137,17 +154,19 @@ impl ContentTypeRegistry {
     /// 按 plural name 查询
     #[must_use]
     pub fn get_by_plural(&self, plural: &str) -> Option<ContentTypeSchema> {
-        let inner = self.inner.read().expect("ContentTypeRegistry lock poisoned");
-        inner
-            .types
-            .values()
-            .find(|ct| ct.plural == plural)
-            .cloned()
+        let inner = self
+            .inner
+            .read()
+            .expect("ContentTypeRegistry lock poisoned");
+        inner.types.values().find(|ct| ct.plural == plural).cloned()
     }
 
     /// 注销单个 content type（线程安全）
     pub fn unregister(&self, singular: &str) -> Option<ContentTypeSchema> {
-        let mut inner = self.inner.write().expect("ContentTypeRegistry lock poisoned");
+        let mut inner = self
+            .inner
+            .write()
+            .expect("ContentTypeRegistry lock poisoned");
         if let Some(schema) = inner.types.remove(singular) {
             inner.by_table.remove(&schema.table);
             Some(schema)
