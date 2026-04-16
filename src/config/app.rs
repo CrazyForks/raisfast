@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 /// | `CORS_ORIGINS` | String | (空=允许所有) | CORS 允许的来源，多个用逗号分隔 |
 /// | `TLS_CERT_PATH` | String | (空=HTTP) | TLS 证书文件路径（PEM 格式） |
 /// | `TLS_KEY_PATH` | String | (空=HTTP) | TLS 私钥文件路径（PEM 格式） |
+/// | `APP_TIMEZONE` | String | `UTC` | 站点时区（IANA 格式，如 `Asia/Shanghai`） |
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub host: String,
@@ -100,6 +101,8 @@ pub struct AppConfig {
     pub search_index_dir: String,
     #[serde(default = "default_content_type_dir")]
     pub content_type_dir: String,
+    #[serde(default = "default_timezone")]
+    pub timezone: String,
 }
 
 /// 单条 Cron 调度配置
@@ -135,6 +138,10 @@ fn default_search_index_dir() -> String {
 
 fn default_content_type_dir() -> String {
     "./content_types".into()
+}
+
+fn default_timezone() -> String {
+    "UTC".into()
 }
 
 #[must_use]
@@ -389,6 +396,10 @@ impl AppConfig {
                 .unwrap_or_else(|_| default_search_index_dir()),
             content_type_dir: env::var("CONTENT_TYPE_DIR")
                 .unwrap_or_else(|_| default_content_type_dir()),
+            timezone: env::var("TIMEZONE")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(default_timezone),
         }
     }
 

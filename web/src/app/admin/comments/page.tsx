@@ -2,13 +2,21 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle, XCircle, Trash2, MessageSquare } from "lucide-react";
+import {
+  CheckCircle,
+  XCircle,
+  Trash2,
+  MessageSquare,
+  Filter,
+  CheckSquare,
+} from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table,
   TableBody,
@@ -52,10 +60,18 @@ function statusBadgeVariant(status: string) {
   }
 }
 
+const STATUS_OPTIONS = [
+  { value: "pending", label: "Pending" },
+  { value: "approved", label: "Approved" },
+  { value: "rejected", label: "Rejected" },
+];
+
 export default function CommentsPage() {
   const { isAdmin } = useAuthStore();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const pageSize = 20;
 
   const commentsQuery = useQuery({
@@ -88,6 +104,7 @@ export default function CommentsPage() {
     onSuccess: () => {
       toast.success("Comment deleted");
       queryClient.invalidateQueries({ queryKey: ["admin-comments"] });
+      setSelected(new Set());
     },
     onError: (err) => {
       if (err instanceof ApiError) {
@@ -98,9 +115,79 @@ export default function CommentsPage() {
     },
   });
 
+  const bulkStatusMutation = useMutation({
+    mutationFn: ({ ids, status }: { ids: string[]; status: string }) =>
+      Promise.all(
+        ids.map((id) => api.put(`/comments/${id}/status`, { status })),
+      ),
+    onSuccess: (_data, vars) => {
+      toast.success(`${vars.ids.length} comment(s) ${vars.status}`);
+      queryClient.invalidateQueries({ queryKey: ["admin-comments"] });
+      setSelected(new Set());
+    },
+    onError: (err) => {
+      if (err instanceof ApiError) {
+        toast.error(err.message);
+      } else {
+        toast.error("Bulk action failed");
+      }
+    },
+  });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: (ids: string[]) =>
+      Promise.all(ids.map((id) => api.delete(`/comments/${id}`))),
+    onSuccess: (_data, ids) => {
+      toast.success(`${ids.length} comment(s) deleted`);
+      queryClient.invalidateQueries({ queryKey: ["admin-comments"] });
+      setSelected(new Set());
+    },
+    onError: (err) => {
+      if (err instanceof ApiError) {
+        toast.error(err.message);
+      } else {
+        toast.error("Bulk delete failed");
+      }
+    },
+  });
+
   function handleDelete(id: string) {
     if (confirm("Are you sure you want to delete this comment?")) {
       deleteMutation.mutate(id);
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function toggleSelectAll(ids: string[]) {
+    setSelected((prev) => {
+      const allSelected = ids.every((id) => prev.has(id));
+      if (allSelected) {
+        return new Set();
+      }
+      return new Set(ids);
+    });
+  }
+
+  function handleBulkStatus(status: string) {
+    if (selected.size === 0) return;
+    bulkStatusMutation.mutate({ ids: Array.from(selected), status });
+  }
+
+  function handleBulkDelete() {
+    if (selected.size === 0) return;
+    if (confirm(`Delete ${selected.size} selected comment(s)?`)) {
+      bulkDeleteMutation.mutate(Array.from(selected));
     }
   }
 
@@ -121,23 +208,85 @@ export default function CommentsPage() {
     );
   }
 
-  const comments = commentsQuery.data?.items ?? [];
+  const allComments = commentsQuery.data?.items ?? [];
+  const filtered =
+    statusFilter === "all"
+      ? allComments
+      : allComments.filter((c) => c.status === statusFilter);
   const totalPages = Math.ceil((commentsQuery.data?.total ?? 0) / pageSize);
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Comments</h1>
-        <p className="text-sm text-muted-foreground">
-          {commentsQuery.data ? `${commentsQuery.data.total} total` : ""}
-        </p>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">
+            {commentsQuery.data ? `${commentsQuery.data.total} total` : ""}
+          </span>
+        </div>
       </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <Filter className="size-4 text-muted-foreground" />
+        {["all", ...STATUS_OPTIONS.map((s) => s.value)].map((val) => (
+          <Button
+            key={val}
+            variant={statusFilter === val ? "default" : "outline"}
+            size="sm"
+            onClick={() => setStatusFilter(val)}
+          >
+            {val === "all" ? "All" : STATUS_OPTIONS.find((s) => s.value === val)?.label}
+          </Button>
+        ))}
+      </div>
+
+      {selected.size > 0 && (
+        <div className="flex items-center gap-2 p-2 bg-muted rounded-md">
+          <CheckSquare className="size-4" />
+          <span className="text-sm font-medium">{selected.size} selected</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleBulkStatus("approved")}
+            disabled={bulkStatusMutation.isPending}
+          >
+            Approve
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleBulkStatus("rejected")}
+            disabled={bulkStatusMutation.isPending}
+          >
+            Reject
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={handleBulkDelete}
+            disabled={bulkDeleteMutation.isPending}
+          >
+            Delete
+          </Button>
+        </div>
+      )}
 
       <Card>
         <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10">
+                  <Checkbox
+                    checked={
+                      filtered.length > 0 &&
+                      filtered.every((c) => selected.has(c.id))
+                    }
+                    onCheckedChange={() =>
+                      toggleSelectAll(filtered.map((c) => c.id))
+                    }
+                  />
+                </TableHead>
                 <TableHead>Author</TableHead>
                 <TableHead>Content</TableHead>
                 <TableHead>Post</TableHead>
@@ -149,19 +298,25 @@ export default function CommentsPage() {
             <TableBody>
               {commentsQuery.isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8">
+                  <TableCell colSpan={7} className="text-center py-8">
                     Loading...
                   </TableCell>
                 </TableRow>
-              ) : comments.length === 0 ? (
+              ) : filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8">
+                  <TableCell colSpan={7} className="text-center py-8">
                     No comments found.
                   </TableCell>
                 </TableRow>
               ) : (
-                comments.map((c) => (
-                  <TableRow key={c.id}>
+                filtered.map((c) => (
+                  <TableRow key={c.id} className={selected.has(c.id) ? "bg-muted/50" : ""}>
+                    <TableCell>
+                      <Checkbox
+                        checked={selected.has(c.id)}
+                        onCheckedChange={() => toggleSelect(c.id)}
+                      />
+                    </TableCell>
                     <TableCell className="font-medium whitespace-nowrap">
                       {c.nickname || "User"}
                     </TableCell>

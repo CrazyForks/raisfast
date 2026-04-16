@@ -140,7 +140,7 @@ mod tests {
     #[cfg(feature = "search-tantivy")]
     async fn create_post(pool: &crate::db::Pool, author_id: &str, title: &str) -> String {
         let id = uuid::Uuid::now_v7().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_str();
         sqlx::query(
             "INSERT INTO posts (id, title, slug, content, status, author_id, view_count, is_pinned, created_at, updated_at) \
              VALUES (?, ?, ?, ?, 'published', ?, 0, 0, ?, ?)",

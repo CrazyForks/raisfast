@@ -260,7 +260,7 @@ impl ContentRepository {
 
         super::validation::validate_create_tx(&self.pool, ct, &data).await?;
         let id = uuid::Uuid::now_v7().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_str();
 
         let obj = data
             .as_object_mut()
@@ -341,7 +341,7 @@ impl ContentRepository {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("begin tx: {e}")))?;
 
         super::validation::validate_update_tx(&self.pool, ct, id, &data).await?;
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_str();
 
         let obj = data
             .as_object_mut()
@@ -433,7 +433,7 @@ impl ContentRepository {
         }
 
         let sql = if ct.soft_delete {
-            let now = chrono::Utc::now().to_rfc3339();
+            let now = crate::utils::tz::now_str();
             format!(
                 "UPDATE {} SET deleted_at = '{}' WHERE {}",
                 ct.table,

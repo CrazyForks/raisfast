@@ -1078,7 +1078,7 @@ impl PluginManager {
         let mut health = plugin.health.write().await;
         health.error_count += 1;
         health.last_error = Some(error.to_string());
-        health.last_error_at = Some(chrono::Utc::now().to_rfc3339());
+        health.last_error_at = Some(crate::utils::tz::now_str());
 
         let should_disable = health.error_count >= AUTO_DISABLE_THRESHOLD && !health.auto_disabled;
         if should_disable {
@@ -1388,6 +1388,7 @@ mod tests {
             search_engine: "none".into(),
             search_index_dir: "./data/search_index".into(),
             content_type_dir: "./content_types".into(),
+            timezone: "UTC".into(),
         })
     }
 
@@ -2884,6 +2885,7 @@ Plugin = {
             search_engine: "none".into(),
             search_index_dir: "./data/search_index".into(),
             content_type_dir: "./content_types".into(),
+            timezone: "UTC".into(),
         });
 
         let mgr = PluginManager::new_with_options(

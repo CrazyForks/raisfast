@@ -324,6 +324,7 @@ mod tests {
             search_engine: "none".into(),
             search_index_dir: "./data/search_index".into(),
             content_type_dir: "./content_types".into(),
+            timezone: "UTC".into(),
         })
     }
 

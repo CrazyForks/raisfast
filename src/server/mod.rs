@@ -19,6 +19,7 @@ use rust_blog::handlers::{
     tag, tenant, user,
 };
 use rust_blog::middleware::locale::locale_middleware;
+use rust_blog::middleware::metrics;
 use rust_blog::middleware::rate_limit::{
     RateLimiterSet, comment_rate_limit, global_rate_limit, login_rate_limit, register_rate_limit,
 };
@@ -351,12 +352,14 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
 
     let app = axum::Router::new()
         .route("/health", get(health::health))
+        .route("/metrics", get(metrics::metrics_endpoint))
         .route("/feed.xml", get(rss::feed))
         .nest("/api/v1", api_v1)
         .nest_service("/uploads", ServeDir::new(&upload_dir))
         .nest_service("/static", ServeDir::new(&static_dir))
         .fallback(handle_plugin_route)
         .layer(from_fn(locale_middleware))
+        .layer(from_fn(metrics::track_metrics))
         .layer(from_fn(
             rust_blog::middleware::request_id::inject_request_id,
         ))
@@ -409,6 +412,10 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
 
 /// 启动 HTTP 服务器，监听请求直到收到关闭信号。
 pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
+    metrics::init();
+    let tz = rust_blog::utils::tz::parse_tz_or_utc(&config.timezone);
+    tracing::info!("site timezone: {}", tz);
+    rust_blog::utils::tz::set_site_tz(tz);
     let addr = format!("{}:{}", config.host, config.port);
     let limiters = RateLimiterSet::from_config(config);
 
@@ -697,6 +704,14 @@ fn spawn_webhook_subscriber(
 ) {
     use rust_blog::eventbus::Event;
 
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_else(|e| {
+            tracing::error!("webhook http client init failed: {e}");
+            panic!("webhook client failure");
+        });
+
     let mut rx = eventbus.subscribe();
     tokio::spawn(async move {
         loop {
@@ -762,15 +777,14 @@ fn spawn_webhook_subscriber(
                         );
                         let url = sub.url.clone();
                         let body_clone = body.clone();
+                        let client = client.clone();
                         tokio::spawn(async move {
-                            let client = reqwest::Client::new();
                             let result = client
                                 .post(&url)
                                 .header("Content-Type", "application/json")
                                 .header("X-Webhook-Signature", format!("sha256={signature}"))
                                 .header("X-Webhook-Event", event_type)
                                 .body(body_clone)
-                                .timeout(std::time::Duration::from_secs(10))
                                 .send()
                                 .await;
                             match result {

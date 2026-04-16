@@ -18,7 +18,9 @@ import {
   Settings,
   Layers,
   Building2,
+  ClipboardList,
   Globe,
+  Webhook,
   X,
   ShieldCheck,
   ChevronDown,
@@ -60,6 +62,8 @@ const systemItems = [
   { label: "Plugins", href: "/admin/plugins", icon: Puzzle },
   { label: "Cron", href: "/admin/crons", icon: Clock },
   { label: "Tenants", href: "/admin/tenants", icon: Building2 },
+  { label: "Webhooks", href: "/admin/webhooks", icon: Webhook },
+  { label: "Audit Log", href: "/admin/audit", icon: ClipboardList },
   { label: "Options", href: "/admin/options", icon: Settings },
 ];
 

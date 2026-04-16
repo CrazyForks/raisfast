@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import Link from "next/link";
 
@@ -48,7 +48,6 @@ type PostForm = z.infer<typeof postSchema>;
 
 export default function NewPostPage() {
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
 
   const categoriesQuery = useQuery({
     queryKey: ["categories"],
@@ -90,29 +89,28 @@ export default function NewPostPage() {
     );
   }
 
-  async function onSubmit(values: PostForm) {
-    setLoading(true);
-    try {
-      await api.post("/posts", {
+  const createMutation = useMutation({
+    mutationFn: (values: PostForm) =>
+      api.post("/posts", {
         title: values.title,
         content: values.content,
         excerpt: values.excerpt || undefined,
         status: values.status,
         category_id: values.category_id || undefined,
         tag_ids: selectedTags.length > 0 ? selectedTags : undefined,
-      });
+      }),
+    onSuccess: () => {
       toast.success("Post created");
       router.push("/admin/posts");
-    } catch (err) {
+    },
+    onError: (err) => {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
         toast.error("Failed to create post");
       }
-    } finally {
-      setLoading(false);
-    }
-  }
+    },
+  });
 
   const categories = categoriesQuery.data ?? [];
   const tags = tagsQuery.data ?? [];
@@ -130,7 +128,7 @@ export default function NewPostPage() {
 
       <Card>
         <CardContent className="pt-6">
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+          <form onSubmit={handleSubmit((v) => createMutation.mutate(v))} className="space-y-6">
             <div className="space-y-2">
               <Label htmlFor="title">Title</Label>
               <Input
@@ -234,8 +232,8 @@ export default function NewPostPage() {
             </div>
 
             <div className="flex gap-2">
-              <Button type="submit" disabled={loading}>
-                {loading ? "Creating..." : "Create Post"}
+              <Button type="submit" disabled={createMutation.isPending}>
+                {createMutation.isPending ? "Creating..." : "Create Post"}
               </Button>
               <Link href="/admin/posts">
                 <Button type="button" variant="outline">

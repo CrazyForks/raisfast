@@ -10,6 +10,9 @@ import {
   Plus,
   ExternalLink,
   Trash,
+  Pencil,
+  Save,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -95,6 +98,10 @@ export default function CronsPage() {
     cron_expr: "",
     enabled: true,
   });
+  const [editCron, setEditCron] = useState<CronSchedule | null>(null);
+  const [editLabel, setEditLabel] = useState("");
+  const [editCronExpr, setEditCronExpr] = useState("");
+  const [editPayload, setEditPayload] = useState("");
 
   const cronsQuery = useQuery({
     queryKey: ["crons", page],
@@ -138,6 +145,43 @@ export default function CronsPage() {
       toast.error(err instanceof ApiError ? err.message : "Failed to delete");
     },
   });
+
+  const updateMutation = useMutation({
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: { label?: string; cron_expr?: string; payload?: string };
+    }) => api.put(`/admin/crons/${id}`, data),
+    onSuccess: () => {
+      toast.success("Schedule updated");
+      queryClient.invalidateQueries({ queryKey: ["crons"] });
+      setEditCron(null);
+    },
+    onError: (err) => {
+      toast.error(err instanceof ApiError ? err.message : "Failed to update");
+    },
+  });
+
+  function startEdit(c: CronSchedule) {
+    setEditCron(c);
+    setEditLabel(c.label);
+    setEditCronExpr(c.cron_expr);
+    setEditPayload(c.payload ?? "");
+  }
+
+  function saveEdit() {
+    if (!editCron) return;
+    updateMutation.mutate({
+      id: editCron.id,
+      data: {
+        label: editLabel,
+        cron_expr: editCronExpr,
+        ...(editPayload ? { payload: editPayload } : {}),
+      },
+    });
+  }
 
   const crons = cronsQuery.data?.items ?? [];
   const totalPages = Math.ceil((cronsQuery.data?.total ?? 0) / pageSize);
@@ -271,19 +315,27 @@ export default function CronsPage() {
                 crons.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell>
-                      <Link
-                        href={`/admin/crons/${encodeURIComponent(c.id)}`}
-                        className="block group"
-                      >
-                        <div className="font-medium group-hover:underline">
-                          {c.label}
-                        </div>
-                        {c.plugin_id && (
-                          <div className="text-xs text-muted-foreground">
-                            Plugin: {c.plugin_id}
+                      {editCron?.id === c.id ? (
+                        <Input
+                          value={editLabel}
+                          onChange={(e) => setEditLabel(e.target.value)}
+                          className="h-8 w-40"
+                        />
+                      ) : (
+                        <Link
+                          href={`/admin/crons/${encodeURIComponent(c.id)}`}
+                          className="block group"
+                        >
+                          <div className="font-medium group-hover:underline">
+                            {c.label}
                           </div>
-                        )}
-                      </Link>
+                          {c.plugin_id && (
+                            <div className="text-xs text-muted-foreground">
+                              Plugin: {c.plugin_id}
+                            </div>
+                          )}
+                        </Link>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge variant="ghost" className="font-mono text-xs">
@@ -291,16 +343,24 @@ export default function CronsPage() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Tooltip>
-                        <TooltipTrigger>
-                          <span className="text-sm font-mono">
-                            {cronHuman(c.cron_expr)}
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <code className="text-xs">{c.cron_expr}</code>
-                        </TooltipContent>
-                      </Tooltip>
+                      {editCron?.id === c.id ? (
+                        <Input
+                          value={editCronExpr}
+                          onChange={(e) => setEditCronExpr(e.target.value)}
+                          className="h-8 w-40 font-mono text-xs"
+                        />
+                      ) : (
+                        <Tooltip>
+                          <TooltipTrigger>
+                            <span className="text-sm font-mono">
+                              {cronHuman(c.cron_expr)}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <code className="text-xs">{c.cron_expr}</code>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
                     </TableCell>
                     <TableCell>
                       {c.enabled ? (
@@ -316,18 +376,45 @@ export default function CronsPage() {
                       {formatTime(c.next_run_at)}
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Link
-                          href={`/admin/crons/${encodeURIComponent(c.id)}`}
-                        >
+                      {editCron?.id === c.id ? (
+                        <div className="flex items-center justify-end gap-1">
                           <Button
                             variant="ghost"
                             size="icon-sm"
-                            title="View details & logs"
+                            onClick={saveEdit}
+                            disabled={updateMutation.isPending}
                           >
-                            <ExternalLink className="size-4" />
+                            <Save className="size-4" />
                           </Button>
-                        </Link>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => setEditCron(null)}
+                          >
+                            <X className="size-4" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            title="Edit"
+                            onClick={() => startEdit(c)}
+                          >
+                            <Pencil className="size-4" />
+                          </Button>
+                          <Link
+                            href={`/admin/crons/${encodeURIComponent(c.id)}`}
+                          >
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              title="View details & logs"
+                            >
+                              <ExternalLink className="size-4" />
+                            </Button>
+                          </Link>
                         {c.enabled ? (
                           <Button
                             variant="ghost"
@@ -376,7 +463,8 @@ export default function CronsPage() {
                         >
                           <Trash2 className="size-4 text-destructive" />
                         </Button>
-                      </div>
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))

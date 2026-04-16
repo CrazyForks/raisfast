@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Pencil, Save, X } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -54,6 +54,8 @@ type TagForm = z.infer<typeof tagSchema>;
 export default function TagsPage() {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editTag, setEditTag] = useState<Tag | null>(null);
+  const [editName, setEditName] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = 20;
 
@@ -92,6 +94,23 @@ export default function TagsPage() {
     },
   });
 
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: { name: string } }) =>
+      api.put(`/tags/${id}`, data),
+    onSuccess: () => {
+      toast.success("Tag updated");
+      queryClient.invalidateQueries({ queryKey: ["tags"] });
+      setEditTag(null);
+    },
+    onError: (err) => {
+      if (err instanceof ApiError) {
+        toast.error(err.message);
+      } else {
+        toast.error("Failed to update tag");
+      }
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/tags/${id}`),
     onSuccess: () => {
@@ -113,6 +132,16 @@ export default function TagsPage() {
     }
   }
 
+  function startEdit(tag: Tag) {
+    setEditTag(tag);
+    setEditName(tag.name);
+  }
+
+  function saveEdit() {
+    if (!editTag) return;
+    updateMutation.mutate({ id: editTag.id, data: { name: editName } });
+  }
+
   const tags = tagsQuery.data?.items ?? [];
   const totalPages = Math.ceil((tagsQuery.data?.total ?? 0) / pageSize);
 
@@ -121,9 +150,7 @@ export default function TagsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Tags</h1>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger
-            render={<Button />}
-          >
+          <DialogTrigger render={<Button />}>
             <Plus className="size-4" />
             New Tag
           </DialogTrigger>
@@ -191,20 +218,59 @@ export default function TagsPage() {
               ) : (
                 tags.map((tag) => (
                   <TableRow key={tag.id}>
-                    <TableCell className="font-medium">{tag.name}</TableCell>
+                    <TableCell>
+                      {editTag?.id === tag.id ? (
+                        <Input
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          className="h-8 w-40"
+                        />
+                      ) : (
+                        <span className="font-medium">{tag.name}</span>
+                      )}
+                    </TableCell>
                     <TableCell>{tag.slug}</TableCell>
                     <TableCell>
                       {new Date(tag.created_at).toLocaleDateString()}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => handleDelete(tag.id)}
-                        disabled={deleteMutation.isPending}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
+                      {editTag?.id === tag.id ? (
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={saveEdit}
+                            disabled={updateMutation.isPending}
+                          >
+                            <Save className="size-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => setEditTag(null)}
+                          >
+                            <X className="size-4" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => startEdit(tag)}
+                          >
+                            <Pencil className="size-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => handleDelete(tag.id)}
+                            disabled={deleteMutation.isPending}
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Shield, User, Pencil, Trash2 } from "lucide-react";
+import { Shield, User, Pencil, Trash2, Plus } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -27,6 +27,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Select,
@@ -35,6 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, ApiError } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
@@ -75,6 +77,10 @@ export default function UsersPage() {
   const { isAdmin, user: currentUser } = useAuthStore();
   const queryClient = useQueryClient();
   const [editUser, setEditUser] = useState<UserItem | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newEmail, setNewEmail] = useState("");
+  const [newUsername, setNewUsername] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = 20;
 
@@ -115,6 +121,26 @@ export default function UsersPage() {
     setValue("role", u.role);
   }
 
+  const createMutation = useMutation({
+    mutationFn: (data: { email: string; username: string; password: string }) =>
+      api.post("/auth/register", data),
+    onSuccess: () => {
+      toast.success("User created");
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      setCreateOpen(false);
+      setNewEmail("");
+      setNewUsername("");
+      setNewPassword("");
+    },
+    onError: (err) => {
+      if (err instanceof ApiError) {
+        toast.error(err.message);
+      } else {
+        toast.error("Failed to create user");
+      }
+    },
+  });
+
   if (!isAdmin()) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -137,7 +163,77 @@ export default function UsersPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Users</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Users</h1>
+        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+          <DialogTrigger render={<Button />}>
+            <Plus className="size-4" />
+            New User
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Create User</DialogTitle>
+              <DialogDescription>
+                Register a new user account.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Username</Label>
+                <Input
+                  value={newUsername}
+                  onChange={(e) => setNewUsername(e.target.value)}
+                  placeholder="username"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Email</Label>
+                <Input
+                  type="email"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  placeholder="user@example.com"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Password</Label>
+                <Input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Min 8 characters"
+                />
+              </div>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setCreateOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  disabled={
+                    createMutation.isPending ||
+                    !newEmail ||
+                    !newUsername ||
+                    !newPassword
+                  }
+                  onClick={() =>
+                    createMutation.mutate({
+                      email: newEmail,
+                      username: newUsername,
+                      password: newPassword,
+                    })
+                  }
+                >
+                  {createMutation.isPending ? "Creating..." : "Create"}
+                </Button>
+              </DialogFooter>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
 
       <Card>
         <CardContent className="p-0">

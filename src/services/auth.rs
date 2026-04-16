@@ -313,7 +313,7 @@ pub async fn refresh(
     let new_expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
     let new_expires_str = new_expires_at.to_rfc3339();
     let new_id = uuid::Uuid::now_v7().to_string();
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_str();
 
     let mut tx = pool.begin().await?;
 

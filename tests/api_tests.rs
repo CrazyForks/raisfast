@@ -20,7 +20,7 @@ use rust_blog::config::app::AppConfig;
 use rust_blog::handlers::{
     auth as h_auth, category as h_cat, comment as h_cmt, cron as h_cron, health as h_health,
     media as h_media, options as h_options, plugin as h_plugin, post as h_post, rbac as h_rbac,
-    rss as h_rss, sse as h_sse, tag as h_tag, tenant as h_tenant, user as h_user,
+    rss as h_rss, sse as h_sse, stats as h_stats, tag as h_tag, tenant as h_tenant, user as h_user,
 };
 use rust_blog::middleware::locale::locale_middleware;
 use rust_blog::middleware::rate_limit::{
@@ -89,6 +89,7 @@ fn test_config() -> AppConfig {
         search_engine: "none".into(),
         search_index_dir: "./data/search_index".into(),
         content_type_dir: "./content_types".into(),
+        timezone: "UTC".into(),
     }
 }
 
@@ -251,6 +252,9 @@ async fn test_app() -> (axum::Router, AppState) {
             "/admin/rbac/roles/{id}/permissions",
             get(h_rbac::get_permissions).put(h_rbac::set_permissions),
         )
+        .route("/admin/stats", get(h_stats::overview))
+        .route("/admin/stats/content/{table}", get(h_stats::content_stats))
+        .route("/admin/stats/trends", get(h_stats::trends))
         .route("/options/public", get(h_options::get_public_options))
         .route(
             "/admin/options",
@@ -2320,8 +2324,7 @@ mod webhook_tests {
     #[tokio::test]
     async fn list_empty() {
         let (mut app, tok) = setup_admin().await;
-        let (status, body) =
-            send(&mut app, get_auth("/api/v1/admin/webhooks", &tok)).await;
+        let (status, body) = send(&mut app, get_auth("/api/v1/admin/webhooks", &tok)).await;
         assert!(status.is_success(), "list: {status} {body:?}");
         assert_eq!(body["code"], 0);
         assert_eq!(body["data"]["total"], 0);
@@ -2711,15 +2714,18 @@ mod webhook_tests {
         )
         .await;
         assert!(status.is_success());
-        assert_eq!(update_body["data"]["url"], "https://example.com/lifecycle-v2");
+        assert_eq!(
+            update_body["data"]["url"],
+            "https://example.com/lifecycle-v2"
+        );
         assert_eq!(update_body["data"]["enabled"], false);
-        assert_eq!(update_body["data"]["secret"], secret.as_str(), "secret should not change on update");
+        assert_eq!(
+            update_body["data"]["secret"],
+            secret.as_str(),
+            "secret should not change on update"
+        );
 
-        let (status, list_body) = send(
-            &mut app,
-            get_auth("/api/v1/admin/webhooks", &tok),
-        )
-        .await;
+        let (status, list_body) = send(&mut app, get_auth("/api/v1/admin/webhooks", &tok)).await;
         assert!(status.is_success());
         assert_eq!(list_body["data"]["total"], 1);
 
@@ -2737,12 +2743,566 @@ mod webhook_tests {
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
 
-        let (status, list_body) = send(
+        let (status, list_body) = send(&mut app, get_auth("/api/v1/admin/webhooks", &tok)).await;
+        assert!(status.is_success());
+        assert_eq!(list_body["data"]["total"], 0);
+    }
+}
+
+// ── options ──────────────────────────────────────────────────────────
+
+mod options_tests {
+    use super::*;
+
+    fn admin_token() -> String {
+        let id = uuid::Uuid::now_v7().to_string();
+        make_token(&id, "admin")
+    }
+
+    #[tokio::test]
+    async fn public_options_empty() {
+        let (mut app, _) = test_app().await;
+        let (status, body) = send(&mut app, get_req("/api/v1/options/public")).await;
+        assert!(status.is_success(), "public options: {status} {body:?}");
+        assert_eq!(body["code"], 0);
+    }
+
+    #[tokio::test]
+    async fn list_options_empty() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token();
+        let (status, body) = send(&mut app, get_auth("/api/v1/admin/options", &tok)).await;
+        assert!(status.is_success(), "list options: {status} {body:?}");
+        assert_eq!(body["code"], 0);
+    }
+
+    #[tokio::test]
+    async fn set_get_delete_option() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token();
+
+        let key = format!("test.{}", uuid::Uuid::now_v7().to_string());
+
+        let (status, body) = send(
             &mut app,
-            get_auth("/api/v1/admin/webhooks", &tok),
+            put_json_auth(
+                &format!("/api/v1/admin/options/{key}"),
+                json!({"value": "Test Value"}),
+                &tok,
+            ),
+        )
+        .await;
+        assert!(status.is_success(), "set option: {status} {body:?}");
+
+        let (status, _body) = send(
+            &mut app,
+            delete_auth(&format!("/api/v1/admin/options/{key}"), &tok),
+        )
+        .await;
+        assert!(status.is_success(), "delete option: {status}");
+    }
+
+    #[tokio::test]
+    async fn batch_update_options() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token();
+
+        let key1 = format!("test.{}", &uuid::Uuid::now_v7().to_string()[..8]);
+        let key2 = format!("test.{}", &uuid::Uuid::now_v7().to_string()[..8]);
+
+        let (status, body) = send(
+            &mut app,
+            put_json_auth(
+                "/api/v1/admin/options",
+                json!({"options": {key1: "Val1", key2: "Val2"}}),
+                &tok,
+            ),
+        )
+        .await;
+        assert!(status.is_success(), "batch update: {status} {body:?}");
+    }
+}
+
+// ── rbac ──────────────────────────────────────────────────────────
+
+mod rbac_tests {
+    use super::*;
+
+    async fn admin_token() -> String {
+        let pool = test_pool().await;
+        let id = create_admin(&pool).await;
+        make_token(&id, "admin")
+    }
+
+    #[tokio::test]
+    async fn list_roles() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+        let (status, body) = send(&mut app, get_auth("/api/v1/admin/rbac/roles", &tok)).await;
+        assert!(status.is_success(), "list roles: {status} {body:?}");
+        assert_eq!(body["code"], 0);
+        assert!(body["data"]["items"].is_array());
+    }
+
+    #[tokio::test]
+    async fn create_role_returns_in_list() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+        let role_name = format!("editor-{}", &uuid::Uuid::now_v7().to_string()[..8]);
+
+        let (status, body) = send(
+            &mut app,
+            post_json_auth(
+                "/api/v1/admin/rbac/roles",
+                json!({"name": role_name, "description": "Editor role"}),
+                &tok,
+            ),
+        )
+        .await;
+        assert!(status.is_success(), "create role: {status} {body:?}");
+        assert_eq!(body["data"]["name"], role_name);
+        let role_id = body["data"]["id"].as_str().unwrap().to_string();
+
+        let (status, body) = send(&mut app, get_auth("/api/v1/admin/rbac/roles", &tok)).await;
+        assert!(status.is_success(), "list roles: {status} {body:?}");
+        let items = body["data"]["items"].as_array().unwrap();
+        let found = items.iter().any(|r| r["id"] == role_id);
+        assert!(found, "created role should appear in list");
+    }
+
+    #[tokio::test]
+    async fn update_role() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+
+        let (_, create_body) = send(
+            &mut app,
+            post_json_auth(
+                "/api/v1/admin/rbac/roles",
+                json!({"name": format!("mod-{}", &uuid::Uuid::now_v7().to_string()[..8])}),
+                &tok,
+            ),
+        )
+        .await;
+        let id = create_body["data"]["id"].as_str().unwrap();
+
+        let new_name = format!("super-{}", &uuid::Uuid::now_v7().to_string()[..8]);
+        let (status, body) = send(
+            &mut app,
+            put_json_auth(
+                &format!("/api/v1/admin/rbac/roles/{id}"),
+                json!({"name": new_name, "description": "updated"}),
+                &tok,
+            ),
+        )
+        .await;
+        assert!(status.is_success(), "update role: {status} {body:?}");
+        assert_eq!(body["data"]["name"], new_name);
+    }
+
+    #[tokio::test]
+    async fn delete_role() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+
+        let role_name = format!("del-{}", &uuid::Uuid::now_v7().to_string()[..8]);
+        let (_, create_body) = send(
+            &mut app,
+            post_json_auth("/api/v1/admin/rbac/roles", json!({"name": role_name}), &tok),
+        )
+        .await;
+        let id = create_body["data"]["id"].as_str().unwrap();
+
+        let (status, _) = send(
+            &mut app,
+            delete_auth(&format!("/api/v1/admin/rbac/roles/{id}"), &tok),
+        )
+        .await;
+        assert!(status.is_success(), "delete role: {status}");
+
+        let (status, body) = send(&mut app, get_auth("/api/v1/admin/rbac/roles", &tok)).await;
+        assert!(status.is_success());
+        let items = body["data"]["items"].as_array().unwrap();
+        let found = items.iter().any(|r| r["id"] == id);
+        assert!(!found, "deleted role should not appear in list");
+    }
+
+    #[tokio::test]
+    async fn set_and_get_permissions() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+
+        let (_, create_body) = send(
+            &mut app,
+            post_json_auth(
+                "/api/v1/admin/rbac/roles",
+                json!({"name": format!("perm-{}", &uuid::Uuid::now_v7().to_string()[..8])}),
+                &tok,
+            ),
+        )
+        .await;
+        let role_id = create_body["data"]["id"].as_str().unwrap();
+
+        let (status, body) = send(
+            &mut app,
+            put_json_auth(
+                &format!("/api/v1/admin/rbac/roles/{role_id}/permissions"),
+                json!({"permissions": [
+                    {"action": "read", "subject": "posts"},
+                    {"action": "write", "subject": "comments", "conditions": {"own": "true"}}
+                ]}),
+                &tok,
+            ),
+        )
+        .await;
+        assert!(status.is_success(), "set perms: {status} {body:?}");
+
+        let (status, body) = send(
+            &mut app,
+            get_auth(
+                &format!("/api/v1/admin/rbac/roles/{role_id}/permissions"),
+                &tok,
+            ),
+        )
+        .await;
+        assert!(status.is_success(), "get perms: {status} {body:?}");
+        let perms = body["data"].as_array().unwrap();
+        assert_eq!(perms.len(), 2);
+    }
+}
+
+// ── stats ──────────────────────────────────────────────────────────
+
+mod stats_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn overview_empty() {
+        let (mut app, _) = test_app().await;
+        let (status, body) = send(&mut app, get_req("/api/v1/admin/stats")).await;
+        assert!(status.is_success(), "stats overview: {status} {body:?}");
+        assert_eq!(body["code"], 0);
+        assert!(body["data"]["total_posts"].is_number());
+        assert!(body["data"]["total_users"].is_number());
+    }
+
+    #[tokio::test]
+    async fn content_stats() {
+        let (mut app, _) = test_app().await;
+        let (status, body) = send(&mut app, get_req("/api/v1/admin/stats/content/posts")).await;
+        assert!(status.is_success(), "content stats: {status} {body:?}");
+        assert_eq!(body["code"], 0);
+    }
+
+    #[tokio::test]
+    async fn trends() {
+        let (mut app, _) = test_app().await;
+        let (status, body) = send(
+            &mut app,
+            get_req("/api/v1/admin/stats/trends?table=posts&days=7"),
+        )
+        .await;
+        assert!(status.is_success(), "trends: {status} {body:?}");
+        assert_eq!(body["code"], 0);
+    }
+}
+
+// ── plugin ──────────────────────────────────────────────────────────
+
+mod plugin_tests {
+    use super::*;
+
+    async fn admin_token() -> String {
+        let pool = test_pool().await;
+        let id = create_admin(&pool).await;
+        make_token(&id, "admin")
+    }
+
+    #[tokio::test]
+    async fn list_plugins_empty() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+        let (status, body) = send(&mut app, get_auth("/api/v1/admin/plugins", &tok)).await;
+        assert!(status.is_success(), "list plugins: {status} {body:?}");
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["total"], 0);
+    }
+
+    #[tokio::test]
+    async fn get_nonexistent_plugin() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+        let fake_id = "nonexistent-plugin";
+        let (status, _body) = send(
+            &mut app,
+            get_auth(&format!("/api/v1/admin/plugins/{fake_id}"), &tok),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn enable_nonexistent_plugin() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+        let (status, _body) = send(
+            &mut app,
+            post_json_auth("/api/v1/admin/plugins/ghost/enable", json!({}), &tok),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn disable_nonexistent_plugin() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+        let (status, _body) = send(
+            &mut app,
+            post_json_auth("/api/v1/admin/plugins/ghost/disable", json!({}), &tok),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn reload_nonexistent_plugin() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+        let (status, _body) = send(
+            &mut app,
+            post_json_auth("/api/v1/admin/plugins/ghost/reload", json!({}), &tok),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn remove_nonexistent_plugin_is_idempotent() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+        let (status, _body) =
+            send(&mut app, delete_auth("/api/v1/admin/plugins/ghost", &tok)).await;
+        assert!(status.is_success(), "remove is idempotent: {status}");
+    }
+}
+
+// ── tenant admin ──────────────────────────────────────────────────
+
+mod tenant_admin_tests {
+    use super::*;
+
+    async fn admin_token() -> String {
+        let pool = test_pool().await;
+        let id = create_admin(&pool).await;
+        make_token(&id, "admin")
+    }
+
+    #[tokio::test]
+    async fn create_and_get_tenant() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+
+        let (status, body) = send(
+            &mut app,
+            post_json_auth(
+                "/api/v1/admin/tenants",
+                json!({"name": "Acme Corp", "domain": "acme.example.com"}),
+                &tok,
+            ),
+        )
+        .await;
+        assert!(status.is_success(), "create tenant: {status} {body:?}");
+        assert_eq!(body["data"]["name"], "Acme Corp");
+        let id = body["data"]["id"].as_str().unwrap().to_string();
+
+        let (status, body) = send(
+            &mut app,
+            get_auth(&format!("/api/v1/admin/tenants/{id}"), &tok),
+        )
+        .await;
+        assert!(status.is_success(), "get tenant: {status} {body:?}");
+        assert_eq!(body["data"]["name"], "Acme Corp");
+    }
+
+    #[tokio::test]
+    async fn update_tenant() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+
+        let (_, create_body) = send(
+            &mut app,
+            post_json_auth("/api/v1/admin/tenants", json!({"name": "Original"}), &tok),
+        )
+        .await;
+        let id = create_body["data"]["id"].as_str().unwrap();
+
+        let (status, body) = send(
+            &mut app,
+            put_json_auth(
+                &format!("/api/v1/admin/tenants/{id}"),
+                json!({"name": "Updated Corp", "domain": "updated.example.com"}),
+                &tok,
+            ),
+        )
+        .await;
+        assert!(status.is_success(), "update tenant: {status} {body:?}");
+        assert_eq!(body["data"]["name"], "Updated Corp");
+    }
+
+    #[tokio::test]
+    async fn delete_tenant() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+
+        let (_, create_body) = send(
+            &mut app,
+            post_json_auth("/api/v1/admin/tenants", json!({"name": "ToDelete"}), &tok),
+        )
+        .await;
+        let id = create_body["data"]["id"].as_str().unwrap();
+
+        let (status, _) = send(
+            &mut app,
+            delete_auth(&format!("/api/v1/admin/tenants/{id}"), &tok),
+        )
+        .await;
+        assert!(status.is_success(), "delete tenant: {status}");
+
+        let (status, _) = send(
+            &mut app,
+            get_auth(&format!("/api/v1/admin/tenants/{id}"), &tok),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn list_tenants() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+
+        send(
+            &mut app,
+            post_json_auth("/api/v1/admin/tenants", json!({"name": "Tenant A"}), &tok),
+        )
+        .await;
+        send(
+            &mut app,
+            post_json_auth("/api/v1/admin/tenants", json!({"name": "Tenant B"}), &tok),
+        )
+        .await;
+
+        let (status, body) = send(&mut app, get_auth("/api/v1/admin/tenants", &tok)).await;
+        assert!(status.is_success(), "list tenants: {status} {body:?}");
+        assert!(body["data"]["total"].as_i64().unwrap() >= 2);
+    }
+
+    #[tokio::test]
+    async fn get_tenant_not_found() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+        let fake_id = uuid::Uuid::now_v7().to_string();
+        let (status, _) = send(
+            &mut app,
+            get_auth(&format!("/api/v1/admin/tenants/{fake_id}"), &tok),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn update_tenant_not_found() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+        let fake_id = uuid::Uuid::now_v7().to_string();
+        let (status, _) = send(
+            &mut app,
+            put_json_auth(
+                &format!("/api/v1/admin/tenants/{fake_id}"),
+                json!({"name": "Ghost"}),
+                &tok,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn delete_tenant_not_found_is_idempotent() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+        let fake_id = uuid::Uuid::now_v7().to_string();
+        let (status, _) = send(
+            &mut app,
+            delete_auth(&format!("/api/v1/admin/tenants/{fake_id}"), &tok),
+        )
+        .await;
+        assert!(status.is_success(), "delete tenant is idempotent: {status}");
+    }
+}
+
+// ── audit ──────────────────────────────────────────────────────────
+
+mod audit_tests {
+    use super::*;
+
+    async fn admin_token() -> String {
+        let pool = test_pool().await;
+        let id = create_admin(&pool).await;
+        make_token(&id, "admin")
+    }
+
+    #[tokio::test]
+    async fn list_audit_empty() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+        let (status, body) = send(&mut app, get_auth("/api/v1/admin/audit", &tok)).await;
+        assert!(status.is_success(), "list audit: {status} {body:?}");
+        assert_eq!(body["code"], 0);
+        assert_eq!(body["data"]["total"], 0);
+    }
+
+    #[tokio::test]
+    async fn get_audit_not_found() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+        let fake_id = uuid::Uuid::now_v7().to_string();
+        let (status, _) = send(
+            &mut app,
+            get_auth(&format!("/api/v1/admin/audit/{fake_id}"), &tok),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn list_audit_with_filter() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+        let (status, body) = send(
+            &mut app,
+            get_auth(
+                "/api/v1/admin/audit?action=create&page=1&page_size=10",
+                &tok,
+            ),
+        )
+        .await;
+        assert!(status.is_success(), "audit filter: {status} {body:?}");
+        assert_eq!(body["code"], 0);
+    }
+
+    #[tokio::test]
+    async fn audit_pagination() {
+        let (mut app, _) = test_app().await;
+        let tok = admin_token().await;
+        let (status, body) = send(
+            &mut app,
+            get_auth("/api/v1/admin/audit?page=2&page_size=5", &tok),
         )
         .await;
         assert!(status.is_success());
-        assert_eq!(list_body["data"]["total"], 0);
+        assert_eq!(body["data"]["page"], 2);
+        assert_eq!(body["data"]["page_size"], 5);
     }
 }

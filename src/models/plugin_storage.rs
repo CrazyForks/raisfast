@@ -31,7 +31,7 @@ pub async fn get(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<Option<St
     match row {
         Some(r) => {
             if let Some(exp) = &r.expires_at {
-                let now = chrono::Utc::now().to_rfc3339();
+                let now = crate::utils::tz::now_str();
                 if exp < &now {
                     let _ =
                         sqlx::query("DELETE FROM plugin_storage WHERE plugin_id = ? AND key = ?")

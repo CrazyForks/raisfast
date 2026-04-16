@@ -5,7 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import Link from "next/link";
 
@@ -50,7 +50,6 @@ export default function EditPostPage() {
   const router = useRouter();
   const params = useParams();
   const slug = params.slug as string;
-  const [loading, setLoading] = useState(false);
 
   const postQuery = useQuery({
     queryKey: ["post", slug],
@@ -112,29 +111,28 @@ export default function EditPostPage() {
     );
   }
 
-  async function onSubmit(values: PostForm) {
-    setLoading(true);
-    try {
-      await api.put(`/posts/${slug}`, {
+  const updateMutation = useMutation({
+    mutationFn: (values: PostForm) =>
+      api.put(`/posts/${slug}`, {
         title: values.title,
         content: values.content,
         excerpt: values.excerpt || undefined,
         status: values.status,
         category_id: values.category_id || undefined,
         tag_ids: selectedTags.length > 0 ? selectedTags : undefined,
-      });
+      }),
+    onSuccess: () => {
       toast.success("Post updated");
       router.push("/admin/posts");
-    } catch (err) {
+    },
+    onError: (err) => {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
         toast.error("Failed to update post");
       }
-    } finally {
-      setLoading(false);
-    }
-  }
+    },
+  });
 
   const categories = categoriesQuery.data ?? [];
   const tags = tagsQuery.data ?? [];
@@ -188,7 +186,7 @@ export default function EditPostPage() {
 
       <Card>
         <CardContent className="pt-6">
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+          <form onSubmit={handleSubmit((v) => updateMutation.mutate(v))} className="space-y-6">
             <div className="space-y-2">
               <Label htmlFor="title">Title</Label>
               <Input id="title" placeholder="Post title" {...register("title")} />
@@ -276,8 +274,8 @@ export default function EditPostPage() {
             </div>
 
             <div className="flex gap-2">
-              <Button type="submit" disabled={loading}>
-                {loading ? "Saving..." : "Save Changes"}
+              <Button type="submit" disabled={updateMutation.isPending}>
+                {updateMutation.isPending ? "Saving..." : "Save Changes"}
               </Button>
               <Link href="/admin/posts">
                 <Button type="button" variant="outline">Cancel</Button>

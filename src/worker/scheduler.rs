@@ -107,13 +107,17 @@ pub struct CronSchedule {
 ///
 /// 从 `after` 开始查找下一个匹配 cron 表达式的时间点。
 /// 使用 UTC 时区。
-pub fn next_run(cron_expr: &str, after: DateTime<Utc>) -> AppResult<DateTime<Utc>> {
+pub fn next_run<Tz: chrono::TimeZone>(
+    cron_expr: &str,
+    after: chrono::DateTime<Tz>,
+) -> AppResult<DateTime<Utc>> {
     let schedule = cron_expr
         .parse::<Schedule>()
         .map_err(|e| AppError::BadRequest(format!("invalid cron expression: {e}")))?;
     schedule
         .after(&after)
         .next()
+        .map(|dt| dt.with_timezone(&Utc))
         .ok_or_else(|| AppError::BadRequest("cron schedule has no future runs".into()))
 }
 
@@ -277,7 +281,7 @@ pub async fn delete_schedule(pool: &Pool, id: &str) -> AppResult<()> {
 
 /// Cron 调度器后台任务
 ///
-/// 循环扫描到期的 `cron_schedules，入队对应` Job，
+/// 循环扫描到期的 `cron_schedules`，入队对应 Job，
 /// 并更新 `last_run_at` / `next_run_at`。
 pub struct CronScheduler {
     pool: Pool,
@@ -361,7 +365,8 @@ impl CronScheduler {
         let elapsed = start.elapsed().as_millis() as i64;
 
         let now = Utc::now();
-        let next = next_run(&schedule.cron_expr, now).ok();
+        let local_now = now.with_timezone(&crate::utils::tz::site_tz());
+        let next = next_run(&schedule.cron_expr, local_now).ok();
         let now_str = now.to_rfc3339();
         let next_str = next.as_ref().map(chrono::DateTime::to_rfc3339);
 

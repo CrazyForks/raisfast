@@ -142,7 +142,10 @@ mod tests {
         let body = b"test payload";
         let sig1 = WebhookService::sign_payload("secret-a", body);
         let sig2 = WebhookService::sign_payload("secret-b", body);
-        assert_ne!(sig1, sig2, "different secrets should produce different signatures");
+        assert_ne!(
+            sig1, sig2,
+            "different secrets should produce different signatures"
+        );
     }
 
     #[test]
@@ -150,7 +153,10 @@ mod tests {
         let secret = "shared-secret";
         let sig1 = WebhookService::sign_payload(secret, b"body-1");
         let sig2 = WebhookService::sign_payload(secret, b"body-2");
-        assert_ne!(sig1, sig2, "different bodies should produce different signatures");
+        assert_ne!(
+            sig1, sig2,
+            "different bodies should produce different signatures"
+        );
     }
 
     #[test]

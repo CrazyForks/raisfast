@@ -96,7 +96,7 @@ impl RbacService {
 
     /// 更新角色
     pub async fn update_role(&self, id: &str, req: &UpdateRoleRequest) -> Result<Role, AppError> {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_str();
         self.repo
             .update_role(id, req.name.as_deref(), req.description.as_deref(), &now)
             .await

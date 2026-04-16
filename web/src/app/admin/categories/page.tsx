@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Pencil, Save, X } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -59,6 +59,10 @@ type CategoryForm = z.infer<typeof categorySchema>;
 export default function CategoriesPage() {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editCat, setEditCat] = useState<Category | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+  const [editSort, setEditSort] = useState(0);
   const [page, setPage] = useState(1);
   const pageSize = 20;
 
@@ -102,6 +106,28 @@ export default function CategoriesPage() {
     },
   });
 
+  const updateMutation = useMutation({
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: { name?: string; description?: string; sort_order?: number };
+    }) => api.put(`/categories/${id}`, data),
+    onSuccess: () => {
+      toast.success("Category updated");
+      queryClient.invalidateQueries({ queryKey: ["categories"] });
+      setEditCat(null);
+    },
+    onError: (err) => {
+      if (err instanceof ApiError) {
+        toast.error(err.message);
+      } else {
+        toast.error("Failed to update category");
+      }
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/categories/${id}`),
     onSuccess: () => {
@@ -123,6 +149,25 @@ export default function CategoriesPage() {
     }
   }
 
+  function startEdit(cat: Category) {
+    setEditCat(cat);
+    setEditName(cat.name);
+    setEditDesc(cat.description ?? "");
+    setEditSort(cat.sort_order);
+  }
+
+  function saveEdit() {
+    if (!editCat) return;
+    updateMutation.mutate({
+      id: editCat.id,
+      data: {
+        name: editName,
+        description: editDesc || undefined,
+        sort_order: editSort,
+      },
+    });
+  }
+
   const categories = categoriesQuery.data?.items ?? [];
   const totalPages = Math.ceil((categoriesQuery.data?.total ?? 0) / pageSize);
 
@@ -131,9 +176,7 @@ export default function CategoriesPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Categories</h1>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger
-            render={<Button />}
-          >
+          <DialogTrigger render={<Button />}>
             <Plus className="size-4" />
             New Category
           </DialogTrigger>
@@ -221,21 +264,82 @@ export default function CategoriesPage() {
               ) : (
                 categories.map((cat) => (
                   <TableRow key={cat.id}>
-                    <TableCell className="font-medium">{cat.name}</TableCell>
-                    <TableCell>{cat.slug}</TableCell>
-                    <TableCell className="max-w-[200px] truncate">
-                      {cat.description || "—"}
+                    <TableCell>
+                      {editCat?.id === cat.id ? (
+                        <Input
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          className="h-8 w-40"
+                        />
+                      ) : (
+                        <span className="font-medium">{cat.name}</span>
+                      )}
                     </TableCell>
-                    <TableCell>{cat.sort_order}</TableCell>
+                    <TableCell>{cat.slug}</TableCell>
+                    <TableCell>
+                      {editCat?.id === cat.id ? (
+                        <Input
+                          value={editDesc}
+                          onChange={(e) => setEditDesc(e.target.value)}
+                          className="h-8 w-48"
+                          placeholder="—"
+                        />
+                      ) : (
+                        <span className="max-w-[200px] truncate block text-muted-foreground">
+                          {cat.description || "—"}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {editCat?.id === cat.id ? (
+                        <Input
+                          type="number"
+                          value={editSort}
+                          onChange={(e) => setEditSort(Number(e.target.value))}
+                          className="h-8 w-20"
+                        />
+                      ) : (
+                        cat.sort_order
+                      )}
+                    </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => handleDelete(cat.id)}
-                        disabled={deleteMutation.isPending}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
+                      {editCat?.id === cat.id ? (
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={saveEdit}
+                            disabled={updateMutation.isPending}
+                          >
+                            <Save className="size-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => setEditCat(null)}
+                          >
+                            <X className="size-4" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => startEdit(cat)}
+                          >
+                            <Pencil className="size-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => handleDelete(cat.id)}
+                            disabled={deleteMutation.isPending}
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))

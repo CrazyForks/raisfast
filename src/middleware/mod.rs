@@ -9,6 +9,7 @@
 
 pub mod auth;
 pub mod locale;
+pub mod metrics;
 pub mod permission;
 pub mod rate_limit;
 pub mod request_id;

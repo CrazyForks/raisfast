@@ -65,7 +65,7 @@ impl TenantService {
 
     /// 更新租户
     pub async fn update(&self, id: &str, req: &UpdateTenantRequest) -> Result<Tenant, AppError> {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_str();
         let config = req
             .config
             .as_ref()

@@ -115,7 +115,7 @@ impl OptionsService {
     pub async fn set(&self, key: &str, value: Value) -> Result<(), AppError> {
         let value_str = serde_json::to_string(&value)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("json serialize failed: {e}")))?;
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_str();
 
         self.repo
             .upsert_value(key, &value_str, "default", &now)
@@ -129,7 +129,7 @@ impl OptionsService {
 
     /// 批量设置配置（事务保证原子性）
     pub async fn set_batch(&self, pairs: HashMap<String, Value>) -> Result<(), AppError> {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_str();
         let sorted: Vec<_> = pairs.into_iter().collect();
 
         for (key, value) in &sorted {

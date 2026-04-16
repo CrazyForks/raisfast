@@ -186,6 +186,19 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Dashboard</h1>
 
+      {statsQuery.error && (
+        <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-md flex items-center justify-between">
+          <span>Failed to load dashboard stats. Data may be stale.</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => statsQuery.refetch()}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <StatusBadges
           label="Posts"
@@ -240,7 +253,19 @@ export default function DashboardPage() {
             </div>
           </CardHeader>
           <CardContent>
-            {trendsQuery.isLoading ? (
+            {trendsQuery.error ? (
+              <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">
+                Failed to load trends.
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-2"
+                  onClick={() => trendsQuery.refetch()}
+                >
+                  Retry
+                </Button>
+              </div>
+            ) : trendsQuery.isLoading ? (
               <Skeleton className="h-40 w-full" />
             ) : trendsData.length === 0 ? (
               <p className="text-sm text-muted-foreground">No data yet.</p>
