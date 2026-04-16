@@ -14,6 +14,7 @@ pub mod content_type;
 pub mod db;
 pub mod errors;
 pub mod eventbus;
+pub mod extension;
 pub mod handlers;
 pub mod middleware;
 pub mod models;
@@ -30,6 +31,8 @@ use config::app::AppConfig;
 use content_type::ContentTypeRegistry;
 use db::Pool;
 use eventbus::EventBus;
+use extension::manager::ExtensionManager;
+use extension::service::ExtensionService;
 use plugins::PluginManager;
 use repositories::{
     CategoryRepository, CommentRepository, MediaRepository, PostRepository, RefreshTokenRepository,
@@ -68,4 +71,6 @@ pub struct AppState {
     pub tenant: Arc<TenantService>,
     pub audit: Arc<AuditService>,
     pub webhook: Arc<WebhookService>,
+    pub extension_manager: Arc<ExtensionManager>,
+    pub extension_service: Arc<ExtensionService>,
 }

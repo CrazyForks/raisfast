@@ -90,7 +90,7 @@ pub enum AppError {
     ///
     /// 通过 `#[from]` 自动从 `anyhow::Error` 转换，避免手动映射。
     /// 向客户端隐藏内部细节，仅返回通用错误消息。
-    #[error("internal server error")]
+    #[error("{0}")]
     Internal(#[from] anyhow::Error),
 }
 

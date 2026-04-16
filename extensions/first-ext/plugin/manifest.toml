@@ -1,0 +1,19 @@
+[plugin]
+id = "com.rust-blog.blog-stats"
+name = "Blog Stats API"
+version = "1.0.0"
+description = "通过自定义路由暴露博客统计 API，演示 handle_route hook"
+author = "rust-blog"
+license = "MIT"
+runtime = "lua"
+language = "lua"
+entry = "init.lua"
+
+[permissions]
+max_memory_mb = 8
+timeout_ms = 3000
+database = ["read:posts", "read:comments", "read:users"]
+
+[hooks.handle-route]
+match = "/api/v1/plugins/stats/*"
+priority = 10

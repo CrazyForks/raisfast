@@ -1,0 +1,23 @@
+[extension]
+# ── 必填 ──────────────────────────
+id = "first-ext"                        # 全局唯一标识（kebab-case）
+name = "first-ext"                     # 显示名称
+version = "1.0.0"                       # 语义化版本
+
+# ── 可选 ──────────────────────────
+description = "first extension"
+author = "Team"
+license = "MIT"
+homepage = "https://github.com/example/ecommerce-ext"
+
+# Content Type 目录路径，null/省略 = 无 CT
+content_types = "content_types/"
+
+# Plugin manifest 路径，null/省略 = 无 Plugin
+plugin = "plugin/manifest.toml"
+
+
+# 依赖的其他 Extension（id → version range）
+[extension.dependencies]
+
+# ── 组件引用（相对于 extension 根目录）──

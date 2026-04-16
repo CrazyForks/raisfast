@@ -103,6 +103,8 @@ pub struct AppConfig {
     pub content_type_dir: String,
     #[serde(default = "default_timezone")]
     pub timezone: String,
+    #[serde(default = "default_extension_dir")]
+    pub extension_dir: String,
 }
 
 /// 单条 Cron 调度配置
@@ -142,6 +144,10 @@ fn default_content_type_dir() -> String {
 
 fn default_timezone() -> String {
     "UTC".into()
+}
+
+fn default_extension_dir() -> String {
+    "./extensions".into()
 }
 
 #[must_use]
@@ -400,6 +406,10 @@ impl AppConfig {
                 .ok()
                 .filter(|v| !v.is_empty())
                 .unwrap_or_else(default_timezone),
+            extension_dir: env::var("EXTENSION_DIR")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(default_extension_dir),
         }
     }
 

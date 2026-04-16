@@ -12,7 +12,6 @@ import {
   MessageSquare,
   Image,
   Users,
-  Puzzle,
   Clock,
   LogOut,
   Settings,
@@ -25,6 +24,7 @@ import {
   ShieldCheck,
   ChevronDown,
   PenLine,
+  Package,
 } from "lucide-react";
 
 import {
@@ -53,13 +53,13 @@ const contentItems = [
   { label: "Tags", href: "/admin/tags", icon: Tag },
   { label: "Comments", href: "/admin/comments", icon: MessageSquare },
   { label: "Media", href: "/admin/media", icon: Image },
+  { label: "Content Types", href: "/admin/content-types", icon: Layers },
 ];
 
 const systemItems = [
   { label: "Users", href: "/admin/users", icon: Users },
-  { label: "Content Types", href: "/admin/content-types", icon: Layers },
+  { label: "Extensions", href: "/admin/extensions", icon: Package },
   { label: "Roles & Permissions", href: "/admin/rbac", icon: ShieldCheck },
-  { label: "Plugins", href: "/admin/plugins", icon: Puzzle },
   { label: "Cron", href: "/admin/crons", icon: Clock },
   { label: "Tenants", href: "/admin/tenants", icon: Building2 },
   { label: "Webhooks", href: "/admin/webhooks", icon: Webhook },

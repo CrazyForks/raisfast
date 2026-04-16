@@ -159,6 +159,7 @@ pub struct PluginManager {
     pool: Option<Pool>,
     watcher: RwLock<Option<notify::RecommendedWatcher>>,
     reload_tx: tokio::sync::mpsc::Sender<PathBuf>,
+    reload_rx: tokio::sync::Mutex<Option<tokio::sync::mpsc::Receiver<PathBuf>>>,
     event_bus: tokio::sync::broadcast::Sender<Arc<PluginEvent>>,
 }
 
@@ -217,6 +218,35 @@ impl PluginManager {
 
     /// 带可选依赖创建 `PluginManager`
     pub async fn new_with_options(config: Arc<AppConfig>, opts: PluginManagerOptions) -> Arc<Self> {
+        let manager = Self::build_instance(config, opts).await;
+
+        if manager.config.plugin_dir.is_some() {
+            manager.load_all().await;
+            if manager.config.plugin_hot_reload {
+                let mgr = manager.clone();
+                let mut rx_guard = manager.reload_rx.lock().await;
+                if let Some(reload_rx) = rx_guard.take() {
+                    tokio::spawn(async move {
+                        let mut rx = reload_rx;
+                        while let Some(path) = rx.recv().await {
+                            mgr.reload_changed_file(&path).await;
+                        }
+                    });
+                }
+                manager.start_watcher().await;
+            }
+        }
+
+        manager
+    }
+
+    /// 创建空的 `PluginManager`（不扫描目录），由 ExtensionManager 调度加载
+    pub async fn new_empty(config: Arc<AppConfig>, opts: PluginManagerOptions) -> Arc<Self> {
+        Self::build_instance(config, opts).await
+    }
+
+    /// 构建 PluginManager 实例（引擎初始化，不加载插件）
+    async fn build_instance(config: Arc<AppConfig>, opts: PluginManagerOptions) -> Arc<Self> {
         #[cfg(feature = "plugin-wasm")]
         let engine = {
             let mut engine_config = wasmtime::Config::new();
@@ -234,10 +264,10 @@ impl PluginManager {
         let lua_engine =
             LuaEngine::new(&config, opts.pool.clone()).expect("failed to create lua engine");
 
-        let (reload_tx, mut reload_rx) = tokio::sync::mpsc::channel::<PathBuf>(32);
+        let (reload_tx, reload_rx) = tokio::sync::mpsc::channel::<PathBuf>(32);
         let (event_tx, _) = tokio::sync::broadcast::channel::<Arc<PluginEvent>>(256);
 
-        let manager = Arc::new(Self {
+        Arc::new(Self {
             #[cfg(feature = "plugin-wasm")]
             engine,
             #[cfg(feature = "plugin-js")]
@@ -249,23 +279,9 @@ impl PluginManager {
             pool: opts.pool,
             watcher: RwLock::new(None),
             reload_tx,
+            reload_rx: tokio::sync::Mutex::new(Some(reload_rx)),
             event_bus: event_tx,
-        });
-
-        if manager.config.plugin_dir.is_some() {
-            manager.load_all().await;
-            if manager.config.plugin_hot_reload {
-                let mgr = manager.clone();
-                tokio::spawn(async move {
-                    while let Some(path) = reload_rx.recv().await {
-                        mgr.reload_changed_file(&path).await;
-                    }
-                });
-                manager.start_watcher().await;
-            }
-        }
-
-        manager
+        })
     }
 
     /// 设置数据库连接池（如果创建时未提供）
@@ -370,8 +386,8 @@ impl PluginManager {
         }
     }
 
-    /// 从 plugin.toml 路径加载插件，根据 runtime 字段选择引擎
-    async fn load_plugin_from_dir(&self, manifest_path: &Path) -> AppResult<String> {
+    /// 从 plugin.toml 所在目录加载插件，根据 runtime 字段选择引擎
+    pub async fn load_plugin_from_dir(&self, manifest_path: &Path) -> AppResult<String> {
         let dir = manifest_path.parent().ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!("manifest has no parent directory"))
         })?;
@@ -1389,6 +1405,7 @@ mod tests {
             search_index_dir: "./data/search_index".into(),
             content_type_dir: "./content_types".into(),
             timezone: "UTC".into(),
+            extension_dir: "./extensions".into(),
         })
     }
 
@@ -2886,6 +2903,7 @@ Plugin = {
             search_index_dir: "./data/search_index".into(),
             content_type_dir: "./content_types".into(),
             timezone: "UTC".into(),
+            extension_dir: "./extensions".into(),
         });
 
         let mgr = PluginManager::new_with_options(

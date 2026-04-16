@@ -443,6 +443,7 @@ pub async fn create_schema(
     Json(req): Json<super::schema::CreateContentTypeRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let schema = super::schema::ContentTypeSchema {
+        extension_id: None,
         name: req.name,
         singular: req.singular.clone(),
         plural: req.plural,

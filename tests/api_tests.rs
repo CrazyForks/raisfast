@@ -90,6 +90,7 @@ fn test_config() -> AppConfig {
         search_index_dir: "./data/search_index".into(),
         content_type_dir: "./content_types".into(),
         timezone: "UTC".into(),
+        extension_dir: "./__nonexistent_extensions__".into(),
     }
 }
 
@@ -141,6 +142,10 @@ async fn test_pool() -> rust_blog::db::Pool {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(include_str!("../migrations/014_extensions.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
         pool
     }
 }
@@ -151,7 +156,7 @@ async fn test_app() -> (axum::Router, AppState) {
     let state = AppState {
         pool: pool.clone(),
         config: config.clone(),
-        plugins: PluginManager::new(config).await,
+        plugins: PluginManager::new(config.clone()).await,
         eventbus: rust_blog::eventbus::EventBus::new(256),
         post_repo: Arc::new(CachedPostRepository::new(
             SqlxPostRepository::new(pool.clone()),
@@ -180,6 +185,16 @@ async fn test_app() -> (axum::Router, AppState) {
         ))),
         audit: Arc::new(rust_blog::audit::AuditService::new(pool.clone())),
         webhook: Arc::new(rust_blog::webhook::WebhookService::new(pool.clone())),
+        extension_manager: rust_blog::extension::manager::ExtensionManager::new(
+            Arc::new(rust_blog::content_type::ContentTypeRegistry::new()),
+            PluginManager::new(config.clone()).await,
+            pool.clone(),
+            &config,
+        )
+        .await,
+        extension_service: Arc::new(rust_blog::extension::service::ExtensionService::new(
+            pool.clone(),
+        )),
     };
     let max_upload = state.config.max_upload_size;
 
@@ -287,6 +302,23 @@ async fn test_app() -> (axum::Router, AppState) {
             get(rust_blog::webhook::handler::get)
                 .put(rust_blog::webhook::handler::update)
                 .delete(rust_blog::webhook::handler::delete),
+        )
+        .route(
+            "/admin/extensions",
+            get(rust_blog::extension::handler::list),
+        )
+        .route(
+            "/admin/extensions/{id}",
+            get(rust_blog::extension::handler::get)
+                .delete(rust_blog::extension::handler::uninstall),
+        )
+        .route(
+            "/admin/extensions/{id}/enable",
+            http_post(rust_blog::extension::handler::enable),
+        )
+        .route(
+            "/admin/extensions/{id}/disable",
+            http_post(rust_blog::extension::handler::disable),
         )
         .layer(from_fn(global_rate_limit))
         .layer(axum::Extension(RateLimiterSet::new_default()));
@@ -3304,5 +3336,98 @@ mod audit_tests {
         assert!(status.is_success());
         assert_eq!(body["data"]["page"], 2);
         assert_eq!(body["data"]["page_size"], 5);
+    }
+}
+
+// ── extension ────────────────────────────────────────────────────────
+
+mod extension_tests {
+    use super::*;
+
+    async fn setup_admin() -> (axum::Router, String) {
+        let admin_id = uuid::Uuid::now_v7().to_string();
+        let token = make_token(&admin_id, "admin");
+        let (app, _) = test_app().await;
+        (app, token)
+    }
+
+    #[tokio::test]
+    async fn list_returns_empty_when_no_extensions() {
+        let (mut app, tok) = setup_admin().await;
+        let (status, body) = send(&mut app, get_auth("/api/v1/admin/extensions", &tok)).await;
+        assert!(status.is_success(), "list: {status} {body:?}");
+        assert_eq!(body["code"], 0);
+        assert!(body["data"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_nonexistent_returns_not_found() {
+        let (mut app, tok) = setup_admin().await;
+        let (status, _) = send(
+            &mut app,
+            get_auth("/api/v1/admin/extensions/nonexistent", &tok),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn enable_nonexistent_returns_not_found() {
+        let (mut app, tok) = setup_admin().await;
+        let (status, _) = send(
+            &mut app,
+            post_json_auth(
+                "/api/v1/admin/extensions/nonexistent/enable",
+                json!({}),
+                &tok,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn disable_nonexistent_returns_not_found() {
+        let (mut app, tok) = setup_admin().await;
+        let (status, _) = send(
+            &mut app,
+            post_json_auth(
+                "/api/v1/admin/extensions/nonexistent/disable",
+                json!({}),
+                &tok,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn uninstall_nonexistent_returns_not_found() {
+        let (mut app, tok) = setup_admin().await;
+        let (status, _) = send(
+            &mut app,
+            axum::http::Request::builder()
+                .method("DELETE")
+                .uri("/api/v1/admin/extensions/nonexistent")
+                .header(header::AUTHORIZATION, format!("Bearer {tok}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"drop_tables":false}"#))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn list_requires_auth() {
+        let (mut app, _) = setup_admin().await;
+        let (status, _) = send(
+            &mut app,
+            Request::get("/api/v1/admin/extensions")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 }

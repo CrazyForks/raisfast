@@ -3,10 +3,11 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Layers, Plus, Trash2, Pencil } from "lucide-react";
+import { Layers, Plus, Trash2, Pencil, Package } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, ApiError } from "@/lib/api";
@@ -104,6 +105,20 @@ export default function ContentTypesPage() {
                     <div className="flex items-center gap-2">
                       <Layers className="size-5 text-muted-foreground" />
                       <CardTitle>{ct.name}</CardTitle>
+                      {ct.extension_id && (
+                        <Badge
+                          variant="secondary"
+                          className="gap-1 text-xs cursor-pointer"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            router.push(`/admin/extensions/${ct.extension_id}`);
+                          }}
+                        >
+                          <Package className="size-3" />
+                          {ct.extension_id}
+                        </Badge>
+                      )}
                     </div>
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <Button

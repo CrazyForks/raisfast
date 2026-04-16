@@ -107,6 +107,7 @@ mod tests {
             search_index_dir: "./data/search_index".into(),
             content_type_dir: "./content_types".into(),
             timezone: "UTC".into(),
+            extension_dir: "./extensions".into(),
         });
         let mgr = PluginManager::new_with_options(
             config,

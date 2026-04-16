@@ -84,42 +84,6 @@ fn build_cors(config: &AppConfig) -> CorsLayer {
     }
 }
 
-/// 加载内容类型定义并自动执行 migration
-async fn load_content_types(config: &AppConfig, pool: &rust_blog::db::Pool) -> ContentTypeRegistry {
-    let ct_dir = std::path::Path::new(&config.content_type_dir);
-    let registry = if ct_dir.exists() {
-        match ContentTypeRegistry::load_from_dir(ct_dir) {
-            Ok(reg) => {
-                tracing::info!(
-                    "loaded {} content type(s) from {}",
-                    reg.len(),
-                    config.content_type_dir
-                );
-                reg
-            }
-            Err(e) => {
-                tracing::error!("failed to load content types: {}", e);
-                ContentTypeRegistry::new()
-            }
-        }
-    } else {
-        tracing::info!(
-            "content_type_dir '{}' not found, skipping",
-            config.content_type_dir
-        );
-        ContentTypeRegistry::new()
-    };
-
-    let repo = rust_blog::content_type::repository::ContentRepository::new(pool.clone());
-    for ct in registry.all() {
-        if let Err(e) = repo.migrate(&ct).await {
-            tracing::error!("migration failed for content type '{}': {}", ct.name, e);
-        }
-    }
-
-    registry
-}
-
 /// 组装完整的应用路由（含数据库连接池初始化）。
 async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Result<axum::Router> {
     let upload_dir = config.upload_dir.clone();
@@ -152,7 +116,23 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
 
     let search: Arc<dyn SearchEngine> = build_search_engine(config);
 
-    let content_type_registry = load_content_types(config, &pool).await;
+    let ct_registry = Arc::new(ContentTypeRegistry::new());
+
+    let plugin_manager = rust_blog::plugins::PluginManager::new_empty(
+        Arc::new(config.clone()),
+        rust_blog::plugins::PluginManagerOptions {
+            pool: Some(pool.clone()),
+        },
+    )
+    .await;
+
+    let extension_manager = rust_blog::extension::manager::ExtensionManager::new(
+        ct_registry.clone(),
+        plugin_manager.clone(),
+        pool.clone(),
+        config,
+    )
+    .await;
 
     let options_repo: Arc<dyn OptionsRepository> =
         Arc::new(SqlxOptionsRepository::new(pool.clone()));
@@ -166,14 +146,14 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
     let audit_service = Arc::new(rust_blog::audit::AuditService::new(pool.clone()));
     let webhook_service = Arc::new(rust_blog::webhook::WebhookService::new(pool.clone()));
 
+    let extension_service = Arc::new(rust_blog::extension::service::ExtensionService::new(
+        pool.clone(),
+    ));
+
     let state = AppState {
         pool: pool.clone(),
         config: Arc::new(config.clone()),
-        plugins: rust_blog::plugins::PluginManager::new_with_options(
-            Arc::new(config.clone()),
-            rust_blog::plugins::PluginManagerOptions { pool: Some(pool) },
-        )
-        .await,
+        plugins: plugin_manager,
         eventbus: eventbus.clone(),
         post_repo,
         user_repo,
@@ -183,12 +163,14 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         media_repo,
         refresh_token_repo,
         search,
-        content_type_registry: Arc::new(content_type_registry),
+        content_type_registry: ct_registry,
         options: options_service,
         rbac: rbac_service,
         tenant: tenant_service,
         audit: audit_service,
         webhook: webhook_service.clone(),
+        extension_manager,
+        extension_service,
     };
 
     spawn_event_subscriber(eventbus.clone(), state.plugins.clone());
@@ -330,6 +312,23 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
             get(rust_blog::content_type::handler::get_schema)
                 .put(rust_blog::content_type::handler::update_schema)
                 .delete(rust_blog::content_type::handler::delete_schema),
+        )
+        .route(
+            "/admin/extensions",
+            get(rust_blog::extension::handler::list),
+        )
+        .route(
+            "/admin/extensions/{id}",
+            get(rust_blog::extension::handler::get)
+                .delete(rust_blog::extension::handler::uninstall),
+        )
+        .route(
+            "/admin/extensions/{id}/enable",
+            http_post(rust_blog::extension::handler::enable),
+        )
+        .route(
+            "/admin/extensions/{id}/disable",
+            http_post(rust_blog::extension::handler::disable),
         )
         .layer(from_fn(global_rate_limit))
         .layer(Extension(limiters))

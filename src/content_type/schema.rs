@@ -9,6 +9,9 @@ use crate::errors::app_error::AppError;
 /// 内容类型定义
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentTypeSchema {
+    /// 来源 Extension ID（None = 独立注册）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extension_id: Option<String>,
     /// 显示名称（如 "Post"）
     pub name: String,
     /// 单数标识（如 "post"），用于 API 路径和注册表 key
@@ -323,6 +326,7 @@ impl ContentTypeSchema {
         }
 
         Ok(ContentTypeSchema {
+            extension_id: None,
             name: toml.content_type.name,
             singular: toml.content_type.singular,
             plural: toml.content_type.plural,

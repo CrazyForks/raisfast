@@ -70,7 +70,10 @@ fn parse_product() -> ContentTypeSchema {
 }
 
 fn parse_article() -> ContentTypeSchema {
-    ContentTypeSchema::parse_from_file(std::path::Path::new("content_types/article.toml")).unwrap()
+    ContentTypeSchema::parse_from_file(std::path::Path::new(
+        "extensions/first-ext/content_types/article.toml",
+    ))
+    .unwrap()
 }
 
 #[tokio::test]
