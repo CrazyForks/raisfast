@@ -85,6 +85,15 @@ pub fn register_host_functions(
     host.set("dbQuery", db_query_fn)?;
 
     let hc = host_ctx.clone();
+    let db_execute_fn =
+        lua.create_function(move |lua, (sql, params): (String, Option<String>)| {
+            Ok(mlua::Value::String(
+                lua.create_string(hc.db_execute(&sql, params.as_deref()))?,
+            ))
+        })?;
+    host.set("dbExecute", db_execute_fn)?;
+
+    let hc = host_ctx.clone();
     let fs_read_fn = lua.create_function(move |lua, path: String| match hc.fs_read(&path) {
         Ok(content) => Ok(mlua::Value::String(lua.create_string(&content)?)),
         Err(_) => Ok(mlua::Value::Nil),
@@ -360,6 +369,7 @@ mod tests {
             "setData",
             "getPost",
             "dbQuery",
+            "dbExecute",
             "fsRead",
             "fsWrite",
             "fsDelete",

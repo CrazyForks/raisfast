@@ -74,6 +74,15 @@ pub fn register_host_functions(
     host.set("dbQuery", db_query_fn)?;
 
     let hc = host_ctx.clone();
+    let db_execute_fn = Function::new(
+        ctx.clone(),
+        move |sql: String, params: Option<String>| -> String {
+            hc.db_execute(&sql, params.as_deref())
+        },
+    )?;
+    host.set("dbExecute", db_execute_fn)?;
+
+    let hc = host_ctx.clone();
     let fs_read_fn = Function::new(ctx.clone(), move |path: String| -> Option<String> {
         hc.fs_read(&path).ok()
     })?;
@@ -386,6 +395,7 @@ mod tests {
                 "setData",
                 "getPost",
                 "dbQuery",
+                "dbExecute",
                 "fsRead",
                 "fsWrite",
                 "fsDelete",

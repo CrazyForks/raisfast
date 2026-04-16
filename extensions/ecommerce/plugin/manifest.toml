@@ -1,0 +1,79 @@
+[plugin]
+id = "com.rust-blog.ecommerce"
+name = "E-Commerce API"
+version = "0.1.0"
+description = "电商 API：商品浏览、购物车、下单结算"
+author = "rust-blog"
+license = "MIT"
+runtime = "js"
+language = "js"
+entry = "main.js"
+
+[permissions]
+max_memory_mb = 16
+timeout_ms = 5000
+database = [
+    "products",
+    "read:product_categories",
+    "orders",
+    "order_items",
+    "cart_items",
+]
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/ecommerce/products"
+handler = "listProducts"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/ecommerce/products/:id"
+handler = "getProduct"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/ecommerce/cart"
+handler = "viewCart"
+auth = "member"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/ecommerce/cart"
+handler = "addToCart"
+auth = "member"
+
+[[routes]]
+method = "DELETE"
+path = "/api/v1/plugins/ecommerce/cart"
+handler = "clearCart"
+auth = "member"
+
+[[routes]]
+method = "PUT"
+path = "/api/v1/plugins/ecommerce/cart/:id"
+handler = "updateCartItem"
+auth = "member"
+
+[[routes]]
+method = "DELETE"
+path = "/api/v1/plugins/ecommerce/cart/:id"
+handler = "removeCartItem"
+auth = "member"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/ecommerce/checkout"
+handler = "checkout"
+auth = "member"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/ecommerce/orders"
+handler = "listOrders"
+auth = "member"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/ecommerce/orders/:id"
+handler = "getOrder"
+auth = "member"

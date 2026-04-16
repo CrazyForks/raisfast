@@ -1,0 +1,12 @@
+[extension]
+id = "ecommerce"
+name = "E-Commerce"
+version = "0.1.0"
+description = "电商模块：商品、购物车、订单管理"
+author = "rust-blog"
+license = "MIT"
+homepage = "https://github.com/example/ecommerce-ext"
+content_types = "content_types/"
+plugin = "plugin/manifest.toml"
+
+[extension.dependencies]

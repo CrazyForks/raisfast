@@ -71,6 +71,24 @@ impl std::ops::Deref for AuthorUser {
 #[derive(Debug, Clone)]
 pub struct AuthUser(pub AuthIdentity);
 
+/// 可选认证提取器——无 token 时返回 None（不报错）
+///
+/// 用于需要根据 CT 配置动态决定是否需要认证的场景。
+#[derive(Debug, Clone)]
+pub struct OptionalAuth(pub Option<AuthIdentity>);
+
+impl FromRequestParts<AppState> for OptionalAuth {
+    type Rejection = std::convert::Infallible;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> impl std::future::Future<Output = Result<Self, Self::Rejection>> + Send {
+        let result = crate::utils::auth::extract_optional_identity(parts, state);
+        async move { Ok(OptionalAuth(result)) }
+    }
+}
+
 impl FromRequestParts<AppState> for AuthUser {
     type Rejection = AppError;
 

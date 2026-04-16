@@ -24,6 +24,7 @@ pub fn register_host_functions(linker: &mut Linker<Arc<HostContext>>) -> anyhow:
     linker.func_wrap("env", "host_set_data", host_set_data)?;
     linker.func_wrap("env", "host_get_post", host_get_post)?;
     linker.func_wrap("env", "host_db_query", host_db_query)?;
+    linker.func_wrap("env", "host_db_execute", host_db_execute)?;
     linker.func_wrap("env", "host_fs_read", host_fs_read)?;
     linker.func_wrap("env", "host_fs_write", host_fs_write)?;
     linker.func_wrap("env", "host_fs_delete", host_fs_delete)?;
@@ -185,6 +186,27 @@ fn host_db_query(caller: Caller<'_, Arc<HostContext>>, sql_ptr: i32, sql_len: i3
         None => return 0,
     };
     let result = caller.data().db_query(&sql);
+    write_string(&mut caller, &result)
+}
+
+fn host_db_execute(
+    caller: Caller<'_, Arc<HostContext>>,
+    sql_ptr: i32,
+    sql_len: i32,
+    params_ptr: i32,
+    params_len: i32,
+) -> i32 {
+    let mut caller = caller;
+    let sql = match read_string(&mut caller, sql_ptr, sql_len) {
+        Some(s) => s,
+        None => return 0,
+    };
+    let params = if params_len > 0 {
+        read_string(&mut caller, params_ptr, params_len)
+    } else {
+        None
+    };
+    let result = caller.data().db_execute(&sql, params.as_deref());
     write_string(&mut caller, &result)
 }
 

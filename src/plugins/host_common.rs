@@ -11,6 +11,7 @@ use crate::db::Pool;
 use crate::plugins::Permissions;
 use crate::plugins::permissions::PermissionChecker;
 use crate::plugins::vfs::VirtualFs;
+use sqlx::Arguments;
 
 /// 插件宿主上下文
 ///
@@ -214,6 +215,89 @@ impl HostContext {
             }) {
                 Ok(json) => json,
                 Err(e) => format!("error: {e}"),
+            }
+        })
+    }
+
+    /// 执行写操作 SQL（INSERT/UPDATE/DELETE），返回 JSON 结果。
+    ///
+    /// 当 `params_json` 为 `Some` 时使用参数化查询（防 SQL 注入），
+    /// 为 `None` 时执行原始 SQL（仅适用于无用户输入的场景）。
+    #[must_use]
+    pub fn db_execute(&self, sql: &str, params_json: Option<&str>) -> String {
+        if !PermissionChecker::is_write_query(sql) {
+            return r#"{"error":"only INSERT/UPDATE/DELETE are allowed"}"#.to_string();
+        }
+        if PermissionChecker::is_ddl_query(sql) {
+            return r#"{"error":"DDL operations are not allowed"}"#.to_string();
+        }
+        let table = match crate::plugins::permissions::extract_write_table_name(sql) {
+            Some(t) => t,
+            None => return r#"{"error":"cannot parse table name from SQL"}"#.to_string(),
+        };
+        if PermissionChecker::is_protected_table(&table) {
+            return format!(
+                r#"{{"error":"table '{table}' is protected and cannot be modified by plugins"}}"#
+            );
+        }
+        if !PermissionChecker::is_table_writable(&self.permissions, &table) {
+            return format!(r#"{{"error":"no write permission for table: {table}"}}"#);
+        }
+        let parsed_params = match params_json {
+            Some(pj) if !pj.is_empty() => {
+                let params: Vec<serde_json::Value> = match serde_json::from_str(pj) {
+                    Ok(p) => p,
+                    Err(e) => return format!(r#"{{"error":"invalid params JSON: {e}"}}"#),
+                };
+                for p in &params {
+                    if matches!(
+                        p,
+                        serde_json::Value::Array(_) | serde_json::Value::Object(_)
+                    ) {
+                        return format!(r#"{{"error":"unsupported param type: {p}"}}"#);
+                    }
+                }
+                Some(params)
+            }
+            _ => None,
+        };
+        let Some(pool) = &self.pool else {
+            return r#"{"error":"no database access"}"#.to_string();
+        };
+        let handle = tokio::runtime::Handle::current();
+        let sql = crate::db::dialect::translate(sql).into_owned();
+        tokio::task::block_in_place(|| {
+            let result: Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> = match parsed_params {
+                Some(params) => {
+                    let mut args = sqlx::sqlite::SqliteArguments::default();
+                    for p in &params {
+                        match p {
+                            serde_json::Value::String(s) => {
+                                args.add(s.clone()).ok();
+                            }
+                            serde_json::Value::Number(n) => {
+                                if let Some(i) = n.as_i64() {
+                                    args.add(i).ok();
+                                } else {
+                                    args.add(n.as_f64().unwrap_or(0.0)).ok();
+                                }
+                            }
+                            serde_json::Value::Bool(b) => {
+                                args.add(*b).ok();
+                            }
+                            serde_json::Value::Null => {
+                                args.add(Option::<String>::None).ok();
+                            }
+                            _ => {}
+                        }
+                    }
+                    handle.block_on(async { sqlx::query_with(&sql, args).execute(pool).await })
+                }
+                None => handle.block_on(async { sqlx::query(&sql).execute(pool).await }),
+            };
+            match result {
+                Ok(r) => format!(r#"{{"rows_affected":{}}}"#, r.rows_affected()),
+                Err(e) => format!(r#"{{"error":"{e}"}}"#),
             }
         })
     }
@@ -609,5 +693,145 @@ mod tests {
 
         let result = ctx.db_query("SELECT COUNT(*) as cnt FROM posts");
         assert!(!result.contains("error"));
+    }
+
+    #[test]
+    fn host_context_db_execute_rejects_select() {
+        let config = make_test_config();
+        let ctx = HostContext::new("test", config, "p1".into(), Permissions::default(), None);
+        let result = ctx.db_execute("SELECT * FROM posts", None);
+        assert!(result.contains("only INSERT/UPDATE/DELETE"));
+    }
+
+    #[test]
+    fn host_context_db_execute_rejects_ddl() {
+        let config = make_test_config();
+        let ctx = HostContext::new("test", config, "p1".into(), Permissions::default(), None);
+        let result = ctx.db_execute("CREATE TABLE evil (id TEXT)", None);
+        assert!(result.contains("DDL operations") || result.contains("only INSERT/UPDATE/DELETE"));
+    }
+
+    #[test]
+    fn host_context_db_execute_rejects_protected_table() {
+        let config = make_test_config();
+        let perms = Permissions {
+            database: vec!["*".into()],
+            ..Permissions::default()
+        };
+        let ctx = HostContext::new("test", config, "p1".into(), perms, None);
+        let result = ctx.db_execute("DELETE FROM users WHERE 1=1", None);
+        assert!(result.contains("protected"));
+    }
+
+    #[test]
+    fn host_context_db_execute_rejects_no_write_permission() {
+        let config = make_test_config();
+        let perms = Permissions {
+            database: vec!["read:orders".into()],
+            ..Permissions::default()
+        };
+        let ctx = HostContext::new("test", config, "p1".into(), perms, None);
+        let result = ctx.db_execute("INSERT INTO orders (id) VALUES ('1')", None);
+        assert!(result.contains("no write permission"));
+    }
+
+    #[test]
+    fn host_context_db_execute_no_database_access() {
+        let config = make_test_config();
+        let perms = Permissions {
+            database: vec!["orders".into()],
+            ..Permissions::default()
+        };
+        let ctx = HostContext::new("test", config, "p1".into(), perms, None);
+        let result = ctx.db_execute("INSERT INTO orders (id) VALUES ('1')", None);
+        assert!(result.contains("no database access"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn host_context_db_execute_with_real_db() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(include_str!("../../migrations/001_init.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let perms = Permissions {
+            database: vec!["tags".into()],
+            ..Permissions::default()
+        };
+        let config = make_test_config();
+        let ctx = HostContext::new("test", config, "p1".into(), perms, Some(pool));
+
+        let result = ctx.db_execute(
+            "INSERT INTO tags (id, name, slug) VALUES ('tag-1', 'Test', 'test')",
+            None,
+        );
+        assert!(result.contains("rows_affected"));
+        assert!(!result.contains("error"));
+
+        let update = ctx.db_execute("UPDATE tags SET name = 'Updated' WHERE id = 'tag-1'", None);
+        assert!(update.contains("rows_affected"));
+
+        let delete = ctx.db_execute("DELETE FROM tags WHERE id = 'tag-1'", None);
+        assert!(delete.contains("rows_affected"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn host_context_db_execute_parameterized() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(include_str!("../../migrations/001_init.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let perms = Permissions {
+            database: vec!["tags".into()],
+            ..Permissions::default()
+        };
+        let config = make_test_config();
+        let ctx = HostContext::new("test", config, "p1".into(), perms, Some(pool));
+
+        let result = ctx.db_execute(
+            "INSERT INTO tags (id, name, slug) VALUES (?, ?, ?)",
+            Some(r#"["t2","Param Tag","param-tag"]"#),
+        );
+        assert!(result.contains("rows_affected"));
+        assert!(!result.contains("error"));
+
+        let update = ctx.db_execute(
+            "UPDATE tags SET name = ? WHERE id = ?",
+            Some(r#"["Renamed","t2"]"#),
+        );
+        assert!(update.contains("rows_affected"));
+
+        let delete = ctx.db_execute("DELETE FROM tags WHERE id = ?", Some(r#"["t2"]"#));
+        assert!(delete.contains("rows_affected"));
+    }
+
+    #[test]
+    fn host_context_db_execute_invalid_params_json() {
+        let config = make_test_config();
+        let perms = Permissions {
+            database: vec!["tags".into()],
+            ..Permissions::default()
+        };
+        let ctx = HostContext::new("test", config, "p1".into(), perms, None);
+        let result = ctx.db_execute("INSERT INTO tags (id) VALUES (?)", Some("not valid json"));
+        assert!(result.contains("invalid params JSON"));
+    }
+
+    #[test]
+    fn host_context_db_execute_unsupported_param_type() {
+        let config = make_test_config();
+        let perms = Permissions {
+            database: vec!["tags".into()],
+            ..Permissions::default()
+        };
+        let ctx = HostContext::new("test", config, "p1".into(), perms, None);
+        let result = ctx.db_execute(
+            "INSERT INTO tags (id) VALUES (?)",
+            Some(r#"[{"nested":"object"}]"#),
+        );
+        assert!(result.contains("unsupported param type"));
     }
 }

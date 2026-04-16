@@ -4,6 +4,7 @@ use axum::http::request::Parts;
 
 use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::middleware::auth::AuthIdentity;
 use crate::services::auth::Claims;
 
 /// 从请求头中提取并验证 JWT claims。
@@ -23,6 +24,17 @@ pub fn extract_claims(parts: &mut Parts, state: &AppState) -> Result<Claims, App
         .ok_or(AppError::Unauthorized)?;
 
     crate::services::auth::verify_token(token, secret)
+}
+
+/// 尝试从请求头中提取 JWT claims，无 token 时返回 None（不报错）。
+pub fn extract_optional_identity(parts: &mut Parts, state: &AppState) -> Option<AuthIdentity> {
+    extract_claims(parts, state)
+        .ok()
+        .map(|claims| AuthIdentity {
+            user_id: claims.sub,
+            role: claims.role,
+            tenant_id: claims.tenant_id,
+        })
 }
 
 /// 校验当前用户是管理员或资源所有者，否则返回 `Forbidden`。

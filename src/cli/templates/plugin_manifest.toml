@@ -1,0 +1,15 @@
+[plugin]
+id = "{{ plugin_id }}"
+name = "{{ name }} Plugin"
+version = "{{ version }}"
+description = "{{ description }}"
+author = "{{ author }}"
+license = "{{ license }}"
+runtime = "{{ runtime }}"
+language = "{{ runtime }}"
+entry = "{{ entry }}"
+
+[permissions]
+max_memory_mb = {{ max_memory_mb }}
+timeout_ms = {{ timeout_ms }}
+database = []

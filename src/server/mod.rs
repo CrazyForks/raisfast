@@ -499,9 +499,10 @@ async fn shutdown_signal() {
 
 /// 插件路由 fallback。
 ///
-/// 当 axum 路由未匹配时，尝试分发给插件的 `handle_route` Hook。
+/// 当 axum 路由未匹配时，尝试分发给插件的 `manifest.routes` 声明式路由。
 /// 若所有插件均未处理，返回 404。
 async fn handle_plugin_route(
+    auth: rust_blog::middleware::auth::OptionalAuth,
     State(state): State<AppState>,
     req: axum::extract::Request,
 ) -> axum::response::Response {
@@ -510,7 +511,31 @@ async fn handle_plugin_route(
     let path = req.uri().path().to_string();
     let method = req.method().to_string();
 
-    let result = state.plugins.dispatch_route(&path, &method).await;
+    let headers_json: serde_json::Value = {
+        let mut map = serde_json::Map::new();
+        for (key, value) in req.headers() {
+            if let Ok(v) = value.to_str() {
+                map.insert(key.to_string(), serde_json::Value::String(v.to_string()));
+            }
+        }
+        serde_json::Value::Object(map)
+    };
+
+    let body_bytes = axum::body::to_bytes(req.into_body(), 1024 * 1024).await;
+    let body_str = body_bytes
+        .ok()
+        .and_then(|b| String::from_utf8(b.to_vec()).ok());
+
+    let result = state
+        .plugins
+        .dispatch_route(
+            &path,
+            &method,
+            body_str.as_deref(),
+            Some(&headers_json),
+            auth.0.as_ref(),
+        )
+        .await;
 
     match result {
         Some(response) => response,

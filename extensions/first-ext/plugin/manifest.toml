@@ -2,7 +2,7 @@
 id = "com.rust-blog.blog-stats"
 name = "Blog Stats API"
 version = "1.0.0"
-description = "通过自定义路由暴露博客统计 API，演示 handle_route hook"
+description = "通过自定义路由暴露博客统计 API"
 author = "rust-blog"
 license = "MIT"
 runtime = "lua"
@@ -14,6 +14,22 @@ max_memory_mb = 8
 timeout_ms = 3000
 database = ["read:posts", "read:comments", "read:users"]
 
-[hooks.handle-route]
-match = "/api/v1/plugins/stats/*"
-priority = 10
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/stats/overview"
+handler = "stats_overview"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/stats/posts"
+handler = "stats_posts"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/stats/recent"
+handler = "stats_recent"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/stats/top"
+handler = "stats_top"

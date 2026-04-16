@@ -1,0 +1,70 @@
+[content_type]
+name = "Order"
+singular = "order"
+plural = "orders"
+table = "orders"
+description = "订单"
+draft_publish = false
+timestamps = true
+soft_delete = false
+
+[fields.order_no]
+type = "text"
+required = true
+unique = true
+max_length = 32
+immutable = true
+label = "订单号"
+
+[fields.user_id]
+type = "text"
+required = true
+immutable = true
+label = "用户ID"
+
+[fields.status]
+type = "enum"
+enum_values = ["pending", "paid", "shipped", "completed", "cancelled", "refunded"]
+default = "pending"
+label = "订单状态"
+
+[fields.total_amount]
+type = "decimal"
+required = true
+min = 0
+label = "订单总额"
+
+[fields.shipping_address]
+type = "json"
+label = "收货地址"
+
+[fields.note]
+type = "text"
+max_length = 500
+label = "备注"
+
+[fields.paid_at]
+type = "datetime"
+label = "支付时间"
+
+[fields.shipped_at]
+type = "datetime"
+label = "发货时间"
+
+[[indexes]]
+fields = ["order_no"]
+unique = true
+
+[[indexes]]
+fields = ["user_id", "created_at"]
+
+[list_view]
+default_sort = "created_at:desc"
+columns = ["order_no", "user_id", "status", "total_amount", "created_at"]
+
+[api]
+list = "admin"
+get = "admin"
+create = "admin"
+update = "admin"
+delete = "admin"

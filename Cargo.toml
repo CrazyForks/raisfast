@@ -113,6 +113,7 @@ axum-server = { version = "0.7", features = ["tls-rustls"], optional = true }
 rustls = { version = "0.23", optional = true }
 tokio-rustls = { version = "0.26", optional = true }
 regex = "1.12.3"
+tera = "1"
 
 [dev-dependencies]
 http-body-util = "0.1.3"

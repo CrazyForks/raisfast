@@ -34,7 +34,7 @@ mod manifest;
 pub mod permissions;
 pub mod vfs;
 
-pub use manifest::{CronEntry, HookConfig, HookPoint, Permissions, PluginManifest};
+pub use manifest::{CronEntry, HookConfig, HookPoint, Permissions, PluginManifest, RouteDef};
 pub use permissions::PermissionChecker;
 
 use std::collections::HashMap;
@@ -1167,142 +1167,170 @@ impl PluginManager {
         self.pool.as_ref()
     }
 
-    /// 调度 `handle_route` Hook（自定义路由）
+    /// 调度自定义路由请求。
+    ///
+    /// 遍历所有插件的 `manifest.routes`，按 method+path 匹配后调用对应的 handler 函数。
     pub async fn dispatch_route(
         &self,
         path: &str,
         method: &str,
+        body: Option<&str>,
+        headers: Option<&serde_json::Value>,
+        auth: Option<&crate::middleware::auth::AuthIdentity>,
     ) -> Option<axum::response::Response> {
         let plugins = self.plugins.read().await;
         if plugins.is_empty() {
             return None;
         }
 
-        let func_name = "handle_route";
-
-        let mut sorted: Vec<_> = plugins.values().collect();
-        sorted.sort_by_key(|p| {
-            p.manifest
-                .hooks
-                .get(func_name)
-                .and_then(|h| h.priority)
-                .unwrap_or(100)
-        });
-
-        for plugin in sorted {
-            let hook_config = match plugin.manifest.hooks.get(func_name) {
-                Some(h) => h,
-                None => continue,
-            };
-
-            if let Some(pattern) = &hook_config.match_pattern
-                && !path_matches_pattern(path, pattern)
-            {
-                continue;
-            }
-
+        for plugin in plugins.values() {
             let plugin_id = plugin.manifest.plugin.id.clone();
             if !self.is_plugin_enabled(&plugin_id).await {
                 continue;
             }
 
-            let input = serde_json::json!({
-                "path": path,
-                "method": method,
-            });
-
-            let start = std::time::Instant::now();
-            let result = match &plugin.instance {
-                #[cfg(feature = "plugin-wasm")]
-                LoadedPluginInstance::Wasm(wasm) => {
-                    let mut instance = wasm.write().await;
-                    instance
-                        .call_json_filter::<serde_json::Value>(func_name, &input)
-                        .map_err(|e| anyhow::anyhow!("{e}"))
+            if let Some(route) = Self::match_route(&plugin.manifest.routes, method, path) {
+                if let Err(resp) = crate::content_type::schema::check_api_access(route.auth, auth) {
+                    let status = match &resp {
+                        crate::errors::app_error::AppError::Unauthorized => {
+                            axum::http::StatusCode::UNAUTHORIZED
+                        }
+                        crate::errors::app_error::AppError::Forbidden => {
+                            axum::http::StatusCode::FORBIDDEN
+                        }
+                        _ => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    };
+                    let code = status.as_u16() as i32 * 100;
+                    return Some(
+                        (
+                            status,
+                            [(axum::http::header::CONTENT_TYPE, "application/json")],
+                            format!(r#"{{"code":{code},"message":"{resp}","data":null}}"#),
+                        )
+                            .into_response(),
+                    );
                 }
-                #[cfg(feature = "plugin-js")]
-                LoadedPluginInstance::Js(pid) => self
-                    .js_engine
-                    .call_filter::<serde_json::Value>(pid, func_name, &input)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("{e}")),
-                #[cfg(feature = "plugin-lua")]
-                LoadedPluginInstance::Lua(pid) => self
-                    .lua_engine
-                    .call_filter::<serde_json::Value>(pid, func_name, &input)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("{e}")),
-            };
+                let input = serde_json::json!({
+                    "path": path,
+                    "method": method,
+                    "body": body.unwrap_or(""),
+                    "headers": headers.unwrap_or(&serde_json::Value::Null),
+                });
 
-            let elapsed = start.elapsed().as_micros() as u64;
+                let handler = &route.handler;
+                let start = std::time::Instant::now();
+                let result = self.call_plugin_json(plugin, handler, &input).await;
+                let elapsed = start.elapsed().as_micros() as u64;
 
-            match result {
-                Ok(Some(result)) => {
-                    if let Some(body) = result.get("body").and_then(|b| b.as_str()) {
-                        let status = result
-                            .get("status")
-                            .and_then(serde_json::Value::as_u64)
-                            .unwrap_or(200) as u16;
-                        let status_code = axum::http::StatusCode::from_u16(status)
-                            .unwrap_or(axum::http::StatusCode::OK);
+                match result {
+                    Ok(Some(resp)) => {
                         self.reset_error_count(&plugin_id).await;
-                        self.record_hook_metrics(&plugin_id, func_name, elapsed, false)
+                        self.record_hook_metrics(&plugin_id, handler, elapsed, false)
                             .await;
-                        return Some(
-                            (
-                                status_code,
-                                [(axum::http::header::CONTENT_TYPE, "application/json")],
-                                body.to_string(),
-                            )
-                                .into_response(),
-                        );
+                        return Some(resp);
                     }
-                }
-                Ok(None) => {
-                    self.reset_error_count(&plugin_id).await;
-                    self.record_hook_metrics(&plugin_id, func_name, elapsed, false)
-                        .await;
-                    continue;
-                }
-                Err(e) => {
-                    let err_msg = format!("{e}");
-                    tracing::warn!("plugin {} handle_route failed: {err_msg}", plugin_id);
-                    self.record_hook_error(&plugin_id, func_name, &err_msg)
-                        .await;
-                    self.record_hook_metrics(&plugin_id, func_name, elapsed, true)
-                        .await;
+                    Ok(None) => {
+                        self.reset_error_count(&plugin_id).await;
+                        self.record_hook_metrics(&plugin_id, handler, elapsed, false)
+                            .await;
+                        continue;
+                    }
+                    Err(e) => {
+                        let err_msg = format!("{e}");
+                        tracing::warn!(
+                            "plugin {plugin_id} route handler {handler} failed: {err_msg}"
+                        );
+                        self.record_hook_error(&plugin_id, handler, &err_msg).await;
+                        self.record_hook_metrics(&plugin_id, handler, elapsed, true)
+                            .await;
+                    }
                 }
             }
         }
 
         None
     }
+
+    /// 在 routes 列表中按 method + path 精确匹配，返回命中的 RouteDef
+    fn match_route<'a>(routes: &'a [RouteDef], method: &str, path: &str) -> Option<&'a RouteDef> {
+        routes
+            .iter()
+            .find(|r| r.method.eq_ignore_ascii_case(method) && path_matches_route(path, &r.path))
+    }
+
+    /// 调用插件的 JSON filter（统一 WASM/JS/Lua 三引擎），返回解析后的 Response
+    async fn call_plugin_json(
+        &self,
+        plugin: &LoadedPlugin,
+        handler: &str,
+        input: &serde_json::Value,
+    ) -> Result<Option<axum::response::Response>, anyhow::Error> {
+        let result: Option<serde_json::Value> = match &plugin.instance {
+            #[cfg(feature = "plugin-wasm")]
+            LoadedPluginInstance::Wasm(wasm) => {
+                let mut instance = wasm.write().await;
+                instance
+                    .call_json_filter::<serde_json::Value>(handler, input)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+            }
+            #[cfg(feature = "plugin-js")]
+            LoadedPluginInstance::Js(pid) => self
+                .js_engine
+                .call_filter::<serde_json::Value>(pid, handler, input)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?,
+            #[cfg(feature = "plugin-lua")]
+            LoadedPluginInstance::Lua(pid) => self
+                .lua_engine
+                .call_filter::<serde_json::Value>(pid, handler, input)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?,
+        };
+
+        match result {
+            Some(result) => {
+                if let Some(body) = result.get("body").and_then(|b| b.as_str()) {
+                    let status = result
+                        .get("status")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(200) as u16;
+                    let status_code = axum::http::StatusCode::from_u16(status)
+                        .unwrap_or(axum::http::StatusCode::OK);
+                    Ok(Some(
+                        (
+                            status_code,
+                            [(axum::http::header::CONTENT_TYPE, "application/json")],
+                            body.to_string(),
+                        )
+                            .into_response(),
+                    ))
+                } else {
+                    Ok(None)
+                }
+            }
+            None => Ok(None),
+        }
+    }
 }
 
-/// 简单的 glob 风格路径匹配
-fn path_matches_pattern(path: &str, pattern: &str) -> bool {
-    let pattern_parts: Vec<&str> = pattern.split('/').collect();
-    let path_parts: Vec<&str> = path.split('/').collect();
+/// 路由路径匹配（支持 `:param` 占位段）
+fn path_matches_route(path: &str, pattern: &str) -> bool {
+    let path_parts: Vec<&str> = path.trim_end_matches('/').split('/').collect();
+    let pattern_parts: Vec<&str> = pattern.trim_end_matches('/').split('/').collect();
 
-    if pattern_parts.len() != path_parts.len() && !pattern.contains('*') {
+    if path_parts.len() != pattern_parts.len() {
         return false;
     }
 
-    let pi = pattern_parts.iter().peekable();
-    let mut pathi = path_parts.iter();
-
-    for pp in pi {
-        if pp == &"*" {
-            pathi.next();
+    for (pp, rp) in path_parts.iter().zip(pattern_parts.iter()) {
+        if rp.starts_with(':') {
             continue;
         }
-        match pathi.next() {
-            Some(sp) if sp == pp => continue,
-            _ => return false,
+        if pp != rp {
+            return false;
         }
     }
-
-    pathi.next().is_none()
+    true
 }
 
 /// 拓扑排序：根据 dependencies 字段确定加载顺序
@@ -1446,9 +1474,6 @@ mod tests {
   (func (export "on_post_updating") (param $ptr i32) (param $len i32) (result i32)
     (call $echo_lp (local.get $ptr) (local.get $len))
   )
-  (func (export "handle_route") (param $ptr i32) (param $len i32) (result i32)
-    (i32.const 0)
-  )
   (func (export "filter_html") (param $ptr i32) (param $len i32) (result i32)
     (call $echo_lp (local.get $ptr) (local.get $len))
   )
@@ -1457,52 +1482,52 @@ mod tests {
         wat.as_bytes().to_vec()
     }
 
-    // ── path_matches_pattern tests ───────────────────────────────
+    // ── path_matches_route tests ────────────────────────────────
 
     #[test]
-    fn path_exact_match() {
-        assert!(path_matches_pattern("/api/v1/posts", "/api/v1/posts"));
+    fn route_exact_match() {
+        assert!(path_matches_route("/api/v1/posts", "/api/v1/posts"));
     }
 
     #[test]
-    fn path_no_match() {
-        assert!(!path_matches_pattern("/api/v1/posts", "/api/v1/users"));
+    fn route_no_match() {
+        assert!(!path_matches_route("/api/v1/posts", "/api/v1/users"));
     }
 
     #[test]
-    fn path_wildcard_match() {
-        assert!(path_matches_pattern(
-            "/api/v1/plugins/seo/sitemap",
-            "/api/v1/plugins/seo/*"
+    fn route_param_match() {
+        assert!(path_matches_route(
+            "/api/v1/plugins/ecommerce/products/abc-123",
+            "/api/v1/plugins/ecommerce/products/:id"
         ));
     }
 
     #[test]
-    fn path_wildcard_no_match_different_length() {
-        assert!(!path_matches_pattern(
+    fn route_different_length_no_match() {
+        assert!(!path_matches_route(
             "/api/v1/plugins/seo/a/b",
-            "/api/v1/plugins/seo/*"
+            "/api/v1/plugins/seo/:id"
         ));
     }
 
     #[test]
-    fn path_empty_both() {
-        assert!(path_matches_pattern("", ""));
+    fn route_empty_both() {
+        assert!(path_matches_route("", ""));
     }
 
     #[test]
-    fn path_different_depth_no_wildcard() {
-        assert!(!path_matches_pattern("/api/v1", "/api/v1/posts"));
+    fn route_trailing_slash_normalized() {
+        assert!(path_matches_route("/api/v1/posts/", "/api/v1/posts"));
     }
 
     #[test]
-    fn path_root_match() {
-        assert!(path_matches_pattern("/", "/"));
+    fn route_root_match() {
+        assert!(path_matches_route("/", "/"));
     }
 
     #[test]
-    fn path_trailing_segment_mismatch() {
-        assert!(!path_matches_pattern(
+    fn route_trailing_segment_mismatch() {
+        assert!(!path_matches_route(
             "/api/v1/posts/123",
             "/api/v1/posts/456"
         ));
@@ -1565,7 +1590,11 @@ mod tests {
     async fn dispatch_route_returns_none_with_no_plugins() {
         let config = test_config();
         let mgr = PluginManager::new(config).await;
-        assert!(mgr.dispatch_route("/api/v1/test", "GET").await.is_none());
+        assert!(
+            mgr.dispatch_route("/api/v1/test", "GET", None, None, None)
+                .await
+                .is_none()
+        );
     }
 
     // ── WASM plugin tests ────────────────────────────────────────
@@ -1932,18 +1961,18 @@ name = "JS Route"
 version = "1.0.0"
 runtime = "js"
 
-[hooks.handle_route]
-match = "/api/v1/custom/*"
-priority = 5
+[[routes]]
+method = "GET"
+path = "/api/v1/custom/test"
+handler = "handle_test"
 "#;
         std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
         std::fs::write(
             plugin_dir.join("index.js"),
             r#"
-var Plugin = {
-    handle_route: function(routeJson) {
-        return JSON.stringify({ status: 200, body: '{"hello":"world"}' });
-    }
+var Plugin = {};
+Plugin.handle_test = function(input) {
+    return JSON.stringify({ status: 200, body: '{"hello":"world"}' });
 };
 "#,
         )
@@ -1953,7 +1982,9 @@ var Plugin = {
         config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
         let mgr = PluginManager::new(Arc::new(config)).await;
 
-        let result = mgr.dispatch_route("/api/v1/custom/test", "GET").await;
+        let result = mgr
+            .dispatch_route("/api/v1/custom/test", "GET", None, None, None)
+            .await;
         assert!(result.is_some());
     }
 
@@ -2730,7 +2761,7 @@ Plugin = {
 
     #[cfg(feature = "plugin-lua")]
     #[tokio::test]
-    async fn manager_lua_plugin_handle_route() {
+    async fn manager_lua_plugin_routes() {
         let dir = tempfile::tempdir().unwrap();
         let plugin_dir = dir.path().join("lua-route-plugin");
         std::fs::create_dir_all(&plugin_dir).unwrap();
@@ -2746,51 +2777,40 @@ entry = "init.lua"
 [permissions]
 database = ["read:posts"]
 
-[hooks.handle-route]
-match = "/api/v1/plugins/stats/*"
-priority = 10
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/stats/ping"
+handler = "ping"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/stats/count"
+handler = "count"
 "#;
         std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
 
         let lua_code = r#"
-Plugin = {
-    handle_route = function(input)
-        local path = input.path or ""
-        local method = input.method or ""
+Plugin = {}
+Plugin.ping = function(input)
+    return {
+        status = 200,
+        body = '{"code":0,"message":"ok","data":"pong"}'
+    }
+end
 
-        if method ~= "GET" then
-            return nil
-        end
-
-        local name = path:match("/api/v1/plugins/stats/([^/]+)$")
-        if not name then
-            return nil
-        end
-
-        if name == "ping" then
-            return {
-                status = 200,
-                body = '{"code":0,"message":"ok","data":"pong"}'
-            }
-        end
-
-        if name == "count" then
-            local result = Host.dbQuery("SELECT COUNT(*) as total FROM posts")
-            if result and result:sub(1, 6) ~= "error:" then
-                return {
-                    status = 200,
-                    body = '{"code":0,"message":"ok","data":' .. result .. '}'
-                }
-            end
-            return {
-                status = 500,
-                body = '{"code":50000,"message":"query failed","data":null}'
-            }
-        end
-
-        return nil
-    end,
-}
+Plugin.count = function(input)
+    local result = Host.dbQuery("SELECT COUNT(*) as total FROM posts")
+    if result and result:sub(1, 6) ~= "error:" then
+        return {
+            status = 200,
+            body = '{"code":0,"message":"ok","data":' .. result .. '}'
+        }
+    end
+    return {
+        status = 500,
+        body = '{"code":50000,"message":"query failed","data":null}'
+    }
+end
 "#;
         std::fs::write(plugin_dir.join("init.lua"), lua_code).unwrap();
 
@@ -2799,19 +2819,19 @@ Plugin = {
         let mgr = PluginManager::new(Arc::new(config)).await;
 
         let result = mgr
-            .dispatch_route("/api/v1/plugins/stats/ping", "GET")
+            .dispatch_route("/api/v1/plugins/stats/ping", "GET", None, None, None)
             .await;
-        assert!(result.is_some(), "should match route pattern");
+        assert!(result.is_some(), "should match declared route");
 
         let result = mgr
-            .dispatch_route("/api/v1/plugins/stats/unknown", "GET")
+            .dispatch_route("/api/v1/plugins/stats/unknown", "GET", None, None, None)
             .await;
-        assert!(result.is_none(), "should return nil for unknown endpoint");
+        assert!(result.is_none(), "should return none for undeclared path");
 
         let result = mgr
-            .dispatch_route("/api/v1/plugins/stats/ping", "POST")
+            .dispatch_route("/api/v1/plugins/stats/ping", "POST", None, None, None)
             .await;
-        assert!(result.is_none(), "should ignore non-GET");
+        assert!(result.is_none(), "should not match wrong method");
     }
 
     #[cfg(feature = "plugin-lua")]

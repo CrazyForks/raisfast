@@ -1,0 +1,28 @@
+[content_type]
+name = "Example"
+singular = "example"
+plural = "examples"
+table = "examples"
+description = "示例内容类型"
+draft_publish = false
+timestamps = true
+soft_delete = false
+
+[fields.name]
+type = "text"
+required = true
+max_length = 200
+label = "名称"
+
+[fields.status]
+type = "enum"
+enum_values = ["active", "inactive"]
+default = "active"
+label = "状态"
+
+[api]
+list = "public"
+get = "public"
+create = "admin"
+update = "admin"
+delete = "admin"

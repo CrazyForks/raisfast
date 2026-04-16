@@ -3,6 +3,7 @@
 //! 使用 clap derive 定义命令行结构，将每个子命令分发到对应模块执行。
 
 mod db_cmd;
+mod ext_cmd;
 mod server_cmd;
 
 use rust_blog::config::app::AppConfig;
@@ -28,6 +29,11 @@ enum Commands {
         #[command(subcommand)]
         action: DbAction,
     },
+    /// Extension management
+    Ext {
+        #[command(subcommand)]
+        action: ExtAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -51,6 +57,28 @@ pub enum DbAction {
         /// Output directory (default: ./backups)
         #[arg(short, long, default_value = "./backups")]
         output: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ExtAction {
+    /// Create a new extension from template
+    New {
+        /// Extension ID (used as directory name)
+        id: String,
+        /// Plugin runtime: js, lua, wasm
+        #[arg(short, long, default_value = "js")]
+        runtime: String,
+    },
+    /// Validate extension manifests and content types
+    Check {
+        /// Path to extension directory (default: ./extensions)
+        path: Option<String>,
+    },
+    /// Preview all routes registered by extensions
+    Routes {
+        /// Path to extension directory (default: ./extensions)
+        path: Option<String>,
     },
 }
 
@@ -91,6 +119,24 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
             action: DbAction::Backup { output },
         }) => {
             db_cmd::backup(config, &output)?;
+        }
+
+        Some(Commands::Ext {
+            action: ExtAction::New { id, runtime },
+        }) => {
+            ext_cmd::create_new(config, &id, &runtime)?;
+        }
+
+        Some(Commands::Ext {
+            action: ExtAction::Check { path },
+        }) => {
+            ext_cmd::check(config, path.as_deref())?;
+        }
+
+        Some(Commands::Ext {
+            action: ExtAction::Routes { path },
+        }) => {
+            ext_cmd::routes(config, path.as_deref())?;
         }
     }
 

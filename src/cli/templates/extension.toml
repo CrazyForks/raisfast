@@ -1,0 +1,11 @@
+[extension]
+id = "{{ id }}"
+name = "{{ name }}"
+version = "{{ version }}"
+description = "{{ description }}"
+author = "{{ author }}"
+license = "{{ license }}"
+content_types = "content_types/"
+plugin = "plugin/manifest.toml"
+
+[extension.dependencies]

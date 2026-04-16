@@ -1,0 +1,62 @@
+[content_type]
+name = "Order Item"
+singular = "order_item"
+plural = "order_items"
+table = "order_items"
+description = "订单项"
+draft_publish = false
+timestamps = false
+soft_delete = false
+
+[fields.order_id]
+type = "relation"
+relation_type = "many_to_one"
+target = "orders"
+foreign_key = "order_id"
+required = true
+immutable = true
+label = "订单"
+
+[fields.product_id]
+type = "text"
+required = true
+immutable = true
+label = "商品ID"
+
+[fields.product_name]
+type = "text"
+required = true
+max_length = 200
+immutable = true
+label = "商品名称"
+
+[fields.price]
+type = "decimal"
+required = true
+min = 0
+immutable = true
+label = "单价"
+
+[fields.quantity]
+type = "integer"
+required = true
+min = 1
+immutable = true
+label = "数量"
+
+[fields.subtotal]
+type = "decimal"
+required = true
+min = 0
+immutable = true
+label = "小计"
+
+[[indexes]]
+fields = ["order_id"]
+
+[api]
+list = "admin"
+get = "admin"
+create = "admin"
+update = "admin"
+delete = "admin"

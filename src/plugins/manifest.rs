@@ -39,7 +39,7 @@ pub struct RouteDef {
     pub path: String,
     pub handler: String,
     #[serde(default)]
-    pub auth: bool,
+    pub auth: crate::content_type::schema::ApiAccess,
     pub permission: Option<String>,
 }
 
@@ -167,7 +167,6 @@ pub enum HookPoint {
     FilterHtml,
 
     // ── 路由/认证 ──
-    HandleRoute,
     OnLogin,
 
     // ── 定时任务 ──
@@ -193,7 +192,6 @@ impl HookPoint {
             HookPoint::ContentDeleted => "on_content_deleted",
             HookPoint::RenderMarkdown => "render_markdown",
             HookPoint::FilterHtml => "filter_html",
-            HookPoint::HandleRoute => "handle_route",
             HookPoint::OnLogin => "on_login",
             HookPoint::CronTick => "on_cron_tick",
         }
@@ -217,7 +215,6 @@ impl HookPoint {
             HookPoint::ContentDeleted,
             HookPoint::RenderMarkdown,
             HookPoint::FilterHtml,
-            HookPoint::HandleRoute,
             HookPoint::OnLogin,
             HookPoint::CronTick,
         ]
@@ -279,8 +276,7 @@ priority = 10
 [hooks.render-markdown]
 priority = 20
 
-[hooks.handle-route]
-match = "/api/v1/plugins/seo/*"
+[hooks.on-login]
 priority = 5
 "#;
         let m: PluginManifest = toml::from_str(toml).unwrap();
@@ -308,9 +304,8 @@ priority = 5
         let hrm = m.hooks.get("render_markdown").unwrap();
         assert_eq!(hrm.priority, Some(20));
 
-        let hhr = m.hooks.get("handle_route").unwrap();
-        assert_eq!(hhr.priority, Some(5));
-        assert_eq!(hhr.match_pattern.as_deref(), Some("/api/v1/plugins/seo/*"));
+        let hol = m.hooks.get("on_login").unwrap();
+        assert_eq!(hol.priority, Some(5));
     }
 
     #[test]
@@ -328,18 +323,13 @@ version = "1.0.0"
         for hp in HookPoint::all() {
             let name = hp.wasm_func_name();
             assert!(!name.is_empty(), "HookPoint::{hp:?} has empty func name");
-            assert!(
-                name.contains('_')
-                    || name == "render_markdown"
-                    || name == "filter_html"
-                    || name == "handle_route"
-            );
+            assert!(name.contains('_') || name == "render_markdown" || name == "filter_html");
         }
     }
 
     #[test]
-    fn hookpoint_all_has_17_variants() {
-        assert_eq!(HookPoint::all().len(), 17);
+    fn hookpoint_all_has_16_variants() {
+        assert_eq!(HookPoint::all().len(), 16);
     }
 
     #[test]

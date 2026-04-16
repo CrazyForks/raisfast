@@ -42,6 +42,9 @@ pub struct ContentTypeSchema {
     /// 列表视图配置
     #[serde(default)]
     pub list_view: Option<ListViewConfig>,
+    /// API 访问控制配置
+    #[serde(default)]
+    pub api: ApiConfig,
 }
 
 /// 字段定义
@@ -174,6 +177,81 @@ fn default_sort() -> String {
     "created_at:desc".into()
 }
 
+/// API 访问级别
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ApiAccess {
+    /// 公开访问，无需认证
+    #[default]
+    Public,
+    /// 需要登录（任意角色）
+    Member,
+    /// 需要管理员角色
+    Admin,
+}
+
+/// API 端点访问配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiConfig {
+    /// 列表查询（GET /cms/{plural}）
+    #[serde(default = "api_default_public")]
+    pub list: ApiAccess,
+    /// 单条查询（GET /cms/{plural}/{id}）
+    #[serde(default = "api_default_public")]
+    pub get: ApiAccess,
+    /// 创建（POST /cms/{plural}）
+    #[serde(default = "api_default_admin")]
+    pub create: ApiAccess,
+    /// 更新（PUT /cms/{plural}/{id}）
+    #[serde(default = "api_default_admin")]
+    pub update: ApiAccess,
+    /// 删除（DELETE /cms/{plural}/{id}）
+    #[serde(default = "api_default_admin")]
+    pub delete: ApiAccess,
+}
+
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self {
+            list: ApiAccess::Public,
+            get: ApiAccess::Public,
+            create: ApiAccess::Member,
+            update: ApiAccess::Member,
+            delete: ApiAccess::Member,
+        }
+    }
+}
+
+fn api_default_public() -> ApiAccess {
+    ApiAccess::Public
+}
+
+fn api_default_admin() -> ApiAccess {
+    ApiAccess::Admin
+}
+
+/// 检查指定访问级别是否允许当前请求通过
+pub fn check_api_access(
+    access: ApiAccess,
+    auth_identity: Option<&crate::middleware::auth::AuthIdentity>,
+) -> Result<(), crate::errors::app_error::AppError> {
+    match access {
+        ApiAccess::Public => Ok(()),
+        ApiAccess::Member => {
+            if auth_identity.is_some() {
+                Ok(())
+            } else {
+                Err(crate::errors::app_error::AppError::Unauthorized)
+            }
+        }
+        ApiAccess::Admin => match auth_identity {
+            Some(id) if id.role == "admin" => Ok(()),
+            Some(_) => Err(crate::errors::app_error::AppError::Forbidden),
+            None => Err(crate::errors::app_error::AppError::Unauthorized),
+        },
+    }
+}
+
 fn default_true() -> bool {
     true
 }
@@ -185,6 +263,7 @@ struct ContentTypeToml {
     fields: toml::Table,
     list_view: Option<ListViewConfig>,
     indexes: Option<Vec<IndexDef>>,
+    api: Option<ApiConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -339,6 +418,7 @@ impl ContentTypeSchema {
             soft_delete: toml.content_type.soft_delete,
             indexes: toml.indexes.unwrap_or_default(),
             list_view: toml.list_view,
+            api: toml.api.unwrap_or_default(),
         })
     }
 

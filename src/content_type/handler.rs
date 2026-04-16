@@ -13,9 +13,10 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 
 use super::repository::{ContentQuery, ContentRepository};
-use super::schema::ContentTypeSchema;
+use super::schema::{ContentTypeSchema, check_api_access};
 use crate::AppState;
 use crate::errors::app_error::AppError;
+use crate::middleware::auth::OptionalAuth;
 
 /// 统一 API 响应
 #[derive(Debug, serde::Serialize)]
@@ -71,26 +72,28 @@ pub fn register_content_routes(
                 &format!("/cms/{plural}"),
                 axum::routing::get({
                     let singular = singular.clone();
-                    move |state, params| list_handler(state, singular.clone(), params)
+                    move |auth, state, params| list_handler(auth, state, singular.clone(), params)
                 })
                 .post({
                     let singular = singular.clone();
-                    move |state, data| create_handler(state, singular.clone(), data)
+                    move |auth, state, data| create_handler(auth, state, singular.clone(), data)
                 }),
             )
             .route(
                 &format!("/cms/{plural}/{{id_or_slug}}"),
                 axum::routing::get({
                     let singular = singular.clone();
-                    move |state, path| get_handler(state, path, singular.clone())
+                    move |auth, state, path| get_handler(auth, state, path, singular.clone())
                 })
                 .put({
                     let singular = singular.clone();
-                    move |state, path, data| update_handler(state, path, data, singular.clone())
+                    move |auth, state, path, data| {
+                        update_handler(auth, state, path, data, singular.clone())
+                    }
                 })
                 .delete({
                     let singular = singular.clone();
-                    move |state, path| delete_handler(state, path, singular.clone())
+                    move |auth, state, path| delete_handler(auth, state, path, singular.clone())
                 }),
             )
             .route(
@@ -127,6 +130,7 @@ fn parse_dynamic_path(path: &str) -> Option<(String, Option<String>)> {
 
 /// Catch-all 动态路由 handler（启动后新增的 content type 走这里）
 pub async fn dynamic_cms_handler(
+    auth: OptionalAuth,
     State(state): State<AppState>,
     method: axum::http::Method,
     Path(path): Path<String>,
@@ -143,24 +147,29 @@ pub async fn dynamic_cms_handler(
 
     match (method.clone(), id) {
         (axum::http::Method::GET, None) => {
+            check_api_access(ct.api.list, auth.0.as_ref())?;
             let data = do_list(&state, &ct, params).await?;
             Ok(Json(data).into_response())
         }
         (axum::http::Method::POST, None) => {
+            check_api_access(ct.api.create, auth.0.as_ref())?;
             let Json(data) = body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
             let result = do_create(&state, &ct, data).await?;
             Ok((StatusCode::CREATED, Json(result)).into_response())
         }
         (axum::http::Method::GET, Some(id)) => {
+            check_api_access(ct.api.get, auth.0.as_ref())?;
             let data = do_get(&state, &ct, &id).await?;
             Ok(Json(data).into_response())
         }
         (axum::http::Method::PUT, Some(id)) => {
+            check_api_access(ct.api.update, auth.0.as_ref())?;
             let Json(data) = body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
             let result = do_update(&state, &ct, &id, data).await?;
             Ok(Json(result).into_response())
         }
         (axum::http::Method::DELETE, Some(id)) => {
+            check_api_access(ct.api.delete, auth.0.as_ref())?;
             do_delete(&state, &ct, &id).await?;
             Ok(Json(json!({"deleted": true})).into_response())
         }
@@ -321,6 +330,7 @@ async fn do_admin_get(
 // ── 固定路由 handler（启动时注册的 content type） ──────────────
 
 async fn list_handler(
+    auth: OptionalAuth,
     State(state): State<AppState>,
     type_name: String,
     Query(params): Query<ListParams>,
@@ -329,11 +339,13 @@ async fn list_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
+    check_api_access(ct.api.list, auth.0.as_ref())?;
     let data = do_list(&state, &ct, params).await?;
     Ok(Json(data))
 }
 
 async fn get_handler(
+    auth: OptionalAuth,
     State(state): State<AppState>,
     Path(id_or_slug): Path<String>,
     type_name: String,
@@ -342,11 +354,13 @@ async fn get_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
+    check_api_access(ct.api.get, auth.0.as_ref())?;
     let data = do_get(&state, &ct, &id_or_slug).await?;
     Ok(Json(data))
 }
 
 async fn create_handler(
+    auth: OptionalAuth,
     State(state): State<AppState>,
     type_name: String,
     Json(data): Json<Value>,
@@ -355,11 +369,13 @@ async fn create_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
+    check_api_access(ct.api.create, auth.0.as_ref())?;
     let result = do_create(&state, &ct, data).await?;
     Ok((StatusCode::CREATED, Json(result)))
 }
 
 async fn update_handler(
+    auth: OptionalAuth,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(data): Json<Value>,
@@ -369,11 +385,13 @@ async fn update_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
+    check_api_access(ct.api.update, auth.0.as_ref())?;
     let result = do_update(&state, &ct, &id, data).await?;
     Ok(Json(result))
 }
 
 async fn delete_handler(
+    auth: OptionalAuth,
     State(state): State<AppState>,
     Path(id): Path<String>,
     type_name: String,
@@ -382,6 +400,7 @@ async fn delete_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
+    check_api_access(ct.api.delete, auth.0.as_ref())?;
     do_delete(&state, &ct, &id).await?;
     Ok(Json(json!({"deleted": true})))
 }
@@ -456,6 +475,7 @@ pub async fn create_schema(
         fields: req.fields,
         indexes: vec![],
         list_view: None,
+        api: super::schema::ApiConfig::default(),
     };
 
     if state.content_type_registry.get(&req.singular).is_some() {

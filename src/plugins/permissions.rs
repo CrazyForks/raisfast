@@ -98,6 +98,50 @@ impl PermissionChecker {
         let trimmed = sql.trim().to_uppercase();
         trimmed.starts_with("SELECT")
     }
+
+    /// 校验 SQL 是否为写操作（INSERT / UPDATE / DELETE）
+    #[must_use]
+    pub fn is_write_query(sql: &str) -> bool {
+        let trimmed = sql.trim().to_uppercase();
+        trimmed.starts_with("INSERT")
+            || trimmed.starts_with("UPDATE")
+            || trimmed.starts_with("DELETE")
+    }
+
+    /// 校验 SQL 是否为 DDL（CREATE / DROP / ALTER / TRUNCATE / ATTACH / DETACH / PRAGMA / REINDEX / ANALYZE / VACUUM）
+    #[must_use]
+    pub fn is_ddl_query(sql: &str) -> bool {
+        let trimmed = sql.trim().to_uppercase();
+        trimmed.starts_with("CREATE")
+            || trimmed.starts_with("DROP")
+            || trimmed.starts_with("ALTER")
+            || trimmed.starts_with("TRUNCATE")
+            || trimmed.starts_with("ATTACH")
+            || trimmed.starts_with("DETACH")
+            || trimmed.starts_with("PRAGMA")
+            || trimmed.starts_with("REINDEX")
+            || trimmed.starts_with("ANALYZE")
+            || trimmed.starts_with("VACUUM")
+    }
+
+    /// 检查表名是否为系统保护表（插件不可写入）
+    #[must_use]
+    pub fn is_protected_table(table: &str) -> bool {
+        const PROTECTED_TABLES: &[&str] = &[
+            "users",
+            "roles",
+            "permissions",
+            "extensions",
+            "audit_log",
+            "plugin_storage",
+            "options",
+            "rbac_roles",
+            "rbac_permissions",
+            "rbac_role_permissions",
+            "tenants",
+        ];
+        PROTECTED_TABLES.contains(&table.to_lowercase().as_str())
+    }
 }
 
 /// 从 SQL 语句中提取表名（简单启发式，取 FROM 后的第一个标识符）
@@ -109,6 +153,51 @@ pub fn extract_table_name(sql: &str) -> Option<String> {
     let from_pos = rest.find("FROM")?;
     let after_from = rest[from_pos + 4..].trim_start();
     let table: String = after_from
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    if table.is_empty() {
+        None
+    } else {
+        Some(table.to_lowercase())
+    }
+}
+
+/// 从写 SQL（INSERT/UPDATE/DELETE）中提取目标表名
+#[must_use]
+pub fn extract_write_table_name(sql: &str) -> Option<String> {
+    let upper = sql.trim().to_uppercase();
+    if upper.starts_with("INSERT") {
+        extract_after_keyword(&upper, "INTO")
+    } else if upper.starts_with("UPDATE") {
+        extract_first_identifier_after(&upper, "UPDATE")
+    } else if upper.starts_with("DELETE") {
+        extract_after_keyword(&upper, "FROM")
+    } else {
+        None
+    }
+}
+
+/// 从关键字后提取第一个标识符（表名）
+fn extract_after_keyword(sql: &str, keyword: &str) -> Option<String> {
+    let pos = sql.find(keyword)?;
+    let after = sql[pos + keyword.len()..].trim_start();
+    let table: String = after
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    if table.is_empty() {
+        None
+    } else {
+        Some(table.to_lowercase())
+    }
+}
+
+/// 从指定关键字之后提取第一个标识符（用于 UPDATE table_name SET ...）
+fn extract_first_identifier_after(sql: &str, keyword: &str) -> Option<String> {
+    let pos = sql.find(keyword)?;
+    let after = sql[pos + keyword.len()..].trim_start();
+    let table: String = after
         .chars()
         .take_while(|c| c.is_alphanumeric() || *c == '_')
         .collect();
@@ -353,5 +442,105 @@ mod tests {
             extract_table_name("  SELECT   *   FROM   tags  "),
             Some("tags".into())
         );
+    }
+
+    #[test]
+    fn is_write_query_insert() {
+        assert!(PermissionChecker::is_write_query(
+            "INSERT INTO orders (id) VALUES ('1')"
+        ));
+    }
+
+    #[test]
+    fn is_write_query_update() {
+        assert!(PermissionChecker::is_write_query(
+            "UPDATE products SET stock = 0"
+        ));
+    }
+
+    #[test]
+    fn is_write_query_delete() {
+        assert!(PermissionChecker::is_write_query("DELETE FROM cart_items"));
+    }
+
+    #[test]
+    fn is_write_query_rejects_select() {
+        assert!(!PermissionChecker::is_write_query("SELECT * FROM orders"));
+    }
+
+    #[test]
+    fn is_write_query_rejects_ddl() {
+        assert!(!PermissionChecker::is_write_query("DROP TABLE orders"));
+    }
+
+    #[test]
+    fn is_ddl_query_create() {
+        assert!(PermissionChecker::is_ddl_query(
+            "CREATE TABLE foo (id TEXT)"
+        ));
+    }
+
+    #[test]
+    fn is_ddl_query_alter() {
+        assert!(PermissionChecker::is_ddl_query(
+            "ALTER TABLE foo ADD COLUMN bar TEXT"
+        ));
+    }
+
+    #[test]
+    fn is_ddl_query_rejects_insert() {
+        assert!(!PermissionChecker::is_ddl_query(
+            "INSERT INTO foo VALUES (1)"
+        ));
+    }
+
+    #[test]
+    fn extract_write_table_name_insert() {
+        assert_eq!(
+            extract_write_table_name("INSERT INTO orders (id, status) VALUES ('1', 'pending')"),
+            Some("orders".into())
+        );
+    }
+
+    #[test]
+    fn extract_write_table_name_update() {
+        assert_eq!(
+            extract_write_table_name("UPDATE products SET stock = stock - 1 WHERE id = 'abc'"),
+            Some("products".into())
+        );
+    }
+
+    #[test]
+    fn extract_write_table_name_delete() {
+        assert_eq!(
+            extract_write_table_name("DELETE FROM cart_items WHERE user_id = 'u1'"),
+            Some("cart_items".into())
+        );
+    }
+
+    #[test]
+    fn extract_write_table_name_select_returns_none() {
+        assert_eq!(extract_write_table_name("SELECT * FROM orders"), None);
+    }
+
+    #[test]
+    fn is_protected_table_users() {
+        assert!(PermissionChecker::is_protected_table("users"));
+    }
+
+    #[test]
+    fn is_protected_table_extensions() {
+        assert!(PermissionChecker::is_protected_table("extensions"));
+    }
+
+    #[test]
+    fn is_protected_table_orders_is_not() {
+        assert!(!PermissionChecker::is_protected_table("orders"));
+    }
+
+    #[test]
+    fn is_protected_table_case_insensitive() {
+        assert!(PermissionChecker::is_protected_table("USERS"));
+        assert!(PermissionChecker::is_protected_table("Roles"));
     }
 }
