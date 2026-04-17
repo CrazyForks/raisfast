@@ -155,6 +155,7 @@ mod tests {
             content_type_dir: "./content_types".into(),
             timezone: "UTC".into(),
             extension_dir: "./extensions".into(),
+            protected_tables: vec![],
         });
         let handler = GenerateThumbnailHandler::new(pool, config);
         let job = Job::GenerateSitemap;

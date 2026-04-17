@@ -124,23 +124,10 @@ impl PermissionChecker {
             || trimmed.starts_with("VACUUM")
     }
 
-    /// 检查表名是否为系统保护表（插件不可写入）
+    /// 检查表名是否在保护表列表中（插件/CT 不可写入）
     #[must_use]
-    pub fn is_protected_table(table: &str) -> bool {
-        const PROTECTED_TABLES: &[&str] = &[
-            "users",
-            "roles",
-            "permissions",
-            "extensions",
-            "audit_log",
-            "plugin_storage",
-            "options",
-            "rbac_roles",
-            "rbac_permissions",
-            "rbac_role_permissions",
-            "tenants",
-        ];
-        PROTECTED_TABLES.contains(&table.to_lowercase().as_str())
+    pub fn is_protected_table(table: &str, protected: &[String]) -> bool {
+        protected.iter().any(|t| t.eq_ignore_ascii_case(table))
     }
 }
 
@@ -523,24 +510,55 @@ mod tests {
         assert_eq!(extract_write_table_name("SELECT * FROM orders"), None);
     }
 
+    fn default_protected() -> Vec<String> {
+        vec![
+            "users".into(),
+            "roles".into(),
+            "permissions".into(),
+            "extensions".into(),
+            "audit_log".into(),
+            "plugin_storage".into(),
+            "options".into(),
+            "rbac_roles".into(),
+            "rbac_permissions".into(),
+            "rbac_role_permissions".into(),
+            "tenants".into(),
+        ]
+    }
+
     #[test]
     fn is_protected_table_users() {
-        assert!(PermissionChecker::is_protected_table("users"));
+        assert!(PermissionChecker::is_protected_table(
+            "users",
+            &default_protected()
+        ));
     }
 
     #[test]
     fn is_protected_table_extensions() {
-        assert!(PermissionChecker::is_protected_table("extensions"));
+        assert!(PermissionChecker::is_protected_table(
+            "extensions",
+            &default_protected()
+        ));
     }
 
     #[test]
     fn is_protected_table_orders_is_not() {
-        assert!(!PermissionChecker::is_protected_table("orders"));
+        assert!(!PermissionChecker::is_protected_table(
+            "orders",
+            &default_protected()
+        ));
     }
 
     #[test]
     fn is_protected_table_case_insensitive() {
-        assert!(PermissionChecker::is_protected_table("USERS"));
-        assert!(PermissionChecker::is_protected_table("Roles"));
+        assert!(PermissionChecker::is_protected_table(
+            "USERS",
+            &default_protected()
+        ));
+        assert!(PermissionChecker::is_protected_table(
+            "Roles",
+            &default_protected()
+        ));
     }
 }

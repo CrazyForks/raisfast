@@ -91,6 +91,7 @@ fn test_config() -> AppConfig {
         content_type_dir: "./content_types".into(),
         timezone: "UTC".into(),
         extension_dir: "./__nonexistent_extensions__".into(),
+        protected_tables: rust_blog::config::app::default_protected_tables(),
     }
 }
 

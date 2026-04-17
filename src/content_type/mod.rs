@@ -51,6 +51,7 @@ pub struct ContentTypeRegistry {
 struct RegistryInner {
     types: HashMap<String, ContentTypeSchema>,
     by_table: HashMap<String, String>,
+    protected_tables: Vec<String>,
 }
 
 impl ContentTypeRegistry {
@@ -90,8 +91,28 @@ impl ContentTypeRegistry {
         Ok(registry)
     }
 
-    /// 注册单个 content type（线程安全）
+    /// 注册单个 content type（线程安全）。
+    ///
+    /// 如果 CT 表名与系统保护表冲突则跳过并打印警告。
     pub fn register(&self, schema: ContentTypeSchema) {
+        let inner = self
+            .inner
+            .read()
+            .expect("ContentTypeRegistry lock poisoned");
+        let protected = inner.protected_tables.clone();
+        drop(inner);
+
+        if crate::plugins::permissions::PermissionChecker::is_protected_table(
+            &schema.table,
+            &protected,
+        ) {
+            tracing::warn!(
+                "skipping content type '{}': table '{}' is a protected system table",
+                schema.name,
+                schema.table
+            );
+            return;
+        }
         let mut inner = self
             .inner
             .write()
@@ -100,6 +121,15 @@ impl ContentTypeRegistry {
             .by_table
             .insert(schema.table.clone(), schema.singular.clone());
         inner.types.insert(schema.singular.clone(), schema);
+    }
+
+    /// 设置系统保护表列表
+    pub fn set_protected_tables(&self, tables: Vec<String>) {
+        let mut inner = self
+            .inner
+            .write()
+            .expect("ContentTypeRegistry lock poisoned");
+        inner.protected_tables = tables;
     }
 
     /// 按 singular name 查询

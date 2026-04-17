@@ -25,6 +25,9 @@ pub fn register_host_functions(linker: &mut Linker<Arc<HostContext>>) -> anyhow:
     linker.func_wrap("env", "host_get_post", host_get_post)?;
     linker.func_wrap("env", "host_db_query", host_db_query)?;
     linker.func_wrap("env", "host_db_execute", host_db_execute)?;
+    linker.func_wrap("env", "host_db_begin", host_db_begin)?;
+    linker.func_wrap("env", "host_db_commit", host_db_commit)?;
+    linker.func_wrap("env", "host_db_rollback", host_db_rollback)?;
     linker.func_wrap("env", "host_fs_read", host_fs_read)?;
     linker.func_wrap("env", "host_fs_write", host_fs_write)?;
     linker.func_wrap("env", "host_fs_delete", host_fs_delete)?;
@@ -207,6 +210,24 @@ fn host_db_execute(
         None
     };
     let result = caller.data().db_execute(&sql, params.as_deref());
+    write_string(&mut caller, &result)
+}
+
+fn host_db_begin(caller: Caller<'_, Arc<HostContext>>) -> i32 {
+    let mut caller = caller;
+    let result = caller.data().db_begin();
+    write_string(&mut caller, &result)
+}
+
+fn host_db_commit(caller: Caller<'_, Arc<HostContext>>) -> i32 {
+    let mut caller = caller;
+    let result = caller.data().db_commit();
+    write_string(&mut caller, &result)
+}
+
+fn host_db_rollback(caller: Caller<'_, Arc<HostContext>>) -> i32 {
+    let mut caller = caller;
+    let result = caller.data().db_rollback();
     write_string(&mut caller, &result)
 }
 

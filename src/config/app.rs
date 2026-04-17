@@ -105,6 +105,8 @@ pub struct AppConfig {
     pub timezone: String,
     #[serde(default = "default_extension_dir")]
     pub extension_dir: String,
+    #[serde(default = "default_protected_tables")]
+    pub protected_tables: Vec<String>,
 }
 
 /// 单条 Cron 调度配置
@@ -148,6 +150,22 @@ fn default_timezone() -> String {
 
 fn default_extension_dir() -> String {
     "./extensions".into()
+}
+
+pub fn default_protected_tables() -> Vec<String> {
+    vec![
+        "users".into(),
+        "roles".into(),
+        "permissions".into(),
+        "extensions".into(),
+        "audit_log".into(),
+        "plugin_storage".into(),
+        "options".into(),
+        "rbac_roles".into(),
+        "rbac_permissions".into(),
+        "rbac_role_permissions".into(),
+        "tenants".into(),
+    ]
 }
 
 #[must_use]
@@ -410,6 +428,11 @@ impl AppConfig {
                 .ok()
                 .filter(|v| !v.is_empty())
                 .unwrap_or_else(default_extension_dir),
+            protected_tables: env::var("PROTECTED_TABLES")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
+                .unwrap_or_else(default_protected_tables),
         }
     }
 

@@ -12,6 +12,12 @@ use crate::plugins::Permissions;
 use crate::plugins::permissions::PermissionChecker;
 use crate::plugins::vfs::VirtualFs;
 use sqlx::Arguments;
+use std::sync::Mutex;
+
+/// 事务状态（持有从连接池借出的独占连接）
+struct TxState {
+    conn: sqlx::pool::PoolConnection<sqlx::Sqlite>,
+}
 
 /// 插件宿主上下文
 ///
@@ -24,6 +30,7 @@ pub struct HostContext {
     plugin_id: String,
     permissions: Permissions,
     pool: Option<Pool>,
+    tx: Mutex<Option<TxState>>,
 }
 
 impl HostContext {
@@ -42,6 +49,7 @@ impl HostContext {
             plugin_id,
             permissions,
             pool,
+            tx: Mutex::new(None),
         }
     }
 
@@ -235,7 +243,7 @@ impl HostContext {
             Some(t) => t,
             None => return r#"{"error":"cannot parse table name from SQL"}"#.to_string(),
         };
-        if PermissionChecker::is_protected_table(&table) {
+        if PermissionChecker::is_protected_table(&table, &self.config.protected_tables) {
             return format!(
                 r#"{{"error":"table '{table}' is protected and cannot be modified by plugins"}}"#
             );
@@ -261,6 +269,25 @@ impl HostContext {
             }
             _ => None,
         };
+
+        let tx_guard = self.tx.lock().unwrap();
+        if tx_guard.is_some() {
+            let sql = crate::db::dialect::translate(sql).into_owned();
+            let handle = tokio::runtime::Handle::current();
+            drop(tx_guard);
+            let mut tx_guard = self.tx.lock().unwrap();
+            let tx_state = tx_guard.as_mut().unwrap();
+            return tokio::task::block_in_place(|| {
+                let result: Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> =
+                    build_and_exec(&mut tx_state.conn, &sql, &parsed_params, &handle);
+                match result {
+                    Ok(r) => format!(r#"{{"rows_affected":{}}}"#, r.rows_affected()),
+                    Err(e) => format!(r#"{{"error":"{e}"}}"#),
+                }
+            });
+        }
+        drop(tx_guard);
+
         let Some(pool) = &self.pool else {
             return r#"{"error":"no database access"}"#.to_string();
         };
@@ -302,6 +329,99 @@ impl HostContext {
         })
     }
 
+    /// 开启数据库事务。
+    ///
+    /// 从连接池获取一个独占连接并执行 `BEGIN`。
+    /// 同一时刻只能有一个活跃事务，重复调用返回错误。
+    /// 插件超时或崩溃时，[`HostContext::cleanup_tx`] 会自动 rollback。
+    #[must_use]
+    pub fn db_begin(&self) -> String {
+        let Some(pool) = &self.pool else {
+            return r#"{"error":"no database access"}"#.to_string();
+        };
+        let mut tx_guard = self.tx.lock().unwrap();
+        if tx_guard.is_some() {
+            return r#"{"error":"transaction already active"}"#.to_string();
+        }
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| match handle.block_on(async { pool.acquire().await }) {
+            Ok(mut conn) => {
+                match handle.block_on(async { sqlx::query("BEGIN").execute(&mut *conn).await }) {
+                    Ok(_) => {
+                        tracing::info!("[plugin:{}] transaction begun", self.plugin_id);
+                        *tx_guard = Some(TxState { conn });
+                        r#"{"ok":true}"#.to_string()
+                    }
+                    Err(e) => format!(r#"{{"error":"BEGIN failed: {e}"}}"#),
+                }
+            }
+            Err(e) => format!(r#"{{"error":"cannot acquire connection: {e}"}}"#),
+        })
+    }
+
+    /// 提交当前事务并释放连接。
+    #[must_use]
+    pub fn db_commit(&self) -> String {
+        let mut tx_guard = self.tx.lock().unwrap();
+        let Some(mut tx_state) = tx_guard.take() else {
+            return r#"{"error":"no active transaction"}"#.to_string();
+        };
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle
+                .block_on(async { sqlx::query("COMMIT").execute(&mut *tx_state.conn).await })
+            {
+                Ok(_) => {
+                    tracing::info!("[plugin:{}] transaction committed", self.plugin_id);
+                    r#"{"ok":true}"#.to_string()
+                }
+                Err(e) => {
+                    let _ = handle.block_on(async {
+                        sqlx::query("ROLLBACK").execute(&mut *tx_state.conn).await
+                    });
+                    format!(r#"{{"error":"COMMIT failed, rolled back: {e}"}}"#)
+                }
+            }
+        })
+    }
+
+    /// 回滚当前事务并释放连接。
+    #[must_use]
+    pub fn db_rollback(&self) -> String {
+        let mut tx_guard = self.tx.lock().unwrap();
+        let Some(mut tx_state) = tx_guard.take() else {
+            return r#"{"error":"no active transaction"}"#.to_string();
+        };
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle
+                .block_on(async { sqlx::query("ROLLBACK").execute(&mut *tx_state.conn).await })
+            {
+                Ok(_) => {
+                    tracing::info!("[plugin:{}] transaction rolled back", self.plugin_id);
+                    r#"{"ok":true}"#.to_string()
+                }
+                Err(e) => format!(r#"{{"error":"ROLLBACK failed: {e}"}}"#),
+            }
+        })
+    }
+
+    /// 清理未提交的事务（插件超时/崩溃时调用）。
+    pub fn cleanup_tx(&self) {
+        let mut tx_guard = self.tx.lock().unwrap();
+        if let Some(mut tx_state) = tx_guard.take() {
+            let handle = tokio::runtime::Handle::current();
+            let plugin_id = self.plugin_id.clone();
+            tokio::task::block_in_place(|| {
+                let _ = handle
+                    .block_on(async { sqlx::query("ROLLBACK").execute(&mut *tx_state.conn).await });
+                tracing::warn!(
+                    "[plugin:{plugin_id}] cleaned up dangling transaction (rolled back)"
+                );
+            });
+        }
+    }
+
     /// 读取虚拟文件系统中的文件
     pub fn fs_read(&self, path: &str) -> Result<String, String> {
         let vfs = VirtualFs::new(&self.config, &self.plugin_id, &self.permissions);
@@ -337,6 +457,43 @@ impl HostContext {
         let vfs = VirtualFs::new(&self.config, &self.plugin_id, &self.permissions);
         let info = vfs.stat(path).map_err(|e| e.to_string())?;
         serde_json::to_string(&info).map_err(|e| format!("error: {e}"))
+    }
+}
+
+/// 在连接上执行参数化或原始写操作
+fn build_and_exec(
+    conn: &mut sqlx::SqliteConnection,
+    sql: &str,
+    parsed_params: &Option<Vec<serde_json::Value>>,
+    handle: &tokio::runtime::Handle,
+) -> Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> {
+    match parsed_params {
+        Some(params) => {
+            let mut args = sqlx::sqlite::SqliteArguments::default();
+            for p in params {
+                match p {
+                    serde_json::Value::String(s) => {
+                        args.add(s.clone()).ok();
+                    }
+                    serde_json::Value::Number(n) => {
+                        if let Some(i) = n.as_i64() {
+                            args.add(i).ok();
+                        } else {
+                            args.add(n.as_f64().unwrap_or(0.0)).ok();
+                        }
+                    }
+                    serde_json::Value::Bool(b) => {
+                        args.add(*b).ok();
+                    }
+                    serde_json::Value::Null => {
+                        args.add(Option::<String>::None).ok();
+                    }
+                    _ => {}
+                }
+            }
+            handle.block_on(async { sqlx::query_with(sql, args).execute(conn).await })
+        }
+        None => handle.block_on(async { sqlx::query(sql).execute(conn).await }),
     }
 }
 
@@ -410,6 +567,19 @@ mod tests {
             content_type_dir: "./content_types".into(),
             timezone: "UTC".into(),
             extension_dir: "./extensions".into(),
+            protected_tables: vec![
+                "users".into(),
+                "roles".into(),
+                "permissions".into(),
+                "extensions".into(),
+                "audit_log".into(),
+                "plugin_storage".into(),
+                "options".into(),
+                "rbac_roles".into(),
+                "rbac_permissions".into(),
+                "rbac_role_permissions".into(),
+                "tenants".into(),
+            ],
         })
     }
 
@@ -833,5 +1003,167 @@ mod tests {
             Some(r#"[{"nested":"object"}]"#),
         );
         assert!(result.contains("unsupported param type"));
+    }
+
+    #[test]
+    fn host_context_db_begin_returns_error_without_pool() {
+        let config = make_test_config();
+        let ctx = HostContext::new("test", config, "p1".into(), Permissions::default(), None);
+        let result = ctx.db_begin();
+        assert!(result.contains("no database access"));
+    }
+
+    #[test]
+    fn host_context_db_commit_returns_error_without_tx() {
+        let config = make_test_config();
+        let ctx = HostContext::new("test", config, "p1".into(), Permissions::default(), None);
+        let result = ctx.db_commit();
+        assert!(result.contains("no active transaction"));
+    }
+
+    #[test]
+    fn host_context_db_rollback_returns_error_without_tx() {
+        let config = make_test_config();
+        let ctx = HostContext::new("test", config, "p1".into(), Permissions::default(), None);
+        let result = ctx.db_rollback();
+        assert!(result.contains("no active transaction"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn host_context_transaction_commit_roundtrip() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(include_str!("../../migrations/001_init.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let perms = Permissions {
+            database: vec!["tags".into()],
+            ..Permissions::default()
+        };
+        let config = make_test_config();
+        let ctx = HostContext::new("test", config, "p1".into(), perms, Some(pool.clone()));
+
+        let begin = ctx.db_begin();
+        assert!(begin.contains(r#""ok":true"#), "begin failed: {begin}");
+
+        let insert = ctx.db_execute(
+            "INSERT INTO tags (id, name, slug) VALUES ('tx-1', 'TxTest', 'tx-test')",
+            None,
+        );
+        assert!(insert.contains("rows_affected"), "insert failed: {insert}");
+
+        let commit = ctx.db_commit();
+        assert!(commit.contains(r#""ok":true"#), "commit failed: {commit}");
+
+        let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM tags WHERE id = 'tx-1'")
+            .bind("tx-1")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1, "row should be committed");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn host_context_transaction_rollback_discards() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(include_str!("../../migrations/001_init.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let perms = Permissions {
+            database: vec!["tags".into()],
+            ..Permissions::default()
+        };
+        let config = make_test_config();
+        let ctx = HostContext::new("test", config, "p1".into(), perms, Some(pool.clone()));
+
+        let begin = ctx.db_begin();
+        assert!(begin.contains(r#""ok":true"#));
+
+        let insert = ctx.db_execute(
+            "INSERT INTO tags (id, name, slug) VALUES ('rb-1', 'RbTest', 'rb-test')",
+            None,
+        );
+        assert!(insert.contains("rows_affected"));
+
+        let rollback = ctx.db_rollback();
+        assert!(rollback.contains(r#""ok":true"#));
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags WHERE id = 'rb-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 0, "row should be rolled back");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn host_context_transaction_double_begin_error() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+
+        let config = make_test_config();
+        let ctx = HostContext::new(
+            "test",
+            config,
+            "p1".into(),
+            Permissions::default(),
+            Some(pool),
+        );
+
+        let begin1 = ctx.db_begin();
+        assert!(begin1.contains(r#""ok":true"#));
+
+        let begin2 = ctx.db_begin();
+        assert!(begin2.contains("already active"));
+
+        ctx.cleanup_tx();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn host_context_cleanup_tx_rolls_back() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(include_str!("../../migrations/001_init.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let perms = Permissions {
+            database: vec!["tags".into()],
+            ..Permissions::default()
+        };
+        let config = make_test_config();
+        let ctx = HostContext::new("test", config, "p1".into(), perms, Some(pool.clone()));
+
+        let begin = ctx.db_begin();
+        assert!(begin.contains(r#""ok":true"#));
+
+        let insert = ctx.db_execute(
+            "INSERT INTO tags (id, name, slug) VALUES ('cl-1', 'CleanTest', 'cl-test')",
+            None,
+        );
+        assert!(insert.contains("rows_affected"));
+
+        ctx.cleanup_tx();
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags WHERE id = 'cl-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 0, "cleanup_tx should rollback");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn host_context_cleanup_tx_noop_without_active() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let config = make_test_config();
+        let ctx = HostContext::new(
+            "test",
+            config,
+            "p1".into(),
+            Permissions::default(),
+            Some(pool),
+        );
+        ctx.cleanup_tx();
     }
 }

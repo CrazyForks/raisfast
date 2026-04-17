@@ -83,6 +83,18 @@ pub fn register_host_functions(
     host.set("dbExecute", db_execute_fn)?;
 
     let hc = host_ctx.clone();
+    let db_begin_fn = Function::new(ctx.clone(), move || -> String { hc.db_begin() })?;
+    host.set("dbBegin", db_begin_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_commit_fn = Function::new(ctx.clone(), move || -> String { hc.db_commit() })?;
+    host.set("dbCommit", db_commit_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_rollback_fn = Function::new(ctx.clone(), move || -> String { hc.db_rollback() })?;
+    host.set("dbRollback", db_rollback_fn)?;
+
+    let hc = host_ctx.clone();
     let fs_read_fn = Function::new(ctx.clone(), move |path: String| -> Option<String> {
         hc.fs_read(&path).ok()
     })?;
@@ -175,6 +187,7 @@ mod tests {
             content_type_dir: "./content_types".into(),
             timezone: "UTC".into(),
             extension_dir: "./extensions".into(),
+            protected_tables: vec![],
         })
     }
 
@@ -396,6 +409,9 @@ mod tests {
                 "getPost",
                 "dbQuery",
                 "dbExecute",
+                "dbBegin",
+                "dbCommit",
+                "dbRollback",
                 "fsRead",
                 "fsWrite",
                 "fsDelete",

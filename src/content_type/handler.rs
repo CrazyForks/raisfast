@@ -466,7 +466,7 @@ pub async fn create_schema(
         name: req.name,
         singular: req.singular.clone(),
         plural: req.plural,
-        table: req.table,
+        table: req.table.clone(),
         description: req.description,
         draft_publish: req.draft_publish,
         slug_field: req.slug_field,
@@ -477,6 +477,16 @@ pub async fn create_schema(
         list_view: None,
         api: super::schema::ApiConfig::default(),
     };
+
+    if crate::plugins::permissions::PermissionChecker::is_protected_table(
+        &req.table,
+        &state.config.protected_tables,
+    ) {
+        return Err(AppError::BadRequest(format!(
+            "table '{}' is a protected system table",
+            req.table
+        )));
+    }
 
     if state.content_type_registry.get(&req.singular).is_some() {
         return Err(AppError::Conflict(format!(
