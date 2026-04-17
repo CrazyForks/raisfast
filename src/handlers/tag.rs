@@ -13,6 +13,9 @@ use crate::services::post;
 use crate::utils::pagination::PaginationParams;
 
 /// 获取标签列表（分页）
+#[utoipa::path(get, path = "/tags", tag = "tags",
+    responses((status = 200, description = "标签列表"))
+)]
 pub async fn list(
     State(state): State<crate::AppState>,
     tenant: ResolvedTenant,
@@ -30,6 +33,11 @@ pub async fn list(
 }
 
 /// 创建新标签
+#[utoipa::path(post, path = "/tags", tag = "tags",
+    security(("bearer_auth" = [])),
+    request_body = CreateTagRequest,
+    responses((status = 200, description = "标签已创建"))
+)]
 pub async fn create(
     State(state): State<crate::AppState>,
     _author: AuthorUser,
@@ -42,6 +50,11 @@ pub async fn create(
 }
 
 /// 删除标签
+#[utoipa::path(delete, path = "/tags/{id}", tag = "tags",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "标签 ID")),
+    responses((status = 200, description = "标签已删除"))
+)]
 pub async fn delete(
     State(state): State<crate::AppState>,
     _author: AuthorUser,

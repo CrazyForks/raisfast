@@ -23,6 +23,16 @@ interface AuthState {
   isAuthor: () => boolean;
 }
 
+const SESSION_COOKIE = "session";
+
+function setSessionCookie(token: string) {
+  document.cookie = `${SESSION_COOKIE}=${token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
+}
+
+function clearSessionCookie() {
+  document.cookie = `${SESSION_COOKIE}=; path=/; max-age=0`;
+}
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
@@ -35,11 +45,15 @@ export const useAuthStore = create<AuthState>()(
 
       setUser: (user) => set({ user }),
 
-      login: (user, accessToken, refreshToken) =>
-        set({ user, accessToken, refreshToken }),
+      login: (user, accessToken, refreshToken) => {
+        setSessionCookie(accessToken);
+        set({ user, accessToken, refreshToken });
+      },
 
-      logout: () =>
-        set({ user: null, accessToken: null, refreshToken: null }),
+      logout: () => {
+        clearSessionCookie();
+        set({ user: null, accessToken: null, refreshToken: null });
+      },
 
       isLoggedIn: () => get().accessToken !== null,
 

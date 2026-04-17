@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { RichTextEditor } from "@/components/common/rich-text-editor";
 import {
   Select,
   SelectContent,
@@ -195,11 +196,10 @@ export default function EditPostPage() {
 
             <div className="space-y-2">
               <Label htmlFor="content">Content</Label>
-              <Textarea
-                id="content"
+              <RichTextEditor
+                value={watch("content") || ""}
+                onChange={(html) => setValue("content", html)}
                 placeholder="Write your post content..."
-                rows={15}
-                {...register("content")}
               />
               {errors.content && <p className="text-sm text-red-500">{errors.content.message}</p>}
             </div>

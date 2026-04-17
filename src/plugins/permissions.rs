@@ -13,6 +13,7 @@ impl PermissionChecker {
     ///
     /// 白名单规则支持 `*` 通配符（如 `*.example.com`、`api.example.com/*`）。
     /// 若白名单为空，拒绝所有 HTTP 请求。
+    /// 额外拦截内部/私有 IP 段（SSRF 防护）。
     #[must_use]
     pub fn is_url_allowed(permissions: &Permissions, url: &str) -> bool {
         if permissions.http.is_empty() {
@@ -20,6 +21,9 @@ impl PermissionChecker {
         }
 
         let host = extract_host(url).unwrap_or_default();
+        if is_private_host(&host) {
+            return false;
+        }
         let host: &str = &host;
         let path = extract_path(url);
         let path: &str = &path;
@@ -50,11 +54,11 @@ impl PermissionChecker {
     /// 检查配置 key 是否在 config 白名单中。
     ///
     /// 白名单支持前缀匹配（如 `seo.*` 匹配 `seo.title`、`seo.description`）。
-    /// 若白名单为空，允许读取所有配置项（向后兼容）。
+    /// 若白名单为空，拒绝所有配置访问。
     #[must_use]
     pub fn is_config_key_allowed(permissions: &Permissions, key: &str) -> bool {
         if permissions.config.is_empty() {
-            return true;
+            return false;
         }
 
         permissions.config.iter().any(|pattern| {
@@ -131,14 +135,27 @@ impl PermissionChecker {
     }
 }
 
-/// 从 SQL 语句中提取表名（简单启发式，取 FROM 后的第一个标识符）
+/// 从 SQL 语句中提取表名（简单启发式，取 FROM 后的第一个标识符）。
+///
+/// **安全限制：** 检测到 UNION、子查询、JOIN 等可疑模式时返回 `None`，
+/// 调用方应将 `None` 视为拒绝。
 #[must_use]
 pub fn extract_table_name(sql: &str) -> Option<String> {
     let trimmed = sql.trim();
     let upper = trimmed.to_uppercase();
+
+    if upper.contains("UNION") || upper.contains("JOIN") {
+        return None;
+    }
+
     let rest = upper.strip_prefix("SELECT")?;
     let from_pos = rest.find("FROM")?;
     let after_from = rest[from_pos + 4..].trim_start();
+
+    if after_from.starts_with('(') {
+        return None;
+    }
+
     let table: String = after_from
         .chars()
         .take_while(|c| c.is_alphanumeric() || *c == '_')
@@ -217,6 +234,45 @@ fn extract_path(url: &str) -> String {
         .next()
         .unwrap_or(after_host)
         .to_string()
+}
+
+fn is_private_host(host: &str) -> bool {
+    let lower = host.to_lowercase();
+    if lower.is_empty() {
+        return false;
+    }
+    if lower == "localhost" || lower == "0.0.0.0" || lower == "[::1]" || lower == "::1" {
+        return true;
+    }
+    let octets: Vec<&str> = lower.split('.').collect();
+    if octets.len() == 4
+        && let (Some(a), Some(b), Some(c), Some(_d)) = (
+            octets[0].parse::<u8>().ok(),
+            octets[1].parse::<u8>().ok(),
+            octets[2].parse::<u8>().ok(),
+            octets[3].parse::<u8>().ok(),
+        )
+    {
+        if a == 127 {
+            return true;
+        }
+        if a == 10 {
+            return true;
+        }
+        if a == 172 && (16..=31).contains(&b) {
+            return true;
+        }
+        if a == 192 && b == 168 {
+            return true;
+        }
+        if a == 169 && b == 254 {
+            return true;
+        }
+        if a == 0 && b == 0 && c == 0 {
+            return true;
+        }
+    }
+    false
 }
 
 fn glob_match_path(path: &str, pattern: &str) -> bool {
@@ -307,9 +363,9 @@ mod tests {
     }
 
     #[test]
-    fn config_empty_allows_all() {
+    fn config_empty_blocks_all() {
         let p = perms(vec![], vec![], vec![]);
-        assert!(PermissionChecker::is_config_key_allowed(&p, "anything"));
+        assert!(!PermissionChecker::is_config_key_allowed(&p, "anything"));
     }
 
     #[test]
@@ -560,5 +616,92 @@ mod tests {
             "Roles",
             &default_protected()
         ));
+    }
+
+    #[test]
+    fn ssrf_blocks_localhost() {
+        let p = perms(vec!["localhost"], vec![], vec![]);
+        assert!(!PermissionChecker::is_url_allowed(
+            &p,
+            "http://localhost/admin"
+        ));
+    }
+
+    #[test]
+    fn ssrf_blocks_127_loopback() {
+        let p = perms(vec!["127.0.0.1"], vec![], vec![]);
+        assert!(!PermissionChecker::is_url_allowed(
+            &p,
+            "http://127.0.0.1/secret"
+        ));
+    }
+
+    #[test]
+    fn ssrf_blocks_private_10() {
+        let p = perms(vec!["10.0.0.1"], vec![], vec![]);
+        assert!(!PermissionChecker::is_url_allowed(
+            &p,
+            "http://10.0.0.1/internal"
+        ));
+    }
+
+    #[test]
+    fn ssrf_blocks_private_172() {
+        let p = perms(vec!["172.16.0.1"], vec![], vec![]);
+        assert!(!PermissionChecker::is_url_allowed(
+            &p,
+            "http://172.16.0.1/db"
+        ));
+    }
+
+    #[test]
+    fn ssrf_blocks_private_192() {
+        let p = perms(vec!["192.168.1.1"], vec![], vec![]);
+        assert!(!PermissionChecker::is_url_allowed(
+            &p,
+            "http://192.168.1.1/admin"
+        ));
+    }
+
+    #[test]
+    fn ssrf_blocks_link_local() {
+        let p = perms(vec!["169.254.1.1"], vec![], vec![]);
+        assert!(!PermissionChecker::is_url_allowed(
+            &p,
+            "http://169.254.1.1/metadata"
+        ));
+    }
+
+    #[test]
+    fn ssrf_allows_public_ip() {
+        let p = perms(vec!["93.184.216.34"], vec![], vec![]);
+        assert!(PermissionChecker::is_url_allowed(
+            &p,
+            "http://93.184.216.34/index.html"
+        ));
+    }
+
+    #[test]
+    fn sql_union_bypass_returns_none() {
+        assert_eq!(
+            extract_table_name("SELECT * FROM posts UNION SELECT * FROM users"),
+            None
+        );
+    }
+
+    #[test]
+    fn sql_join_returns_none() {
+        assert_eq!(
+            extract_table_name("SELECT * FROM posts JOIN users ON posts.user_id = users.id"),
+            None
+        );
+    }
+
+    #[test]
+    fn sql_subquery_returns_none() {
+        assert_eq!(
+            extract_table_name("SELECT * FROM (SELECT * FROM users)"),
+            None
+        );
     }
 }

@@ -16,6 +16,9 @@ use crate::errors::response::ApiResponse;
 /// - **说明：** 返回服务运行状态，包括数据库连通性检测。
 ///   若数据库不可达，返回 503。
 /// - **返回：** `ApiResponse<Value>`（包含 `{"status": "ok", "db": "ok"}`）
+#[utoipa::path(get, path = "/health", tag = "health",
+    responses((status = 200, description = "健康检查通过"))
+)]
 pub async fn health(
     State(state): State<crate::AppState>,
 ) -> Result<Json<ApiResponse<Value>>, (axum::http::StatusCode, Json<Value>)> {

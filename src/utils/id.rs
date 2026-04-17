@@ -10,3 +10,11 @@ pub fn new_id_and_timestamp() -> (String, String) {
     let now = super::tz::now_str();
     (id, now)
 }
+
+/// 生成指定字节数的随机 hex 字符串
+#[must_use]
+pub fn random_hex(byte_count: usize) -> String {
+    let mut buf = vec![0u8; byte_count];
+    getrandom::getrandom(&mut buf).unwrap_or_else(|e| panic!("random_hex failed: {e}"));
+    hex::encode(buf)
+}

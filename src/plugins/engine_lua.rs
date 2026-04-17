@@ -251,6 +251,8 @@ mod tests {
             rate_limit_login_window: 60,
             rate_limit_comment_max: 3,
             rate_limit_comment_window: 60,
+            rate_limit_api_token_max: 120,
+            rate_limit_api_token_window: 60,
             worker_enabled: false,
             worker_concurrency: 1,
             worker_poll_interval_ms: 500,
@@ -492,7 +494,11 @@ Plugin = {
     end
 }
 "#;
-        engine.load_plugin_default("test-cfg", code).await.unwrap();
+        let perms = Permissions {
+            config: vec!["app.*".into()],
+            ..Permissions::default()
+        };
+        engine.load_plugin("test-cfg", code, perms).await.unwrap();
 
         let result = engine
             .call_action("test-cfg", "on_post_created", &serde_json::json!({}))

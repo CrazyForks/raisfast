@@ -153,6 +153,7 @@ pub struct RateLimiterSet {
     pub register: RateLimiter<MemoryStore>,
     pub login: RateLimiter<MemoryStore>,
     pub comment: RateLimiter<MemoryStore>,
+    pub api_token: RateLimiter<MemoryStore>,
 }
 
 impl RateLimiterSet {
@@ -186,6 +187,13 @@ impl RateLimiterSet {
                 RateLimitConfig {
                     max_requests: config.rate_limit_comment_max,
                     window_secs: config.rate_limit_comment_window,
+                },
+            ),
+            api_token: RateLimiter::new(
+                Arc::new(MemoryStore::new()),
+                RateLimitConfig {
+                    max_requests: config.rate_limit_api_token_max,
+                    window_secs: config.rate_limit_api_token_window,
                 },
             ),
         }
@@ -223,6 +231,13 @@ impl RateLimiterSet {
                     window_secs: 60,
                 },
             ),
+            api_token: RateLimiter::new(
+                Arc::new(MemoryStore::new()),
+                RateLimitConfig {
+                    max_requests: 120,
+                    window_secs: 60,
+                },
+            ),
         }
     }
 }
@@ -252,10 +267,26 @@ pub async fn global_rate_limit(
 ) -> Response {
     let ip = extract_client_ip(&req);
 
-    if limiters.global.check(&ip).await {
-        next.run(req).await
+    if !limiters.global.check(&ip).await {
+        return rate_limited_response();
+    }
+
+    if let Some(prefix) = extract_api_token_prefix(&req)
+        && !limiters.api_token.check(&format!("token:{prefix}")).await
+    {
+        return rate_limited_response();
+    }
+
+    next.run(req).await
+}
+
+fn extract_api_token_prefix(req: &Request) -> Option<String> {
+    let auth = req.headers().get("authorization")?.to_str().ok()?;
+    let token = auth.strip_prefix("Bearer ")?;
+    if token.starts_with("rblog_") {
+        token.get(..12).map(|s| s.to_string())
     } else {
-        rate_limited_response()
+        None
     }
 }
 

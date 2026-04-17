@@ -95,6 +95,8 @@ mod tests {
             rate_limit_login_window: 60,
             rate_limit_comment_max: 3,
             rate_limit_comment_window: 60,
+            rate_limit_api_token_max: 120,
+            rate_limit_api_token_window: 60,
             worker_enabled: false,
             worker_concurrency: 2,
             worker_poll_interval_ms: 500,

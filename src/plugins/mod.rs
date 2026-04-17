@@ -695,7 +695,7 @@ impl PluginManager {
                         continue;
                     }
 
-                    let mut last = debounced.lock().unwrap();
+                    let mut last = debounced.lock().unwrap_or_else(|e| e.into_inner());
                     let now = std::time::Instant::now();
                     if let Some(t) = *last
                         && now.duration_since(t).as_millis() < 1000
@@ -804,7 +804,20 @@ impl PluginManager {
                 #[cfg(feature = "plugin-wasm")]
                 LoadedPluginInstance::Wasm(wasm) => {
                     let mut instance = wasm.write().await;
-                    instance.call_json_filter(func_name, &current)
+                    let timeout = std::time::Duration::from_millis(instance.timeout_ms());
+                    tokio::time::timeout(timeout, async {
+                        tokio::task::block_in_place(|| {
+                            instance.call_json_filter(func_name, &current)
+                        })
+                    })
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(anyhow::anyhow!(
+                            "plugin {} exceeded wall-clock timeout ({}ms)",
+                            plugin_id,
+                            timeout.as_millis()
+                        ))
+                    })
                 }
                 #[cfg(feature = "plugin-js")]
                 LoadedPluginInstance::Js(pid) => self
@@ -879,7 +892,18 @@ impl PluginManager {
                 #[cfg(feature = "plugin-wasm")]
                 LoadedPluginInstance::Wasm(wasm) => {
                     let mut instance = wasm.write().await;
-                    instance.call_json_action(func_name, data)
+                    let timeout = std::time::Duration::from_millis(instance.timeout_ms());
+                    tokio::time::timeout(timeout, async {
+                        tokio::task::block_in_place(|| instance.call_json_action(func_name, data))
+                    })
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(anyhow::anyhow!(
+                            "plugin {} exceeded wall-clock timeout ({}ms)",
+                            plugin_id,
+                            timeout.as_millis()
+                        ))
+                    })
                 }
                 #[cfg(feature = "plugin-js")]
                 LoadedPluginInstance::Js(pid) => self
@@ -949,7 +973,20 @@ impl PluginManager {
                 #[cfg(feature = "plugin-wasm")]
                 LoadedPluginInstance::Wasm(wasm) => {
                     let mut instance = wasm.write().await;
-                    instance.call_string_filter(func_name, content)
+                    let timeout = std::time::Duration::from_millis(instance.timeout_ms());
+                    tokio::time::timeout(timeout, async {
+                        tokio::task::block_in_place(|| {
+                            instance.call_string_filter(func_name, content)
+                        })
+                    })
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(anyhow::anyhow!(
+                            "plugin {} exceeded wall-clock timeout ({}ms)",
+                            plugin_id,
+                            timeout.as_millis()
+                        ))
+                    })
                 }
                 #[cfg(feature = "plugin-js")]
                 LoadedPluginInstance::Js(pid) => self
@@ -1269,9 +1306,20 @@ impl PluginManager {
             #[cfg(feature = "plugin-wasm")]
             LoadedPluginInstance::Wasm(wasm) => {
                 let mut instance = wasm.write().await;
-                instance
-                    .call_json_filter::<serde_json::Value>(handler, input)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?
+                let timeout = std::time::Duration::from_millis(instance.timeout_ms());
+                tokio::time::timeout(timeout, async {
+                    tokio::task::block_in_place(|| {
+                        instance.call_json_filter::<serde_json::Value>(handler, input)
+                    })
+                })
+                .await
+                .unwrap_or_else(|_| {
+                    Err(anyhow::anyhow!(
+                        "plugin exceeded wall-clock timeout ({}ms)",
+                        timeout.as_millis()
+                    ))
+                })
+                .map_err(|e| anyhow::anyhow!("{e}"))?
             }
             #[cfg(feature = "plugin-js")]
             LoadedPluginInstance::Js(pid) => self
@@ -1421,6 +1469,8 @@ mod tests {
             rate_limit_login_window: 60,
             rate_limit_comment_max: 3,
             rate_limit_comment_window: 60,
+            rate_limit_api_token_max: 120,
+            rate_limit_api_token_window: 60,
             worker_enabled: false,
             worker_concurrency: 1,
             worker_poll_interval_ms: 500,
@@ -2059,6 +2109,9 @@ name = "JS Config"
 version = "1.0.0"
 runtime = "js"
 
+[permissions]
+config = ["app.*"]
+
 [hooks.on-post-creating]
 priority = 10
 "#;
@@ -2093,7 +2146,7 @@ var Plugin = {
     }
 
     #[cfg(all(feature = "plugin-wasm", feature = "plugin-js"))]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn manager_mixed_wasm_js_filter_chain() {
         let dir = tempfile::tempdir().unwrap();
 
@@ -2361,7 +2414,10 @@ version = "1.0.0"
 runtime = "lua"
 entry = "init.lua"
 
-[hooks.on_post_creating]
+[permissions]
+config = ["app.*"]
+
+[hooks.on-post-creating]
 priority = 10
 "#;
         std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
@@ -2394,7 +2450,7 @@ Plugin = {
     }
 
     #[cfg(all(feature = "plugin-wasm", feature = "plugin-js", feature = "plugin-lua"))]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn manager_triple_engine_filter_chain() {
         let dir = tempfile::tempdir().unwrap();
 
@@ -2924,6 +2980,8 @@ end
             rate_limit_login_window: 60,
             rate_limit_comment_max: 3,
             rate_limit_comment_window: 60,
+            rate_limit_api_token_max: 120,
+            rate_limit_api_token_window: 60,
             worker_enabled: false,
             worker_concurrency: 2,
             worker_poll_interval_ms: 500,

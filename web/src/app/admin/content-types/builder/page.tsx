@@ -25,6 +25,8 @@ import {
   Plus,
   Trash2,
   GripVertical,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -338,6 +340,18 @@ export default function ContentTypeBuilderPage() {
     setSelectedIdx(null);
   }, []);
 
+  const moveField = useCallback((idx: number, direction: -1 | 1) => {
+    setFields((prev) => {
+      const target = idx + direction;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[target]] = [next[target], next[idx]];
+      if (selectedIdx === idx) setSelectedIdx(target);
+      else if (selectedIdx === target) setSelectedIdx(idx);
+      return next;
+    });
+  }, [selectedIdx]);
+
   const addField = useCallback((type: FieldType) => {
     const f = emptyField(type);
     setFields((prev) => {
@@ -438,7 +452,24 @@ export default function ContentTypeBuilderPage() {
                       : "hover:bg-muted"
                   }`}
                 >
-                  <GripVertical className="size-3 text-muted-foreground shrink-0" />
+                  <div className="flex flex-col gap-0">
+                    <button
+                      type="button"
+                      className="p-0 hover:text-foreground disabled:opacity-30"
+                      disabled={idx === 0}
+                      onClick={(e) => { e.stopPropagation(); moveField(idx, -1); }}
+                    >
+                      <ChevronUp className="size-3" />
+                    </button>
+                    <button
+                      type="button"
+                      className="p-0 hover:text-foreground disabled:opacity-30"
+                      disabled={idx === fields.length - 1}
+                      onClick={(e) => { e.stopPropagation(); moveField(idx, 1); }}
+                    >
+                      <ChevronDown className="size-3" />
+                    </button>
+                  </div>
                   <Icon className="size-4 shrink-0" />
                   <span className="flex-1 truncate">
                     {f.name || "New field"}

@@ -25,6 +25,9 @@ import {
   ChevronDown,
   PenLine,
   Package,
+  Moon,
+  Sun,
+  KeyRound,
 } from "lucide-react";
 
 import {
@@ -46,6 +49,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useAuthStore } from "@/stores/auth";
 import { useTenantStore } from "@/stores/tenant";
+import { useTheme } from "next-themes";
 
 const contentItems = [
   { label: "Posts", href: "/admin/posts", icon: FileText },
@@ -63,6 +67,7 @@ const systemItems = [
   { label: "Cron", href: "/admin/crons", icon: Clock },
   { label: "Tenants", href: "/admin/tenants", icon: Building2 },
   { label: "Webhooks", href: "/admin/webhooks", icon: Webhook },
+  { label: "API Tokens", href: "/admin/tokens", icon: KeyRound },
   { label: "Audit Log", href: "/admin/audit", icon: ClipboardList },
   { label: "Options", href: "/admin/options", icon: Settings },
 ];
@@ -108,6 +113,7 @@ export default function AdminLayout({
 }) {
   const pathname = usePathname();
   const { isLoggedIn, isAuthor, logout, user } = useAuthStore();
+  const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -257,6 +263,18 @@ export default function AdminLayout({
                 {user?.role}
               </p>
             </div>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+              title="Toggle theme"
+            >
+              {mounted && resolvedTheme === "dark" ? (
+                <Sun className="size-4" />
+              ) : (
+                <Moon className="size-4" />
+              )}
+            </Button>
             <Button
               variant="ghost"
               size="icon-sm"

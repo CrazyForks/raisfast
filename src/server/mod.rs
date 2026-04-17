@@ -1,38 +1,40 @@
 //! HTTP 服务器：路由组装、中间件、启动与优雅关闭。
 
+mod openapi;
+
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::AppState;
+use crate::cache::MemoryCache;
+use crate::config::app::AppConfig;
+use crate::content_type::ContentTypeRegistry;
+use crate::db::connection::init_pool;
+use crate::handlers::{
+    api_token, auth, category, comment, cron, health, media, options, plugin, post, rbac, rss, sse,
+    stats, tag, tenant, user,
+};
+use crate::middleware::locale::locale_middleware;
+use crate::middleware::metrics;
+use crate::middleware::rate_limit::{
+    RateLimiterSet, comment_rate_limit, global_rate_limit, login_rate_limit, register_rate_limit,
+};
+use crate::repositories::{
+    CachedPostRepository, OptionsRepository, PostRepository, RbacRepository,
+    SqlxCategoryRepository, SqlxCommentRepository, SqlxMediaRepository, SqlxOptionsRepository,
+    SqlxPostRepository, SqlxRbacRepository, SqlxRefreshTokenRepository, SqlxTagRepository,
+    SqlxTenantRepository, SqlxUserRepository, TenantRepository,
+};
+use crate::search::{NoopSearchEngine, SearchEngine};
+use crate::services::options::OptionsService;
+use crate::services::rbac::RbacService;
+use crate::services::tenant::TenantService;
 use axum::Extension;
 use axum::extract::State;
 use axum::http::HeaderValue;
 use axum::middleware::from_fn;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post as http_post, put};
-use rust_blog::AppState;
-use rust_blog::cache::MemoryCache;
-use rust_blog::config::app::AppConfig;
-use rust_blog::content_type::ContentTypeRegistry;
-use rust_blog::db::connection::init_pool;
-use rust_blog::handlers::{
-    auth, category, comment, cron, health, media, options, plugin, post, rbac, rss, sse, stats,
-    tag, tenant, user,
-};
-use rust_blog::middleware::locale::locale_middleware;
-use rust_blog::middleware::metrics;
-use rust_blog::middleware::rate_limit::{
-    RateLimiterSet, comment_rate_limit, global_rate_limit, login_rate_limit, register_rate_limit,
-};
-use rust_blog::repositories::{
-    CachedPostRepository, OptionsRepository, PostRepository, RbacRepository,
-    SqlxCategoryRepository, SqlxCommentRepository, SqlxMediaRepository, SqlxOptionsRepository,
-    SqlxPostRepository, SqlxRbacRepository, SqlxRefreshTokenRepository, SqlxTagRepository,
-    SqlxTenantRepository, SqlxUserRepository, TenantRepository,
-};
-use rust_blog::search::{NoopSearchEngine, SearchEngine};
-use rust_blog::services::options::OptionsService;
-use rust_blog::services::rbac::RbacService;
-use rust_blog::services::tenant::TenantService;
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
@@ -44,7 +46,7 @@ use tracing::Level;
 fn build_search_engine(config: &AppConfig) -> Arc<dyn SearchEngine> {
     match config.search_engine.as_str() {
         #[cfg(feature = "search-tantivy")]
-        "tantivy" => match rust_blog::search::TantivyEngine::open(&config.search_index_dir) {
+        "tantivy" => match crate::search::TantivyEngine::open(&config.search_index_dir) {
             Ok(engine) => {
                 tracing::info!(
                     "search engine: tantivy (index: {})",
@@ -91,42 +93,42 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
     let max_upload = config.max_upload_size;
     let pool = init_pool(&config.database_url, config.db_pool_size).await?;
 
-    let eventbus = rust_blog::eventbus::EventBus::new(256);
+    let eventbus = crate::eventbus::EventBus::new(256);
 
     let worker_pool = pool.clone();
 
     let sqlx_repo = SqlxPostRepository::new(pool.clone());
-    let cache: std::sync::Arc<dyn rust_blog::cache::CacheStore> =
+    let cache: std::sync::Arc<dyn crate::cache::CacheStore> =
         std::sync::Arc::new(MemoryCache::new());
     let post_repo: Arc<dyn PostRepository> =
         Arc::new(CachedPostRepository::new(sqlx_repo, cache, None));
 
-    let user_repo: Arc<dyn rust_blog::repositories::UserRepository> =
+    let user_repo: Arc<dyn crate::repositories::UserRepository> =
         Arc::new(SqlxUserRepository::new(pool.clone()));
-    let category_repo: Arc<dyn rust_blog::repositories::CategoryRepository> =
+    let category_repo: Arc<dyn crate::repositories::CategoryRepository> =
         Arc::new(SqlxCategoryRepository::new(pool.clone()));
-    let tag_repo: Arc<dyn rust_blog::repositories::TagRepository> =
+    let tag_repo: Arc<dyn crate::repositories::TagRepository> =
         Arc::new(SqlxTagRepository::new(pool.clone()));
-    let comment_repo: Arc<dyn rust_blog::repositories::CommentRepository> =
+    let comment_repo: Arc<dyn crate::repositories::CommentRepository> =
         Arc::new(SqlxCommentRepository::new(pool.clone()));
-    let media_repo: Arc<dyn rust_blog::repositories::MediaRepository> =
+    let media_repo: Arc<dyn crate::repositories::MediaRepository> =
         Arc::new(SqlxMediaRepository::new(pool.clone()));
-    let refresh_token_repo: Arc<dyn rust_blog::repositories::RefreshTokenRepository> =
+    let refresh_token_repo: Arc<dyn crate::repositories::RefreshTokenRepository> =
         Arc::new(SqlxRefreshTokenRepository::new(pool.clone()));
 
     let search: Arc<dyn SearchEngine> = build_search_engine(config);
 
     let ct_registry = Arc::new(ContentTypeRegistry::new());
 
-    let plugin_manager = rust_blog::plugins::PluginManager::new_empty(
+    let plugin_manager = crate::plugins::PluginManager::new_empty(
         Arc::new(config.clone()),
-        rust_blog::plugins::PluginManagerOptions {
+        crate::plugins::PluginManagerOptions {
             pool: Some(pool.clone()),
         },
     )
     .await;
 
-    let extension_manager = rust_blog::extension::manager::ExtensionManager::new(
+    let extension_manager = crate::extension::manager::ExtensionManager::new(
         ct_registry.clone(),
         plugin_manager.clone(),
         pool.clone(),
@@ -143,10 +145,10 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
 
     let tenant_repo: Arc<dyn TenantRepository> = Arc::new(SqlxTenantRepository::new(pool.clone()));
     let tenant_service = Arc::new(TenantService::new(tenant_repo));
-    let audit_service = Arc::new(rust_blog::audit::AuditService::new(pool.clone()));
-    let webhook_service = Arc::new(rust_blog::webhook::WebhookService::new(pool.clone()));
+    let audit_service = Arc::new(crate::audit::AuditService::new(pool.clone()));
+    let webhook_service = Arc::new(crate::webhook::WebhookService::new(pool.clone()));
 
-    let extension_service = Arc::new(rust_blog::extension::service::ExtensionService::new(
+    let extension_service = Arc::new(crate::extension::service::ExtensionService::new(
         pool.clone(),
     ));
 
@@ -178,7 +180,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
     spawn_webhook_subscriber(eventbus.clone(), state.webhook.clone());
 
     if config.worker_enabled {
-        let cache_for_workers: Arc<dyn rust_blog::cache::CacheStore> = Arc::new(MemoryCache::new());
+        let cache_for_workers: Arc<dyn crate::cache::CacheStore> = Arc::new(MemoryCache::new());
         spawn_workers(
             worker_pool,
             &eventbus,
@@ -203,6 +205,8 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         )
         .route("/auth/refresh", http_post(auth::refresh))
         .route("/auth/logout", http_post(auth::logout))
+        .route("/tokens", get(api_token::list).post(api_token::create))
+        .route("/tokens/{id}", delete(api_token::delete))
         .route("/users/me", get(user::get_me).put(user::update_me))
         .route("/users/me/password", put(user::change_password))
         .route("/users/{id}", get(user::get_user))
@@ -290,63 +294,57 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
                 .put(tenant::update_tenant)
                 .delete(tenant::delete_tenant),
         )
-        .route("/admin/audit", get(rust_blog::audit::handler::list))
-        .route("/admin/audit/{id}", get(rust_blog::audit::handler::get))
+        .route("/admin/audit", get(crate::audit::handler::list))
+        .route("/admin/audit/{id}", get(crate::audit::handler::get))
         .route(
             "/admin/webhooks",
-            get(rust_blog::webhook::handler::list).post(rust_blog::webhook::handler::create),
+            get(crate::webhook::handler::list).post(crate::webhook::handler::create),
         )
         .route(
             "/admin/webhooks/{id}",
-            get(rust_blog::webhook::handler::get)
-                .put(rust_blog::webhook::handler::update)
-                .delete(rust_blog::webhook::handler::delete),
+            get(crate::webhook::handler::get)
+                .put(crate::webhook::handler::update)
+                .delete(crate::webhook::handler::delete),
         )
         .route(
             "/admin/content-types",
-            get(rust_blog::content_type::handler::list_schemas)
-                .post(rust_blog::content_type::handler::create_schema),
+            get(crate::content_type::handler::list_schemas)
+                .post(crate::content_type::handler::create_schema),
         )
         .route(
             "/admin/content-types/{singular}",
-            get(rust_blog::content_type::handler::get_schema)
-                .put(rust_blog::content_type::handler::update_schema)
-                .delete(rust_blog::content_type::handler::delete_schema),
+            get(crate::content_type::handler::get_schema)
+                .put(crate::content_type::handler::update_schema)
+                .delete(crate::content_type::handler::delete_schema),
         )
-        .route(
-            "/admin/extensions",
-            get(rust_blog::extension::handler::list),
-        )
+        .route("/admin/extensions", get(crate::extension::handler::list))
         .route(
             "/admin/extensions/{id}",
-            get(rust_blog::extension::handler::get)
-                .delete(rust_blog::extension::handler::uninstall),
+            get(crate::extension::handler::get).delete(crate::extension::handler::uninstall),
         )
         .route(
             "/admin/extensions/{id}/enable",
-            http_post(rust_blog::extension::handler::enable),
+            http_post(crate::extension::handler::enable),
         )
         .route(
             "/admin/extensions/{id}/disable",
-            http_post(rust_blog::extension::handler::disable),
+            http_post(crate::extension::handler::disable),
         )
         .layer(from_fn(global_rate_limit))
         .layer(Extension(limiters))
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024));
 
-    let api_v1 = rust_blog::content_type::handler::register_content_routes(
-        api_v1,
-        &state.content_type_registry,
-    );
+    let api_v1 =
+        crate::content_type::handler::register_content_routes(api_v1, &state.content_type_registry);
 
     let api_v1 = api_v1
         .route(
             "/cms/{*path}",
-            axum::routing::any(rust_blog::content_type::handler::dynamic_cms_handler),
+            axum::routing::any(crate::content_type::handler::dynamic_cms_handler),
         )
         .route(
             "/admin/cms/{*path}",
-            axum::routing::any(rust_blog::content_type::handler::dynamic_admin_cms_handler),
+            axum::routing::any(crate::content_type::handler::dynamic_admin_cms_handler),
         );
 
     let app = axum::Router::new()
@@ -359,9 +357,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         .fallback(handle_plugin_route)
         .layer(from_fn(locale_middleware))
         .layer(from_fn(metrics::track_metrics))
-        .layer(from_fn(
-            rust_blog::middleware::request_id::inject_request_id,
-        ))
+        .layer(from_fn(crate::middleware::request_id::inject_request_id))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|request: &axum::extract::Request| {
@@ -406,15 +402,20 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         .layer(cors)
         .with_state(state);
 
+    let app = app
+        .route("/api/docs/openapi.json", get(openapi::serve_openapi_json))
+        .route("/api/docs", get(openapi::redirect_to_swagger))
+        .route("/api/docs/", get(openapi::redirect_to_swagger));
+
     Ok(app)
 }
 
 /// 启动 HTTP 服务器，监听请求直到收到关闭信号。
 pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
     metrics::init();
-    let tz = rust_blog::utils::tz::parse_tz_or_utc(&config.timezone);
+    let tz = crate::utils::tz::parse_tz_or_utc(&config.timezone);
     tracing::info!("site timezone: {}", tz);
-    rust_blog::utils::tz::set_site_tz(tz);
+    crate::utils::tz::set_site_tz(tz);
     let addr = format!("{}:{}", config.host, config.port);
     let limiters = RateLimiterSet::from_config(config);
 
@@ -427,6 +428,7 @@ pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
             cleanup_limiters.register.cleanup_expired().await;
             cleanup_limiters.login.cleanup_expired().await;
             cleanup_limiters.comment.cleanup_expired().await;
+            cleanup_limiters.api_token.cleanup_expired().await;
         }
     });
 
@@ -454,7 +456,7 @@ pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
                 tracing::info!("server listening on http://{}", addr);
                 println!("server listening on http://{}", addr);
                 let listener = TcpListener::bind(&addr).await?;
-                axum::serve(listener, app)
+                axum::serve(listener, app.into_make_service())
                     .with_graceful_shutdown(shutdown_signal())
                     .await?;
             }
@@ -463,7 +465,7 @@ pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
             tracing::info!("server listening on http://{}", addr);
             println!("server listening on http://{}", addr);
             let listener = TcpListener::bind(&addr).await?;
-            axum::serve(listener, app)
+            axum::serve(listener, app.into_make_service())
                 .with_graceful_shutdown(shutdown_signal())
                 .await?;
         }
@@ -502,7 +504,7 @@ async fn shutdown_signal() {
 /// 当 axum 路由未匹配时，尝试分发给插件的 `manifest.routes` 声明式路由。
 /// 若所有插件均未处理，返回 404。
 async fn handle_plugin_route(
-    auth: rust_blog::middleware::auth::OptionalAuth,
+    auth: crate::middleware::auth::OptionalAuth,
     State(state): State<AppState>,
     req: axum::extract::Request,
 ) -> axum::response::Response {
@@ -553,11 +555,11 @@ async fn handle_plugin_route(
 
 /// 启动 EventBus 后台订阅者，将业务事件转发给插件系统。
 fn spawn_event_subscriber(
-    eventbus: rust_blog::eventbus::EventBus,
-    plugins: Arc<rust_blog::plugins::PluginManager>,
+    eventbus: crate::eventbus::EventBus,
+    plugins: Arc<crate::plugins::PluginManager>,
 ) {
-    use rust_blog::eventbus::Event;
-    use rust_blog::plugins::HookPoint;
+    use crate::eventbus::Event;
+    use crate::plugins::HookPoint;
 
     let mut rx = eventbus.subscribe();
     tokio::spawn(async move {
@@ -597,11 +599,11 @@ fn spawn_event_subscriber(
 
 /// 启动审计日志订阅者，将所有业务事件写入 `audit_log` 表。
 fn spawn_audit_subscriber(
-    eventbus: rust_blog::eventbus::EventBus,
-    audit: Arc<rust_blog::audit::AuditService>,
-    tenant_service: Arc<rust_blog::services::tenant::TenantService>,
+    eventbus: crate::eventbus::EventBus,
+    audit: Arc<crate::audit::AuditService>,
+    tenant_service: Arc<crate::services::tenant::TenantService>,
 ) {
-    use rust_blog::eventbus::Event;
+    use crate::eventbus::Event;
 
     let mut rx = eventbus.subscribe();
     tokio::spawn(async move {
@@ -723,10 +725,10 @@ fn spawn_audit_subscriber(
 
 /// 启动 Webhook 事件投递订阅者
 fn spawn_webhook_subscriber(
-    eventbus: rust_blog::eventbus::EventBus,
-    webhook_service: Arc<rust_blog::webhook::WebhookService>,
+    eventbus: crate::eventbus::EventBus,
+    webhook_service: Arc<crate::webhook::WebhookService>,
 ) {
-    use rust_blog::eventbus::Event;
+    use crate::eventbus::Event;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -765,7 +767,7 @@ fn spawn_webhook_subscriber(
 
                     let payload_value = serde_json::to_value(event.as_ref()).unwrap_or_default();
                     let timestamp = chrono::Utc::now().to_rfc3339();
-                    let webhook_payload = rust_blog::webhook::model::WebhookPayload {
+                    let webhook_payload = crate::webhook::model::WebhookPayload {
                         event: event_type.to_string(),
                         data: payload_value,
                         timestamp,
@@ -795,7 +797,7 @@ fn spawn_webhook_subscriber(
                             continue;
                         }
 
-                        let signature = rust_blog::webhook::service::WebhookService::sign_payload(
+                        let signature = crate::webhook::service::WebhookService::sign_payload(
                             &sub.secret,
                             &body,
                         );
@@ -843,19 +845,17 @@ fn spawn_webhook_subscriber(
 
 /// 启动 Worker 子系统（CronScheduler + JobEnqueuer + WorkerRunner）
 async fn spawn_workers(
-    pool: rust_blog::db::Pool,
-    eventbus: &rust_blog::eventbus::EventBus,
+    pool: crate::db::Pool,
+    eventbus: &crate::eventbus::EventBus,
     config: &AppConfig,
-    plugins: Arc<rust_blog::plugins::PluginManager>,
-    search: Arc<dyn rust_blog::search::SearchEngine>,
-    cache: Arc<dyn rust_blog::cache::CacheStore>,
+    plugins: Arc<crate::plugins::PluginManager>,
+    search: Arc<dyn crate::search::SearchEngine>,
+    cache: Arc<dyn crate::cache::CacheStore>,
 ) {
-    use rust_blog::worker::{
+    use crate::worker::{
         CronScheduler, JobEnqueuer, JobHandlerRegistry, PluginCronDispatcher, SqliteJobQueue,
         WorkerRunner, seed_defaults,
     };
-    use std::sync::Arc;
-    use std::time::Duration;
 
     let queue = Arc::new(SqliteJobQueue::new(pool.clone()));
 
@@ -880,7 +880,7 @@ async fn spawn_workers(
     }
 
     let mut registry = JobHandlerRegistry::new();
-    rust_blog::worker::handlers::register_all(
+    crate::worker::handlers::register_all(
         &mut registry,
         pool.clone(),
         Arc::new(config.clone()),

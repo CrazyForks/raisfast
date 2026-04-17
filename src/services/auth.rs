@@ -448,3 +448,84 @@ pub async fn list_users(
     let responses = users.into_iter().map(UserResponse::from).collect();
     Ok((responses, total))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn password_strength_rejects_short() {
+        assert!(validate_password_strength("Ab1").is_err());
+    }
+
+    #[test]
+    fn password_strength_rejects_no_uppercase() {
+        assert!(validate_password_strength("abcdefgh1").is_err());
+    }
+
+    #[test]
+    fn password_strength_rejects_no_lowercase() {
+        assert!(validate_password_strength("ABCDEFGH1").is_err());
+    }
+
+    #[test]
+    fn password_strength_rejects_no_digit() {
+        assert!(validate_password_strength("Abcdefgh").is_err());
+    }
+
+    #[test]
+    fn password_strength_accepts_valid() {
+        assert!(validate_password_strength("Password1").is_ok());
+    }
+
+    #[test]
+    fn hash_and_verify_password_roundtrip() {
+        let hash = hash_password("Secret123").unwrap();
+        assert!(verify_password("Secret123", &hash).unwrap());
+    }
+
+    #[test]
+    fn verify_password_rejects_wrong() {
+        let hash = hash_password("Secret123").unwrap();
+        assert!(!verify_password("WrongPass1", &hash).unwrap());
+    }
+
+    #[test]
+    fn generate_and_verify_token() {
+        let token = generate_access_token("user-1", "admin", "default", "secret", 900).unwrap();
+        let claims = verify_token(&token, "secret").unwrap();
+        assert_eq!(claims.sub, "user-1");
+        assert_eq!(claims.role, "admin");
+    }
+
+    #[test]
+    fn verify_token_rejects_wrong_secret() {
+        let token = generate_access_token("user-1", "admin", "default", "secret-a", 900).unwrap();
+        assert!(verify_token(&token, "secret-b").is_err());
+    }
+
+    #[test]
+    fn verify_token_rejects_expired() {
+        let now = chrono::Utc::now();
+        let claims = Claims {
+            sub: "user-1".into(),
+            role: "admin".into(),
+            tenant_id: "default".into(),
+            exp: (now - chrono::Duration::seconds(120)).timestamp() as usize,
+            iat: (now - chrono::Duration::seconds(180)).timestamp() as usize,
+        };
+        let token = jsonwebtoken::encode(
+            &Header::default(),
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret("secret".as_bytes()),
+        )
+        .unwrap();
+        assert!(verify_token(&token, "secret").is_err());
+    }
+
+    #[test]
+    fn generate_test_token_is_valid() {
+        let token = generate_access_token_for_test("user-1", "author");
+        assert!(token.len() > 20);
+    }
+}

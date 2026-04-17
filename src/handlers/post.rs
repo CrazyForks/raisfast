@@ -43,6 +43,9 @@ pub struct AdminPostListQuery {
 /// - **说明：** 分页查询已发布文章，支持按 `category_id`、`tag_id`、`q`（关键词）筛选。
 ///   `page_size` 上限为 100。
 /// - **返回：** `ApiResponse<PaginatedData<PostResponse>>`
+#[utoipa::path(get, path = "/posts", tag = "posts",
+    responses((status = 200, description = "文章列表"))
+)]
 pub async fn list(
     State(state): State<crate::AppState>,
     tenant: ResolvedTenant,
@@ -79,6 +82,10 @@ pub async fn list(
 /// - **认证：** 无需认证
 /// - **说明：** 根据 slug 获取已发布文章详情，自动增加浏览量。
 /// - **返回：** `ApiResponse<PostResponse>`
+#[utoipa::path(get, path = "/posts/{slug}", tag = "posts",
+    params(("slug" = String, Path, description = "文章 slug")),
+    responses((status = 200, description = "文章详情"))
+)]
 pub async fn get(
     State(state): State<crate::AppState>,
     tenant: ResolvedTenant,
@@ -101,6 +108,11 @@ pub async fn get(
 /// - **说明：** 创建新文章，自动生成 slug，支持设置分类和标签。
 /// - **验证：** 通过 `validation::validate()` 校验请求体，验证错误消息通过 i18n 翻译。
 /// - **返回：** `ApiResponse<PostResponse>`
+#[utoipa::path(post, path = "/posts", tag = "posts",
+    security(("bearer_auth" = [])),
+    request_body = CreatePostRequest,
+    responses((status = 200, description = "文章已创建"))
+)]
 pub async fn create(
     State(state): State<crate::AppState>,
     author: AuthorUser,
@@ -127,6 +139,12 @@ pub async fn create(
 /// - **说明：** 根据 slug 查找文章，验证权限后更新。仅修改提供的字段。
 /// - **验证：** 通过 `validation::validate()` 校验请求体，验证错误消息通过 i18n 翻译。
 /// - **返回：** `ApiResponse<PostResponse>`
+#[utoipa::path(put, path = "/posts/{slug}", tag = "posts",
+    security(("bearer_auth" = [])),
+    params(("slug" = String, Path, description = "文章 slug")),
+    request_body = UpdatePostRequest,
+    responses((status = 200, description = "文章已更新"))
+)]
 pub async fn update(
     State(state): State<crate::AppState>,
     auth_user: AuthUser,
@@ -155,6 +173,11 @@ pub async fn update(
 /// - **认证：** 需要登录（`AuthUser`），且为文章作者或管理员
 /// - **说明：** 根据 slug 查找文章，验证权限后删除。
 /// - **返回：** `ApiResponse<()>`
+#[utoipa::path(delete, path = "/posts/{slug}", tag = "posts",
+    security(("bearer_auth" = [])),
+    params(("slug" = String, Path, description = "文章 slug")),
+    responses((status = 200, description = "文章已删除"))
+)]
 pub async fn delete(
     State(state): State<crate::AppState>,
     auth_user: AuthUser,

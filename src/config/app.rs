@@ -79,6 +79,10 @@ pub struct AppConfig {
     pub rate_limit_comment_max: u32,
     #[serde(default = "default_rate_limit_comment_window")]
     pub rate_limit_comment_window: u64,
+    #[serde(default = "default_rate_limit_api_token_max")]
+    pub rate_limit_api_token_max: u32,
+    #[serde(default = "default_rate_limit_api_token_window")]
+    pub rate_limit_api_token_window: u64,
     #[serde(default)]
     pub worker_enabled: bool,
     #[serde(default = "default_worker_concurrency")]
@@ -228,6 +232,14 @@ fn default_rate_limit_comment_window() -> u64 {
     60
 }
 
+fn default_rate_limit_api_token_max() -> u32 {
+    120
+}
+
+fn default_rate_limit_api_token_window() -> u64 {
+    60
+}
+
 fn default_worker_concurrency() -> usize {
     2
 }
@@ -373,6 +385,14 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default_rate_limit_comment_window()),
+            rate_limit_api_token_max: env::var("RATE_LIMIT_API_TOKEN_MAX")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_rate_limit_api_token_max()),
+            rate_limit_api_token_window: env::var("RATE_LIMIT_API_TOKEN_WINDOW")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_rate_limit_api_token_window()),
             plugin_vfs_root: env::var("PLUGIN_VFS_ROOT")
                 .unwrap_or_else(|_| default_plugin_vfs_root()),
             plugin_vfs_max_file_size: env::var("PLUGIN_VFS_MAX_FILE_SIZE")

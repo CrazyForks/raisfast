@@ -6,9 +6,7 @@ use std::path::PathBuf;
 
 use rust_blog::config::app::AppConfig;
 
-use crate::server;
-
-// ── PID 文件管理 ─────────────────────────────────────────────────
+use rust_blog::server as srv;
 
 fn pid_file_path() -> PathBuf {
     PathBuf::from("./hello-axum.pid")
@@ -101,7 +99,7 @@ pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
         );
     }
 
-    server::start(config).await?;
+    srv::start(config).await?;
     remove_pid();
     Ok(())
 }

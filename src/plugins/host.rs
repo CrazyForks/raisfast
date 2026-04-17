@@ -52,6 +52,8 @@ fn read_string(caller: &mut Caller<'_, Arc<HostContext>>, ptr: i32, len: i32) ->
 /// 将字符串以长度前缀格式写入 WASM 内存末尾，返回指针。
 ///
 /// 布局：`[4 字节 LE 长度][数据]`
+///
+/// 受 `HostContext::max_memory_bytes` 限制，防止插件通过 host function 无限增长内存。
 fn write_string(caller: &mut Caller<'_, Arc<HostContext>>, s: &str) -> i32 {
     let bytes = s.as_bytes();
     let total_len = 4 + bytes.len();
@@ -63,11 +65,33 @@ fn write_string(caller: &mut Caller<'_, Arc<HostContext>>, s: &str) -> i32 {
         None => return 0,
     };
 
+    let max_memory = caller.data().max_memory_bytes();
     let current_size = mem.data_size(&mut *caller);
+    if current_size + total_len > max_memory {
+        tracing::warn!(
+            "[plugin:{}] write_string denied: {} + {} > {}",
+            caller.data().plugin_id(),
+            current_size,
+            total_len,
+            max_memory,
+        );
+        return 0;
+    }
+
     let needed = total_len + 1024;
     if current_size < needed {
         let extra = needed - current_size;
         let pages = (extra / 65536) as u64 + 1;
+        let new_total = current_size as u64 + pages * 65536;
+        if new_total > max_memory as u64 {
+            tracing::warn!(
+                "[plugin:{}] write_string grow denied: {} > {}",
+                caller.data().plugin_id(),
+                new_total,
+                max_memory,
+            );
+            return 0;
+        }
         let _ = mem.grow(&mut *caller, pages);
     }
 

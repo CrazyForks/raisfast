@@ -40,7 +40,7 @@ pub struct Post {
 /// 标签摘要
 ///
 /// 用于文章响应中展示标签的简要信息，包含 ID、名称和 slug。
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, utoipa::ToSchema)]
 pub struct TagBrief {
     pub id: String,
     pub name: String,

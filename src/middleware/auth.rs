@@ -1,12 +1,12 @@
-//! JWT 认证提取器
+//! JWT / API Token 认证提取器
 //!
-//! 本模块提供基于 JWT（HS256）Bearer Token 的身份验证中间件。
+//! 本模块提供基于 JWT（HS256）Bearer Token 和 API Token（`rblog_` 前缀）的身份验证中间件。
 //! 通过实现 Axum 的 [`FromRequestParts`] trait，将提取器作为 handler 参数使用，
 //! 框架会自动从请求头中解析并验证令牌，提取用户身份与角色信息。
 //!
 //! # 核心类型
 //!
-//! - [`AuthIdentity`] — 通用身份信息（`user_id` + `role`）
+//! - [`AuthIdentity`] — 通用身份信息（`user_id` + `role` + `tenant_id`）
 //!
 //! # 提取器
 //!
@@ -15,17 +15,18 @@
 //! | [`AuthUser`] | 任意已认证用户 | 通用认证守卫 |
 //! | [`AdminUser`] | `admin` | 管理后台操作 |
 //! | [`AuthorUser`] | `admin`、`author` | 文章内容管理 |
+//! | [`OptionalAuth`] | 可选认证 | 条件认证场景 |
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 
 use crate::AppState;
 use crate::errors::app_error::AppError;
-use crate::utils::auth::extract_claims;
+use crate::utils::auth::extract_identity;
 
 /// 通用已认证用户身份
 ///
-/// 从 JWT claims 中提取的 `user_id`（`sub` 声明）和 `role`（`role` 声明）。
+/// 从 JWT claims 或 API Token 中提取的 `user_id`、`role`、`tenant_id`。
 /// 各角色提取器共用此结构体，通过 `Deref` 便捷访问字段。
 #[derive(Debug, Clone)]
 pub struct AuthIdentity {
@@ -60,14 +61,8 @@ impl std::ops::Deref for AuthorUser {
 
 /// 已认证用户提取器
 ///
-/// 从请求的 `Authorization` 头中提取 Bearer Token，验证 JWT 签名后
-/// 解析出用户 ID 和角色。适用于任何需要登录身份的路由，不限制角色。
-///
-/// # 示例
-///
-/// ```ignore
-/// async fn get_profile(user: AuthUser) -> Json<Profile> { ... }
-/// ```
+/// 从请求的 `Authorization` 头中提取 Bearer Token，支持 JWT 和 API Token。
+/// 适用于任何需要登录身份的路由，不限制角色。
 #[derive(Debug, Clone)]
 pub struct AuthUser(pub AuthIdentity);
 
@@ -84,8 +79,8 @@ impl FromRequestParts<AppState> for OptionalAuth {
         parts: &mut Parts,
         state: &AppState,
     ) -> impl std::future::Future<Output = Result<Self, Self::Rejection>> + Send {
-        let result = crate::utils::auth::extract_optional_identity(parts, state);
-        async move { Ok(OptionalAuth(result)) }
+        let result = extract_identity(parts, state);
+        async move { Ok(OptionalAuth(result.await.ok())) }
     }
 }
 
@@ -96,14 +91,10 @@ impl FromRequestParts<AppState> for AuthUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> impl std::future::Future<Output = Result<Self, Self::Rejection>> + Send {
-        let result = extract_claims(parts, state);
+        let result = extract_identity(parts, state);
         async move {
-            let claims = result?;
-            Ok(AuthUser(AuthIdentity {
-                user_id: claims.sub,
-                role: claims.role,
-                tenant_id: claims.tenant_id,
-            }))
+            let identity = result.await?;
+            Ok(AuthUser(identity))
         }
     }
 }
@@ -112,12 +103,6 @@ impl FromRequestParts<AppState> for AuthUser {
 ///
 /// 与 [`AuthUser`] 类似，但额外校验用户角色必须为 `"admin"`。
 /// 用于仅限管理员访问的敏感操作路由。
-///
-/// # 示例
-///
-/// ```ignore
-/// async fn delete_user(admin: AdminUser) -> StatusCode { ... }
-/// ```
 #[derive(Debug, Clone)]
 pub struct AdminUser(pub AuthIdentity);
 
@@ -128,17 +113,13 @@ impl FromRequestParts<AppState> for AdminUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> impl std::future::Future<Output = Result<Self, Self::Rejection>> + Send {
-        let result = extract_claims(parts, state);
+        let result = extract_identity(parts, state);
         async move {
-            let claims = result?;
-            if claims.role != "admin" {
+            let identity = result.await?;
+            if identity.role != "admin" {
                 return Err(AppError::Forbidden);
             }
-            Ok(AdminUser(AuthIdentity {
-                user_id: claims.sub,
-                role: claims.role,
-                tenant_id: claims.tenant_id,
-            }))
+            Ok(AdminUser(identity))
         }
     }
 }
@@ -147,12 +128,6 @@ impl FromRequestParts<AppState> for AdminUser {
 ///
 /// 与 [`AuthUser`] 类似，但要求用户角色为 `"admin"` 或 `"author"`。
 /// 用于文章创建、编辑等内容管理路由。
-///
-/// # 示例
-///
-/// ```ignore
-/// async fn create_post(author: AuthorUser) -> Json<Post> { ... }
-/// ```
 #[derive(Debug, Clone)]
 pub struct AuthorUser(pub AuthIdentity);
 
@@ -163,17 +138,13 @@ impl FromRequestParts<AppState> for AuthorUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> impl std::future::Future<Output = Result<Self, Self::Rejection>> + Send {
-        let result = extract_claims(parts, state);
+        let result = extract_identity(parts, state);
         async move {
-            let claims = result?;
-            if claims.role != "admin" && claims.role != "author" {
+            let identity = result.await?;
+            if identity.role != "admin" && identity.role != "author" {
                 return Err(AppError::Forbidden);
             }
-            Ok(AuthorUser(AuthIdentity {
-                user_id: claims.sub,
-                role: claims.role,
-                tenant_id: claims.tenant_id,
-            }))
+            Ok(AuthorUser(identity))
         }
     }
 }

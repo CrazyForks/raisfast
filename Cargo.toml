@@ -115,6 +115,10 @@ tokio-rustls = { version = "0.26", optional = true }
 regex = "1.12.3"
 tera = "1"
 
+# OpenAPI
+utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
+
 [dev-dependencies]
 http-body-util = "0.1.3"
 rstest = "0.23"

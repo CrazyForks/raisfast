@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { RichTextEditor } from "@/components/common/rich-text-editor";
 import {
   Select,
   SelectContent,
@@ -201,11 +202,10 @@ export function FieldRenderer({
 
     case "richtext":
       input = (
-        <Textarea
+        <RichTextEditor
           value={strValue}
-          onChange={(e) => onChange(e.target.value)}
-          rows={8}
-          placeholder="Markdown supported"
+          onChange={onChange}
+          placeholder="Start writing..."
         />
       );
       break;

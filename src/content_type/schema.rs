@@ -36,6 +36,9 @@ pub struct ContentTypeSchema {
     /// 是否软删除
     #[serde(default)]
     pub soft_delete: bool,
+    /// 是否启用内容版本历史
+    #[serde(default)]
+    pub versioning: bool,
     /// 索引定义
     #[serde(default)]
     pub indexes: Vec<IndexDef>,
@@ -281,6 +284,8 @@ struct ContentTypeHeader {
     timestamps: bool,
     #[serde(default)]
     soft_delete: bool,
+    #[serde(default)]
+    versioning: bool,
 }
 
 impl ContentTypeSchema {
@@ -416,6 +421,7 @@ impl ContentTypeSchema {
             slug_field: toml.content_type.slug_field,
             timestamps: toml.content_type.timestamps,
             soft_delete: toml.content_type.soft_delete,
+            versioning: toml.content_type.versioning,
             indexes: toml.indexes.unwrap_or_default(),
             list_view: toml.list_view,
             api: toml.api.unwrap_or_default(),
@@ -476,6 +482,9 @@ impl ContentTypeSchema {
         }
         if self.soft_delete {
             header.insert("soft_delete".into(), toml::Value::Boolean(true));
+        }
+        if self.versioning {
+            header.insert("versioning".into(), toml::Value::Boolean(true));
         }
 
         let mut fields_table = toml::Table::new();
@@ -762,6 +771,8 @@ pub struct CreateContentTypeRequest {
     #[serde(default)]
     pub soft_delete: bool,
     #[serde(default)]
+    pub versioning: bool,
+    #[serde(default)]
     pub fields: Vec<FieldSchema>,
 }
 
@@ -783,6 +794,8 @@ pub struct UpdateContentTypeRequest {
     pub timestamps: Option<bool>,
     #[serde(default)]
     pub soft_delete: Option<bool>,
+    #[serde(default)]
+    pub versioning: Option<bool>,
     #[serde(default)]
     pub fields: Option<Vec<FieldSchema>>,
     #[serde(default)]

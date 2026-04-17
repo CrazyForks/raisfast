@@ -2,7 +2,7 @@
 //!
 //! 基于 rquickjs 的 `AsyncRuntime` / `AsyncContext`，
 //! 支持 JavaScript 插件在 tokio 异步环境中运行。
-//! 每个插件拥有独立的 AsyncContext（隔离的全局作用域）。
+//! 每个插件拥有独立的 AsyncRuntime + AsyncContext（完全隔离的内存空间）。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,15 +17,19 @@ use crate::config::app::AppConfig;
 use crate::db::Pool;
 use crate::plugins::Permissions;
 
+/// 单个 JS 插件的隔离运行环境
+struct PluginSlot {
+    runtime: AsyncRuntime,
+    context: AsyncContext,
+}
+
 /// JS 插件引擎
 ///
-/// 管理 `QuickJS` 运行时和所有 JS 插件上下文。
+/// 管理所有 JS 插件，每个插件拥有独立的 `AsyncRuntime`（独立内存限制）。
 pub struct JsEngine {
-    runtime: AsyncRuntime,
-    contexts: Mutex<HashMap<String, AsyncContext>>,
+    slots: Mutex<HashMap<String, PluginSlot>>,
     permissions_map: Mutex<HashMap<String, Permissions>>,
-    #[allow(dead_code)]
-    memory_limit_bytes: usize,
+    default_memory_limit_bytes: usize,
     timeout_ms: u64,
     config: Arc<AppConfig>,
     pool: Option<Pool>,
@@ -34,30 +38,36 @@ pub struct JsEngine {
 impl JsEngine {
     /// 创建新的 JS 引擎
     pub async fn new(config: &AppConfig, pool: Option<Pool>) -> anyhow::Result<Self> {
-        let runtime = AsyncRuntime::new()?;
-        let memory_limit_bytes = (config.plugin_max_memory_mb as usize) * 1024 * 1024;
-        runtime.set_memory_limit(memory_limit_bytes).await;
-        runtime.set_max_stack_size(512 * 1024).await;
+        let default_memory_limit_bytes = (config.plugin_max_memory_mb as usize) * 1024 * 1024;
 
         Ok(Self {
-            runtime,
-            contexts: Mutex::new(HashMap::new()),
+            slots: Mutex::new(HashMap::new()),
             permissions_map: Mutex::new(HashMap::new()),
-            memory_limit_bytes,
+            default_memory_limit_bytes,
             timeout_ms: config.plugin_default_timeout_ms,
             config: Arc::new(config.clone()),
             pool,
         })
     }
 
-    /// 加载 JS 插件代码到独立上下文
+    /// 加载 JS 插件代码到独立上下文（每个插件独立 AsyncRuntime）
     pub async fn load_plugin(
         &self,
         id: &str,
         code: &str,
         permissions: Permissions,
     ) -> anyhow::Result<()> {
-        let ctx = AsyncContext::full(&self.runtime).await?;
+        let memory_limit = permissions
+            .max_memory_mb
+            .map_or(self.default_memory_limit_bytes, |mb| {
+                mb as usize * 1024 * 1024
+            });
+
+        let runtime = AsyncRuntime::new()?;
+        runtime.set_memory_limit(memory_limit).await;
+        runtime.set_max_stack_size(512 * 1024).await;
+
+        let ctx = AsyncContext::full(&runtime).await?;
         let config = self.config.clone();
         let plugin_id = id.to_string();
         let perms = permissions.clone();
@@ -78,7 +88,13 @@ impl JsEngine {
             .lock()
             .await
             .insert(id.to_string(), permissions);
-        self.contexts.lock().await.insert(id.to_string(), ctx);
+        self.slots.lock().await.insert(
+            id.to_string(),
+            PluginSlot {
+                runtime,
+                context: ctx,
+            },
+        );
         Ok(())
     }
 
@@ -88,9 +104,9 @@ impl JsEngine {
         self.load_plugin(id, code, Permissions::default()).await
     }
 
-    /// 卸载插件（移除上下文）
+    /// 卸载插件（移除上下文和运行时）
     pub async fn unload_plugin(&self, id: &str) {
-        self.contexts.lock().await.remove(id);
+        self.slots.lock().await.remove(id);
     }
 
     /// 调用 Filter Hook（JSON 字符串进出）
@@ -100,23 +116,24 @@ impl JsEngine {
         func_name: &str,
         input: &T,
     ) -> anyhow::Result<Option<T>> {
-        let contexts = self.contexts.lock().await;
-        let ctx = match contexts.get(plugin_id) {
-            Some(c) => c,
+        let mut slots = self.slots.lock().await;
+        let slot = match slots.get_mut(plugin_id) {
+            Some(s) => s,
             None => return Ok(None),
         };
 
         let input_json = serde_json::to_string(input)?;
         let timeout = self.timeout_ms;
         let start = Instant::now();
-        self.runtime
+        slot.runtime
             .set_interrupt_handler(Some(Box::new(move || {
                 start.elapsed().as_millis() > u128::from(timeout)
             })))
             .await;
 
         let func_name_owned = func_name.to_string();
-        let result: anyhow::Result<Option<T>> = ctx
+        let result: anyhow::Result<Option<T>> = slot
+            .context
             .with(|ctx| {
                 let global = ctx.globals();
                 let plugin_obj: Object = match global.get("Plugin") {
@@ -133,7 +150,9 @@ impl JsEngine {
             })
             .await;
 
-        self.runtime.set_interrupt_handler(None).await;
+        if let Some(slot) = slots.get(plugin_id) {
+            slot.runtime.set_interrupt_handler(None).await;
+        }
         result
     }
 
@@ -144,23 +163,24 @@ impl JsEngine {
         func_name: &str,
         data: &T,
     ) -> anyhow::Result<()> {
-        let contexts = self.contexts.lock().await;
-        let ctx = match contexts.get(plugin_id) {
-            Some(c) => c,
+        let mut slots = self.slots.lock().await;
+        let slot = match slots.get_mut(plugin_id) {
+            Some(s) => s,
             None => return Ok(()),
         };
 
         let data_json = serde_json::to_string(data)?;
         let timeout = self.timeout_ms;
         let start = Instant::now();
-        self.runtime
+        slot.runtime
             .set_interrupt_handler(Some(Box::new(move || {
                 start.elapsed().as_millis() > u128::from(timeout)
             })))
             .await;
 
         let func_name_owned = func_name.to_string();
-        let result: anyhow::Result<()> = ctx
+        let result: anyhow::Result<()> = slot
+            .context
             .with(|ctx| {
                 let global = ctx.globals();
                 let plugin_obj: Object = match global.get("Plugin") {
@@ -176,7 +196,9 @@ impl JsEngine {
             })
             .await;
 
-        self.runtime.set_interrupt_handler(None).await;
+        if let Some(slot) = slots.get(plugin_id) {
+            slot.runtime.set_interrupt_handler(None).await;
+        }
         result
     }
 
@@ -187,15 +209,15 @@ impl JsEngine {
         func_name: &str,
         input: &str,
     ) -> anyhow::Result<Option<String>> {
-        let contexts = self.contexts.lock().await;
-        let ctx = match contexts.get(plugin_id) {
-            Some(c) => c,
+        let mut slots = self.slots.lock().await;
+        let slot = match slots.get_mut(plugin_id) {
+            Some(s) => s,
             None => return Ok(None),
         };
 
         let timeout = self.timeout_ms;
         let start = Instant::now();
-        self.runtime
+        slot.runtime
             .set_interrupt_handler(Some(Box::new(move || {
                 start.elapsed().as_millis() > u128::from(timeout)
             })))
@@ -203,7 +225,8 @@ impl JsEngine {
 
         let func_name_owned = func_name.to_string();
         let input_owned = input.to_string();
-        let result: anyhow::Result<Option<String>> = ctx
+        let result: anyhow::Result<Option<String>> = slot
+            .context
             .with(|ctx| {
                 let global = ctx.globals();
                 let plugin_obj: Object = match global.get("Plugin") {
@@ -219,14 +242,16 @@ impl JsEngine {
             })
             .await;
 
-        self.runtime.set_interrupt_handler(None).await;
+        if let Some(slot) = slots.get(plugin_id) {
+            slot.runtime.set_interrupt_handler(None).await;
+        }
         result
     }
 
     /// 获取已加载 JS 插件数量
     #[allow(dead_code)]
     pub async fn plugin_count(&self) -> usize {
-        self.contexts.lock().await.len()
+        self.slots.lock().await.len()
     }
 }
 
@@ -271,6 +296,8 @@ mod tests {
             rate_limit_login_window: 60,
             rate_limit_comment_max: 3,
             rate_limit_comment_window: 60,
+            rate_limit_api_token_max: 120,
+            rate_limit_api_token_window: 60,
             worker_enabled: false,
             worker_concurrency: 1,
             worker_poll_interval_ms: 500,
@@ -476,7 +503,11 @@ var Plugin = {
     }
 };
 "#;
-        engine.load_plugin_default("test-cfg", code).await.unwrap();
+        let perms = Permissions {
+            config: vec!["app.*".into()],
+            ..Permissions::default()
+        };
+        engine.load_plugin("test-cfg", code, perms).await.unwrap();
 
         let result = engine
             .call_action("test-cfg", "on_post_created", &serde_json::json!({}))

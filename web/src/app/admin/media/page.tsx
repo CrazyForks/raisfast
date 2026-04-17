@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Upload, Trash2, FileIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -133,12 +134,14 @@ export default function MediaPage() {
         <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
           {items.map((item) => (
             <Card key={item.id} className="overflow-hidden">
-              <div className="aspect-square bg-muted flex items-center justify-center overflow-hidden">
+              <div className="aspect-square bg-muted flex items-center justify-center overflow-hidden relative">
                 {isImageMime(item.mime_type) ? (
-                  <img
+                  <Image
                     src={item.url}
                     alt={item.original_name}
-                    className="h-full w-full object-cover"
+                    fill
+                    className="object-cover"
+                    sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
                   />
                 ) : (
                   <FileIcon className="size-12 text-muted-foreground" />

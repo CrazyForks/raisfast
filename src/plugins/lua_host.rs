@@ -201,6 +201,8 @@ mod tests {
             rate_limit_login_window: 60,
             rate_limit_comment_max: 3,
             rate_limit_comment_window: 60,
+            rate_limit_api_token_max: 120,
+            rate_limit_api_token_window: 60,
             worker_enabled: false,
             worker_concurrency: 1,
             worker_poll_interval_ms: 500,
@@ -248,7 +250,10 @@ mod tests {
     fn host_get_config_returns_known_values() {
         let lua = create_sandboxed_lua();
         let config = make_test_config();
-        let perms = Permissions::default();
+        let perms = Permissions {
+            config: vec!["app.*".into()],
+            ..Permissions::default()
+        };
         register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
 
         let globals = lua.globals();

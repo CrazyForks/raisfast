@@ -57,6 +57,8 @@ pub struct ListParams {
 }
 
 /// 为所有 content type 注册动态路由（启动时调用）
+///
+/// 除标准 CRUD 路由外，还为启用 `versioning` 的 content type 注册版本历史端点。
 pub fn register_content_routes(
     router: axum::Router<AppState>,
     registry: &crate::content_type::ContentTypeRegistry,
@@ -110,6 +112,27 @@ pub fn register_content_routes(
                     move |state, path| admin_get_handler(state, path, singular.clone())
                 }),
             );
+
+        if ct.versioning {
+            let p = plural.clone();
+            api = api
+                .route(
+                    &format!("/admin/cms/{p}/{{id}}/revisions"),
+                    axum::routing::get(crate::handlers::content_revision::list_revisions),
+                )
+                .route(
+                    &format!("/admin/cms/{p}/{{id}}/revisions/{{revision_id}}"),
+                    axum::routing::get(crate::handlers::content_revision::get_revision),
+                )
+                .route(
+                    &format!("/admin/cms/{p}/{{id}}/revisions/{{revision_id}}/restore"),
+                    axum::routing::post(crate::handlers::content_revision::restore_revision),
+                )
+                .route(
+                    &format!("/admin/cms/{p}/{{id}}/revisions/{{rev_a}}/diff/{{rev_b}}"),
+                    axum::routing::get(crate::handlers::content_revision::diff_revisions),
+                );
+        }
 
         tracing::debug!("registered CMS routes for content type: {}", ct.singular);
     }
@@ -472,6 +495,7 @@ pub async fn create_schema(
         slug_field: req.slug_field,
         timestamps: req.timestamps,
         soft_delete: req.soft_delete,
+        versioning: req.versioning,
         fields: req.fields,
         indexes: vec![],
         list_view: None,
@@ -576,6 +600,9 @@ pub async fn update_schema(
     }
     if let Some(soft_delete) = req.soft_delete {
         updated.soft_delete = soft_delete;
+    }
+    if let Some(versioning) = req.versioning {
+        updated.versioning = versioning;
     }
     if let Some(fields) = req.fields {
         updated.fields = fields;

@@ -17,8 +17,10 @@
 //! - [`media`] — 媒体文件模型与查询
 //! - [`refresh_token`] — 刷新令牌模型与查询
 
+pub mod api_token;
 pub mod category;
 pub mod comment;
+pub mod content_revision;
 pub mod media;
 pub mod options;
 pub mod plugin_storage;

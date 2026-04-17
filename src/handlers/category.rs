@@ -13,6 +13,9 @@ use crate::services::post;
 use crate::utils::pagination::PaginationParams;
 
 /// 获取分类列表（分页）
+#[utoipa::path(get, path = "/categories", tag = "categories",
+    responses((status = 200, description = "分类列表"))
+)]
 pub async fn list(
     State(state): State<crate::AppState>,
     tenant: ResolvedTenant,
@@ -31,6 +34,11 @@ pub async fn list(
 }
 
 /// 创建新分类
+#[utoipa::path(post, path = "/categories", tag = "categories",
+    security(("bearer_auth" = [])),
+    request_body = CreateCategoryRequest,
+    responses((status = 200, description = "分类已创建"))
+)]
 pub async fn create(
     State(state): State<crate::AppState>,
     _author: AuthorUser,
@@ -44,6 +52,12 @@ pub async fn create(
 }
 
 /// 更新分类
+#[utoipa::path(put, path = "/categories/{id}", tag = "categories",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "分类 ID")),
+    request_body = UpdateCategoryRequest,
+    responses((status = 200, description = "分类已更新"))
+)]
 pub async fn update(
     State(state): State<crate::AppState>,
     _author: AuthorUser,
@@ -58,6 +72,11 @@ pub async fn update(
 }
 
 /// 删除分类
+#[utoipa::path(delete, path = "/categories/{id}", tag = "categories",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "分类 ID")),
+    responses((status = 200, description = "分类已删除"))
+)]
 pub async fn delete(
     State(state): State<crate::AppState>,
     _author: AuthorUser,

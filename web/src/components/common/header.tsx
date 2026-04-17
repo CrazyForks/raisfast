@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/sheet";
 import { useAuthStore } from "@/stores/auth";
 import { UserMenu } from "@/components/common/user-menu";
+import { ThemeToggle } from "@/components/common/theme-toggle";
 
 const navLinks = [
   { href: "/posts", label: "Posts" },
@@ -107,6 +108,10 @@ export function Header() {
         </div>
 
         <div className="hidden items-center gap-2 md:flex">
+          <ThemeToggle />
+        </div>
+
+        <div className="hidden items-center gap-2 md:flex">
           {!mounted ? null : isLoggedIn ? (
             <UserMenu />
           ) : (
@@ -167,6 +172,10 @@ export function Header() {
                     </Link>
                   ),
                 )}
+                <div className="my-2 h-px bg-border" />
+                <div className="px-3 py-2">
+                  <ThemeToggle />
+                </div>
                 <div className="my-2 h-px bg-border" />
                 {!mounted ? null : isLoggedIn ? (
                   <div className="px-3 py-2">

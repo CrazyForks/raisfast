@@ -85,6 +85,12 @@ impl WasmInstance {
         self.store.set_fuel(self.fuel_limit)
     }
 
+    /// 返回插件的超时时间（毫秒）
+    #[must_use]
+    pub fn timeout_ms(&self) -> u64 {
+        self.timeout_ms
+    }
+
     /// 调用返回 JSON 的 Filter Hook
     ///
     /// ABI 协议：函数签名 `(ptr: i32, len: i32) -> i32`
@@ -343,6 +349,8 @@ mod tests {
             rate_limit_login_window: 60,
             rate_limit_comment_max: 3,
             rate_limit_comment_window: 60,
+            rate_limit_api_token_max: 120,
+            rate_limit_api_token_window: 60,
             worker_enabled: false,
             worker_concurrency: 1,
             worker_poll_interval_ms: 500,
@@ -538,7 +546,11 @@ mod tests {
         let mut cfg = wasmtime::Config::new();
         cfg.consume_fuel(true);
         let engine = wasmtime::Engine::new(&cfg).unwrap();
-        let host_ctx = make_host_ctx("config-test", Permissions::default());
+        let perms = Permissions {
+            config: vec!["app.*".into()],
+            ..Permissions::default()
+        };
+        let host_ctx = make_host_ctx("config-test", perms);
         assert!(host_ctx.get_config("app.env").is_some());
         assert_eq!(host_ctx.get_config("app.env"), Some("test".into()));
         let _inst = WasmInstance::new(&engine, TEST_WAT.as_bytes(), host_ctx, 5000).unwrap();

@@ -6,6 +6,7 @@
 //! - 调用 **models** 层执行数据库操作。
 //! - 负责数据校验、权限检查、业务规则执行等职责。
 
+pub mod api_token;
 pub mod auth;
 pub mod comment;
 pub mod media;

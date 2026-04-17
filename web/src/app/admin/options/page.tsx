@@ -44,10 +44,10 @@ interface OptionGroup {
 }
 
 const GROUP_LABELS: Record<string, string> = {
-  general: "常规",
-  reading: "阅读",
-  discussion: "讨论",
-  appearance: "外观",
+  general: "General",
+  reading: "Reading",
+  discussion: "Discussion",
+  appearance: "Appearance",
 };
 
 function OptionField({

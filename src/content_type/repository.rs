@@ -327,6 +327,9 @@ impl ContentRepository {
     }
 
     /// 更新（含字段校验，事务保护）
+    ///
+    /// 当 content type 启用 `versioning` 时，更新前自动保存当前数据快照到
+    /// `content_revisions` 表。
     pub async fn update(
         &self,
         ct: &ContentTypeSchema,
@@ -334,6 +337,19 @@ impl ContentRepository {
         mut data: Value,
         tenant_id: Option<&str>,
     ) -> Result<Value, AppError> {
+        if ct.versioning
+            && let Some(current) = self.find_by_id(ct, id, tenant_id).await?
+        {
+            let _ = crate::models::content_revision::create_revision(
+                &self.pool,
+                &ct.singular,
+                id,
+                &current,
+                None,
+            )
+            .await;
+        }
+
         let mut tx = self
             .pool
             .begin()
@@ -413,12 +429,19 @@ impl ContentRepository {
     }
 
     /// 删除
+    ///
+    /// 同时清理该记录在 `content_revisions` 表中的所有版本历史。
     pub async fn delete(
         &self,
         ct: &ContentTypeSchema,
         id: &str,
         tenant_id: Option<&str>,
     ) -> Result<(), AppError> {
+        if ct.versioning {
+            let _ = crate::models::content_revision::delete_revisions(&self.pool, &ct.singular, id)
+                .await;
+        }
+
         let tid = self.resolve_tenant(&ct.table, tenant_id).await;
 
         let mut idx = 1;

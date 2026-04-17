@@ -17,6 +17,10 @@ use crate::services::auth;
 use crate::utils::pagination::PaginationParams;
 
 /// 获取当前登录用户资料
+#[utoipa::path(get, path = "/users/me", tag = "users",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "当前用户资料"))
+)]
 pub async fn get_me(
     State(state): State<crate::AppState>,
     auth_user: AuthUser,
@@ -32,6 +36,11 @@ pub async fn get_me(
 }
 
 /// 更新当前用户资料
+#[utoipa::path(put, path = "/users/me", tag = "users",
+    security(("bearer_auth" = [])),
+    request_body = UpdateUserRequest,
+    responses((status = 200, description = "用户资料已更新"))
+)]
 pub async fn update_me(
     State(state): State<crate::AppState>,
     auth_user: AuthUser,
@@ -50,6 +59,11 @@ pub async fn update_me(
 }
 
 /// 修改当前用户密码
+#[utoipa::path(put, path = "/users/me/password", tag = "users",
+    security(("bearer_auth" = [])),
+    request_body = UpdatePasswordRequest,
+    responses((status = 200, description = "密码已修改"))
+)]
 pub async fn change_password(
     State(state): State<crate::AppState>,
     auth_user: AuthUser,
@@ -69,6 +83,11 @@ pub async fn change_password(
 }
 
 /// 获取指定用户的公开资料
+#[utoipa::path(get, path = "/users/{id}", tag = "users",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "用户 ID")),
+    responses((status = 200, description = "用户公开资料"))
+)]
 pub async fn get_user(
     State(state): State<crate::AppState>,
     tenant: ResolvedTenant,
@@ -79,6 +98,10 @@ pub async fn get_user(
 }
 
 /// 获取用户列表（管理员）
+#[utoipa::path(get, path = "/users", tag = "users",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "用户列表"))
+)]
 pub async fn list_users(
     State(state): State<crate::AppState>,
     _admin: AdminUser,
@@ -97,6 +120,12 @@ pub async fn list_users(
 }
 
 /// 管理员更新用户角色
+#[utoipa::path(put, path = "/users/{id}/role", tag = "users",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "用户 ID")),
+    request_body = UpdateRoleRequest,
+    responses((status = 200, description = "用户角色已更新"))
+)]
 pub async fn update_role(
     _admin: AdminUser,
     State(state): State<crate::AppState>,

@@ -21,6 +21,7 @@ pub mod models;
 pub mod plugins;
 pub mod repositories;
 pub mod search;
+pub mod server;
 pub mod services;
 pub mod utils;
 pub mod webhook;

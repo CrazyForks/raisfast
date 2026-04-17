@@ -207,11 +207,15 @@ impl HostContext {
         let Some(pool) = &self.pool else {
             return "error: no database access".to_string();
         };
-        let table = crate::plugins::permissions::extract_table_name(sql);
-        if let Some(tbl) = &table
-            && !PermissionChecker::is_table_readable(&self.permissions, tbl)
-        {
-            return format!("error: no read permission for table: {tbl}");
+        let table = match crate::plugins::permissions::extract_table_name(sql) {
+            Some(t) => t,
+            None => return "error: cannot parse table name from SQL".to_string(),
+        };
+        if PermissionChecker::is_protected_table(&table, &self.config.protected_tables) {
+            return format!("error: table '{table}' is protected and cannot be read by plugins");
+        }
+        if !PermissionChecker::is_table_readable(&self.permissions, &table) {
+            return format!("error: no read permission for table: {table}");
         }
         let handle = tokio::runtime::Handle::current();
         let sql = crate::db::dialect::translate(sql).into_owned();
@@ -222,7 +226,7 @@ impl HostContext {
                 Ok::<_, sqlx::Error>(json)
             }) {
                 Ok(json) => json,
-                Err(e) => format!("error: {e}"),
+                Err(_) => "error: database query failed".to_string(),
             }
         })
     }
@@ -270,19 +274,19 @@ impl HostContext {
             _ => None,
         };
 
-        let tx_guard = self.tx.lock().unwrap();
+        let tx_guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
         if tx_guard.is_some() {
             let sql = crate::db::dialect::translate(sql).into_owned();
             let handle = tokio::runtime::Handle::current();
             drop(tx_guard);
-            let mut tx_guard = self.tx.lock().unwrap();
+            let mut tx_guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
             let tx_state = tx_guard.as_mut().unwrap();
             return tokio::task::block_in_place(|| {
                 let result: Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> =
                     build_and_exec(&mut tx_state.conn, &sql, &parsed_params, &handle);
                 match result {
                     Ok(r) => format!(r#"{{"rows_affected":{}}}"#, r.rows_affected()),
-                    Err(e) => format!(r#"{{"error":"{e}"}}"#),
+                    Err(_) => r#"{"error":"database write failed"}"#.to_string(),
                 }
             });
         }
@@ -324,7 +328,7 @@ impl HostContext {
             };
             match result {
                 Ok(r) => format!(r#"{{"rows_affected":{}}}"#, r.rows_affected()),
-                Err(e) => format!(r#"{{"error":"{e}"}}"#),
+                Err(_) => r#"{"error":"database write failed"}"#.to_string(),
             }
         })
     }
@@ -339,7 +343,7 @@ impl HostContext {
         let Some(pool) = &self.pool else {
             return r#"{"error":"no database access"}"#.to_string();
         };
-        let mut tx_guard = self.tx.lock().unwrap();
+        let mut tx_guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
         if tx_guard.is_some() {
             return r#"{"error":"transaction already active"}"#.to_string();
         }
@@ -362,7 +366,7 @@ impl HostContext {
     /// 提交当前事务并释放连接。
     #[must_use]
     pub fn db_commit(&self) -> String {
-        let mut tx_guard = self.tx.lock().unwrap();
+        let mut tx_guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
         let Some(mut tx_state) = tx_guard.take() else {
             return r#"{"error":"no active transaction"}"#.to_string();
         };
@@ -388,7 +392,7 @@ impl HostContext {
     /// 回滚当前事务并释放连接。
     #[must_use]
     pub fn db_rollback(&self) -> String {
-        let mut tx_guard = self.tx.lock().unwrap();
+        let mut tx_guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
         let Some(mut tx_state) = tx_guard.take() else {
             return r#"{"error":"no active transaction"}"#.to_string();
         };
@@ -408,7 +412,7 @@ impl HostContext {
 
     /// 清理未提交的事务（插件超时/崩溃时调用）。
     pub fn cleanup_tx(&self) {
-        let mut tx_guard = self.tx.lock().unwrap();
+        let mut tx_guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(mut tx_state) = tx_guard.take() {
             let handle = tokio::runtime::Handle::current();
             let plugin_id = self.plugin_id.clone();
@@ -554,6 +558,8 @@ mod tests {
             rate_limit_login_window: 60,
             rate_limit_comment_max: 3,
             rate_limit_comment_window: 60,
+            rate_limit_api_token_max: 120,
+            rate_limit_api_token_window: 60,
             worker_enabled: false,
             worker_concurrency: 1,
             worker_poll_interval_ms: 500,
@@ -603,7 +609,11 @@ mod tests {
     #[test]
     fn host_context_get_config_checks_permissions() {
         let config = make_test_config();
-        let ctx = HostContext::new("test", config, "p1".into(), Permissions::default(), None);
+        let perms = Permissions {
+            config: vec!["app.*".into()],
+            ..Permissions::default()
+        };
+        let ctx = HostContext::new("test", config, "p1".into(), perms, None);
         assert!(ctx.get_config("app.env").is_some());
         assert!(ctx.get_config("unknown.key").is_none());
     }

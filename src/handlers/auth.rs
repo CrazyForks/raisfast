@@ -14,6 +14,10 @@ use crate::middleware::tenant::ResolvedTenant;
 use crate::services::auth;
 
 /// 用户注册
+#[utoipa::path(post, path = "/auth/register", tag = "auth",
+    request_body = RegisterRequest,
+    responses((status = 200, description = "注册成功"))
+)]
 pub async fn register(
     State(state): State<crate::AppState>,
     tenant: ResolvedTenant,
@@ -31,6 +35,10 @@ pub async fn register(
 }
 
 /// 用户登录
+#[utoipa::path(post, path = "/auth/login", tag = "auth",
+    request_body = LoginRequest,
+    responses((status = 200, description = "登录成功"))
+)]
 pub async fn login(
     State(state): State<crate::AppState>,
     tenant: ResolvedTenant,
@@ -53,6 +61,10 @@ pub async fn login(
 }
 
 /// 刷新访问令牌
+#[utoipa::path(post, path = "/auth/refresh", tag = "auth",
+    request_body = RefreshRequest,
+    responses((status = 200, description = "令牌刷新成功"))
+)]
 pub async fn refresh(
     State(state): State<crate::AppState>,
     Json(req): Json<RefreshRequest>,
@@ -73,6 +85,10 @@ pub async fn refresh(
 }
 
 /// 用户登出
+#[utoipa::path(post, path = "/auth/logout", tag = "auth",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "登出成功"))
+)]
 pub async fn logout(
     State(state): State<crate::AppState>,
     auth_user: crate::middleware::auth::AuthUser,

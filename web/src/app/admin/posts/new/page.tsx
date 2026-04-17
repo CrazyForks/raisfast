@@ -14,6 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { RichTextEditor } from "@/components/common/rich-text-editor";
 import {
   Select,
   SelectContent,
@@ -143,11 +144,10 @@ export default function NewPostPage() {
 
             <div className="space-y-2">
               <Label htmlFor="content">Content</Label>
-              <Textarea
-                id="content"
+              <RichTextEditor
+                value={watch("content") || ""}
+                onChange={(html) => setValue("content", html)}
                 placeholder="Write your post content..."
-                rows={15}
-                {...register("content")}
               />
               {errors.content && (
                 <p className="text-sm text-red-500">

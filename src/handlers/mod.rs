@@ -16,9 +16,11 @@
 //! - [`rss`] — RSS 订阅源
 //! - [`health`] — 健康检查
 
+pub mod api_token;
 pub mod auth;
 pub mod category;
 pub mod comment;
+pub mod content_revision;
 pub mod cron;
 pub mod dto;
 pub mod health;

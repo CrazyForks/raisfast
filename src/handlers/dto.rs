@@ -4,6 +4,7 @@
 //! 与数据库模型（`models::*`）解耦。
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::models::media::Media;
@@ -12,7 +13,7 @@ use crate::models::user::User;
 // ── User ──────────────────────────────────────────────────────
 
 /// 注册请求体
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct RegisterRequest {
     #[validate(email)]
     pub email: String,
@@ -23,7 +24,7 @@ pub struct RegisterRequest {
 }
 
 /// 登录请求体
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct LoginRequest {
     #[validate(email)]
     pub email: String,
@@ -32,14 +33,14 @@ pub struct LoginRequest {
 }
 
 /// 刷新令牌请求体
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct RefreshRequest {
     #[validate(length(min = 1))]
     pub refresh_token: String,
 }
 
 /// 更新用户资料请求体
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdateUserRequest {
     #[validate(length(min = 2, max = 50))]
     pub username: Option<String>,
@@ -49,7 +50,7 @@ pub struct UpdateUserRequest {
 }
 
 /// 修改密码请求体
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdatePasswordRequest {
     #[validate(length(min = 1, max = 128))]
     pub old_password: String,
@@ -58,14 +59,14 @@ pub struct UpdatePasswordRequest {
 }
 
 /// 管理员更新角色请求体
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdateRoleRequest {
     #[validate(length(min = 1))]
     pub role: String,
 }
 
 /// 用户公开信息响应
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 #[non_exhaustive]
 pub struct UserResponse {
     pub id: String,
@@ -96,7 +97,7 @@ impl From<User> for UserResponse {
 }
 
 /// 登录成功响应
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[non_exhaustive]
 pub struct LoginResponse {
     pub access_token: String,
@@ -108,7 +109,7 @@ pub struct LoginResponse {
 // ── Post ──────────────────────────────────────────────────────
 
 /// 创建文章请求体
-#[derive(Debug, Clone, Deserialize, Serialize, Validate)]
+#[derive(Debug, Clone, Deserialize, Serialize, Validate, ToSchema)]
 pub struct CreatePostRequest {
     #[validate(length(min = 1, max = 200))]
     pub title: String,
@@ -125,7 +126,7 @@ pub struct CreatePostRequest {
 }
 
 /// 更新文章请求体
-#[derive(Debug, Deserialize, Serialize, Validate, Clone)]
+#[derive(Debug, Deserialize, Serialize, Validate, Clone, ToSchema)]
 pub struct UpdatePostRequest {
     #[validate(length(min = 1, max = 200))]
     pub title: Option<String>,
@@ -141,7 +142,7 @@ pub struct UpdatePostRequest {
 }
 
 /// 文章 API 响应
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, ToSchema)]
 #[non_exhaustive]
 pub struct PostResponse {
     pub id: String,
@@ -171,7 +172,7 @@ pub struct PostResponse {
 // ── Category ──────────────────────────────────────────────────
 
 /// 创建分类请求体
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateCategoryRequest {
     #[validate(length(min = 1, max = 100))]
     pub name: String,
@@ -182,7 +183,7 @@ pub struct CreateCategoryRequest {
 }
 
 /// 更新分类请求体
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdateCategoryRequest {
     #[validate(length(min = 1, max = 100))]
     pub name: Option<String>,
@@ -195,7 +196,7 @@ pub struct UpdateCategoryRequest {
 // ── Tag ───────────────────────────────────────────────────────
 
 /// 创建标签请求体
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateTagRequest {
     #[validate(length(min = 1, max = 50))]
     pub name: String,
@@ -204,7 +205,7 @@ pub struct CreateTagRequest {
 // ── Comment ───────────────────────────────────────────────────
 
 /// 创建评论请求体
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateCommentRequest {
     #[validate(length(min = 1, max = 5000))]
     pub content: String,
@@ -217,7 +218,7 @@ pub struct CreateCommentRequest {
 }
 
 /// 更新评论状态请求体
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdateCommentStatusRequest {
     #[validate(custom(function = "validate_comment_status"))]
     pub status: String,
@@ -226,7 +227,7 @@ pub struct UpdateCommentStatusRequest {
 // ── Media ─────────────────────────────────────────────────────
 
 /// 媒体文件 API 响应
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct MediaResponse {
     pub id: String,
     pub user_id: String,

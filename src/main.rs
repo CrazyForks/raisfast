@@ -20,7 +20,6 @@ use rust_blog::config::app::AppConfig;
 
 mod cli;
 mod logging;
-mod server;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

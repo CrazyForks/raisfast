@@ -58,6 +58,7 @@ async fn setup_pool() -> sqlx::SqlitePool {
         include_str!("../migrations/009_options.sql"),
         include_str!("../migrations/010_rbac.sql"),
         include_str!("../migrations/011_tenants.sql"),
+        include_str!("../migrations/016_content_revisions.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }
@@ -745,4 +746,205 @@ default = 0
         .unwrap();
     assert_eq!(created["body"], "hello");
     assert_eq!(created["priority"], 5);
+}
+
+// ── Versioning 测试 ─────────────────────────────────────────────
+
+const VERSIONED_TOML: &str = r#"
+[content_type]
+name = "Article"
+singular = "article"
+plural = "articles"
+table = "ct_versioned_articles"
+timestamps = true
+versioning = true
+
+[fields.title]
+type = "text"
+required = true
+
+[fields.content]
+type = "text"
+
+[fields.status]
+type = "text"
+default = "draft"
+"#;
+
+fn parse_versioned() -> ContentTypeSchema {
+    ContentTypeSchema::parse_from_str(VERSIONED_TOML).unwrap()
+}
+
+#[tokio::test]
+async fn versioning_flag_parsed() {
+    let ct = parse_versioned();
+    assert!(ct.versioning);
+    assert_eq!(ct.singular, "article");
+}
+
+#[tokio::test]
+async fn versioning_creates_revision_on_update() {
+    let pool = setup_pool().await;
+    let ct = parse_versioned();
+    let repo = ContentRepository::new(pool.clone());
+
+    repo.migrate(&ct).await.unwrap();
+
+    let created = repo
+        .create(
+            &ct,
+            json!({"title": "V1 Title", "content": "V1 Content"}),
+            None,
+        )
+        .await
+        .unwrap();
+    let id = created["id"].as_str().unwrap();
+
+    let _updated = repo
+        .update(
+            &ct,
+            id,
+            json!({"title": "V2 Title", "content": "V2 Content"}),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let revisions = rust_blog::models::content_revision::list_revisions(&pool, "article", id)
+        .await
+        .unwrap();
+    assert_eq!(revisions.len(), 1);
+    assert_eq!(revisions[0].revision_number, 1);
+
+    let rev =
+        rust_blog::models::content_revision::get_revision(&pool, "article", id, &revisions[0].id)
+            .await
+            .unwrap()
+            .unwrap();
+    let snapshot: serde_json::Value = serde_json::from_str(&rev.snapshot).unwrap();
+    assert_eq!(snapshot["title"], "V1 Title");
+    assert_eq!(snapshot["content"], "V1 Content");
+}
+
+#[tokio::test]
+async fn versioning_multiple_updates_create_multiple_revisions() {
+    let pool = setup_pool().await;
+    let ct = parse_versioned();
+    let repo = ContentRepository::new(pool.clone());
+
+    repo.migrate(&ct).await.unwrap();
+
+    let created = repo
+        .create(&ct, json!({"title": "Rev0"}), None)
+        .await
+        .unwrap();
+    let id = created["id"].as_str().unwrap();
+
+    repo.update(&ct, id, json!({"title": "Rev1"}), None)
+        .await
+        .unwrap();
+    repo.update(&ct, id, json!({"title": "Rev2"}), None)
+        .await
+        .unwrap();
+    repo.update(&ct, id, json!({"title": "Rev3"}), None)
+        .await
+        .unwrap();
+
+    let revisions = rust_blog::models::content_revision::list_revisions(&pool, "article", id)
+        .await
+        .unwrap();
+    assert_eq!(revisions.len(), 3);
+    assert_eq!(revisions[0].revision_number, 3);
+    assert_eq!(revisions[1].revision_number, 2);
+    assert_eq!(revisions[2].revision_number, 1);
+}
+
+#[tokio::test]
+async fn versioning_delete_cleans_up_revisions() {
+    let pool = setup_pool().await;
+    let ct = parse_versioned();
+    let repo = ContentRepository::new(pool.clone());
+
+    repo.migrate(&ct).await.unwrap();
+
+    let created = repo
+        .create(&ct, json!({"title": "Temp"}), None)
+        .await
+        .unwrap();
+    let id = created["id"].as_str().unwrap();
+
+    repo.update(&ct, id, json!({"title": "Updated"}), None)
+        .await
+        .unwrap();
+
+    let before = rust_blog::models::content_revision::list_revisions(&pool, "article", id)
+        .await
+        .unwrap();
+    assert_eq!(before.len(), 1);
+
+    repo.delete(&ct, id, None).await.unwrap();
+
+    let after = rust_blog::models::content_revision::list_revisions(&pool, "article", id)
+        .await
+        .unwrap();
+    assert!(after.is_empty());
+}
+
+#[tokio::test]
+async fn versioning_no_revision_when_disabled() {
+    let pool = setup_pool().await;
+    let ct = ContentTypeSchema::parse_from_str(
+        r#"
+[content_type]
+name = "Note"
+singular = "note"
+plural = "notes"
+table = "ct_no_versioning"
+timestamps = true
+
+[fields.title]
+type = "text"
+required = true
+"#,
+    )
+    .unwrap();
+    assert!(!ct.versioning);
+
+    let repo = ContentRepository::new(pool.clone());
+    repo.migrate(&ct).await.unwrap();
+
+    let created = repo
+        .create(&ct, json!({"title": "NoRev"}), None)
+        .await
+        .unwrap();
+    let id = created["id"].as_str().unwrap();
+
+    repo.update(&ct, id, json!({"title": "Updated"}), None)
+        .await
+        .unwrap();
+
+    let revisions = rust_blog::models::content_revision::list_revisions(&pool, "note", id)
+        .await
+        .unwrap();
+    assert!(revisions.is_empty());
+}
+
+#[tokio::test]
+async fn versioning_diff_computes_correctly() {
+    let old = json!({"title": "Old", "content": "Same", "status": "draft"});
+    let new = json!({"title": "New", "content": "Same", "status": "published", "extra": 42});
+
+    let diff = rust_blog::models::content_revision::compute_diff(&old, &new);
+
+    let changed = diff["changed"].as_object().unwrap();
+    assert!(changed.contains_key("title"));
+    assert!(changed.contains_key("status"));
+    assert_eq!(changed.len(), 2);
+
+    let added = diff["added"].as_object().unwrap();
+    assert!(added.contains_key("extra"));
+    assert_eq!(added.len(), 1);
+
+    let removed = diff["removed"].as_object().unwrap();
+    assert!(removed.is_empty());
 }

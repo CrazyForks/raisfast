@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { Eye } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -26,11 +27,13 @@ export function PostCard({ post }: PostCardProps) {
     <Card className="group overflow-hidden transition-shadow hover:shadow-lg">
       {post.cover_image && (
         <Link href={`/posts/${post.slug}`}>
-          <div className="aspect-video overflow-hidden">
-            <img
+          <div className="aspect-video overflow-hidden relative">
+            <Image
               src={post.cover_image}
               alt={post.title}
-              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+              fill
+              className="object-cover transition-transform duration-300 group-hover:scale-105"
+              sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
             />
           </div>
         </Link>

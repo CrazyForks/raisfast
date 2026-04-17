@@ -174,6 +174,8 @@ mod tests {
             rate_limit_login_window: 60,
             rate_limit_comment_max: 3,
             rate_limit_comment_window: 60,
+            rate_limit_api_token_max: 120,
+            rate_limit_api_token_window: 60,
             worker_enabled: false,
             worker_concurrency: 1,
             worker_poll_interval_ms: 500,
@@ -220,7 +222,10 @@ mod tests {
         let runtime = AsyncRuntime::new().unwrap();
         let ctx = AsyncContext::full(&runtime).await.unwrap();
         let config = make_test_config();
-        let perms = Permissions::default();
+        let perms = Permissions {
+            config: vec!["app.*".into()],
+            ..Permissions::default()
+        };
 
         ctx.with(|ctx| {
             register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None)
