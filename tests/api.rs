@@ -42,60 +42,14 @@ use tower_http::limit::RequestBodyLimitLayer;
 // ── helpers ──────────────────────────────────────────────────────
 
 pub(crate) fn test_config() -> AppConfig {
-    AppConfig {
-        host: "127.0.0.1".into(),
-        port: 0,
-        env: "test".into(),
-        database_url: "sqlite::memory:".into(),
-        db_pool_size: 1,
-        jwt_secret: "test-secret-key-at-least-32-characters-long".into(),
-        jwt_access_expires: 900,
-        jwt_refresh_expires: 604800,
-        upload_dir: std::env::temp_dir()
-            .join("hello-axum-test-uploads")
-            .to_string_lossy()
-            .into(),
-        max_upload_size: 5242880,
-        static_dir: "./static".into(),
-        base_url: "http://localhost:9000".into(),
-        cors_origins: None,
-        tls_cert_path: None,
-        tls_key_path: None,
-        plugin_dir: None,
-        plugin_hot_reload: false,
-        plugin_max_memory_mb: 32,
-        plugin_default_timeout_ms: 5000,
-        plugin_disabled: vec![],
-        plugin_vfs_root: "./plugins-data".into(),
-        plugin_vfs_max_file_size: 1048576,
-        plugin_vfs_max_total_size: 10485760,
-        log_dir: "./logs".into(),
-        log_max_files: 7,
-        rate_limit_global_max: 60,
-        rate_limit_global_window: 60,
-        rate_limit_register_max: 5,
-        rate_limit_register_window: 3600,
-        rate_limit_login_max: 10,
-        rate_limit_login_window: 60,
-        rate_limit_comment_max: 3,
-        rate_limit_comment_window: 60,
-        rate_limit_api_token_max: 120,
-        rate_limit_api_token_window: 60,
-        worker_enabled: false,
-        worker_concurrency: 1,
-        worker_poll_interval_ms: 500,
-        worker_default_max_attempts: 3,
-        worker_cron_tick_ms: 60000,
-        cron_seed_enabled: false,
-        cron_schedules: vec![],
-        cron_log_retention_days: 30,
-        search_engine: "none".into(),
-        search_index_dir: "./data/search_index".into(),
-        content_type_dir: "./content_types".into(),
-        timezone: "UTC".into(),
-        extension_dir: "./__nonexistent_extensions__".into(),
-        protected_tables: rust_blog::config::app::default_protected_tables(),
-    }
+    let mut cfg = AppConfig::test_defaults();
+    cfg.upload_dir = std::env::temp_dir()
+        .join("hello-axum-test-uploads")
+        .to_string_lossy()
+        .into();
+    cfg.base_url = "http://localhost:9000".into();
+    cfg.extension_dir = "./__nonexistent_extensions__".into();
+    cfg
 }
 
 pub(crate) async fn test_pool() -> rust_blog::db::Pool {
@@ -162,6 +116,10 @@ pub(crate) async fn test_pool() -> rust_blog::db::Pool {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(include_str!("../migrations/018_media_dimensions.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
         pool
     }
 }
@@ -214,6 +172,7 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
         extension_service: Arc::new(rust_blog::extension::service::ExtensionService::new(
             pool.clone(),
         )),
+        storage: rust_blog::storage::create_storage(&config).expect("failed to create storage"),
     };
     let max_upload = state.config.max_upload_size;
 

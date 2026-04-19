@@ -247,7 +247,7 @@ pub async fn create_post(
                 cover_image: req.cover_image,
                 status: status.to_string(),
                 author_id: author_id.to_string(),
-                category_id: req.category_id.filter(|s| !s.is_empty()),
+                category_id: req.category_id.filter(|s: &String| !s.is_empty()),
                 tag_ids: req.tag_ids,
             },
             tenant_id,
@@ -292,11 +292,10 @@ pub async fn update_post(
         .map(slugify)
         .filter(|s| s != &existing.slug);
 
-    let slug = match new_slug {
-        Some(s) => Some(make_unique_slug(&s, repo, tenant_id).await?),
+    let slug: Option<String> = match new_slug.as_deref() {
+        Some(s) => Some(make_unique_slug(s, repo, tenant_id).await?),
         None => None,
     };
-
     let content = req.content.as_deref().unwrap_or(&existing.content);
     let excerpt = req
         .excerpt
@@ -312,7 +311,7 @@ pub async fn update_post(
             excerpt: Some(excerpt),
             cover_image: req.cover_image,
             status: req.status,
-            category_id: req.category_id.filter(|s| !s.is_empty()),
+            category_id: req.category_id.filter(|s: &String| !s.is_empty()),
             tag_ids: req.tag_ids,
         },
         tenant_id,

@@ -23,6 +23,7 @@ pub mod repositories;
 pub mod search;
 pub mod server;
 pub mod services;
+pub mod storage;
 pub mod utils;
 pub mod webhook;
 pub mod worker;
@@ -45,6 +46,7 @@ use services::rbac::RbacService;
 use services::tenant::TenantService;
 use services::workflow::WorkflowService;
 use std::sync::Arc;
+use storage::Storage;
 use webhook::WebhookService;
 
 rust_i18n::i18n!("locales", fallback = "en");
@@ -76,4 +78,5 @@ pub struct AppState {
     pub workflow: Arc<WorkflowService>,
     pub extension_manager: Arc<ExtensionManager>,
     pub extension_service: Arc<ExtensionService>,
+    pub storage: Arc<dyn Storage>,
 }

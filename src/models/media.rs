@@ -24,6 +24,8 @@ pub struct Media {
     pub filepath: String,
     pub mimetype: String,
     pub size: i64,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
     pub created_at: String,
 }
 
@@ -40,7 +42,7 @@ pub async fn create(
     let tid = resolve_tenant(tenant_id);
 
     let sql = crate::db::dialect::translate(
-        "INSERT INTO media (id, tenant_id, user_id, filename, filepath, mimetype, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO media (id, tenant_id, user_id, filename, filepath, mimetype, size, width, height, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     sqlx::query(&sql)
         .bind(&id)
@@ -50,6 +52,8 @@ pub async fn create(
         .bind(&cmd.filepath)
         .bind(&cmd.mimetype)
         .bind(cmd.size)
+        .bind(cmd.width)
+        .bind(cmd.height)
         .bind(&now)
         .execute(pool)
         .await?;
@@ -124,6 +128,66 @@ pub async fn find_by_id(
     }
     let media = q.fetch_optional(pool).await?;
     Ok(media)
+}
+
+/// 存储统计信息
+#[derive(Debug, Serialize, Clone)]
+pub struct MediaStats {
+    pub total_files: i64,
+    pub total_size: i64,
+    pub by_type: Vec<MediaTypeInfo>,
+}
+
+/// 按 MIME 类型分组的统计
+#[derive(Debug, Serialize, Clone)]
+pub struct MediaTypeInfo {
+    pub mimetype: String,
+    pub count: i64,
+    pub total_size: i64,
+}
+
+/// 获取存储统计信息
+pub async fn stats(
+    pool: &crate::db::Pool,
+    user_id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<MediaStats> {
+    let filter = tenant_filter(tenant_id);
+
+    let total_sql = format!(
+        "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE user_id = ?{filter}"
+    );
+    let total_sql = crate::db::dialect::translate(&total_sql);
+    let mut q = sqlx::query_as::<_, (i64, i64)>(&total_sql).bind(user_id);
+    if let Some(t) = tenant_id {
+        q = q.bind(t);
+    }
+    let (total_files, total_size) = q.fetch_one(pool).await?;
+
+    let by_type_sql = format!(
+        "SELECT mimetype, COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE user_id = ?{filter} GROUP BY mimetype ORDER BY COUNT(*) DESC"
+    );
+    let by_type_sql = crate::db::dialect::translate(&by_type_sql);
+    let mut q2 = sqlx::query_as::<_, (String, i64, i64)>(&by_type_sql).bind(user_id);
+    if let Some(t) = tenant_id {
+        q2 = q2.bind(t);
+    }
+    let rows = q2.fetch_all(pool).await?;
+
+    let by_type = rows
+        .into_iter()
+        .map(|(mimetype, count, total_size)| MediaTypeInfo {
+            mimetype,
+            count,
+            total_size,
+        })
+        .collect();
+
+    Ok(MediaStats {
+        total_files,
+        total_size,
+        by_type,
+    })
 }
 
 /// 删除媒体文件记录

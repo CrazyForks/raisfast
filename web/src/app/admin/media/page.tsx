@@ -1,92 +1,86 @@
 "use client";
 
-import { useRef, useState } from "react";
-import Image from "next/image";
+import { useCallback, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Upload, Trash2, FileIcon } from "lucide-react";
+import {
+  LayoutGrid,
+  List,
+  Search,
+  ArrowUpDown,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, type MediaFile, type PaginatedData } from "@/lib/api";
 
-interface MediaResponse {
-  id: string;
-  original_name: string;
-  url: string;
-  mime_type: string;
-  file_size: number;
-  created_at: string;
-}
+import { MediaSidebar } from "@/components/admin/media/media-sidebar";
+import { MediaUpload } from "@/components/admin/media/media-upload";
+import { MediaGrid } from "@/components/admin/media/media-grid";
+import { MediaList } from "@/components/admin/media/media-list";
+import { MediaDetailPanel } from "@/components/admin/media/media-detail-panel";
+import {
+  matchesCategory,
+  sortFiles,
+  getAcceptForCategory,
+  formatFileSize,
+  type FileCategory,
+} from "@/components/admin/media/media-utils";
 
-interface PaginatedData<T> {
-  items: T[];
-  total: number;
-  page: number;
-  page_size: number;
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function isImageMime(mime: string): boolean {
-  return mime.startsWith("image/");
-}
+type ViewMode = "grid" | "list";
+type SortField = "created_at" | "filename" | "size";
+type SortOrder = "asc" | "desc";
 
 export default function MediaPage() {
   const queryClient = useQueryClient();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
   const [page, setPage] = useState(1);
+  const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const [category, setCategory] = useState<FileCategory>("all");
+  const [search, setSearch] = useState("");
+  const [sortField, setSortField] = useState<SortField>("created_at");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
+  const [selectedFile, setSelectedFile] = useState<MediaFile | null>(null);
+
   const pageSize = 20;
 
   const mediaQuery = useQuery({
     queryKey: ["media", page],
     queryFn: () =>
-      api.get<PaginatedData<MediaResponse>>(`/media?page=${page}&page_size=${pageSize}`),
+      api.get<PaginatedData<MediaFile>>(
+        `/media?page=${page}&page_size=${pageSize}`,
+      ),
+  });
+
+  const statsQuery = useQuery({
+    queryKey: ["media-stats"],
+    queryFn: () =>
+      api.get<{
+        total_files: number;
+        total_size: number;
+        by_type: { mimetype: string; count: number; total_size: number }[];
+      }>("/media/stats"),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/media/${id}`),
     onSuccess: () => {
       toast.success("File deleted");
+      setSelectedFile(null);
       queryClient.invalidateQueries({ queryKey: ["media"] });
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        toast.error(err.message);
-      } else {
-        toast.error("Failed to delete file");
-      }
+      if (err instanceof ApiError) toast.error(err.message);
+      else toast.error("Failed to delete file");
     },
   });
-
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setUploading(true);
-    try {
-      await api.upload("/media/upload", file);
-      toast.success("File uploaded");
-      queryClient.invalidateQueries({ queryKey: ["media"] });
-    } catch (err) {
-      if (err instanceof ApiError) {
-        toast.error(err.message);
-      } else {
-        toast.error("Failed to upload file");
-      }
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-    }
-  }
 
   function handleDelete(id: string) {
     if (confirm("Are you sure you want to delete this file?")) {
@@ -94,105 +88,179 @@ export default function MediaPage() {
     }
   }
 
-  const items = mediaQuery.data?.items ?? [];
+  const allFiles = mediaQuery.data?.items ?? [];
+
+  const filteredFiles = useMemo(() => {
+    let files = allFiles;
+    if (category !== "all") {
+      files = files.filter((f) => matchesCategory(f, category));
+    }
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      files = files.filter((f) => f.filename.toLowerCase().includes(q));
+    }
+    return sortFiles(files, sortField, sortOrder);
+  }, [allFiles, category, search, sortField, sortOrder]);
+
   const totalPages = Math.ceil((mediaQuery.data?.total ?? 0) / pageSize);
 
+  const toggleSort = useCallback(
+    (field: SortField) => {
+      if (sortField === field) {
+        setSortOrder((o) => (o === "asc" ? "desc" : "asc"));
+      } else {
+        setSortField(field);
+        setSortOrder("desc");
+      }
+    },
+    [sortField],
+  );
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Media</h1>
-        <div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            className="hidden"
-            onChange={handleUpload}
-          />
-          <Button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-          >
-            <Upload className="size-4" />
-            {uploading ? "Uploading..." : "Upload File"}
-          </Button>
-        </div>
-      </div>
+    <div className="flex h-[calc(100vh-8rem)] gap-0">
+      {/* Sidebar */}
+      <aside className="w-48 shrink-0 border-r py-4 px-2 overflow-hidden flex flex-col gap-4">
+        <h1 className="text-xl font-bold">Media</h1>
+        {statsQuery.data && (
+          <p className="text-xs text-muted-foreground">
+            {statsQuery.data.total_files} files &middot; {formatFileSize(statsQuery.data.total_size)}
+          </p>
+        )}
+        <MediaSidebar
+          files={allFiles}
+          selected={category}
+          onSelect={setCategory}
+        />
+      </aside>
 
-      {mediaQuery.isLoading ? (
-        <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <Skeleton key={i} className="aspect-square rounded-xl" />
-          ))}
-        </div>
-      ) : items.length === 0 ? (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <p className="text-muted-foreground">No media files yet.</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
-          {items.map((item) => (
-            <Card key={item.id} className="overflow-hidden">
-              <div className="aspect-square bg-muted flex items-center justify-center overflow-hidden relative">
-                {isImageMime(item.mime_type) ? (
-                  <Image
-                    src={item.url}
-                    alt={item.original_name}
-                    fill
-                    className="object-cover"
-                    sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
-                  />
-                ) : (
-                  <FileIcon className="size-12 text-muted-foreground" />
-                )}
+      {/* Main content */}
+      <div className="flex flex-1 min-w-0">
+        <div className="flex-1 min-w-0 p-4 space-y-4 overflow-y-auto">
+          {/* Toolbar */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative flex-1 max-w-xs">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+              <Input
+                placeholder="Search files..."
+                className="pl-8 h-8"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+
+            <Select
+              value={sortField}
+              onValueChange={(v) => toggleSort(v as SortField)}
+            >
+              <SelectTrigger className="w-32 h-8">
+                <ArrowUpDown className="size-3.5 mr-1" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="created_at">Date</SelectItem>
+                <SelectItem value="filename">Name</SelectItem>
+                <SelectItem value="size">Size</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={() =>
+                setSortOrder((o) => (o === "asc" ? "desc" : "asc"))
+              }
+              title={sortOrder === "asc" ? "Ascending" : "Descending"}
+            >
+              {sortOrder === "asc" ? "↑" : "↓"}
+            </Button>
+
+            <div className="flex border rounded-md overflow-hidden">
+              <Button
+                variant={viewMode === "grid" ? "secondary" : "ghost"}
+                size="icon-xs"
+                onClick={() => setViewMode("grid")}
+              >
+                <LayoutGrid className="size-4" />
+              </Button>
+              <Button
+                variant={viewMode === "list" ? "secondary" : "ghost"}
+                size="icon-xs"
+                onClick={() => setViewMode("list")}
+              >
+                <List className="size-4" />
+              </Button>
+            </div>
+          </div>
+
+          {/* Upload area */}
+          <MediaUpload accept={getAcceptForCategory(category)} />
+
+          {/* Content */}
+          {mediaQuery.isLoading ? (
+            viewMode === "grid" ? (
+              <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                {Array.from({ length: 10 }).map((_, i) => (
+                  <Skeleton key={i} className="aspect-square rounded-xl" />
+                ))}
               </div>
-              <CardContent className="p-3 space-y-1">
-                <p className="text-sm font-medium truncate">
-                  {item.original_name}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {formatFileSize(item.file_size)}
-                </p>
-                <Button
-                  variant="destructive"
-                  size="xs"
-                  className="w-full"
-                  onClick={() => handleDelete(item.id)}
-                  disabled={deleteMutation.isPending}
-                >
-                  <Trash2 className="size-3" />
-                  Delete
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+            ) : (
+              <div className="space-y-2">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <Skeleton key={i} className="h-14 rounded" />
+                ))}
+              </div>
+            )
+          ) : filteredFiles.length === 0 ? null : viewMode === "grid" ? (
+            <MediaGrid
+              files={filteredFiles}
+              onDelete={handleDelete}
+              onSelect={setSelectedFile}
+              selectedId={selectedFile?.id}
+            />
+          ) : (
+            <MediaList
+              files={filteredFiles}
+              onDelete={handleDelete}
+              onSelect={setSelectedFile}
+              selectedId={selectedFile?.id}
+            />
+          )}
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page <= 1}
-            onClick={() => setPage((p) => p - 1)}
-          >
-            Previous
-          </Button>
-          <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page >= totalPages}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            Next
-          </Button>
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2 pt-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => p - 1)}
+              >
+                Previous
+              </Button>
+              <span className="text-sm text-muted-foreground">
+                Page {page} of {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          )}
         </div>
-      )}
+
+        {/* Detail panel */}
+        {selectedFile && (
+          <MediaDetailPanel
+            file={selectedFile}
+            onDelete={handleDelete}
+            onClose={() => setSelectedFile(null)}
+          />
+        )}
+      </div>
     </div>
   );
 }

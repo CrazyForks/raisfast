@@ -7,4 +7,6 @@ pub struct CreateMediaCmd {
     pub filepath: String,
     pub mimetype: String,
     pub size: i64,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
 }

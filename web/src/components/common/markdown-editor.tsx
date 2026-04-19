@@ -19,6 +19,9 @@ import {
   Table,
   Heading,
   Video,
+  FileSpreadsheet,
+  FileText,
+  FileType2,
 } from "lucide-react";
 
 const Icon = ({ children }: { children: React.ReactNode }) => (
@@ -71,6 +74,9 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { MediaSelector } from "@/components/common/media-selector";
+import type { MediaFile } from "@/lib/api";
+import type { FileCategory } from "@/components/admin/media/media-utils";
 
 const MAX_TABLE = 10;
 const HEADING_LEVELS = [1, 2, 3, 4, 5, 6] as const;
@@ -95,7 +101,7 @@ interface MarkdownEditorProps {
 }
 
 type PendingAction = {
-  type: "link" | "image" | "video";
+  type: "link" | "image" | "video" | "pdf" | "excel" | "word";
   textApi: any;
 };
 
@@ -361,9 +367,10 @@ export function MarkdownEditor({
 }: MarkdownEditorProps) {
   const [colorMode, setColorMode] = useState<"light" | "dark">("light");
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [dialogType, setDialogType] = useState<"link" | "image" | "video">("link");
+  const [dialogType, setDialogType] = useState<PendingAction["type"]>("link");
   const [inputText, setInputText] = useState("");
   const [inputUrl, setInputUrl] = useState("");
+  const [showMediaPicker, setShowMediaPicker] = useState(false);
   const pendingRef = useRef<PendingAction | null>(null);
   const apiRef = useRef<any>(null);
   const stateRef = useRef<any>(null);
@@ -392,6 +399,9 @@ export function MarkdownEditor({
       const linkCmd = makeDialogCommand("link");
       const imageCmd = makeDialogCommand("image");
       const videoCmd = makeDialogCommand("video");
+      const pdfCmd = makeDialogCommand("pdf");
+      const excelCmd = makeDialogCommand("excel");
+      const wordCmd = makeDialogCommand("word");
       const headingCmd = buildHeadingCommand(apiRef, stateRef);
       const tableCmd = buildTableCommand(apiRef);
       setCommands([
@@ -409,6 +419,11 @@ export function MarkdownEditor({
         linkCmd,
         imageCmd,
         videoCmd,
+        m.divider,
+        pdfCmd,
+        excelCmd,
+        wordCmd,
+        m.divider,
         m.code,
         m.codeBlock,
         m.quote,
@@ -445,6 +460,21 @@ export function MarkdownEditor({
       setDialogOpen(false);
       return;
     }
+    if (pending.type === "pdf") {
+      const md = `<iframe width="100%" height="600" src="${inputUrl}" frameborder="0"></iframe>`;
+      pending.textApi.replaceSelection(md);
+      pendingRef.current = null;
+      setDialogOpen(false);
+      return;
+    }
+    if (pending.type === "excel" || pending.type === "word") {
+      const label = inputText || pending.type.toUpperCase();
+      const md = `[${label}](${inputUrl})`;
+      pending.textApi.replaceSelection(md);
+      pendingRef.current = null;
+      setDialogOpen(false);
+      return;
+    }
     const text =
       inputText || (pending.type === "link" ? "link" : "image");
     const url = inputUrl;
@@ -455,21 +485,35 @@ export function MarkdownEditor({
     setDialogOpen(false);
   }, [inputText, inputUrl]);
 
+  const handleMediaSelect = useCallback((file: MediaFile) => {
+    setInputUrl(file.url);
+    if (!inputText) {
+      setInputText(file.filename.replace(/\.[^.]+$/, ""));
+    }
+    setShowMediaPicker(false);
+  }, [inputText]);
+
   const handleCancel = useCallback(() => {
     pendingRef.current = null;
     setDialogOpen(false);
   }, []);
 
-  function makeDialogCommand(type: "link" | "image" | "video") {
-    const labels = {
+  function makeDialogCommand(type: PendingAction["type"]) {
+    const labels: Record<string, { aria: string; title: string; shortcut?: string }> = {
       link: { aria: "Insert Link", title: "Insert Link (Ctrl+L)", shortcut: "ctrlcmd+l" },
       image: { aria: "Insert Image", title: "Insert Image (Ctrl+K)", shortcut: "ctrlcmd+k" },
-      video: { aria: "Insert Video", title: "Insert Video", shortcut: undefined },
+      video: { aria: "Insert Video", title: "Insert Video" },
+      pdf: { aria: "Insert PDF", title: "Insert PDF" },
+      excel: { aria: "Insert Excel", title: "Insert Excel" },
+      word: { aria: "Insert Word", title: "Insert Word" },
     };
-    const icons = {
+    const icons: Record<string, React.ReactNode> = {
       link: <Icon><Link size={14} /></Icon>,
       image: <Icon><ImageIcon size={14} /></Icon>,
       video: <Icon><Video size={14} /></Icon>,
+      pdf: <Icon><FileText size={14} /></Icon>,
+      excel: <Icon><FileSpreadsheet size={14} /></Icon>,
+      word: <Icon><FileType2 size={14} /></Icon>,
     };
     const cmd: any = {
       name: type,
@@ -484,6 +528,7 @@ export function MarkdownEditor({
         setInputText(state.selectedText || "");
         setInputUrl("");
         setDialogType(type);
+        setShowMediaPicker(false);
         setDialogOpen(true);
       },
     };
@@ -519,11 +564,17 @@ export function MarkdownEditor({
                 ? "Insert Link"
                 : dialogType === "image"
                   ? "Insert Image"
-                  : "Insert Video"}
+                  : dialogType === "video"
+                    ? "Insert Video"
+                    : dialogType === "pdf"
+                      ? "Insert PDF"
+                      : dialogType === "excel"
+                        ? "Insert Excel"
+                        : "Insert Word"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            {dialogType !== "video" && (
+            {!["video", "pdf"].includes(dialogType) && (
               <div className="space-y-1.5">
                 <Label htmlFor="md-text">
                   {dialogType === "link" ? "Link Text" : "Alt Text"}
@@ -535,7 +586,7 @@ export function MarkdownEditor({
                   placeholder={
                     dialogType === "link"
                       ? "Display text"
-                      : "Image description"
+                      : "Description"
                   }
                   autoFocus
                   onKeyDown={(e) =>
@@ -553,11 +604,17 @@ export function MarkdownEditor({
                 placeholder={
                   dialogType === "video"
                     ? "Video URL or YouTube / Bilibili link"
-                    : dialogType === "link"
-                      ? "https://example.com"
-                      : "https://example.com/image.png"
+                    : dialogType === "pdf"
+                      ? "PDF file URL"
+                      : dialogType === "excel"
+                        ? "Excel file URL"
+                        : dialogType === "word"
+                          ? "Word file URL"
+                          : dialogType === "link"
+                            ? "https://example.com"
+                            : "https://example.com/image.png"
                 }
-                autoFocus={dialogType === "video"}
+                autoFocus={["video", "pdf", "excel", "word"].includes(dialogType)}
                 onKeyDown={(e) =>
                   e.key === "Enter" && applyInsert()
                 }
@@ -568,6 +625,32 @@ export function MarkdownEditor({
                 </p>
               )}
             </div>
+            {["image", "pdf", "excel", "word"].includes(dialogType) && (
+              <div>
+                {showMediaPicker ? (
+                  <MediaSelector
+                    onSelect={handleMediaSelect}
+                    onClose={() => setShowMediaPicker(false)}
+                    category={
+                      dialogType === "image" ? "image"
+                        : dialogType === "pdf" ? "document"
+                          : dialogType === "excel" ? "spreadsheet"
+                            : "document"
+                    }
+                  />
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => setShowMediaPicker(true)}
+                  >
+                    <ImageIcon className="size-4" />
+                    Select from Media
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={handleCancel}>

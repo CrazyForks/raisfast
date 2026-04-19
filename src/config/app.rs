@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 /// | `JWT_ACCESS_EXPIRES` | u64 | `900` (15 分钟) | Access Token 过期时间（秒） |
 /// | `JWT_REFRESH_EXPIRES` | u64 | `604800` (7 天) | Refresh Token 过期时间（秒） |
 /// | `UPLOAD_DIR` | String | `./uploads` | 上传文件存储目录 |
-/// | `MAX_UPLOAD_SIZE` | usize | `5242880` (5 MB) | 上传文件大小上限（字节） |
+/// | `MAX_UPLOAD_SIZE` | usize | `104857600` (100 MB) | 上传文件大小上限（字节） |
 /// | `STATIC_DIR` | String | `./static` | 静态文件目录（favicon、robots.txt 等） |
 /// | `BASE_URL` | String | `http://{host}:{port}` | 站点完整 URL（用于生成 RSS/媒体链接） |
 /// | `CORS_ORIGINS` | String | (空=允许所有) | CORS 允许的来源，多个用逗号分隔 |
@@ -111,6 +111,16 @@ pub struct AppConfig {
     pub extension_dir: String,
     #[serde(default = "default_protected_tables")]
     pub protected_tables: Vec<String>,
+    #[serde(default = "default_storage_driver")]
+    pub storage_driver: String,
+    pub s3_endpoint: Option<String>,
+    pub s3_access_key: Option<String>,
+    pub s3_secret_key: Option<String>,
+    #[serde(default = "default_s3_bucket")]
+    pub s3_bucket: String,
+    #[serde(default = "default_s3_region")]
+    pub s3_region: String,
+    pub s3_public_url: Option<String>,
 }
 
 /// 单条 Cron 调度配置
@@ -264,6 +274,18 @@ fn default_plugin_vfs_root() -> String {
     "./plugins-data".into()
 }
 
+fn default_storage_driver() -> String {
+    "local".into()
+}
+
+fn default_s3_bucket() -> String {
+    "blog".into()
+}
+
+fn default_s3_region() -> String {
+    "us-east-1".into()
+}
+
 fn default_plugin_vfs_max_file_size() -> usize {
     1048576 // 1 MB
 }
@@ -325,7 +347,7 @@ impl AppConfig {
             max_upload_size: env::var("MAX_UPLOAD_SIZE")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(5242880),
+                .unwrap_or(104857600),
             static_dir: env::var("STATIC_DIR").unwrap_or_else(|_| "./static".into()),
             base_url,
             cors_origins,
@@ -453,6 +475,81 @@ impl AppConfig {
                 .filter(|s| !s.is_empty())
                 .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
                 .unwrap_or_else(default_protected_tables),
+            storage_driver: env::var("STORAGE_DRIVER")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(default_storage_driver),
+            s3_endpoint: env::var("S3_ENDPOINT").ok().filter(|s| !s.is_empty()),
+            s3_access_key: env::var("S3_ACCESS_KEY").ok().filter(|s| !s.is_empty()),
+            s3_secret_key: env::var("S3_SECRET_KEY").ok().filter(|s| !s.is_empty()),
+            s3_bucket: env::var("S3_BUCKET").unwrap_or_else(|_| default_s3_bucket()),
+            s3_region: env::var("S3_REGION").unwrap_or_else(|_| default_s3_region()),
+            s3_public_url: env::var("S3_PUBLIC_URL").ok().filter(|s| !s.is_empty()),
+        }
+    }
+
+    /// 创建用于测试的最小配置实例。
+    ///
+    /// 所有字段使用默认值，调用者可按需覆盖。
+    #[must_use]
+    pub fn test_defaults() -> Self {
+        Self {
+            host: "0.0.0.0".into(),
+            port: 3000,
+            env: "test".into(),
+            database_url: "sqlite::memory:".into(),
+            db_pool_size: 1,
+            jwt_secret: "test-secret-key-at-least-32-characters-long".into(),
+            jwt_access_expires: 900,
+            jwt_refresh_expires: 604800,
+            upload_dir: "./test-uploads".into(),
+            max_upload_size: 104857600,
+            static_dir: "./static".into(),
+            base_url: "http://localhost:3000".into(),
+            cors_origins: None,
+            tls_cert_path: None,
+            tls_key_path: None,
+            plugin_dir: None,
+            plugin_hot_reload: false,
+            plugin_max_memory_mb: default_plugin_max_memory(),
+            plugin_default_timeout_ms: default_plugin_timeout(),
+            plugin_disabled: vec![],
+            plugin_vfs_root: default_plugin_vfs_root(),
+            plugin_vfs_max_file_size: default_plugin_vfs_max_file_size(),
+            plugin_vfs_max_total_size: default_plugin_vfs_max_total_size(),
+            log_dir: "./test-logs".into(),
+            log_max_files: 1,
+            rate_limit_global_max: default_rate_limit_global_max(),
+            rate_limit_global_window: default_rate_limit_global_window(),
+            rate_limit_register_max: default_rate_limit_register_max(),
+            rate_limit_register_window: default_rate_limit_register_window(),
+            rate_limit_login_max: default_rate_limit_login_max(),
+            rate_limit_login_window: default_rate_limit_login_window(),
+            rate_limit_comment_max: default_rate_limit_comment_max(),
+            rate_limit_comment_window: default_rate_limit_comment_window(),
+            rate_limit_api_token_max: default_rate_limit_api_token_max(),
+            rate_limit_api_token_window: default_rate_limit_api_token_window(),
+            worker_enabled: false,
+            worker_concurrency: default_worker_concurrency(),
+            worker_poll_interval_ms: default_worker_poll_interval_ms(),
+            worker_default_max_attempts: default_worker_max_attempts(),
+            worker_cron_tick_ms: default_worker_cron_tick_ms(),
+            cron_seed_enabled: false,
+            cron_schedules: vec![],
+            cron_log_retention_days: default_cron_log_retention_days(),
+            search_engine: default_search_engine(),
+            search_index_dir: default_search_index_dir(),
+            content_type_dir: default_content_type_dir(),
+            timezone: default_timezone(),
+            extension_dir: default_extension_dir(),
+            protected_tables: default_protected_tables(),
+            storage_driver: default_storage_driver(),
+            s3_endpoint: None,
+            s3_access_key: None,
+            s3_secret_key: None,
+            s3_bucket: default_s3_bucket(),
+            s3_region: default_s3_region(),
+            s3_public_url: None,
         }
     }
 

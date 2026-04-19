@@ -234,6 +234,8 @@ pub struct MediaResponse {
     pub url: String,
     pub mimetype: String,
     pub size: i64,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
     pub created_at: String,
 }
 
@@ -247,11 +249,61 @@ pub fn media_to_response(media: &Media, base_url: &str) -> MediaResponse {
         url: format!("{}/uploads/{}", base_url, media.filepath),
         mimetype: media.mimetype.clone(),
         size: media.size,
+        width: media.width,
+        height: media.height,
         created_at: media.created_at.clone(),
     }
 }
 
-// ── 验证辅助 ──────────────────────────────────────────────────
+/// 将 Media 模型转换为 API 响应（使用 Storage 层提供的 URL）
+#[must_use]
+pub fn media_to_response_with_url(media: &Media, url: &str) -> MediaResponse {
+    MediaResponse {
+        id: media.id.clone(),
+        user_id: media.user_id.clone(),
+        filename: media.filename.clone(),
+        url: url.to_string(),
+        mimetype: media.mimetype.clone(),
+        size: media.size,
+        width: media.width,
+        height: media.height,
+        created_at: media.created_at.clone(),
+    }
+}
+
+/// 存储 statistics API 响应
+#[derive(Debug, Serialize, ToSchema)]
+pub struct MediaStatsResponse {
+    pub total_files: i64,
+    pub total_size: i64,
+    pub by_type: Vec<MediaTypeInfoResponse>,
+}
+
+/// 按 MIME 类型分组的统计
+#[derive(Debug, Serialize, ToSchema)]
+pub struct MediaTypeInfoResponse {
+    pub mimetype: String,
+    pub count: i64,
+    pub total_size: i64,
+}
+
+/// 将 MediaStats 模型转换为 API 响应
+#[must_use]
+pub fn stats_to_response(stats: &crate::models::media::MediaStats) -> MediaStatsResponse {
+    MediaStatsResponse {
+        total_files: stats.total_files,
+        total_size: stats.total_size,
+        by_type: stats
+            .by_type
+            .iter()
+            .map(|t| MediaTypeInfoResponse {
+                mimetype: t.mimetype.clone(),
+                count: t.count,
+                total_size: t.total_size,
+            })
+            .collect(),
+    }
+}
 
 fn validate_password(pwd: &str) -> Result<(), validator::ValidationError> {
     let has_letter = pwd.chars().any(|c| c.is_ascii_alphabetic());

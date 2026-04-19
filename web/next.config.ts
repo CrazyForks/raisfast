@@ -8,7 +8,7 @@ let apiPort: number;
 let apiProtocol: string;
 try {
   const url = new URL(API_BASE);
-  apiHost = url.hostname;
+  apiHost = url.hostname === "0.0.0.0" ? "localhost" : url.hostname;
   apiPort = parseInt(url.port) || (url.protocol === "https:" ? 443 : 80);
   apiProtocol = url.protocol.replace(":", "");
 } catch {

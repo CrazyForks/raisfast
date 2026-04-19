@@ -23,6 +23,9 @@ search-tantivy = ["tantivy"]
 # ── TLS (HTTPS) ─────────────────────────────────────────────────────
 tls = ["axum-server", "rustls", "tokio-rustls"]
 
+# ── Storage backend ────────────────────────────────────────────────
+storage-s3 = ["aws-sdk-s3", "aws-config"]
+
 [profile.dev]
 debug = 1  # 默认是 2（最大），设为 1 或 false 可大幅减小体积
 
@@ -112,6 +115,10 @@ tantivy = { version = "0.26", optional = true }
 axum-server = { version = "0.7", features = ["tls-rustls"], optional = true }
 rustls = { version = "0.23", optional = true }
 tokio-rustls = { version = "0.26", optional = true }
+
+# S3 Storage (optional)
+aws-sdk-s3 = { version = "1", optional = true }
+aws-config = { version = "1", optional = true }
 regex = "1.12.3"
 tera = "1"
 

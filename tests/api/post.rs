@@ -61,7 +61,7 @@ async fn create_success() {
     assert_eq!(body["data"]["title"], "Hello Axum");
     assert_eq!(body["data"]["status"], "published");
     assert!(body["data"]["slug"].is_string());
-    assert!(body["data"]["html_content"].is_string());
+    assert!(body["data"]["content"].is_string());
     assert_eq!(body["data"]["tags"].as_array().unwrap().len(), 1);
 }
 

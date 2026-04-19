@@ -32,6 +32,18 @@ export interface PaginatedData<T> {
   page_size: number;
 }
 
+export interface MediaFile {
+  id: string;
+  user_id: string;
+  filename: string;
+  url: string;
+  mimetype: string;
+  size: number;
+  width: number | null;
+  height: number | null;
+  created_at: string;
+}
+
 export interface Comment {
   id: string;
   content: string;

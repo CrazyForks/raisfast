@@ -152,6 +152,8 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         pool.clone(),
     ));
 
+    let storage = crate::storage::create_storage(config)?;
+
     let state = AppState {
         pool: pool.clone(),
         config: Arc::new(config.clone()),
@@ -176,6 +178,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         )),
         extension_manager,
         extension_service,
+        storage,
     };
 
     spawn_event_subscriber(eventbus.clone(), state.plugins.clone());
@@ -241,6 +244,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
             http_post(media::upload).layer(RequestBodyLimitLayer::new(max_upload)),
         )
         .route("/media", get(media::list))
+        .route("/media/stats", get(media::stats))
         .route("/media/{id}", delete(media::delete))
         .route("/events", get(sse::subscribe))
         .route("/admin/posts", get(post::admin_list))

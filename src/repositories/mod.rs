@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use crate::errors::app_error::AppResult;
 use crate::models::category::Category;
 use crate::models::comment::{AdminCommentRow, Comment};
-use crate::models::media::Media;
+use crate::models::media::{Media, MediaStats};
 use crate::models::post::{Post, PostJoinedRow, TagBrief};
 use crate::models::rbac::{Permission, Role};
 use crate::models::refresh_token::RefreshToken;
@@ -289,6 +289,9 @@ pub trait MediaRepository: Send + Sync {
 
     /// 删除媒体文件记录
     async fn delete(&self, id: &str, tenant_id: Option<&str>) -> AppResult<()>;
+
+    /// 获取存储统计
+    async fn stats(&self, user_id: &str, tenant_id: Option<&str>) -> AppResult<MediaStats>;
 }
 
 /// 刷新令牌 Repository 接口

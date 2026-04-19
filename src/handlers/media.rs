@@ -27,16 +27,20 @@ pub async fn upload(
         .content_type()
         .unwrap_or("application/octet-stream")
         .to_string();
+    tracing::info!(filename = %filename, content_type = %content_type, "uploading media file");
     let data = field
         .bytes()
         .await
         .map_err(|_| AppError::BadRequest("file_data_read_failed".into()))?;
 
+    let bucket = "blog";
+
     let media = media_service::save_file(
+        state.storage.as_ref(),
         state.media_repo.as_ref(),
         &auth_user.user_id,
-        &state.config.upload_dir,
         state.config.max_upload_size,
+        bucket,
         &filename,
         &content_type,
         &data,
@@ -44,9 +48,9 @@ pub async fn upload(
     )
     .await?;
 
-    let base_url = &state.config.base_url;
+    let url = state.storage.url(&media.filepath).await?;
     Ok(ApiResponse::success(
-        crate::handlers::dto::media_to_response(&media, base_url),
+        crate::handlers::dto::media_to_response_with_url(&media, &url),
     ))
 }
 
@@ -58,7 +62,6 @@ pub async fn list(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<crate::handlers::dto::MediaResponse>>> {
     params.sanitize();
-    let base_url = &state.config.base_url;
     let (items, total) = media_service::list(
         state.media_repo.as_ref(),
         &auth_user.user_id,
@@ -67,10 +70,13 @@ pub async fn list(
         tenant.as_str(),
     )
     .await?;
-    let responses = items
-        .iter()
-        .map(|m| crate::handlers::dto::media_to_response(m, base_url))
-        .collect();
+
+    let storage = state.storage.as_ref();
+    let responses = futures::future::join_all(items.iter().map(|m| async {
+        let url = storage.url(&m.filepath).await.unwrap_or_default();
+        crate::handlers::dto::media_to_response_with_url(m, &url)
+    }))
+    .await;
 
     Ok(params.paginate(responses, total))
 }
@@ -83,8 +89,8 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     media_service::delete_media(
+        state.storage.as_ref(),
         state.media_repo.as_ref(),
-        &state.config.upload_dir,
         &id,
         &auth_user.user_id,
         &auth_user.role,
@@ -92,4 +98,21 @@ pub async fn delete(
     )
     .await?;
     Ok(ApiResponse::success(()))
+}
+
+/// 获取存储统计
+pub async fn stats(
+    State(state): State<crate::AppState>,
+    auth_user: AuthUser,
+    tenant: ResolvedTenant,
+) -> AppResult<ApiResponse<crate::handlers::dto::MediaStatsResponse>> {
+    let s = media_service::stats(
+        state.media_repo.as_ref(),
+        &auth_user.user_id,
+        tenant.as_str(),
+    )
+    .await?;
+    Ok(ApiResponse::success(
+        crate::handlers::dto::stats_to_response(&s),
+    ))
 }

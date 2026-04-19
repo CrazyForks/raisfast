@@ -8,14 +8,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release --features "db-sqlite plugin-all search-tantivy" 2>/dev/null || true
+RUN cargo build --release --features "db-sqlite plugin-all search-tantivy storage-s3" 2>/dev/null || true
 RUN rm -rf src
 
 COPY src/ src/
 COPY migrations/ migrations/
 COPY extensions/ extensions/
 RUN touch src/main.rs \
-    && cargo build --release --features "db-sqlite plugin-all search-tantivy"
+    && cargo build --release --features "db-sqlite plugin-all search-tantivy storage-s3"
 
 FROM debian:bookworm-slim
 

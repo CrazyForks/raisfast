@@ -32,4 +32,8 @@ impl MediaRepository for SqlxMediaRepository {
     async fn delete(&self, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
         media::delete(&self.pool, id, tenant_id).await
     }
+
+    async fn stats(&self, user_id: &str, tenant_id: Option<&str>) -> AppResult<media::MediaStats> {
+        media::stats(&self.pool, user_id, tenant_id).await
+    }
 }

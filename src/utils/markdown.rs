@@ -8,7 +8,7 @@
 
 use ammonia::clean;
 use comrak::plugins::syntect::SyntectAdapter;
-use comrak::{markdown_to_html_with_plugins, ComrakOptions, Plugins, RenderPlugins};
+use comrak::{ComrakOptions, Plugins, RenderPlugins, markdown_to_html_with_plugins};
 
 /// 将 Markdown 文本渲染为经过安全过滤的 HTML。
 ///
