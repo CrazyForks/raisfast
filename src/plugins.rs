@@ -2879,7 +2879,7 @@ end
         std::fs::write(plugin_dir.join("init.lua"), lua_code).unwrap();
 
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../../migrations/007_cron_schedules.sql"))
+        sqlx::query(include_str!("../migrations/007_cron_schedules.sql"))
             .execute(&pool)
             .await
             .unwrap();
