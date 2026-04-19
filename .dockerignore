@@ -1,0 +1,11 @@
+target/
+data/
+logs/
+uploads/
+plugins-data/
+node_modules/
+web/
+extensions/*/plugin/
+*.md
+.git/
+.env.local

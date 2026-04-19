@@ -28,6 +28,7 @@ import {
   Moon,
   Sun,
   KeyRound,
+  GitBranch,
 } from "lucide-react";
 
 import {
@@ -68,6 +69,7 @@ const systemItems = [
   { label: "Tenants", href: "/admin/tenants", icon: Building2 },
   { label: "Webhooks", href: "/admin/webhooks", icon: Webhook },
   { label: "API Tokens", href: "/admin/tokens", icon: KeyRound },
+  { label: "Workflows", href: "/admin/workflows", icon: GitBranch },
   { label: "Audit Log", href: "/admin/audit", icon: ClipboardList },
   { label: "Options", href: "/admin/options", icon: Settings },
 ];

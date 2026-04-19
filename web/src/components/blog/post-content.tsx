@@ -1,10 +1,14 @@
 "use client";
 
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+
 interface PostContentProps {
-  htmlContent: string;
+  content: string;
 }
 
-export function PostContent({ htmlContent }: PostContentProps) {
+export function PostContent({ content }: PostContentProps) {
   return (
     <div
       className="prose prose-neutral dark:prose-invert max-w-none
@@ -21,8 +25,13 @@ export function PostContent({ htmlContent }: PostContentProps) {
         prose-table:text-sm
         prose-th:border-b prose-th:px-3 prose-th:py-2 prose-th:text-left
         prose-td:border-b prose-td:px-3 prose-td:py-2
+        prose-video:max-w-full prose-video:rounded-lg
+        prose-iframe:max-w-full prose-iframe:rounded-lg
         sm:prose-lg"
-      dangerouslySetInnerHTML={{ __html: htmlContent }}
-    />
+    >
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+        {content}
+      </ReactMarkdown>
+    </div>
   );
 }

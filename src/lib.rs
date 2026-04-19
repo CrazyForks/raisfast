@@ -43,6 +43,7 @@ use search::SearchEngine;
 use services::options::OptionsService;
 use services::rbac::RbacService;
 use services::tenant::TenantService;
+use services::workflow::WorkflowService;
 use std::sync::Arc;
 use webhook::WebhookService;
 
@@ -72,6 +73,7 @@ pub struct AppState {
     pub tenant: Arc<TenantService>,
     pub audit: Arc<AuditService>,
     pub webhook: Arc<WebhookService>,
+    pub workflow: Arc<WorkflowService>,
     pub extension_manager: Arc<ExtensionManager>,
     pub extension_service: Arc<ExtensionService>,
 }

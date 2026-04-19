@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { RichTextEditor } from "@/components/common/rich-text-editor";
+import { MarkdownEditor } from "@/components/common/markdown-editor";
 import {
   Select,
   SelectContent,
@@ -59,12 +59,12 @@ export default function EditPostPage() {
 
   const categoriesQuery = useQuery({
     queryKey: ["categories"],
-    queryFn: () => api.get<Category[]>("/categories"),
+    queryFn: () => api.get<{ items: Category[] }>("/categories"),
   });
 
   const tagsQuery = useQuery({
     queryKey: ["tags"],
-    queryFn: () => api.get<Tag[]>("/tags"),
+    queryFn: () => api.get<{ items: Tag[] }>("/tags"),
   });
 
   const post = postQuery.data;
@@ -135,8 +135,8 @@ export default function EditPostPage() {
     },
   });
 
-  const categories = categoriesQuery.data ?? [];
-  const tags = tagsQuery.data ?? [];
+  const categories = categoriesQuery.data?.items ?? [];
+  const tags = tagsQuery.data?.items ?? [];
 
   if (postQuery.isLoading) {
     return (
@@ -196,10 +196,10 @@ export default function EditPostPage() {
 
             <div className="space-y-2">
               <Label htmlFor="content">Content</Label>
-              <RichTextEditor
+              <MarkdownEditor
                 value={watch("content") || ""}
-                onChange={(html) => setValue("content", html)}
-                placeholder="Write your post content..."
+                onChange={(v) => setValue("content", v)}
+                placeholder="Write your post content in Markdown..."
               />
               {errors.content && <p className="text-sm text-red-500">{errors.content.message}</p>}
             </div>

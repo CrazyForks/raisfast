@@ -1,13 +1,32 @@
 services:
-  app:
+  backend:
     build: .
     ports:
-      - "3000:3000"
+      - "9000:9000"
     env_file: .env
+    environment:
+      DATABASE_URL: sqlite:/app/data/blog.db?mode=rwc
+      APP_ENV: production
+      CORS_ORIGINS: http://localhost:3000
     volumes:
       - blog-data:/app/data
-      - uploads:/app/uploads
+      - blog-uploads:/app/uploads
+      - blog-logs:/app/logs
+      - blog-plugins:/app/plugins-data
+    restart: unless-stopped
+
+  frontend:
+    build: ./web
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:9000/api/v1
+    depends_on:
+      - backend
+    restart: unless-stopped
 
 volumes:
   blog-data:
-  uploads:
+  blog-uploads:
+  blog-logs:
+  blog-plugins:

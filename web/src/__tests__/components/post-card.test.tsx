@@ -8,7 +8,6 @@ const basePost: Post = {
   title: "Test Post",
   slug: "test-post",
   content: "Hello world",
-  html_content: "<p>Hello world</p>",
   excerpt: "A test post",
   cover_image: "",
   status: "published",

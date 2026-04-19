@@ -14,7 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { RichTextEditor } from "@/components/common/rich-text-editor";
+import { MarkdownEditor } from "@/components/common/markdown-editor";
 import {
   Select,
   SelectContent,
@@ -52,12 +52,12 @@ export default function NewPostPage() {
 
   const categoriesQuery = useQuery({
     queryKey: ["categories"],
-    queryFn: () => api.get<Category[]>("/categories"),
+    queryFn: () => api.get<{ items: Category[] }>("/categories"),
   });
 
   const tagsQuery = useQuery({
     queryKey: ["tags"],
-    queryFn: () => api.get<Tag[]>("/tags"),
+    queryFn: () => api.get<{ items: Tag[] }>("/tags"),
   });
 
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -113,8 +113,8 @@ export default function NewPostPage() {
     },
   });
 
-  const categories = categoriesQuery.data ?? [];
-  const tags = tagsQuery.data ?? [];
+  const categories = categoriesQuery.data?.items ?? [];
+  const tags = tagsQuery.data?.items ?? [];
 
   return (
     <div className="space-y-6">
@@ -144,10 +144,10 @@ export default function NewPostPage() {
 
             <div className="space-y-2">
               <Label htmlFor="content">Content</Label>
-              <RichTextEditor
+              <MarkdownEditor
                 value={watch("content") || ""}
-                onChange={(html) => setValue("content", html)}
-                placeholder="Write your post content..."
+                onChange={(v) => setValue("content", v)}
+                placeholder="Write your post content in Markdown..."
               />
               {errors.content && (
                 <p className="text-sm text-red-500">

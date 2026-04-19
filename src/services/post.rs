@@ -6,7 +6,7 @@
 //! - 文章的创建、更新、删除、发布态查询和详情查询
 //! - Slug 自动生成与去重
 //! - 内容摘要自动提取
-//! - 文章响应对象的组装（含 HTML 渲染、标签和作者信息）
+//! - 文章响应对象的组装（含标签和作者信息）
 
 use slug::slugify;
 
@@ -22,33 +22,17 @@ use crate::models::post::PostJoinedRow;
 use crate::plugins::{HookPoint, PluginManager};
 use crate::repositories::{CategoryRepository, PostRepository, TagRepository};
 use crate::search::SearchEngine;
-use crate::utils::markdown::render_markdown;
-
-async fn render_content(content: &str, plugins: &PluginManager) -> String {
-    match plugins.dispatch_render_override(content).await {
-        Some(html) => plugins
-            .dispatch_filter(HookPoint::FilterHtml, html)
-            .await
-            .unwrap_or_else(|e| {
-                tracing::warn!("filter_html hook failed: {e}");
-                render_markdown(content)
-            }),
-        None => render_markdown(content),
-    }
-}
 
 async fn joined_row_to_response(
     r: PostJoinedRow,
     tags: Vec<crate::models::post::TagBrief>,
-    plugins: &PluginManager,
+    _plugins: &PluginManager,
 ) -> PostResponse {
-    let html_content = render_content(&r.content, plugins).await;
     PostResponse {
         id: r.id,
         title: r.title,
         slug: r.slug,
         content: r.content,
-        html_content,
         excerpt: r.excerpt,
         cover_image: r.cover_image,
         status: r.status,
@@ -435,7 +419,7 @@ pub async fn list_posts(
     category_id: Option<&str>,
     tag_id: Option<&str>,
     q: Option<&str>,
-    plugins: &PluginManager,
+    _plugins: &PluginManager,
     search: Option<&dyn SearchEngine>,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<PostResponse>, i64)> {
@@ -495,7 +479,6 @@ pub async fn list_posts(
 
     let mut responses = Vec::with_capacity(rows.len());
     for r in rows {
-        let html_content = render_content(&r.content, plugins).await;
         let (title_hl, excerpt_hl) = highlights
             .get(&r.id)
             .map_or((None, None), |(t, e)| (t.clone(), e.clone()));
@@ -504,7 +487,6 @@ pub async fn list_posts(
             title: r.title,
             slug: r.slug,
             content: r.content,
-            html_content,
             excerpt: r.excerpt,
             cover_image: r.cover_image,
             status: r.status,
@@ -550,7 +532,7 @@ pub async fn list_all_posts(
     page: i64,
     page_size: i64,
     status: Option<&str>,
-    plugins: &PluginManager,
+    _plugins: &PluginManager,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<PostResponse>, i64)> {
     let (rows, total) = repo
@@ -565,13 +547,11 @@ pub async fn list_all_posts(
 
     let mut responses = Vec::with_capacity(rows.len());
     for r in rows {
-        let html_content = render_content(&r.content, plugins).await;
         responses.push(PostResponse {
             id: r.id.clone(),
             title: r.title,
             slug: r.slug,
             content: r.content,
-            html_content,
             excerpt: r.excerpt,
             cover_image: r.cover_image,
             status: r.status,

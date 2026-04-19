@@ -30,3 +30,4 @@ pub mod refresh_token;
 pub mod tag;
 pub mod tenant;
 pub mod user;
+pub mod workflow;

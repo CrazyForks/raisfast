@@ -12,7 +12,7 @@ use crate::content_type::ContentTypeRegistry;
 use crate::db::connection::init_pool;
 use crate::handlers::{
     api_token, auth, category, comment, cron, health, media, options, plugin, post, rbac, rss, sse,
-    stats, tag, tenant, user,
+    stats, tag, tenant, user, workflow,
 };
 use crate::middleware::locale::locale_middleware;
 use crate::middleware::metrics;
@@ -171,6 +171,9 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         tenant: tenant_service,
         audit: audit_service,
         webhook: webhook_service.clone(),
+        workflow: Arc::new(crate::services::workflow::WorkflowService::new(
+            pool.clone(),
+        )),
         extension_manager,
         extension_service,
     };
@@ -330,6 +333,32 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
             "/admin/extensions/{id}/disable",
             http_post(crate::extension::handler::disable),
         )
+        .route(
+            "/admin/workflows",
+            get(workflow::list).post(workflow::create),
+        )
+        .route(
+            "/admin/workflows/{id}",
+            get(workflow::get).delete(workflow::delete),
+        )
+        .route("/admin/workflows/{id}/start", http_post(workflow::start))
+        .route("/admin/workflows/instances", get(workflow::list_instances))
+        .route(
+            "/admin/workflows/instances/{id}",
+            get(workflow::get_instance),
+        )
+        .route(
+            "/admin/workflows/instances/{id}/execute",
+            http_post(workflow::execute_step),
+        )
+        .route(
+            "/admin/workflows/instances/{id}/cancel",
+            http_post(workflow::cancel_instance),
+        )
+        .route(
+            "/admin/workflows/instances/{id}/logs",
+            get(workflow::get_step_logs),
+        )
         .layer(from_fn(global_rate_limit))
         .layer(Extension(limiters))
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024));
@@ -349,6 +378,8 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
 
     let app = axum::Router::new()
         .route("/health", get(health::health))
+        .route("/healthz", get(health::liveness))
+        .route("/readyz", get(health::readiness))
         .route("/metrics", get(metrics::metrics_endpoint))
         .route("/feed.xml", get(rss::feed))
         .nest("/api/v1", api_v1)
@@ -413,6 +444,11 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
 /// 启动 HTTP 服务器，监听请求直到收到关闭信号。
 pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
     metrics::init();
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        env = %config.env,
+        "starting rust-blog server"
+    );
     let tz = crate::utils::tz::parse_tz_or_utc(&config.timezone);
     tracing::info!("site timezone: {}", tz);
     crate::utils::tz::set_site_tz(tz);
@@ -453,12 +489,23 @@ pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
                     "TLS_CERT_PATH and TLS_KEY_PATH set but 'tls' feature not enabled. \
                       Falling back to HTTP."
                 );
-                tracing::info!("server listening on http://{}", addr);
+                tracing::info!(
+                    "server listening on http://{} (pid={})",
+                    addr,
+                    std::process::id()
+                );
                 println!("server listening on http://{}", addr);
+                let start = std::time::Instant::now();
                 let listener = TcpListener::bind(&addr).await?;
+                tracing::info!(
+                    startup_ms = start.elapsed().as_millis() as u64,
+                    "server ready to accept connections"
+                );
                 axum::serve(listener, app.into_make_service())
                     .with_graceful_shutdown(shutdown_signal())
                     .await?;
+
+                tracing::info!("server shutdown complete");
             }
         }
         _ => {
@@ -494,8 +541,12 @@ async fn shutdown_signal() {
     let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        _ = ctrl_c => { tracing::info!("received ctrl+c"); },
-        _ = terminate => { tracing::info!("received SIGTERM"); },
+        _ = ctrl_c => {
+            tracing::info!("received SIGINT (ctrl+c), starting graceful shutdown");
+        },
+        _ = terminate => {
+            tracing::info!("received SIGTERM, starting graceful shutdown");
+        },
     }
 }
 

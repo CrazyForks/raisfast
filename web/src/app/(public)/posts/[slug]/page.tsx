@@ -85,7 +85,7 @@ export default function PostDetailPage() {
         </div>
       </div>
 
-      <PostContent htmlContent={post.html_content} />
+      <PostContent content={post.content} />
 
       <Separator />
 

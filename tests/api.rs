@@ -158,6 +158,10 @@ pub(crate) async fn test_pool() -> rust_blog::db::Pool {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(include_str!("../migrations/017_workflows.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
         pool
     }
 }
@@ -197,6 +201,9 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
         ))),
         audit: Arc::new(rust_blog::audit::AuditService::new(pool.clone())),
         webhook: Arc::new(rust_blog::webhook::WebhookService::new(pool.clone())),
+        workflow: Arc::new(rust_blog::services::workflow::WorkflowService::new(
+            pool.clone(),
+        )),
         extension_manager: rust_blog::extension::manager::ExtensionManager::new(
             Arc::new(rust_blog::content_type::ContentTypeRegistry::new()),
             PluginManager::new(config.clone()).await,
@@ -333,6 +340,38 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
         .route(
             "/admin/extensions/{id}/disable",
             http_post(rust_blog::extension::handler::disable),
+        )
+        .route(
+            "/admin/workflows",
+            get(rust_blog::handlers::workflow::list).post(rust_blog::handlers::workflow::create),
+        )
+        .route(
+            "/admin/workflows/{id}",
+            get(rust_blog::handlers::workflow::get).delete(rust_blog::handlers::workflow::delete),
+        )
+        .route(
+            "/admin/workflows/{id}/start",
+            http_post(rust_blog::handlers::workflow::start),
+        )
+        .route(
+            "/admin/workflows/instances",
+            get(rust_blog::handlers::workflow::list_instances),
+        )
+        .route(
+            "/admin/workflows/instances/{id}",
+            get(rust_blog::handlers::workflow::get_instance),
+        )
+        .route(
+            "/admin/workflows/instances/{id}/execute",
+            http_post(rust_blog::handlers::workflow::execute_step),
+        )
+        .route(
+            "/admin/workflows/instances/{id}/cancel",
+            http_post(rust_blog::handlers::workflow::cancel_instance),
+        )
+        .route(
+            "/admin/workflows/instances/{id}/logs",
+            get(rust_blog::handlers::workflow::get_step_logs),
         )
         .layer(from_fn(global_rate_limit))
         .layer(axum::Extension(RateLimiterSet::new_default()));
@@ -544,3 +583,5 @@ mod tenant_e2e;
 mod user;
 #[path = "api/webhook.rs"]
 mod webhook;
+#[path = "api/workflow.rs"]
+mod workflow;

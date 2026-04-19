@@ -149,7 +149,6 @@ pub struct PostResponse {
     pub title: String,
     pub slug: String,
     pub content: String,
-    pub html_content: String,
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
     pub status: String,

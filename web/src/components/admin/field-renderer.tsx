@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { RichTextEditor } from "@/components/common/rich-text-editor";
+import { MarkdownEditor } from "@/components/common/markdown-editor";
 import {
   Select,
   SelectContent,
@@ -202,7 +202,7 @@ export function FieldRenderer({
 
     case "richtext":
       input = (
-        <RichTextEditor
+        <MarkdownEditor
           value={strValue}
           onChange={onChange}
           placeholder="Start writing..."

@@ -15,3 +15,4 @@ pub mod post;
 pub mod rbac;
 pub mod stats;
 pub mod tenant;
+pub mod workflow;

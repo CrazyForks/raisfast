@@ -7,7 +7,7 @@ type PostData = {
   title?: string;
   excerpt?: string;
   slug?: string;
-  html_content?: string;
+  content?: string;
   author_name?: string;
   published_at?: string;
 };
