@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Shield, Plus, Pencil, Trash2, Key } from "lucide-react";
+import { Shield, Plus, Pencil, Trash2, Key, MoreVertical } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -33,6 +33,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { api, ApiError } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
 
@@ -350,29 +351,26 @@ export default function RbacPage() {
                           </p>
                         )}
                       </div>
-                      <div
-                        className="flex items-center gap-0.5 ml-2 shrink-0"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          title="Edit"
-                          onClick={() => openEdit(role)}
-                        >
-                          <Pencil className="size-3.5" />
-                        </Button>
-                        {!role.is_system && (
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            title="Delete"
-                            onClick={() => setDeleteRole(role)}
-                          >
-                            <Trash2 className="size-3.5 text-destructive" />
-                          </Button>
-                        )}
-                      </div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger className="inline-flex items-center justify-center rounded-md p-1 hover:bg-muted transition-colors">
+                          <MoreVertical className="size-4" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => openEdit(role)}>
+                            <Pencil className="size-4 mr-2" />
+                            Edit
+                          </DropdownMenuItem>
+                          {!role.is_system && (
+                            <DropdownMenuItem
+                              className="text-destructive"
+                              onClick={() => setDeleteRole(role)}
+                            >
+                              <Trash2 className="size-4 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   );
                 })}
@@ -502,14 +500,20 @@ export default function RbacPage() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          title="Remove"
-                          onClick={() => setRemovePerm(p)}
-                        >
-                          <Trash2 className="size-4 text-destructive" />
-                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger className="inline-flex items-center justify-center rounded-md p-1 hover:bg-muted transition-colors">
+                            <MoreVertical className="size-4" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              className="text-destructive"
+                              onClick={() => setRemovePerm(p)}
+                            >
+                              <Trash2 className="size-4 mr-2" />
+                              Remove
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   ))}

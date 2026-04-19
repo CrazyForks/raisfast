@@ -509,9 +509,14 @@ immutable = true
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct).await.unwrap();
 
-        repo.create(&ct, json!({"name": "A", "code": "ABC"}), None)
-            .await
-            .unwrap();
+        repo.create(
+            &ct,
+            json!({"name": "A", "code": "ABC"}),
+            None,
+            &Default::default(),
+        )
+        .await
+        .unwrap();
 
         let data = json!({"name": "B", "code": "ABC"});
         let result = validate_create(&pool, &ct, &data).await;
@@ -531,7 +536,12 @@ immutable = true
         repo.migrate(&ct).await.unwrap();
 
         let created = repo
-            .create(&ct, json!({"name": "Test", "secret": "sauce"}), None)
+            .create(
+                &ct,
+                json!({"name": "Test", "secret": "sauce"}),
+                None,
+                &Default::default(),
+            )
             .await
             .unwrap();
         let id = created["id"].as_str().unwrap().to_string();
@@ -553,7 +563,12 @@ immutable = true
         repo.migrate(&ct).await.unwrap();
 
         let created = repo
-            .create(&ct, json!({"name": "Test", "code": "XYZ"}), None)
+            .create(
+                &ct,
+                json!({"name": "Test", "code": "XYZ"}),
+                None,
+                &Default::default(),
+            )
             .await
             .unwrap();
         let id = created["id"].as_str().unwrap().to_string();

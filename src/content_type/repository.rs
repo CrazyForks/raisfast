@@ -7,10 +7,63 @@ use std::collections::HashMap;
 
 use serde_json::{Value, json};
 
-use super::schema::{ContentTypeSchema, FieldType, RelationType};
+use super::schema::{AutoFillSource, ContentTypeSchema, FieldType, RelationType};
 use crate::db::Pool;
 use crate::errors::app_error::AppError;
+use crate::middleware::auth::OptionalAuth;
 use sqlx::Row;
+
+/// 保存操作上下文（从 handler 层传递到 repository 层）
+///
+/// 携带当前请求的认证信息，供 auto_fill 机制注入字段值。
+#[derive(Debug, Clone, Default)]
+pub struct SaveContext {
+    pub user_id: Option<String>,
+    pub user_role: Option<String>,
+    pub tenant_id: Option<String>,
+}
+
+impl SaveContext {
+    pub fn from_optional_auth(auth: &OptionalAuth) -> Self {
+        Self {
+            user_id: auth.0.as_ref().map(|a| a.user_id.clone()),
+            user_role: auth.0.as_ref().map(|a| a.role.clone()),
+            tenant_id: auth.0.as_ref().map(|a| a.tenant_id.clone()),
+        }
+    }
+
+    fn resolve_auto_fill(&self, source: &AutoFillSource) -> Option<Value> {
+        match source {
+            AutoFillSource::UserId => self.user_id.as_ref().map(|id| json!(id)),
+            AutoFillSource::UserRole => self.user_role.as_ref().map(|r| json!(r)),
+            AutoFillSource::CurrentTenantId => self.tenant_id.as_ref().map(|t| json!(t)),
+            AutoFillSource::CurrentTimestamp => Some(json!(crate::utils::tz::now_str())),
+        }
+    }
+
+    fn inject_auto_fill(&self, ct: &ContentTypeSchema, obj: &mut serde_json::Map<String, Value>) {
+        for field in ct.auto_fill_fields() {
+            if let Some(ref source) = field.auto_fill
+                && let Some(value) = self.resolve_auto_fill(source)
+            {
+                match field.field_type {
+                    FieldType::Relation => {
+                        if let Some(ref rel) = field.relation {
+                            let fk = rel
+                                .foreign_key
+                                .clone()
+                                .unwrap_or_else(|| format!("{}_id", field.name));
+                            obj.insert(fk, value);
+                        }
+                    }
+                    _ => {
+                        obj.insert(field.name.clone(), value);
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// 通用查询参数
 #[derive(Debug, Clone, Default)]
@@ -251,6 +304,7 @@ impl ContentRepository {
         ct: &ContentTypeSchema,
         mut data: Value,
         tenant_id: Option<&str>,
+        save_ctx: &SaveContext,
     ) -> Result<Value, AppError> {
         let mut tx = self
             .pool
@@ -276,6 +330,8 @@ impl ContentRepository {
         if ct.draft_publish && obj.get("status").is_none() {
             obj.insert("status".to_string(), json!("draft"));
         }
+
+        save_ctx.inject_auto_fill(ct, obj);
 
         let tid = self.resolve_tenant(&ct.table, tenant_id).await;
 
@@ -336,6 +392,7 @@ impl ContentRepository {
         id: &str,
         mut data: Value,
         tenant_id: Option<&str>,
+        save_ctx: &SaveContext,
     ) -> Result<Value, AppError> {
         if ct.versioning
             && let Some(current) = self.find_by_id(ct, id, tenant_id).await?
@@ -366,6 +423,8 @@ impl ContentRepository {
         obj.remove("id");
         obj.remove("created_at");
         obj.remove("updated_at");
+
+        save_ctx.inject_auto_fill(ct, obj);
 
         let tid = self.resolve_tenant(&ct.table, tenant_id).await;
 

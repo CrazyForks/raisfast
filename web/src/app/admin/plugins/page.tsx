@@ -10,14 +10,16 @@ import {
   Trash2,
   AlertTriangle,
   Activity,
-  ExternalLink,
+  MoreVertical,
 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -87,6 +89,7 @@ function formatDuration(us: number): string {
 
 export default function PluginsPage() {
   const { t } = useT();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const pageSize = 20;
@@ -293,64 +296,56 @@ export default function PluginsPage() {
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Link href={`/admin/plugins/${encodeURIComponent(p.id)}`}>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              title="View details"
+                        <DropdownMenu>
+                          <DropdownMenuTrigger className="inline-flex items-center justify-center rounded-md p-1 hover:bg-muted transition-colors">
+                            <MoreVertical className="size-4" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => router.push(`/admin/plugins/${encodeURIComponent(p.id)}`)}>
+                              <Activity className="size-4" />
+                              {t("common.viewDetails")}
+                            </DropdownMenuItem>
+                            {p.enabled ? (
+                              <DropdownMenuItem
+                                disabled={disableMutation.isPending}
+                                onClick={() => disableMutation.mutate(p.id)}
+                              >
+                                <PowerOff className="size-4" />
+                                {t("common.disable")}
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem
+                                disabled={enableMutation.isPending}
+                                onClick={() => enableMutation.mutate(p.id)}
+                              >
+                                <Power className="size-4" />
+                                {t("common.enable")}
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuItem
+                              disabled={reloadMutation.isPending}
+                              onClick={() => reloadMutation.mutate(p.id)}
                             >
-                              <ExternalLink className="size-4" />
-                            </Button>
-                          </Link>
-                          {p.enabled ? (
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              title="Disable"
-                              disabled={disableMutation.isPending}
-                              onClick={() => disableMutation.mutate(p.id)}
+                              <RefreshCw className="size-4" />
+                              {t("common.reload")}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={removeMutation.isPending}
+                              onClick={() => {
+                                if (
+                                  confirm(
+                                    t("plugins.confirmRemove", { name: p.name })
+                                  )
+                                ) {
+                                  removeMutation.mutate(p.id);
+                                }
+                              }}
                             >
-                              <PowerOff className="size-4" />
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              title="Enable"
-                              disabled={enableMutation.isPending}
-                              onClick={() => enableMutation.mutate(p.id)}
-                            >
-                              <Power className="size-4" />
-                            </Button>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            title="Reload"
-                            disabled={reloadMutation.isPending}
-                            onClick={() => reloadMutation.mutate(p.id)}
-                          >
-                            <RefreshCw className="size-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            title="Remove"
-                            disabled={removeMutation.isPending}
-                            onClick={() => {
-                              if (
-                                confirm(
-                                  t("plugins.confirmRemove", { name: p.name })
-                                )
-                              ) {
-                                removeMutation.mutate(p.id);
-                              }
-                            }}
-                          >
-                            <Trash2 className="size-4 text-destructive" />
-                          </Button>
-                        </div>
+                              <Trash2 className="size-4 text-destructive" />
+                              {t("common.remove")}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   );

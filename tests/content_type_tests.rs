@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use serde_json::json;
 
 use rust_blog::content_type::ContentTypeRegistry;
-use rust_blog::content_type::repository::{ContentQuery, ContentRepository};
+use rust_blog::content_type::repository::{ContentQuery, ContentRepository, SaveContext};
 use rust_blog::content_type::schema::ContentTypeSchema;
 use rust_blog::db::tenant;
 
@@ -164,6 +164,7 @@ async fn create_and_find_by_id() {
                 "in_stock": true
             }),
             None,
+            &SaveContext::default(),
         )
         .await
         .unwrap();
@@ -197,6 +198,7 @@ async fn create_sets_defaults() {
                 "price": 0
             }),
             None,
+            &SaveContext::default(),
         )
         .await
         .unwrap();
@@ -218,6 +220,7 @@ async fn find_by_slug() {
         &ct,
         json!({"title": "Slug Test", "slug": "slug-test", "price": 10}),
         None,
+        &SaveContext::default(),
     )
     .await
     .unwrap();
@@ -242,6 +245,7 @@ async fn find_paginated() {
             &ct,
             json!({"title": format!("Item {i}"), "slug": format!("item-{i}"), "price": i}),
             None,
+            &SaveContext::default(),
         )
         .await
         .unwrap();
@@ -290,6 +294,7 @@ async fn find_with_status_filter() {
             &ct,
             json!({"title": "Draft", "slug": "draft", "price": 1, "status": "draft"}),
             None,
+            &SaveContext::default(),
         )
         .await
         .unwrap();
@@ -298,6 +303,7 @@ async fn find_with_status_filter() {
             &ct,
             json!({"title": "Published", "slug": "published", "price": 2, "status": "published"}),
             None,
+            &SaveContext::default(),
         )
         .await
         .unwrap();
@@ -330,13 +336,20 @@ async fn update_changes_fields() {
             &ct,
             json!({"title": "Original", "slug": "original", "price": 50}),
             None,
+            &SaveContext::default(),
         )
         .await
         .unwrap();
     let id = created["id"].as_str().unwrap().to_string();
 
     let updated = repo
-        .update(&ct, &id, json!({"title": "Updated", "price": 99}), None)
+        .update(
+            &ct,
+            &id,
+            json!({"title": "Updated", "price": 99}),
+            None,
+            &SaveContext::default(),
+        )
         .await
         .unwrap();
 
@@ -357,6 +370,7 @@ async fn delete_removes_record() {
             &ct,
             json!({"title": "To Delete", "slug": "to-delete", "price": 1}),
             None,
+            &SaveContext::default(),
         )
         .await
         .unwrap();
@@ -398,7 +412,12 @@ required = true
     repo.migrate(&ct).await.unwrap();
 
     let created = repo
-        .create(&ct, json!({"title": "Soft Delete Me"}), None)
+        .create(
+            &ct,
+            json!({"title": "Soft Delete Me"}),
+            None,
+            &SaveContext::default(),
+        )
         .await
         .unwrap();
     let id = created["id"].as_str().unwrap().to_string();
@@ -440,6 +459,7 @@ async fn tenant_isolation() {
             &ct,
             json!({"title": "Tenant A Product", "slug": "tenant-a", "price": 100}),
             Some("tenant_a"),
+            &SaveContext::default(),
         )
         .await
         .unwrap();
@@ -448,6 +468,7 @@ async fn tenant_isolation() {
             &ct,
             json!({"title": "Tenant B Product", "slug": "tenant-b", "price": 200}),
             Some("tenant_b"),
+            &SaveContext::default(),
         )
         .await
         .unwrap();
@@ -505,6 +526,7 @@ async fn delete_respects_tenant() {
             &ct,
             json!({"title": "A", "slug": "a", "price": 1}),
             Some("tenant_a"),
+            &SaveContext::default(),
         )
         .await
         .unwrap();
@@ -542,6 +564,7 @@ async fn find_with_custom_sort() {
             &ct,
             json!({"title": title, "slug": title.to_lowercase(), "price": price}),
             None,
+            &SaveContext::default(),
         )
         .await
         .unwrap();
@@ -575,6 +598,7 @@ async fn find_with_field_filter() {
         &ct,
         json!({"title": "Expensive", "slug": "expensive", "price": 999}),
         None,
+        &SaveContext::default(),
     )
     .await
     .unwrap();
@@ -582,6 +606,7 @@ async fn find_with_field_filter() {
         &ct,
         json!({"title": "Cheap", "slug": "cheap", "price": 1}),
         None,
+        &SaveContext::default(),
     )
     .await
     .unwrap();
@@ -616,6 +641,7 @@ async fn partial_field_selection() {
         &ct,
         json!({"title": "Select", "slug": "select", "price": 42}),
         None,
+        &SaveContext::default(),
     )
     .await
     .unwrap();
@@ -650,6 +676,7 @@ async fn create_auto_generates_id_and_timestamps() {
             &ct,
             json!({"title": "Auto", "slug": "auto", "price": 1}),
             None,
+            &SaveContext::default(),
         )
         .await
         .unwrap();
@@ -667,7 +694,9 @@ async fn create_without_body_object_returns_error() {
     let repo = ContentRepository::new(pool);
     repo.migrate(&ct).await.unwrap();
 
-    let result = repo.create(&ct, json!("not an object"), None).await;
+    let result = repo
+        .create(&ct, json!("not an object"), None, &SaveContext::default())
+        .await;
     assert!(result.is_err());
 }
 
@@ -679,13 +708,24 @@ async fn update_with_no_fields_returns_error() {
     repo.migrate(&ct).await.unwrap();
 
     let created = repo
-        .create(&ct, json!({"title": "X", "slug": "x", "price": 1}), None)
+        .create(
+            &ct,
+            json!({"title": "X", "slug": "x", "price": 1}),
+            None,
+            &SaveContext::default(),
+        )
         .await
         .unwrap();
     let id = created["id"].as_str().unwrap().to_string();
 
     let result = repo
-        .update(&ct, &id, json!({"nonexistent_field": "v"}), None)
+        .update(
+            &ct,
+            &id,
+            json!({"nonexistent_field": "v"}),
+            None,
+            &SaveContext::default(),
+        )
         .await;
     assert!(result.is_err());
 }
@@ -741,6 +781,7 @@ default = 0
             &ct_v2,
             json!({"title": "V2", "body": "hello", "priority": 5}),
             None,
+            &SaveContext::default(),
         )
         .await
         .unwrap();
@@ -795,6 +836,7 @@ async fn versioning_creates_revision_on_update() {
             &ct,
             json!({"title": "V1 Title", "content": "V1 Content"}),
             None,
+            &SaveContext::default(),
         )
         .await
         .unwrap();
@@ -806,6 +848,7 @@ async fn versioning_creates_revision_on_update() {
             id,
             json!({"title": "V2 Title", "content": "V2 Content"}),
             None,
+            &SaveContext::default(),
         )
         .await
         .unwrap();
@@ -835,20 +878,38 @@ async fn versioning_multiple_updates_create_multiple_revisions() {
     repo.migrate(&ct).await.unwrap();
 
     let created = repo
-        .create(&ct, json!({"title": "Rev0"}), None)
+        .create(&ct, json!({"title": "Rev0"}), None, &SaveContext::default())
         .await
         .unwrap();
     let id = created["id"].as_str().unwrap();
 
-    repo.update(&ct, id, json!({"title": "Rev1"}), None)
-        .await
-        .unwrap();
-    repo.update(&ct, id, json!({"title": "Rev2"}), None)
-        .await
-        .unwrap();
-    repo.update(&ct, id, json!({"title": "Rev3"}), None)
-        .await
-        .unwrap();
+    repo.update(
+        &ct,
+        id,
+        json!({"title": "Rev1"}),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
+    repo.update(
+        &ct,
+        id,
+        json!({"title": "Rev2"}),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
+    repo.update(
+        &ct,
+        id,
+        json!({"title": "Rev3"}),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
 
     let revisions = rust_blog::models::content_revision::list_revisions(&pool, "article", id)
         .await
@@ -868,14 +929,20 @@ async fn versioning_delete_cleans_up_revisions() {
     repo.migrate(&ct).await.unwrap();
 
     let created = repo
-        .create(&ct, json!({"title": "Temp"}), None)
+        .create(&ct, json!({"title": "Temp"}), None, &SaveContext::default())
         .await
         .unwrap();
     let id = created["id"].as_str().unwrap();
 
-    repo.update(&ct, id, json!({"title": "Updated"}), None)
-        .await
-        .unwrap();
+    repo.update(
+        &ct,
+        id,
+        json!({"title": "Updated"}),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
 
     let before = rust_blog::models::content_revision::list_revisions(&pool, "article", id)
         .await
@@ -914,14 +981,25 @@ required = true
     repo.migrate(&ct).await.unwrap();
 
     let created = repo
-        .create(&ct, json!({"title": "NoRev"}), None)
+        .create(
+            &ct,
+            json!({"title": "NoRev"}),
+            None,
+            &SaveContext::default(),
+        )
         .await
         .unwrap();
     let id = created["id"].as_str().unwrap();
 
-    repo.update(&ct, id, json!({"title": "Updated"}), None)
-        .await
-        .unwrap();
+    repo.update(
+        &ct,
+        id,
+        json!({"title": "Updated"}),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
 
     let revisions = rust_blog::models::content_revision::list_revisions(&pool, "note", id)
         .await

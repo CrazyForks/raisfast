@@ -50,6 +50,23 @@ pub struct ContentTypeSchema {
     pub api: ApiConfig,
 }
 
+/// 自动填充来源
+///
+/// 声明字段值从请求上下文自动注入，而非由客户端提供。
+/// 在 TOML 中使用 `auto_fill = "user_id"` 语法。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoFillSource {
+    /// 当前认证用户的 ID
+    UserId,
+    /// 当前认证用户的角色
+    UserRole,
+    /// 当前租户 ID
+    CurrentTenantId,
+    /// 当前 ISO 8601 时间戳（与 timestamps 不同，可用于任意字段）
+    CurrentTimestamp,
+}
+
 /// 字段定义
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldSchema {
@@ -66,6 +83,9 @@ pub struct FieldSchema {
     /// 默认值
     #[serde(default)]
     pub default: Option<serde_json::Value>,
+    /// 自动填充来源（从请求上下文注入，优先级高于 default 和客户端传值）
+    #[serde(default)]
+    pub auto_fill: Option<AutoFillSource>,
     /// 私有字段，不出现在 API 响应中
     #[serde(default)]
     pub private: bool,
@@ -353,6 +373,17 @@ impl ContentTypeSchema {
 
             let default = field_toml.get("default").map(toml_value_to_json);
 
+            let auto_fill = field_toml
+                .get("auto_fill")
+                .and_then(|v| v.as_str())
+                .and_then(|s| match s {
+                    "user_id" => Some(AutoFillSource::UserId),
+                    "user_role" => Some(AutoFillSource::UserRole),
+                    "current_tenant_id" => Some(AutoFillSource::CurrentTenantId),
+                    "current_timestamp" => Some(AutoFillSource::CurrentTimestamp),
+                    _ => None,
+                });
+
             fields.push(FieldSchema {
                 name: name.clone(),
                 field_type,
@@ -365,6 +396,7 @@ impl ContentTypeSchema {
                     .and_then(toml::Value::as_bool)
                     .unwrap_or(false),
                 default,
+                auto_fill,
                 private: field_toml
                     .get("private")
                     .and_then(toml::Value::as_bool)
@@ -439,6 +471,15 @@ impl ContentTypeSchema {
         self.fields
             .iter()
             .filter(|f| f.field_type == FieldType::Relation)
+            .collect()
+    }
+
+    /// 获取带 auto_fill 声明的字段（用于 create 时注入上下文值）
+    #[must_use]
+    pub fn auto_fill_fields(&self) -> Vec<&FieldSchema> {
+        self.fields
+            .iter()
+            .filter(|f| f.auto_fill.is_some())
             .collect()
     }
 
@@ -593,6 +634,15 @@ fn field_to_toml(field: &FieldSchema) -> toml::Value {
     }
     if field.immutable {
         t.insert("immutable".into(), toml::Value::Boolean(true));
+    }
+    if let Some(ref auto_fill) = field.auto_fill {
+        let val = match auto_fill {
+            AutoFillSource::UserId => "user_id",
+            AutoFillSource::UserRole => "user_role",
+            AutoFillSource::CurrentTenantId => "current_tenant_id",
+            AutoFillSource::CurrentTimestamp => "current_timestamp",
+        };
+        t.insert("auto_fill".into(), toml::Value::String(val.into()));
     }
     if let Some(ref vals) = field.enum_values {
         t.insert(

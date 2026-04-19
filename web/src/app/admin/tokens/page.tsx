@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Copy, Check, KeyRound } from "lucide-react";
+import { Plus, Trash2, Copy, Check, KeyRound, MoreVertical } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -30,6 +30,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { api, ApiError } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 
@@ -316,14 +317,23 @@ export default function ApiTokensPage() {
                       {new Date(tk.created_at).toLocaleDateString()}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => handleDelete(tk.id, tk.name)}
-                        disabled={deleteMutation.isPending}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          className="inline-flex items-center justify-center rounded-md p-1 hover:bg-muted transition-colors"
+                        >
+                          <MoreVertical className="size-4" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            className="text-destructive"
+                            onClick={() => handleDelete(tk.id, tk.name)}
+                            disabled={deleteMutation.isPending}
+                          >
+                            <Trash2 className="size-4 mr-2" />
+                            {t("common.delete")}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { GitBranch, Plus, Trash2, Eye, Play, Pencil } from "lucide-react";
+import { GitBranch, Plus, Trash2, Eye, Play, Pencil, MoreVertical } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -32,6 +32,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { api, ApiError } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 
@@ -256,45 +257,47 @@ export default function WorkflowsPage() {
                     </TableCell>
                     <TableCell>{new Date(wf.created_at).toLocaleDateString()}</TableCell>
                     <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Link href={`/admin/workflows/editor?id=${wf.id}`}>
-                          <Button variant="ghost" size="icon-sm" title="Open in visual editor">
-                            <Pencil className="size-4" />
-                          </Button>
-                        </Link>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => {
-                            const ctx = prompt("Enter context JSON:", "{}");
-                            if (ctx) {
-                              try {
-                                const context = JSON.parse(ctx);
-                                api
-                                  .post(`/admin/workflows/${wf.id}/start`, { context })
-                                  .then(() => {
-                                    toast.success(t("workflows.workflowStarted"));
-                                    queryClient.invalidateQueries({ queryKey: ["workflow-instances"] });
-                                  })
-                                  .catch((e: Error) => toast.error(e.message));
-                              } catch {
-                                toast.error(t("common.invalidJson"));
+                      <DropdownMenu>
+                        <DropdownMenuTrigger className="inline-flex items-center justify-center rounded-md p-1 hover:bg-muted transition-colors">
+                          <MoreVertical className="size-4" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => window.location.href = `/admin/workflows/editor?id=${wf.id}`}>
+                            <Pencil className="size-4 mr-2" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              const ctx = prompt("Enter context JSON:", "{}");
+                              if (ctx) {
+                                try {
+                                  const context = JSON.parse(ctx);
+                                  api
+                                    .post(`/admin/workflows/${wf.id}/start`, { context })
+                                    .then(() => {
+                                      toast.success(t("workflows.workflowStarted"));
+                                      queryClient.invalidateQueries({ queryKey: ["workflow-instances"] });
+                                    })
+                                    .catch((e: Error) => toast.error(e.message));
+                                } catch {
+                                  toast.error(t("common.invalidJson"));
+                                }
                               }
-                            }
-                          }}
-                          title="Start workflow"
-                        >
-                          <Play className="size-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => handleDelete(wf.id, wf.name)}
-                          disabled={deleteMutation.isPending}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </div>
+                            }}
+                          >
+                            <Play className="size-4 mr-2" />
+                            Start workflow
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-destructive"
+                            onClick={() => handleDelete(wf.id, wf.name)}
+                            disabled={deleteMutation.isPending}
+                          >
+                            <Trash2 className="size-4 mr-2" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))

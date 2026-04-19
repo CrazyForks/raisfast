@@ -9,6 +9,7 @@ import {
   MessageSquare,
   Filter,
   CheckSquare,
+  MoreVertical,
 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -17,6 +18,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -337,41 +344,41 @@ export default function CommentsPage() {
                       {new Date(c.created_at).toLocaleDateString()}
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        {c.status !== "approved" && (
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            title={t("comments.approve")}
-                            onClick={() =>
-                              statusMutation.mutate({ id: c.id, status: "approved" })
-                            }
+                      <DropdownMenu>
+                        <DropdownMenuTrigger className="inline-flex items-center justify-center rounded-md p-1 hover:bg-muted transition-colors">
+                          <MoreVertical className="size-4" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {c.status !== "approved" && (
+                            <DropdownMenuItem
+                              onClick={() =>
+                                statusMutation.mutate({ id: c.id, status: "approved" })
+                              }
+                            >
+                              <CheckCircle className="size-4 text-green-600" />
+                              {t("comments.approve")}
+                            </DropdownMenuItem>
+                          )}
+                          {c.status !== "rejected" && (
+                            <DropdownMenuItem
+                              onClick={() =>
+                                statusMutation.mutate({ id: c.id, status: "rejected" })
+                              }
+                            >
+                              <XCircle className="size-4 text-red-500" />
+                              {t("comments.reject")}
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem
+                            className="text-destructive"
+                            onClick={() => handleDelete(c.id)}
+                            disabled={deleteMutation.isPending}
                           >
-                            <CheckCircle className="size-4 text-green-600" />
-                          </Button>
-                        )}
-                        {c.status !== "rejected" && (
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            title={t("comments.reject")}
-                            onClick={() =>
-                              statusMutation.mutate({ id: c.id, status: "rejected" })
-                            }
-                          >
-                            <XCircle className="size-4 text-red-500" />
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          title={t("common.delete")}
-                          onClick={() => handleDelete(c.id)}
-                          disabled={deleteMutation.isPending}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </div>
+                            <Trash2 className="size-4" />
+                            {t("common.delete")}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))

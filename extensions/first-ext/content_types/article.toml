@@ -42,6 +42,7 @@ type = "relation"
 relation_type = "many_to_one"
 target = "users"
 foreign_key = "author_id"
+auto_fill = "user_id"
 label = "作者"
 
 [fields.category]

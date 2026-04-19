@@ -3,13 +3,14 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Layers, Plus, Trash2, Pencil, Package } from "lucide-react";
+import { Layers, Plus, Trash2, Pencil, Package, MoreVertical } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { api, ApiError } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import type { ContentTypeSchema } from "@/components/admin/field-renderer";
@@ -122,26 +123,33 @@ export default function ContentTypesPage() {
                         </Badge>
                       )}
                     </div>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          router.push(`/admin/content-types/builder?edit=${ct.singular}`);
-                        }}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        className="inline-flex items-center justify-center rounded-md p-1 hover:bg-muted transition-colors"
+                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
                       >
-                        <Pencil className="size-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={(e) => handleDelete(e, ct.singular)}
-                        disabled={deleteMutation.isPending}
-                      >
-                        <Trash2 className="size-4 text-destructive" />
-                      </Button>
-                    </div>
+                        <MoreVertical className="size-4" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            router.push(`/admin/content-types/builder?edit=${ct.singular}`);
+                          }}
+                        >
+                          <Pencil className="size-4 mr-2" />
+                          {t("common.edit")}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          onClick={(e) => handleDelete(e, ct.singular)}
+                          disabled={deleteMutation.isPending}
+                        >
+                          <Trash2 className="size-4 mr-2" />
+                          {t("common.delete")}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                   {ct.description && (
                     <CardDescription>{ct.description}</CardDescription>

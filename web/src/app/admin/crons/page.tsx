@@ -14,9 +14,11 @@ import {
   Pencil,
   Save,
   X,
+  MoreVertical,
 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +44,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
 import { api, ApiError } from "@/lib/api";
 
@@ -89,6 +92,7 @@ function cronHuman(expr: string): string {
 
 export default function CronsPage() {
   const { t } = useT();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [page, setPage] = useState(1);
@@ -396,74 +400,58 @@ export default function CronsPage() {
                           </Button>
                         </div>
                       ) : (
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            title="Edit"
-                            onClick={() => startEdit(c)}
-                          >
-                            <Pencil className="size-4" />
-                          </Button>
-                          <Link
-                            href={`/admin/crons/${encodeURIComponent(c.id)}`}
-                          >
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              title="View details & logs"
-                            >
-                              <ExternalLink className="size-4" />
-                            </Button>
-                          </Link>
-                        {c.enabled ? (
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            title="Disable"
-                            disabled={toggleMutation.isPending}
-                            onClick={() =>
-                              toggleMutation.mutate({
-                                id: c.id,
-                                enabled: false,
-                              })
-                            }
-                          >
-                            <PowerOff className="size-4" />
-                          </Button>
-                        ) : (
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            title="Enable"
-                            disabled={toggleMutation.isPending}
-                            onClick={() =>
-                              toggleMutation.mutate({
-                                id: c.id,
-                                enabled: true,
-                              })
-                            }
-                          >
-                            <Power className="size-4" />
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          title="Delete"
-                          disabled={deleteMutation.isPending}
-                          onClick={() => {
-                              if (
-                                confirm(
-                                  t("cron.confirmDeleteSchedule", { name: c.label }),
-                                )
-                            ) {
-                              deleteMutation.mutate(c.id);
-                            }
-                          }}
-                        >
-                          <Trash2 className="size-4 text-destructive" />
-                        </Button>
+                        <div className="flex items-center justify-end">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger className="inline-flex items-center justify-center rounded-md p-1 hover:bg-muted transition-colors">
+                              <MoreVertical className="size-4" />
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => startEdit(c)}>
+                                <Pencil className="size-4 mr-2" />
+                                Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => router.push(`/admin/crons/${encodeURIComponent(c.id)}`)}>
+                                <ExternalLink className="size-4 mr-2" />
+                                View details & logs
+                              </DropdownMenuItem>
+                              {c.enabled ? (
+                                <DropdownMenuItem
+                                  disabled={toggleMutation.isPending}
+                                  onClick={() =>
+                                    toggleMutation.mutate({ id: c.id, enabled: false })
+                                  }
+                                >
+                                  <PowerOff className="size-4 mr-2" />
+                                  Disable
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem
+                                  disabled={toggleMutation.isPending}
+                                  onClick={() =>
+                                    toggleMutation.mutate({ id: c.id, enabled: true })
+                                  }
+                                >
+                                  <Power className="size-4 mr-2" />
+                                  Enable
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuItem
+                                disabled={deleteMutation.isPending}
+                                onClick={() => {
+                                  if (
+                                    confirm(
+                                      t("cron.confirmDeleteSchedule", { name: c.label }),
+                                    )
+                                  ) {
+                                    deleteMutation.mutate(c.id);
+                                  }
+                                }}
+                              >
+                                <Trash2 className="size-4 mr-2 text-destructive" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       )}
                     </TableCell>

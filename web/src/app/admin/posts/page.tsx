@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, MoreVertical } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, ApiError } from "@/lib/api";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useT } from "@/lib/i18n";
 
 interface Post {
@@ -150,23 +151,27 @@ export default function PostsPage() {
                       {new Date(post.created_at).toLocaleDateString()}
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => router.push(`/admin/posts/${post.slug}/edit`)}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          className="inline-flex items-center justify-center rounded-md p-1 hover:bg-muted transition-colors"
                         >
-                          <Pencil className="size-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => handleDelete(post.slug)}
-                          disabled={deleteMutation.isPending}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </div>
+                          <MoreVertical className="size-4" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => router.push(`/admin/posts/${post.slug}/edit`)}>
+                            <Pencil className="size-4 mr-2" />
+                            {t("common.edit")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-destructive"
+                            onClick={() => handleDelete(post.slug)}
+                            disabled={deleteMutation.isPending}
+                          >
+                            <Trash2 className="size-4 mr-2" />
+                            {t("common.delete")}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))

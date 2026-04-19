@@ -4,12 +4,13 @@ import { use, useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, ChevronUp, ChevronDown } from "lucide-react";
+import { Plus, Trash2, ChevronUp, ChevronDown, MoreVertical, Pencil } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -303,17 +304,36 @@ export default function ContentTypeListPage({
                       );
                     })}
                     <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(item.id);
-                        }}
-                        disabled={deleteMutation.isPending}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          className="inline-flex items-center justify-center rounded-md p-1 hover:bg-muted transition-colors"
+                          onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                        >
+                          <MoreVertical className="size-4" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              router.push(`/admin/content-types/${singular}/${item.id}/edit`);
+                            }}
+                          >
+                            <Pencil className="size-4 mr-2" />
+                            {t("common.edit")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDelete(item.id);
+                            }}
+                            disabled={deleteMutation.isPending}
+                          >
+                            <Trash2 className="size-4 mr-2" />
+                            {t("common.delete")}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))

@@ -104,7 +104,9 @@ pub async fn restore_revision(
     }
 
     let repo = ContentRepository::new(state.pool.clone());
-    let result = repo.update(&ct, &id, snapshot, None).await?;
+    let result = repo
+        .update(&ct, &id, snapshot, None, &Default::default())
+        .await?;
 
     Ok(Json(result))
 }

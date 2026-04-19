@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
-use super::repository::{ContentQuery, ContentRepository};
+use super::repository::{ContentQuery, ContentRepository, SaveContext};
 use super::schema::{ContentTypeSchema, check_api_access};
 use crate::AppState;
 use crate::errors::app_error::AppError;
@@ -141,6 +141,8 @@ pub async fn dynamic_cms_handler(
         return Err(AppError::not_found(&plural));
     };
 
+    let save_ctx = SaveContext::from_optional_auth(&auth);
+
     match (method.clone(), id) {
         (axum::http::Method::GET, None) => {
             check_api_access(ct.api.list, auth.0.as_ref())?;
@@ -150,7 +152,7 @@ pub async fn dynamic_cms_handler(
         (axum::http::Method::POST, None) => {
             check_api_access(ct.api.create, auth.0.as_ref())?;
             let Json(data) = body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
-            let result = do_create(&state, &ct, data).await?;
+            let result = do_create(&state, &ct, data, &save_ctx).await?;
             Ok((
                 StatusCode::CREATED,
                 Json(crate::errors::response::ApiResponse::success(result)),
@@ -165,7 +167,7 @@ pub async fn dynamic_cms_handler(
         (axum::http::Method::PUT, Some(id)) => {
             check_api_access(ct.api.update, auth.0.as_ref())?;
             let Json(data) = body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
-            let result = do_update(&state, &ct, &id, data).await?;
+            let result = do_update(&state, &ct, &id, data, &save_ctx).await?;
             Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
         }
         (axum::http::Method::DELETE, Some(id)) => {
@@ -273,9 +275,10 @@ async fn do_create(
     state: &AppState,
     ct: &ContentTypeSchema,
     data: Value,
+    save_ctx: &SaveContext,
 ) -> Result<serde_json::Value, AppError> {
     let repo = ContentRepository::new(state.pool.clone());
-    repo.create(ct, data, None).await
+    repo.create(ct, data, None, save_ctx).await
 }
 
 async fn do_update(
@@ -283,9 +286,10 @@ async fn do_update(
     ct: &ContentTypeSchema,
     id: &str,
     data: Value,
+    save_ctx: &SaveContext,
 ) -> Result<serde_json::Value, AppError> {
     let repo = ContentRepository::new(state.pool.clone());
-    repo.update(ct, id, data, None).await
+    repo.update(ct, id, data, None, save_ctx).await
 }
 
 async fn do_delete(state: &AppState, ct: &ContentTypeSchema, id: &str) -> Result<(), AppError> {
@@ -379,7 +383,8 @@ async fn create_handler(
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
     check_api_access(ct.api.create, auth.0.as_ref())?;
-    let result = do_create(&state, &ct, data).await?;
+    let save_ctx = SaveContext::from_optional_auth(&auth);
+    let result = do_create(&state, &ct, data, &save_ctx).await?;
     Ok((
         StatusCode::CREATED,
         Json(crate::errors::response::ApiResponse::success(result)),
@@ -398,7 +403,8 @@ async fn update_handler(
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
     check_api_access(ct.api.update, auth.0.as_ref())?;
-    let result = do_update(&state, &ct, &id, data).await?;
+    let save_ctx = SaveContext::from_optional_auth(&auth);
+    let result = do_update(&state, &ct, &id, data, &save_ctx).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(result)))
 }
 

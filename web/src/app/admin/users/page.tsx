@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Shield, User, Pencil, Trash2, Plus } from "lucide-react";
+import { Shield, User, Pencil, Trash2, Plus, MoreVertical } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -12,6 +12,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -282,14 +283,19 @@ export default function UsersPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       {u.id !== currentUser?.id && (
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          title={t("users.editRole")}
-                          onClick={() => openEdit(u)}
-                        >
-                          <Pencil className="size-4" />
-                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            className="inline-flex items-center justify-center rounded-md p-1 hover:bg-muted transition-colors"
+                          >
+                            <MoreVertical className="size-4" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => openEdit(u)}>
+                              <Pencil className="size-4 mr-2" />
+                              {t("users.editRole")}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       )}
                     </TableCell>
                   </TableRow>

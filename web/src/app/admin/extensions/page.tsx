@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Package,
   Power,
@@ -13,6 +14,7 @@ import {
   AlertTriangle,
   RefreshCw,
   ExternalLink,
+  MoreVertical,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -41,6 +43,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { api, apiRequest, ApiError } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 
@@ -60,6 +63,7 @@ interface ExtensionItem {
 
 export default function ExtensionsPage() {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const { t } = useT();
   const [uninstallTarget, setUninstallTarget] = useState<ExtensionItem | null>(null);
   const [dropTables, setDropTables] = useState(false);
@@ -274,45 +278,43 @@ export default function ExtensionsPage() {
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Link href={`/admin/extensions/${encodeURIComponent(ext.id)}`}>
-                            <Button variant="ghost" size="icon-sm" title="View details">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger className="inline-flex items-center justify-center rounded-md p-1 hover:bg-muted transition-colors">
+                            <MoreVertical className="size-4" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => router.push(`/admin/extensions/${encodeURIComponent(ext.id)}`)}>
                               <ExternalLink className="size-4" />
-                            </Button>
-                          </Link>
-                          {ext.enabled ? (
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              title="Disable"
-                              disabled={disableMutation.isPending}
-                              onClick={() => disableMutation.mutate(ext.id)}
+                              View details
+                            </DropdownMenuItem>
+                            {ext.enabled ? (
+                              <DropdownMenuItem
+                                disabled={disableMutation.isPending}
+                                onClick={() => disableMutation.mutate(ext.id)}
+                              >
+                                <PowerOff className="size-4" />
+                                Disable
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem
+                                disabled={enableMutation.isPending}
+                                onClick={() => enableMutation.mutate(ext.id)}
+                              >
+                                <Power className="size-4" />
+                                Enable
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setUninstallTarget(ext);
+                                setDropTables(false);
+                              }}
                             >
-                              <PowerOff className="size-4" />
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              title="Enable"
-                              disabled={enableMutation.isPending}
-                              onClick={() => enableMutation.mutate(ext.id)}
-                            >
-                              <Power className="size-4" />
-                            </Button>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            title="Uninstall"
-                            onClick={() => {
-                              setUninstallTarget(ext);
-                              setDropTables(false);
-                            }}
-                          >
-                            <Trash2 className="size-4 text-destructive" />
-                          </Button>
-                        </div>
+                              <Trash2 className="size-4 text-destructive" />
+                              Uninstall
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   );
