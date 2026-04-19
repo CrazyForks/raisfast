@@ -25,6 +25,7 @@ import {
   FieldRenderer,
   getFieldLabel,
 } from "@/components/admin/field-renderer";
+import { useT } from "@/lib/i18n";
 
 function getFormFields(schema: ContentTypeSchema): FieldSchema[] {
   return schema.fields.filter((f) => {
@@ -43,6 +44,7 @@ export default function EditCmsItemPage({
 }) {
   const { singular, id } = use(params);
   const router = useRouter();
+  const { t } = useT();
 
   const schemaQuery = useQuery({
     queryKey: ["content-type", singular],
@@ -84,14 +86,14 @@ export default function EditCmsItemPage({
     mutationFn: (data: Record<string, unknown>) =>
       api.put(`/cms/${schema!.plural}/${id}`, data),
     onSuccess: () => {
-      toast.success(`${schema!.name} updated`);
+      toast.success(t("common.updated", { name: schema!.name }));
       router.push(`/admin/content-types/${singular}`);
     },
     onError: (err) => {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error(`Failed to update ${schema!.name}`);
+        toast.error(t("common.failedToUpdate", { name: schema!.name }));
       }
     },
   });
@@ -110,7 +112,7 @@ export default function EditCmsItemPage({
     const newErrors: Record<string, string> = {};
     for (const field of getFormFields(schema)) {
       if (field.required && (formData[field.name] == null || formData[field.name] === "")) {
-        newErrors[field.name] = `${getFieldLabel(field)} is required`;
+        newErrors[field.name] = t("common.isRequired", { field: getFieldLabel(field) });
       }
       if (
         field.field_type === "json" &&
@@ -120,7 +122,7 @@ export default function EditCmsItemPage({
         try {
           JSON.parse(formData[field.name] as string);
         } catch {
-          newErrors[field.name] = "Invalid JSON";
+          newErrors[field.name] = t("common.invalidJson");
         }
       }
     }
@@ -142,7 +144,7 @@ export default function EditCmsItemPage({
         <div className="flex items-center gap-4">
           <Link href={`/admin/content-types/${singular}`}>
             <Button variant="outline" size="sm">
-              &larr; Back
+              {t("common.back")}
             </Button>
           </Link>
           <Skeleton className="h-8 w-32" />
@@ -158,14 +160,14 @@ export default function EditCmsItemPage({
         <div className="flex items-center gap-4">
           <Link href={`/admin/content-types/${singular}`}>
             <Button variant="outline" size="sm">
-              &larr; Back
+              {t("common.back")}
             </Button>
           </Link>
-          <h1 className="text-2xl font-bold">Not Found</h1>
+          <h1 className="text-2xl font-bold">{t("common.notFound")}</h1>
         </div>
         <Card>
           <CardContent className="py-8 text-center text-muted-foreground">
-            {schema ? "Item not found." : `Content type "${singular}" not found.`}
+            {schema ? t("contentTypes.itemNotFound") : t("contentTypes.notFoundMsg", { singular })}
           </CardContent>
         </Card>
       </div>
@@ -177,10 +179,10 @@ export default function EditCmsItemPage({
       <div className="flex items-center gap-4">
         <Link href={`/admin/content-types/${singular}`}>
           <Button variant="outline" size="sm">
-            &larr; Back
+            {t("common.back")}
           </Button>
         </Link>
-        <h1 className="text-2xl font-bold">Edit {schema.name}</h1>
+        <h1 className="text-2xl font-bold">{t("contentTypes.editItem", { name: schema.name })}</h1>
       </div>
 
       <form onSubmit={handleSubmit}>
@@ -206,7 +208,7 @@ export default function EditCmsItemPage({
               <Card>
                 <CardContent className="pt-6 space-y-4">
                   <div className="space-y-2">
-                    <Label>Status</Label>
+                    <Label>{t("common.status")}</Label>
                     <Select
                       value={(formData["status"] as string) || "draft"}
                       onValueChange={(val) => {
@@ -214,12 +216,12 @@ export default function EditCmsItemPage({
                       }}
                     >
                       <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Select status" />
+                        <SelectValue placeholder={t("common.selectStatus")} />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="draft">Draft</SelectItem>
-                        <SelectItem value="published">Published</SelectItem>
-                        <SelectItem value="archived">Archived</SelectItem>
+                        <SelectItem value="draft">{t("common.draft")}</SelectItem>
+                        <SelectItem value="published">{t("common.published")}</SelectItem>
+                        <SelectItem value="archived">{t("common.archived")}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -233,7 +235,7 @@ export default function EditCmsItemPage({
                   {String(item.created_at ?? "") !== "" && (
                     <div>
                       <span className="text-xs text-muted-foreground">
-                        Created
+                        {t("posts.createdCol")}
                       </span>
                       <p className="text-sm">
                         {new Date(String(item.created_at)).toLocaleString()}
@@ -243,7 +245,7 @@ export default function EditCmsItemPage({
                   {String(item.updated_at ?? "") !== "" && (
                     <div>
                       <span className="text-xs text-muted-foreground">
-                        Updated
+                        {t("posts.updatedCol")}
                       </span>
                       <p className="text-sm">
                         {new Date(String(item.updated_at)).toLocaleString()}
@@ -261,14 +263,14 @@ export default function EditCmsItemPage({
                   className="w-full"
                   disabled={updateMutation.isPending}
                 >
-                  {updateMutation.isPending ? "Saving..." : "Save Changes"}
+                  {updateMutation.isPending ? t("common.saving") : t("posts.saveChanges")}
                 </Button>
                 <Link
                   href={`/admin/content-types/${singular}`}
                   className="block"
                 >
                   <Button type="button" variant="outline" className="w-full">
-                    Cancel
+                    {t("common.cancel")}
                   </Button>
                 </Link>
               </CardContent>

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { useT } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -40,6 +41,7 @@ type SortField = "created_at" | "filename" | "size";
 type SortOrder = "asc" | "desc";
 
 export default function MediaPage() {
+  const { t } = useT();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
@@ -72,18 +74,18 @@ export default function MediaPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/media/${id}`),
     onSuccess: () => {
-      toast.success("File deleted");
+      toast.success(t("media.fileDeleted"));
       setSelectedFile(null);
       queryClient.invalidateQueries({ queryKey: ["media"] });
     },
     onError: (err) => {
       if (err instanceof ApiError) toast.error(err.message);
-      else toast.error("Failed to delete file");
+      else toast.error(t("media.failedToDelete"));
     },
   });
 
   function handleDelete(id: string) {
-    if (confirm("Are you sure you want to delete this file?")) {
+    if (confirm(t("media.confirmDelete"))) {
       deleteMutation.mutate(id);
     }
   }
@@ -120,10 +122,10 @@ export default function MediaPage() {
     <div className="flex h-[calc(100vh-8rem)] gap-0">
       {/* Sidebar */}
       <aside className="w-48 shrink-0 border-r py-4 px-2 overflow-hidden flex flex-col gap-4">
-        <h1 className="text-xl font-bold">Media</h1>
+        <h1 className="text-xl font-bold">{t("media.title")}</h1>
         {statsQuery.data && (
           <p className="text-xs text-muted-foreground">
-            {statsQuery.data.total_files} files &middot; {formatFileSize(statsQuery.data.total_size)}
+            {t("media.files", { count: statsQuery.data.total_files })} &middot; {formatFileSize(statsQuery.data.total_size)}
           </p>
         )}
         <MediaSidebar
@@ -141,7 +143,7 @@ export default function MediaPage() {
             <div className="relative flex-1 max-w-xs">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
               <Input
-                placeholder="Search files..."
+                placeholder={t("media.searchFiles")}
                 className="pl-8 h-8"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -157,9 +159,9 @@ export default function MediaPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="created_at">Date</SelectItem>
-                <SelectItem value="filename">Name</SelectItem>
-                <SelectItem value="size">Size</SelectItem>
+                <SelectItem value="created_at">{t("media.date")}</SelectItem>
+                <SelectItem value="filename">{t("media.name")}</SelectItem>
+                <SelectItem value="size">{t("media.size")}</SelectItem>
               </SelectContent>
             </Select>
 
@@ -169,7 +171,7 @@ export default function MediaPage() {
               onClick={() =>
                 setSortOrder((o) => (o === "asc" ? "desc" : "asc"))
               }
-              title={sortOrder === "asc" ? "Ascending" : "Descending"}
+              title={sortOrder === "asc" ? t("media.ascending") : t("media.descending")}
             >
               {sortOrder === "asc" ? "↑" : "↓"}
             </Button>
@@ -235,10 +237,10 @@ export default function MediaPage() {
                 disabled={page <= 1}
                 onClick={() => setPage((p) => p - 1)}
               >
-                Previous
+                {t("common.previous")}
               </Button>
               <span className="text-sm text-muted-foreground">
-                Page {page} of {totalPages}
+                {t("common.pageOf", { page, total: totalPages })}
               </span>
               <Button
                 variant="outline"
@@ -246,7 +248,7 @@ export default function MediaPage() {
                 disabled={page >= totalPages}
                 onClick={() => setPage((p) => p + 1)}
               >
-                Next
+                {t("common.next")}
               </Button>
             </div>
           )}

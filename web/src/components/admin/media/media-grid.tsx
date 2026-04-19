@@ -17,6 +17,7 @@ import {
   getCategoryIcon,
   isImageMime,
 } from "./media-utils";
+import { useT } from "@/lib/i18n";
 
 interface MediaGridProps {
   files: MediaFile[];
@@ -31,6 +32,7 @@ export function MediaGrid({
   onSelect,
   selectedId,
 }: MediaGridProps) {
+  const { t } = useT();
   return (
     <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
       {files.map((file) => {
@@ -84,17 +86,17 @@ export function MediaGrid({
                     <DropdownMenuItem
                       onSelect={() => {
                         navigator.clipboard.writeText(file.url);
-                        toast.success("URL copied");
+                        toast.success(t("media.urlCopied"));
                       }}
                     >
                       <Copy className="size-4" />
-                      Copy URL
+                      {t("media.copyUrl")}
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onSelect={() => window.open(file.url, "_blank")}
                     >
                       <Download className="size-4" />
-                      Download
+                      {t("media.download")}
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       className="text-destructive"
@@ -104,7 +106,7 @@ export function MediaGrid({
                       }}
                     >
                       <Trash2 className="size-4" />
-                      Delete
+                      {t("common.delete")}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>

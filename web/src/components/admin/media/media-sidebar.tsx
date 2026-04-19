@@ -3,6 +3,7 @@
 import type { MediaFile } from "@/lib/api";
 import { FILE_CATEGORIES, matchesCategory, type FileCategory } from "./media-utils";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/i18n";
 
 interface MediaSidebarProps {
   files: MediaFile[];
@@ -11,6 +12,7 @@ interface MediaSidebarProps {
 }
 
 export function MediaSidebar({ files, selected, onSelect }: MediaSidebarProps) {
+  const { t } = useT();
   const counts = files.reduce(
     (acc, f) => {
       const cat = matchesCategory(f, "all") ? "all" : "all";
@@ -28,7 +30,7 @@ export function MediaSidebar({ files, selected, onSelect }: MediaSidebarProps) {
   return (
     <div className="space-y-1">
       <SidebarItem
-        label="All"
+        label={t("common.all")}
         count={counts["all"] ?? 0}
         active={selected === "all"}
         onClick={() => onSelect("all")}
@@ -47,7 +49,7 @@ export function MediaSidebar({ files, selected, onSelect }: MediaSidebarProps) {
         );
       })}
       <SidebarItem
-        label="Other"
+        label={t("media.other")}
         count={
           files.length -
           FILE_CATEGORIES.reduce(

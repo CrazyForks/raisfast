@@ -11,10 +11,12 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import type { ContentTypeSchema } from "@/components/admin/field-renderer";
 
 export default function ContentTypesPage() {
   const router = useRouter();
+  const { t } = useT();
   const queryClient = useQueryClient();
 
   const query = useQuery({
@@ -26,14 +28,14 @@ export default function ContentTypesPage() {
     mutationFn: (singular: string) =>
       api.delete(`/admin/content-types/${singular}`),
     onSuccess: () => {
-      toast.success("Content type deleted");
+      toast.success(t("contentTypes.contentTypeDeleted"));
       queryClient.invalidateQueries({ queryKey: ["content-types"] });
     },
     onError: (err) => {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to delete");
+        toast.error(t("contentTypes.failedToDelete"));
       }
     },
   });
@@ -41,7 +43,7 @@ export default function ContentTypesPage() {
   function handleDelete(e: React.MouseEvent, singular: string) {
     e.preventDefault();
     e.stopPropagation();
-    if (confirm(`Delete content type "${singular}"? This removes the schema file but NOT the database table.`)) {
+    if (confirm(t("contentTypes.confirmDelete", { singular }))) {
       deleteMutation.mutate(singular);
     }
   }
@@ -50,7 +52,7 @@ export default function ContentTypesPage() {
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">Content Types</h1>
+          <h1 className="text-2xl font-bold">{t("contentTypes.title")}</h1>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 3 }).map((_, i) => (
@@ -66,12 +68,12 @@ export default function ContentTypesPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Content Types</h1>
+        <h1 className="text-2xl font-bold">{t("contentTypes.title")}</h1>
         <div className="flex gap-2">
           <Link href="/admin/content-types/builder">
             <Button>
               <Plus className="size-4" />
-              Create Content Type
+              {t("contentTypes.createContentType")}
             </Button>
           </Link>
         </div>
@@ -82,15 +84,15 @@ export default function ContentTypesPage() {
           <CardContent className="py-12 text-center space-y-4">
             <Layers className="size-12 mx-auto text-muted-foreground" />
             <div>
-              <h3 className="text-lg font-medium">No content types yet</h3>
+              <h3 className="text-lg font-medium">{t("contentTypes.noContentTypes")}</h3>
               <p className="text-sm text-muted-foreground mt-1">
-                Create your first content type to start building your CMS.
+                {t("contentTypes.noContentTypesDesc")}
               </p>
             </div>
             <Link href="/admin/content-types/builder">
               <Button>
                 <Plus className="size-4" />
-                Create Content Type
+                {t("contentTypes.createContentType")}
               </Button>
             </Link>
           </CardContent>
@@ -147,7 +149,7 @@ export default function ContentTypesPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-center justify-between text-sm text-muted-foreground">
-                    <span>{ct.fields.length} field{ct.fields.length !== 1 ? "s" : ""}</span>
+                    <span>{t("contentTypes.fields", { count: ct.fields.length })}</span>
                     <span className="font-mono text-xs">{ct.table}</span>
                   </div>
                 </CardContent>

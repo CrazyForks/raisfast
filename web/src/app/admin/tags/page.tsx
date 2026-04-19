@@ -30,6 +30,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { api, ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 interface Tag {
   id: string;
@@ -52,6 +53,7 @@ const tagSchema = z.object({
 type TagForm = z.infer<typeof tagSchema>;
 
 export default function TagsPage() {
+  const { t } = useT();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTag, setEditTag] = useState<Tag | null>(null);
@@ -80,7 +82,7 @@ export default function TagsPage() {
   const createMutation = useMutation({
     mutationFn: (data: TagForm) => api.post("/tags", data),
     onSuccess: () => {
-      toast.success("Tag created");
+      toast.success(t("tags.tagCreated"));
       queryClient.invalidateQueries({ queryKey: ["tags"] });
       setDialogOpen(false);
       reset();
@@ -89,7 +91,7 @@ export default function TagsPage() {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to create tag");
+        toast.error(t("tags.failedToCreate"));
       }
     },
   });
@@ -98,7 +100,7 @@ export default function TagsPage() {
     mutationFn: ({ id, data }: { id: string; data: { name: string } }) =>
       api.put(`/tags/${id}`, data),
     onSuccess: () => {
-      toast.success("Tag updated");
+      toast.success(t("tags.tagUpdated"));
       queryClient.invalidateQueries({ queryKey: ["tags"] });
       setEditTag(null);
     },
@@ -106,7 +108,7 @@ export default function TagsPage() {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to update tag");
+        toast.error(t("tags.failedToUpdate"));
       }
     },
   });
@@ -114,20 +116,20 @@ export default function TagsPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/tags/${id}`),
     onSuccess: () => {
-      toast.success("Tag deleted");
+      toast.success(t("tags.tagDeleted"));
       queryClient.invalidateQueries({ queryKey: ["tags"] });
     },
     onError: (err) => {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to delete tag");
+        toast.error(t("tags.failedToDelete"));
       }
     },
   });
 
   function handleDelete(id: string) {
-    if (confirm("Are you sure you want to delete this tag?")) {
+    if (confirm(t("tags.confirmDelete"))) {
       deleteMutation.mutate(id);
     }
   }
@@ -148,26 +150,26 @@ export default function TagsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Tags</h1>
+        <h1 className="text-2xl font-bold">{t("tags.title")}</h1>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger render={<Button />}>
             <Plus className="size-4" />
-            New Tag
+            {t("tags.newTag")}
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>New Tag</DialogTitle>
-              <DialogDescription>Create a new tag for posts.</DialogDescription>
+              <DialogTitle>{t("tags.newTag")}</DialogTitle>
+              <DialogDescription>{t("tags.createTag")}</DialogDescription>
             </DialogHeader>
             <form
               onSubmit={handleSubmit((data) => createMutation.mutate(data))}
               className="space-y-4"
             >
               <div className="space-y-2">
-                <Label htmlFor="tag-name">Name</Label>
+                <Label htmlFor="tag-name">{t("common.name")}</Label>
                 <Input
                   id="tag-name"
-                  placeholder="Tag name"
+                  placeholder={t("tags.tagName")}
                   {...register("name")}
                 />
                 {errors.name && (
@@ -180,10 +182,10 @@ export default function TagsPage() {
                   variant="outline"
                   onClick={() => setDialogOpen(false)}
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </Button>
                 <Button type="submit" disabled={createMutation.isPending}>
-                  {createMutation.isPending ? "Creating..." : "Create"}
+                  {createMutation.isPending ? t("common.creating") : t("common.create")}
                 </Button>
               </DialogFooter>
             </form>
@@ -196,23 +198,23 @@ export default function TagsPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Slug</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>{t("common.name")}</TableHead>
+                <TableHead>{t("categories.slug")}</TableHead>
+                <TableHead>{t("posts.createdCol")}</TableHead>
+                <TableHead className="text-right">{t("common.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {tagsQuery.isLoading ? (
                 <TableRow>
                   <TableCell colSpan={4} className="text-center py-8">
-                    Loading...
+                    {t("common.loading")}
                   </TableCell>
                 </TableRow>
               ) : tags.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={4} className="text-center py-8">
-                    No tags found.
+                    {t("tags.noTags")}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -288,10 +290,10 @@ export default function TagsPage() {
             disabled={page <= 1}
             onClick={() => setPage((p) => p - 1)}
           >
-            Previous
+            {t("common.previous")}
           </Button>
           <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
+            {t("common.pageOf", { page, total: totalPages })}
           </span>
           <Button
             variant="outline"
@@ -299,7 +301,7 @@ export default function TagsPage() {
             disabled={page >= totalPages}
             onClick={() => setPage((p) => p + 1)}
           >
-            Next
+            {t("common.next")}
           </Button>
         </div>
       )}

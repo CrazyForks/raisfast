@@ -180,9 +180,7 @@ pub async fn save_file(
 /// 仅读取图片头部信息，不解码整张图片，性能开销极小。
 /// 解析失败时静默返回 `None`，不阻断上传流程。
 fn parse_image_dimensions(data: &[u8]) -> (Option<i32>, Option<i32>) {
-    match image::ImageReader::new(std::io::Cursor::new(data))
-        .with_guessed_format()
-    {
+    match image::ImageReader::new(std::io::Cursor::new(data)).with_guessed_format() {
         Ok(reader) => match reader.into_dimensions() {
             Ok((w, h)) => (Some(w as i32), Some(h as i32)),
             Err(e) => {

@@ -3,6 +3,7 @@
 import { useRouter, useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
+import { useT } from "@/lib/i18n";
 import {
   ArrowLeft,
   Power,
@@ -94,27 +95,27 @@ function InfoRow({
   );
 }
 
-function statusBadge(status: string) {
+function statusBadge(status: string, t: (key: string) => string) {
   switch (status) {
     case "success":
       return (
         <Badge variant="default" className="gap-1">
           <CheckCircle className="size-3" />
-          Success
+          {t("cron.success")}
         </Badge>
       );
     case "failed":
       return (
         <Badge variant="destructive" className="gap-1">
           <XCircle className="size-3" />
-          Failed
+          {t("cron.failedStatus")}
         </Badge>
       );
     case "running":
       return (
         <Badge variant="secondary" className="gap-1">
           <Loader2 className="size-3 animate-spin" />
-          Running
+          {t("cron.running")}
         </Badge>
       );
     default:
@@ -123,6 +124,7 @@ function statusBadge(status: string) {
 }
 
 export default function CronDetailPage() {
+  const { t } = useT();
   const router = useRouter();
   const params = useParams();
   const queryClient = useQueryClient();
@@ -148,24 +150,24 @@ export default function CronDetailPage() {
     mutationFn: (enabled: boolean) =>
       api.post(`/admin/crons/${encodeURIComponent(id)}/toggle`, { enabled }),
     onSuccess: () => {
-      toast.success("Schedule toggled");
+      toast.success(t("cron.scheduleToggled"));
       queryClient.invalidateQueries({ queryKey: ["cron", id] });
       queryClient.invalidateQueries({ queryKey: ["crons"] });
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to toggle");
+      toast.error(err instanceof ApiError ? err.message : t("cron.failedToCreate"));
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: () => api.delete(`/admin/crons/${encodeURIComponent(id)}`),
     onSuccess: () => {
-      toast.success("Schedule deleted");
+      toast.success(t("cron.scheduleDeleted"));
       queryClient.invalidateQueries({ queryKey: ["crons"] });
       router.push("/admin/crons");
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to delete");
+      toast.error(err instanceof ApiError ? err.message : t("cron.failedToDelete"));
     },
   });
 
@@ -173,7 +175,7 @@ export default function CronDetailPage() {
     mutationFn: () =>
       api.post<number>("/admin/crons/logs/cleanup", {}) as Promise<number>,
     onSuccess: (count: number) => {
-      toast.success(`Cleaned up ${count} old log(s)`);
+      toast.success(t("cron.cleanedUp", { count }));
       queryClient.invalidateQueries({ queryKey: ["cron-logs", id] });
     },
     onError: (err) => {
@@ -189,7 +191,7 @@ export default function CronDetailPage() {
         <div className="flex items-center gap-4">
           <Link href="/admin/crons">
             <Button variant="outline" size="sm">
-              &larr; Back
+              {t("common.back")}
             </Button>
           </Link>
           <Skeleton className="h-8 w-48" />
@@ -213,10 +215,10 @@ export default function CronDetailPage() {
         <div className="flex items-center gap-4">
           <Link href="/admin/crons">
             <Button variant="outline" size="sm">
-              &larr; Back
+              {t("common.back")}
             </Button>
           </Link>
-          <h1 className="text-2xl font-bold">Schedule Not Found</h1>
+          <h1 className="text-2xl font-bold">{t("cron.scheduleNotFound")}</h1>
         </div>
         <Card>
           <CardContent className="pt-6">
@@ -225,11 +227,11 @@ export default function CronDetailPage() {
               <p>
                 {scheduleQuery.error instanceof ApiError
                   ? scheduleQuery.error.message
-                  : "Schedule not found."}
+                  : t("cron.scheduleNotFound")}
               </p>
               <Link href="/admin/crons">
                 <Button variant="outline" size="sm">
-                  Back to Cron Schedules
+                  {t("cron.backToCronSchedules")}
                 </Button>
               </Link>
             </div>
@@ -248,7 +250,7 @@ export default function CronDetailPage() {
         <div className="flex items-center gap-4">
           <Link href="/admin/crons">
             <Button variant="outline" size="sm">
-              &larr; Back
+              {t("common.back")}
             </Button>
           </Link>
           <div>
@@ -267,7 +269,7 @@ export default function CronDetailPage() {
               onClick={() => toggleMutation.mutate(false)}
             >
               <PowerOff className="size-4" />
-              Disable
+              {t("common.disabled")}
             </Button>
           ) : (
             <Button
@@ -277,7 +279,7 @@ export default function CronDetailPage() {
               onClick={() => toggleMutation.mutate(true)}
             >
               <Power className="size-4" />
-              Enable
+              {t("common.enabled")}
             </Button>
           )}
           <Button
@@ -288,7 +290,7 @@ export default function CronDetailPage() {
             onClick={() => {
               if (
                 confirm(
-                  `Delete schedule "${schedule.label}"? This cannot be undone.`,
+                  t("cron.confirmDeleteSchedule", { name: schedule.label }),
                 )
               ) {
                 deleteMutation.mutate();
@@ -296,7 +298,7 @@ export default function CronDetailPage() {
             }}
           >
             <Trash2 className="size-4" />
-            Delete
+            {t("common.delete")}
           </Button>
         </div>
       </div>
@@ -305,23 +307,23 @@ export default function CronDetailPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <FileText className="size-4" />
-            Schedule Details
+            {t("cron.scheduleDetails")}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-0">
-          <InfoRow label="ID">
+          <InfoRow label={t("cron.idField")}>
             <span className="font-mono text-xs">{schedule.id}</span>
           </InfoRow>
           <Separator />
-          <InfoRow label="Label">{schedule.label}</InfoRow>
+          <InfoRow label={t("cron.labelField")}>{schedule.label}</InfoRow>
           <Separator />
-          <InfoRow label="Job Type">
+          <InfoRow label={t("cron.jobType")}>
             <Badge variant="ghost" className="font-mono">
               {schedule.job_type}
             </Badge>
           </InfoRow>
           <Separator />
-          <InfoRow label="Cron Expression">
+          <InfoRow label={t("cron.cronExpression")}>
             <Tooltip>
               <TooltipTrigger>
                 <code className="text-sm bg-muted px-2 py-0.5 rounded">
@@ -329,44 +331,44 @@ export default function CronDetailPage() {
                 </code>
               </TooltipTrigger>
               <TooltipContent>
-                7-segment: sec min hour day month weekday
+                {t("cron.cronExpression7")}
               </TooltipContent>
             </Tooltip>
           </InfoRow>
           <Separator />
-          <InfoRow label="Status">
+          <InfoRow label={t("common.status")}>
             {schedule.enabled ? (
-              <Badge variant="default">Enabled</Badge>
+              <Badge variant="default">{t("common.enabled")}</Badge>
             ) : (
-              <Badge variant="outline">Disabled</Badge>
+              <Badge variant="outline">{t("common.disabled")}</Badge>
             )}
           </InfoRow>
           <Separator />
-          <InfoRow label="Payload">
+          <InfoRow label={t("cron.payload")}>
             {schedule.payload ? (
               <code className="text-xs bg-muted px-2 py-0.5 rounded max-w-xs block truncate">
                 {schedule.payload}
               </code>
             ) : (
-              <span className="text-muted-foreground">None</span>
+              <span className="text-muted-foreground">{t("common.none")}</span>
             )}
           </InfoRow>
           <Separator />
-          <InfoRow label="Plugin">
+          <InfoRow label={t("cron.pluginCol")}>
             {schedule.plugin_id ? (
               <Badge variant="secondary">{schedule.plugin_id}</Badge>
             ) : (
-              <span className="text-muted-foreground">Built-in</span>
+              <span className="text-muted-foreground">{t("cron.builtIn")}</span>
             )}
           </InfoRow>
           <Separator />
-          <InfoRow label="Last Run">{formatTime(schedule.last_run_at)}</InfoRow>
+          <InfoRow label={t("cron.lastRun")}>{formatTime(schedule.last_run_at)}</InfoRow>
           <Separator />
-          <InfoRow label="Next Run">{formatTime(schedule.next_run_at)}</InfoRow>
+          <InfoRow label={t("cron.nextRun")}>{formatTime(schedule.next_run_at)}</InfoRow>
           <Separator />
-          <InfoRow label="Created">{formatTime(schedule.created_at)}</InfoRow>
+          <InfoRow label={t("cron.created")}>{formatTime(schedule.created_at)}</InfoRow>
           <Separator />
-          <InfoRow label="Updated">{formatTime(schedule.updated_at)}</InfoRow>
+          <InfoRow label={t("cron.updated")}>{formatTime(schedule.updated_at)}</InfoRow>
         </CardContent>
       </Card>
 
@@ -375,10 +377,10 @@ export default function CronDetailPage() {
           <div>
             <CardTitle className="flex items-center gap-2">
               <Activity className="size-4" />
-              Execution History
+              {t("cron.executionHistory")}
             </CardTitle>
             <CardDescription>
-              Recent execution logs for this schedule
+              {t("cron.recentLogs")}
             </CardDescription>
           </div>
           <Button
@@ -388,25 +390,25 @@ export default function CronDetailPage() {
             onClick={() => cleanupMutation.mutate()}
           >
             <Trash className="size-4" />
-            Cleanup Old
+            {t("cron.cleanupOld")}
           </Button>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Status</TableHead>
-                <TableHead>Started</TableHead>
-                <TableHead>Finished</TableHead>
-                <TableHead>Duration</TableHead>
-                <TableHead>Error</TableHead>
+                <TableHead>{t("common.status")}</TableHead>
+                <TableHead>{t("cron.started")}</TableHead>
+                <TableHead>{t("cron.finished")}</TableHead>
+                <TableHead>{t("cron.duration")}</TableHead>
+                <TableHead>{t("cron.error")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {logsQuery.isLoading ? (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center py-8">
-                    Loading...
+                    {t("common.loading")}
                   </TableCell>
                 </TableRow>
               ) : logs.length === 0 ? (
@@ -414,14 +416,14 @@ export default function CronDetailPage() {
                   <TableCell colSpan={5} className="text-center py-8">
                     <div className="flex flex-col items-center gap-2 text-muted-foreground">
                       <Activity className="size-6" />
-                      <p className="text-sm">No execution logs yet.</p>
+                      <p className="text-sm">{t("cron.noExecutionLogs")}</p>
                     </div>
                   </TableCell>
                 </TableRow>
               ) : (
                 logs.map((log) => (
                   <TableRow key={log.id}>
-                    <TableCell>{statusBadge(log.status)}</TableCell>
+                    <TableCell>{statusBadge(log.status, t)}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {formatTime(log.started_at)}
                     </TableCell>

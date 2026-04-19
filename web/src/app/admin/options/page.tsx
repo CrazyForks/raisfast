@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 interface Validation {
   min?: number;
@@ -163,6 +164,7 @@ function OptionField({
 
 export default function OptionsPage() {
   const queryClient = useQueryClient();
+  const { t } = useT();
   const [dirty, setDirty] = useState<Record<string, unknown>>({});
 
   const groupsQuery = useQuery({
@@ -176,12 +178,12 @@ export default function OptionsPage() {
     mutationFn: (options: Record<string, unknown>) =>
       api.put<OptionGroup[]>("/admin/options", { options }),
     onSuccess: (data) => {
-      toast.success("配置已保存");
+      toast.success(t("options.saved"));
       setDirty({});
       queryClient.setQueryData(["options"], data);
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "保存失败");
+      toast.error(err instanceof ApiError ? err.message : t("options.failedToSave"));
     },
   });
 
@@ -204,7 +206,7 @@ export default function OptionsPage() {
       }
     }
     if (Object.keys(updates).length === 0) {
-      toast.info("没有修改");
+      toast.info(t("options.noChanges"));
       return;
     }
     saveMutation.mutate(updates);
@@ -220,12 +222,12 @@ export default function OptionsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">站点设置</h1>
+        <h1 className="text-2xl font-bold">{t("options.title")}</h1>
         <div className="flex items-center gap-2">
           {hasChanges && (
             <Button variant="outline" size="sm" onClick={handleReset}>
               <RotateCcw className="size-4 mr-1" />
-              撤销
+              {t("options.reset")}
             </Button>
           )}
           <Button
@@ -234,7 +236,7 @@ export default function OptionsPage() {
             disabled={!hasChanges || saveMutation.isPending}
           >
             <Save className="size-4 mr-1" />
-            {saveMutation.isPending ? "保存中..." : "保存更改"}
+            {saveMutation.isPending ? t("common.saving") : t("options.saveChanges")}
           </Button>
         </div>
       </div>
@@ -253,7 +255,7 @@ export default function OptionsPage() {
           ))}
         </div>
       ) : groups.length === 0 ? (
-        <p className="text-muted-foreground">暂无配置项</p>
+        <p className="text-muted-foreground">{t("options.noOptions")}</p>
       ) : (
         <Tabs defaultValue={firstGroup}>
           <TabsList>

@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { api, ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 interface UploadItem {
   id: string;
@@ -17,6 +18,7 @@ interface UploadItem {
 }
 
 export function MediaUpload({ accept = "" }: { accept?: string }) {
+  const { t } = useT();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropRef = useRef<HTMLDivElement>(null);
@@ -55,7 +57,7 @@ export function MediaUpload({ accept = "" }: { accept?: string }) {
       );
       queryClient.invalidateQueries({ queryKey: ["media"] });
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : "Upload failed";
+      const msg = err instanceof ApiError ? err.message : t("media.uploadFailed");
       setUploads((prev) =>
         prev.map((u) =>
           u.id === itemId
@@ -126,7 +128,7 @@ export function MediaUpload({ accept = "" }: { accept?: string }) {
       >
         <Upload className="size-5 text-muted-foreground" />
         <span className="text-sm text-muted-foreground">
-          Drop files here, paste, or <span className="text-primary underline">browse</span>
+          Drop files here, paste, or <span className="text-primary underline">{t("media.browse")}</span>
         </span>
         <input
           ref={fileInputRef}
@@ -144,7 +146,7 @@ export function MediaUpload({ accept = "" }: { accept?: string }) {
 
       {activeCount > 0 && (
         <p className="text-xs text-muted-foreground text-center">
-          Uploading {activeCount} file{activeCount > 1 ? "s" : ""}...
+          {t("media.uploading", { count: activeCount })}
         </p>
       )}
 
@@ -165,11 +167,11 @@ export function MediaUpload({ accept = "" }: { accept?: string }) {
                 </div>
               )}
               {item.status === "done" && (
-                <span className="text-xs text-green-600">Done</span>
+                <span className="text-xs text-green-600">{t("media.done")}</span>
               )}
               {item.status === "error" && (
                 <span className="text-xs text-destructive" title={item.error}>
-                  Failed
+                  {t("media.failedUpload")}
                 </span>
               )}
               <button

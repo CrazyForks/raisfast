@@ -9,12 +9,14 @@ import {
   getCategoryIcon,
   formatFileSize,
 } from "./media-utils";
+import { useT } from "@/lib/i18n";
 
 interface MediaPreviewProps {
   file: MediaFile;
 }
 
 export function MediaPreview({ file }: MediaPreviewProps) {
+  const { t } = useT();
   const Icon = getCategoryIcon(file.mimetype);
 
   if (isImageMime(file.mimetype)) {
@@ -38,7 +40,7 @@ export function MediaPreview({ file }: MediaPreviewProps) {
           controls
           className="w-full max-h-[400px]"
         >
-          Your browser does not support video.
+          {t("media.noVideoSupport")}
         </video>
       </div>
     );
@@ -78,7 +80,7 @@ export function MediaPreview({ file }: MediaPreviewProps) {
           rel="noopener noreferrer"
           className="text-sm text-primary underline"
         >
-          Download file
+          {t("media.downloadFile")}
         </a>
       </div>
     </div>

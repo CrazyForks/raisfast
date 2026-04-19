@@ -37,6 +37,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { api, ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 interface PluginHealth {
   error_count: number;
@@ -102,6 +103,7 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
 }
 
 export default function PluginDetailPage() {
+  const { t } = useT();
   const router = useRouter();
   const params = useParams();
   const queryClient = useQueryClient();
@@ -116,45 +118,45 @@ export default function PluginDetailPage() {
   const enableMutation = useMutation({
     mutationFn: () => api.post(`/admin/plugins/${encodeURIComponent(id)}/enable`, {}),
     onSuccess: () => {
-      toast.success("Plugin enabled");
+      toast.success(t("plugins.pluginEnabled"));
       queryClient.invalidateQueries({ queryKey: ["plugin", id] });
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to enable");
+      toast.error(err instanceof ApiError ? err.message : t("plugins.failedToEnable"));
     },
   });
 
   const disableMutation = useMutation({
     mutationFn: () => api.post(`/admin/plugins/${encodeURIComponent(id)}/disable`, {}),
     onSuccess: () => {
-      toast.success("Plugin disabled");
+      toast.success(t("plugins.pluginDisabled"));
       queryClient.invalidateQueries({ queryKey: ["plugin", id] });
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to disable");
+      toast.error(err instanceof ApiError ? err.message : t("plugins.failedToDisable"));
     },
   });
 
   const reloadMutation = useMutation({
     mutationFn: () => api.post(`/admin/plugins/${encodeURIComponent(id)}/reload`, {}),
     onSuccess: () => {
-      toast.success("Plugin reloaded");
+      toast.success(t("plugins.pluginReloaded"));
       queryClient.invalidateQueries({ queryKey: ["plugin", id] });
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to reload");
+      toast.error(err instanceof ApiError ? err.message : t("plugins.failedToReload"));
     },
   });
 
   const removeMutation = useMutation({
     mutationFn: () => api.delete(`/admin/plugins/${encodeURIComponent(id)}`),
     onSuccess: () => {
-      toast.success("Plugin removed");
+      toast.success(t("plugins.pluginRemoved"));
       queryClient.invalidateQueries({ queryKey: ["plugins"] });
       router.push("/admin/plugins");
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to remove");
+      toast.error(err instanceof ApiError ? err.message : t("plugins.failedToRemove"));
     },
   });
 
@@ -164,7 +166,7 @@ export default function PluginDetailPage() {
         <div className="flex items-center gap-4">
           <Link href="/admin/plugins">
             <Button variant="outline" size="sm">
-              &larr; Back
+              &larr; {t("common.back")}
             </Button>
           </Link>
           <Skeleton className="h-8 w-48" />
@@ -196,10 +198,10 @@ export default function PluginDetailPage() {
         <div className="flex items-center gap-4">
           <Link href="/admin/plugins">
             <Button variant="outline" size="sm">
-              &larr; Back
+              &larr; {t("common.back")}
             </Button>
           </Link>
-          <h1 className="text-2xl font-bold">Plugin Not Found</h1>
+          <h1 className="text-2xl font-bold">{t("plugins.notFound")}</h1>
         </div>
         <Card>
           <CardContent className="pt-6">
@@ -208,11 +210,11 @@ export default function PluginDetailPage() {
               <p>
                 {pluginQuery.error instanceof ApiError
                   ? pluginQuery.error.message
-                  : "Plugin not found."}
+                  : t("plugins.notFoundMsg")}
               </p>
               <Link href="/admin/plugins">
                 <Button variant="outline" size="sm">
-                  Back to Plugins
+                  {t("plugins.backToPlugins")}
                 </Button>
               </Link>
             </div>
@@ -251,7 +253,7 @@ export default function PluginDetailPage() {
         <div className="flex items-center gap-4">
           <Link href="/admin/plugins">
             <Button variant="outline" size="sm">
-              &larr; Back
+              &larr; {t("common.back")}
             </Button>
           </Link>
           <div>
@@ -268,7 +270,7 @@ export default function PluginDetailPage() {
               onClick={() => disableMutation.mutate()}
             >
               <PowerOff className="size-4" />
-              Disable
+              {t("common.disable")}
             </Button>
           ) : (
             <Button
@@ -278,7 +280,7 @@ export default function PluginDetailPage() {
               onClick={() => enableMutation.mutate()}
             >
               <Power className="size-4" />
-              Enable
+              {t("common.enable")}
             </Button>
           )}
           <Button
@@ -288,7 +290,7 @@ export default function PluginDetailPage() {
             onClick={() => reloadMutation.mutate()}
           >
             <RefreshCw className="size-4" />
-            Reload
+            {t("plugins.reload")}
           </Button>
           <Button
             variant="outline"
@@ -298,7 +300,7 @@ export default function PluginDetailPage() {
             onClick={() => {
               if (
                 confirm(
-                  `Remove plugin "${plugin.name}"? This will unload it from memory.`,
+                  t("plugins.confirmRemove", { name: plugin.name })
                 )
               ) {
                 removeMutation.mutate();
@@ -306,7 +308,7 @@ export default function PluginDetailPage() {
             }}
           >
             <Trash2 className="size-4" />
-            Remove
+            {t("plugins.remove")}
           </Button>
         </div>
       </div>
@@ -316,7 +318,7 @@ export default function PluginDetailPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <FileText className="size-4" />
-              General
+              {t("plugins.general")}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-0">
@@ -324,23 +326,23 @@ export default function PluginDetailPage() {
             <Separator />
             <InfoRow label="Name">{plugin.name}</InfoRow>
             <Separator />
-            <InfoRow label="Version">{plugin.version}</InfoRow>
+            <InfoRow label={t("plugins.version")}>{plugin.version}</InfoRow>
             <Separator />
-            <InfoRow label="Runtime">
+            <InfoRow label={t("plugins.runtime")}>
               <Badge variant={rb.variant}>{rb.label}</Badge>
             </InfoRow>
             <Separator />
-            <InfoRow label="Status">
+            <InfoRow label={t("common.status")}>
               {plugin.enabled ? (
-                <Badge variant="default">Enabled</Badge>
+                <Badge variant="default">{t("common.enabled")}</Badge>
               ) : (
-                <Badge variant="outline">Disabled</Badge>
+                <Badge variant="outline">{t("common.disabled")}</Badge>
               )}
             </InfoRow>
             {plugin.description && (
               <>
                 <Separator />
-                <InfoRow label="Description">
+                <InfoRow label={t("common.description")}>
                   <span className="max-w-xs">{plugin.description}</span>
                 </InfoRow>
               </>
@@ -352,32 +354,32 @@ export default function PluginDetailPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Shield className="size-4" />
-              Health
+              {t("plugins.health")}
             </CardTitle>
             <CardDescription>
-              Error tracking and auto-disable status
+              {t("plugins.errorTracking")}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-0">
-            <InfoRow label="Status">
+            <InfoRow label={t("common.status")}>
               {plugin.health.auto_disabled ? (
-                <Badge variant="destructive">Auto-disabled</Badge>
+                <Badge variant="destructive">{t("plugins.autoDisabled")}</Badge>
               ) : plugin.health.error_count > 0 ? (
                 <Badge variant="secondary">
-                  {plugin.health.error_count} error(s)
+                  {t("plugins.errorCount", { count: plugin.health.error_count })}
                 </Badge>
               ) : (
-                <Badge variant="default">Healthy</Badge>
+                <Badge variant="default">{t("plugins.healthy")}</Badge>
               )}
             </InfoRow>
             <Separator />
-            <InfoRow label="Error Count">
+            <InfoRow label={t("plugins.errorCountLabel")}>
               {plugin.health.error_count}
             </InfoRow>
             {plugin.health.last_error && (
               <>
                 <Separator />
-                <InfoRow label="Last Error">
+                <InfoRow label={t("plugins.lastError")}>
                   <Tooltip>
                     <TooltipTrigger>
                       <span className="max-w-xs truncate text-destructive block">
@@ -394,14 +396,14 @@ export default function PluginDetailPage() {
             {plugin.health.last_error_at && (
               <>
                 <Separator />
-                <InfoRow label="Last Error At">
+                <InfoRow label={t("plugins.lastErrorAt")}>
                   {new Date(plugin.health.last_error_at).toLocaleString()}
                 </InfoRow>
               </>
             )}
             <Separator />
-            <InfoRow label="Auto-disabled">
-              {plugin.health.auto_disabled ? "Yes" : "No"}
+            <InfoRow label={t("plugins.autoDisabledLabel")}>
+              {plugin.health.auto_disabled ? t("field.yes") : t("field.no")}
             </InfoRow>
           </CardContent>
         </Card>
@@ -411,10 +413,10 @@ export default function PluginDetailPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Lock className="size-4" />
-            Permissions
+            {t("plugins.permissions")}
           </CardTitle>
           <CardDescription>
-            Declared permissions from plugin manifest
+            {t("permissions.declaredFromManifest")}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-0">
@@ -428,7 +430,7 @@ export default function PluginDetailPage() {
                 ))}
               </div>
             ) : (
-              <span className="text-muted-foreground">None</span>
+              <span className="text-muted-foreground">{t("common.none")}</span>
             )}
           </InfoRow>
           <Separator />
@@ -442,7 +444,7 @@ export default function PluginDetailPage() {
                 ))}
               </div>
             ) : (
-              <span className="text-muted-foreground">None</span>
+              <span className="text-muted-foreground">{t("common.none")}</span>
             )}
           </InfoRow>
           <Separator />
@@ -456,7 +458,7 @@ export default function PluginDetailPage() {
                 ))}
               </div>
             ) : (
-              <span className="text-muted-foreground">None</span>
+              <span className="text-muted-foreground">{t("common.none")}</span>
             )}
           </InfoRow>
           <Separator />
@@ -470,20 +472,20 @@ export default function PluginDetailPage() {
                 ))}
               </div>
             ) : (
-              <span className="text-muted-foreground">None</span>
+              <span className="text-muted-foreground">{t("common.none")}</span>
             )}
           </InfoRow>
           <Separator />
-          <InfoRow label="Max Memory">
+          <InfoRow label={t("plugins.maxMemory")}>
             {perms.max_memory_mb != null
               ? `${perms.max_memory_mb} MB`
-              : "Default"}
+              : t("plugins.default")}
           </InfoRow>
           <Separator />
-          <InfoRow label="Timeout">
+          <InfoRow label={t("plugins.timeout")}>
             {perms.timeout_ms != null
               ? `${perms.timeout_ms} ms`
-              : "Default"}
+              : t("plugins.default")}
           </InfoRow>
         </CardContent>
       </Card>
@@ -492,16 +494,16 @@ export default function PluginDetailPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Zap className="size-4" />
-            Hooks
+            {t("plugins.hooksTitle")}
           </CardTitle>
           <CardDescription>
-            Registered hook points and their execution metrics
+            {t("plugins.hooksDesc")}
           </CardDescription>
         </CardHeader>
         <CardContent>
           {plugin.hooks.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4">
-              No hooks registered.
+              {t("plugins.noHooks")}
             </p>
           ) : (
             <div className="space-y-3">
@@ -518,7 +520,7 @@ export default function PluginDetailPage() {
                         <Badge variant="ghost">{hook}</Badge>
                         {m && m.total_errors > 0 && (
                           <span className="text-xs text-destructive">
-                            {m.total_errors} error(s)
+                            {t("plugins.errorCount", { count: m.total_errors })}
                           </span>
                         )}
                       </div>
@@ -538,7 +540,7 @@ export default function PluginDetailPage() {
                         </div>
                       ) : (
                         <span className="text-xs text-muted-foreground">
-                          No metrics yet
+                          {t("plugins.noMetrics")}
                         </span>
                       )}
                     </div>
@@ -555,14 +557,14 @@ export default function PluginDetailPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Activity className="size-4" />
-            Performance Overview
+            {t("plugins.performance")}
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="rounded-lg border p-4 text-center">
               <div className="text-2xl font-bold">{totalCalls}</div>
-              <div className="text-xs text-muted-foreground">Total Calls</div>
+              <div className="text-xs text-muted-foreground">{t("plugins.totalCalls")}</div>
             </div>
             <div className="rounded-lg border p-4 text-center">
               <div className="text-2xl font-bold">
@@ -572,13 +574,13 @@ export default function PluginDetailPage() {
                   <span>{totalErrors}</span>
                 )}
               </div>
-              <div className="text-xs text-muted-foreground">Total Errors</div>
+              <div className="text-xs text-muted-foreground">{t("plugins.totalErrors")}</div>
             </div>
             <div className="rounded-lg border p-4 text-center">
               <div className="text-2xl font-bold">
                 {formatDuration(totalDuration)}
               </div>
-              <div className="text-xs text-muted-foreground">Total Duration</div>
+              <div className="text-xs text-muted-foreground">{t("plugins.totalDuration")}</div>
             </div>
           </div>
         </CardContent>

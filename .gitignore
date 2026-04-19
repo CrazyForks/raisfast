@@ -6,3 +6,4 @@ backups/
 logs/
 plugins-sdk/target
 plugins-data/
+uploads/

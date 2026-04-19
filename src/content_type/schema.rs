@@ -56,7 +56,6 @@ pub struct FieldSchema {
     /// 字段名
     pub name: String,
     /// 字段类型
-    #[serde(rename = "type")]
     pub field_type: FieldType,
     /// 是否必填
     #[serde(default)]

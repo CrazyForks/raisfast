@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { MarkdownEditor } from "@/components/common/markdown-editor";
+import { useT } from "@/lib/i18n";
 import {
   Select,
   SelectContent,
@@ -162,6 +163,7 @@ export function FieldRenderer({
   error,
 }: FieldRendererProps) {
   const label = getFieldLabel(field);
+  const { t } = useT();
   const strValue = value == null ? "" : String(value);
 
   function handleNumberChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -195,7 +197,7 @@ export function FieldRenderer({
           onChange={(e) => onChange(e.target.value)}
           disabled={field.field_type === "uid"}
           maxLength={field.max_length ?? undefined}
-          placeholder={field.field_type === "media" ? "Media URL" : undefined}
+          placeholder={field.field_type === "media" ? t("field.mediaUrl") : undefined}
         />
       );
       break;
@@ -205,7 +207,7 @@ export function FieldRenderer({
         <MarkdownEditor
           value={strValue}
           onChange={onChange}
-          placeholder="Start writing..."
+          placeholder={t("field.startWriting")}
         />
       );
       break;
@@ -256,7 +258,7 @@ export function FieldRenderer({
               }`}
             />
           </button>
-          <span className="text-sm">{value ? "Yes" : "No"}</span>
+          <span className="text-sm">{value ? t("field.yes") : t("field.no")}</span>
         </label>
       );
       break;
@@ -338,7 +340,7 @@ export function FieldRenderer({
           placeholder={
             field.relation?.foreign_key
               ? `${field.relation.foreign_key} value`
-              : "Related item ID"
+              : t("field.relatedItemId")
           }
         />
       );

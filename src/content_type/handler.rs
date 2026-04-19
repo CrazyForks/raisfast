@@ -18,33 +18,6 @@ use crate::AppState;
 use crate::errors::app_error::AppError;
 use crate::middleware::auth::OptionalAuth;
 
-/// 统一 API 响应
-#[derive(Debug, serde::Serialize)]
-pub struct ApiResponse<T: serde::Serialize> {
-    pub code: i32,
-    pub message: String,
-    pub data: Option<T>,
-}
-
-impl<T: serde::Serialize> ApiResponse<T> {
-    pub fn success(data: T) -> Self {
-        Self {
-            code: 0,
-            message: "success".into(),
-            data: Some(data),
-        }
-    }
-
-    #[must_use]
-    pub fn error(code: i32, message: String) -> ApiResponse<()> {
-        ApiResponse {
-            code,
-            message,
-            data: None,
-        }
-    }
-}
-
 /// 分页查询参数
 #[derive(Debug, Deserialize)]
 pub struct ListParams {
@@ -172,29 +145,36 @@ pub async fn dynamic_cms_handler(
         (axum::http::Method::GET, None) => {
             check_api_access(ct.api.list, auth.0.as_ref())?;
             let data = do_list(&state, &ct, params).await?;
-            Ok(Json(data).into_response())
+            Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
         }
         (axum::http::Method::POST, None) => {
             check_api_access(ct.api.create, auth.0.as_ref())?;
             let Json(data) = body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
             let result = do_create(&state, &ct, data).await?;
-            Ok((StatusCode::CREATED, Json(result)).into_response())
+            Ok((
+                StatusCode::CREATED,
+                Json(crate::errors::response::ApiResponse::success(result)),
+            )
+                .into_response())
         }
         (axum::http::Method::GET, Some(id)) => {
             check_api_access(ct.api.get, auth.0.as_ref())?;
             let data = do_get(&state, &ct, &id).await?;
-            Ok(Json(data).into_response())
+            Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
         }
         (axum::http::Method::PUT, Some(id)) => {
             check_api_access(ct.api.update, auth.0.as_ref())?;
             let Json(data) = body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
             let result = do_update(&state, &ct, &id, data).await?;
-            Ok(Json(result).into_response())
+            Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
         }
         (axum::http::Method::DELETE, Some(id)) => {
             check_api_access(ct.api.delete, auth.0.as_ref())?;
             do_delete(&state, &ct, &id).await?;
-            Ok(Json(json!({"deleted": true})).into_response())
+            Ok(Json(crate::errors::response::ApiResponse::success(
+                json!({"deleted": true}),
+            ))
+            .into_response())
         }
         _ => Err(AppError::not_found(&format!("{method} {path}"))),
     }
@@ -218,11 +198,11 @@ pub async fn dynamic_admin_cms_handler(
     match (method.clone(), id) {
         (axum::http::Method::GET, None) => {
             let data = do_admin_list(&state, &ct, params).await?;
-            Ok(Json(data).into_response())
+            Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
         }
         (axum::http::Method::GET, Some(id)) => {
             let data = do_admin_get(&state, &ct, &id).await?;
-            Ok(Json(data).into_response())
+            Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
         }
         _ => Err(AppError::not_found(&format!("{method} {path}"))),
     }
@@ -357,14 +337,14 @@ async fn list_handler(
     State(state): State<AppState>,
     type_name: String,
     Query(params): Query<ListParams>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<impl IntoResponse, AppError> {
     let ct = state
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
     check_api_access(ct.api.list, auth.0.as_ref())?;
     let data = do_list(&state, &ct, params).await?;
-    Ok(Json(data))
+    Ok(Json(crate::errors::response::ApiResponse::success(data)))
 }
 
 async fn get_handler(
@@ -372,14 +352,14 @@ async fn get_handler(
     State(state): State<AppState>,
     Path(id_or_slug): Path<String>,
     type_name: String,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<impl IntoResponse, AppError> {
     let ct = state
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
     check_api_access(ct.api.get, auth.0.as_ref())?;
     let data = do_get(&state, &ct, &id_or_slug).await?;
-    Ok(Json(data))
+    Ok(Json(crate::errors::response::ApiResponse::success(data)))
 }
 
 async fn create_handler(
@@ -387,14 +367,23 @@ async fn create_handler(
     State(state): State<AppState>,
     type_name: String,
     Json(data): Json<Value>,
-) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
+) -> Result<
+    (
+        StatusCode,
+        Json<crate::errors::response::ApiResponse<serde_json::Value>>,
+    ),
+    AppError,
+> {
     let ct = state
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
     check_api_access(ct.api.create, auth.0.as_ref())?;
     let result = do_create(&state, &ct, data).await?;
-    Ok((StatusCode::CREATED, Json(result)))
+    Ok((
+        StatusCode::CREATED,
+        Json(crate::errors::response::ApiResponse::success(result)),
+    ))
 }
 
 async fn update_handler(
@@ -403,14 +392,14 @@ async fn update_handler(
     Path(id): Path<String>,
     Json(data): Json<Value>,
     type_name: String,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<impl IntoResponse, AppError> {
     let ct = state
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
     check_api_access(ct.api.update, auth.0.as_ref())?;
     let result = do_update(&state, &ct, &id, data).await?;
-    Ok(Json(result))
+    Ok(Json(crate::errors::response::ApiResponse::success(result)))
 }
 
 async fn delete_handler(
@@ -418,40 +407,42 @@ async fn delete_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
     type_name: String,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<impl IntoResponse, AppError> {
     let ct = state
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
     check_api_access(ct.api.delete, auth.0.as_ref())?;
     do_delete(&state, &ct, &id).await?;
-    Ok(Json(json!({"deleted": true})))
+    Ok(Json(crate::errors::response::ApiResponse::success(
+        json!({"deleted": true}),
+    )))
 }
 
 async fn admin_list_handler(
     State(state): State<AppState>,
     type_name: String,
     Query(params): Query<ListParams>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<impl IntoResponse, AppError> {
     let ct = state
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
     let data = do_admin_list(&state, &ct, params).await?;
-    Ok(Json(data))
+    Ok(Json(crate::errors::response::ApiResponse::success(data)))
 }
 
 async fn admin_get_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
     type_name: String,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<impl IntoResponse, AppError> {
     let ct = state
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
     let data = do_admin_get(&state, &ct, &id).await?;
-    Ok(Json(data))
+    Ok(Json(crate::errors::response::ApiResponse::success(data)))
 }
 
 // ── Schema 管理 API ──────────────────────────────────────────

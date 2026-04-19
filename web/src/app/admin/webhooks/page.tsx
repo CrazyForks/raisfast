@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { api, ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 interface WebhookSubscription {
   id: string;
@@ -59,6 +60,7 @@ const webhookSchema = z.object({
 type WebhookForm = z.infer<typeof webhookSchema>;
 
 export default function WebhooksPage() {
+  const { t } = useT();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editWebhook, setEditWebhook] = useState<WebhookSubscription | null>(null);
@@ -95,7 +97,7 @@ export default function WebhooksPage() {
         description: data.description || null,
       }),
     onSuccess: () => {
-      toast.success("Webhook created");
+      toast.success(t("webhooks.webhookCreated"));
       queryClient.invalidateQueries({ queryKey: ["webhooks"] });
       setDialogOpen(false);
       reset();
@@ -104,7 +106,7 @@ export default function WebhooksPage() {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to create webhook");
+        toast.error(t("webhooks.failedToCreate"));
       }
     },
   });
@@ -123,7 +125,7 @@ export default function WebhooksPage() {
       };
     }) => api.put(`/admin/webhooks/${id}`, data),
     onSuccess: () => {
-      toast.success("Webhook updated");
+      toast.success(t("webhooks.webhookUpdated"));
       queryClient.invalidateQueries({ queryKey: ["webhooks"] });
       setEditWebhook(null);
     },
@@ -131,7 +133,7 @@ export default function WebhooksPage() {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to update webhook");
+        toast.error(t("webhooks.failedToUpdate"));
       }
     },
   });
@@ -139,20 +141,20 @@ export default function WebhooksPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/admin/webhooks/${id}`),
     onSuccess: () => {
-      toast.success("Webhook deleted");
+      toast.success(t("webhooks.webhookDeleted"));
       queryClient.invalidateQueries({ queryKey: ["webhooks"] });
     },
     onError: (err) => {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to delete webhook");
+        toast.error(t("webhooks.failedToDelete"));
       }
     },
   });
 
   function handleDelete(id: string) {
-    if (confirm("Delete this webhook subscription?")) {
+    if (confirm(t("webhooks.confirmDelete"))) {
       deleteMutation.mutate(id);
     }
   }
@@ -198,18 +200,18 @@ export default function WebhooksPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Webhook className="size-6" />
-          <h1 className="text-2xl font-bold">Webhooks</h1>
+          <h1 className="text-2xl font-bold">{t("webhooks.title")}</h1>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger render={<Button />}>
             <Plus className="size-4" />
-            New Webhook
+            {t("webhooks.newWebhook")}
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>New Webhook</DialogTitle>
+              <DialogTitle>{t("webhooks.newWebhook")}</DialogTitle>
               <DialogDescription>
-                Create a new webhook subscription to receive event notifications.
+                {t("webhooks.createWebhook")}
               </DialogDescription>
             </DialogHeader>
             <form
@@ -217,7 +219,7 @@ export default function WebhooksPage() {
               className="space-y-4"
             >
               <div className="space-y-2">
-                <Label htmlFor="wh-url">Callback URL</Label>
+                <Label htmlFor="wh-url">{t("webhooks.callbackUrl")}</Label>
                 <Input
                   id="wh-url"
                   placeholder="https://example.com/webhook"
@@ -228,7 +230,7 @@ export default function WebhooksPage() {
                 )}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="wh-events">Events (comma-separated)</Label>
+                <Label htmlFor="wh-events">{t("webhooks.eventsComma")}</Label>
                 <Input
                   id="wh-events"
                   placeholder="post.created, post.updated, comment.created"
@@ -238,11 +240,11 @@ export default function WebhooksPage() {
                   <p className="text-sm text-red-500">{errors.events.message}</p>
                 )}
                 <p className="text-xs text-muted-foreground">
-                  Use <code>*</code> to subscribe to all events
+                  Use <code>*</code> {t("webhooks.useStar")}
                 </p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="wh-desc">Description (optional)</Label>
+                <Label htmlFor="wh-desc">{t("webhooks.descriptionOptional")}</Label>
                 <Input
                   id="wh-desc"
                   placeholder="Notify external service..."
@@ -255,10 +257,10 @@ export default function WebhooksPage() {
                   variant="outline"
                   onClick={() => setDialogOpen(false)}
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </Button>
                 <Button type="submit" disabled={createMutation.isPending}>
-                  {createMutation.isPending ? "Creating..." : "Create"}
+                  {createMutation.isPending ? t("common.creating") : t("common.create")}
                 </Button>
               </DialogFooter>
             </form>
@@ -271,25 +273,25 @@ export default function WebhooksPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>URL</TableHead>
-                <TableHead>Events</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Description</TableHead>
+                <TableHead>{t("webhooks.urlCol")}</TableHead>
+                <TableHead>{t("webhooks.events")}</TableHead>
+                <TableHead>{t("common.status")}</TableHead>
+                <TableHead>{t("common.description")}</TableHead>
                 <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead className="text-right">{t("common.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {webhooksQuery.isLoading ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8">
-                    Loading...
+                    {t("common.loading")}
                   </TableCell>
                 </TableRow>
               ) : webhooks.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8">
-                    No webhooks found.
+                    {t("webhooks.noWebhooks")}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -332,13 +334,13 @@ export default function WebhooksPage() {
                           onChange={(e) => setEditEnabled(e.target.value === "true")}
                           className="h-8 rounded-md border border-input bg-background px-2 text-sm"
                         >
-                          <option value="true">Enabled</option>
-                          <option value="false">Disabled</option>
+                          <option value="true">{t("common.enabled")}</option>
+                          <option value="false">{t("common.disabled")}</option>
                         </select>
                       ) : w.enabled ? (
-                        <Badge variant="default">Enabled</Badge>
+                        <Badge variant="default">{t("common.enabled")}</Badge>
                       ) : (
-                        <Badge variant="destructive">Disabled</Badge>
+                        <Badge variant="destructive">{t("common.disabled")}</Badge>
                       )}
                     </TableCell>
                     <TableCell>
@@ -413,10 +415,10 @@ export default function WebhooksPage() {
             disabled={page <= 1}
             onClick={() => setPage((p) => p - 1)}
           >
-            Previous
+            {t("common.previous")}
           </Button>
           <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
+            {t("common.pageOf", { page, total: totalPages })}
           </span>
           <Button
             variant="outline"
@@ -424,7 +426,7 @@ export default function WebhooksPage() {
             disabled={page >= totalPages}
             onClick={() => setPage((p) => p + 1)}
           >
-            Next
+            {t("common.next")}
           </Button>
         </div>
       )}

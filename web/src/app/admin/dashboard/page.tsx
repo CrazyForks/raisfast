@@ -27,6 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
+import { useT } from "@/lib/i18n";
 
 interface StatsOverview {
   total_posts: number;
@@ -106,6 +107,7 @@ function StatusBadges({
 
 export default function DashboardPage() {
   const { isAdmin } = useAuthStore();
+  const { t } = useT();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -133,19 +135,19 @@ export default function DashboardPage() {
 
   const simpleCards = [
     {
-      label: "Categories",
+      label: t("dashboard.categories"),
       value: overview?.total_categories,
       icon: Folder,
       href: "/admin/categories",
     },
     {
-      label: "Tags",
+      label: t("dashboard.tags"),
       value: overview?.total_tags,
       icon: Tag,
       href: "/admin/tags",
     },
     {
-      label: "Media",
+      label: t("dashboard.media"),
       value: overview?.total_media,
       icon: Image,
       href: "/admin/media",
@@ -153,7 +155,7 @@ export default function DashboardPage() {
     ...(isAdmin()
       ? [
           {
-            label: "Users",
+            label: t("dashboard.users"),
             value: overview?.total_users,
             icon: Users,
             href: "/admin/users",
@@ -165,7 +167,7 @@ export default function DashboardPage() {
   if (!mounted) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <h1 className="text-2xl font-bold">{t("dashboard.title")}</h1>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {Array.from({ length: 5 }).map((_, i) => (
             <Card key={i}>
@@ -184,24 +186,24 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Dashboard</h1>
+      <h1 className="text-2xl font-bold">{t("dashboard.title")}</h1>
 
       {statsQuery.error && (
         <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-md flex items-center justify-between">
-          <span>Failed to load dashboard stats. Data may be stale.</span>
+          <span>{t("dashboard.failedToLoad")}</span>
           <Button
             variant="ghost"
             size="sm"
             onClick={() => statsQuery.refetch()}
           >
-            Retry
+            {t("common.retry")}
           </Button>
         </div>
       )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <StatusBadges
-          label="Posts"
+          label={t("dashboard.posts")}
           icon={FileText}
           total={overview?.total_posts ?? 0}
           byStatus={overview?.posts_by_status ?? {}}
@@ -209,7 +211,7 @@ export default function DashboardPage() {
           href="/admin/posts"
         />
         <StatusBadges
-          label="Comments"
+          label={t("dashboard.comments")}
           icon={MessageSquare}
           total={overview?.total_comments ?? 0}
           byStatus={overview?.comments_by_status ?? {}}
@@ -243,11 +245,11 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between">
               <CardTitle className="flex items-center gap-2">
                 <TrendingUp className="size-4" />
-                Posts (Last 14 Days)
+                {t("dashboard.postsLast14Days")}
               </CardTitle>
               <Link href="/admin/posts">
                 <Button variant="outline" size="sm">
-                  View All
+                  {t("dashboard.viewAll")}
                 </Button>
               </Link>
             </div>
@@ -255,20 +257,20 @@ export default function DashboardPage() {
           <CardContent>
             {trendsQuery.error ? (
               <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">
-                Failed to load trends.
+                {t("common.failedToLoad")}
                 <Button
                   variant="ghost"
                   size="sm"
                   className="ml-2"
                   onClick={() => trendsQuery.refetch()}
                 >
-                  Retry
+                  {t("common.retry")}
                 </Button>
               </div>
             ) : trendsQuery.isLoading ? (
               <Skeleton className="h-40 w-full" />
             ) : trendsData.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No data yet.</p>
+              <p className="text-sm text-muted-foreground">{t("dashboard.noDataYet")}</p>
             ) : (
               <div className="flex items-end gap-1 h-40">
                 {trendsData.map((d) => (
@@ -293,7 +295,7 @@ export default function DashboardPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Recent Activity</CardTitle>
+            <CardTitle>{t("dashboard.recentActivity")}</CardTitle>
           </CardHeader>
           <CardContent>
             {statsQuery.isLoading ? (
@@ -303,14 +305,14 @@ export default function DashboardPage() {
                 ))}
               </div>
             ) : recentActivity.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No activity yet.</p>
+              <p className="text-sm text-muted-foreground">{t("dashboard.noActivity")}</p>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Detail</TableHead>
-                    <TableHead>Time</TableHead>
+                    <TableHead>{t("dashboard.type")}</TableHead>
+                    <TableHead>{t("dashboard.detail")}</TableHead>
+                    <TableHead>{t("dashboard.time")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -325,9 +327,9 @@ export default function DashboardPage() {
                           }
                         >
                           {item.type === "post.created"
-                            ? "Post"
+                            ? t("dashboard.post")
                             : item.type === "comment.created"
-                              ? "Comment"
+                              ? t("dashboard.comment")
                               : item.type}
                         </Badge>
                       </TableCell>
@@ -361,7 +363,7 @@ export default function DashboardPage() {
       {isAdmin() && overview?.content_by_type && Object.keys(overview.content_by_type).length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Content Types</CardTitle>
+            <CardTitle>{t("dashboard.contentTypes")}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

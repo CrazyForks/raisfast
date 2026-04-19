@@ -51,6 +51,7 @@ import {
   SelectTrigger,
 } from "@/components/ui/select";
 import { api, ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import { StepNode, STEP_META, type StepNodeData } from "@/components/workflow/node";
 
 const STEP_COLORS: Record<string, string> = {
@@ -153,6 +154,7 @@ function NodeEditSheet({
   onSave: (id: string, data: Partial<StepNodeData>) => void;
   onDelete: (id: string) => void;
 }) {
+  const { t } = useT();
   const [title, setTitle] = useState("");
   const [stepType, setStepType] = useState("task");
   const [configJson, setConfigJson] = useState("{}");
@@ -173,19 +175,19 @@ function NodeEditSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-80">
         <SheetHeader>
-          <SheetTitle>Edit Step</SheetTitle>
+          <SheetTitle>{t("workflows.editor.editStep")}</SheetTitle>
         </SheetHeader>
         <div className="space-y-4 px-1 py-4">
           <div className="space-y-2">
-            <Label>Name</Label>
+            <Label>{t("workflows.editor.name")}</Label>
             <Input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Step name"
+              placeholder={t("workflows.editor.stepName")}
             />
           </div>
           <div className="space-y-2">
-            <Label>Type</Label>
+            <Label>{t("workflows.editor.type")}</Label>
             <Select value={stepType} onValueChange={(v) => { if (v) setStepType(v); }}>
               <SelectTrigger className="w-full">
                 <SelectValue />
@@ -206,7 +208,7 @@ function NodeEditSheet({
           </div>
           {stepType === "branch" && (
             <div className="space-y-2">
-              <Label>Branches (JSON array)</Label>
+              <Label>{t("workflows.editor.branchesJson")}</Label>
               <Textarea
                 rows={4}
                 className="font-mono text-xs"
@@ -214,12 +216,12 @@ function NodeEditSheet({
                 disabled
               />
               <p className="text-xs text-muted-foreground">
-                Connect edges from this node to define branches.
+                {t("workflows.editor.connectEdges")}
               </p>
             </div>
           )}
           <div className="space-y-2">
-            <Label>Config (JSON)</Label>
+            <Label>{t("workflows.editor.configJson")}</Label>
             <Textarea
               rows={6}
               className="font-mono text-xs"
@@ -236,12 +238,12 @@ function NodeEditSheet({
                   onSave(node.id, { title, stepType, config });
                   onOpenChange(false);
                 } catch {
-                  toast.error("Invalid JSON in config");
+                  toast.error(t("workflows.editor.invalidJson"));
                 }
               }}
               style={{ backgroundColor: meta.color }}
             >
-              Apply
+              {t("workflows.editor.apply")}
             </Button>
             <Button
               variant="destructive"
@@ -250,7 +252,7 @@ function NodeEditSheet({
                 onDelete(node.id);
                 onOpenChange(false);
               }}
-              title="Delete step"
+              title={t("workflows.editor.deleteStep")}
             >
               <Trash2 className="size-4" />
             </Button>
@@ -274,6 +276,7 @@ function FlowEditor({
   onSave: (nodes: Node<StepNodeData>[]) => void;
   saving: boolean;
 }) {
+  const { t } = useT();
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [editNodeId, setEditNodeId] = useState<string | null>(null);
@@ -351,7 +354,7 @@ function FlowEditor({
           <div className="flex-1" />
           <Button size="sm" onClick={() => onSave(nodes)} disabled={saving}>
             <Save className="size-4" />
-            {saving ? "Saving..." : "Save"}
+            {saving ? t("workflows.editor.saving") : t("workflows.editor.save")}
           </Button>
         </div>
       )}
@@ -386,6 +389,7 @@ function FlowEditor({
 
 export default function WorkflowEditorPage() {
   const router = useRouter();
+  const { t } = useT();
   const searchParams = useSearchParams();
   const workflowId = searchParams.get("id");
   const [loading, setLoading] = useState(false);
@@ -428,7 +432,7 @@ export default function WorkflowEditorPage() {
       })
       .catch((err) => {
         if (err instanceof ApiError) toast.error(err.message);
-        else toast.error("Failed to load workflow");
+        else toast.error(t("workflows.editor.failedToLoad"));
       })
       .finally(() => {
         setLoading(false);
@@ -439,7 +443,7 @@ export default function WorkflowEditorPage() {
   const handleSave = useCallback(
     async (nodes: Node<StepNodeData>[]) => {
       if (isEditing) {
-        toast.info("Workflow definitions are immutable. Create a new one to change steps.");
+        toast.info(t("workflows.editor.immutableNotice"));
         return;
       }
       setSaving(true);
@@ -448,14 +452,14 @@ export default function WorkflowEditorPage() {
         const id = `wf-${Date.now()}`;
         await api.post("/admin/workflows", {
           id,
-          name: name || "Untitled Workflow",
+          name: name || t("workflows.editor.untitled"),
           steps,
         });
-        toast.success("Workflow saved");
+        toast.success(t("workflows.editor.workflowSaved"));
         router.push("/admin/workflows");
       } catch (err) {
         if (err instanceof ApiError) toast.error(err.message);
-        else toast.error("Failed to save workflow");
+        else toast.error(t("workflows.editor.failedToSave"));
       } finally {
         setSaving(false);
       }
@@ -479,14 +483,14 @@ export default function WorkflowEditorPage() {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Workflow name..."
+              placeholder={t("workflows.editor.workflowName")}
               className="text-lg font-semibold bg-transparent border-none outline-none w-64"
             />
           )}
         </div>
         {isEditing && (
           <Button variant="outline" size="sm" onClick={() => router.push("/admin/workflows")}>
-            Back to list
+            {t("workflows.editor.backToList")}
           </Button>
         )}
       </div>

@@ -31,6 +31,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { api, ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 interface Category {
   id: string;
@@ -57,6 +58,7 @@ const categorySchema = z.object({
 type CategoryForm = z.infer<typeof categorySchema>;
 
 export default function CategoriesPage() {
+  const { t } = useT();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editCat, setEditCat] = useState<Category | null>(null);
@@ -92,7 +94,7 @@ export default function CategoriesPage() {
         sort_order: data.sort_order,
       }),
     onSuccess: () => {
-      toast.success("Category created");
+      toast.success(t("categories.categoryCreated"));
       queryClient.invalidateQueries({ queryKey: ["categories"] });
       setDialogOpen(false);
       reset();
@@ -101,7 +103,7 @@ export default function CategoriesPage() {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to create category");
+        toast.error(t("categories.failedToCreate"));
       }
     },
   });
@@ -115,7 +117,7 @@ export default function CategoriesPage() {
       data: { name?: string; description?: string; sort_order?: number };
     }) => api.put(`/categories/${id}`, data),
     onSuccess: () => {
-      toast.success("Category updated");
+      toast.success(t("categories.categoryUpdated"));
       queryClient.invalidateQueries({ queryKey: ["categories"] });
       setEditCat(null);
     },
@@ -123,7 +125,7 @@ export default function CategoriesPage() {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to update category");
+        toast.error(t("categories.failedToUpdate"));
       }
     },
   });
@@ -131,20 +133,20 @@ export default function CategoriesPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/categories/${id}`),
     onSuccess: () => {
-      toast.success("Category deleted");
+      toast.success(t("categories.categoryDeleted"));
       queryClient.invalidateQueries({ queryKey: ["categories"] });
     },
     onError: (err) => {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to delete category");
+        toast.error(t("categories.failedToDelete"));
       }
     },
   });
 
   function handleDelete(id: string) {
-    if (confirm("Are you sure you want to delete this category?")) {
+    if (confirm(t("categories.confirmDelete"))) {
       deleteMutation.mutate(id);
     }
   }
@@ -174,17 +176,17 @@ export default function CategoriesPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Categories</h1>
+        <h1 className="text-2xl font-bold">{t("categories.title")}</h1>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger render={<Button />}>
             <Plus className="size-4" />
-            New Category
+            {t("categories.newCategory")}
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>New Category</DialogTitle>
+              <DialogTitle>{t("categories.newCategory")}</DialogTitle>
               <DialogDescription>
-                Create a new category for organizing posts.
+                {t("categories.createCategory")}
               </DialogDescription>
             </DialogHeader>
             <form
@@ -192,10 +194,10 @@ export default function CategoriesPage() {
               className="space-y-4"
             >
               <div className="space-y-2">
-                <Label htmlFor="cat-name">Name</Label>
+                <Label htmlFor="cat-name">{t("common.name")}</Label>
                 <Input
                   id="cat-name"
-                  placeholder="Category name"
+                  placeholder={t("categories.categoryName")}
                   {...register("name")}
                 />
                 {errors.name && (
@@ -203,16 +205,16 @@ export default function CategoriesPage() {
                 )}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="cat-desc">Description</Label>
+                <Label htmlFor="cat-desc">{t("common.description")}</Label>
                 <Textarea
                   id="cat-desc"
-                  placeholder="Optional description"
+                  placeholder={t("categories.optionalDesc")}
                   rows={3}
                   {...register("description")}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="cat-sort">Sort Order</Label>
+                <Label htmlFor="cat-sort">{t("categories.sortOrder")}</Label>
                 <Input
                   id="cat-sort"
                   type="number"
@@ -225,10 +227,10 @@ export default function CategoriesPage() {
                   variant="outline"
                   onClick={() => setDialogOpen(false)}
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </Button>
                 <Button type="submit" disabled={createMutation.isPending}>
-                  {createMutation.isPending ? "Creating..." : "Create"}
+                  {createMutation.isPending ? t("common.creating") : t("common.create")}
                 </Button>
               </DialogFooter>
             </form>
@@ -241,24 +243,24 @@ export default function CategoriesPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Slug</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead>Sort Order</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>{t("common.name")}</TableHead>
+                <TableHead>{t("categories.slug")}</TableHead>
+                <TableHead>{t("common.description")}</TableHead>
+                <TableHead>{t("categories.sortOrder")}</TableHead>
+                <TableHead className="text-right">{t("common.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {categoriesQuery.isLoading ? (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center py-8">
-                    Loading...
+                    {t("common.loading")}
                   </TableCell>
                 </TableRow>
               ) : categories.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center py-8">
-                    No categories found.
+                    {t("categories.noCategories")}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -357,10 +359,10 @@ export default function CategoriesPage() {
             disabled={page <= 1}
             onClick={() => setPage((p) => p - 1)}
           >
-            Previous
+            {t("common.previous")}
           </Button>
           <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
+            {t("common.pageOf", { page, total: totalPages })}
           </span>
           <Button
             variant="outline"
@@ -368,7 +370,7 @@ export default function CategoriesPage() {
             disabled={page >= totalPages}
             onClick={() => setPage((p) => p + 1)}
           >
-            Next
+            {t("common.next")}
           </Button>
         </div>
       )}

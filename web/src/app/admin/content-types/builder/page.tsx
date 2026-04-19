@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useT } from "@/lib/i18n";
 import {
   Type,
   FileText,
@@ -202,6 +203,7 @@ function slugify(s: string): string {
 }
 
 export default function ContentTypeBuilderPage() {
+  const { t } = useT();
   const router = useRouter();
   const searchParams = useSearchParams();
   const editSingular = searchParams.get("edit");
@@ -313,7 +315,7 @@ export default function ContentTypeBuilderPage() {
     },
     onSuccess: () => {
       toast.success(
-        isEditMode ? "Content type updated" : "Content type created",
+        isEditMode ? t("builder.contentTypeUpdated") : t("builder.contentTypeCreated"),
       );
       router.push("/admin/content-types");
     },
@@ -321,7 +323,7 @@ export default function ContentTypeBuilderPage() {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to save content type");
+        toast.error(t("builder.failedToSave"));
       }
     },
   });
@@ -407,10 +409,10 @@ export default function ContentTypeBuilderPage() {
           size="sm"
           onClick={() => router.push("/admin/content-types")}
         >
-          &larr; Back
+          &larr; {t("common.back")}
         </Button>
         <h1 className="text-2xl font-bold">
-          {isEditMode ? `Edit: ${base.name}` : "Content-Type Builder"}
+          {isEditMode ? `${t("builder.editContentType")}: ${base.name}` : t("builder.title")}
         </h1>
       </div>
 
@@ -425,12 +427,12 @@ export default function ContentTypeBuilderPage() {
             <CardHeader className="py-3 px-4">
               <CardTitle className="text-sm flex items-center gap-2">
                 <FileText className="size-4" />
-                {base.name || "Untitled Content Type"}
+                {base.name || t("builder.untitled")}
               </CardTitle>
             </CardHeader>
             <CardContent className="py-2 px-4">
               <p className="text-xs text-muted-foreground">
-                {fields.length} field{fields.length !== 1 ? "s" : ""}
+                {t("builder.fieldCount", { count: fields.length })}
               </p>
             </CardContent>
           </Card>
@@ -472,7 +474,7 @@ export default function ContentTypeBuilderPage() {
                   </div>
                   <Icon className="size-4 shrink-0" />
                   <span className="flex-1 truncate">
-                    {f.name || "New field"}
+                    {f.name || t("builder.newField")}
                   </span>
                   <Badge variant="secondary" className="text-[10px] px-1.5">
                     {f.field_type}
@@ -488,7 +490,7 @@ export default function ContentTypeBuilderPage() {
             onClick={() => setPickerOpen(true)}
           >
             <Plus className="size-4" />
-            Add another field
+            {t("builder.addAnotherField")}
           </Button>
         </div>
 
@@ -520,22 +522,22 @@ export default function ContentTypeBuilderPage() {
           variant="outline"
           onClick={() => router.push("/admin/content-types")}
         >
-          Cancel
+          {t("common.cancel")}
         </Button>
         <Button
           onClick={() => saveMutation.mutate()}
           disabled={saveMutation.isPending}
         >
-          {saveMutation.isPending ? "Saving..." : "Save"}
+          {saveMutation.isPending ? t("builder.saving") : t("builder.save")}
         </Button>
       </div>
 
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Add a field</DialogTitle>
+            <DialogTitle>{t("builder.addAField")}</DialogTitle>
             <DialogDescription>
-              Choose a field type to add to your content type.
+              {t("builder.chooseFieldType")}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 mt-2">
@@ -578,6 +580,8 @@ function BaseConfigPanel({
   onChange: (b: BaseConfig) => void;
   textFields: FieldDraft[];
 }) {
+  const { t } = useT();
+
   function upd(patch: Partial<BaseConfig>) {
     onChange({ ...base, ...patch });
   }
@@ -585,11 +589,11 @@ function BaseConfigPanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Base Configuration</CardTitle>
+        <CardTitle className="text-base">{t("builder.baseConfig")}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
-          <Label>Name</Label>
+          <Label>{t("common.name")}</Label>
           <Input
             value={base.name}
             onChange={(e) => {
@@ -612,7 +616,7 @@ function BaseConfigPanel({
 
         <div className="grid grid-cols-3 gap-4">
           <div className="space-y-2">
-            <Label>Singular</Label>
+            <Label>{t("builder.singularName")}</Label>
             <Input
               value={base.singular}
               onChange={(e) => upd({ singular: e.target.value })}
@@ -620,7 +624,7 @@ function BaseConfigPanel({
             />
           </div>
           <div className="space-y-2">
-            <Label>Plural</Label>
+            <Label>{t("builder.pluralName")}</Label>
             <Input
               value={base.plural}
               onChange={(e) => upd({ plural: e.target.value })}
@@ -628,7 +632,7 @@ function BaseConfigPanel({
             />
           </div>
           <div className="space-y-2">
-            <Label>Table</Label>
+            <Label>{t("builder.tableName")}</Label>
             <Input
               value={base.table}
               onChange={(e) => upd({ table: e.target.value })}
@@ -638,11 +642,11 @@ function BaseConfigPanel({
         </div>
 
         <div className="space-y-2">
-          <Label>Description</Label>
+          <Label>{t("common.description")}</Label>
           <Textarea
             value={base.description}
             onChange={(e) => upd({ description: e.target.value })}
-            placeholder="Describe this content type..."
+            placeholder={t("builder.describeContentType")}
             rows={3}
           />
         </div>
@@ -655,27 +659,27 @@ function BaseConfigPanel({
               checked={base.draft_publish}
               onCheckedChange={(v) => upd({ draft_publish: v === true })}
             />
-            <span className="text-sm">Draft / Publish</span>
+            <span className="text-sm">{t("builder.draftPublish")}</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
             <Checkbox
               checked={base.timestamps}
               onCheckedChange={(v) => upd({ timestamps: v === true })}
             />
-            <span className="text-sm">Timestamps</span>
+            <span className="text-sm">{t("builder.timestamps")}</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
             <Checkbox
               checked={base.soft_delete}
               onCheckedChange={(v) => upd({ soft_delete: v === true })}
             />
-            <span className="text-sm">Soft Delete</span>
+            <span className="text-sm">{t("builder.softDelete")}</span>
           </label>
         </div>
 
         {textFields.length > 0 && (
           <div className="space-y-2">
-            <Label>Slug Field</Label>
+            <Label>{t("builder.slugField")}</Label>
             <Select
               value={base.slug_field || "__none__"}
               onValueChange={(v) =>
@@ -683,10 +687,10 @@ function BaseConfigPanel({
               }
             >
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="None" />
+                <SelectValue placeholder={t("common.none")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__none__">None</SelectItem>
+                <SelectItem value="__none__">{t("common.none")}</SelectItem>
                 {textFields.map((f) => (
                   <SelectItem key={f.name} value={f.name}>
                     {f.name || "unnamed"}
@@ -710,6 +714,8 @@ function FieldConfigPanel({
   onUpdate: (patch: Partial<FieldDraft>) => void;
   onRemove: () => void;
 }) {
+  const { t } = useT();
+
   return (
     <Card>
       <CardHeader>
@@ -718,7 +724,7 @@ function FieldConfigPanel({
             const Icon = FIELD_TYPE_ICON_MAP[field.field_type] ?? Type;
             return <Icon className="size-4" />;
           })()}
-          Field Configuration
+          {t("builder.fieldConfiguration")}
           <Badge variant="secondary" className="ml-auto">
             {field.field_type}
           </Badge>
@@ -727,7 +733,7 @@ function FieldConfigPanel({
       <CardContent className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label>Field Name</Label>
+            <Label>{t("builder.fieldName")}</Label>
             <Input
               value={field.name}
               onChange={(e) => onUpdate({ name: slugify(e.target.value) })}
@@ -735,32 +741,32 @@ function FieldConfigPanel({
             />
           </div>
           <div className="space-y-2">
-            <Label>Field Type</Label>
+            <Label>{t("builder.fieldTypeLabel")}</Label>
             <Input value={field.field_type} disabled />
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label>Label</Label>
+            <Label>{t("builder.label")}</Label>
             <Input
               value={field.label}
               onChange={(e) => onUpdate({ label: e.target.value })}
-              placeholder="Display label"
+              placeholder={t("builder.displayLabel")}
             />
           </div>
           <div className="space-y-2">
-            <Label>Description</Label>
+            <Label>{t("common.description")}</Label>
             <Input
               value={field.description}
               onChange={(e) => onUpdate({ description: e.target.value })}
-              placeholder="Help text"
+              placeholder={t("builder.helpText")}
             />
           </div>
         </div>
 
         <div className="space-y-2">
-          <Label>Default Value</Label>
+          <Label>{t("builder.defaultValue")}</Label>
           <Input
             value={field.default}
             onChange={(e) => onUpdate({ default: e.target.value })}
@@ -776,28 +782,28 @@ function FieldConfigPanel({
               checked={field.required}
               onCheckedChange={(v) => onUpdate({ required: v === true })}
             />
-            <span className="text-sm">Required</span>
+            <span className="text-sm">{t("builder.required")}</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
             <Checkbox
               checked={field.unique}
               onCheckedChange={(v) => onUpdate({ unique: v === true })}
             />
-            <span className="text-sm">Unique</span>
+            <span className="text-sm">{t("builder.unique")}</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
             <Checkbox
               checked={field.private}
               onCheckedChange={(v) => onUpdate({ private: v === true })}
             />
-            <span className="text-sm">Private</span>
+            <span className="text-sm">{t("builder.privateField")}</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
             <Checkbox
               checked={field.immutable}
               onCheckedChange={(v) => onUpdate({ immutable: v === true })}
             />
-            <span className="text-sm">Immutable</span>
+            <span className="text-sm">{t("builder.immutable")}</span>
           </label>
         </div>
 
@@ -811,11 +817,11 @@ function FieldConfigPanel({
           variant="destructive"
           size="sm"
           onClick={() => {
-            if (confirm("Remove this field?")) onRemove();
+            if (confirm(t("builder.removeFieldConfirm"))) onRemove();
           }}
         >
           <Trash2 className="size-4" />
-          Remove Field
+          {t("builder.removeField")}
         </Button>
       </CardContent>
     </Card>
@@ -829,13 +835,15 @@ function TypeSpecificOptions({
   field: FieldDraft;
   onUpdate: (patch: Partial<FieldDraft>) => void;
 }) {
+  const { t } = useT();
+
   switch (field.field_type) {
     case "text":
     case "email":
     case "password":
       return (
         <div className="space-y-2">
-          <Label>Max Length</Label>
+          <Label>{t("builder.maxLength")}</Label>
           <Input
             type="number"
             value={field.max_length ?? ""}
@@ -855,7 +863,7 @@ function TypeSpecificOptions({
       return (
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label>Min</Label>
+            <Label>{t("builder.minValue")}</Label>
             <Input
               type="number"
               value={field.min ?? ""}
@@ -867,7 +875,7 @@ function TypeSpecificOptions({
             />
           </div>
           <div className="space-y-2">
-            <Label>Max</Label>
+            <Label>{t("builder.maxValue")}</Label>
             <Input
               type="number"
               value={field.max ?? ""}
@@ -884,7 +892,7 @@ function TypeSpecificOptions({
     case "enum":
       return (
         <div className="space-y-2">
-          <Label>Values (comma-separated)</Label>
+          <Label>{t("builder.valuesComma")}</Label>
           <Input
             value={(field.enum_values ?? []).join(", ")}
             onChange={(e) => {
@@ -903,7 +911,7 @@ function TypeSpecificOptions({
       return (
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label>Target</Label>
+            <Label>{t("builder.target")}</Label>
             <Input
               value={field.relation?.target ?? ""}
               onChange={(e) =>
@@ -918,7 +926,7 @@ function TypeSpecificOptions({
             />
           </div>
           <div className="space-y-2">
-            <Label>Relation Type</Label>
+            <Label>{t("builder.relationType")}</Label>
             <Select
               value={field.relation?.relation_type ?? "one_to_many"}
               onValueChange={(v) =>
@@ -948,7 +956,7 @@ function TypeSpecificOptions({
       return (
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label>Accepted Types</Label>
+            <Label>{t("builder.acceptedTypes")}</Label>
             <Input
               value={(field.media_config?.accept ?? []).join(", ")}
               onChange={(e) => {
@@ -967,7 +975,7 @@ function TypeSpecificOptions({
             />
           </div>
           <div className="space-y-2">
-            <Label>Max Count</Label>
+            <Label>{t("builder.maxCount")}</Label>
             <Input
               type="number"
               value={field.media_config?.max_count ?? 1}
@@ -995,7 +1003,7 @@ function TypeSpecificOptions({
     case "json":
       return (
         <p className="text-sm text-muted-foreground">
-          No additional options for this field type.
+          {t("builder.noAdditionalOptions")}
         </p>
       );
 

@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api, ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 interface Category {
   id: string;
@@ -49,6 +50,7 @@ type PostForm = z.infer<typeof postSchema>;
 
 export default function NewPostPage() {
   const router = useRouter();
+  const { t } = useT();
 
   const categoriesQuery = useQuery({
     queryKey: ["categories"],
@@ -101,14 +103,14 @@ export default function NewPostPage() {
         tag_ids: selectedTags.length > 0 ? selectedTags : undefined,
       }),
     onSuccess: () => {
-      toast.success("Post created");
+      toast.success(t("posts.postCreated"));
       router.push("/admin/posts");
     },
     onError: (err) => {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to create post");
+        toast.error(t("posts.failedToCreate"));
       }
     },
   });
@@ -121,20 +123,20 @@ export default function NewPostPage() {
       <div className="flex items-center gap-4">
         <Link href="/admin/posts">
           <Button variant="outline" size="sm">
-            &larr; Back
+            {t("common.back")}
           </Button>
         </Link>
-        <h1 className="text-2xl font-bold">New Post</h1>
+        <h1 className="text-2xl font-bold">{t("posts.newPost")}</h1>
       </div>
 
       <Card>
         <CardContent className="pt-6">
           <form onSubmit={handleSubmit((v) => createMutation.mutate(v))} className="space-y-6">
             <div className="space-y-2">
-              <Label htmlFor="title">Title</Label>
+              <Label htmlFor="title">{t("posts.titleCol")}</Label>
               <Input
                 id="title"
-                placeholder="Post title"
+                placeholder={t("posts.postTitle")}
                 {...register("title")}
               />
               {errors.title && (
@@ -143,11 +145,11 @@ export default function NewPostPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="content">Content</Label>
+              <Label htmlFor="content">{t("posts.content")}</Label>
               <MarkdownEditor
                 value={watch("content") || ""}
                 onChange={(v) => setValue("content", v)}
-                placeholder="Write your post content in Markdown..."
+                placeholder={t("posts.writeContent")}
               />
               {errors.content && (
                 <p className="text-sm text-red-500">
@@ -157,10 +159,10 @@ export default function NewPostPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="excerpt">Excerpt</Label>
+              <Label htmlFor="excerpt">{t("posts.excerpt")}</Label>
               <Textarea
                 id="excerpt"
-                placeholder="Brief summary (optional)"
+                placeholder={t("posts.briefSummary")}
                 rows={3}
                 {...register("excerpt")}
               />
@@ -168,7 +170,7 @@ export default function NewPostPage() {
 
             <div className="grid gap-6 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>Status</Label>
+                <Label>{t("common.status")}</Label>
                 <Select
                   value={statusValue}
                   onValueChange={(val) =>
@@ -176,17 +178,17 @@ export default function NewPostPage() {
                   }
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select status" />
+                    <SelectValue placeholder={t("common.selectStatus")} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="draft">Draft</SelectItem>
-                    <SelectItem value="published">Published</SelectItem>
+                    <SelectItem value="draft">{t("common.draft")}</SelectItem>
+                    <SelectItem value="published">{t("common.published")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
               <div className="space-y-2">
-                <Label>Category</Label>
+                <Label>{t("posts.categoryCol")}</Label>
                 <Select
                   value={categoryValue}
                   onValueChange={(val) =>
@@ -194,7 +196,7 @@ export default function NewPostPage() {
                   }
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select category" />
+                    <SelectValue placeholder={t("posts.selectCategory")} />
                   </SelectTrigger>
                   <SelectContent>
                     {categories.map((cat) => (
@@ -208,9 +210,9 @@ export default function NewPostPage() {
             </div>
 
             <div className="space-y-2">
-              <Label>Tags</Label>
+              <Label>{t("posts.tags")}</Label>
               {tags.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No tags available</p>
+                <p className="text-sm text-muted-foreground">{t("posts.noTags")}</p>
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {tags.map((tag) => (
@@ -233,11 +235,11 @@ export default function NewPostPage() {
 
             <div className="flex gap-2">
               <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? "Creating..." : "Create Post"}
+                {createMutation.isPending ? t("common.creating") : t("posts.createPost")}
               </Button>
               <Link href="/admin/posts">
                 <Button type="button" variant="outline">
-                  Cancel
+                  {t("common.cancel")}
                 </Button>
               </Link>
             </div>

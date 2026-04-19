@@ -24,6 +24,7 @@ import {
   getCategoryIcon,
   isImageMime,
 } from "./media-utils";
+import { useT } from "@/lib/i18n";
 
 interface MediaListProps {
   files: MediaFile[];
@@ -38,15 +39,16 @@ export function MediaList({
   onSelect,
   selectedId,
 }: MediaListProps) {
+  const { t } = useT();
   return (
     <Table>
       <TableHeader>
         <TableRow>
           <TableHead className="w-10" />
-          <TableHead>Name</TableHead>
-          <TableHead>Type</TableHead>
-          <TableHead>Size</TableHead>
-          <TableHead>Date</TableHead>
+          <TableHead>{t("media.name")}</TableHead>
+          <TableHead>{t("media.type")}</TableHead>
+          <TableHead>{t("media.size")}</TableHead>
+          <TableHead>{t("media.date")}</TableHead>
           <TableHead className="w-10" />
         </TableRow>
       </TableHeader>
@@ -105,17 +107,17 @@ export function MediaList({
                     <DropdownMenuItem
                       onSelect={() => {
                         navigator.clipboard.writeText(file.url);
-                        toast.success("URL copied");
+                        toast.success(t("media.urlCopied"));
                       }}
                     >
                       <Copy className="size-4" />
-                      Copy URL
+                      {t("media.copyUrl")}
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onSelect={() => window.open(file.url, "_blank")}
                     >
                       <Download className="size-4" />
-                      Download
+                      {t("media.download")}
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       className="text-destructive"
@@ -125,7 +127,7 @@ export function MediaList({
                       }}
                     >
                       <Trash2 className="size-4" />
-                      Delete
+                      {t("common.delete")}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>

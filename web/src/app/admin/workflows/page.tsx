@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { api, ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 interface WorkflowDefinition {
   id: string;
@@ -73,6 +74,7 @@ function parseStepCount(stepsJson: string): number {
 
 export default function WorkflowsPage() {
   const queryClient = useQueryClient();
+  const { t } = useT();
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const workflowsQuery = useQuery({
@@ -101,31 +103,31 @@ export default function WorkflowsPage() {
       });
     },
     onSuccess: () => {
-      toast.success("Workflow created");
+      toast.success(t("workflows.workflowCreated"));
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
       setDialogOpen(false);
       reset();
     },
     onError: (err) => {
       if (err instanceof ApiError) toast.error(err.message);
-      else toast.error("Failed to create workflow");
+      else toast.error(t("workflows.failedToCreate"));
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/admin/workflows/${id}`),
     onSuccess: () => {
-      toast.success("Workflow deleted");
+      toast.success(t("workflows.workflowDeleted"));
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
     },
     onError: (err) => {
       if (err instanceof ApiError) toast.error(err.message);
-      else toast.error("Failed to delete workflow");
+      else toast.error(t("workflows.failedToDelete"));
     },
   });
 
   function handleDelete(id: string, name: string) {
-    if (confirm(`Delete workflow "${name}"?`)) {
+    if (confirm(t("workflows.confirmDelete", { name }))) {
       deleteMutation.mutate(id);
     }
   }
@@ -137,31 +139,31 @@ export default function WorkflowsPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <GitBranch className="size-6" />
-          <h1 className="text-2xl font-bold">Workflows</h1>
+          <h1 className="text-2xl font-bold">{t("workflows.title")}</h1>
         </div>
         <div className="flex items-center gap-2">
           <Link href="/admin/workflows/instances">
             <Button variant="outline" size="sm">
               <Eye className="size-4" />
-              Instances
+              {t("workflows.instances")}
             </Button>
           </Link>
           <Link href="/admin/workflows/editor">
             <Button variant="outline" size="sm">
               <GitBranch className="size-4" />
-              Visual Editor
+              {t("workflows.visualEditor")}
             </Button>
           </Link>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger render={<Button />}>
               <Plus className="size-4" />
-              New Workflow
+              {t("workflows.newWorkflow")}
             </DialogTrigger>
             <DialogContent className="max-w-lg">
               <DialogHeader>
-                <DialogTitle>Create Workflow</DialogTitle>
+                <DialogTitle>{t("workflows.createWorkflow")}</DialogTitle>
                 <DialogDescription>
-                  Define a new workflow with steps. Steps are configured as JSON.
+                  {t("workflows.createWorkflowDesc")}
                 </DialogDescription>
               </DialogHeader>
               <form
@@ -174,7 +176,7 @@ export default function WorkflowsPage() {
                   {errors.id && <p className="text-sm text-red-500">{errors.id.message}</p>}
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="wf-name">Name</Label>
+                  <Label htmlFor="wf-name">{t("common.name")}</Label>
                   <Input id="wf-name" placeholder="e.g. Editorial Review" {...register("name")} />
                   {errors.name && <p className="text-sm text-red-500">{errors.name.message}</p>}
                 </div>
@@ -183,7 +185,7 @@ export default function WorkflowsPage() {
                   <Input id="wf-desc" placeholder="Brief description..." {...register("description")} />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="wf-steps">Steps (JSON)</Label>
+                  <Label htmlFor="wf-steps">{t("workflows.stepsJson")}</Label>
                   <Textarea
                     id="wf-steps"
                     rows={8}
@@ -194,15 +196,15 @@ export default function WorkflowsPage() {
                     <p className="text-sm text-red-500">{errors.steps_json.message}</p>
                   )}
                   <p className="text-xs text-muted-foreground">
-                    Each step: {`{ id, name, type: "task"|"await"|"branch"|"parallel"|"delay", config, next }`}
+                    {t("workflows.stepFormat")}
                   </p>
                 </div>
                 <DialogFooter>
                   <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
-                    Cancel
+                    {t("common.cancel")}
                   </Button>
                   <Button type="submit" disabled={createMutation.isPending}>
-                    {createMutation.isPending ? "Creating..." : "Create"}
+                    {createMutation.isPending ? t("common.creating") : t("common.create")}
                   </Button>
                 </DialogFooter>
               </form>
@@ -216,23 +218,23 @@ export default function WorkflowsPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
+                <TableHead>{t("common.name")}</TableHead>
                 <TableHead>ID</TableHead>
                 <TableHead>Steps</TableHead>
-                <TableHead>Status</TableHead>
+                <TableHead>{t("common.status")}</TableHead>
                 <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead className="text-right">{t("common.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {workflowsQuery.isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8">Loading...</TableCell>
+                  <TableCell colSpan={6} className="text-center py-8">{t("common.loading")}</TableCell>
                 </TableRow>
               ) : workflows.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8">
-                    No workflows found. Create one to get started.
+                    {t("workflows.noWorkflows")}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -243,7 +245,7 @@ export default function WorkflowsPage() {
                       <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{wf.id}</code>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="secondary">{parseStepCount(wf.steps)} steps</Badge>
+                      <Badge variant="secondary">{t("workflows.steps", { count: parseStepCount(wf.steps) })}</Badge>
                     </TableCell>
                     <TableCell>
                       {wf.enabled ? (
@@ -271,12 +273,12 @@ export default function WorkflowsPage() {
                                 api
                                   .post(`/admin/workflows/${wf.id}/start`, { context })
                                   .then(() => {
-                                    toast.success("Workflow started");
+                                    toast.success(t("workflows.workflowStarted"));
                                     queryClient.invalidateQueries({ queryKey: ["workflow-instances"] });
                                   })
                                   .catch((e: Error) => toast.error(e.message));
                               } catch {
-                                toast.error("Invalid JSON");
+                                toast.error(t("common.invalidJson"));
                               }
                             }
                           }}

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Shield, Plus, Pencil, Trash2, Key } from "lucide-react";
+import { useT } from "@/lib/i18n";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -90,6 +91,7 @@ const COMMON_SUBJECTS = [
 ];
 
 export default function RbacPage() {
+  const { t } = useT();
   const { isAdmin } = useAuthStore();
   const queryClient = useQueryClient();
 
@@ -145,16 +147,16 @@ export default function RbacPage() {
     mutationFn: (data: RoleForm) =>
       api.post<Role>("/admin/rbac/roles", data),
     onSuccess: (role) => {
-      toast.success("Role created");
+      toast.success(t("rbac.roleCreated"));
       queryClient.invalidateQueries({ queryKey: ["rbac-roles"] });
       setCreateOpen(false);
       resetRole();
       setSelectedRoleId(role.id);
     },
     onError: (err) => {
-      toast.error(
-        err instanceof ApiError ? err.message : "Failed to create role",
-      );
+        toast.error(
+          err instanceof ApiError ? err.message : t("rbac.failedToCreate"),
+        );
     },
   });
 
@@ -162,30 +164,30 @@ export default function RbacPage() {
     mutationFn: ({ id, ...data }: RoleForm & { id: string }) =>
       api.put<Role>(`/admin/rbac/roles/${id}`, data),
     onSuccess: () => {
-      toast.success("Role updated");
+      toast.success(t("rbac.roleUpdated"));
       queryClient.invalidateQueries({ queryKey: ["rbac-roles"] });
       setEditRole(null);
       resetRole();
     },
     onError: (err) => {
-      toast.error(
-        err instanceof ApiError ? err.message : "Failed to update role",
-      );
+        toast.error(
+          err instanceof ApiError ? err.message : t("rbac.failedToUpdate"),
+        );
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/admin/rbac/roles/${id}`),
     onSuccess: () => {
-      toast.success("Role deleted");
+      toast.success(t("rbac.roleDeleted"));
       queryClient.invalidateQueries({ queryKey: ["rbac-roles"] });
       if (selectedRoleId === deleteRole?.id) setSelectedRoleId(null);
       setDeleteRole(null);
     },
     onError: (err) => {
-      toast.error(
-        err instanceof ApiError ? err.message : "Failed to delete role",
-      );
+        toast.error(
+          err instanceof ApiError ? err.message : t("rbac.failedToDelete"),
+        );
     },
   });
 
@@ -202,7 +204,7 @@ export default function RbacPage() {
         { permissions: entries },
       ),
     onSuccess: () => {
-      toast.success("Permission added");
+      toast.success(t("rbac.permissionAdded"));
       queryClient.invalidateQueries({
         queryKey: ["rbac-permissions", selectedRoleId],
       });
@@ -230,7 +232,7 @@ export default function RbacPage() {
       );
     },
     onSuccess: () => {
-      toast.success("Permission removed");
+      toast.success(t("rbac.permissionRemoved"));
       queryClient.invalidateQueries({
         queryKey: ["rbac-permissions", selectedRoleId],
       });
@@ -279,12 +281,12 @@ export default function RbacPage() {
       <div className="flex min-h-[50vh] items-center justify-center">
         <div className="text-center space-y-4">
           <Shield className="size-12 mx-auto text-muted-foreground" />
-          <h2 className="text-xl font-semibold">Admin Only</h2>
+          <h2 className="text-xl font-semibold">{t("common.adminOnly")}</h2>
           <p className="text-muted-foreground">
-            Only administrators can manage roles and permissions.
+            {t("common.adminOnlyMsg")}
           </p>
           <Link href="/admin/dashboard">
-            <Button variant="outline">Back to Dashboard</Button>
+            <Button variant="outline">{t("common.backToDashboard")}</Button>
           </Link>
         </div>
       </div>
@@ -293,17 +295,17 @@ export default function RbacPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Roles & Permissions</h1>
+      <h1 className="text-2xl font-bold">{t("rbac.title")}</h1>
 
       <div className="grid gap-6 lg:grid-cols-[240px_1fr]">
         {/* Left: Roles list */}
         <Card className="h-fit">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-base">Roles</CardTitle>
+              <CardTitle className="text-base">{t("rbac.roles")}</CardTitle>
               <Button size="sm" onClick={openCreate}>
                 <Plus className="size-4 mr-1" />
-                New
+                {t("common.create")}
               </Button>
             </div>
           </CardHeader>
@@ -311,11 +313,11 @@ export default function RbacPage() {
           <CardContent className="p-2">
             {rolesQuery.isLoading ? (
               <p className="text-sm text-muted-foreground text-center py-8">
-                Loading...
+                {t("common.loading")}
               </p>
             ) : roles.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-8">
-                No roles.
+                {t("rbac.noRoles")}
               </p>
             ) : (
               <div className="space-y-1">
@@ -337,8 +339,8 @@ export default function RbacPage() {
                             {role.name}
                           </span>
                           {role.is_system && (
-                            <Badge variant="secondary" className="text-[10px] px-1 py-0">
-                              system
+                              <Badge variant="secondary" className="text-[10px] px-1 py-0">
+                                {t("rbac.systemRole")}
                             </Badge>
                           )}
                         </div>
@@ -385,7 +387,7 @@ export default function RbacPage() {
                 disabled={page <= 1}
                 onClick={() => setPage((p) => p - 1)}
               >
-                Prev
+                {t("rbac.prev")}
               </Button>
               <span className="text-xs text-muted-foreground">
                 {page}/{totalPages}
@@ -396,7 +398,7 @@ export default function RbacPage() {
                 disabled={page >= totalPages}
                 onClick={() => setPage((p) => p + 1)}
               >
-                Next
+                {t("common.next")}
               </Button>
             </div>
           )}
@@ -417,7 +419,7 @@ export default function RbacPage() {
                       </Badge>
                     </>
                   ) : (
-                    "Permissions"
+                    t("rbac.permissions")
                   )}
                 </CardTitle>
                 {selectedRole?.description && (
@@ -429,7 +431,7 @@ export default function RbacPage() {
               {selectedRoleId && (
                 <Button size="sm" onClick={() => { resetPerm(); setAddPermOpen(true); }}>
                   <Plus className="size-4 mr-1" />
-                  Add Permission
+                  {t("rbac.addPermission")}
                 </Button>
               )}
             </div>
@@ -439,24 +441,24 @@ export default function RbacPage() {
             {!selectedRoleId ? (
               <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                 <Shield className="size-10 mb-3" />
-                <p className="text-sm">Select a role to view permissions</p>
+                <p className="text-sm">{t("rbac.selectRole")}</p>
               </div>
             ) : permsQuery.isLoading ? (
               <p className="text-sm text-muted-foreground text-center py-8">
-                Loading...
+                {t("common.loading")}
               </p>
             ) : permissions.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-8">
-                No permissions configured.
+                {t("rbac.noPermissions")}
               </p>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Action</TableHead>
-                    <TableHead>Subject</TableHead>
-                    <TableHead>Fields</TableHead>
-                    <TableHead>Conditions</TableHead>
+                    <TableHead>{t("rbac.action")}</TableHead>
+                    <TableHead>{t("rbac.subject")}</TableHead>
+                    <TableHead>{t("rbac.fieldsCol")}</TableHead>
+                    <TableHead>{t("rbac.conditionsCol")}</TableHead>
                     <TableHead className="w-12" />
                   </TableRow>
                 </TableHeader>
@@ -522,15 +524,15 @@ export default function RbacPage() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create Role</DialogTitle>
-            <DialogDescription>Add a new role to the system.</DialogDescription>
+            <DialogTitle>{t("rbac.createRole")}</DialogTitle>
+            <DialogDescription>{t("rbac.addRoleDesc")}</DialogDescription>
           </DialogHeader>
           <form
             onSubmit={submitRole((data) => createMutation.mutate(data))}
             className="space-y-4"
           >
             <div className="space-y-2">
-              <Label htmlFor="name">Name</Label>
+              <Label htmlFor="name">{t("rbac.roleName")}</Label>
               <Input
                 id="name"
                 {...regRole("name")}
@@ -543,7 +545,7 @@ export default function RbacPage() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="description">Description</Label>
+              <Label htmlFor="description">{t("rbac.roleDesc")}</Label>
               <Textarea
                 id="description"
                 {...regRole("description")}
@@ -557,10 +559,10 @@ export default function RbacPage() {
                 variant="outline"
                 onClick={() => setCreateOpen(false)}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? "Creating..." : "Create"}
+                {createMutation.isPending ? t("common.creating") : t("common.create")}
               </Button>
             </DialogFooter>
           </form>
@@ -574,7 +576,7 @@ export default function RbacPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Role</DialogTitle>
+            <DialogTitle>{t("rbac.editRole")}</DialogTitle>
             <DialogDescription>
               Update &ldquo;{editRole?.name}&rdquo; role.
             </DialogDescription>
@@ -586,7 +588,7 @@ export default function RbacPage() {
             className="space-y-4"
           >
             <div className="space-y-2">
-              <Label htmlFor="edit-name">Name</Label>
+              <Label htmlFor="edit-name">{t("rbac.roleName")}</Label>
               <Input id="edit-name" {...regRole("name")} />
               {roleErrors.name && (
                 <p className="text-xs text-destructive">
@@ -595,7 +597,7 @@ export default function RbacPage() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-desc">Description</Label>
+              <Label htmlFor="edit-desc">{t("rbac.roleDesc")}</Label>
               <Textarea id="edit-desc" {...regRole("description")} rows={2} />
             </div>
             <DialogFooter>
@@ -604,10 +606,10 @@ export default function RbacPage() {
                 variant="outline"
                 onClick={() => setEditRole(null)}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button type="submit" disabled={updateMutation.isPending}>
-                {updateMutation.isPending ? "Saving..." : "Save"}
+                {updateMutation.isPending ? t("common.saving") : t("common.save")}
               </Button>
             </DialogFooter>
           </form>
@@ -621,22 +623,21 @@ export default function RbacPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Role</DialogTitle>
+            <DialogTitle>{t("rbac.deleteRoleTitle")}</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete &ldquo;{deleteRole?.name}
-              &rdquo;? This action cannot be undone.
+              {t("rbac.deleteRoleConfirm", { name: deleteRole?.name ?? "" })}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteRole(null)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button
               variant="destructive"
               disabled={deleteMutation.isPending}
               onClick={() => deleteRole && deleteMutation.mutate(deleteRole.id)}
             >
-              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+              {deleteMutation.isPending ? t("common.saving") : t("common.delete")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -646,7 +647,7 @@ export default function RbacPage() {
       <Dialog open={addPermOpen} onOpenChange={setAddPermOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add Permission</DialogTitle>
+            <DialogTitle>{t("rbac.addPermissionTitle")}</DialogTitle>
             <DialogDescription>
               Grant a new permission to &ldquo;{selectedRole?.name}&rdquo;. Use *
               for wildcard.
@@ -654,7 +655,7 @@ export default function RbacPage() {
           </DialogHeader>
           <form onSubmit={submitPerm(onSubmitPerm)} className="space-y-4">
             <div className="space-y-2">
-              <Label>Action</Label>
+              <Label>{t("rbac.action")}</Label>
               <Input
                 {...regPerm("action")}
                 placeholder="e.g. content-type::post.create"
@@ -672,7 +673,7 @@ export default function RbacPage() {
               )}
             </div>
             <div className="space-y-2">
-              <Label>Subject</Label>
+              <Label>{t("rbac.subject")}</Label>
               <Input
                 {...regPerm("subject")}
                 placeholder="e.g. content-type::post"
@@ -690,7 +691,7 @@ export default function RbacPage() {
               )}
             </div>
             <div className="space-y-2">
-              <Label>Fields (comma-separated, optional)</Label>
+              <Label>{t("rbac.fieldsOptional")}</Label>
               <Input
                 {...regPerm("fields")}
                 placeholder="e.g. title,slug,content"
@@ -702,10 +703,10 @@ export default function RbacPage() {
                 variant="outline"
                 onClick={() => setAddPermOpen(false)}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button type="submit" disabled={addPermMutation.isPending}>
-                {addPermMutation.isPending ? "Adding..." : "Add"}
+                {addPermMutation.isPending ? t("common.creating") : t("common.create")}
               </Button>
             </DialogFooter>
           </form>
@@ -719,7 +720,7 @@ export default function RbacPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Remove Permission</DialogTitle>
+            <DialogTitle>{t("rbac.removePermissionTitle")}</DialogTitle>
             <DialogDescription>
               Remove{" "}
               <code className="bg-muted px-1 rounded">
@@ -734,14 +735,14 @@ export default function RbacPage() {
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRemovePerm(null)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button
               variant="destructive"
               disabled={removePermMutation.isPending}
               onClick={() => removePermMutation.mutate()}
             >
-              {removePermMutation.isPending ? "Removing..." : "Remove"}
+              {removePermMutation.isPending ? t("common.saving") : t("common.delete")}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -18,6 +18,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 interface AuditEntry {
   id: string;
@@ -63,6 +64,7 @@ function daysAgo(n: number): string {
 }
 
 export default function AuditPage() {
+  const { t } = useT();
   const [page, setPage] = useState(1);
   const [actionFilter, setActionFilter] = useState("");
   const [searchAction, setSearchAction] = useState("");
@@ -192,7 +194,7 @@ export default function AuditPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <ClipboardList className="size-6" />
-          <h1 className="text-2xl font-bold">Audit Log</h1>
+          <h1 className="text-2xl font-bold">{t("audit.title")}</h1>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={exportCsv}>
@@ -208,7 +210,7 @@ export default function AuditPage() {
 
       <div className="flex items-end gap-3 flex-wrap">
         <div className="space-y-1">
-          <Label className="text-xs">Action</Label>
+          <Label className="text-xs">{t("audit.action")}</Label>
           <Input
             placeholder="create, delete, ..."
             value={actionFilter}
@@ -218,7 +220,7 @@ export default function AuditPage() {
           />
         </div>
         <div className="space-y-1">
-          <Label className="text-xs">From</Label>
+          <Label className="text-xs">{t("audit.from")}</Label>
           <Input
             type="date"
             value={dateFrom}
@@ -227,7 +229,7 @@ export default function AuditPage() {
           />
         </div>
         <div className="space-y-1">
-          <Label className="text-xs">To</Label>
+          <Label className="text-xs">{t("audit.to")}</Label>
           <Input
             type="date"
             value={dateTo}
@@ -237,14 +239,14 @@ export default function AuditPage() {
         </div>
         <Button variant="outline" size="sm" onClick={handleSearch}>
           <Search className="size-4" />
-          Search
+          {t("audit.search")}
         </Button>
         <Button variant="ghost" size="sm" onClick={clearFilter}>
-          Clear
+          {t("audit.clear")}
         </Button>
         <div className="flex items-center gap-1 ml-auto">
           <Button variant="ghost" size="sm" onClick={() => applyDateRange("today")}>
-            Today
+            {t("audit.today")}
           </Button>
           <Button variant="ghost" size="sm" onClick={() => applyDateRange("7d")}>
             7d
@@ -257,7 +259,7 @@ export default function AuditPage() {
 
       {auditQuery.error && (
         <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-md">
-          Failed to load audit log. Please try again.
+          {t("audit.failedToLoad")}
         </div>
       )}
 
@@ -266,25 +268,25 @@ export default function AuditPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Time</TableHead>
-                <TableHead>Action</TableHead>
-                <TableHead>Subject</TableHead>
-                <TableHead>Subject ID</TableHead>
-                <TableHead>Actor</TableHead>
-                <TableHead>Detail</TableHead>
+                <TableHead>{t("audit.timestamp")}</TableHead>
+                <TableHead>{t("audit.action")}</TableHead>
+                <TableHead>{t("audit.resource")}</TableHead>
+                <TableHead>{t("audit.subjectId")}</TableHead>
+                <TableHead>{t("audit.actor")}</TableHead>
+                <TableHead>{t("audit.detailCol")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {auditQuery.isLoading ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8">
-                    Loading...
+                    {t("common.loading")}
                   </TableCell>
                 </TableRow>
               ) : entries.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8">
-                    No audit entries found.
+                    {t("audit.noEntries")}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -312,7 +314,7 @@ export default function AuditPage() {
                           {entry.actor_id.slice(0, 8)}
                         </span>
                       ) : (
-                        <span className="text-muted-foreground">system</span>
+                        <span className="text-muted-foreground">{t("audit.system")}</span>
                       )}
                       {entry.actor_role && (
                         <Badge
@@ -342,10 +344,10 @@ export default function AuditPage() {
             disabled={page <= 1}
             onClick={() => setPage((p) => p - 1)}
           >
-            Previous
+            {t("common.previous")}
           </Button>
           <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
+            Page {t("common.pageOf", { page, total: totalPages })}
           </span>
           <Button
             variant="outline"
@@ -353,7 +355,7 @@ export default function AuditPage() {
             disabled={page >= totalPages}
             onClick={() => setPage((p) => p + 1)}
           >
-            Next
+            {t("common.next")}
           </Button>
         </div>
       )}

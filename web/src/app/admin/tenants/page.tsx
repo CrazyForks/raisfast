@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Pencil, Save, X, ShieldCheck, ShieldAlert } from "lucide-react";
+import { useT } from "@/lib/i18n";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -57,6 +58,7 @@ const tenantSchema = z.object({
 type TenantForm = z.infer<typeof tenantSchema>;
 
 export default function TenantsPage() {
+  const { t } = useT();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTenant, setEditTenant] = useState<Tenant | null>(null);
@@ -89,7 +91,7 @@ export default function TenantsPage() {
         domain: data.domain || null,
       }),
     onSuccess: () => {
-      toast.success("Tenant created");
+      toast.success(t("tenants.tenantCreated"));
       queryClient.invalidateQueries({ queryKey: ["tenants"] });
       setDialogOpen(false);
       reset();
@@ -98,7 +100,7 @@ export default function TenantsPage() {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to create tenant");
+        toast.error(t("tenants.failedToCreate"));
       }
     },
   });
@@ -112,7 +114,7 @@ export default function TenantsPage() {
       data: { name?: string; domain?: string; status?: string };
     }) => api.put(`/admin/tenants/${id}`, data),
     onSuccess: () => {
-      toast.success("Tenant updated");
+      toast.success(t("tenants.tenantUpdated"));
       queryClient.invalidateQueries({ queryKey: ["tenants"] });
       setEditTenant(null);
     },
@@ -120,7 +122,7 @@ export default function TenantsPage() {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to update tenant");
+        toast.error(t("tenants.failedToUpdate"));
       }
     },
   });
@@ -128,24 +130,24 @@ export default function TenantsPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/admin/tenants/${id}`),
     onSuccess: () => {
-      toast.success("Tenant deleted");
+      toast.success(t("tenants.tenantDeleted"));
       queryClient.invalidateQueries({ queryKey: ["tenants"] });
     },
     onError: (err) => {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to delete tenant");
+        toast.error(t("tenants.failedToDelete"));
       }
     },
   });
 
   function handleDelete(id: string) {
     if (id === "default") {
-      toast.error("Cannot delete the default tenant");
+      toast.error(t("tenants.cannotDeleteDefault"));
       return;
     }
-    if (confirm("Delete this tenant? Data belonging to this tenant will NOT be removed.")) {
+    if (confirm(t("tenants.confirmDeleteMsg"))) {
       deleteMutation.mutate(id);
     }
   }
@@ -175,17 +177,17 @@ export default function TenantsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Tenants</h1>
+        <h1 className="text-2xl font-bold">{t("tenants.title")}</h1>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger render={<Button />}>
             <Plus className="size-4" />
-            New Tenant
+            {t("tenants.newTenant")}
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>New Tenant</DialogTitle>
+              <DialogTitle>{t("tenants.newTenant")}</DialogTitle>
               <DialogDescription>
-                Create a new tenant for data isolation.
+                {t("tenants.createTenant")}
               </DialogDescription>
             </DialogHeader>
             <form
@@ -193,7 +195,7 @@ export default function TenantsPage() {
               className="space-y-4"
             >
               <div className="space-y-2">
-                <Label htmlFor="tenant-name">Name</Label>
+                <Label htmlFor="tenant-name">{t("common.name")}</Label>
                 <Input
                   id="tenant-name"
                   placeholder="Acme Corp"
@@ -204,7 +206,7 @@ export default function TenantsPage() {
                 )}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="tenant-domain">Domain (optional)</Label>
+                <Label htmlFor="tenant-domain">{t("tenants.domain")}</Label>
                 <Input
                   id="tenant-domain"
                   placeholder="acme.example.com"
@@ -217,10 +219,10 @@ export default function TenantsPage() {
                   variant="outline"
                   onClick={() => setDialogOpen(false)}
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </Button>
                 <Button type="submit" disabled={createMutation.isPending}>
-                  {createMutation.isPending ? "Creating..." : "Create"}
+                  {createMutation.isPending ? t("common.creating") : t("common.create")}
                 </Button>
               </DialogFooter>
             </form>
@@ -234,24 +236,24 @@ export default function TenantsPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>ID</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Domain</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>{t("common.name")}</TableHead>
+                <TableHead>{t("tenants.domain")}</TableHead>
+                <TableHead>{t("common.status")}</TableHead>
+                <TableHead>{t("tenants.created")}</TableHead>
+                <TableHead className="text-right">{t("common.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {tenantsQuery.isLoading ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8">
-                    Loading...
+                    {t("common.loading")}
                   </TableCell>
                 </TableRow>
               ) : tenants.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8">
-                    No tenants found.
+                    {t("tenants.noTenants")}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -369,10 +371,10 @@ export default function TenantsPage() {
             disabled={page <= 1}
             onClick={() => setPage((p) => p - 1)}
           >
-            Previous
+            {t("common.previous")}
           </Button>
           <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
+            {t("common.pageOf", { page, total: totalPages })}
           </span>
           <Button
             variant="outline"
@@ -380,7 +382,7 @@ export default function TenantsPage() {
             disabled={page >= totalPages}
             onClick={() => setPage((p) => p + 1)}
           >
-            Next
+            {t("common.next")}
           </Button>
         </div>
       )}

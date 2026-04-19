@@ -40,6 +40,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, ApiError } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
+import { useT } from "@/lib/i18n";
 
 interface UserItem {
   id: string;
@@ -75,6 +76,7 @@ const roleSchema = z.object({
 
 export default function UsersPage() {
   const { isAdmin, user: currentUser } = useAuthStore();
+  const { t } = useT();
   const queryClient = useQueryClient();
   const [editUser, setEditUser] = useState<UserItem | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -103,7 +105,7 @@ export default function UsersPage() {
     mutationFn: ({ id, role }: { id: string; role: string }) =>
       api.put(`/users/${id}/role`, { role }),
     onSuccess: () => {
-      toast.success("User role updated");
+      toast.success(t("users.userRoleUpdated"));
       queryClient.invalidateQueries({ queryKey: ["users"] });
       setEditUser(null);
     },
@@ -111,7 +113,7 @@ export default function UsersPage() {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to update user");
+        toast.error(t("users.failedToUpdate"));
       }
     },
   });
@@ -125,7 +127,7 @@ export default function UsersPage() {
     mutationFn: (data: { email: string; username: string; password: string }) =>
       api.post("/auth/register", data),
     onSuccess: () => {
-      toast.success("User created");
+      toast.success(t("users.userCreated"));
       queryClient.invalidateQueries({ queryKey: ["users"] });
       setCreateOpen(false);
       setNewEmail("");
@@ -136,7 +138,7 @@ export default function UsersPage() {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to create user");
+        toast.error(t("users.failedToCreate"));
       }
     },
   });
@@ -146,12 +148,12 @@ export default function UsersPage() {
       <div className="flex min-h-[50vh] items-center justify-center">
         <div className="text-center space-y-4">
           <Shield className="size-12 mx-auto text-muted-foreground" />
-          <h2 className="text-xl font-semibold">Admin Only</h2>
+          <h2 className="text-xl font-semibold">{t("common.adminOnly")}</h2>
           <p className="text-muted-foreground">
-            Only administrators can view the users list.
+            {t("common.adminOnlyMsg")}
           </p>
           <Link href="/admin/dashboard">
-            <Button variant="outline">Back to Dashboard</Button>
+            <Button variant="outline">{t("common.backToDashboard")}</Button>
           </Link>
         </div>
       </div>
@@ -164,22 +166,22 @@ export default function UsersPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Users</h1>
+        <h1 className="text-2xl font-bold">{t("users.title")}</h1>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger render={<Button />}>
             <Plus className="size-4" />
-            New User
+            {t("users.newUser")}
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Create User</DialogTitle>
+              <DialogTitle>{t("users.createUser")}</DialogTitle>
               <DialogDescription>
-                Register a new user account.
+                {t("users.registerNew")}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label>Username</Label>
+                <Label>{t("users.username")}</Label>
                 <Input
                   value={newUsername}
                   onChange={(e) => setNewUsername(e.target.value)}
@@ -187,7 +189,7 @@ export default function UsersPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Email</Label>
+                <Label>{t("users.email")}</Label>
                 <Input
                   type="email"
                   value={newEmail}
@@ -196,12 +198,12 @@ export default function UsersPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Password</Label>
+                <Label>{t("users.password")}</Label>
                 <Input
                   type="password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Min 8 characters"
+                  placeholder={t("users.minChars")}
                 />
               </div>
               <DialogFooter>
@@ -210,7 +212,7 @@ export default function UsersPage() {
                   variant="outline"
                   onClick={() => setCreateOpen(false)}
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </Button>
                 <Button
                   disabled={
@@ -227,7 +229,7 @@ export default function UsersPage() {
                     })
                   }
                 >
-                  {createMutation.isPending ? "Creating..." : "Create"}
+                  {createMutation.isPending ? t("common.creating") : t("common.create")}
                 </Button>
               </DialogFooter>
             </div>
@@ -240,24 +242,24 @@ export default function UsersPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Username</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Joined</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>{t("users.username")}</TableHead>
+                <TableHead>{t("users.email")}</TableHead>
+                <TableHead>{t("users.role")}</TableHead>
+                <TableHead>{t("users.joined")}</TableHead>
+                <TableHead className="text-right">{t("common.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {usersQuery.isLoading ? (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center py-8">
-                    Loading...
+                    {t("common.loading")}
                   </TableCell>
                 </TableRow>
               ) : users.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center py-8">
-                    No users found.
+                    {t("users.noUsers")}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -283,7 +285,7 @@ export default function UsersPage() {
                         <Button
                           variant="ghost"
                           size="icon-sm"
-                          title="Edit role"
+                          title={t("users.editRole")}
                           onClick={() => openEdit(u)}
                         >
                           <Pencil className="size-4" />
@@ -306,10 +308,10 @@ export default function UsersPage() {
             disabled={page <= 1}
             onClick={() => setPage((p) => p - 1)}
           >
-            Previous
+            {t("common.previous")}
           </Button>
           <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
+            {t("common.pageOf", { page, total: totalPages })}
           </span>
           <Button
             variant="outline"
@@ -317,7 +319,7 @@ export default function UsersPage() {
             disabled={page >= totalPages}
             onClick={() => setPage((p) => p + 1)}
           >
-            Next
+            {t("common.next")}
           </Button>
         </div>
       )}
@@ -325,9 +327,9 @@ export default function UsersPage() {
       <Dialog open={!!editUser} onOpenChange={(open) => !open && setEditUser(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit User Role</DialogTitle>
+            <DialogTitle>{t("users.editRole")}</DialogTitle>
             <DialogDescription>
-              Change role for {editUser?.username} ({editUser?.email})
+              {t("users.changeRoleFor", { username: editUser?.username ?? "", email: editUser?.email ?? "" })}
             </DialogDescription>
           </DialogHeader>
           <form
@@ -337,7 +339,7 @@ export default function UsersPage() {
             className="space-y-4"
           >
             <div className="space-y-2">
-              <Label>Role</Label>
+              <Label>{t("users.role")}</Label>
               <Select
                 value={roleValue}
                 onValueChange={(val) => val && setValue("role", val)}
@@ -346,9 +348,9 @@ export default function UsersPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="reader">Reader</SelectItem>
-                  <SelectItem value="author">Author</SelectItem>
-                  <SelectItem value="admin">Admin</SelectItem>
+                  <SelectItem value="reader">{t("users.reader")}</SelectItem>
+                  <SelectItem value="author">{t("users.author")}</SelectItem>
+                  <SelectItem value="admin">{t("users.admin")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -358,10 +360,10 @@ export default function UsersPage() {
                 variant="outline"
                 onClick={() => setEditUser(null)}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button type="submit" disabled={updateMutation.isPending}>
-                {updateMutation.isPending ? "Saving..." : "Save"}
+                {updateMutation.isPending ? t("common.saving") : t("common.save")}
               </Button>
             </DialogFooter>
           </form>

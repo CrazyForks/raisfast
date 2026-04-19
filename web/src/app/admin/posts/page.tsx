@@ -19,6 +19,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 interface Post {
   id: string;
@@ -40,6 +41,7 @@ interface PaginatedData<T> {
 export default function PostsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { t } = useT();
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<string>("");
   const pageSize = 20;
@@ -55,20 +57,20 @@ export default function PostsPage() {
   const deleteMutation = useMutation({
     mutationFn: (slug: string) => api.delete(`/posts/${slug}`),
     onSuccess: () => {
-      toast.success("Post deleted");
+      toast.success(t("posts.postDeleted"));
       queryClient.invalidateQueries({ queryKey: ["admin-posts"] });
     },
     onError: (err) => {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to delete post");
+        toast.error(t("posts.failedToDelete"));
       }
     },
   });
 
   function handleDelete(slug: string) {
-    if (confirm("Are you sure you want to delete this post?")) {
+    if (confirm(t("posts.confirmDelete"))) {
       deleteMutation.mutate(slug);
     }
   }
@@ -79,21 +81,21 @@ export default function PostsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Posts</h1>
+        <h1 className="text-2xl font-bold">{t("posts.title")}</h1>
         <div className="flex items-center gap-2">
           <select
             className="h-9 rounded-md border border-input bg-background px-3 text-sm"
             value={statusFilter}
             onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
           >
-            <option value="">All Status</option>
-            <option value="published">Published</option>
-            <option value="draft">Draft</option>
+            <option value="">{t("posts.allStatus")}</option>
+            <option value="published">{t("common.published")}</option>
+            <option value="draft">{t("common.draft")}</option>
           </select>
           <Link href="/admin/posts/new">
             <Button>
               <Plus className="size-4" />
-              New Post
+              {t("posts.newPost")}
             </Button>
           </Link>
         </div>
@@ -104,25 +106,25 @@ export default function PostsPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Title</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Author</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>{t("posts.titleCol")}</TableHead>
+                <TableHead>{t("common.status")}</TableHead>
+                <TableHead>{t("posts.categoryCol")}</TableHead>
+                <TableHead>{t("posts.authorCol")}</TableHead>
+                <TableHead>{t("posts.createdCol")}</TableHead>
+                <TableHead className="text-right">{t("common.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {postsQuery.isLoading ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8">
-                    Loading...
+                    {t("common.loading")}
                   </TableCell>
                 </TableRow>
               ) : posts.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8">
-                    No posts found.
+                    {t("posts.noPosts")}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -182,10 +184,10 @@ export default function PostsPage() {
             disabled={page <= 1}
             onClick={() => setPage((p) => p - 1)}
           >
-            Previous
+            {t("common.previous")}
           </Button>
           <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
+            {t("common.pageOf", { page, total: totalPages })}
           </span>
           <Button
             variant="outline"
@@ -193,7 +195,7 @@ export default function PostsPage() {
             disabled={page >= totalPages}
             onClick={() => setPage((p) => p + 1)}
           >
-            Next
+            {t("common.next")}
           </Button>
         </div>
       )}

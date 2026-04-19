@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { formatFileSize } from "./media-utils";
 import { MediaPreview } from "./media-preview";
+import { useT } from "@/lib/i18n";
 
 interface MediaDetailPanelProps {
   file: MediaFile;
@@ -20,6 +21,7 @@ export function MediaDetailPanel({
   onDelete,
   onClose,
 }: MediaDetailPanelProps) {
+  const { t } = useT();
   return (
     <div className="w-72 shrink-0 border-l bg-card overflow-y-auto space-y-4 p-4">
       <div className="flex items-center justify-between">
@@ -40,21 +42,21 @@ export function MediaDetailPanel({
 
       <dl className="space-y-2 text-sm">
         <div className="flex justify-between">
-          <dt className="text-muted-foreground">Type</dt>
+          <dt className="text-muted-foreground">{t("media.type")}</dt>
           <dd className="font-mono text-xs">{file.mimetype}</dd>
         </div>
         <div className="flex justify-between">
-          <dt className="text-muted-foreground">Size</dt>
+          <dt className="text-muted-foreground">{t("media.size")}</dt>
           <dd>{formatFileSize(file.size)}</dd>
         </div>
         {file.width != null && file.height != null && (
           <div className="flex justify-between">
-            <dt className="text-muted-foreground">Dimensions</dt>
+            <dt className="text-muted-foreground">{t("media.dimensions")}</dt>
             <dd>{file.width} &times; {file.height}</dd>
           </div>
         )}
         <div className="flex justify-between">
-          <dt className="text-muted-foreground">Uploaded</dt>
+          <dt className="text-muted-foreground">{t("media.uploaded")}</dt>
           <dd>{new Date(file.created_at).toLocaleString()}</dd>
         </div>
       </dl>
@@ -62,7 +64,7 @@ export function MediaDetailPanel({
       <Separator />
 
       <div>
-        <dt className="text-xs text-muted-foreground mb-1">URL</dt>
+        <dt className="text-xs text-muted-foreground mb-1">{t("media.urlLabel")}</dt>
         <div className="flex gap-1">
           <code className="flex-1 text-xs bg-muted px-2 py-1.5 rounded truncate">
             {file.url}
@@ -72,7 +74,7 @@ export function MediaDetailPanel({
             size="icon-xs"
             onClick={() => {
               navigator.clipboard.writeText(file.url);
-              toast.success("URL copied");
+              toast.success(t("media.urlCopied"));
             }}
           >
             <Copy className="size-3" />
@@ -90,7 +92,7 @@ export function MediaDetailPanel({
           onClick={() => window.open(file.url, "_blank")}
         >
           <Download className="size-4" />
-          Download
+          {t("media.download")}
         </Button>
         <Button
           variant="destructive"
@@ -99,7 +101,7 @@ export function MediaDetailPanel({
           onClick={() => onDelete(file.id)}
         >
           <Trash2 className="size-4" />
-          Delete
+          {t("common.delete")}
         </Button>
       </div>
     </div>

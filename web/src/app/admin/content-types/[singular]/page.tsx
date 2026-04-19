@@ -28,6 +28,7 @@ import {
   getFieldByName,
   FieldCell,
 } from "@/components/admin/field-renderer";
+import { useT } from "@/lib/i18n";
 
 export default function ContentTypeListPage({
   params,
@@ -35,6 +36,7 @@ export default function ContentTypeListPage({
   params: Promise<{ singular: string }>;
 }) {
   const { singular } = use(params);
+  const { t } = useT();
   const router = useRouter();
   const queryClient = useQueryClient();
   const sortInitRef = useRef(false);
@@ -115,7 +117,7 @@ export default function ContentTypeListPage({
       id: string;
     }) => api.delete(`/cms/${plural}/${id}`),
     onSuccess: () => {
-      toast.success("Item deleted");
+      toast.success(t("contentTypes.itemDeleted"));
       if (schema) {
         queryClient.invalidateQueries({
           queryKey: ["cms-items", schema.plural],
@@ -126,7 +128,7 @@ export default function ContentTypeListPage({
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to delete item");
+        toast.error(t("contentTypes.failedToDeleteItem"));
       }
     },
   });
@@ -142,7 +144,7 @@ export default function ContentTypeListPage({
 
   function handleDelete(id: string) {
     if (!schema) return;
-    if (confirm("Are you sure you want to delete this item?")) {
+    if (confirm(t("contentTypes.confirmDeleteItem"))) {
       deleteMutation.mutate({ plural: schema.plural, id });
     }
   }
@@ -165,14 +167,14 @@ export default function ContentTypeListPage({
         <div className="flex items-center gap-4">
           <Link href="/admin/content-types">
             <Button variant="outline" size="sm">
-              &larr; Back
+              {t("common.back")}
             </Button>
           </Link>
-          <h1 className="text-2xl font-bold">Content Type Not Found</h1>
+          <h1 className="text-2xl font-bold">{t("contentTypes.notFound")}</h1>
         </div>
         <Card>
           <CardContent className="py-8 text-center text-muted-foreground">
-            Content type &quot;{singular}&quot; not found.
+            {t("contentTypes.notFoundMsg", { singular })}
           </CardContent>
         </Card>
       </div>
@@ -185,7 +187,7 @@ export default function ContentTypeListPage({
         <div className="flex items-center gap-4">
           <Link href="/admin/content-types">
             <Button variant="outline" size="sm">
-              &larr; Back
+              {t("common.back")}
             </Button>
           </Link>
           <h1 className="text-2xl font-bold">{schema.name}</h1>
@@ -193,7 +195,7 @@ export default function ContentTypeListPage({
         <Link href={`/admin/content-types/${singular}/new`}>
           <Button>
             <Plus className="size-4" />
-            New {schema.name}
+            {t("contentTypes.newItem", { name: schema.name })}
           </Button>
         </Link>
       </div>
@@ -255,7 +257,7 @@ export default function ContentTypeListPage({
                     </TableHead>
                   );
                 })}
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead className="text-right">{t("common.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -265,7 +267,7 @@ export default function ContentTypeListPage({
                     colSpan={columns.length + 1}
                     className="text-center py-8"
                   >
-                    Loading...
+                    {t("common.loading")}
                   </TableCell>
                 </TableRow>
               ) : sortedItems.length === 0 ? (
@@ -274,7 +276,7 @@ export default function ContentTypeListPage({
                     colSpan={columns.length + 1}
                     className="text-center py-8"
                   >
-                    No items found.
+                    {t("contentTypes.noItems")}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -329,10 +331,10 @@ export default function ContentTypeListPage({
             disabled={page <= 1}
             onClick={() => setPage((p) => p - 1)}
           >
-            Previous
+            {t("common.previous")}
           </Button>
           <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
+            {t("common.pageOf", { page, total: totalPages })}
           </span>
           <Button
             variant="outline"
@@ -340,7 +342,7 @@ export default function ContentTypeListPage({
             disabled={page >= totalPages}
             onClick={() => setPage((p) => p + 1)}
           >
-            Next
+            {t("common.next")}
           </Button>
         </div>
       )}

@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { api, apiRequest, ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 interface ExtensionItem {
   id: string;
@@ -59,6 +60,7 @@ interface ExtensionItem {
 
 export default function ExtensionsPage() {
   const queryClient = useQueryClient();
+  const { t } = useT();
   const [uninstallTarget, setUninstallTarget] = useState<ExtensionItem | null>(null);
   const [dropTables, setDropTables] = useState(false);
 
@@ -70,22 +72,22 @@ export default function ExtensionsPage() {
   const enableMutation = useMutation({
     mutationFn: (id: string) => api.post(`/admin/extensions/${id}/enable`, {}),
     onSuccess: () => {
-      toast.success("Extension enabled");
+      toast.success(t("extensions.extensionEnabled"));
       queryClient.invalidateQueries({ queryKey: ["extensions"] });
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to enable extension");
+      toast.error(err instanceof ApiError ? err.message : t("extensions.failedToEnable"));
     },
   });
 
   const disableMutation = useMutation({
     mutationFn: (id: string) => api.post(`/admin/extensions/${id}/disable`, {}),
     onSuccess: () => {
-      toast.success("Extension disabled");
+      toast.success(t("extensions.extensionDisabled"));
       queryClient.invalidateQueries({ queryKey: ["extensions"] });
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to disable extension");
+      toast.error(err instanceof ApiError ? err.message : t("extensions.failedToDisable"));
     },
   });
 
@@ -96,13 +98,13 @@ export default function ExtensionsPage() {
         body: JSON.stringify({ drop_tables: drop }),
       }),
     onSuccess: () => {
-      toast.success("Extension uninstalled");
+      toast.success(t("extensions.extensionUninstalled"));
       setUninstallTarget(null);
       setDropTables(false);
       queryClient.invalidateQueries({ queryKey: ["extensions"] });
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to uninstall extension");
+      toast.error(err instanceof ApiError ? err.message : t("extensions.failedToUninstall"));
     },
   });
 
@@ -114,11 +116,11 @@ export default function ExtensionsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Extensions</h1>
+        <h1 className="text-2xl font-bold">{t("extensions.title")}</h1>
         <div className="flex items-center gap-2">
-          <Badge variant="default">{enabledCount} enabled</Badge>
+          <Badge variant="default">{t("common.enabledCount", { count: enabledCount })}</Badge>
           {disabledCount > 0 && (
-            <Badge variant="outline">{disabledCount} disabled</Badge>
+            <Badge variant="outline">{t("common.disabledCount", { count: disabledCount })}</Badge>
           )}
         </div>
       </div>
@@ -128,12 +130,12 @@ export default function ExtensionsPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Extension</TableHead>
-                <TableHead>Components</TableHead>
-                <TableHead>Content Types</TableHead>
-                <TableHead>Dependencies</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>{t("extensions.extension")}</TableHead>
+                <TableHead>{t("extensions.components")}</TableHead>
+                <TableHead>{t("extensions.contentTypesCol")}</TableHead>
+                <TableHead>{t("extensions.dependencies")}</TableHead>
+                <TableHead>{t("common.status")}</TableHead>
+                <TableHead className="text-right">{t("common.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -142,7 +144,7 @@ export default function ExtensionsPage() {
                   <TableCell colSpan={6} className="text-center py-8">
                     <div className="flex items-center justify-center gap-2">
                       <RefreshCw className="size-4 animate-spin" />
-                      Loading...
+                      {t("common.loading")}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -151,13 +153,13 @@ export default function ExtensionsPage() {
                   <TableCell colSpan={6} className="text-center py-8">
                     <div className="flex flex-col items-center gap-2 text-destructive">
                       <AlertTriangle className="size-8" />
-                      <p>Failed to load extensions</p>
+                      <p>{t("extensions.failedToLoad")}</p>
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => queryClient.invalidateQueries({ queryKey: ["extensions"] })}
                       >
-                        Retry
+                        {t("common.retry")}
                       </Button>
                     </div>
                   </TableCell>
@@ -167,9 +169,9 @@ export default function ExtensionsPage() {
                   <TableCell colSpan={6} className="text-center py-8">
                     <div className="flex flex-col items-center gap-2 text-muted-foreground">
                       <Package className="size-8" />
-                      <p>No extensions installed.</p>
+                      <p>{t("extensions.noExtensions")}</p>
                       <p className="text-xs">
-                        Place extensions in the configured extension directory.
+                        {t("extensions.placeExtensions")}
                       </p>
                     </div>
                   </TableCell>
@@ -209,7 +211,7 @@ export default function ExtensionsPage() {
                                 </Badge>
                               </TooltipTrigger>
                               <TooltipContent>
-                                Contains {ext.content_types.length} content type(s)
+                                {t("extensions.containsContentTypesCount", { count: ext.content_types.length })}
                               </TooltipContent>
                             </Tooltip>
                           )}
@@ -218,11 +220,11 @@ export default function ExtensionsPage() {
                               <TooltipTrigger>
                                 <Badge variant="outline" className="gap-1">
                                   <Puzzle className="size-3" />
-                                  Plugin
+                                  {t("layout.plugins")}
                                 </Badge>
                               </TooltipTrigger>
                               <TooltipContent>
-                                Contains a plugin
+                                {t("extensions.containsPlugin")}
                               </TooltipContent>
                             </Tooltip>
                           )}
@@ -261,14 +263,14 @@ export default function ExtensionsPage() {
                             ))}
                           </div>
                         ) : (
-                          <span className="text-xs text-muted-foreground">None</span>
+                          <span className="text-xs text-muted-foreground">{t("common.none")}</span>
                         )}
                       </TableCell>
                       <TableCell>
                         {ext.enabled ? (
-                          <Badge variant="default">Enabled</Badge>
+                          <Badge variant="default">{t("common.enabled")}</Badge>
                         ) : (
-                          <Badge variant="outline">Disabled</Badge>
+                          <Badge variant="outline">{t("common.disabled")}</Badge>
                         )}
                       </TableCell>
                       <TableCell className="text-right">
@@ -329,12 +331,9 @@ export default function ExtensionsPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Uninstall Extension</DialogTitle>
+            <DialogTitle>{t("extensions.uninstallExtension")}</DialogTitle>
             <DialogDescription>
-              Are you sure you want to uninstall{" "}
-              <strong>{uninstallTarget?.name}</strong> (v
-              {uninstallTarget?.version})? This will remove the extension files
-              and database record.
+              {t("extensions.uninstallConfirm", { name: uninstallTarget?.name ?? "", version: uninstallTarget?.version ?? "" })}
             </DialogDescription>
           </DialogHeader>
           {uninstallTarget && uninstallTarget.content_types.length > 0 && (
@@ -342,10 +341,7 @@ export default function ExtensionsPage() {
               <AlertTriangle className="size-4 mt-0.5 text-destructive shrink-0" />
               <div className="space-y-2">
                 <p className="text-sm">
-                  This extension contains content types:{" "}
-                  <strong>{uninstallTarget.content_types.join(", ")}</strong>.
-                  The associated database tables will remain unless you choose to
-                  drop them.
+                  {t("extensions.containsContentTypes", { types: uninstallTarget.content_types.join(", ") })}
                 </p>
                 <div className="flex items-center gap-2">
                   <Checkbox
@@ -354,7 +350,7 @@ export default function ExtensionsPage() {
                     onCheckedChange={(checked) => setDropTables(checked === true)}
                   />
                   <label htmlFor="drop-tables" className="text-sm font-medium">
-                    Drop database tables (irreversible — all data will be lost)
+                    {t("extensions.dropTables")}
                   </label>
                 </div>
               </div>
@@ -366,7 +362,7 @@ export default function ExtensionsPage() {
               onClick={() => setUninstallTarget(null)}
               disabled={uninstallMutation.isPending}
             >
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button
               variant="destructive"
@@ -380,7 +376,7 @@ export default function ExtensionsPage() {
                 }
               }}
             >
-              {uninstallMutation.isPending ? "Uninstalling..." : "Uninstall"}
+              {uninstallMutation.isPending ? t("extensions.uninstalling") : t("extensions.uninstall")}
             </Button>
           </DialogFooter>
         </DialogContent>

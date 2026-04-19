@@ -24,6 +24,7 @@ import {
   FieldRenderer,
   getFieldLabel,
 } from "@/components/admin/field-renderer";
+import { useT } from "@/lib/i18n";
 
 function getFormFields(schema: ContentTypeSchema): FieldSchema[] {
   return schema.fields.filter((f) => {
@@ -55,6 +56,7 @@ export default function NewCmsItemPage({
 }) {
   const { singular } = use(params);
   const router = useRouter();
+  const { t } = useT();
 
   const schemaQuery = useQuery({
     queryKey: ["content-type", singular],
@@ -77,14 +79,14 @@ export default function NewCmsItemPage({
     mutationFn: (data: Record<string, unknown>) =>
       api.post(`/cms/${schema!.plural}`, data),
     onSuccess: () => {
-      toast.success(`${schema!.name} created`);
+      toast.success(t("common.created", { name: schema!.name }));
       router.push(`/admin/content-types/${singular}`);
     },
     onError: (err) => {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error(`Failed to create ${schema!.name}`);
+        toast.error(t("common.failedToCreate", { name: schema!.name }));
       }
     },
   });
@@ -103,7 +105,7 @@ export default function NewCmsItemPage({
     const newErrors: Record<string, string> = {};
     for (const field of getFormFields(schema)) {
       if (field.required && (formData[field.name] == null || formData[field.name] === "")) {
-        newErrors[field.name] = `${getFieldLabel(field)} is required`;
+        newErrors[field.name] = t("common.isRequired", { field: getFieldLabel(field) });
       }
       if (
         field.field_type === "json" &&
@@ -113,7 +115,7 @@ export default function NewCmsItemPage({
         try {
           JSON.parse(formData[field.name] as string);
         } catch {
-          newErrors[field.name] = "Invalid JSON";
+          newErrors[field.name] = t("common.invalidJson");
         }
       }
     }
@@ -135,7 +137,7 @@ export default function NewCmsItemPage({
         <div className="flex items-center gap-4">
           <Link href={`/admin/content-types/${singular}`}>
             <Button variant="outline" size="sm">
-              &larr; Back
+              {t("common.back")}
             </Button>
           </Link>
           <Skeleton className="h-8 w-32" />
@@ -151,14 +153,14 @@ export default function NewCmsItemPage({
         <div className="flex items-center gap-4">
           <Link href="/admin/content-types">
             <Button variant="outline" size="sm">
-              &larr; Back
+              {t("common.back")}
             </Button>
           </Link>
-          <h1 className="text-2xl font-bold">Not Found</h1>
+          <h1 className="text-2xl font-bold">{t("common.notFound")}</h1>
         </div>
         <Card>
           <CardContent className="py-8 text-center text-muted-foreground">
-            Content type &quot;{singular}&quot; not found.
+            {t("contentTypes.notFoundMsg", { singular })}
           </CardContent>
         </Card>
       </div>
@@ -170,10 +172,10 @@ export default function NewCmsItemPage({
       <div className="flex items-center gap-4">
         <Link href={`/admin/content-types/${singular}`}>
           <Button variant="outline" size="sm">
-            &larr; Back
+            {t("common.back")}
           </Button>
         </Link>
-        <h1 className="text-2xl font-bold">New {schema.name}</h1>
+        <h1 className="text-2xl font-bold">{t("contentTypes.newItem", { name: schema.name })}</h1>
       </div>
 
       <form onSubmit={handleSubmit}>
@@ -199,7 +201,7 @@ export default function NewCmsItemPage({
               <Card>
                 <CardContent className="pt-6 space-y-4">
                   <div className="space-y-2">
-                    <Label>Status</Label>
+                    <Label>{t("common.status")}</Label>
                     <Select
                       value={(formData["status"] as string) || "draft"}
                       onValueChange={(val) => {
@@ -207,11 +209,11 @@ export default function NewCmsItemPage({
                       }}
                     >
                       <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Select status" />
+                        <SelectValue placeholder={t("common.selectStatus")} />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="draft">Draft</SelectItem>
-                        <SelectItem value="published">Published</SelectItem>
+                        <SelectItem value="draft">{t("common.draft")}</SelectItem>
+                        <SelectItem value="published">{t("common.published")}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -226,14 +228,14 @@ export default function NewCmsItemPage({
                   className="w-full"
                   disabled={createMutation.isPending}
                 >
-                  {createMutation.isPending ? "Creating..." : "Create"}
+                  {createMutation.isPending ? t("common.creating") : t("common.create")}
                 </Button>
                 <Link
                   href={`/admin/content-types/${singular}`}
                   className="block"
                 >
                   <Button type="button" variant="outline" className="w-full">
-                    Cancel
+                    {t("common.cancel")}
                   </Button>
                 </Link>
               </CardContent>

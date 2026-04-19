@@ -76,10 +76,8 @@ async fn resolve_item_relations(
                 }
 
                 let target_table = &rel.target;
-                let sql = format!(
-                    "SELECT json_object({}) FROM {target_table} WHERE id = ?",
-                    build_star_columns(target_table)
-                );
+                let cols = build_star_columns(pool, target_table).await;
+                let sql = format!("SELECT json_object({cols}) FROM {target_table} WHERE id = ?");
                 let sql = crate::db::dialect::translate(&sql);
 
                 let row = sqlx::query_as::<_, (Option<String>,)>(&sql)
@@ -108,10 +106,9 @@ async fn resolve_item_relations(
                 }
 
                 let target_table = &rel.target;
-                let sql = format!(
-                    "SELECT json_object({}) FROM {target_table} WHERE {fk_col} = ?",
-                    build_star_columns(target_table)
-                );
+                let cols = build_star_columns(pool, target_table).await;
+                let sql =
+                    format!("SELECT json_object({cols}) FROM {target_table} WHERE {fk_col} = ?");
                 let sql = crate::db::dialect::translate(&sql);
 
                 let rows = sqlx::query_as::<_, (String,)>(&sql)
@@ -143,12 +140,12 @@ async fn resolve_item_relations(
                 let target_table = &rel.target;
                 let source_col = format!("{}_id", ct.singular);
                 let target_col = format!("{}_id", rel.target);
+                let cols = build_star_columns(pool, target_table).await;
 
                 let sql = format!(
-                    "SELECT json_object({}) FROM {target_table} \
+                    "SELECT json_object({cols}) FROM {target_table} \
                      INNER JOIN {through} ON {through}.{target_col} = {target_table}.id \
-                     WHERE {through}.{source_col} = ?",
-                    build_star_columns(target_table)
+                     WHERE {through}.{source_col} = ?"
                 );
                 let sql = crate::db::dialect::translate(&sql);
 
@@ -184,10 +181,8 @@ async fn resolve_item_relations(
                 }
 
                 let target_table = &rel.target;
-                let sql = format!(
-                    "SELECT json_object({}) FROM {target_table} WHERE id = ?",
-                    build_star_columns(target_table)
-                );
+                let cols = build_star_columns(pool, target_table).await;
+                let sql = format!("SELECT json_object({cols}) FROM {target_table} WHERE id = ?");
                 let sql = crate::db::dialect::translate(&sql);
 
                 let row = sqlx::query_as::<_, (Option<String>,)>(&sql)
@@ -210,9 +205,21 @@ async fn resolve_item_relations(
     Ok(())
 }
 
-fn build_star_columns(_table: &str) -> String {
-    "'id', id, 'name', COALESCE(name, ''), 'slug', COALESCE(slug, ''), 'title', COALESCE(title, '')"
-        .to_string()
+async fn build_star_columns(pool: &sqlx::SqlitePool, table: &str) -> String {
+    let cols: Vec<String> = sqlx::query_as::<_, (String,)>(&format!(
+        "SELECT name FROM pragma_table_info('{}') ORDER BY cid",
+        table
+    ))
+    .fetch_all(pool)
+    .await
+    .map(|rows| rows.into_iter().map(|(c,)| c).collect())
+    .unwrap_or_else(|_| vec!["id".into()]);
+
+    let mut parts = Vec::new();
+    for col in &cols {
+        parts.push(format!("'{}', {}", col, col));
+    }
+    parts.join(", ")
 }
 
 #[cfg(test)]

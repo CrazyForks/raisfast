@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api, ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 interface WorkflowInstance {
   id: string;
@@ -71,6 +72,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function InstanceDetail({ instance }: { instance: WorkflowInstance }) {
+  const { t } = useT();
   const [expanded, setExpanded] = useState(false);
 
   const logsQuery = useQuery({
@@ -84,7 +86,7 @@ function InstanceDetail({ instance }: { instance: WorkflowInstance }) {
   const cancelMutation = useMutation({
     mutationFn: () => api.post(`/admin/workflows/instances/${instance.id}/cancel`, {}),
     onSuccess: () => {
-      toast.success("Instance cancelled");
+      toast.success(t("workflows.instances.cancelled"));
       queryClient.invalidateQueries({ queryKey: ["workflow-instances"] });
     },
     onError: (err) => {
@@ -99,7 +101,7 @@ function InstanceDetail({ instance }: { instance: WorkflowInstance }) {
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="sm" onClick={() => setExpanded(!expanded)}>
           {expanded ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
-          {expanded ? "Hide logs" : "Show logs"}
+          {expanded ? t("workflows.instances.hideLogs") : t("workflows.instances.showLogs")}
         </Button>
         {instance.status === "running" && (
           <Button
@@ -109,12 +111,12 @@ function InstanceDetail({ instance }: { instance: WorkflowInstance }) {
             disabled={cancelMutation.isPending}
           >
             <XCircle className="size-4" />
-            Cancel
+            {t("common.cancel")}
           </Button>
         )}
         {instance.current_step && (
           <span className="text-xs text-muted-foreground">
-            Current: <code className="bg-muted px-1 rounded">{instance.current_step}</code>
+            {t("workflows.instances.currentStep")} <code className="bg-muted px-1 rounded">{instance.current_step}</code>
           </span>
         )}
       </div>
@@ -123,7 +125,7 @@ function InstanceDetail({ instance }: { instance: WorkflowInstance }) {
         <Card>
           <CardContent className="p-3 space-y-3">
             <div>
-              <p className="text-xs font-medium text-muted-foreground mb-1">Context</p>
+              <p className="text-xs font-medium text-muted-foreground mb-1">{t("workflows.instances.context")}</p>
               <pre className="text-xs bg-muted p-2 rounded overflow-x-auto">
                 {(() => {
                   try {
@@ -137,12 +139,12 @@ function InstanceDetail({ instance }: { instance: WorkflowInstance }) {
 
             <div>
               <p className="text-xs font-medium text-muted-foreground mb-1">
-                Step Logs ({logs.length})
+                {t("workflows.instances.stepLogs", { count: logs.length })}
               </p>
               {logsQuery.isLoading ? (
-                <p className="text-xs text-muted-foreground">Loading...</p>
+                <p className="text-xs text-muted-foreground">{t("common.loading")}</p>
               ) : logs.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No step logs.</p>
+                <p className="text-xs text-muted-foreground">{t("workflows.instances.noStepLogs")}</p>
               ) : (
                 <div className="space-y-2">
                   {logs.map((log) => (
@@ -179,6 +181,7 @@ function InstanceDetail({ instance }: { instance: WorkflowInstance }) {
 }
 
 export default function WorkflowInstancesPage() {
+  const { t } = useT();
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const pageSize = 20;
@@ -202,12 +205,12 @@ export default function WorkflowInstancesPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <GitBranch className="size-6" />
-          <h1 className="text-2xl font-bold">Workflow Instances</h1>
+          <h1 className="text-2xl font-bold">{t("workflows.instances.title")}</h1>
         </div>
         <Link href="/admin/workflows">
           <Button variant="outline" size="sm">
             <ArrowRight className="size-4 rotate-180" />
-            Definitions
+            {t("workflows.instances.definitions")}
           </Button>
         </Link>
       </div>
@@ -218,7 +221,7 @@ export default function WorkflowInstancesPage() {
             <SelectValue placeholder="Filter status" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All</SelectItem>
+            <SelectItem value="all">{t("common.all")}</SelectItem>
             <SelectItem value="running">Running</SelectItem>
             <SelectItem value="completed">Completed</SelectItem>
             <SelectItem value="failed">Failed</SelectItem>
@@ -226,16 +229,16 @@ export default function WorkflowInstancesPage() {
           </SelectContent>
         </Select>
         <span className="text-sm text-muted-foreground">
-          {instancesQuery.data?.total ?? 0} instance(s)
+          {t("workflows.instances.instanceCount", { count: instancesQuery.data?.total ?? 0 })}
         </span>
       </div>
 
       <div className="space-y-4">
         {instancesQuery.isLoading ? (
-          <div className="text-center py-8 text-muted-foreground">Loading...</div>
+          <div className="text-center py-8 text-muted-foreground">{t("common.loading")}</div>
         ) : instances.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
-            No workflow instances found.
+            {t("workflows.instances.noInstances")}
           </div>
         ) : (
           instances.map((inst) => (
@@ -266,13 +269,13 @@ export default function WorkflowInstancesPage() {
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-2">
           <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-            Previous
+            {t("common.previous")}
           </Button>
           <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
+            Page {t("common.pageOf", { page, total: totalPages })}
           </span>
           <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
-            Next
+            {t("common.next")}
           </Button>
         </div>
       )}

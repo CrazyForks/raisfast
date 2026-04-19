@@ -32,6 +32,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { api, ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 interface PluginHealth {
   error_count: number;
@@ -85,6 +86,7 @@ function formatDuration(us: number): string {
 }
 
 export default function PluginsPage() {
+  const { t } = useT();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const pageSize = 20;
@@ -98,44 +100,44 @@ export default function PluginsPage() {
   const enableMutation = useMutation({
     mutationFn: (id: string) => api.post(`/admin/plugins/${id}/enable`, {}),
     onSuccess: () => {
-      toast.success("Plugin enabled");
+      toast.success(t("plugins.pluginEnabled"));
       queryClient.invalidateQueries({ queryKey: ["plugins"] });
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to enable plugin");
+      toast.error(err instanceof ApiError ? err.message : t("plugins.failedToEnable"));
     },
   });
 
   const disableMutation = useMutation({
     mutationFn: (id: string) => api.post(`/admin/plugins/${id}/disable`, {}),
     onSuccess: () => {
-      toast.success("Plugin disabled");
+      toast.success(t("plugins.pluginDisabled"));
       queryClient.invalidateQueries({ queryKey: ["plugins"] });
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to disable plugin");
+      toast.error(err instanceof ApiError ? err.message : t("plugins.failedToDisable"));
     },
   });
 
   const reloadMutation = useMutation({
     mutationFn: (id: string) => api.post(`/admin/plugins/${id}/reload`, {}),
     onSuccess: () => {
-      toast.success("Plugin reloaded");
+      toast.success(t("plugins.pluginReloaded"));
       queryClient.invalidateQueries({ queryKey: ["plugins"] });
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to reload plugin");
+      toast.error(err instanceof ApiError ? err.message : t("plugins.failedToReload"));
     },
   });
 
   const removeMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/admin/plugins/${id}`),
     onSuccess: () => {
-      toast.success("Plugin removed");
+      toast.success(t("plugins.pluginRemoved"));
       queryClient.invalidateQueries({ queryKey: ["plugins"] });
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to remove plugin");
+      toast.error(err instanceof ApiError ? err.message : t("plugins.failedToRemove"));
     },
   });
 
@@ -145,8 +147,8 @@ export default function PluginsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Plugins</h1>
-        <Badge variant="outline">{plugins.length} loaded</Badge>
+        <h1 className="text-2xl font-bold">{t("plugins.title")}</h1>
+        <Badge variant="outline">{t("plugins.loaded", { count: plugins.length })}</Badge>
       </div>
 
       <Card>
@@ -154,19 +156,19 @@ export default function PluginsPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Plugin</TableHead>
-                <TableHead>Runtime</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Hooks</TableHead>
-                <TableHead>Health</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>{t("plugins.plugin")}</TableHead>
+                <TableHead>{t("plugins.runtime")}</TableHead>
+                <TableHead>{t("common.status")}</TableHead>
+                <TableHead>{t("plugins.hooks")}</TableHead>
+                <TableHead>{t("plugins.health")}</TableHead>
+                <TableHead className="text-right">{t("common.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {pluginsQuery.isLoading ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8">
-                    Loading...
+                    {t("common.loading")}
                   </TableCell>
                 </TableRow>
               ) : plugins.length === 0 ? (
@@ -174,9 +176,9 @@ export default function PluginsPage() {
                   <TableCell colSpan={6} className="text-center py-8">
                     <div className="flex flex-col items-center gap-2 text-muted-foreground">
                       <Puzzle className="size-8" />
-                      <p>No plugins loaded.</p>
+                      <p>{t("plugins.noPlugins")}</p>
                       <p className="text-xs">
-                        Place plugins in the configured plugin directory.
+                        {t("plugins.placePlugins")}
                       </p>
                     </div>
                   </TableCell>
@@ -222,16 +224,16 @@ export default function PluginsPage() {
                       </TableCell>
                       <TableCell>
                         {p.enabled ? (
-                          <Badge variant="default">Enabled</Badge>
+                          <Badge variant="default">{t("common.enabled")}</Badge>
                         ) : (
-                          <Badge variant="outline">Disabled</Badge>
+                          <Badge variant="outline">{t("common.disabled")}</Badge>
                         )}
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap gap-1">
                           {p.hooks.length === 0 ? (
                             <span className="text-xs text-muted-foreground">
-                              None
+                              {t("common.none")}
                             </span>
                           ) : (
                             p.hooks.slice(0, 3).map((h) => (
@@ -254,12 +256,12 @@ export default function PluginsPage() {
                               <div className="flex items-center gap-1 text-destructive">
                                 <AlertTriangle className="size-4" />
                                 <span className="text-xs font-medium">
-                                  Auto-disabled
+                                  {t("plugins.autoDisabled")}
                                 </span>
                               </div>
                             </TooltipTrigger>
                             <TooltipContent>
-                              {p.health.last_error || "Too many errors"}
+                              {p.health.last_error || t("plugins.tooManyErrors")}
                             </TooltipContent>
                           </Tooltip>
                         ) : p.health.error_count > 0 ? (
@@ -268,25 +270,25 @@ export default function PluginsPage() {
                               <div className="flex items-center gap-1 text-yellow-600">
                                 <AlertTriangle className="size-4" />
                                 <span className="text-xs">
-                                  {p.health.error_count} error(s)
+                                  {t("plugins.errorCount", { count: p.health.error_count })}
                                 </span>
                               </div>
                             </TooltipTrigger>
                             <TooltipContent>
-                              {p.health.last_error || "Errors occurred"}
+                              {p.health.last_error || t("plugins.errorsOccurred")}
                             </TooltipContent>
                           </Tooltip>
                         ) : totalCalls > 0 ? (
                           <div className="flex items-center gap-1 text-muted-foreground">
                             <Activity className="size-3.5" />
                             <span className="text-xs">
-                              {totalCalls} calls &middot;{" "}
+                              {t("plugins.calls", { count: totalCalls })} &middot;{" "}
                               {formatDuration(totalDuration)}
                             </span>
                           </div>
                         ) : (
                           <span className="text-xs text-muted-foreground">
-                            Idle
+                            {t("plugins.idle")}
                           </span>
                         )}
                       </TableCell>
@@ -339,7 +341,7 @@ export default function PluginsPage() {
                             onClick={() => {
                               if (
                                 confirm(
-                                  `Remove plugin "${p.name}"? This will unload it from memory.`,
+                                  t("plugins.confirmRemove", { name: p.name })
                                 )
                               ) {
                                 removeMutation.mutate(p.id);
@@ -367,10 +369,10 @@ export default function PluginsPage() {
             disabled={page <= 1}
             onClick={() => setPage((p) => p - 1)}
           >
-            Previous
+            {t("common.previous")}
           </Button>
           <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
+            {t("common.pageOf", { page, total: totalPages })}
           </span>
           <Button
             variant="outline"
@@ -378,7 +380,7 @@ export default function PluginsPage() {
             disabled={page >= totalPages}
             onClick={() => setPage((p) => p + 1)}
           >
-            Next
+            {t("common.next")}
           </Button>
         </div>
       )}

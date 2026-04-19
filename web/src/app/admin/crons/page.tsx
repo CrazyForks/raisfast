@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useT } from "@/lib/i18n";
 import {
   Clock,
   Power,
@@ -87,6 +88,7 @@ function cronHuman(expr: string): string {
 }
 
 export default function CronsPage() {
+  const { t } = useT();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [page, setPage] = useState(1);
@@ -113,13 +115,13 @@ export default function CronsPage() {
     mutationFn: (body: Record<string, unknown>) =>
       api.post<CronSchedule>("/admin/crons", body),
     onSuccess: () => {
-      toast.success("Schedule created");
+      toast.success(t("cron.scheduleCreated"));
       queryClient.invalidateQueries({ queryKey: ["crons"] });
       setDialogOpen(false);
       setForm({ label: "", job_type: "", payload: "", cron_expr: "", enabled: true });
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to create");
+      toast.error(err instanceof ApiError ? err.message : t("cron.failedToCreate"));
     },
   });
 
@@ -127,22 +129,22 @@ export default function CronsPage() {
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
       api.post(`/admin/crons/${id}/toggle`, { enabled }),
     onSuccess: () => {
-      toast.success("Schedule toggled");
+      toast.success(t("cron.scheduleToggled"));
       queryClient.invalidateQueries({ queryKey: ["crons"] });
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to toggle");
+      toast.error(err instanceof ApiError ? err.message : t("cron.failedToCreate"));
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/admin/crons/${id}`),
     onSuccess: () => {
-      toast.success("Schedule deleted");
+      toast.success(t("cron.scheduleDeleted"));
       queryClient.invalidateQueries({ queryKey: ["crons"] });
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to delete");
+      toast.error(err instanceof ApiError ? err.message : t("cron.failedToDelete"));
     },
   });
 
@@ -155,7 +157,7 @@ export default function CronsPage() {
       data: { label?: string; cron_expr?: string; payload?: string };
     }) => api.put(`/admin/crons/${id}`, data),
     onSuccess: () => {
-      toast.success("Schedule updated");
+      toast.success(t("cron.scheduleUpdated"));
       queryClient.invalidateQueries({ queryKey: ["crons"] });
       setEditCron(null);
     },
@@ -189,23 +191,23 @@ export default function CronsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Cron Schedules</h1>
+        <h1 className="text-2xl font-bold">{t("cron.title")}</h1>
         <div className="flex items-center gap-2">
-          <Badge variant="outline">{crons.length} schedule(s)</Badge>
+          <Badge variant="outline">{t("cron.schedules", { count: crons.length })}</Badge>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger
               render={<Button size="sm" />}
             >
               <Plus className="size-4" />
-              New Schedule
+              {t("cron.newSchedule")}
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Create Cron Schedule</DialogTitle>
+                <DialogTitle>{t("cron.createSchedule")}</DialogTitle>
               </DialogHeader>
               <div className="space-y-4 pt-2">
                 <div className="space-y-2">
-                  <Label htmlFor="label">Label</Label>
+                  <Label htmlFor="label">{t("cron.labelField")}</Label>
                   <Input
                     id="label"
                     value={form.label}
@@ -216,7 +218,7 @@ export default function CronsPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="job_type">Job Type</Label>
+                  <Label htmlFor="job_type">{t("cron.jobType")}</Label>
                   <Input
                     id="job_type"
                     value={form.job_type}
@@ -227,7 +229,7 @@ export default function CronsPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="cron_expr">Cron Expression (7-segment)</Label>
+                  <Label htmlFor="cron_expr">{t("cron.cronExpression")}</Label>
                   <Input
                     id="cron_expr"
                     value={form.cron_expr}
@@ -237,11 +239,11 @@ export default function CronsPage() {
                     placeholder="0 0 */6 * * * (every 6 hours)"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Format: sec min hour day month weekday
+                    {t("cron.format")}
                   </p>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="payload">Payload (JSON, optional)</Label>
+                  <Label htmlFor="payload">{t("cron.payload")}</Label>
                   <Input
                     id="payload"
                     value={form.payload}
@@ -269,7 +271,7 @@ export default function CronsPage() {
                     });
                   }}
                 >
-                  {createMutation.isPending ? "Creating..." : "Create"}
+                  {createMutation.isPending ? t("common.creating") : t("common.create")}
                 </Button>
               </div>
             </DialogContent>
@@ -282,20 +284,20 @@ export default function CronsPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Label</TableHead>
-                <TableHead>Job Type</TableHead>
-                <TableHead>Schedule</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Last Run</TableHead>
-                <TableHead>Next Run</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>{t("cron.labelField")}</TableHead>
+                <TableHead>{t("cron.jobType")}</TableHead>
+                <TableHead>{t("cron.schedule")}</TableHead>
+                <TableHead>{t("common.status")}</TableHead>
+                <TableHead>{t("cron.lastRun")}</TableHead>
+                <TableHead>{t("cron.nextRun")}</TableHead>
+                <TableHead className="text-right">{t("common.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {cronsQuery.isLoading ? (
                 <TableRow>
                   <TableCell colSpan={7} className="text-center py-8">
-                    Loading...
+                    {t("common.loading")}
                   </TableCell>
                 </TableRow>
               ) : crons.length === 0 ? (
@@ -303,10 +305,9 @@ export default function CronsPage() {
                   <TableCell colSpan={7} className="text-center py-8">
                     <div className="flex flex-col items-center gap-2 text-muted-foreground">
                       <Clock className="size-8" />
-                      <p>No cron schedules.</p>
+                      <p>{t("cron.noCronSchedules")}</p>
                       <p className="text-xs">
-                        Create one above or enable CRON_SEED_ENABLED to seed
-                        defaults.
+                        {t("cron.seedHint")}
                       </p>
                     </div>
                   </TableCell>
@@ -331,7 +332,7 @@ export default function CronsPage() {
                           </div>
                           {c.plugin_id && (
                             <div className="text-xs text-muted-foreground">
-                              Plugin: {c.plugin_id}
+                              {t("cron.pluginCol")}: {c.plugin_id}
                             </div>
                           )}
                         </Link>
@@ -364,9 +365,9 @@ export default function CronsPage() {
                     </TableCell>
                     <TableCell>
                       {c.enabled ? (
-                        <Badge variant="default">Enabled</Badge>
+                        <Badge variant="default">{t("common.enabled")}</Badge>
                       ) : (
-                        <Badge variant="outline">Disabled</Badge>
+                        <Badge variant="outline">{t("common.disabled")}</Badge>
                       )}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
@@ -452,10 +453,10 @@ export default function CronsPage() {
                           title="Delete"
                           disabled={deleteMutation.isPending}
                           onClick={() => {
-                            if (
-                              confirm(
-                                `Delete schedule "${c.label}"? This cannot be undone.`,
-                              )
+                              if (
+                                confirm(
+                                  t("cron.confirmDeleteSchedule", { name: c.label }),
+                                )
                             ) {
                               deleteMutation.mutate(c.id);
                             }
@@ -482,10 +483,10 @@ export default function CronsPage() {
             disabled={page <= 1}
             onClick={() => setPage((p) => p - 1)}
           >
-            Previous
+            {t("common.previous")}
           </Button>
           <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
+            {t("common.pageOf", { page, total: totalPages })}
           </span>
           <Button
             variant="outline"
@@ -493,7 +494,7 @@ export default function CronsPage() {
             disabled={page >= totalPages}
             onClick={() => setPage((p) => p + 1)}
           >
-            Next
+            {t("common.next")}
           </Button>
         </div>
       )}

@@ -154,9 +154,8 @@ pub async fn stats(
 ) -> AppResult<MediaStats> {
     let filter = tenant_filter(tenant_id);
 
-    let total_sql = format!(
-        "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE user_id = ?{filter}"
-    );
+    let total_sql =
+        format!("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE user_id = ?{filter}");
     let total_sql = crate::db::dialect::translate(&total_sql);
     let mut q = sqlx::query_as::<_, (i64, i64)>(&total_sql).bind(user_id);
     if let Some(t) = tenant_id {

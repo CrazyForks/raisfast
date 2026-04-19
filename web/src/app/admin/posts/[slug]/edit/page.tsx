@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api, ApiError, type Post } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 interface Category {
   id: string;
@@ -51,6 +52,7 @@ export default function EditPostPage() {
   const router = useRouter();
   const params = useParams();
   const slug = params.slug as string;
+  const { t } = useT();
 
   const postQuery = useQuery({
     queryKey: ["post", slug],
@@ -123,14 +125,14 @@ export default function EditPostPage() {
         tag_ids: selectedTags.length > 0 ? selectedTags : undefined,
       }),
     onSuccess: () => {
-      toast.success("Post updated");
+      toast.success(t("posts.postUpdated"));
       router.push("/admin/posts");
     },
     onError: (err) => {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to update post");
+        toast.error(t("posts.failedToUpdate"));
       }
     },
   });
@@ -143,7 +145,7 @@ export default function EditPostPage() {
       <div className="space-y-6">
         <div className="flex items-center gap-4">
           <Link href="/admin/posts">
-            <Button variant="outline" size="sm">&larr; Back</Button>
+            <Button variant="outline" size="sm">{t("common.back")}</Button>
           </Link>
           <Skeleton className="h-8 w-32" />
         </div>
@@ -163,13 +165,13 @@ export default function EditPostPage() {
       <div className="space-y-6">
         <div className="flex items-center gap-4">
           <Link href="/admin/posts">
-            <Button variant="outline" size="sm">&larr; Back</Button>
+            <Button variant="outline" size="sm">{t("common.back")}</Button>
           </Link>
-          <h1 className="text-2xl font-bold">Edit Post</h1>
+          <h1 className="text-2xl font-bold">{t("posts.editPost")}</h1>
         </div>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-muted-foreground">Failed to load post.</p>
+            <p className="text-muted-foreground">{t("posts.failedToLoad")}</p>
           </CardContent>
         </Card>
       </div>
@@ -180,35 +182,35 @@ export default function EditPostPage() {
     <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Link href="/admin/posts">
-          <Button variant="outline" size="sm">&larr; Back</Button>
+          <Button variant="outline" size="sm">{t("common.back")}</Button>
         </Link>
-        <h1 className="text-2xl font-bold">Edit Post</h1>
+        <h1 className="text-2xl font-bold">{t("posts.editPost")}</h1>
       </div>
 
       <Card>
         <CardContent className="pt-6">
           <form onSubmit={handleSubmit((v) => updateMutation.mutate(v))} className="space-y-6">
             <div className="space-y-2">
-              <Label htmlFor="title">Title</Label>
-              <Input id="title" placeholder="Post title" {...register("title")} />
+              <Label htmlFor="title">{t("posts.titleCol")}</Label>
+              <Input id="title" placeholder={t("posts.postTitle")} {...register("title")} />
               {errors.title && <p className="text-sm text-red-500">{errors.title.message}</p>}
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="content">Content</Label>
+              <Label htmlFor="content">{t("posts.content")}</Label>
               <MarkdownEditor
                 value={watch("content") || ""}
                 onChange={(v) => setValue("content", v)}
-                placeholder="Write your post content in Markdown..."
+                placeholder={t("posts.writeContent")}
               />
               {errors.content && <p className="text-sm text-red-500">{errors.content.message}</p>}
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="excerpt">Excerpt</Label>
+              <Label htmlFor="excerpt">{t("posts.excerpt")}</Label>
               <Textarea
                 id="excerpt"
-                placeholder="Brief summary (optional)"
+                placeholder={t("posts.briefSummary")}
                 rows={3}
                 {...register("excerpt")}
               />
@@ -216,29 +218,29 @@ export default function EditPostPage() {
 
             <div className="grid gap-6 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>Status</Label>
+                <Label>{t("common.status")}</Label>
                 <Select
                   value={statusValue}
                   onValueChange={(val) => val && setValue("status", val as "draft" | "published")}
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select status" />
+                    <SelectValue placeholder={t("common.selectStatus")} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="draft">Draft</SelectItem>
-                    <SelectItem value="published">Published</SelectItem>
+                    <SelectItem value="draft">{t("common.draft")}</SelectItem>
+                    <SelectItem value="published">{t("common.published")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
               <div className="space-y-2">
-                <Label>Category</Label>
+                <Label>{t("posts.categoryCol")}</Label>
                 <Select
                   value={categoryValue}
                   onValueChange={(val) => val && setValue("category_id", val)}
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select category" />
+                    <SelectValue placeholder={t("posts.selectCategory")} />
                   </SelectTrigger>
                   <SelectContent>
                     {categories.map((cat) => (
@@ -250,9 +252,9 @@ export default function EditPostPage() {
             </div>
 
             <div className="space-y-2">
-              <Label>Tags</Label>
+              <Label>{t("posts.tags")}</Label>
               {tags.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No tags available</p>
+                <p className="text-sm text-muted-foreground">{t("posts.noTags")}</p>
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {tags.map((tag) => (
@@ -275,10 +277,10 @@ export default function EditPostPage() {
 
             <div className="flex gap-2">
               <Button type="submit" disabled={updateMutation.isPending}>
-                {updateMutation.isPending ? "Saving..." : "Save Changes"}
+                {updateMutation.isPending ? t("common.saving") : t("posts.saveChanges")}
               </Button>
               <Link href="/admin/posts">
-                <Button type="button" variant="outline">Cancel</Button>
+                <Button type="button" variant="outline">{t("common.cancel")}</Button>
               </Link>
             </div>
           </form>

@@ -48,6 +48,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { api, apiRequest, ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 interface ExtensionDetail {
   id: string;
@@ -69,6 +70,7 @@ export default function ExtensionDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const { t } = useT();
   const queryClient = useQueryClient();
   const [showUninstall, setShowUninstall] = useState(false);
   const [dropTables, setDropTables] = useState(false);
@@ -82,24 +84,24 @@ export default function ExtensionDetailPage({
   const enableMutation = useMutation({
     mutationFn: () => api.post(`/admin/extensions/${id}/enable`, {}),
     onSuccess: () => {
-      toast.success("Extension enabled");
+      toast.success(t("extensions.extensionEnabled"));
       queryClient.invalidateQueries({ queryKey: ["extension", id] });
       queryClient.invalidateQueries({ queryKey: ["extensions"] });
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to enable");
+      toast.error(err instanceof ApiError ? err.message : t("extensions.failedToEnable"));
     },
   });
 
   const disableMutation = useMutation({
     mutationFn: () => api.post(`/admin/extensions/${id}/disable`, {}),
     onSuccess: () => {
-      toast.success("Extension disabled");
+      toast.success(t("extensions.extensionDisabled"));
       queryClient.invalidateQueries({ queryKey: ["extension", id] });
       queryClient.invalidateQueries({ queryKey: ["extensions"] });
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : "Failed to disable");
+      toast.error(err instanceof ApiError ? err.message : t("extensions.failedToDisable"));
     },
   });
 
@@ -110,13 +112,13 @@ export default function ExtensionDetailPage({
         body: JSON.stringify({ drop_tables: drop }),
       }),
     onSuccess: () => {
-      toast.success("Extension uninstalled");
+      toast.success(t("extensions.extensionUninstalled"));
       queryClient.invalidateQueries({ queryKey: ["extensions"] });
       window.location.href = "/admin/extensions";
     },
     onError: (err) => {
       toast.error(
-        err instanceof ApiError ? err.message : "Failed to uninstall",
+        err instanceof ApiError ? err.message : t("extensions.failedToUninstall"),
       );
     },
   });
@@ -137,13 +139,13 @@ export default function ExtensionDetailPage({
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="size-4" />
-          Back to Extensions
+          {t("extensions.backToExtensions")}
         </Link>
         <div className="flex flex-col items-center gap-2 py-16 text-destructive">
           <AlertTriangle className="size-8" />
-          <p>Extension not found</p>
+          <p>{t("extensions.notFound")}</p>
           <p className="text-sm text-muted-foreground">
-            The extension &quot;{id}&quot; does not exist or has been removed.
+            {t("extensions.notFoundMsg", { id })}
           </p>
         </div>
       </div>
@@ -161,7 +163,7 @@ export default function ExtensionDetailPage({
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="size-4" />
-          Extensions
+          {t("extensions.title")}
         </Link>
       </div>
 
@@ -170,9 +172,9 @@ export default function ExtensionDetailPage({
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold">{ext.name}</h1>
             {ext.enabled ? (
-              <Badge variant="default">Enabled</Badge>
+              <Badge variant="default">{t("common.enabled")}</Badge>
             ) : (
-              <Badge variant="outline">Disabled</Badge>
+              <Badge variant="outline">{t("common.disabled")}</Badge>
             )}
           </div>
           <div className="flex items-center gap-3 text-sm text-muted-foreground">
@@ -181,7 +183,7 @@ export default function ExtensionDetailPage({
             {ext.installed_at && (
               <span className="inline-flex items-center gap-1">
                 <Calendar className="size-3" />
-                Installed {new Date(ext.installed_at).toLocaleDateString()}
+                {t("extensions.installed")} {new Date(ext.installed_at).toLocaleDateString()}
               </span>
             )}
           </div>
@@ -222,7 +224,7 @@ export default function ExtensionDetailPage({
             }}
           >
             <Trash2 className="size-4" />
-            Uninstall
+            {t("extensions.uninstall")}
           </Button>
         </div>
       </div>
@@ -231,7 +233,7 @@ export default function ExtensionDetailPage({
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Components
+              {t("extensions.components")}
             </CardTitle>
           </CardHeader>
           <CardContent className="flex items-center gap-3">
@@ -240,7 +242,7 @@ export default function ExtensionDetailPage({
                 <TooltipTrigger>
                   <Badge variant="secondary" className="gap-1.5 py-1 px-2.5">
                     <Layers className="size-3.5" />
-                    Content Types
+                    {t("extensions.contentTypesCol")}
                   </Badge>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -249,17 +251,17 @@ export default function ExtensionDetailPage({
               </Tooltip>
             ) : (
               <Badge variant="ghost" className="opacity-50">
-                No Content Types
+                {t("extensions.noContentTypes")}
               </Badge>
             )}
             {ext.has_plugin ? (
               <Badge variant="outline" className="gap-1.5 py-1 px-2.5">
                 <Puzzle className="size-3.5" />
-                Plugin
+                {t("layout.plugins")}
               </Badge>
             ) : (
               <Badge variant="ghost" className="opacity-50">
-                No Plugin
+                {t("extensions.noPlugin")}
               </Badge>
             )}
           </CardContent>
@@ -268,7 +270,7 @@ export default function ExtensionDetailPage({
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Dependencies
+              {t("extensions.dependencies")}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -295,7 +297,7 @@ export default function ExtensionDetailPage({
               </div>
             ) : (
               <span className="text-sm text-muted-foreground">
-                No dependencies
+                {t("common.noDependencies")}
               </span>
             )}
           </CardContent>
@@ -304,7 +306,7 @@ export default function ExtensionDetailPage({
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Installation
+              {t("extensions.installation")}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -312,7 +314,7 @@ export default function ExtensionDetailPage({
               <div className="space-y-1 text-sm">
                 <div className="flex items-center gap-1.5">
                   <Badge variant="default" className="size-1.5 rounded-full p-0" />
-                  Installed
+                  {t("extensions.installed")}
                 </div>
                 {ext.installed_at && (
                   <p className="text-muted-foreground">
@@ -322,7 +324,7 @@ export default function ExtensionDetailPage({
               </div>
             ) : (
               <span className="text-sm text-muted-foreground">
-                Not installed (file-only)
+                {t("extensions.notInstalled")}
               </span>
             )}
           </CardContent>
@@ -337,7 +339,7 @@ export default function ExtensionDetailPage({
             <div className="flex items-center justify-between">
               <CardTitle className="flex items-center gap-2">
                 <Layers className="size-5" />
-                Content Types
+                {t("extensions.contentTypesCol")}
               </CardTitle>
               <Badge variant="outline">{ext.content_types.length}</Badge>
             </div>
@@ -364,13 +366,13 @@ export default function ExtensionDetailPage({
                         <Link href={`/admin/content-types/${ct}`}>
                           <Button variant="ghost" size="sm" className="gap-1.5">
                             <List className="size-3.5" />
-                            Data
+                            {t("extensions.data")}
                           </Button>
                         </Link>
                         <Link href={`/admin/content-types/builder?edit=${ct}`}>
                           <Button variant="ghost" size="sm" className="gap-1.5">
                             <Pencil className="size-3.5" />
-                            Schema
+                            {t("extensions.schema")}
                           </Button>
                         </Link>
                       </div>
@@ -388,21 +390,20 @@ export default function ExtensionDetailPage({
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Puzzle className="size-5" />
-              Plugin
+              {t("layout.plugins")}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">
-                  This extension contains a plugin with runtime logic (hooks,
-                  cron tasks, custom routes).
+                  {t("extensions.pluginDesc")}
                 </p>
               </div>
               <Link href={`/admin/plugins/${ext.id}`}>
                 <Button variant="outline" size="sm" className="gap-1.5">
                   <ExternalLink className="size-3.5" />
-                  View Runtime Details
+                  {t("extensions.viewRuntimeDetails")}
                 </Button>
               </Link>
             </div>
@@ -413,11 +414,9 @@ export default function ExtensionDetailPage({
       <Dialog open={showUninstall} onOpenChange={setShowUninstall}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Uninstall Extension</DialogTitle>
+            <DialogTitle>{t("extensions.uninstallExtension")}</DialogTitle>
             <DialogDescription>
-              Are you sure you want to uninstall <strong>{ext.name}</strong> (v
-              {ext.version})? This will remove the extension files and database
-              record.
+              {t("extensions.uninstallConfirm", { name: ext.name, version: ext.version })}
             </DialogDescription>
           </DialogHeader>
           {ext.content_types.length > 0 && (
@@ -425,9 +424,7 @@ export default function ExtensionDetailPage({
               <AlertTriangle className="size-4 mt-0.5 text-destructive shrink-0" />
               <div className="space-y-2">
                 <p className="text-sm">
-                  This extension contains content types:{" "}
-                  <strong>{ext.content_types.join(", ")}</strong>. The associated
-                  database tables will remain unless you choose to drop them.
+                  {t("extensions.containsContentTypes", { types: ext.content_types.join(", ") })}
                 </p>
                 <div className="flex items-center gap-2">
                   <Checkbox
@@ -439,7 +436,7 @@ export default function ExtensionDetailPage({
                     htmlFor="drop-tables-detail"
                     className="text-sm font-medium"
                   >
-                    Drop database tables (irreversible)
+                    {t("extensions.dropTables")}
                   </label>
                 </div>
               </div>
@@ -451,14 +448,14 @@ export default function ExtensionDetailPage({
               onClick={() => setShowUninstall(false)}
               disabled={uninstallMutation.isPending}
             >
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button
               variant="destructive"
               disabled={uninstallMutation.isPending}
               onClick={() => uninstallMutation.mutate(dropTables)}
             >
-              {uninstallMutation.isPending ? "Uninstalling..." : "Uninstall"}
+              {uninstallMutation.isPending ? t("extensions.uninstalling") : t("extensions.uninstall")}
             </Button>
           </DialogFooter>
         </DialogContent>

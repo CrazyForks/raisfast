@@ -11,6 +11,7 @@ use validator::Validate;
 
 use crate::AppState;
 use crate::errors::app_error::AppResult;
+use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
 use crate::services::api_token;
 
@@ -46,14 +47,7 @@ pub async fn create(
         body.expires_at.as_deref(),
     )
     .await?;
-    Ok((
-        StatusCode::CREATED,
-        Json(serde_json::json!({
-            "code": 20100,
-            "message": "created",
-            "data": result
-        })),
-    ))
+    Ok((StatusCode::CREATED, Json(ApiResponse::success(result))))
 }
 
 /// 列出当前用户的 API Token
@@ -65,11 +59,7 @@ pub async fn create(
 )]
 pub async fn list(user: AuthUser, State(state): State<AppState>) -> AppResult<impl IntoResponse> {
     let tokens = api_token::list_tokens(&state.pool, &user.user_id).await?;
-    Ok(Json(serde_json::json!({
-        "code": 20000,
-        "message": "ok",
-        "data": tokens
-    })))
+    Ok(Json(ApiResponse::success(tokens)))
 }
 
 /// 删除 API Token
@@ -87,8 +77,7 @@ pub async fn delete(
 ) -> AppResult<impl IntoResponse> {
     let is_admin = user.role == "admin";
     api_token::delete_token(&state.pool, &id, &user.user_id, is_admin).await?;
-    Ok(Json(serde_json::json!({
-        "code": 20000,
-        "message": "deleted"
-    })))
+    Ok(Json(ApiResponse::success(
+        serde_json::json!({"deleted": true}),
+    )))
 }

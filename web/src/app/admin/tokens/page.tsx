@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { api, ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 interface ApiToken {
   id: string;
@@ -70,6 +71,7 @@ function ScopeBadge({ scope }: { scope: string }) {
 }
 
 export default function ApiTokensPage() {
+  const { t } = useT();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [revealedToken, setRevealedToken] = useState<CreateTokenResponse | null>(null);
@@ -98,7 +100,7 @@ export default function ApiTokensPage() {
         expires_at: data.expires_at || null,
       }),
     onSuccess: (result) => {
-      toast.success("Token created");
+      toast.success(t("tokens.tokenCreated"));
       queryClient.invalidateQueries({ queryKey: ["api-tokens"] });
       setDialogOpen(false);
       setRevealedToken(result);
@@ -108,7 +110,7 @@ export default function ApiTokensPage() {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to create token");
+        toast.error(t("tokens.failedToCreate"));
       }
     },
   });
@@ -116,20 +118,20 @@ export default function ApiTokensPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/tokens/${id}`),
     onSuccess: () => {
-      toast.success("Token revoked");
+      toast.success(t("tokens.tokenRevoked"));
       queryClient.invalidateQueries({ queryKey: ["api-tokens"] });
     },
     onError: (err) => {
       if (err instanceof ApiError) {
         toast.error(err.message);
       } else {
-        toast.error("Failed to revoke token");
+        toast.error(t("tokens.failedToRevoke"));
       }
     },
   });
 
   function handleDelete(id: string, name: string) {
-    if (confirm(`Revoke token "${name}"? This cannot be undone.`)) {
+    if (confirm(t("tokens.confirmRevoke", { name }))) {
       deleteMutation.mutate(id);
     }
   }
@@ -138,7 +140,7 @@ export default function ApiTokensPage() {
     await navigator.clipboard.writeText(token);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-    toast.success("Token copied to clipboard");
+    toast.success(t("tokens.tokenCopied"));
   }
 
   const tokens = tokensQuery.data ?? [];
@@ -148,18 +150,18 @@ export default function ApiTokensPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <KeyRound className="size-6" />
-          <h1 className="text-2xl font-bold">API Tokens</h1>
+          <h1 className="text-2xl font-bold">{t("tokens.title")}</h1>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger render={<Button />}>
             <Plus className="size-4" />
-            New Token
+            {t("tokens.newToken")}
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Create API Token</DialogTitle>
+              <DialogTitle>{t("tokens.createToken")}</DialogTitle>
               <DialogDescription>
-                Generate a new personal access token. The token value will only be shown once.
+                {t("tokens.createTokenDesc")}
               </DialogDescription>
             </DialogHeader>
             <form
@@ -167,7 +169,7 @@ export default function ApiTokensPage() {
               className="space-y-4"
             >
               <div className="space-y-2">
-                <Label htmlFor="tk-name">Name</Label>
+                <Label htmlFor="tk-name">{t("common.name")}</Label>
                 <Input
                   id="tk-name"
                   placeholder="e.g. CI/CD Pipeline"
@@ -178,7 +180,7 @@ export default function ApiTokensPage() {
                 )}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="tk-scopes">Scopes (comma-separated)</Label>
+                <Label htmlFor="tk-scopes">{t("tokens.scopesComma")}</Label>
                 <div className="flex flex-wrap gap-2 mb-2">
                   {SCOPE_OPTIONS.map((opt) => (
                     <Badge
@@ -200,7 +202,7 @@ export default function ApiTokensPage() {
                 )}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="tk-expires">Expires At (optional)</Label>
+                <Label htmlFor="tk-expires">{t("tokens.expiresOptional")}</Label>
                 <Input
                   id="tk-expires"
                   type="datetime-local"
@@ -213,10 +215,10 @@ export default function ApiTokensPage() {
                   variant="outline"
                   onClick={() => setDialogOpen(false)}
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </Button>
                 <Button type="submit" disabled={createMutation.isPending}>
-                  {createMutation.isPending ? "Creating..." : "Create"}
+                  {createMutation.isPending ? t("common.creating") : t("common.create")}
                 </Button>
               </DialogFooter>
             </form>
@@ -230,7 +232,7 @@ export default function ApiTokensPage() {
             <div className="flex items-center gap-2">
               <KeyRound className="size-4 text-yellow-600" />
               <span className="font-medium text-yellow-700 dark:text-yellow-400">
-                Token Created — copy it now!
+                {t("tokens.tokenCreatedCopy")}
               </span>
               <div className="flex-1" />
               <Button
@@ -243,21 +245,21 @@ export default function ApiTokensPage() {
                 ) : (
                   <Copy className="size-3.5" />
                 )}
-                {copied ? "Copied" : "Copy"}
+                {copied ? t("tokens.copied") : t("tokens.copy")}
               </Button>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setRevealedToken(null)}
               >
-                Dismiss
+                {t("tokens.dismiss")}
               </Button>
             </div>
             <code className="block rounded bg-background p-3 text-sm font-mono break-all select-all">
               {revealedToken.token}
             </code>
             <p className="text-xs text-muted-foreground">
-              This token will not be shown again. Store it securely.
+              {t("tokens.notShownAgain")}
             </p>
           </CardContent>
         </Card>
@@ -269,55 +271,55 @@ export default function ApiTokensPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
-                <TableHead>Scopes</TableHead>
-                <TableHead>Expires</TableHead>
-                <TableHead>Last Used</TableHead>
+                <TableHead>{t("tokens.scopesCol")}</TableHead>
+                <TableHead>{t("tokens.expiresCol")}</TableHead>
+                <TableHead>{t("tokens.lastUsed")}</TableHead>
                 <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead className="text-right">{t("common.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {tokensQuery.isLoading ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8">
-                    Loading...
+                    {t("common.loading")}
                   </TableCell>
                 </TableRow>
               ) : tokens.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8">
-                    No API tokens found. Create one to get started.
+                    {t("tokens.noTokens")}
                   </TableCell>
                 </TableRow>
               ) : (
-                tokens.map((t) => (
-                  <TableRow key={t.id}>
-                    <TableCell className="font-medium">{t.name}</TableCell>
+                tokens.map((tk) => (
+                  <TableRow key={tk.id}>
+                    <TableCell className="font-medium">{tk.name}</TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
-                        {t.scopes.map((s) => (
+                        {tk.scopes.map((s) => (
                           <ScopeBadge key={s} scope={s} />
                         ))}
                       </div>
                     </TableCell>
                     <TableCell>
-                      {t.expires_at
-                        ? new Date(t.expires_at).toLocaleDateString()
-                        : <span className="text-muted-foreground">Never</span>}
+                      {tk.expires_at
+                        ? new Date(tk.expires_at).toLocaleDateString()
+                        : <span className="text-muted-foreground">{t("tokens.never")}</span>}
                     </TableCell>
                     <TableCell>
-                      {t.last_used_at
-                        ? new Date(t.last_used_at).toLocaleString()
+                      {tk.last_used_at
+                        ? new Date(tk.last_used_at).toLocaleString()
                         : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell>
-                      {new Date(t.created_at).toLocaleDateString()}
+                      {new Date(tk.created_at).toLocaleDateString()}
                     </TableCell>
                     <TableCell className="text-right">
                       <Button
                         variant="ghost"
                         size="icon-sm"
-                        onClick={() => handleDelete(t.id, t.name)}
+                        onClick={() => handleDelete(tk.id, tk.name)}
                         disabled={deleteMutation.isPending}
                       >
                         <Trash2 className="size-4" />
