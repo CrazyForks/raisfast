@@ -26,6 +26,9 @@ use serde::{Deserialize, Serialize};
 /// | `CORS_ORIGINS` | String | (空=允许所有) | CORS 允许的来源，多个用逗号分隔 |
 /// | `TLS_CERT_PATH` | String | (空=HTTP) | TLS 证书文件路径（PEM 格式） |
 /// | `TLS_KEY_PATH` | String | (空=HTTP) | TLS 私钥文件路径（PEM 格式） |
+/// | `PLUGIN_WASM_POOL_SIZE` | u32 | `4` | WASM 实例池大小 |
+/// | `PLUGIN_LUA_POOL_SIZE` | u32 | `4` | Lua 实例池大小 |
+/// | `PLUGIN_JS_POOL_SIZE` | u32 | `4` | JS 实例池大小 |
 /// | `APP_TIMEZONE` | String | `UTC` | 站点时区（IANA 格式，如 `Asia/Shanghai`） |
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -51,6 +54,12 @@ pub struct AppConfig {
     pub plugin_max_memory_mb: u32,
     #[serde(default = "default_plugin_timeout")]
     pub plugin_default_timeout_ms: u64,
+    #[serde(default = "default_plugin_wasm_pool_size")]
+    pub plugin_wasm_pool_size: u32,
+    #[serde(default = "default_plugin_lua_pool_size")]
+    pub plugin_lua_pool_size: u32,
+    #[serde(default = "default_plugin_js_pool_size")]
+    pub plugin_js_pool_size: u32,
     #[serde(default)]
     pub plugin_disabled: Vec<String>,
     #[serde(default = "default_plugin_vfs_root")]
@@ -270,6 +279,18 @@ fn default_plugin_timeout() -> u64 {
     5000
 }
 
+fn default_plugin_wasm_pool_size() -> u32 {
+    4
+}
+
+fn default_plugin_lua_pool_size() -> u32 {
+    4
+}
+
+fn default_plugin_js_pool_size() -> u32 {
+    4
+}
+
 fn default_plugin_vfs_root() -> String {
     "./plugins-data".into()
 }
@@ -366,6 +387,18 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default_plugin_timeout()),
+            plugin_wasm_pool_size: env::var("PLUGIN_WASM_POOL_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_plugin_wasm_pool_size()),
+            plugin_lua_pool_size: env::var("PLUGIN_LUA_POOL_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_plugin_lua_pool_size()),
+            plugin_js_pool_size: env::var("PLUGIN_JS_POOL_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_plugin_js_pool_size()),
             plugin_disabled: env::var("PLUGIN_DISABLED")
                 .ok()
                 .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
@@ -513,6 +546,9 @@ impl AppConfig {
             plugin_hot_reload: false,
             plugin_max_memory_mb: default_plugin_max_memory(),
             plugin_default_timeout_ms: default_plugin_timeout(),
+            plugin_wasm_pool_size: default_plugin_wasm_pool_size(),
+            plugin_lua_pool_size: default_plugin_lua_pool_size(),
+            plugin_js_pool_size: default_plugin_js_pool_size(),
             plugin_disabled: vec![],
             plugin_vfs_root: default_plugin_vfs_root(),
             plugin_vfs_max_file_size: default_plugin_vfs_max_file_size(),

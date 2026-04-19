@@ -32,7 +32,7 @@ pub mod validation;
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use schema::ContentTypeSchema;
 
@@ -41,16 +41,17 @@ use crate::errors::app_error::AppError;
 /// 内容类型注册表
 ///
 /// 管理所有已注册的 content type schema，提供按名称/表名查询能力。
-/// 内部使用 `RwLock` 支持运行时热更新。
+/// 内部使用 `RwLock` 支持运行时热更新。所有查询返回 `Arc<ContentTypeSchema>` 避免深拷贝。
 #[derive(Debug, Default)]
 pub struct ContentTypeRegistry {
     inner: RwLock<RegistryInner>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 struct RegistryInner {
-    types: HashMap<String, ContentTypeSchema>,
+    types: HashMap<String, Arc<ContentTypeSchema>>,
     by_table: HashMap<String, String>,
+    by_plural: HashMap<String, String>,
     protected_tables: Vec<String>,
 }
 
@@ -113,14 +114,19 @@ impl ContentTypeRegistry {
             );
             return;
         }
+        let mut schema = schema;
+        schema.cache_select_columns();
+        let plural = schema.plural.clone();
+        let table = schema.table.clone();
+        let singular = schema.singular.clone();
+        let arc = Arc::new(schema);
         let mut inner = self
             .inner
             .write()
             .expect("ContentTypeRegistry lock poisoned");
-        inner
-            .by_table
-            .insert(schema.table.clone(), schema.singular.clone());
-        inner.types.insert(schema.singular.clone(), schema);
+        inner.by_table.insert(table, singular.clone());
+        inner.by_plural.insert(plural, singular.clone());
+        inner.types.insert(singular, arc);
     }
 
     /// 设置系统保护表列表
@@ -134,7 +140,7 @@ impl ContentTypeRegistry {
 
     /// 按 singular name 查询
     #[must_use]
-    pub fn get(&self, name: &str) -> Option<ContentTypeSchema> {
+    pub fn get(&self, name: &str) -> Option<Arc<ContentTypeSchema>> {
         let inner = self
             .inner
             .read()
@@ -144,7 +150,7 @@ impl ContentTypeRegistry {
 
     /// 按表名查询
     #[must_use]
-    pub fn get_by_table(&self, table: &str) -> Option<ContentTypeSchema> {
+    pub fn get_by_table(&self, table: &str) -> Option<Arc<ContentTypeSchema>> {
         let inner = self
             .inner
             .read()
@@ -157,7 +163,7 @@ impl ContentTypeRegistry {
 
     /// 获取所有已注册 content type
     #[must_use]
-    pub fn all(&self) -> Vec<ContentTypeSchema> {
+    pub fn all(&self) -> Vec<Arc<ContentTypeSchema>> {
         let inner = self
             .inner
             .read()
@@ -181,24 +187,28 @@ impl ContentTypeRegistry {
         self.len() == 0
     }
 
-    /// 按 plural name 查询
+    /// 按 plural name 查询（O(1) HashMap 查找）
     #[must_use]
-    pub fn get_by_plural(&self, plural: &str) -> Option<ContentTypeSchema> {
+    pub fn get_by_plural(&self, plural: &str) -> Option<Arc<ContentTypeSchema>> {
         let inner = self
             .inner
             .read()
             .expect("ContentTypeRegistry lock poisoned");
-        inner.types.values().find(|ct| ct.plural == plural).cloned()
+        inner
+            .by_plural
+            .get(plural)
+            .and_then(|singular| inner.types.get(singular).cloned())
     }
 
     /// 注销单个 content type（线程安全）
-    pub fn unregister(&self, singular: &str) -> Option<ContentTypeSchema> {
+    pub fn unregister(&self, singular: &str) -> Option<Arc<ContentTypeSchema>> {
         let mut inner = self
             .inner
             .write()
             .expect("ContentTypeRegistry lock poisoned");
         if let Some(schema) = inner.types.remove(singular) {
             inner.by_table.remove(&schema.table);
+            inner.by_plural.remove(&schema.plural);
             Some(schema)
         } else {
             None

@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use rquickjs::{AsyncContext, AsyncRuntime, Function, Object};
@@ -17,46 +18,66 @@ use crate::config::app::AppConfig;
 use crate::db::Pool;
 use crate::plugins::Permissions;
 
-/// 单个 JS 插件的隔离运行环境
 struct PluginSlot {
     runtime: AsyncRuntime,
     context: AsyncContext,
 }
 
-/// JS 插件引擎
+/// JS 实例池
 ///
-/// 管理所有 JS 插件，每个插件拥有独立的 `AsyncRuntime`（独立内存限制）。
+/// 为单个 JS 插件维护多个独立 Runtime+Context，支持并发执行。
+struct JsInstancePool {
+    instances: Vec<Mutex<PluginSlot>>,
+    next: AtomicUsize,
+}
+
+impl JsInstancePool {
+    fn new(instances: Vec<PluginSlot>) -> Self {
+        Self {
+            instances: instances.into_iter().map(Mutex::new).collect(),
+            next: AtomicUsize::new(0),
+        }
+    }
+
+    async fn acquire(&self) -> tokio::sync::MutexGuard<'_, PluginSlot> {
+        let len = self.instances.len();
+        let idx = self.next.fetch_add(1, Ordering::Relaxed) % len;
+        self.instances[idx].lock().await
+    }
+}
+
 pub struct JsEngine {
-    slots: Mutex<HashMap<String, PluginSlot>>,
+    pools: Mutex<HashMap<String, Arc<JsInstancePool>>>,
     permissions_map: Mutex<HashMap<String, Permissions>>,
     default_memory_limit_bytes: usize,
     timeout_ms: u64,
     config: Arc<AppConfig>,
     pool: Option<Pool>,
+    pool_size: usize,
 }
 
 impl JsEngine {
-    /// 创建新的 JS 引擎
     pub async fn new(config: &AppConfig, pool: Option<Pool>) -> anyhow::Result<Self> {
         let default_memory_limit_bytes = (config.plugin_max_memory_mb as usize) * 1024 * 1024;
+        let pool_size = config.plugin_js_pool_size.max(1) as usize;
 
         Ok(Self {
-            slots: Mutex::new(HashMap::new()),
+            pools: Mutex::new(HashMap::new()),
             permissions_map: Mutex::new(HashMap::new()),
             default_memory_limit_bytes,
             timeout_ms: config.plugin_default_timeout_ms,
             config: Arc::new(config.clone()),
             pool,
+            pool_size,
         })
     }
 
-    /// 加载 JS 插件代码到独立上下文（每个插件独立 AsyncRuntime）
-    pub async fn load_plugin(
+    async fn create_instance(
         &self,
-        id: &str,
         code: &str,
-        permissions: Permissions,
-    ) -> anyhow::Result<()> {
+        plugin_id: &str,
+        permissions: &Permissions,
+    ) -> anyhow::Result<PluginSlot> {
         let memory_limit = permissions
             .max_memory_mb
             .map_or(self.default_memory_limit_bytes, |mb| {
@@ -69,7 +90,7 @@ impl JsEngine {
 
         let ctx = AsyncContext::full(&runtime).await?;
         let config = self.config.clone();
-        let plugin_id = id.to_string();
+        let plugin_id = plugin_id.to_string();
         let perms = permissions.clone();
         ctx.with(|ctx| {
             super::js_host::register_host_functions(
@@ -84,44 +105,58 @@ impl JsEngine {
         })
         .await?;
 
+        Ok(PluginSlot {
+            runtime,
+            context: ctx,
+        })
+    }
+
+    pub async fn load_plugin(
+        &self,
+        id: &str,
+        code: &str,
+        permissions: Permissions,
+    ) -> anyhow::Result<()> {
+        let mut instances = Vec::with_capacity(self.pool_size);
+        for _ in 0..self.pool_size {
+            instances.push(self.create_instance(code, id, &permissions).await?);
+        }
+
         self.permissions_map
             .lock()
             .await
             .insert(id.to_string(), permissions);
-        self.slots.lock().await.insert(
-            id.to_string(),
-            PluginSlot {
-                runtime,
-                context: ctx,
-            },
-        );
+        self.pools
+            .lock()
+            .await
+            .insert(id.to_string(), Arc::new(JsInstancePool::new(instances)));
         Ok(())
     }
 
-    /// 加载 JS 插件（兼容旧的无权限接口）
     #[cfg(test)]
     pub async fn load_plugin_default(&self, id: &str, code: &str) -> anyhow::Result<()> {
         self.load_plugin(id, code, Permissions::default()).await
     }
 
-    /// 卸载插件（移除上下文和运行时）
     pub async fn unload_plugin(&self, id: &str) {
-        self.slots.lock().await.remove(id);
+        self.pools.lock().await.remove(id);
     }
 
-    /// 调用 Filter Hook（JSON 字符串进出）
     pub async fn call_filter<T: Serialize + DeserializeOwned + Send>(
         &self,
         plugin_id: &str,
         func_name: &str,
         input: &T,
     ) -> anyhow::Result<Option<T>> {
-        let mut slots = self.slots.lock().await;
-        let slot = match slots.get_mut(plugin_id) {
-            Some(s) => s,
-            None => return Ok(None),
+        let pool = {
+            let pools = self.pools.lock().await;
+            match pools.get(plugin_id) {
+                Some(p) => Arc::clone(p),
+                None => return Ok(None),
+            }
         };
 
+        let slot = pool.acquire().await;
         let input_json = serde_json::to_string(input)?;
         let timeout = self.timeout_ms;
         let start = Instant::now();
@@ -150,25 +185,25 @@ impl JsEngine {
             })
             .await;
 
-        if let Some(slot) = slots.get(plugin_id) {
-            slot.runtime.set_interrupt_handler(None).await;
-        }
+        slot.runtime.set_interrupt_handler(None).await;
         result
     }
 
-    /// 调用 Action Hook（无返回值）
     pub async fn call_action<T: Serialize>(
         &self,
         plugin_id: &str,
         func_name: &str,
         data: &T,
     ) -> anyhow::Result<()> {
-        let mut slots = self.slots.lock().await;
-        let slot = match slots.get_mut(plugin_id) {
-            Some(s) => s,
-            None => return Ok(()),
+        let pool = {
+            let pools = self.pools.lock().await;
+            match pools.get(plugin_id) {
+                Some(p) => Arc::clone(p),
+                None => return Ok(()),
+            }
         };
 
+        let slot = pool.acquire().await;
         let data_json = serde_json::to_string(data)?;
         let timeout = self.timeout_ms;
         let start = Instant::now();
@@ -196,25 +231,25 @@ impl JsEngine {
             })
             .await;
 
-        if let Some(slot) = slots.get(plugin_id) {
-            slot.runtime.set_interrupt_handler(None).await;
-        }
+        slot.runtime.set_interrupt_handler(None).await;
         result
     }
 
-    /// 调用 String Filter Hook（如 `render_markdown、filter_html`）
     pub async fn call_string_filter(
         &self,
         plugin_id: &str,
         func_name: &str,
         input: &str,
     ) -> anyhow::Result<Option<String>> {
-        let mut slots = self.slots.lock().await;
-        let slot = match slots.get_mut(plugin_id) {
-            Some(s) => s,
-            None => return Ok(None),
+        let pool = {
+            let pools = self.pools.lock().await;
+            match pools.get(plugin_id) {
+                Some(p) => Arc::clone(p),
+                None => return Ok(None),
+            }
         };
 
+        let slot = pool.acquire().await;
         let timeout = self.timeout_ms;
         let start = Instant::now();
         slot.runtime
@@ -242,16 +277,13 @@ impl JsEngine {
             })
             .await;
 
-        if let Some(slot) = slots.get(plugin_id) {
-            slot.runtime.set_interrupt_handler(None).await;
-        }
+        slot.runtime.set_interrupt_handler(None).await;
         result
     }
 
-    /// 获取已加载 JS 插件数量
     #[allow(dead_code)]
     pub async fn plugin_count(&self) -> usize {
-        self.slots.lock().await.len()
+        self.pools.lock().await.len()
     }
 }
 

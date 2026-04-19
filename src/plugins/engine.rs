@@ -5,14 +5,71 @@
 //! Store 数据类型为 [`Arc<HostContext>`]，所有 Host Function 共享公共业务逻辑。
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use tokio::sync::Mutex;
 
 use crate::plugins::host_common::HostContext;
 
-/// 默认 fuel 上限（约 1000 万条 WASM 指令，足够处理一般内容）
 const DEFAULT_FUEL: u64 = 10_000_000;
+
+/// WASM 实例池
+///
+/// 为单个 WASM 插件维护多个实例，支持并发执行。
+/// 使用 round-robin 策略分配实例。
+pub struct WasmInstancePool {
+    instances: Vec<Mutex<WasmInstance>>,
+    next: AtomicUsize,
+}
+
+impl WasmInstancePool {
+    /// 从已有实例创建指定大小的池
+    pub fn new(instances: Vec<WasmInstance>) -> Self {
+        let next = AtomicUsize::new(0);
+        Self {
+            instances: instances.into_iter().map(Mutex::new).collect(),
+            next,
+        }
+    }
+
+    /// 从 WASM 字节码创建实例池
+    pub fn create_pool(
+        engine: &wasmtime::Engine,
+        wasm_bytes: &[u8],
+        host_ctx: Arc<HostContext>,
+        timeout_ms: u64,
+        pool_size: usize,
+    ) -> anyhow::Result<Self> {
+        let mut instances = Vec::with_capacity(pool_size);
+        for _ in 0..pool_size {
+            let ctx: Arc<HostContext> = Arc::new((*host_ctx).clone());
+            instances.push(WasmInstance::new(engine, wasm_bytes, ctx, timeout_ms)?);
+        }
+        Ok(Self::new(instances))
+    }
+
+    /// 获取下一个可用实例（round-robin）
+    pub async fn acquire(&self) -> tokio::sync::MutexGuard<'_, WasmInstance> {
+        let len = self.instances.len();
+        let idx = self.next.fetch_add(1, Ordering::Relaxed) % len;
+        self.instances[idx].lock().await
+    }
+
+    /// 池中实例数量
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn len(&self) -> usize {
+        self.instances.len()
+    }
+
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.instances.is_empty()
+    }
+}
 
 /// 单个插件实例
 pub struct WasmInstance {

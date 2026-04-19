@@ -24,13 +24,27 @@ struct TxState {
 /// 持有单个插件所需的全部共享状态，业务逻辑方法均为同步接口
 /// （内部通过 `block_in_place` + `block_on` 执行异步操作）。
 pub struct HostContext {
-    /// 运行时标签，用于日志前缀（`"js"` / `"lua"`）
     pub runtime_label: &'static str,
     config: Arc<AppConfig>,
     plugin_id: String,
     permissions: Permissions,
     pool: Option<Pool>,
     tx: Mutex<Option<TxState>>,
+    vfs: Option<Arc<VirtualFs>>,
+}
+
+impl Clone for HostContext {
+    fn clone(&self) -> Self {
+        Self {
+            runtime_label: self.runtime_label,
+            config: self.config.clone(),
+            plugin_id: self.plugin_id.clone(),
+            permissions: self.permissions.clone(),
+            pool: self.pool.clone(),
+            tx: Mutex::new(None),
+            vfs: self.vfs.clone(),
+        }
+    }
 }
 
 impl HostContext {
@@ -50,6 +64,7 @@ impl HostContext {
             permissions,
             pool,
             tx: Mutex::new(None),
+            vfs: None,
         }
     }
 

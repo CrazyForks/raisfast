@@ -104,7 +104,7 @@ impl ContentRepository {
         ct: &ContentTypeSchema,
         query: ContentQuery,
     ) -> Result<(Vec<Value>, i64), AppError> {
-        let select_cols = build_select_columns(ct, query.fields.as_deref());
+        let select_cols = ct.select_columns(query.fields.as_deref());
         let table = &ct.table;
 
         let mut where_clauses = Vec::new();
@@ -199,7 +199,7 @@ impl ContentRepository {
         id: &str,
         tenant_id: Option<&str>,
     ) -> Result<Option<Value>, AppError> {
-        let select_cols = build_select_columns(ct, None);
+        let select_cols = ct.select_columns(None);
         let tid = self.resolve_tenant(&ct.table, tenant_id).await;
 
         let mut where_parts = vec![format!("id = {}", placeholder(1))];
@@ -248,7 +248,7 @@ impl ContentRepository {
         status: Option<&str>,
         tenant_id: Option<&str>,
     ) -> Result<Option<Value>, AppError> {
-        let select_cols = build_select_columns(ct, None);
+        let select_cols = ct.select_columns(None);
         let tid = self.resolve_tenant(&ct.table, tenant_id).await;
 
         let mut where_parts = vec![format!("slug = {}", placeholder(1))];
@@ -627,7 +627,10 @@ impl ContentRepository {
     }
 }
 
-fn build_select_columns(ct: &ContentTypeSchema, requested: Option<&[String]>) -> String {
+pub fn build_select_columns_uncached(
+    ct: &ContentTypeSchema,
+    requested: Option<&[String]>,
+) -> String {
     let mut pairs: Vec<String> = Vec::new();
 
     let add = |name: &str| -> String { format!("'{}', {}", name, name) };
@@ -793,7 +796,7 @@ unique = true
         )
         .unwrap();
 
-        let cols = build_select_columns(&ct, None);
+        let cols = build_select_columns_uncached(&ct, None);
         assert!(cols.starts_with("json_object("));
         assert!(cols.contains("'id', id"));
         assert!(cols.contains("'name', name"));

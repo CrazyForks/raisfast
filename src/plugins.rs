@@ -48,7 +48,7 @@ use serde::de::DeserializeOwned;
 use tokio::sync::RwLock;
 
 #[cfg(feature = "plugin-wasm")]
-use engine::WasmInstance;
+use engine::WasmInstancePool;
 #[cfg(feature = "plugin-js")]
 use engine_js::JsEngine;
 #[cfg(feature = "plugin-lua")]
@@ -111,7 +111,7 @@ const AUTO_DISABLE_THRESHOLD: u32 = 5;
 /// 已加载的插件实例（WASM、JS 或 Lua）
 enum LoadedPluginInstance {
     #[cfg(feature = "plugin-wasm")]
-    Wasm(Box<RwLock<WasmInstance>>),
+    Wasm(Arc<WasmInstancePool>),
     #[cfg(feature = "plugin-js")]
     Js(String),
     #[cfg(feature = "plugin-lua")]
@@ -477,15 +477,22 @@ impl PluginManager {
             self.pool.clone(),
         ));
 
-        let instance = WasmInstance::new(&self.engine, &wasm_bytes, host_ctx, timeout_ms)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("instantiate wasm: {e}")))?;
+        let pool_size = self.config.plugin_wasm_pool_size.max(1) as usize;
+        let instance_pool = WasmInstancePool::create_pool(
+            &self.engine,
+            &wasm_bytes,
+            host_ctx,
+            timeout_ms,
+            pool_size,
+        )
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("instantiate wasm pool: {e}")))?;
 
         let mut plugins = self.plugins.write().await;
         plugins.insert(
             id.clone(),
             LoadedPlugin {
                 manifest,
-                instance: LoadedPluginInstance::Wasm(Box::new(RwLock::new(instance))),
+                instance: LoadedPluginInstance::Wasm(Arc::new(instance_pool)),
                 health: RwLock::new(PluginHealth::default()),
                 metrics: RwLock::new(HashMap::new()),
             },
@@ -803,7 +810,7 @@ impl PluginManager {
             let result = match &plugin.instance {
                 #[cfg(feature = "plugin-wasm")]
                 LoadedPluginInstance::Wasm(wasm) => {
-                    let mut instance = wasm.write().await;
+                    let mut instance = wasm.acquire().await;
                     let timeout = std::time::Duration::from_millis(instance.timeout_ms());
                     tokio::time::timeout(timeout, async {
                         tokio::task::block_in_place(|| {
@@ -891,7 +898,7 @@ impl PluginManager {
             let result = match &plugin.instance {
                 #[cfg(feature = "plugin-wasm")]
                 LoadedPluginInstance::Wasm(wasm) => {
-                    let mut instance = wasm.write().await;
+                    let mut instance = wasm.acquire().await;
                     let timeout = std::time::Duration::from_millis(instance.timeout_ms());
                     tokio::time::timeout(timeout, async {
                         tokio::task::block_in_place(|| instance.call_json_action(func_name, data))
@@ -972,7 +979,7 @@ impl PluginManager {
             let result = match &plugin.instance {
                 #[cfg(feature = "plugin-wasm")]
                 LoadedPluginInstance::Wasm(wasm) => {
-                    let mut instance = wasm.write().await;
+                    let mut instance = wasm.acquire().await;
                     let timeout = std::time::Duration::from_millis(instance.timeout_ms());
                     tokio::time::timeout(timeout, async {
                         tokio::task::block_in_place(|| {
@@ -1305,7 +1312,7 @@ impl PluginManager {
         let result: Option<serde_json::Value> = match &plugin.instance {
             #[cfg(feature = "plugin-wasm")]
             LoadedPluginInstance::Wasm(wasm) => {
-                let mut instance = wasm.write().await;
+                let mut instance = wasm.acquire().await;
                 let timeout = std::time::Duration::from_millis(instance.timeout_ms());
                 tokio::time::timeout(timeout, async {
                     tokio::task::block_in_place(|| {

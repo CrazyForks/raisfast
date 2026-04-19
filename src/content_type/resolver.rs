@@ -13,199 +13,242 @@ use serde_json::{Value, json};
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
 use crate::errors::app_error::AppError;
 
-/// 解析 items 中的 relation 字段
+/// 解析 items 中的 relation 字段（批量优化）
 ///
-/// 对每个 item，检查 schema 中的 relation 字段：
-/// - 如果该字段名在 `include` 列表中（或 include 为空表示全部展开），
-///   则用目标记录的 JSON 替换 FK ID 值。
+/// 按字段维度批量查询：收集所有 items 中同一 relation 字段的 FK ID，
+/// 一次 `WHERE id IN (?)` 查询获取全部目标记录，再按 ID 分发回各 item。
 pub async fn resolve_relations(
     pool: &sqlx::SqlitePool,
     ct: &ContentTypeSchema,
     items: &mut [Value],
     include: Option<&[String]>,
 ) -> Result<(), AppError> {
+    if items.is_empty() {
+        return Ok(());
+    }
+
     let include_set: Option<std::collections::HashSet<&str>> =
         include.map(|list| list.iter().map(|s| s.as_str()).collect());
-
-    for item in items {
-        resolve_item_relations(pool, ct, item, include_set.as_ref()).await?;
-    }
-    Ok(())
-}
-
-async fn resolve_item_relations(
-    pool: &sqlx::SqlitePool,
-    ct: &ContentTypeSchema,
-    item: &mut Value,
-    include_set: Option<&std::collections::HashSet<&str>>,
-) -> Result<(), AppError> {
-    let Some(obj) = item.as_object_mut() else {
-        return Ok(());
-    };
 
     for field in &ct.fields {
         if field.field_type != FieldType::Relation {
             continue;
         }
-
-        if let Some(set) = include_set
+        if let Some(set) = include_set.as_ref()
             && !set.contains(field.name.as_str())
         {
             continue;
         }
-
         let Some(ref rel) = field.relation else {
             continue;
         };
 
         match rel.relation_type {
-            RelationType::ManyToOne | RelationType::OneToOne => {
-                let fk = rel
-                    .foreign_key
-                    .clone()
-                    .unwrap_or_else(|| format!("{}_id", field.name));
-
-                let Some(fk_val) = obj.get(&fk) else {
-                    continue;
-                };
-                let Some(fk_id) = fk_val.as_str() else {
-                    continue;
-                };
-                if fk_id.is_empty() {
-                    continue;
-                }
-
-                let target_table = &rel.target;
-                let cols = build_star_columns(pool, target_table).await;
-                let sql = format!("SELECT json_object({cols}) FROM {target_table} WHERE id = ?");
-                let sql = crate::db::dialect::translate(&sql);
-
-                let row = sqlx::query_as::<_, (Option<String>,)>(&sql)
-                    .bind(fk_id)
-                    .fetch_optional(pool)
-                    .await
-                    .map_err(|e| {
-                        AppError::Internal(anyhow::anyhow!("relation query failed: {e}"))
-                    })?;
-
-                if let Some((Some(json_str),)) = row
-                    && let Ok(target_data) = serde_json::from_str::<Value>(&json_str)
-                {
-                    obj.insert(field.name.clone(), target_data);
-                }
+            RelationType::ManyToOne
+            | RelationType::OneToOne
+            | RelationType::OneWay
+            | RelationType::ManyWay => {
+                resolve_many_to_one_batch(pool, ct, field, rel, items).await?;
             }
             RelationType::OneToMany => {
-                let fk_col = rel
-                    .foreign_key
-                    .clone()
-                    .unwrap_or_else(|| format!("{}_id", ct.singular));
-
-                let item_id = obj.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                if item_id.is_empty() {
-                    continue;
+                for item in items.iter_mut() {
+                    resolve_one_to_many(pool, ct, field.name.as_str(), rel, item).await?;
                 }
-
-                let target_table = &rel.target;
-                let cols = build_star_columns(pool, target_table).await;
-                let sql =
-                    format!("SELECT json_object({cols}) FROM {target_table} WHERE {fk_col} = ?");
-                let sql = crate::db::dialect::translate(&sql);
-
-                let rows = sqlx::query_as::<_, (String,)>(&sql)
-                    .bind(item_id)
-                    .fetch_all(pool)
-                    .await
-                    .map_err(|e| {
-                        AppError::Internal(anyhow::anyhow!("relation query failed: {e}"))
-                    })?;
-
-                let targets: Vec<Value> = rows
-                    .into_iter()
-                    .filter_map(|(s,)| serde_json::from_str::<Value>(&s).ok())
-                    .collect();
-
-                obj.insert(field.name.clone(), json!(targets));
             }
             RelationType::ManyToMany => {
-                let through = rel
-                    .through
-                    .clone()
-                    .unwrap_or_else(|| format!("{}_{}", ct.table, rel.target));
-
-                let item_id = obj.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                if item_id.is_empty() {
-                    continue;
-                }
-
-                let target_table = &rel.target;
-                let source_col = format!("{}_id", ct.singular);
-                let target_col = format!("{}_id", rel.target);
-                let cols = build_star_columns(pool, target_table).await;
-
-                let sql = format!(
-                    "SELECT json_object({cols}) FROM {target_table} \
-                     INNER JOIN {through} ON {through}.{target_col} = {target_table}.id \
-                     WHERE {through}.{source_col} = ?"
-                );
-                let sql = crate::db::dialect::translate(&sql);
-
-                let rows = sqlx::query_as::<_, (String,)>(&sql)
-                    .bind(item_id)
-                    .fetch_all(pool)
-                    .await
-                    .map_err(|e| {
-                        AppError::Internal(anyhow::anyhow!("relation query failed: {e}"))
-                    })?;
-
-                let targets: Vec<Value> = rows
-                    .into_iter()
-                    .filter_map(|(s,)| serde_json::from_str::<Value>(&s).ok())
-                    .collect();
-
-                obj.insert(field.name.clone(), json!(targets));
-            }
-            RelationType::OneWay | RelationType::ManyWay => {
-                let fk = rel
-                    .foreign_key
-                    .clone()
-                    .unwrap_or_else(|| format!("{}_id", field.name));
-
-                let Some(fk_val) = obj.get(&fk) else {
-                    continue;
-                };
-                let Some(fk_id) = fk_val.as_str() else {
-                    continue;
-                };
-                if fk_id.is_empty() {
-                    continue;
-                }
-
-                let target_table = &rel.target;
-                let cols = build_star_columns(pool, target_table).await;
-                let sql = format!("SELECT json_object({cols}) FROM {target_table} WHERE id = ?");
-                let sql = crate::db::dialect::translate(&sql);
-
-                let row = sqlx::query_as::<_, (Option<String>,)>(&sql)
-                    .bind(fk_id)
-                    .fetch_optional(pool)
-                    .await
-                    .map_err(|e| {
-                        AppError::Internal(anyhow::anyhow!("relation query failed: {e}"))
-                    })?;
-
-                if let Some((Some(json_str),)) = row
-                    && let Ok(target_data) = serde_json::from_str::<Value>(&json_str)
-                {
-                    obj.insert(field.name.clone(), target_data);
+                for item in items.iter_mut() {
+                    resolve_many_to_many(pool, ct, field.name.as_str(), rel, item).await?;
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+async fn resolve_many_to_one_batch(
+    pool: &sqlx::SqlitePool,
+    _ct: &ContentTypeSchema,
+    field: &super::schema::FieldSchema,
+    rel: &super::schema::RelationConfig,
+    items: &mut [Value],
+) -> Result<(), AppError> {
+    let fk = rel
+        .foreign_key
+        .clone()
+        .unwrap_or_else(|| format!("{}_id", field.name));
+
+    let mut fk_ids: Vec<String> = Vec::new();
+    for item in &*items {
+        let Some(obj) = item.as_object() else {
+            continue;
+        };
+        let Some(fk_val) = obj.get(&fk) else { continue };
+        let Some(fk_id) = fk_val.as_str() else {
+            continue;
+        };
+        if !fk_id.is_empty() {
+            fk_ids.push(fk_id.to_string());
+        }
+    }
+    if fk_ids.is_empty() {
+        return Ok(());
+    }
+
+    let target_table = &rel.target;
+    let cols = build_star_columns(pool, target_table).await;
+
+    let deduped_ids: Vec<String> = {
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut deduped = Vec::new();
+        for id in &fk_ids {
+            if seen.insert(id.clone()) {
+                deduped.push(id.clone());
+            }
+        }
+        deduped
+    };
+
+    let placeholders: Vec<String> = (1..=deduped_ids.len()).map(|i| format!("?{i}")).collect();
+    let sql = format!(
+        "SELECT json_object({cols}) FROM {target_table} WHERE id IN ({})",
+        placeholders.join(", ")
+    );
+    let sql = crate::db::dialect::translate(&sql);
+
+    let mut q = sqlx::query_as::<_, (String,)>(&sql);
+    for id in &deduped_ids {
+        q = q.bind(id);
+    }
+    let rows = q
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("batch relation query failed: {e}")))?;
+
+    let mut lookup: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+    for (s,) in &rows {
+        if let Ok(val) = serde_json::from_str::<Value>(s)
+            && let Some(id) = val.get("id").and_then(|v| v.as_str())
+        {
+            lookup.insert(id.to_string(), val);
+        }
+    }
+
+    for item in items.iter_mut() {
+        let Some(obj) = item.as_object_mut() else {
+            continue;
+        };
+        let Some(fk_val) = obj.get(&fk) else { continue };
+        let Some(fk_id) = fk_val.as_str() else {
+            continue;
+        };
+        if fk_id.is_empty() {
+            continue;
+        }
+        if let Some(target_data) = lookup.get(fk_id) {
+            obj.insert(field.name.clone(), target_data.clone());
         }
     }
 
     Ok(())
 }
 
+async fn resolve_one_to_many(
+    pool: &sqlx::SqlitePool,
+    ct: &ContentTypeSchema,
+    field_name: &str,
+    rel: &super::schema::RelationConfig,
+    item: &mut Value,
+) -> Result<(), AppError> {
+    let fk_col = rel
+        .foreign_key
+        .clone()
+        .unwrap_or_else(|| format!("{}_id", ct.singular));
+
+    let item_id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    if item_id.is_empty() {
+        return Ok(());
+    }
+
+    let target_table = &rel.target;
+    let cols = build_star_columns(pool, target_table).await;
+    let sql = format!("SELECT json_object({cols}) FROM {target_table} WHERE {fk_col} = ?");
+    let sql = crate::db::dialect::translate(&sql);
+
+    let rows = sqlx::query_as::<_, (String,)>(&sql)
+        .bind(item_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("relation query failed: {e}")))?;
+
+    let targets: Vec<Value> = rows
+        .into_iter()
+        .filter_map(|(s,)| serde_json::from_str::<Value>(&s).ok())
+        .collect();
+
+    if let Some(obj) = item.as_object_mut() {
+        obj.insert(field_name.to_string(), json!(targets));
+    }
+    Ok(())
+}
+
+async fn resolve_many_to_many(
+    pool: &sqlx::SqlitePool,
+    ct: &ContentTypeSchema,
+    field_name: &str,
+    rel: &super::schema::RelationConfig,
+    item: &mut Value,
+) -> Result<(), AppError> {
+    let through = rel
+        .through
+        .clone()
+        .unwrap_or_else(|| format!("{}_{}", ct.table, rel.target));
+
+    let item_id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    if item_id.is_empty() {
+        return Ok(());
+    }
+
+    let target_table = &rel.target;
+    let source_col = format!("{}_id", ct.singular);
+    let target_col = format!("{}_id", rel.target);
+    let cols = build_star_columns(pool, target_table).await;
+
+    let sql = format!(
+        "SELECT json_object({cols}) FROM {target_table} \
+         INNER JOIN {through} ON {through}.{target_col} = {target_table}.id \
+         WHERE {through}.{source_col} = ?"
+    );
+    let sql = crate::db::dialect::translate(&sql);
+
+    let rows = sqlx::query_as::<_, (String,)>(&sql)
+        .bind(item_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("relation query failed: {e}")))?;
+
+    let targets: Vec<Value> = rows
+        .into_iter()
+        .filter_map(|(s,)| serde_json::from_str::<Value>(&s).ok())
+        .collect();
+
+    if let Some(obj) = item.as_object_mut() {
+        obj.insert(field_name.to_string(), json!(targets));
+    }
+    Ok(())
+}
+
 async fn build_star_columns(pool: &sqlx::SqlitePool, table: &str) -> String {
+    use std::sync::{LazyLock, RwLock};
+    static CACHE: LazyLock<RwLock<std::collections::HashMap<String, String>>> =
+        LazyLock::new(|| RwLock::new(std::collections::HashMap::new()));
+
+    {
+        let cache = CACHE.read().unwrap();
+        if let Some(cached) = cache.get(table) {
+            return cached.clone();
+        }
+    }
+
     let cols: Vec<String> = sqlx::query_as::<_, (String,)>(&format!(
         "SELECT name FROM pragma_table_info('{}') ORDER BY cid",
         table
@@ -219,7 +262,14 @@ async fn build_star_columns(pool: &sqlx::SqlitePool, table: &str) -> String {
     for col in &cols {
         parts.push(format!("'{}', {}", col, col));
     }
-    parts.join(", ")
+    let result = parts.join(", ");
+
+    {
+        let mut cache = CACHE.write().unwrap();
+        cache.insert(table.to_string(), result.clone());
+    }
+
+    result
 }
 
 #[cfg(test)]

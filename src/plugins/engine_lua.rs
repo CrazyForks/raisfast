@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 
 use mlua::{Error as LuaError, HookTriggers, Lua, LuaOptions, LuaSerdeExt, StdLib, VmState};
 use serde::Serialize;
@@ -17,31 +17,55 @@ use crate::config::app::AppConfig;
 use crate::db::Pool;
 use crate::plugins::Permissions;
 
-/// 默认超时指令数（约 2-5 秒执行时间）
 const DEFAULT_TIMEOUT_INSTRUCTIONS: i64 = 5_000_000;
+
+/// Lua 实例池
+///
+/// 为单个 Lua 插件维护多个独立 VM 实例，支持并发执行。
+struct LuaInstancePool {
+    instances: Vec<Mutex<Lua>>,
+    next: AtomicUsize,
+}
+
+impl LuaInstancePool {
+    fn new(instances: Vec<Lua>) -> Self {
+        Self {
+            instances: instances.into_iter().map(Mutex::new).collect(),
+            next: AtomicUsize::new(0),
+        }
+    }
+
+    async fn acquire(&self) -> tokio::sync::MutexGuard<'_, Lua> {
+        let len = self.instances.len();
+        let idx = self.next.fetch_add(1, Ordering::Relaxed) % len;
+        self.instances[idx].lock().await
+    }
+}
 
 /// Lua 插件引擎
 ///
 /// 管理所有 Lua 插件的独立 Lua 状态。
+/// 每个插件拥有独立的实例池，不同插件可并发执行。
 pub struct LuaEngine {
-    states: Mutex<HashMap<String, Lua>>,
+    pools: Mutex<HashMap<String, Arc<LuaInstancePool>>>,
     permissions_map: Mutex<HashMap<String, Permissions>>,
     config: Arc<AppConfig>,
     pool: Option<Pool>,
+    pool_size: usize,
 }
 
 impl LuaEngine {
-    /// 创建新的 Lua 引擎
     pub fn new(config: &AppConfig, pool: Option<Pool>) -> anyhow::Result<Self> {
+        let pool_size = config.plugin_lua_pool_size.max(1) as usize;
         Ok(Self {
-            states: Mutex::new(HashMap::new()),
+            pools: Mutex::new(HashMap::new()),
             permissions_map: Mutex::new(HashMap::new()),
             config: Arc::new(config.clone()),
             pool,
+            pool_size,
         })
     }
 
-    /// 创建受限 Lua 状态（沙箱）
     fn create_sandboxed_lua(memory_limit_bytes: usize) -> anyhow::Result<Lua> {
         let lua = Lua::new_with(
             StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::UTF8 | StdLib::COROUTINE,
@@ -51,7 +75,25 @@ impl LuaEngine {
         Ok(lua)
     }
 
-    /// 加载 Lua 插件代码
+    fn create_instance(
+        &self,
+        code: &str,
+        plugin_id: &str,
+        permissions: &Permissions,
+        memory_limit: usize,
+    ) -> anyhow::Result<Lua> {
+        let lua = Self::create_sandboxed_lua(memory_limit)?;
+        super::lua_host::register_host_functions(
+            &lua,
+            self.config.clone(),
+            plugin_id.to_string(),
+            permissions.clone(),
+            self.pool.clone(),
+        )?;
+        lua.load(code).exec()?;
+        Ok(lua)
+    }
+
     pub async fn load_plugin(
         &self,
         id: &str,
@@ -59,53 +101,47 @@ impl LuaEngine {
         permissions: Permissions,
     ) -> anyhow::Result<()> {
         let memory_limit = (self.config.plugin_max_memory_mb as usize) * 1024 * 1024;
-        let lua = Self::create_sandboxed_lua(memory_limit)?;
-        let config = self.config.clone();
-        let plugin_id = id.to_string();
-        let perms = permissions.clone();
-
-        super::lua_host::register_host_functions(
-            &lua,
-            config,
-            plugin_id,
-            perms,
-            self.pool.clone(),
-        )?;
-        lua.load(code).exec()?;
+        let mut instances = Vec::with_capacity(self.pool_size);
+        for _ in 0..self.pool_size {
+            instances.push(self.create_instance(code, id, &permissions, memory_limit)?);
+        }
 
         self.permissions_map
             .lock()
             .await
             .insert(id.to_string(), permissions);
-        self.states.lock().await.insert(id.to_string(), lua);
+        self.pools
+            .lock()
+            .await
+            .insert(id.to_string(), Arc::new(LuaInstancePool::new(instances)));
         Ok(())
     }
 
-    /// 加载 Lua 插件（兼容旧的无权限接口）
     #[cfg(test)]
     pub async fn load_plugin_default(&self, id: &str, code: &str) -> anyhow::Result<()> {
         self.load_plugin(id, code, Permissions::default()).await
     }
 
-    /// 卸载插件（移除 Lua 状态）
     pub async fn unload_plugin(&self, id: &str) {
-        self.states.lock().await.remove(id);
+        self.pools.lock().await.remove(id);
     }
 
-    /// 调用 Filter Hook（原生 serde table 映射）
     pub async fn call_filter<T: Serialize + DeserializeOwned + Send>(
         &self,
         plugin_id: &str,
         func_name: &str,
         input: &T,
     ) -> anyhow::Result<Option<T>> {
-        let states = self.states.lock().await;
-        let lua = match states.get(plugin_id) {
-            Some(l) => l,
-            None => return Ok(None),
+        let pool = {
+            let pools = self.pools.lock().await;
+            match pools.get(plugin_id) {
+                Some(p) => Arc::clone(p),
+                None => return Ok(None),
+            }
         };
 
-        exec_with_timeout(lua, || {
+        let lua = pool.acquire().await;
+        exec_with_timeout(&lua, || {
             let globals = lua.globals();
             let plugin_table: mlua::Table = match globals.get("Plugin") {
                 Ok(t) => t,
@@ -123,20 +159,22 @@ impl LuaEngine {
         })
     }
 
-    /// 调用 Action Hook（无返回值）
     pub async fn call_action<T: Serialize>(
         &self,
         plugin_id: &str,
         func_name: &str,
         data: &T,
     ) -> anyhow::Result<()> {
-        let states = self.states.lock().await;
-        let lua = match states.get(plugin_id) {
-            Some(l) => l,
-            None => return Ok(()),
+        let pool = {
+            let pools = self.pools.lock().await;
+            match pools.get(plugin_id) {
+                Some(p) => Arc::clone(p),
+                None => return Ok(()),
+            }
         };
 
-        exec_with_timeout(lua, || {
+        let lua = pool.acquire().await;
+        exec_with_timeout(&lua, || {
             let globals = lua.globals();
             let plugin_table: mlua::Table = match globals.get("Plugin") {
                 Ok(t) => t,
@@ -153,20 +191,22 @@ impl LuaEngine {
         })
     }
 
-    /// 调用 String Filter Hook
     pub async fn call_string_filter(
         &self,
         plugin_id: &str,
         func_name: &str,
         input: &str,
     ) -> anyhow::Result<Option<String>> {
-        let states = self.states.lock().await;
-        let lua = match states.get(plugin_id) {
-            Some(l) => l,
-            None => return Ok(None),
+        let pool = {
+            let pools = self.pools.lock().await;
+            match pools.get(plugin_id) {
+                Some(p) => Arc::clone(p),
+                None => return Ok(None),
+            }
         };
 
-        exec_with_timeout(lua, || {
+        let lua = pool.acquire().await;
+        exec_with_timeout(&lua, || {
             let globals = lua.globals();
             let plugin_table: mlua::Table = match globals.get("Plugin") {
                 Ok(t) => t,
@@ -182,10 +222,9 @@ impl LuaEngine {
         })
     }
 
-    /// 获取已加载 Lua 插件数量
     #[allow(dead_code)]
     pub async fn plugin_count(&self) -> usize {
-        self.states.lock().await.len()
+        self.pools.lock().await.len()
     }
 }
 

@@ -497,6 +497,7 @@ pub async fn create_schema(
         indexes: vec![],
         list_view: None,
         api: super::schema::ApiConfig::default(),
+        cached_select_columns: None,
     };
 
     if crate::plugins::permissions::PermissionChecker::is_protected_table(
@@ -578,7 +579,7 @@ pub async fn update_schema(
         .get(&singular)
         .ok_or_else(|| AppError::not_found(&singular))?;
 
-    let mut updated = ct;
+    let mut updated = (*ct).clone();
 
     if let Some(name) = req.name {
         updated.name = name;
@@ -625,7 +626,9 @@ pub async fn update_schema(
         updated.table
     );
 
-    Ok(Json(crate::errors::response::ApiResponse::success(updated)))
+    Ok(Json(crate::errors::response::ApiResponse::success(
+        updated.clone(),
+    )))
 }
 
 fn parse_include(s: &str) -> Vec<String> {
