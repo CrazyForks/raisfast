@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Menu, Rss, Search } from "lucide-react";
+import { Menu, Rss, Search, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
   Sheet,
@@ -14,11 +15,13 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { useAuthStore } from "@/stores/auth";
+import { useCartStore } from "@/stores/cart";
 import { UserMenu } from "@/components/common/user-menu";
 import { ThemeToggle } from "@/components/common/theme-toggle";
 
 const navLinks = [
   { href: "/posts", label: "Posts" },
+  { href: "/shop", label: "Shop" },
   {
     href: "/feed.xml",
     label: "RSS",
@@ -33,10 +36,13 @@ export function Header() {
   const [searchValue, setSearchValue] = useState("");
   const router = useRouter();
   const isLoggedIn = useAuthStore((s) => s.isLoggedIn());
+  const cartItemCount = useCartStore((s) => s.itemCount());
+  const fetchCart = useCartStore((s) => s.fetchCart);
 
   useEffect(() => {
     setMounted(true);
-  }, []);
+    fetchCart();
+  }, [fetchCart]);
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -109,6 +115,22 @@ export function Header() {
 
         <div className="hidden items-center gap-2 md:flex">
           <ThemeToggle />
+          {mounted && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Cart"
+              className="relative"
+              onClick={() => router.push("/cart")}
+            >
+              <ShoppingCart className="h-4 w-4" />
+              {cartItemCount > 0 && (
+                <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
+                  {cartItemCount > 9 ? "9+" : cartItemCount}
+                </span>
+              )}
+            </Button>
+          )}
         </div>
 
         <div className="hidden items-center gap-2 md:flex">
@@ -173,6 +195,21 @@ export function Header() {
                   ),
                 )}
                 <div className="my-2 h-px bg-border" />
+                {mounted && isLoggedIn && (
+                  <Link
+                    href="/cart"
+                    className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                    onClick={() => setOpen(false)}
+                  >
+                    <ShoppingCart className="size-4" />
+                    Cart
+                    {cartItemCount > 0 && (
+                      <Badge variant="default" className="ml-auto text-[10px] px-1.5 py-0">
+                        {cartItemCount}
+                      </Badge>
+                    )}
+                  </Link>
+                )}
                 <div className="px-3 py-2">
                   <ThemeToggle />
                 </div>

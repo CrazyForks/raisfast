@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { LogOut, User, LayoutDashboard } from "lucide-react";
+import { LogOut, User, LayoutDashboard, Package } from "lucide-react";
 import {
   Avatar,
   AvatarImage,
@@ -63,6 +63,16 @@ export function UserMenu({ onAction }: UserMenuProps) {
         >
           <User />
           Profile
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="cursor-pointer"
+          onClick={() => {
+            onAction?.();
+            router.push("/orders");
+          }}
+        >
+          <Package />
+          My Orders
         </DropdownMenuItem>
         {isAuthor && (
           <DropdownMenuItem
