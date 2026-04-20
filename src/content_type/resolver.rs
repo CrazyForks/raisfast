@@ -9,6 +9,7 @@
 //! - `many_to_many` → 通过 junction 表嵌入记录数组
 
 use serde_json::{Value, json};
+use sqlx::Row;
 
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
 use crate::errors::app_error::AppError;
@@ -51,14 +52,10 @@ pub async fn resolve_relations(
                 resolve_many_to_one_batch(pool, ct, field, rel, items).await?;
             }
             RelationType::OneToMany => {
-                for item in items.iter_mut() {
-                    resolve_one_to_many(pool, ct, field.name.as_str(), rel, item).await?;
-                }
+                resolve_one_to_many_batch(pool, ct, field.name.as_str(), rel, items).await?;
             }
             RelationType::ManyToMany => {
-                for item in items.iter_mut() {
-                    resolve_many_to_many(pool, ct, field.name.as_str(), rel, item).await?;
-                }
+                resolve_many_to_many_batch(pool, ct, field.name.as_str(), rel, items).await?;
             }
         }
     }
@@ -95,7 +92,8 @@ async fn resolve_many_to_one_batch(
     }
 
     let target_table = &rel.target;
-    let cols = build_star_columns(pool, target_table).await;
+    let columns = fetch_column_names(pool, target_table).await;
+    let select_cols = columns.join(", ");
 
     let deduped_ids: Vec<String> = {
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -110,12 +108,12 @@ async fn resolve_many_to_one_batch(
 
     let placeholders: Vec<String> = (1..=deduped_ids.len()).map(|i| format!("?{i}")).collect();
     let sql = format!(
-        "SELECT json_object({cols}) FROM {target_table} WHERE id IN ({})",
+        "SELECT {select_cols} FROM {target_table} WHERE id IN ({})",
         placeholders.join(", ")
     );
     let sql = crate::db::dialect::translate(&sql);
 
-    let mut q = sqlx::query_as::<_, (String,)>(&sql);
+    let mut q = sqlx::query(&sql);
     for id in &deduped_ids {
         q = q.bind(id);
     }
@@ -125,10 +123,9 @@ async fn resolve_many_to_one_batch(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("batch relation query failed: {e}")))?;
 
     let mut lookup: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
-    for (s,) in &rows {
-        if let Ok(val) = serde_json::from_str::<Value>(s)
-            && let Some(id) = val.get("id").and_then(|v| v.as_str())
-        {
+    for row in &rows {
+        let val = super::repository::row_to_value(row, &columns);
+        if let Some(id) = val.get("id").and_then(|v| v.as_str()) {
             lookup.insert(id.to_string(), val);
         }
     }
@@ -152,94 +149,164 @@ async fn resolve_many_to_one_batch(
     Ok(())
 }
 
-async fn resolve_one_to_many(
+async fn resolve_one_to_many_batch(
     pool: &sqlx::SqlitePool,
     ct: &ContentTypeSchema,
     field_name: &str,
     rel: &super::schema::RelationConfig,
-    item: &mut Value,
+    items: &mut [Value],
 ) -> Result<(), AppError> {
     let fk_col = rel
         .foreign_key
         .clone()
         .unwrap_or_else(|| format!("{}_id", ct.singular));
 
-    let item_id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
-    if item_id.is_empty() {
+    let item_ids: Vec<String> = items
+        .iter()
+        .filter_map(|item| {
+            item.get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if item_ids.is_empty() {
         return Ok(());
     }
 
+    let deduped_ids: Vec<String> = {
+        let mut seen = std::collections::HashSet::new();
+        item_ids
+            .into_iter()
+            .filter(|id| seen.insert(id.clone()))
+            .collect()
+    };
+
     let target_table = &rel.target;
-    let cols = build_star_columns(pool, target_table).await;
-    let sql = format!("SELECT json_object({cols}) FROM {target_table} WHERE {fk_col} = ?");
+    let columns = fetch_column_names(pool, target_table).await;
+    let select_cols = columns.join(", ");
+
+    let placeholders: Vec<String> = (1..=deduped_ids.len()).map(|i| format!("?{i}")).collect();
+    let sql = format!(
+        "SELECT {select_cols}, {fk_col} as __fk FROM {target_table} WHERE {fk_col} IN ({})",
+        placeholders.join(", ")
+    );
     let sql = crate::db::dialect::translate(&sql);
 
-    let rows = sqlx::query_as::<_, (String,)>(&sql)
-        .bind(item_id)
+    let mut q = sqlx::query(&sql);
+    for id in &deduped_ids {
+        q = q.bind(id);
+    }
+    let rows = q
         .fetch_all(pool)
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("relation query failed: {e}")))?;
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("batch one_to_many query failed: {e}")))?;
 
-    let targets: Vec<Value> = rows
-        .into_iter()
-        .filter_map(|(s,)| serde_json::from_str::<Value>(&s).ok())
-        .collect();
-
-    if let Some(obj) = item.as_object_mut() {
-        obj.insert(field_name.to_string(), json!(targets));
+    let mut lookup: std::collections::HashMap<String, Vec<Value>> =
+        std::collections::HashMap::new();
+    for row in &rows {
+        let fk_val: String = row.try_get("__fk").unwrap_or_default();
+        let val = super::repository::row_to_value(row, &columns);
+        lookup.entry(fk_val).or_default().push(val);
     }
+
+    for item in items.iter_mut() {
+        let Some(item_id) = item.get("id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let targets = lookup.get(item_id).cloned().unwrap_or_default();
+        if let Some(obj) = item.as_object_mut() {
+            obj.insert(field_name.to_string(), json!(targets));
+        }
+    }
+
     Ok(())
 }
 
-async fn resolve_many_to_many(
+async fn resolve_many_to_many_batch(
     pool: &sqlx::SqlitePool,
     ct: &ContentTypeSchema,
     field_name: &str,
     rel: &super::schema::RelationConfig,
-    item: &mut Value,
+    items: &mut [Value],
 ) -> Result<(), AppError> {
     let through = rel
         .through
         .clone()
         .unwrap_or_else(|| format!("{}_{}", ct.table, rel.target));
 
-    let item_id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
-    if item_id.is_empty() {
+    let item_ids: Vec<String> = items
+        .iter()
+        .filter_map(|item| {
+            item.get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if item_ids.is_empty() {
         return Ok(());
     }
+
+    let deduped_ids: Vec<String> = {
+        let mut seen = std::collections::HashSet::new();
+        item_ids
+            .into_iter()
+            .filter(|id| seen.insert(id.clone()))
+            .collect()
+    };
 
     let target_table = &rel.target;
     let source_col = format!("{}_id", ct.singular);
     let target_col = format!("{}_id", rel.target);
-    let cols = build_star_columns(pool, target_table).await;
+    let columns = fetch_column_names(pool, target_table).await;
+    let select_cols = columns.join(", ");
 
+    let placeholders: Vec<String> = (1..=deduped_ids.len()).map(|i| format!("?{i}")).collect();
     let sql = format!(
-        "SELECT json_object({cols}) FROM {target_table} \
+        "SELECT {select_cols}, {through}.{source_col} as __source_id \
+         FROM {target_table} \
          INNER JOIN {through} ON {through}.{target_col} = {target_table}.id \
-         WHERE {through}.{source_col} = ?"
+         WHERE {through}.{source_col} IN ({})",
+        placeholders.join(", ")
     );
     let sql = crate::db::dialect::translate(&sql);
 
-    let rows = sqlx::query_as::<_, (String,)>(&sql)
-        .bind(item_id)
+    let mut q = sqlx::query(&sql);
+    for id in &deduped_ids {
+        q = q.bind(id);
+    }
+    let rows = q
         .fetch_all(pool)
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("relation query failed: {e}")))?;
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("batch many_to_many query failed: {e}")))?;
 
-    let targets: Vec<Value> = rows
-        .into_iter()
-        .filter_map(|(s,)| serde_json::from_str::<Value>(&s).ok())
-        .collect();
-
-    if let Some(obj) = item.as_object_mut() {
-        obj.insert(field_name.to_string(), json!(targets));
+    let mut lookup: std::collections::HashMap<String, Vec<Value>> =
+        std::collections::HashMap::new();
+    for row in &rows {
+        let source_id: String = row.try_get("__source_id").unwrap_or_default();
+        let val = super::repository::row_to_value(row, &columns);
+        lookup.entry(source_id).or_default().push(val);
     }
+
+    for item in items.iter_mut() {
+        let Some(item_id) = item.get("id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let targets = lookup.get(item_id).cloned().unwrap_or_default();
+        if let Some(obj) = item.as_object_mut() {
+            obj.insert(field_name.to_string(), json!(targets));
+        }
+    }
+
     Ok(())
 }
 
-async fn build_star_columns(pool: &sqlx::SqlitePool, table: &str) -> String {
+async fn fetch_column_names(pool: &sqlx::SqlitePool, table: &str) -> Vec<String> {
     use std::sync::{LazyLock, RwLock};
-    static CACHE: LazyLock<RwLock<std::collections::HashMap<String, String>>> =
+    static CACHE: LazyLock<RwLock<std::collections::HashMap<String, Vec<String>>>> =
         LazyLock::new(|| RwLock::new(std::collections::HashMap::new()));
 
     {
@@ -258,18 +325,12 @@ async fn build_star_columns(pool: &sqlx::SqlitePool, table: &str) -> String {
     .map(|rows| rows.into_iter().map(|(c,)| c).collect())
     .unwrap_or_else(|_| vec!["id".into()]);
 
-    let mut parts = Vec::new();
-    for col in &cols {
-        parts.push(format!("'{}', {}", col, col));
-    }
-    let result = parts.join(", ");
-
     {
         let mut cache = CACHE.write().unwrap();
-        cache.insert(table.to_string(), result.clone());
+        cache.insert(table.to_string(), cols.clone());
     }
 
-    result
+    cols
 }
 
 #[cfg(test)]

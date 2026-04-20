@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["db-sqlite", "plugin-all"]
+default = ["db-sqlite", "search-tantivy", "plugin-js", "plugin-lua", "openapi"]
 
 # ── Database backend (pick exactly one) ────────────────────────────
 db-sqlite  = ["sqlx/sqlite"]
@@ -26,6 +26,9 @@ tls = ["axum-server", "rustls", "tokio-rustls"]
 # ── Storage backend ────────────────────────────────────────────────
 storage-s3 = ["aws-sdk-s3", "aws-config"]
 
+# ── OpenAPI / Swagger UI ────────────────────────────────────────────
+openapi = ["utoipa-swagger-ui"]
+
 [profile.dev]
 debug = 1  # 默认是 2（最大），设为 1 或 false 可大幅减小体积
 
@@ -40,7 +43,7 @@ tower-http = { version = "0.6", features = ["cors", "trace", "limit", "fs"] }
 
 # Observability
 metrics = "0.24"
-metrics-exporter-prometheus = "0.16"
+metrics-exporter-prometheus = { version = "0.16", default-features = false, features = ["http-listener"] }
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "macros"] }
@@ -83,12 +86,11 @@ validator = { version = "0.19", features = ["derive"] }
 serde_urlencoded = "0.7"
 
 # Content
-comrak = { version = "0.36", features = ["shortcodes"] }
-syntect = "5"
+comrak = { version = "0.36", default-features = false, features = ["shortcodes"] }
 slug = "0.1"
 
-# Media
-image = "0.25"
+# Media（仅启用博客常用格式：jpeg/png/gif/webp/ico）
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "ico"] }
 
 # Cron scheduling
 cron = "0.15"
@@ -122,9 +124,12 @@ aws-config = { version = "1", optional = true }
 regex = "1.12.3"
 tera = "1"
 
+dashmap = "6"
+arc-swap = "1"
+
 # OpenAPI
 utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
-utoipa-swagger-ui = { version = "9", features = ["axum"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"], optional = true }
 
 [dev-dependencies]
 http-body-util = "0.1.3"

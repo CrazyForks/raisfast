@@ -452,7 +452,25 @@ pub async fn list_posts(
                     tenant_id,
                 )
                 .await?;
-            (rows, total, std::collections::HashMap::new())
+            let hmap = if keyword.is_empty() {
+                std::collections::HashMap::new()
+            } else {
+                rows.iter()
+                    .map(|r| {
+                        let title_hl = crate::search::highlight_text(keyword, &r.title);
+                        let excerpt_hl = r
+                            .excerpt
+                            .as_ref()
+                            .map(|e| crate::search::highlight_text(keyword, e))
+                            .or_else(|| {
+                                crate::search::make_excerpt(&r.content, keyword, 200)
+                                    .map(|e| crate::search::highlight_text(keyword, &e))
+                            });
+                        (r.id.clone(), (Some(title_hl), excerpt_hl))
+                    })
+                    .collect()
+            };
+            (rows, total, hmap)
         }
     } else {
         let (rows, total) = repo
@@ -467,7 +485,29 @@ pub async fn list_posts(
                 tenant_id,
             )
             .await?;
-        (rows, total, std::collections::HashMap::new())
+        let hmap = if let Some(kw) = q {
+            if kw.is_empty() {
+                std::collections::HashMap::new()
+            } else {
+                rows.iter()
+                    .map(|r| {
+                        let title_hl = crate::search::highlight_text(kw, &r.title);
+                        let excerpt_hl = r
+                            .excerpt
+                            .as_ref()
+                            .map(|e| crate::search::highlight_text(kw, e))
+                            .or_else(|| {
+                                crate::search::make_excerpt(&r.content, kw, 200)
+                                    .map(|e| crate::search::highlight_text(kw, &e))
+                            });
+                        (r.id.clone(), (Some(title_hl), excerpt_hl))
+                    })
+                    .collect()
+            }
+        } else {
+            std::collections::HashMap::new()
+        };
+        (rows, total, hmap)
     };
 
     let post_ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();

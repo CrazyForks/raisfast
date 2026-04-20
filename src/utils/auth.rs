@@ -23,7 +23,7 @@ pub fn extract_claims(parts: &mut Parts, state: &AppState) -> Result<Claims, App
         .strip_prefix("Bearer ")
         .ok_or(AppError::Unauthorized)?;
 
-    crate::services::auth::verify_token(token, &state.config.jwt_secret)
+    crate::services::auth::verify_token(token, &state.jwt_decoding_key)
 }
 
 /// 尝试从请求头中提取身份（JWT 或 API Token），无 token 时返回 None。
@@ -61,7 +61,7 @@ pub async fn extract_identity(parts: &mut Parts, state: &AppState) -> AppResult<
         });
     }
 
-    let claims = crate::services::auth::verify_token(token, &state.config.jwt_secret)?;
+    let claims = crate::services::auth::verify_token(token, &state.jwt_decoding_key)?;
     Ok(AuthIdentity {
         user_id: claims.sub,
         role: claims.role,

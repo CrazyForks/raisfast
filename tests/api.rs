@@ -130,6 +130,7 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
     let state = AppState {
         pool: pool.clone(),
         config: config.clone(),
+        jwt_decoding_key: jsonwebtoken::DecodingKey::from_secret(config.jwt_secret.as_bytes()),
         plugins: PluginManager::new(config.clone()).await,
         eventbus: rust_blog::eventbus::EventBus::new(256),
         post_repo: Arc::new(CachedPostRepository::new(
@@ -173,6 +174,7 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
             pool.clone(),
         )),
         storage: rust_blog::storage::create_storage(&config).expect("failed to create storage"),
+        cms_cache: Arc::new(dashmap::DashMap::new()),
     };
     let max_upload = state.config.max_upload_size;
 

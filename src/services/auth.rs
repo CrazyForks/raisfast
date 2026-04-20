@@ -11,7 +11,7 @@
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use chrono::Utc;
-use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::{CreateUserCmd, UpdateProfileCmd};
@@ -131,17 +131,13 @@ fn generate_access_token(
 /// 验证并解码 JWT 令牌。
 ///
 /// 若令牌过期或无效，统一返回 [`AppError::Unauthorized`]。
-pub fn verify_token(token: &str, secret: &str) -> AppResult<Claims> {
-    jsonwebtoken::decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &Validation::default(),
-    )
-    .map(|data| data.claims)
-    .map_err(|e| match e.kind() {
-        jsonwebtoken::errors::ErrorKind::ExpiredSignature => AppError::Unauthorized,
-        _ => AppError::Unauthorized,
-    })
+pub fn verify_token(token: &str, key: &jsonwebtoken::DecodingKey) -> AppResult<Claims> {
+    jsonwebtoken::decode::<Claims>(token, key, &Validation::default())
+        .map(|data| data.claims)
+        .map_err(|e| match e.kind() {
+            jsonwebtoken::errors::ErrorKind::ExpiredSignature => AppError::Unauthorized,
+            _ => AppError::Unauthorized,
+        })
 }
 
 /// 生成 32 字节随机刷新令牌，以十六进制字符串返回。
@@ -493,7 +489,8 @@ mod tests {
     #[test]
     fn generate_and_verify_token() {
         let token = generate_access_token("user-1", "admin", "default", "secret", 900).unwrap();
-        let claims = verify_token(&token, "secret").unwrap();
+        let key = jsonwebtoken::DecodingKey::from_secret("secret".as_bytes());
+        let claims = verify_token(&token, &key).unwrap();
         assert_eq!(claims.sub, "user-1");
         assert_eq!(claims.role, "admin");
     }
@@ -501,7 +498,8 @@ mod tests {
     #[test]
     fn verify_token_rejects_wrong_secret() {
         let token = generate_access_token("user-1", "admin", "default", "secret-a", 900).unwrap();
-        assert!(verify_token(&token, "secret-b").is_err());
+        let key = jsonwebtoken::DecodingKey::from_secret("secret-b".as_bytes());
+        assert!(verify_token(&token, &key).is_err());
     }
 
     #[test]
@@ -520,7 +518,8 @@ mod tests {
             &jsonwebtoken::EncodingKey::from_secret("secret".as_bytes()),
         )
         .unwrap();
-        assert!(verify_token(&token, "secret").is_err());
+        let key = jsonwebtoken::DecodingKey::from_secret("secret".as_bytes());
+        assert!(verify_token(&token, &key).is_err());
     }
 
     #[test]

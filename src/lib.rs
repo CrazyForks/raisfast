@@ -59,6 +59,7 @@ rust_i18n::i18n!("locales", fallback = "en");
 pub struct AppState {
     pub pool: Pool,
     pub config: Arc<AppConfig>,
+    pub jwt_decoding_key: jsonwebtoken::DecodingKey,
     pub plugins: Arc<PluginManager>,
     pub eventbus: EventBus,
     pub post_repo: Arc<dyn PostRepository>,
@@ -79,4 +80,5 @@ pub struct AppState {
     pub extension_manager: Arc<ExtensionManager>,
     pub extension_service: Arc<ExtensionService>,
     pub storage: Arc<dyn Storage>,
+    pub cms_cache: Arc<dashmap::DashMap<String, (serde_json::Value, std::time::Instant)>>,
 }

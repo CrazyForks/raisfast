@@ -1,8 +1,9 @@
-//! WASM 引擎封装
+//! WASM Component Model 引擎封装
 //!
-//! 隔离所有 wasmtime 细节，提供简洁的调用接口。
-//! 包含 fuel 消耗限制、超时和内存上限等安全机制。
-//! Store 数据类型为 [`Arc<HostContext>`]，所有 Host Function 共享公共业务逻辑。
+//! 基于 wasmtime Component Model，通过 `bindgen!` 生成的类型化绑定
+//! 直接调用插件导出函数，消除手动内存管理。
+//!
+//! 数据传递使用 canonical ABI 自动编解码，插件侧零 unsafe 代码。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -11,29 +12,31 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
+use crate::plugins::bindings::PluginWorld;
+use crate::plugins::bindings::plugin_hooks::CommentInput;
+use crate::plugins::bindings::plugin_hooks::ContentEvent;
+use crate::plugins::bindings::plugin_hooks::PostInput;
+use crate::plugins::bindings::plugin_hooks::PostOutput;
 use crate::plugins::host_common::HostContext;
 
 const DEFAULT_FUEL: u64 = 10_000_000;
 
-/// WASM 实例池
-///
-/// 为单个 WASM 插件维护多个实例，支持并发执行。
-/// 使用 round-robin 策略分配实例。
+/// WASM Component 实例池
 pub struct WasmInstancePool {
-    instances: Vec<Mutex<WasmInstance>>,
+    instances: Vec<Mutex<WasmComponentInstance>>,
     next: AtomicUsize,
 }
 
-impl WasmInstancePool {
-    /// 从已有实例创建指定大小的池
-    pub fn new(instances: Vec<WasmInstance>) -> Self {
-        let next = AtomicUsize::new(0);
-        Self {
-            instances: instances.into_iter().map(Mutex::new).collect(),
-            next,
-        }
-    }
+/// 单个 WASM Component 实例
+pub struct WasmComponentInstance {
+    store: wasmtime::Store<Arc<HostContext>>,
+    bindings: PluginWorld,
+    timeout_ms: u64,
+    fuel_limit: u64,
+    plugin_id: String,
+}
 
+impl WasmInstancePool {
     /// 从 WASM 字节码创建实例池
     pub fn create_pool(
         engine: &wasmtime::Engine,
@@ -42,183 +45,110 @@ impl WasmInstancePool {
         timeout_ms: u64,
         pool_size: usize,
     ) -> anyhow::Result<Self> {
+        let module = wasmtime::Module::from_binary(engine, wasm_bytes)?;
+        let component = wasmtime::component::Component::from_module(engine, module)?;
+
+        let mut linker = wasmtime::component::Linker::new(engine);
+        super::host::register_host_functions(&mut linker)?;
+
         let mut instances = Vec::with_capacity(pool_size);
         for _ in 0..pool_size {
             let ctx: Arc<HostContext> = Arc::new((*host_ctx).clone());
-            instances.push(WasmInstance::new(engine, wasm_bytes, ctx, timeout_ms)?);
+            let mut store = wasmtime::Store::new(engine, ctx);
+            store.set_fuel(DEFAULT_FUEL)?;
+
+            let (bindings, _) = PluginWorld::instantiate(&mut store, &component, &linker)?;
+
+            instances.push(Mutex::new(WasmComponentInstance {
+                store,
+                bindings,
+                timeout_ms,
+                fuel_limit: DEFAULT_FUEL,
+                plugin_id: host_ctx.plugin_id().to_string(),
+            }));
         }
-        Ok(Self::new(instances))
+        Ok(Self {
+            instances,
+            next: AtomicUsize::new(0),
+        })
     }
 
     /// 获取下一个可用实例（round-robin）
-    pub async fn acquire(&self) -> tokio::sync::MutexGuard<'_, WasmInstance> {
+    pub async fn acquire(&self) -> tokio::sync::MutexGuard<'_, WasmComponentInstance> {
         let len = self.instances.len();
         let idx = self.next.fetch_add(1, Ordering::Relaxed) % len;
         self.instances[idx].lock().await
     }
-
-    /// 池中实例数量
-    #[must_use]
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        self.instances.len()
-    }
-
-    #[must_use]
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.instances.is_empty()
-    }
 }
 
-/// 单个插件实例
-pub struct WasmInstance {
-    store: wasmtime::Store<Arc<HostContext>>,
-    instance: wasmtime::Instance,
-    memory: wasmtime::Memory,
-    alloc_fn: Option<wasmtime::TypedFunc<(i32,), i32>>,
-    dealloc_fn: Option<wasmtime::TypedFunc<(i32, i32), ()>>,
-    timeout_ms: u64,
-    fuel_limit: u64,
-    max_memory_bytes: usize,
-    plugin_id: String,
-}
-
-impl WasmInstance {
-    /// 从 WASM 字节码创建实例
-    pub fn new(
-        engine: &wasmtime::Engine,
-        wasm_bytes: &[u8],
-        host_ctx: Arc<HostContext>,
-        timeout_ms: u64,
-    ) -> anyhow::Result<Self> {
-        let plugin_id = host_ctx.plugin_id().to_string();
-        let max_memory_bytes = host_ctx.max_memory_bytes();
-
-        let module = wasmtime::Module::new(engine, wasm_bytes)?;
-        let mut store = wasmtime::Store::new(engine, host_ctx);
-
-        let fuel_limit = DEFAULT_FUEL;
-        store.set_fuel(fuel_limit)?;
-
-        let mut linker = wasmtime::Linker::new(engine);
-        super::host::register_host_functions(&mut linker)?;
-
-        let instance = linker.instantiate(&mut store, &module)?;
-
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .ok_or_else(|| anyhow::anyhow!("plugin has no exported memory"))?;
-
-        let current_mem = memory.data_size(&store);
-        if current_mem > max_memory_bytes {
-            anyhow::bail!(
-                "plugin {plugin_id} initial memory {current_mem} exceeds limit {max_memory_bytes}"
-            );
-        }
-
-        let alloc_fn = instance
-            .get_typed_func::<(i32,), i32>(&mut store, "alloc")
-            .ok();
-        let dealloc_fn = instance
-            .get_typed_func::<(i32, i32), ()>(&mut store, "dealloc")
-            .ok();
-
-        Ok(Self {
-            store,
-            instance,
-            memory,
-            alloc_fn,
-            dealloc_fn,
-            timeout_ms,
-            fuel_limit,
-            max_memory_bytes,
-            plugin_id,
-        })
-    }
-
-    /// 重置 fuel 为上限值（每次调用前执行）
-    fn reset_fuel(&mut self) -> anyhow::Result<()> {
-        self.store.set_fuel(self.fuel_limit)
-    }
-
+impl WasmComponentInstance {
     /// 返回插件的超时时间（毫秒）
     #[must_use]
     pub fn timeout_ms(&self) -> u64 {
         self.timeout_ms
     }
 
-    /// 调用返回 JSON 的 Filter Hook
+    /// 调用返回 JSON 的 Filter Hook（泛型封装）
     ///
-    /// ABI 协议：函数签名 `(ptr: i32, len: i32) -> i32`
-    /// 返回值 = 输出数据的指针，该指针处前 4 字节为 LE 长度，后面是数据。
-    /// 返回 0 表示插件未处理（None）。
+    /// 将 `serde_json::Value` 转换为 WIT 类型，调用对应的组件方法，
+    /// 再将结果转换回 `serde_json::Value`。
     pub fn call_json_filter<T: Clone + Serialize + DeserializeOwned>(
         &mut self,
         func_name: &str,
         input: &T,
     ) -> anyhow::Result<Option<T>> {
-        let func = match self
-            .instance
-            .get_typed_func::<(i32, i32), i32>(&mut self.store, func_name)
-        {
-            Ok(f) => f,
-            Err(_) => return Ok(None),
-        };
+        self.store.set_fuel(self.fuel_limit)?;
+        let input_val = serde_json::to_value(input)?;
 
-        self.reset_fuel()?;
-
-        let input_json = serde_json::to_vec(input)?;
-        let ptr = self.write_to_memory(&input_json)?;
-
-        let result_ptr: i32 = func
-            .call(&mut self.store, (ptr, input_json.len() as i32))
-            .map_err(|e| self.format_wasm_error(e))?;
-
-        self.free_memory(ptr, input_json.len() as i32);
-
-        if result_ptr <= 0 {
-            return Ok(None);
+        match func_name {
+            "on_post_creating" | "on_post_updating" => {
+                let wit = json_to_post_input(&input_val)?;
+                let hooks = self.bindings.plugin_hooks();
+                let result = match func_name {
+                    "on_post_creating" => hooks.call_on_post_creating(&mut self.store, &wit)?,
+                    "on_post_updating" => hooks.call_on_post_updating(&mut self.store, &wit)?,
+                    _ => None,
+                };
+                Ok(result
+                    .map(|r| post_input_to_json(&r))
+                    .and_then(|v| serde_json::from_value(v).ok()))
+            }
+            "on_comment_creating" => {
+                let wit = json_to_comment_input(&input_val)?;
+                let hooks = self.bindings.plugin_hooks();
+                let result = hooks.call_on_comment_creating(&mut self.store, &wit)?;
+                Ok(result
+                    .map(|r| comment_input_to_json(&r))
+                    .and_then(|v| serde_json::from_value(v).ok()))
+            }
+            "on_content_creating" | "on_content_updating" => {
+                let wit = json_to_content_event(&input_val)?;
+                let hooks = self.bindings.plugin_hooks();
+                let result = match func_name {
+                    "on_content_creating" => {
+                        hooks.call_on_content_creating(&mut self.store, &wit)?
+                    }
+                    "on_content_updating" => {
+                        hooks.call_on_content_updating(&mut self.store, &wit)?
+                    }
+                    _ => None,
+                };
+                Ok(result
+                    .map(|r| content_event_to_json(&r))
+                    .and_then(|v| serde_json::from_value(v).ok()))
+            }
+            "render_markdown" | "filter_html" => {
+                let s = input_val.as_str().unwrap_or("");
+                let hooks = self.bindings.plugin_hooks();
+                let result = match func_name {
+                    "render_markdown" => hooks.call_render_markdown(&mut self.store, s)?,
+                    "filter_html" => hooks.call_filter_html(&mut self.store, s)?,
+                    _ => None,
+                };
+                Ok(result.and_then(|s| serde_json::from_value(serde_json::Value::String(s)).ok()))
+            }
+            _ => Ok(None),
         }
-
-        let output = self.read_length_prefixed(result_ptr)?;
-        let result: T = serde_json::from_slice(&output)?;
-        Ok(Some(result))
-    }
-
-    /// 调用返回 String 的 Filter Hook（如 `render_markdown`）
-    ///
-    /// ABI 协议同 [`call_json_filter`]。
-    pub fn call_string_filter(
-        &mut self,
-        func_name: &str,
-        input: &str,
-    ) -> anyhow::Result<Option<String>> {
-        let func = match self
-            .instance
-            .get_typed_func::<(i32, i32), i32>(&mut self.store, func_name)
-        {
-            Ok(f) => f,
-            Err(_) => return Ok(None),
-        };
-
-        self.reset_fuel()?;
-
-        let input_bytes = input.as_bytes().to_vec();
-        let ptr = self.write_to_memory(&input_bytes)?;
-
-        let result_ptr: i32 = func
-            .call(&mut self.store, (ptr, input_bytes.len() as i32))
-            .map_err(|e| self.format_wasm_error(e))?;
-
-        self.free_memory(ptr, input_bytes.len() as i32);
-
-        if result_ptr <= 0 {
-            return Ok(None);
-        }
-
-        let output = self.read_length_prefixed(result_ptr)?;
-        Ok(Some(String::from_utf8(output)?))
     }
 
     /// 调用 Action Hook（无返回值）
@@ -227,366 +157,183 @@ impl WasmInstance {
         func_name: &str,
         input: &T,
     ) -> anyhow::Result<()> {
-        let func = match self
-            .instance
-            .get_typed_func::<(i32, i32), ()>(&mut self.store, func_name)
-        {
-            Ok(f) => f,
-            Err(_) => return Ok(()),
-        };
+        self.store.set_fuel(self.fuel_limit)?;
+        let input_val = serde_json::to_value(input)?;
+        let hooks = self.bindings.plugin_hooks();
 
-        self.reset_fuel()?;
-
-        let input_json = serde_json::to_vec(input)?;
-        let ptr = self.write_to_memory(&input_json)?;
-
-        func.call(&mut self.store, (ptr, input_json.len() as i32))
-            .map_err(|e| self.format_wasm_error(e))?;
-
-        self.free_memory(ptr, input_json.len() as i32);
+        match func_name {
+            "on_post_created" | "on_post_updated" => {
+                let wit = json_to_post_output(&input_val)?;
+                match func_name {
+                    "on_post_created" => hooks.call_on_post_created(&mut self.store, &wit)?,
+                    "on_post_updated" => hooks.call_on_post_updated(&mut self.store, &wit)?,
+                    _ => {}
+                }
+            }
+            "on_post_deleted" => {
+                if let Some(id) = input_val.as_str() {
+                    hooks.call_on_post_deleted(&mut self.store, id)?;
+                }
+            }
+            "on_comment_created" => {
+                let wit = json_to_comment_input(&input_val)?;
+                hooks.call_on_comment_created(&mut self.store, &wit)?;
+            }
+            "on_content_created" | "on_content_updated" => {
+                let wit = json_to_content_event(&input_val)?;
+                match func_name {
+                    "on_content_created" => hooks.call_on_content_created(&mut self.store, &wit)?,
+                    "on_content_updated" => hooks.call_on_content_updated(&mut self.store, &wit)?,
+                    _ => {}
+                }
+            }
+            "on_content_deleted" => {
+                let ct = input_val
+                    .get("content_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let id = input_val.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                hooks.call_on_content_deleted(&mut self.store, ct, id)?;
+            }
+            "on_login" => {
+                if let Some(uid) = input_val.as_str() {
+                    hooks.call_on_login(&mut self.store, uid)?;
+                }
+            }
+            "on_cron_tick" => {
+                let payload = input_val.as_str().map(|s| s.to_string());
+                hooks.call_on_cron_tick(&mut self.store, payload.as_deref())?;
+            }
+            _ => {}
+        }
         Ok(())
     }
+}
 
-    /// 带 fuel 守卫的 WASM 调用包装。
-    ///
-    /// fuel 耗尽时 wasmtime 返回 Trap，此处统一转为错误。
-    fn format_wasm_error(&self, e: impl std::fmt::Display) -> anyhow::Error {
-        let msg = e.to_string();
-        if msg.contains("all fuel consumed") {
-            anyhow::anyhow!(
-                "plugin {} exceeded fuel limit ({} fuel units, timeout {}ms)",
-                self.plugin_id,
-                self.fuel_limit,
-                self.timeout_ms,
-            )
-        } else {
-            anyhow::anyhow!("{msg}")
-        }
-    }
+// ── JSON ↔ WIT 类型转换 ──────────────────────────────────────────
 
-    /// 将数据写入 WASM 线性内存，返回指针
-    fn write_to_memory(&mut self, data: &[u8]) -> anyhow::Result<i32> {
-        let len = data.len() as i32;
+fn json_to_post_input(v: &serde_json::Value) -> anyhow::Result<PostInput> {
+    Ok(PostInput {
+        title: v["title"].as_str().unwrap_or("").to_string(),
+        content: v["content"].as_str().unwrap_or("").to_string(),
+        slug: v["slug"].as_str().map(|s| s.to_string()),
+        excerpt: v["excerpt"].as_str().map(|s| s.to_string()),
+        category_id: v["category_id"].as_str().map(|s| s.to_string()),
+        tag_ids: v["tag_ids"].as_array().map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        }),
+        status: v["status"].as_str().map(|s| s.to_string()),
+        cover_image: v["cover_image"].as_str().map(|s| s.to_string()),
+    })
+}
 
-        let ptr = if let Some(ref alloc_fn) = self.alloc_fn {
-            alloc_fn
-                .call(&mut self.store, (len,))
-                .map_err(|e| anyhow::anyhow!("{e}"))?
-        } else {
-            let mem_size = self.memory.data_size(&self.store);
-            let needed = data.len() + 1024;
-            if mem_size < needed {
-                let extra = needed - mem_size;
-                let pages_needed = (extra / 65536) as u64 + 1;
-                let new_total = mem_size as u64 + pages_needed * 65536;
-                if new_total > self.max_memory_bytes as u64 {
-                    anyhow::bail!(
-                        "plugin {} memory allocation exceeds limit ({} bytes)",
-                        self.plugin_id,
-                        self.max_memory_bytes,
-                    );
-                }
-                self.memory.grow(&mut self.store, pages_needed)?;
-            }
-            0i32
-        };
+fn post_input_to_json(p: &PostInput) -> serde_json::Value {
+    serde_json::json!({
+        "title": p.title,
+        "content": p.content,
+        "slug": p.slug,
+        "excerpt": p.excerpt,
+        "category_id": p.category_id,
+        "tag_ids": p.tag_ids,
+        "status": p.status,
+        "cover_image": p.cover_image,
+    })
+}
 
-        self.memory.data_mut(&mut self.store)[ptr as usize..ptr as usize + data.len()]
-            .copy_from_slice(data);
+fn json_to_post_output(v: &serde_json::Value) -> anyhow::Result<PostOutput> {
+    Ok(PostOutput {
+        id: v["id"].as_str().unwrap_or("").to_string(),
+        title: v["title"].as_str().unwrap_or("").to_string(),
+        slug: v["slug"].as_str().unwrap_or("").to_string(),
+        content: v["content"].as_str().unwrap_or("").to_string(),
+        excerpt: v["excerpt"].as_str().map(|s| s.to_string()),
+        status: v["status"].as_str().unwrap_or("").to_string(),
+        author_id: v["author_id"].as_str().unwrap_or("").to_string(),
+        category_id: v["category_id"].as_str().map(|s| s.to_string()),
+        view_count: v["view_count"].as_i64().unwrap_or(0),
+        created_at: v["created_at"].as_str().unwrap_or("").to_string(),
+        updated_at: v["updated_at"].as_str().unwrap_or("").to_string(),
+        published_at: v["published_at"].as_str().map(|s| s.to_string()),
+    })
+}
 
-        Ok(ptr)
-    }
+fn json_to_comment_input(v: &serde_json::Value) -> anyhow::Result<CommentInput> {
+    Ok(CommentInput {
+        content: v["content"].as_str().unwrap_or("").to_string(),
+        nickname: v["nickname"].as_str().map(|s| s.to_string()),
+        email: v["email"].as_str().map(|s| s.to_string()),
+        parent_id: v["parent_id"].as_str().map(|s| s.to_string()),
+    })
+}
 
-    /// 从 WASM 线性内存读取数据
-    fn read_from_memory(&self, ptr: i32, len: usize) -> anyhow::Result<Vec<u8>> {
-        let mem_data = self.memory.data(&self.store);
-        let start = ptr as usize;
-        let end = start + len;
-        if end > mem_data.len() {
-            return Err(anyhow::anyhow!(
-                "plugin {} attempted out-of-bounds read: [{start}..{end}]",
-                self.plugin_id,
-            ));
-        }
-        Ok(mem_data[start..end].to_vec())
-    }
+fn comment_input_to_json(c: &CommentInput) -> serde_json::Value {
+    serde_json::json!({
+        "content": c.content,
+        "nickname": c.nickname,
+        "email": c.email,
+        "parent_id": c.parent_id,
+    })
+}
 
-    /// 从 WASM 内存读取长度前缀编码的数据。
-    ///
-    /// 布局：`[4 字节 LE 长度][数据]`
-    fn read_length_prefixed(&self, ptr: i32) -> anyhow::Result<Vec<u8>> {
-        let len_bytes = self.read_from_memory(ptr, 4)?;
-        let len = u32::from_le_bytes(
-            len_bytes
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("invalid length prefix"))?,
-        ) as usize;
-        self.read_from_memory(ptr + 4, len)
-    }
+fn json_to_content_event(v: &serde_json::Value) -> anyhow::Result<ContentEvent> {
+    Ok(ContentEvent {
+        content_type: v["content_type"].as_str().unwrap_or("").to_string(),
+        data: v["data"].as_str().unwrap_or("").to_string(),
+        id: v["id"].as_str().map(|s| s.to_string()),
+    })
+}
 
-    /// 释放 WASM 内存
-    fn free_memory(&mut self, ptr: i32, len: i32) {
-        if let Some(dealloc_fn) = &self.dealloc_fn {
-            let _ = dealloc_fn.call(&mut self.store, (ptr, len));
-        }
-    }
+fn content_event_to_json(e: &ContentEvent) -> serde_json::Value {
+    serde_json::json!({
+        "content_type": e.content_type,
+        "data": e.data,
+        "id": e.id,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
-    use crate::config::app::AppConfig;
-    use crate::db::Pool;
-    use crate::plugins::Permissions;
 
-    const TEST_WAT: &str = r#"
-(module
-  (memory (export "memory") 1)
-  (global $next_ptr (mut i32) (i32.const 0))
-  (func (export "alloc") (param $size i32) (result i32)
-    (global.get $next_ptr)
-    (global.set $next_ptr (i32.add (global.get $next_ptr) (local.get $size)))
-  )
-  (func (export "dealloc") (param $ptr i32) (param $size i32))
-  (func $echo_lp (param $ptr i32) (param $len i32) (result i32)
-    (local $out i32)
-    (local.set $out (global.get $next_ptr))
-    (global.set $next_ptr (i32.add (global.get $next_ptr) (i32.add (i32.const 4) (local.get $len))))
-    (i32.store (local.get $out) (local.get $len))
-    (memory.copy (i32.add (local.get $out) (i32.const 4)) (local.get $ptr) (local.get $len))
-    (local.get $out)
-  )
-  (func (export "on_post_creating") (param $ptr i32) (param $len i32) (result i32)
-    (call $echo_lp (local.get $ptr) (local.get $len))
-  )
-  (func (export "on_post_created") (param $ptr i32) (param $len i32))
-  (func (export "render_markdown") (param $ptr i32) (param $len i32) (result i32)
-    (call $echo_lp (local.get $ptr) (local.get $len))
-  )
-  (func (export "infinite_loop")
-    (block $break (loop $loop (br $loop)))
-  )
-)
-"#;
-
-    fn make_test_config() -> Arc<AppConfig> {
-        Arc::new(AppConfig::test_defaults())
-    }
-
-    fn make_host_ctx(id: &str, perms: Permissions) -> Arc<HostContext> {
-        Arc::new(HostContext::new(
-            "wasm",
-            make_test_config(),
-            id.into(),
-            perms,
-            None::<Pool>,
-        ))
-    }
-
-    fn make_instance(id: &str) -> WasmInstance {
-        let mut cfg = wasmtime::Config::new();
-        cfg.consume_fuel(true);
-        let engine = wasmtime::Engine::new(&cfg).unwrap();
-        let host_ctx = make_host_ctx(id, Permissions::default());
-        WasmInstance::new(&engine, TEST_WAT.as_bytes(), host_ctx, 5000).unwrap()
+    #[test]
+    fn json_post_input_roundtrip() {
+        let original = serde_json::json!({
+            "title": "Hello",
+            "content": "World",
+            "slug": "hello",
+            "tag_ids": ["tag1", "tag2"],
+        });
+        let wit = json_to_post_input(&original).unwrap();
+        let back = post_input_to_json(&wit);
+        assert_eq!(back["title"], "Hello");
+        assert_eq!(back["slug"], "hello");
+        assert_eq!(back["tag_ids"].as_array().unwrap().len(), 2);
     }
 
     #[test]
-    fn create_from_wat_succeeds() {
-        let _inst = make_instance("test-create");
+    fn json_comment_input_roundtrip() {
+        let original = serde_json::json!({
+            "content": "nice post",
+            "nickname": "alice",
+        });
+        let wit = json_to_comment_input(&original).unwrap();
+        let back = comment_input_to_json(&wit);
+        assert_eq!(back["content"], "nice post");
+        assert_eq!(back["nickname"], "alice");
     }
 
     #[test]
-    fn write_and_read_roundtrip() {
-        let mut inst = make_instance("test-roundtrip");
-        let data = b"Hello, WASM!";
-        let ptr = inst.write_to_memory(data).unwrap();
-        let read_back = inst.read_from_memory(ptr, data.len()).unwrap();
-        assert_eq!(&read_back, data);
-    }
-
-    #[test]
-    fn read_out_of_bounds_fails() {
-        let mut inst = make_instance("test-oob");
-        let data = b"hello";
-        let ptr = inst.write_to_memory(data).unwrap();
-        let result = inst.read_from_memory(ptr, 999_999_999);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("out-of-bounds"));
-    }
-
-    #[test]
-    fn fuel_exhaustion_detected() {
-        let mut cfg = wasmtime::Config::new();
-        cfg.consume_fuel(true);
-        let engine = wasmtime::Engine::new(&cfg).unwrap();
-        let perms = Permissions {
-            timeout_ms: Some(100),
-            ..Default::default()
-        };
-        let host_ctx = make_host_ctx("fuel-test", perms);
-        let mut inst = WasmInstance::new(&engine, TEST_WAT.as_bytes(), host_ctx, 100).unwrap();
-
-        inst.reset_fuel().unwrap();
-        inst.store.set_fuel(100).unwrap();
-        let func = inst
-            .instance
-            .get_typed_func::<(), ()>(&mut inst.store, "infinite_loop")
-            .unwrap();
-        let result = func.call(&mut inst.store, ());
-        assert!(result.is_err());
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("fuel")
-                || err_msg.contains("Trap")
-                || err_msg.contains("trap")
-                || err_msg.contains("wasm")
-                || err_msg.contains("interrupt"),
-            "unexpected error message: {err_msg}"
-        );
-    }
-
-    #[test]
-    fn memory_limit_allows_within_budget() {
-        let mut cfg = wasmtime::Config::new();
-        cfg.consume_fuel(true);
-        let engine = wasmtime::Engine::new(&cfg).unwrap();
-        let perms = Permissions {
-            max_memory_mb: Some(1),
-            ..Default::default()
-        };
-        let host_ctx = make_host_ctx("mem-test", perms);
-        let mut inst = WasmInstance::new(&engine, TEST_WAT.as_bytes(), host_ctx, 5000).unwrap();
-
-        let data = vec![0u8; 1024];
-        assert!(inst.write_to_memory(&data).is_ok());
-    }
-
-    #[test]
-    fn format_error_fuel_message() {
-        let inst = make_instance("fmt-test");
-        let err = inst.format_wasm_error("all fuel consumed by test");
-        let msg = err.to_string();
-        assert!(msg.contains("exceeded fuel limit"));
-        assert!(msg.contains("fmt-test"));
-    }
-
-    #[test]
-    fn format_error_generic_message() {
-        let inst = make_instance("fmt-test2");
-        let err = inst.format_wasm_error("some generic error");
-        assert_eq!(err.to_string(), "some generic error");
-    }
-
-    #[test]
-    fn call_json_filter_echo() {
-        let mut inst = make_instance("filter-test");
-        let input = serde_json::json!({"title": "Hello"});
-        let result = inst.call_json_filter::<serde_json::Value>("on_post_creating", &input);
-        match result {
-            Ok(Some(v)) => assert_eq!(v["title"], "Hello"),
-            Ok(None) => {}
-            Err(_) => {}
-        }
-    }
-
-    #[test]
-    fn call_json_action_ok() {
-        let mut inst = make_instance("action-test");
-        let result = inst.call_json_action("on_post_created", &serde_json::json!({"id": "123"}));
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn call_nonexistent_filter_returns_none() {
-        let mut inst = make_instance("noexist-test");
-        let result: anyhow::Result<Option<serde_json::Value>> =
-            inst.call_json_filter("nonexistent", &serde_json::json!({}));
-        assert!(result.unwrap().is_none());
-    }
-
-    #[test]
-    fn call_string_filter_echo() {
-        let mut inst = make_instance("str-test");
-        let result = inst.call_string_filter("render_markdown", "test content");
-        match result {
-            Ok(Some(s)) => assert!(!s.is_empty()),
-            Ok(None) => {}
-            Err(_) => {}
-        }
-    }
-
-    #[test]
-    fn wasm_instance_stores_host_context() {
-        let mut cfg = wasmtime::Config::new();
-        cfg.consume_fuel(true);
-        let engine = wasmtime::Engine::new(&cfg).unwrap();
-        let perms = Permissions {
-            database: vec!["posts".into()],
-            ..Permissions::default()
-        };
-        let host_ctx = make_host_ctx("ctx-test", perms);
-        let inst = WasmInstance::new(&engine, TEST_WAT.as_bytes(), host_ctx, 5000).unwrap();
-
-        assert_eq!(inst.store.data().plugin_id(), "ctx-test");
-        assert_eq!(inst.store.data().runtime_label, "wasm");
-    }
-
-    #[test]
-    fn wasm_host_context_memory_limit_from_permissions() {
-        let mut cfg = wasmtime::Config::new();
-        cfg.consume_fuel(true);
-        let engine = wasmtime::Engine::new(&cfg).unwrap();
-        let perms = Permissions {
-            max_memory_mb: Some(16),
-            ..Permissions::default()
-        };
-        let host_ctx = make_host_ctx("mem-limit-test", perms);
-        assert_eq!(host_ctx.max_memory_bytes(), 16 * 1024 * 1024);
-        let _inst = WasmInstance::new(&engine, TEST_WAT.as_bytes(), host_ctx, 5000).unwrap();
-    }
-
-    #[test]
-    fn wasm_host_context_config_accessible() {
-        let mut cfg = wasmtime::Config::new();
-        cfg.consume_fuel(true);
-        let engine = wasmtime::Engine::new(&cfg).unwrap();
-        let perms = Permissions {
-            config: vec!["app.*".into()],
-            ..Permissions::default()
-        };
-        let host_ctx = make_host_ctx("config-test", perms);
-        assert!(host_ctx.get_config("app.env").is_some());
-        assert_eq!(host_ctx.get_config("app.env"), Some("test".into()));
-        let _inst = WasmInstance::new(&engine, TEST_WAT.as_bytes(), host_ctx, 5000).unwrap();
-    }
-
-    #[test]
-    fn wasm_host_context_log_does_not_crash() {
-        let mut cfg = wasmtime::Config::new();
-        cfg.consume_fuel(true);
-        let engine = wasmtime::Engine::new(&cfg).unwrap();
-        let host_ctx = make_host_ctx("log-test", Permissions::default());
-        host_ctx.log("info", "test message");
-        host_ctx.log("warn", "warning message");
-        host_ctx.log("error", "error message");
-        let _inst = WasmInstance::new(&engine, TEST_WAT.as_bytes(), host_ctx, 5000).unwrap();
-    }
-
-    #[test]
-    fn wasm_host_context_no_pool_returns_gracefully() {
-        let mut cfg = wasmtime::Config::new();
-        cfg.consume_fuel(true);
-        let engine = wasmtime::Engine::new(&cfg).unwrap();
-        let host_ctx = make_host_ctx("no-pool-test", Permissions::default());
-
-        assert!(host_ctx.get_data("key").is_none());
-        assert!(!host_ctx.set_data("key", "val"));
-        assert!(host_ctx.get_post("slug").is_none());
-        assert!(host_ctx.db_query("SELECT 1").contains("no database access"));
-
-        let _inst = WasmInstance::new(&engine, TEST_WAT.as_bytes(), host_ctx, 5000).unwrap();
+    fn json_content_event_roundtrip() {
+        let original = serde_json::json!({
+            "content_type": "articles",
+            "data": "{\"title\":\"test\"}",
+            "id": "abc-123",
+        });
+        let wit = json_to_content_event(&original).unwrap();
+        let back = content_event_to_json(&wit);
+        assert_eq!(back["content_type"], "articles");
+        assert_eq!(back["id"], "abc-123");
     }
 }

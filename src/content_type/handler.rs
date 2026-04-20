@@ -11,12 +11,15 @@ use axum::response::IntoResponse;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::time::Duration;
 
 use super::repository::{ContentQuery, ContentRepository, SaveContext};
 use super::schema::{ContentTypeSchema, check_api_access};
 use crate::AppState;
 use crate::errors::app_error::AppError;
 use crate::middleware::auth::OptionalAuth;
+
+const CMS_CACHE_TTL: Duration = Duration::from_secs(30);
 
 /// 分页查询参数
 #[derive(Debug, Deserialize)]
@@ -212,6 +215,38 @@ pub async fn dynamic_admin_cms_handler(
 
 // ── 核心业务逻辑（共享于固定路由和动态路由） ──────────────────────
 
+fn cms_list_cache_key(ct: &ContentTypeSchema, query: &ContentQuery) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    query.status.hash(&mut hasher);
+    query.page.hash(&mut hasher);
+    query.page_size.hash(&mut hasher);
+    query.search.hash(&mut hasher);
+    query.sort.hash(&mut hasher);
+    for (k, v) in &query.filters {
+        k.hash(&mut hasher);
+        v.to_string().hash(&mut hasher);
+    }
+    if let Some(ref inc) = query.include {
+        for i in inc {
+            i.hash(&mut hasher);
+        }
+    }
+    let h = hasher.finish();
+    format!("cms:{}:{h:x}", ct.plural)
+}
+
+fn cms_detail_cache_key(ct: &ContentTypeSchema, id_or_slug: &str) -> String {
+    format!("cms:{}:detail:{id_or_slug}", ct.plural)
+}
+
+fn invalidate_cms_cache(state: &AppState, ct: &ContentTypeSchema) {
+    let prefix = format!("cms:{}:", ct.plural);
+    state.cms_cache.retain(|k, _| !k.starts_with(&prefix));
+}
+
 async fn do_list(
     state: &AppState,
     ct: &ContentTypeSchema,
@@ -234,13 +269,27 @@ async fn do_list(
         tenant_id: None,
         include,
     };
+
+    let cache_key = cms_list_cache_key(ct, &query);
+    if let Some(entry) = state.cms_cache.get(&cache_key)
+        && entry.value().1.elapsed() < CMS_CACHE_TTL
+    {
+        return Ok(entry.value().0.clone());
+    }
+
     let (items, total) = repo.find(ct, query.clone()).await?;
-    Ok(json!({
+    let result = json!({
         "items": items,
         "total": total,
         "page": query.page,
         "page_size": query.page_size,
-    }))
+    });
+
+    state
+        .cms_cache
+        .insert(cache_key, (result.clone(), std::time::Instant::now()));
+
+    Ok(result)
 }
 
 async fn do_get(
@@ -248,6 +297,13 @@ async fn do_get(
     ct: &ContentTypeSchema,
     id_or_slug: &str,
 ) -> Result<serde_json::Value, AppError> {
+    let cache_key = cms_detail_cache_key(ct, id_or_slug);
+    if let Some(entry) = state.cms_cache.get(&cache_key)
+        && entry.value().1.elapsed() < CMS_CACHE_TTL
+    {
+        return Ok(entry.value().0.clone());
+    }
+
     let repo = ContentRepository::new(state.pool.clone());
     let status = if ct.draft_publish {
         Some("published")
@@ -268,7 +324,13 @@ async fn do_get(
         None => repo.find_by_id(ct, id_or_slug, None).await?,
     };
 
-    item.ok_or_else(|| AppError::not_found(&format!("{}/{}", ct.name, id_or_slug)))
+    let result = item.ok_or_else(|| AppError::not_found(&format!("{}/{}", ct.name, id_or_slug)))?;
+
+    state
+        .cms_cache
+        .insert(cache_key, (result.clone(), std::time::Instant::now()));
+
+    Ok(result)
 }
 
 async fn do_create(
@@ -278,7 +340,9 @@ async fn do_create(
     save_ctx: &SaveContext,
 ) -> Result<serde_json::Value, AppError> {
     let repo = ContentRepository::new(state.pool.clone());
-    repo.create(ct, data, None, save_ctx).await
+    let result = repo.create(ct, data, None, save_ctx).await?;
+    invalidate_cms_cache(state, ct);
+    Ok(result)
 }
 
 async fn do_update(
@@ -289,12 +353,16 @@ async fn do_update(
     save_ctx: &SaveContext,
 ) -> Result<serde_json::Value, AppError> {
     let repo = ContentRepository::new(state.pool.clone());
-    repo.update(ct, id, data, None, save_ctx).await
+    let result = repo.update(ct, id, data, None, save_ctx).await?;
+    invalidate_cms_cache(state, ct);
+    Ok(result)
 }
 
 async fn do_delete(state: &AppState, ct: &ContentTypeSchema, id: &str) -> Result<(), AppError> {
     let repo = ContentRepository::new(state.pool.clone());
-    repo.delete(ct, id, None).await
+    repo.delete(ct, id, None).await?;
+    invalidate_cms_cache(state, ct);
+    Ok(())
 }
 
 async fn do_admin_list(
@@ -497,7 +565,7 @@ pub async fn create_schema(
         indexes: vec![],
         list_view: None,
         api: super::schema::ApiConfig::default(),
-        cached_select_columns: None,
+        cached_column_names: None,
     };
 
     if crate::plugins::permissions::PermissionChecker::is_protected_table(

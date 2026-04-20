@@ -1,0 +1,92 @@
+package rust-blog:plugin-protocol;
+
+/// 共享数据类型
+interface types {
+    record post-input {
+        title: string,
+        content: string,
+        slug: option<string>,
+        excerpt: option<string>,
+        category-id: option<string>,
+        tag-ids: option<list<string>>,
+        status: option<string>,
+        cover-image: option<string>,
+    }
+
+    record post-output {
+        id: string,
+        title: string,
+        slug: string,
+        content: string,
+        excerpt: option<string>,
+        status: string,
+        author-id: string,
+        category-id: option<string>,
+        view-count: s64,
+        created-at: string,
+        updated-at: string,
+        published-at: option<string>,
+    }
+
+    record comment-input {
+        content: string,
+        nickname: option<string>,
+        email: option<string>,
+        parent-id: option<string>,
+    }
+
+    record content-event {
+        content-type: string,
+        data: string,
+        id: option<string>,
+    }
+}
+
+interface host-api {
+    use types.{post-output};
+
+    log: func(level: string, msg: string);
+    get-config: func(key: string) -> option<string>;
+    http-get: func(url: string) -> option<string>;
+    http-post: func(url: string, body: string) -> option<string>;
+    get-data: func(key: string) -> option<string>;
+    set-data: func(key: string, value: string) -> bool;
+    get-post: func(slug: string) -> option<string>;
+    db-query: func(sql: string) -> string;
+    db-execute: func(sql: string, params: option<string>) -> string;
+    db-begin: func() -> string;
+    db-commit: func() -> string;
+    db-rollback: func() -> string;
+    fs-read: func(path: string) -> option<string>;
+    fs-write: func(path: string, content: string) -> bool;
+    fs-delete: func(path: string) -> bool;
+    fs-exists: func(path: string) -> bool;
+    fs-list: func(path: string) -> option<string>;
+    fs-stat: func(path: string) -> option<string>;
+}
+
+interface plugin-hooks {
+    use types.{post-input, post-output, comment-input, content-event};
+
+    on-post-creating: func(input: post-input) -> option<post-input>;
+    on-post-updating: func(input: post-input) -> option<post-input>;
+    on-comment-creating: func(input: comment-input) -> option<comment-input>;
+    on-content-creating: func(input: content-event) -> option<content-event>;
+    on-content-updating: func(input: content-event) -> option<content-event>;
+    render-markdown: func(input: string) -> option<string>;
+    filter-html: func(input: string) -> option<string>;
+    on-post-created: func(output: post-output);
+    on-post-updated: func(output: post-output);
+    on-post-deleted: func(id: string);
+    on-comment-created: func(input: comment-input);
+    on-content-created: func(input: content-event);
+    on-content-updated: func(input: content-event);
+    on-content-deleted: func(content-type: string, id: string);
+    on-login: func(user-id: string);
+    on-cron-tick: func(payload: option<string>);
+}
+
+world plugin-world {
+    import host-api;
+    export plugin-hooks;
+}

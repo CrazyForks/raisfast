@@ -106,7 +106,8 @@ pub async fn serve_openapi_json() -> Response {
     (StatusCode::OK, [("Content-Type", "application/json")], json).into_response()
 }
 
-/// 重定向到在线 Swagger UI
+/// 重定向到在线 Swagger UI（仅在 `openapi` feature 启用时编译）
+#[cfg(feature = "openapi")]
 pub async fn redirect_to_swagger() -> Redirect {
     let spec_url = "http://localhost:9000/api/docs/openapi.json";
     Redirect::temporary(&format!("https://petstore.swagger.io/?url={spec_url}"))

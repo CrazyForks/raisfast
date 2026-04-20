@@ -2,6 +2,9 @@
 //!
 //! 为所有 content type 提供统一的 CRUD 操作，动态构建 SQL。
 //! 使用 `crate::db::dialect::translate()` 支持多数据库方言。
+//!
+//! 查询结果通过 `Row::get()` 逐列提取，直接构建 `serde_json::Value`，
+//! 避免了 `json_object()` 双重序列化的性能开销。
 
 use std::collections::HashMap;
 
@@ -104,7 +107,8 @@ impl ContentRepository {
         ct: &ContentTypeSchema,
         query: ContentQuery,
     ) -> Result<(Vec<Value>, i64), AppError> {
-        let select_cols = ct.select_columns(query.fields.as_deref());
+        let columns = ct.column_names(query.fields.as_deref());
+        let select_cols = columns.join(", ");
         let table = &ct.table;
 
         let mut where_clauses = Vec::new();
@@ -164,7 +168,7 @@ impl ContentRepository {
         let data_sql = crate::db::dialect::translate(&data_sql);
 
         let rows = {
-            let mut data_q = sqlx::query_as::<_, (String,)>(&data_sql);
+            let mut data_q = sqlx::query(&data_sql);
             for p in &params {
                 data_q = data_q.bind(value_to_string(p));
             }
@@ -174,10 +178,7 @@ impl ContentRepository {
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("data query failed: {e}")))?
         };
 
-        let mut items: Vec<Value> = rows
-            .into_iter()
-            .filter_map(|(s,)| serde_json::from_str::<Value>(&s).ok())
-            .collect();
+        let mut items: Vec<Value> = rows.iter().map(|row| row_to_value(row, &columns)).collect();
 
         if !ct.relation_fields().is_empty() {
             super::resolver::resolve_relations(
@@ -199,7 +200,8 @@ impl ContentRepository {
         id: &str,
         tenant_id: Option<&str>,
     ) -> Result<Option<Value>, AppError> {
-        let select_cols = ct.select_columns(None);
+        let columns = ct.column_names(None);
+        let select_cols = columns.join(", ");
         let tid = self.resolve_tenant(&ct.table, tenant_id).await;
 
         let mut where_parts = vec![format!("id = {}", placeholder(1))];
@@ -211,14 +213,13 @@ impl ContentRepository {
 
         let _ = idx;
         let sql = format!(
-            "SELECT {} FROM {} WHERE {}",
-            select_cols,
+            "SELECT {select_cols} FROM {} WHERE {}",
             ct.table,
             where_parts.join(" AND ")
         );
         let sql = crate::db::dialect::translate(&sql);
 
-        let mut q = sqlx::query_as::<_, (String,)>(&sql).bind(id);
+        let mut q = sqlx::query(&sql).bind(id);
         if let Some(ref tid) = tid {
             q = q.bind(tid);
         }
@@ -228,7 +229,7 @@ impl ContentRepository {
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
-        let mut result = row.and_then(|(s,)| serde_json::from_str::<Value>(&s).ok());
+        let mut result = row.map(|r| row_to_value(&r, &columns));
 
         if let Some(ref mut item) = result
             && !ct.relation_fields().is_empty()
@@ -248,7 +249,8 @@ impl ContentRepository {
         status: Option<&str>,
         tenant_id: Option<&str>,
     ) -> Result<Option<Value>, AppError> {
-        let select_cols = ct.select_columns(None);
+        let columns = ct.column_names(None);
+        let select_cols = columns.join(", ");
         let tid = self.resolve_tenant(&ct.table, tenant_id).await;
 
         let mut where_parts = vec![format!("slug = {}", placeholder(1))];
@@ -264,14 +266,13 @@ impl ContentRepository {
         }
 
         let sql = format!(
-            "SELECT {} FROM {} WHERE {}",
-            select_cols,
+            "SELECT {select_cols} FROM {} WHERE {}",
             ct.table,
             where_parts.join(" AND ")
         );
         let sql = crate::db::dialect::translate(&sql);
 
-        let mut q = sqlx::query_as::<_, (String,)>(&sql).bind(slug);
+        let mut q = sqlx::query(&sql).bind(slug);
         if let Some(ref tid) = tid {
             q = q.bind(tid);
         }
@@ -286,7 +287,7 @@ impl ContentRepository {
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
-        let mut result = row.and_then(|(s,)| serde_json::from_str::<Value>(&s).ok());
+        let mut result = row.map(|r| row_to_value(&r, &columns));
 
         if let Some(ref mut item) = result
             && !ct.relation_fields().is_empty()
@@ -627,15 +628,10 @@ impl ContentRepository {
     }
 }
 
-pub fn build_select_columns_uncached(
-    ct: &ContentTypeSchema,
-    requested: Option<&[String]>,
-) -> String {
-    let mut pairs: Vec<String> = Vec::new();
-
-    let add = |name: &str| -> String { format!("'{}', {}", name, name) };
-
-    pairs.push(add("id"));
+/// 构建 SELECT 列名列表（替代 json_object，用于直接 SELECT col1, col2, ...）
+pub fn build_column_names(ct: &ContentTypeSchema, requested: Option<&[String]>) -> Vec<String> {
+    let mut cols = Vec::new();
+    cols.push("id".into());
 
     for field in &ct.fields {
         if field.field_type == FieldType::Relation {
@@ -646,7 +642,7 @@ pub fn build_select_columns_uncached(
                         .as_ref()
                         .and_then(|r| r.foreign_key.clone())
                         .unwrap_or_else(|| format!("{}_id", field.name));
-                    pairs.push(add(&fk));
+                    cols.push(fk);
                 }
                 Some(RelationType::ManyToMany | RelationType::OneToMany) => {}
                 _ => {}
@@ -656,26 +652,64 @@ pub fn build_select_columns_uncached(
 
         if let Some(req) = requested {
             if req.contains(&field.name) {
-                pairs.push(add(&field.name));
+                cols.push(field.name.clone());
             }
         } else {
-            pairs.push(add(&field.name));
+            cols.push(field.name.clone());
         }
     }
 
     if ct.draft_publish {
-        pairs.push(add("status"));
-        pairs.push(add("published_at"));
+        cols.push("status".into());
+        cols.push("published_at".into());
     }
     if ct.timestamps {
-        pairs.push(add("created_at"));
-        pairs.push(add("updated_at"));
+        cols.push("created_at".into());
+        cols.push("updated_at".into());
     }
     if ct.soft_delete {
-        pairs.push(add("deleted_at"));
+        cols.push("deleted_at".into());
     }
 
-    format!("json_object({})", pairs.join(", "))
+    cols
+}
+
+/// 从 sqlx Row 逐列提取值，构建 serde_json::Value
+///
+/// SQLite 将所有值存储为 TEXT，因此优先尝试解析为 bool/int/f64，
+/// 回退到原始字符串。
+pub fn row_to_value(row: &sqlx::sqlite::SqliteRow, columns: &[String]) -> Value {
+    let mut map = serde_json::Map::with_capacity(columns.len());
+    for col in columns {
+        let val = cell_to_json(row, col.as_str());
+        map.insert(col.clone(), val);
+    }
+    Value::Object(map)
+}
+
+/// 将单个 SQLite 单元格转为 JSON Value
+///
+/// 尝试顺序：i64 → f64 → bool → String → Null
+///
+/// 注意：bool 放在 i64 之后，因为 SQLite 不区分 bool 和 int，
+/// 非 0/1 的整数会被 bool 误判为 true。
+fn cell_to_json(row: &sqlx::sqlite::SqliteRow, col: &str) -> Value {
+    if let Ok(Some(v)) = row.try_get::<Option<i64>, _>(col) {
+        return json!(v);
+    }
+    if let Ok(Some(v)) = row.try_get::<Option<f64>, _>(col) {
+        return json!(v);
+    }
+    if let Ok(Some(v)) = row.try_get::<Option<bool>, _>(col) {
+        return json!(v);
+    }
+    if let Ok(Some(s)) = row.try_get::<Option<String>, _>(col) {
+        if s.is_empty() {
+            return Value::Null;
+        }
+        return json!(s);
+    }
+    Value::Null
 }
 
 fn build_order_by(sort: Option<&str>, ct: &ContentTypeSchema) -> String {
@@ -775,7 +809,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_select_columns_basic() {
+    fn build_column_names_basic() {
         let ct = ContentTypeSchema::parse_from_str(
             r#"
 [content_type]
@@ -796,13 +830,12 @@ unique = true
         )
         .unwrap();
 
-        let cols = build_select_columns_uncached(&ct, None);
-        assert!(cols.starts_with("json_object("));
-        assert!(cols.contains("'id', id"));
-        assert!(cols.contains("'name', name"));
-        assert!(cols.contains("'slug', slug"));
-        assert!(cols.contains("'created_at', created_at"));
-        assert!(cols.contains("'updated_at', updated_at"));
+        let cols = build_column_names(&ct, None);
+        assert!(cols.contains(&"id".to_string()));
+        assert!(cols.contains(&"name".to_string()));
+        assert!(cols.contains(&"slug".to_string()));
+        assert!(cols.contains(&"created_at".to_string()));
+        assert!(cols.contains(&"updated_at".to_string()));
     }
 
     #[test]

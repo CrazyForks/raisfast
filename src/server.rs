@@ -157,6 +157,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
     let state = AppState {
         pool: pool.clone(),
         config: Arc::new(config.clone()),
+        jwt_decoding_key: jsonwebtoken::DecodingKey::from_secret(config.jwt_secret.as_bytes()),
         plugins: plugin_manager,
         eventbus: eventbus.clone(),
         post_repo,
@@ -179,6 +180,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         extension_manager,
         extension_service,
         storage,
+        cms_cache: Arc::new(dashmap::DashMap::new()),
     };
 
     spawn_event_subscriber(eventbus.clone(), state.plugins.clone());
@@ -437,8 +439,10 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         .layer(cors)
         .with_state(state);
 
+    let app = app.route("/api/docs/openapi.json", get(openapi::serve_openapi_json));
+
+    #[cfg(feature = "openapi")]
     let app = app
-        .route("/api/docs/openapi.json", get(openapi::serve_openapi_json))
         .route("/api/docs", get(openapi::redirect_to_swagger))
         .route("/api/docs/", get(openapi::redirect_to_swagger));
 

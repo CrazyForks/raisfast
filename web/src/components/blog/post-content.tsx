@@ -1,8 +1,11 @@
 "use client";
 
+import "highlight.js/styles/github-dark.css";
+
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
+import remarkGfm from "remark-gfm";
 
 interface PostContentProps {
   content: string;
@@ -29,7 +32,10 @@ export function PostContent({ content }: PostContentProps) {
         prose-iframe:max-w-full prose-iframe:rounded-lg
         sm:prose-lg"
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeRaw, rehypeHighlight]}
+      >
         {content}
       </ReactMarkdown>
     </div>

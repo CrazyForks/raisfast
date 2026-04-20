@@ -6,7 +6,6 @@
 
 use crate::config::app::AppConfig;
 
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -15,7 +14,7 @@ use axum::Extension;
 use axum::extract::{ConnectInfo, Request};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use tokio::sync::Mutex;
+use dashmap::DashMap;
 
 /// 限流窗口配置。
 #[derive(Debug, Clone)]
@@ -47,13 +46,13 @@ pub trait RateLimitStore: Send + Sync {
     async fn cleanup_expired(&self, window_secs: u64);
 }
 
-/// 基于 `HashMap` 的内存存储实现。
+/// 基于 `DashMap` 的分片锁内存存储实现。
 ///
-/// 使用 `tokio::sync::Mutex` 保证并发安全。
-/// 适用于单实例部署；多实例部署应切换为 Redis 后端。
+/// 使用 `DashMap` 替代 `Mutex<HashMap>`，消除全局锁竞争。
+/// 适用于高并发单实例部署；多实例部署应切换为 Redis 后端。
 #[derive(Debug)]
 pub struct MemoryStore {
-    entries: Mutex<HashMap<String, Entry>>,
+    entries: DashMap<String, Entry>,
 }
 
 impl MemoryStore {
@@ -61,7 +60,7 @@ impl MemoryStore {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            entries: Mutex::new(HashMap::new()),
+            entries: DashMap::new(),
         }
     }
 }
@@ -76,34 +75,32 @@ impl Default for MemoryStore {
 impl RateLimitStore for MemoryStore {
     async fn check(&self, key: &str, config: &RateLimitConfig) -> bool {
         let now = Instant::now();
-        let mut entries = self.entries.lock().await;
 
-        entries.retain(|_, entry| {
+        self.entries.retain(|_, entry| {
             now.duration_since(entry.window_start).as_secs() < config.window_secs * 2
         });
 
-        let entry = entries.entry(key.to_string()).or_insert(Entry {
+        let mut entry_ref = self.entries.entry(key.to_string()).or_insert(Entry {
             count: 0,
             window_start: now,
         });
 
-        if now.duration_since(entry.window_start).as_secs() >= config.window_secs {
-            entry.count = 0;
-            entry.window_start = now;
+        if now.duration_since(entry_ref.window_start).as_secs() >= config.window_secs {
+            entry_ref.count = 0;
+            entry_ref.window_start = now;
         }
 
-        if entry.count >= config.max_requests {
+        if entry_ref.count >= config.max_requests {
             return false;
         }
 
-        entry.count += 1;
+        entry_ref.count += 1;
         true
     }
 
     async fn cleanup_expired(&self, window_secs: u64) {
         let now = Instant::now();
-        let mut entries = self.entries.lock().await;
-        entries
+        self.entries
             .retain(|_, entry| now.duration_since(entry.window_start).as_secs() < window_secs * 2);
     }
 }
@@ -370,15 +367,14 @@ mod tests {
             window_secs: 60,
         };
         {
-            let mut entries = store.entries.lock().await;
-            entries.insert(
+            store.entries.insert(
                 "old_key".to_string(),
                 Entry {
                     count: 1,
                     window_start: Instant::now() - std::time::Duration::from_secs(200),
                 },
             );
-            entries.insert(
+            store.entries.insert(
                 "new_key".to_string(),
                 Entry {
                     count: 1,
@@ -387,8 +383,7 @@ mod tests {
             );
         }
         store.cleanup_expired(config.window_secs).await;
-        let entries = store.entries.lock().await;
-        assert!(!entries.contains_key("old_key"));
-        assert!(entries.contains_key("new_key"));
+        assert!(!store.entries.contains_key("old_key"));
+        assert!(store.entries.contains_key("new_key"));
     }
 }

@@ -1,29 +1,62 @@
-//! SEO 优化插件
+//! SEO 优化插件（Component Model 版本）
 //!
-//! 自动为文章生成摘要（excerpt），如果作者未提供的话。
+//! 零 unsafe 代码，直接操作类型化的 PostInput / String。
+//! 不需要的 Hook 方法留空即可。
 
-use rust_blog_plugin_sdk::*;
+rust_blog_plugin_sdk::wit_bindgen::generate!({
+    path: "../../plugins-protocol/wit/plugin.wit",
+    world: "plugin-world",
+});
 
-/// 创建文章前的过滤器：自动生成 excerpt
-#[unsafe(no_mangle)]
-pub extern "C" fn on_post_creating(ptr: i32, len: i32) -> i32 {
-    let mut input: CreatePostInput = read_input(ptr, len);
+use exports::rust_blog::plugin_protocol::plugin_hooks::{
+    CommentInput, ContentEvent, Guest, PostInput, PostOutput,
+};
 
-    if input.excerpt.is_none() || input.excerpt.as_deref() == Some("") {
-        let plain = strip_markdown(&input.content);
-        input.excerpt = Some(truncate(&plain, 200));
+struct SeoOptimizer;
+
+impl Guest for SeoOptimizer {
+    fn on_post_creating(input: PostInput) -> Option<PostInput> {
+        let mut input = input;
+        if input.excerpt.is_none() || input.excerpt.as_deref() == Some("") {
+            let plain = strip_markdown(&input.content);
+            input.excerpt = Some(truncate(&plain, 200));
+        }
+        Some(input)
     }
 
-    write_output(&input)
+    fn on_post_updating(_input: PostInput) -> Option<PostInput> {
+        None
+    }
+    fn on_comment_creating(_input: CommentInput) -> Option<CommentInput> {
+        None
+    }
+    fn on_content_creating(_input: ContentEvent) -> Option<ContentEvent> {
+        None
+    }
+    fn on_content_updating(_input: ContentEvent) -> Option<ContentEvent> {
+        None
+    }
+
+    fn filter_html(input: String) -> Option<String> {
+        let enhanced = inject_meta_tags(&input);
+        Some(enhanced)
+    }
+
+    fn render_markdown(_input: String) -> Option<String> {
+        None
+    }
+    fn on_post_created(_output: PostOutput) {}
+    fn on_post_updated(_output: PostOutput) {}
+    fn on_post_deleted(_id: String) {}
+    fn on_comment_created(_input: CommentInput) {}
+    fn on_content_created(_input: ContentEvent) {}
+    fn on_content_updated(_input: ContentEvent) {}
+    fn on_content_deleted(_content_type: String, _id: String) {}
+    fn on_login(_user_id: String) {}
+    fn on_cron_tick(_payload: Option<String>) {}
 }
 
-/// Markdown 渲染过滤器：注入 OG 标签
-#[unsafe(no_mangle)]
-pub extern "C" fn filter_html(ptr: i32, len: i32) -> i32 {
-    let html = read_string_input(ptr, len);
-    let enhanced = inject_meta_tags(&html);
-    write_string_output(&enhanced)
-}
+export!(SeoOptimizer);
 
 fn strip_markdown(md: &str) -> String {
     let mut result = String::with_capacity(md.len());

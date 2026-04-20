@@ -38,6 +38,21 @@ pub async fn init_pool(database_url: &str, pool_size: u32) -> Result<Pool, sqlx:
                     sqlx::query("PRAGMA foreign_keys = ON")
                         .execute(&mut *conn)
                         .await?;
+                    sqlx::query("PRAGMA busy_timeout = 5000")
+                        .execute(&mut *conn)
+                        .await?;
+                    sqlx::query("PRAGMA synchronous = NORMAL")
+                        .execute(&mut *conn)
+                        .await?;
+                    sqlx::query("PRAGMA cache_size = -64000")
+                        .execute(&mut *conn)
+                        .await?;
+                    sqlx::query("PRAGMA temp_store = MEMORY")
+                        .execute(&mut *conn)
+                        .await?;
+                    sqlx::query("PRAGMA mmap_size = 268435456")
+                        .execute(&mut *conn)
+                        .await?;
                     Ok(())
                 })
             })

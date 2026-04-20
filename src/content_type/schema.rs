@@ -48,9 +48,9 @@ pub struct ContentTypeSchema {
     /// API 访问控制配置
     #[serde(default)]
     pub api: ApiConfig,
-    /// 预计算的 SELECT json_object(...) 列表达式（注册时填充，不序列化）
+    /// 预计算 SELECT 列名列表（注册时填充，不序列化）
     #[serde(skip)]
-    pub cached_select_columns: Option<String>,
+    pub cached_column_names: Option<Vec<String>>,
 }
 
 /// 自动填充来源
@@ -459,24 +459,25 @@ impl ContentTypeSchema {
             indexes: toml.indexes.unwrap_or_default(),
             list_view: toml.list_view,
             api: toml.api.unwrap_or_default(),
-            cached_select_columns: None,
+            cached_column_names: None,
         })
     }
 
-    /// 预计算并缓存 SELECT json_object(...) 列表达式
+    /// 预计算并缓存 SELECT 列名列表
     pub fn cache_select_columns(&mut self) {
-        self.cached_select_columns =
-            Some(crate::content_type::repository::build_select_columns_uncached(self, None));
+        self.cached_column_names = Some(crate::content_type::repository::build_column_names(
+            self, None,
+        ));
     }
 
-    /// 获取缓存的 SELECT 列表达式，未缓存时回退到动态计算
-    pub fn select_columns(&self, requested: Option<&[String]>) -> String {
+    /// 获取缓存的列名列表，未缓存时回退到动态计算
+    pub fn column_names(&self, requested: Option<&[String]>) -> Vec<String> {
         if requested.is_none()
-            && let Some(ref cached) = self.cached_select_columns
+            && let Some(ref cached) = self.cached_column_names
         {
             return cached.clone();
         }
-        crate::content_type::repository::build_select_columns_uncached(self, requested)
+        crate::content_type::repository::build_column_names(self, requested)
     }
 
     /// 获取非私有字段列表（API 响应用）

@@ -8,3 +8,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 rust-blog-plugin-sdk = { path = "../../plugins-sdk" }
+wit-bindgen = "0.41"

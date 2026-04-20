@@ -273,9 +273,9 @@ impl SearchEngine for TantivyEngine {
                     .unwrap_or("")
                     .to_string();
 
-                let title_highlight = Some(Self::highlight(&query_str, &title_text));
-                let excerpt = Self::make_excerpt(&content_text, &query_str, 200);
-                let excerpt_highlight = excerpt.map(|e| Self::highlight(&query_str, &e));
+                let title_highlight = Some(super::highlight_text(&query_str, &title_text));
+                let excerpt = super::make_excerpt(&content_text, &query_str, 200);
+                let excerpt_highlight = excerpt.map(|e| super::highlight_text(&query_str, &e));
 
                 results.push(SearchResult {
                     post_id,
@@ -292,51 +292,7 @@ impl SearchEngine for TantivyEngine {
     }
 }
 
-impl TantivyEngine {
-    fn highlight(query: &str, text: &str) -> String {
-        let mut result = text.to_string();
-        for word in query.split_whitespace() {
-            let lw = word.to_lowercase();
-            let lt = result.to_lowercase();
-            let mut buf = String::with_capacity(result.len() + 20);
-            let mut last = 0;
-            for (i, _) in lt.match_indices(&lw) {
-                buf.push_str(&result[last..i]);
-                buf.push_str("<em>");
-                buf.push_str(&result[i..i + word.len()]);
-                buf.push_str("</em>");
-                last = i + word.len();
-            }
-            buf.push_str(&result[last..]);
-            result = buf;
-        }
-        result
-    }
-
-    fn make_excerpt(content: &str, query: &str, max_len: usize) -> Option<String> {
-        let first = query.split_whitespace().next()?;
-        let pos = content.to_lowercase().find(&first.to_lowercase())?;
-        let char_start = content[..pos].chars().count();
-        let start_char = char_start.saturating_sub(max_len / 3);
-        let end_char = (start_char + max_len).min(content.chars().count());
-        let start = content
-            .char_indices()
-            .nth(start_char)
-            .map_or(content.len(), |(i, _)| i);
-        let end = content
-            .char_indices()
-            .nth(end_char)
-            .map_or(content.len(), |(i, _)| i);
-        let mut s = content[start..end].to_string();
-        if start_char > 0 {
-            s = format!("...{s}");
-        }
-        if end_char < content.chars().count() {
-            s = format!("{s}...");
-        }
-        Some(s)
-    }
-}
+impl TantivyEngine {}
 
 #[cfg(test)]
 mod tests {
@@ -475,41 +431,41 @@ mod tests {
     #[test]
     fn highlight_unit() {
         assert_eq!(
-            TantivyEngine::highlight("Rust", "学习Rust编程"),
+            super::super::highlight_text("Rust", "学习Rust编程"),
             "学习<em>Rust</em>编程"
         );
     }
 
     #[test]
     fn highlight_multi_word() {
-        let result = TantivyEngine::highlight("Rust 语言", "Rust语言教程和Rust实践");
+        let result = super::super::highlight_text("Rust 语言", "Rust语言教程和Rust实践");
         assert!(result.contains("<em>Rust</em>"));
         assert!(result.contains("<em>语言</em>"));
     }
 
     #[test]
     fn highlight_case_insensitive() {
-        let result = TantivyEngine::highlight("rust", "学习RUST编程");
+        let result = super::super::highlight_text("rust", "学习RUST编程");
         assert!(result.contains("<em>"));
     }
 
     #[test]
     fn highlight_no_match() {
         let text = "这是一段普通文本";
-        assert_eq!(TantivyEngine::highlight("xyz", text), text);
+        assert_eq!(super::super::highlight_text("xyz", text), text);
     }
 
     #[test]
     fn excerpt_unit() {
         let c = "这是一段很长的内容，其中包含了关键词Rust，后面的内容应该被截断。";
-        let e = TantivyEngine::make_excerpt(c, "Rust", 50);
+        let e = super::super::make_excerpt(c, "Rust", 50);
         assert!(e.unwrap().contains("Rust"));
     }
 
     #[test]
     fn excerpt_short_content() {
         let c = "短内容Rust测试";
-        let e = TantivyEngine::make_excerpt(c, "Rust", 200);
+        let e = super::super::make_excerpt(c, "Rust", 200);
         let result = e.unwrap();
         assert!(result.contains("Rust"));
         assert!(!result.starts_with("..."));
@@ -518,27 +474,27 @@ mod tests {
     #[test]
     fn excerpt_keyword_at_start() {
         let c = "Rust位于开头的测试内容后面还有很多文字填充";
-        let e = TantivyEngine::make_excerpt(c, "Rust", 20);
+        let e = super::super::make_excerpt(c, "Rust", 20);
         assert!(e.unwrap().contains("Rust"));
     }
 
     #[test]
     fn excerpt_keyword_at_end() {
         let c = "这是一段前面的内容最后才是关键词Rust";
-        let e = TantivyEngine::make_excerpt(c, "Rust", 20);
+        let e = super::super::make_excerpt(c, "Rust", 20);
         assert!(e.unwrap().contains("Rust"));
     }
 
     #[test]
     fn excerpt_no_match_returns_none() {
         let c = "没有关键词的文本";
-        assert!(TantivyEngine::make_excerpt(c, "xyz", 50).is_none());
+        assert!(super::super::make_excerpt(c, "xyz", 50).is_none());
     }
 
     #[test]
     fn excerpt_multi_word_query_uses_first() {
         let c = "内容中包含First关键词和Second关键词";
-        let e = TantivyEngine::make_excerpt(c, "First Second", 50);
+        let e = super::super::make_excerpt(c, "First Second", 50);
         assert!(e.unwrap().contains("First"));
     }
 

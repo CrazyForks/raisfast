@@ -32,8 +32,9 @@ pub mod validation;
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use schema::ContentTypeSchema;
 
 use crate::errors::app_error::AppError;
@@ -41,10 +42,11 @@ use crate::errors::app_error::AppError;
 /// 内容类型注册表
 ///
 /// 管理所有已注册的 content type schema，提供按名称/表名查询能力。
-/// 内部使用 `RwLock` 支持运行时热更新。所有查询返回 `Arc<ContentTypeSchema>` 避免深拷贝。
+/// 内部使用 `ArcSwap` 实现无锁读、低开销写，支持运行时热更新。
+/// 所有查询返回 `Arc<ContentTypeSchema>` 避免深拷贝。
 #[derive(Debug, Default)]
 pub struct ContentTypeRegistry {
-    inner: RwLock<RegistryInner>,
+    inner: ArcSwap<RegistryInner>,
 }
 
 #[derive(Debug, Default)]
@@ -95,13 +97,12 @@ impl ContentTypeRegistry {
     /// 注册单个 content type（线程安全）。
     ///
     /// 如果 CT 表名与系统保护表冲突则跳过并打印警告。
+    /// 使用 ArcSwap RCU 模式：读取当前快照 → 修改副本 → 原子替换。
     pub fn register(&self, schema: ContentTypeSchema) {
-        let inner = self
-            .inner
-            .read()
-            .expect("ContentTypeRegistry lock poisoned");
-        let protected = inner.protected_tables.clone();
-        drop(inner);
+        let protected = {
+            let guard = self.inner.load();
+            guard.protected_tables.clone()
+        };
 
         if crate::plugins::permissions::PermissionChecker::is_protected_table(
             &schema.table,
@@ -120,65 +121,59 @@ impl ContentTypeRegistry {
         let table = schema.table.clone();
         let singular = schema.singular.clone();
         let arc = Arc::new(schema);
-        let mut inner = self
-            .inner
-            .write()
-            .expect("ContentTypeRegistry lock poisoned");
-        inner.by_table.insert(table, singular.clone());
-        inner.by_plural.insert(plural, singular.clone());
-        inner.types.insert(singular, arc);
+
+        self.inner.rcu(|inner| {
+            let mut new_inner = RegistryInner {
+                types: inner.types.clone(),
+                by_table: inner.by_table.clone(),
+                by_plural: inner.by_plural.clone(),
+                protected_tables: inner.protected_tables.clone(),
+            };
+            new_inner.by_table.insert(table.clone(), singular.clone());
+            new_inner.by_plural.insert(plural.clone(), singular.clone());
+            new_inner.types.insert(singular.clone(), arc.clone());
+            new_inner
+        });
     }
 
     /// 设置系统保护表列表
     pub fn set_protected_tables(&self, tables: Vec<String>) {
-        let mut inner = self
-            .inner
-            .write()
-            .expect("ContentTypeRegistry lock poisoned");
-        inner.protected_tables = tables;
+        self.inner.rcu(|inner| RegistryInner {
+            types: inner.types.clone(),
+            by_table: inner.by_table.clone(),
+            by_plural: inner.by_plural.clone(),
+            protected_tables: tables.clone(),
+        });
     }
 
     /// 按 singular name 查询
     #[must_use]
     pub fn get(&self, name: &str) -> Option<Arc<ContentTypeSchema>> {
-        let inner = self
-            .inner
-            .read()
-            .expect("ContentTypeRegistry lock poisoned");
-        inner.types.get(name).cloned()
+        let guard = self.inner.load();
+        guard.types.get(name).cloned()
     }
 
     /// 按表名查询
     #[must_use]
     pub fn get_by_table(&self, table: &str) -> Option<Arc<ContentTypeSchema>> {
-        let inner = self
-            .inner
-            .read()
-            .expect("ContentTypeRegistry lock poisoned");
-        inner
+        let guard = self.inner.load();
+        guard
             .by_table
             .get(table)
-            .and_then(|singular| inner.types.get(singular).cloned())
+            .and_then(|singular| guard.types.get(singular).cloned())
     }
 
     /// 获取所有已注册 content type
     #[must_use]
     pub fn all(&self) -> Vec<Arc<ContentTypeSchema>> {
-        let inner = self
-            .inner
-            .read()
-            .expect("ContentTypeRegistry lock poisoned");
-        inner.types.values().cloned().collect()
+        let guard = self.inner.load();
+        guard.types.values().cloned().collect()
     }
 
     /// 已注册数量
     #[must_use]
     pub fn len(&self) -> usize {
-        let inner = self
-            .inner
-            .read()
-            .expect("ContentTypeRegistry lock poisoned");
-        inner.types.len()
+        self.inner.load().types.len()
     }
 
     /// 是否为空
@@ -190,28 +185,38 @@ impl ContentTypeRegistry {
     /// 按 plural name 查询（O(1) HashMap 查找）
     #[must_use]
     pub fn get_by_plural(&self, plural: &str) -> Option<Arc<ContentTypeSchema>> {
-        let inner = self
-            .inner
-            .read()
-            .expect("ContentTypeRegistry lock poisoned");
-        inner
+        let guard = self.inner.load();
+        guard
             .by_plural
             .get(plural)
-            .and_then(|singular| inner.types.get(singular).cloned())
+            .and_then(|singular| guard.types.get(singular).cloned())
     }
 
     /// 注销单个 content type（线程安全）
     pub fn unregister(&self, singular: &str) -> Option<Arc<ContentTypeSchema>> {
-        let mut inner = self
-            .inner
-            .write()
-            .expect("ContentTypeRegistry lock poisoned");
-        if let Some(schema) = inner.types.remove(singular) {
-            inner.by_table.remove(&schema.table);
-            inner.by_plural.remove(&schema.plural);
-            Some(schema)
-        } else {
-            None
+        let removed = {
+            let guard = self.inner.load();
+            guard.types.get(singular).cloned()
+        };
+
+        if let Some(schema) = &removed {
+            let table = schema.table.clone();
+            let plural = schema.plural.clone();
+            let singular_owned = singular.to_string();
+            self.inner.rcu(|inner| {
+                let mut new_inner = RegistryInner {
+                    types: inner.types.clone(),
+                    by_table: inner.by_table.clone(),
+                    by_plural: inner.by_plural.clone(),
+                    protected_tables: inner.protected_tables.clone(),
+                };
+                new_inner.types.remove(&singular_owned);
+                new_inner.by_table.remove(&table);
+                new_inner.by_plural.remove(&plural);
+                new_inner
+            });
         }
+
+        removed
     }
 }

@@ -16,6 +16,8 @@
 //! - **管理 API**: 运行时启用/禁用/重载插件
 
 #[cfg(feature = "plugin-wasm")]
+mod bindings;
+#[cfg(feature = "plugin-wasm")]
 mod engine;
 #[cfg(feature = "plugin-js")]
 mod engine_js;
@@ -251,6 +253,7 @@ impl PluginManager {
         let engine = {
             let mut engine_config = wasmtime::Config::new();
             engine_config.consume_fuel(true);
+            engine_config.wasm_component_model(true);
             engine_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
             wasmtime::Engine::new(&engine_config).expect("failed to create wasmtime engine")
         };
