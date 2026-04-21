@@ -27,6 +27,7 @@ pub mod handler;
 pub mod migration;
 pub mod repository;
 pub mod resolver;
+pub mod rule_engine;
 pub mod schema;
 pub mod validation;
 
@@ -67,7 +68,10 @@ impl ContentTypeRegistry {
     /// 从目录加载所有 TOML 定义
     ///
     /// 扫描 `dir` 下所有 `*.toml` 文件，解析为 `ContentTypeSchema` 并注册。
-    pub fn load_from_dir(dir: &Path) -> Result<Self, AppError> {
+    pub fn load_from_dir(
+        dir: &Path,
+        rule_config: &crate::config::app::RuleEngineConfig,
+    ) -> Result<Self, AppError> {
         let registry = Self::new();
         let entries = std::fs::read_dir(dir).map_err(|e| {
             AppError::Internal(anyhow::anyhow!(
@@ -85,7 +89,7 @@ impl ContentTypeRegistry {
                     schema.name,
                     schema.table
                 );
-                registry.register(schema);
+                registry.register(schema, rule_config);
             }
         }
 
@@ -98,7 +102,11 @@ impl ContentTypeRegistry {
     ///
     /// 如果 CT 表名与系统保护表冲突则跳过并打印警告。
     /// 使用 ArcSwap RCU 模式：读取当前快照 → 修改副本 → 原子替换。
-    pub fn register(&self, schema: ContentTypeSchema) {
+    pub fn register(
+        &self,
+        schema: ContentTypeSchema,
+        rule_config: &crate::config::app::RuleEngineConfig,
+    ) {
         let protected = {
             let guard = self.inner.load();
             guard.protected_tables.clone()
@@ -117,6 +125,7 @@ impl ContentTypeRegistry {
         }
         let mut schema = schema;
         schema.cache_select_columns();
+        schema.cache_rules(rule_config);
         let plural = schema.plural.clone();
         let table = schema.table.clone();
         let singular = schema.singular.clone();

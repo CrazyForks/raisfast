@@ -44,6 +44,8 @@ pub struct ExtensionManager {
     pool: Pool,
     /// Extension 根目录
     extension_dir: PathBuf,
+    /// Rule 引擎配置
+    rule_config: crate::config::app::RuleEngineConfig,
 }
 
 impl ExtensionManager {
@@ -62,6 +64,7 @@ impl ExtensionManager {
             plugin_manager,
             pool,
             extension_dir,
+            rule_config: config.rule_engine.clone(),
         });
 
         if mgr.extension_dir.exists() {
@@ -270,7 +273,7 @@ impl ExtensionManager {
                 let mut schema = ContentTypeSchema::parse_from_file(&path)?;
                 let singular = schema.singular.clone();
                 schema.extension_id = Some(ext_id.to_string());
-                self.ct_registry.register(schema.clone());
+                self.ct_registry.register(schema.clone(), &self.rule_config);
                 repo.migrate(&schema).await.map_err(|e| {
                     AppError::Internal(anyhow::anyhow!(
                         "migration failed for content type '{}': {e}",

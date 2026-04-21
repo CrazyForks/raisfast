@@ -54,9 +54,17 @@ label = "小计"
 [[indexes]]
 fields = ["order_id"]
 
-[api]
-list = "admin"
-get = "admin"
-create = "admin"
-update = "admin"
-delete = "admin"
+[api.list]
+access = "admin"
+
+[api.get]
+access = "admin"
+
+[api.create]
+access = "admin"
+
+[api.update]
+access = "admin"
+
+[api.delete]
+access = "admin"

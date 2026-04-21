@@ -83,9 +83,17 @@ fields = ["status", "created_at"]
 default_sort = "created_at:desc"
 columns = ["name", "price", "stock", "status", "featured", "created_at"]
 
-[api]
-list = "public"
-get = "public"
-create = "admin"
-update = "admin"
-delete = "admin"
+[api.list]
+access = "public"
+
+[api.get]
+access = "public"
+
+[api.create]
+access = "admin"
+
+[api.update]
+access = "admin"
+
+[api.delete]
+access = "admin"

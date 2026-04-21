@@ -130,6 +130,101 @@ pub struct AppConfig {
     #[serde(default = "default_s3_region")]
     pub s3_region: String,
     pub s3_public_url: Option<String>,
+    #[serde(default)]
+    pub rule_engine: RuleEngineConfig,
+}
+
+/// API Rule 引擎配置
+///
+/// 所有规则引擎中的硬编码值均可通过环境变量覆盖，便于：
+/// - 适配不同数据库后端（SQLite / PostgreSQL / MySQL）
+/// - 调整缓存策略
+/// - 自定义表达式前缀
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleEngineConfig {
+    /// 表达式前缀：认证用户 ID（默认 `@request.auth.id`）
+    pub prefix_auth_id: String,
+    /// 表达式前缀：认证用户角色（默认 `@request.auth.role`）
+    pub prefix_auth_role: String,
+    /// 表达式前缀：请求体字段（默认 `@request.body.`）
+    pub prefix_request_body: String,
+    /// 表达式前缀：URL 查询参数（默认 `@request.query.`）
+    pub prefix_request_query: String,
+    /// 表达式前缀：当前时间（默认 `@now`）
+    pub prefix_now: String,
+    /// 表达式前缀：跨表引用（默认 `@table.`，Phase 3 使用）
+    pub prefix_cross_table: String,
+    /// SQL 中 @now 编译为的函数（默认 `datetime('now')`，PG 可改为 `NOW()`）
+    pub sql_now_fn: String,
+    /// SQL 中 :isset 编译为的操作符（默认 `IS NOT NULL`）
+    pub sql_isset_op: String,
+    /// SQL 中 :length 编译为的函数名（默认 `LENGTH`，PG 可改为 `CHAR_LENGTH`）
+    pub sql_length_fn: String,
+    /// SQL LIKE 通配符（默认 `%`）
+    pub sql_like_wildcard: String,
+    /// SQL LIKE 单字符通配符（默认 `_`）
+    pub sql_like_single_char: String,
+    /// LIKE 通配符对应的正则（默认 `.*`）
+    pub regex_like_wildcard: String,
+    /// LIKE 单字符对应的正则（默认 `.`）
+    pub regex_like_single_char: String,
+    /// CMS 列表缓存 TTL（秒，默认 30）
+    pub cms_cache_ttl_secs: u64,
+}
+
+impl Default for RuleEngineConfig {
+    fn default() -> Self {
+        Self {
+            prefix_auth_id: "@request.auth.id".into(),
+            prefix_auth_role: "@request.auth.role".into(),
+            prefix_request_body: "@request.body.".into(),
+            prefix_request_query: "@request.query.".into(),
+            prefix_now: "@now".into(),
+            prefix_cross_table: "@table.".into(),
+            sql_now_fn: "datetime('now')".into(),
+            sql_isset_op: "IS NOT NULL".into(),
+            sql_length_fn: "LENGTH".into(),
+            sql_like_wildcard: "%".into(),
+            sql_like_single_char: "_".into(),
+            regex_like_wildcard: ".*".into(),
+            regex_like_single_char: ".".into(),
+            cms_cache_ttl_secs: 30,
+        }
+    }
+}
+
+impl RuleEngineConfig {
+    /// 从环境变量加载，缺失项使用默认值
+    pub fn from_env() -> Self {
+        let defaults = Self::default();
+        Self {
+            prefix_auth_id: env::var("RULE_PREFIX_AUTH_ID").unwrap_or(defaults.prefix_auth_id),
+            prefix_auth_role: env::var("RULE_PREFIX_AUTH_ROLE")
+                .unwrap_or(defaults.prefix_auth_role),
+            prefix_request_body: env::var("RULE_PREFIX_REQUEST_BODY")
+                .unwrap_or(defaults.prefix_request_body),
+            prefix_request_query: env::var("RULE_PREFIX_REQUEST_QUERY")
+                .unwrap_or(defaults.prefix_request_query),
+            prefix_now: env::var("RULE_PREFIX_NOW").unwrap_or(defaults.prefix_now),
+            prefix_cross_table: env::var("RULE_PREFIX_CROSS_TABLE")
+                .unwrap_or(defaults.prefix_cross_table),
+            sql_now_fn: env::var("RULE_SQL_NOW_FN").unwrap_or(defaults.sql_now_fn),
+            sql_isset_op: env::var("RULE_SQL_ISSET_OP").unwrap_or(defaults.sql_isset_op),
+            sql_length_fn: env::var("RULE_SQL_LENGTH_FN").unwrap_or(defaults.sql_length_fn),
+            sql_like_wildcard: env::var("RULE_SQL_LIKE_WILDCARD")
+                .unwrap_or(defaults.sql_like_wildcard),
+            sql_like_single_char: env::var("RULE_SQL_LIKE_SINGLE_CHAR")
+                .unwrap_or(defaults.sql_like_single_char),
+            regex_like_wildcard: env::var("RULE_REGEX_LIKE_WILDCARD")
+                .unwrap_or(defaults.regex_like_wildcard),
+            regex_like_single_char: env::var("RULE_REGEX_LIKE_SINGLE_CHAR")
+                .unwrap_or(defaults.regex_like_single_char),
+            cms_cache_ttl_secs: env::var("CMS_CACHE_TTL")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.cms_cache_ttl_secs),
+        }
+    }
 }
 
 /// 单条 Cron 调度配置
@@ -518,6 +613,7 @@ impl AppConfig {
             s3_bucket: env::var("S3_BUCKET").unwrap_or_else(|_| default_s3_bucket()),
             s3_region: env::var("S3_REGION").unwrap_or_else(|_| default_s3_region()),
             s3_public_url: env::var("S3_PUBLIC_URL").ok().filter(|s| !s.is_empty()),
+            rule_engine: RuleEngineConfig::from_env(),
         }
     }
 
@@ -586,6 +682,7 @@ impl AppConfig {
             s3_bucket: default_s3_bucket(),
             s3_region: default_s3_region(),
             s3_public_url: None,
+            rule_engine: RuleEngineConfig::default(),
         }
     }
 

@@ -261,6 +261,9 @@ async fn find_paginated() {
         fields: None,
         tenant_id: None,
         include: None,
+        skip_total: false,
+        rule_where: None,
+        rule_params: Vec::new(),
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 15);
@@ -276,6 +279,9 @@ async fn find_paginated() {
         fields: None,
         tenant_id: None,
         include: None,
+        skip_total: false,
+        rule_where: None,
+        rule_params: Vec::new(),
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 15);
@@ -318,6 +324,9 @@ async fn find_with_status_filter() {
         fields: None,
         tenant_id: None,
         include: None,
+        skip_total: false,
+        rule_where: None,
+        rule_params: Vec::new(),
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 1);
@@ -438,7 +447,7 @@ required = true
 async fn registry_load_and_lookup() {
     let ct = parse_product();
     let registry = ContentTypeRegistry::new();
-    registry.register(ct);
+    registry.register(ct, &rust_blog::config::app::RuleEngineConfig::default());
 
     assert_eq!(registry.len(), 1);
     assert!(registry.get("product").is_some());
@@ -508,6 +517,9 @@ async fn tenant_isolation() {
         fields: None,
         tenant_id: Some("tenant_a".into()),
         include: None,
+        skip_total: false,
+        rule_where: None,
+        rule_params: Vec::new(),
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 1);
@@ -580,6 +592,9 @@ async fn find_with_custom_sort() {
         fields: None,
         tenant_id: None,
         include: None,
+        skip_total: false,
+        rule_where: None,
+        rule_params: Vec::new(),
     };
     let (items, _) = repo.find(&ct, query).await.unwrap();
     assert_eq!(items[0]["title"], "Beta");
@@ -624,6 +639,9 @@ async fn find_with_field_filter() {
         fields: None,
         tenant_id: None,
         include: None,
+        skip_total: false,
+        rule_where: None,
+        rule_params: Vec::new(),
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 1);
@@ -656,6 +674,9 @@ async fn partial_field_selection() {
         fields: Some(vec!["title".into()]),
         tenant_id: None,
         include: None,
+        skip_total: false,
+        rule_where: None,
+        rule_params: Vec::new(),
     };
     let (items, _) = repo.find(&ct, query).await.unwrap();
     let obj = items[0].as_object().unwrap();

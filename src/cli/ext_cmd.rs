@@ -412,6 +412,7 @@ fn collect_ct_routes(dir: &Path, ext_table: &toml::Value) -> Vec<String> {
                 rust_blog::content_type::schema::ContentTypeSchema::parse_from_str(&content)
             {
                 let auth_label = |access: rust_blog::content_type::schema::ApiAccess| match access {
+                    rust_blog::content_type::schema::ApiAccess::None => "none",
                     rust_blog::content_type::schema::ApiAccess::Public => "public",
                     rust_blog::content_type::schema::ApiAccess::Member => "member",
                     rust_blog::content_type::schema::ApiAccess::Admin => "admin",
@@ -419,27 +420,27 @@ fn collect_ct_routes(dir: &Path, ext_table: &toml::Value) -> Vec<String> {
                 routes.push(format!(
                     "GET    /cms/{}              [list, {}]",
                     ct.plural,
-                    auth_label(ct.api.list)
+                    auth_label(ct.api.list.access)
                 ));
                 routes.push(format!(
                     "GET    /cms/{{}}/{}          [get, {}]",
                     ct.plural,
-                    auth_label(ct.api.get)
+                    auth_label(ct.api.get.access)
                 ));
                 routes.push(format!(
                     "POST   /cms/{}              [create, {}]",
                     ct.plural,
-                    auth_label(ct.api.create)
+                    auth_label(ct.api.create.access)
                 ));
                 routes.push(format!(
                     "PUT    /cms/{{}}/{}          [update, {}]",
                     ct.plural,
-                    auth_label(ct.api.update)
+                    auth_label(ct.api.update.access)
                 ));
                 routes.push(format!(
                     "DELETE /cms/{{}}/{}          [delete, {}]",
                     ct.plural,
-                    auth_label(ct.api.delete)
+                    auth_label(ct.api.delete.access)
                 ));
             }
         }
@@ -464,6 +465,7 @@ fn collect_plugin_routes(dir: &Path, ext_table: &toml::Value) -> Vec<String> {
 
     for route in &manifest.routes {
         let auth_label = match route.auth {
+            rust_blog::content_type::schema::ApiAccess::None => "none",
             rust_blog::content_type::schema::ApiAccess::Public => "public",
             rust_blog::content_type::schema::ApiAccess::Member => "member",
             rust_blog::content_type::schema::ApiAccess::Admin => "admin",

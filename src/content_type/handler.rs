@@ -11,15 +11,44 @@ use axum::response::IntoResponse;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::time::Duration;
 
 use super::repository::{ContentQuery, ContentRepository, SaveContext};
+use super::rule_engine::compile_rule_sql;
 use super::schema::{ContentTypeSchema, check_api_access};
 use crate::AppState;
 use crate::errors::app_error::AppError;
 use crate::middleware::auth::OptionalAuth;
 
-const CMS_CACHE_TTL: Duration = Duration::from_secs(30);
+/// 编译 API Rule 为 SQL WHERE 子句。
+///
+/// 如果用户已登录且有 `filter_auth`，生成 `filter OR filter_auth`；
+/// 否则只用 `filter`。
+/// 如果规则需要认证但用户未登录，返回 None（调用方应拒绝请求）。
+fn build_rule_sql(
+    endpoint: &super::schema::CachedEndpointRules,
+    auth: Option<&crate::middleware::auth::AuthIdentity>,
+    config: &crate::config::app::RuleEngineConfig,
+) -> Option<(String, Vec<String>)> {
+    match (
+        endpoint.filter.as_ref(),
+        endpoint.filter_auth.as_ref(),
+        auth,
+    ) {
+        (None, None, _) => None,
+        (Some(rule), None, _) => compile_rule_sql(rule, 0, None, config),
+        (None, Some(_), None) => None,
+        (Some(rule), Some(_), None) => compile_rule_sql(rule, 0, None, config),
+        (None, Some(auth_rule), Some(a)) => compile_rule_sql(auth_rule, 0, Some(a), config),
+        (Some(rule), Some(auth_rule), Some(a)) => {
+            let (base_sql, mut base_params) = compile_rule_sql(rule, 0, None, config)?;
+            let offset = base_params.len();
+            let (auth_sql, mut auth_params) = compile_rule_sql(auth_rule, offset, Some(a), config)?;
+            let combined = format!("({base_sql} OR {auth_sql})");
+            base_params.append(&mut auth_params);
+            Some((combined, base_params))
+        }
+    }
+}
 
 /// 分页查询参数
 #[derive(Debug, Deserialize)]
@@ -30,6 +59,9 @@ pub struct ListParams {
     pub status: Option<String>,
     pub search: Option<String>,
     pub include: Option<String>,
+    /// 跳过 COUNT(*) 查询以提升性能，total 返回 -1
+    #[serde(default)]
+    pub skip_total: Option<bool>,
 }
 
 /// 为所有 content type 注册动态路由（启动时调用）
@@ -148,12 +180,12 @@ pub async fn dynamic_cms_handler(
 
     match (method.clone(), id) {
         (axum::http::Method::GET, None) => {
-            check_api_access(ct.api.list, auth.0.as_ref())?;
-            let data = do_list(&state, &ct, params).await?;
+            check_api_access(ct.api.list.access, auth.0.as_ref())?;
+            let data = do_list(&state, &ct, params, auth.0.as_ref()).await?;
             Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
         }
         (axum::http::Method::POST, None) => {
-            check_api_access(ct.api.create, auth.0.as_ref())?;
+            check_api_access(ct.api.create.access, auth.0.as_ref())?;
             let Json(data) = body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
             let result = do_create(&state, &ct, data, &save_ctx).await?;
             Ok((
@@ -163,19 +195,19 @@ pub async fn dynamic_cms_handler(
                 .into_response())
         }
         (axum::http::Method::GET, Some(id)) => {
-            check_api_access(ct.api.get, auth.0.as_ref())?;
-            let data = do_get(&state, &ct, &id).await?;
+            check_api_access(ct.api.get.access, auth.0.as_ref())?;
+            let data = do_get(&state, &ct, &id, auth.0.as_ref()).await?;
             Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
         }
         (axum::http::Method::PUT, Some(id)) => {
-            check_api_access(ct.api.update, auth.0.as_ref())?;
+            check_api_access(ct.api.update.access, auth.0.as_ref())?;
             let Json(data) = body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
-            let result = do_update(&state, &ct, &id, data, &save_ctx).await?;
+            let result = do_update(&state, &ct, &id, data, &save_ctx, auth.0.as_ref()).await?;
             Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
         }
         (axum::http::Method::DELETE, Some(id)) => {
-            check_api_access(ct.api.delete, auth.0.as_ref())?;
-            do_delete(&state, &ct, &id).await?;
+            check_api_access(ct.api.delete.access, auth.0.as_ref())?;
+            do_delete(&state, &ct, &id, auth.0.as_ref()).await?;
             Ok(Json(crate::errors::response::ApiResponse::success(
                 json!({"deleted": true}),
             ))
@@ -251,9 +283,18 @@ async fn do_list(
     state: &AppState,
     ct: &ContentTypeSchema,
     params: ListParams,
+    auth: Option<&crate::middleware::auth::AuthIdentity>,
 ) -> Result<serde_json::Value, AppError> {
     let repo = ContentRepository::new(state.pool.clone());
     let include = params.include.as_deref().map(parse_include);
+
+    let (rule_where, rule_params) = ct
+        .cached_rules
+        .as_ref()
+        .and_then(|r| build_rule_sql(&r.list, auth, &state.config.rule_engine))
+        .map(|(w, p)| (Some(w), p))
+        .unwrap_or_default();
+
     let query = ContentQuery {
         page: params.page.unwrap_or(1),
         page_size: params.page_size.unwrap_or(20),
@@ -268,11 +309,15 @@ async fn do_list(
         fields: None,
         tenant_id: None,
         include,
+        skip_total: params.skip_total.unwrap_or(false),
+        rule_where,
+        rule_params,
     };
 
     let cache_key = cms_list_cache_key(ct, &query);
+    let cache_ttl = std::time::Duration::from_secs(state.config.rule_engine.cms_cache_ttl_secs);
     if let Some(entry) = state.cms_cache.get(&cache_key)
-        && entry.value().1.elapsed() < CMS_CACHE_TTL
+        && entry.value().1.elapsed() < cache_ttl
     {
         return Ok(entry.value().0.clone());
     }
@@ -296,10 +341,12 @@ async fn do_get(
     state: &AppState,
     ct: &ContentTypeSchema,
     id_or_slug: &str,
+    auth: Option<&crate::middleware::auth::AuthIdentity>,
 ) -> Result<serde_json::Value, AppError> {
     let cache_key = cms_detail_cache_key(ct, id_or_slug);
+    let cache_ttl = std::time::Duration::from_secs(state.config.rule_engine.cms_cache_ttl_secs);
     if let Some(entry) = state.cms_cache.get(&cache_key)
-        && entry.value().1.elapsed() < CMS_CACHE_TTL
+        && entry.value().1.elapsed() < cache_ttl
     {
         return Ok(entry.value().0.clone());
     }
@@ -326,6 +373,15 @@ async fn do_get(
 
     let result = item.ok_or_else(|| AppError::not_found(&format!("{}/{}", ct.name, id_or_slug)))?;
 
+    if let Some(rules) = ct.cached_rules.as_ref()
+        && let Some(rule) = rules.get.filter.as_ref()
+    {
+        let ctx = super::rule_engine::RuleContext::from_auth(auth);
+        if !rule.evaluate(&result, &ctx, &state.config.rule_engine) {
+            return Err(AppError::not_found(&format!("{}/{}", ct.name, id_or_slug)));
+        }
+    }
+
     state
         .cms_cache
         .insert(cache_key, (result.clone(), std::time::Instant::now()));
@@ -351,15 +407,47 @@ async fn do_update(
     id: &str,
     data: Value,
     save_ctx: &SaveContext,
+    auth: Option<&crate::middleware::auth::AuthIdentity>,
 ) -> Result<serde_json::Value, AppError> {
     let repo = ContentRepository::new(state.pool.clone());
+
+    if let Some(rules) = ct.cached_rules.as_ref()
+        && let Some(rule) = rules.update.filter.as_ref()
+    {
+        let existing = repo.find_by_id(ct, id, None).await?;
+        if let Some(record) = existing {
+            let ctx = super::rule_engine::RuleContext::from_auth(auth);
+            if !rule.evaluate(&record, &ctx, &state.config.rule_engine) {
+                return Err(AppError::Forbidden);
+            }
+        }
+    }
+
     let result = repo.update(ct, id, data, None, save_ctx).await?;
     invalidate_cms_cache(state, ct);
     Ok(result)
 }
 
-async fn do_delete(state: &AppState, ct: &ContentTypeSchema, id: &str) -> Result<(), AppError> {
+async fn do_delete(
+    state: &AppState,
+    ct: &ContentTypeSchema,
+    id: &str,
+    auth: Option<&crate::middleware::auth::AuthIdentity>,
+) -> Result<(), AppError> {
     let repo = ContentRepository::new(state.pool.clone());
+
+    if let Some(rules) = ct.cached_rules.as_ref()
+        && let Some(rule) = rules.delete.filter.as_ref()
+    {
+        let existing = repo.find_by_id(ct, id, None).await?;
+        if let Some(record) = existing {
+            let ctx = super::rule_engine::RuleContext::from_auth(auth);
+            if !rule.evaluate(&record, &ctx, &state.config.rule_engine) {
+                return Err(AppError::Forbidden);
+            }
+        }
+    }
+
     repo.delete(ct, id, None).await?;
     invalidate_cms_cache(state, ct);
     Ok(())
@@ -382,6 +470,9 @@ async fn do_admin_list(
         fields: None,
         tenant_id: None,
         include,
+        skip_total: params.skip_total.unwrap_or(false),
+        rule_where: None,
+        rule_params: Vec::new(),
     };
     let (items, total) = repo.find(ct, query.clone()).await?;
     Ok(json!({
@@ -414,8 +505,8 @@ async fn list_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
-    check_api_access(ct.api.list, auth.0.as_ref())?;
-    let data = do_list(&state, &ct, params).await?;
+    check_api_access(ct.api.list.access, auth.0.as_ref())?;
+    let data = do_list(&state, &ct, params, auth.0.as_ref()).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(data)))
 }
 
@@ -429,8 +520,8 @@ async fn get_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
-    check_api_access(ct.api.get, auth.0.as_ref())?;
-    let data = do_get(&state, &ct, &id_or_slug).await?;
+    check_api_access(ct.api.get.access, auth.0.as_ref())?;
+    let data = do_get(&state, &ct, &id_or_slug, auth.0.as_ref()).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(data)))
 }
 
@@ -450,7 +541,7 @@ async fn create_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
-    check_api_access(ct.api.create, auth.0.as_ref())?;
+    check_api_access(ct.api.create.access, auth.0.as_ref())?;
     let save_ctx = SaveContext::from_optional_auth(&auth);
     let result = do_create(&state, &ct, data, &save_ctx).await?;
     Ok((
@@ -470,9 +561,9 @@ async fn update_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
-    check_api_access(ct.api.update, auth.0.as_ref())?;
+    check_api_access(ct.api.update.access, auth.0.as_ref())?;
     let save_ctx = SaveContext::from_optional_auth(&auth);
-    let result = do_update(&state, &ct, &id, data, &save_ctx).await?;
+    let result = do_update(&state, &ct, &id, data, &save_ctx, auth.0.as_ref()).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(result)))
 }
 
@@ -486,8 +577,8 @@ async fn delete_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
-    check_api_access(ct.api.delete, auth.0.as_ref())?;
-    do_delete(&state, &ct, &id).await?;
+    check_api_access(ct.api.delete.access, auth.0.as_ref())?;
+    do_delete(&state, &ct, &id, auth.0.as_ref()).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(
         json!({"deleted": true}),
     )))
@@ -566,6 +657,7 @@ pub async fn create_schema(
         list_view: None,
         api: super::schema::ApiConfig::default(),
         cached_column_names: None,
+        cached_rules: None,
     };
 
     if crate::plugins::permissions::PermissionChecker::is_protected_table(
@@ -591,7 +683,9 @@ pub async fn create_schema(
     let repo = ContentRepository::new(state.pool.clone());
     repo.migrate(&schema).await?;
 
-    state.content_type_registry.register(schema.clone());
+    state
+        .content_type_registry
+        .register(schema.clone(), &state.config.rule_engine);
 
     tracing::info!(
         "registered content type: {} (table={}, hot-reload)",
@@ -686,7 +780,9 @@ pub async fn update_schema(
     let repo = ContentRepository::new(state.pool.clone());
     repo.migrate(&updated).await?;
 
-    state.content_type_registry.register(updated.clone());
+    state
+        .content_type_registry
+        .register(updated.clone(), &state.config.rule_engine);
 
     tracing::info!(
         "updated content type: {} (table={}, hot-reload)",

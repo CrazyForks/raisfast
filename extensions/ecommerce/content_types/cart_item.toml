@@ -33,9 +33,17 @@ unique = true
 default_sort = "created_at:desc"
 columns = ["user_id", "product_id", "quantity", "created_at"]
 
-[api]
-list = "admin"
-get = "admin"
-create = "admin"
-update = "admin"
-delete = "admin"
+[api.list]
+access = "admin"
+
+[api.get]
+access = "admin"
+
+[api.create]
+access = "admin"
+
+[api.update]
+access = "admin"
+
+[api.delete]
+access = "admin"

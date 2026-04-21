@@ -80,6 +80,11 @@ pub struct ContentQuery {
     pub fields: Option<Vec<String>>,
     pub tenant_id: Option<String>,
     pub include: Option<Vec<String>>,
+    pub skip_total: bool,
+    /// API Rule 编译产生的额外 WHERE 子句
+    pub rule_where: Option<String>,
+    /// API Rule 编译产生的额外参数
+    pub rule_params: Vec<String>,
 }
 
 /// 泛型内容 Repository
@@ -138,23 +143,41 @@ impl ContentRepository {
             }
         }
 
-        let where_sql = if where_clauses.is_empty() {
+        let mut where_sql = if where_clauses.is_empty() {
             String::new()
         } else {
             format!(" WHERE {}", where_clauses.join(" AND "))
         };
 
-        let count_sql = format!("SELECT COUNT(*) as cnt FROM {table}{where_sql}");
-        let count_sql = crate::db::dialect::translate(&count_sql);
-
-        let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
-        for p in &params {
-            count_q = count_q.bind(value_to_string(p));
+        if let Some(ref rule_where) = query.rule_where
+            && !rule_where.is_empty()
+        {
+            let rule_params_owned = query.rule_params.clone();
+            if where_sql.is_empty() {
+                where_sql = format!(" WHERE {rule_where}");
+            } else {
+                where_sql = format!("{where_sql} AND ({rule_where})");
+            }
+            for p in rule_params_owned {
+                params.push(Value::String(p));
+            }
         }
-        let count_row = count_q
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("count query failed: {e}")))?;
+
+        let count_row = if query.skip_total {
+            -1
+        } else {
+            let count_sql = format!("SELECT COUNT(*) as cnt FROM {table}{where_sql}");
+            let count_sql = crate::db::dialect::translate(&count_sql);
+
+            let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
+            for p in &params {
+                count_q = count_q.bind(value_to_string(p));
+            }
+            count_q
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("count query failed: {e}")))?
+        };
 
         let order_sql = build_order_by(query.sort.as_deref(), ct);
 

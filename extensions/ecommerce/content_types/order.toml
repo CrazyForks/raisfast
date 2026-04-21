@@ -62,9 +62,18 @@ fields = ["user_id", "created_at"]
 default_sort = "created_at:desc"
 columns = ["order_no", "user_id", "status", "total_amount", "created_at"]
 
-[api]
-list = "admin"
-get = "admin"
-create = "admin"
-update = "admin"
-delete = "admin"
+[api.list]
+access = "admin"
+filter_auth = 'user_id = @request.auth.id'
+
+[api.get]
+access = "admin"
+
+[api.create]
+access = "admin"
+
+[api.update]
+access = "admin"
+
+[api.delete]
+access = "admin"

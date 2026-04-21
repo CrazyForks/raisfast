@@ -80,3 +80,20 @@ fields = ["status", "created_at"]
 [list_view]
 default_sort = "is_pinned:desc,created_at:desc"
 columns = ["title", "status", "author", "category", "created_at"]
+
+[api.list]
+access = "public"
+filter = 'status = "published"'
+
+[api.get]
+access = "public"
+filter = 'status = "published"'
+
+[api.create]
+access = "admin"
+
+[api.update]
+access = "admin"
+
+[api.delete]
+access = "admin"

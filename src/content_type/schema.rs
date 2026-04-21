@@ -4,6 +4,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::app::RuleEngineConfig;
 use crate::errors::app_error::AppError;
 
 /// 内容类型定义
@@ -51,6 +52,26 @@ pub struct ContentTypeSchema {
     /// 预计算 SELECT 列名列表（注册时填充，不序列化）
     #[serde(skip)]
     pub cached_column_names: Option<Vec<String>>,
+    /// 预解析的 API Rule（注册时填充，不序列化）
+    #[serde(skip)]
+    pub cached_rules: Option<CachedRules>,
+}
+
+/// 每个 API 端点的预解析 Rule
+#[derive(Debug, Clone)]
+pub struct CachedEndpointRules {
+    pub filter: Option<super::rule_engine::Rule>,
+    pub filter_auth: Option<super::rule_engine::Rule>,
+}
+
+/// 所有 API 端点的预解析 Rule
+#[derive(Debug, Clone)]
+pub struct CachedRules {
+    pub list: CachedEndpointRules,
+    pub get: CachedEndpointRules,
+    pub create: CachedEndpointRules,
+    pub update: CachedEndpointRules,
+    pub delete: CachedEndpointRules,
 }
 
 /// 自动填充来源
@@ -206,6 +227,8 @@ fn default_sort() -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ApiAccess {
+    /// 完全禁止
+    None,
     /// 公开访问，无需认证
     #[default]
     Public,
@@ -215,44 +238,82 @@ pub enum ApiAccess {
     Admin,
 }
 
+/// 单个 API 端点的访问控制配置
+///
+/// TOML 写法：
+/// ```toml
+/// [api.list]
+/// access = "public"
+/// filter = 'status = "published"'
+/// filter_auth = 'status = "published" || author_id = @request.auth.id'
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiEndpointConfig {
+    /// 访问级别：none / public / member / admin
+    #[serde(default)]
+    pub access: ApiAccess,
+    /// 数据过滤表达式（对所有通过 access 检查的请求生效）
+    pub filter: Option<String>,
+    /// 已登录用户的额外过滤（与 filter 取 OR）
+    pub filter_auth: Option<String>,
+}
+
+impl Default for ApiEndpointConfig {
+    fn default() -> Self {
+        Self {
+            access: ApiAccess::Public,
+            filter: None,
+            filter_auth: None,
+        }
+    }
+}
+
 /// API 端点访问配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfig {
     /// 列表查询（GET /cms/{plural}）
-    #[serde(default = "api_default_public")]
-    pub list: ApiAccess,
+    #[serde(default)]
+    pub list: ApiEndpointConfig,
     /// 单条查询（GET /cms/{plural}/{id}）
-    #[serde(default = "api_default_public")]
-    pub get: ApiAccess,
+    #[serde(default)]
+    pub get: ApiEndpointConfig,
     /// 创建（POST /cms/{plural}）
-    #[serde(default = "api_default_admin")]
-    pub create: ApiAccess,
+    #[serde(default = "api_endpoint_member")]
+    pub create: ApiEndpointConfig,
     /// 更新（PUT /cms/{plural}/{id}）
-    #[serde(default = "api_default_admin")]
-    pub update: ApiAccess,
+    #[serde(default = "api_endpoint_member")]
+    pub update: ApiEndpointConfig,
     /// 删除（DELETE /cms/{plural}/{id}）
-    #[serde(default = "api_default_admin")]
-    pub delete: ApiAccess,
+    #[serde(default = "api_endpoint_admin")]
+    pub delete: ApiEndpointConfig,
+}
+
+fn api_endpoint_member() -> ApiEndpointConfig {
+    ApiEndpointConfig {
+        access: ApiAccess::Member,
+        filter: None,
+        filter_auth: None,
+    }
+}
+
+fn api_endpoint_admin() -> ApiEndpointConfig {
+    ApiEndpointConfig {
+        access: ApiAccess::Admin,
+        filter: None,
+        filter_auth: None,
+    }
 }
 
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
-            list: ApiAccess::Public,
-            get: ApiAccess::Public,
-            create: ApiAccess::Member,
-            update: ApiAccess::Member,
-            delete: ApiAccess::Member,
+            list: ApiEndpointConfig::default(),
+            get: ApiEndpointConfig::default(),
+            create: api_endpoint_member(),
+            update: api_endpoint_member(),
+            delete: api_endpoint_admin(),
         }
     }
-}
-
-fn api_default_public() -> ApiAccess {
-    ApiAccess::Public
-}
-
-fn api_default_admin() -> ApiAccess {
-    ApiAccess::Admin
 }
 
 /// 检查指定访问级别是否允许当前请求通过
@@ -261,6 +322,7 @@ pub fn check_api_access(
     auth_identity: Option<&crate::middleware::auth::AuthIdentity>,
 ) -> Result<(), crate::errors::app_error::AppError> {
     match access {
+        ApiAccess::None => Err(crate::errors::app_error::AppError::Forbidden),
         ApiAccess::Public => Ok(()),
         ApiAccess::Member => {
             if auth_identity.is_some() {
@@ -460,6 +522,7 @@ impl ContentTypeSchema {
             list_view: toml.list_view,
             api: toml.api.unwrap_or_default(),
             cached_column_names: None,
+            cached_rules: None,
         })
     }
 
@@ -468,6 +531,34 @@ impl ContentTypeSchema {
         self.cached_column_names = Some(crate::content_type::repository::build_column_names(
             self, None,
         ));
+    }
+
+    /// 预解析 API Rule 表达式，schema 注册时调用一次
+    pub fn cache_rules(&mut self, config: &RuleEngineConfig) {
+        self.cached_rules = Some(CachedRules {
+            list: self.parse_endpoint_rules(&self.api.list, config),
+            get: self.parse_endpoint_rules(&self.api.get, config),
+            create: self.parse_endpoint_rules(&self.api.create, config),
+            update: self.parse_endpoint_rules(&self.api.update, config),
+            delete: self.parse_endpoint_rules(&self.api.delete, config),
+        });
+    }
+
+    fn parse_endpoint_rules(
+        &self,
+        config: &ApiEndpointConfig,
+        rule_config: &RuleEngineConfig,
+    ) -> CachedEndpointRules {
+        CachedEndpointRules {
+            filter: config
+                .filter
+                .as_deref()
+                .and_then(|s| super::rule_engine::Rule::parse(s, rule_config).ok()),
+            filter_auth: config
+                .filter_auth
+                .as_deref()
+                .and_then(|s| super::rule_engine::Rule::parse(s, rule_config).ok()),
+        }
     }
 
     /// 获取缓存的列名列表，未缓存时回退到动态计算
@@ -1137,7 +1228,11 @@ type = "text"
         )
         .unwrap();
 
-        let reg = ContentTypeRegistry::load_from_dir(dir.path()).unwrap();
+        let reg = ContentTypeRegistry::load_from_dir(
+            dir.path(),
+            &crate::config::app::RuleEngineConfig::default(),
+        )
+        .unwrap();
         assert_eq!(reg.len(), 2);
         assert!(reg.get("post").is_some());
         assert!(reg.get("page").is_some());
