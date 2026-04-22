@@ -1,0 +1,81 @@
+[plugin]
+id = "com.rust-blog.forum"
+name = "Forum API"
+version = "0.1.0"
+description = "论坛 API：版块主题列表、投票、采纳、计数维护"
+author = "rust-blog"
+license = "MIT"
+runtime = "js"
+language = "js"
+entry = "main.js"
+
+[permissions]
+max_memory_mb = 16
+timeout_ms = 5000
+database = [
+    "forum_boards",
+    "forum_topics",
+    "forum_replies",
+    "forum_votes",
+    "forum_polls",
+    "forum_poll_options",
+    "forum_poll_votes",
+]
+
+[hooks.on-content-creating]
+priority = 50
+
+[hooks.on-content-created]
+priority = 50
+
+[hooks.on-content-deleted]
+priority = 50
+
+[hooks.on-content-viewed]
+priority = 50
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/forum/boards/:slug/topics"
+handler = "listBoardTopics"
+
+[[routes]]
+method = "PUT"
+path = "/api/v1/plugins/forum/replies/:id/accept"
+handler = "acceptAnswer"
+auth = "member"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/forum/vote"
+handler = "vote"
+auth = "member"
+
+[[routes]]
+method = "DELETE"
+path = "/api/v1/plugins/forum/vote"
+handler = "unvote"
+auth = "member"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/forum/polls"
+handler = "createPoll"
+auth = "member"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/forum/polls/:topicId"
+handler = "getPoll"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/forum/polls/:pollId/vote"
+handler = "castVote"
+auth = "member"
+
+[[routes]]
+method = "DELETE"
+path = "/api/v1/plugins/forum/polls/:pollId"
+handler = "deletePoll"
+auth = "member"

@@ -85,9 +85,11 @@ columns = ["name", "price", "stock", "status", "featured", "created_at"]
 
 [api.list]
 access = "public"
+cache = true
 
 [api.get]
 access = "public"
+cache = true
 
 [api.create]
 access = "admin"

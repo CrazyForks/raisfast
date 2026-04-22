@@ -652,7 +652,14 @@ async fn handle_plugin_route(
 ) -> axum::response::Response {
     use serde_json::json;
 
-    let path = req.uri().path().to_string();
+    let path = {
+        let mut s = req.uri().path().to_string();
+        if let Some(q) = req.uri().query() {
+            s.push('?');
+            s.push_str(q);
+        }
+        s
+    };
     let method = req.method().to_string();
 
     let headers_json: serde_json::Value = {

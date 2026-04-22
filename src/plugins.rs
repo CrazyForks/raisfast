@@ -1355,11 +1355,40 @@ impl PluginManager {
                         .unwrap_or(200) as u16;
                     let status_code = axum::http::StatusCode::from_u16(status)
                         .unwrap_or(axum::http::StatusCode::OK);
+
+                    let normalized = if let Ok(mut plugin_resp) =
+                        serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(body)
+                    {
+                        if plugin_resp.contains_key("ok") {
+                            let is_ok = plugin_resp
+                                .get("ok")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            let code = if is_ok { 0 } else { status as i32 * 100 };
+                            let message = if is_ok {
+                                "messages.success".to_string()
+                            } else {
+                                plugin_resp
+                                    .get("error")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("errors.internal")
+                                    .to_string()
+                            };
+                            let data = plugin_resp.remove("data").unwrap_or(serde_json::Value::Null);
+                            serde_json::json!({ "code": code, "message": message, "data": data })
+                                .to_string()
+                        } else {
+                            body.to_string()
+                        }
+                    } else {
+                        body.to_string()
+                    };
+
                     Ok(Some(
                         (
                             status_code,
                             [(axum::http::header::CONTENT_TYPE, "application/json")],
-                            body.to_string(),
+                            normalized,
                         )
                             .into_response(),
                     ))

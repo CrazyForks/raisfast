@@ -56,9 +56,11 @@ fields = ["order_id"]
 
 [api.list]
 access = "admin"
+cache = true
 
 [api.get]
 access = "admin"
+cache = true
 
 [api.create]
 access = "admin"

@@ -1,0 +1,112 @@
+[content_type]
+name = "Forum Topic"
+singular = "forum_topic"
+plural = "forum_topics"
+table = "forum_topics"
+description = "论坛主题"
+draft_publish = false
+slug_field = "title"
+timestamps = true
+soft_delete = false
+
+[fields.title]
+type = "text"
+required = true
+max_length = 200
+label = "标题"
+
+[fields.slug]
+type = "uid"
+target_field = "title"
+unique = true
+label = "URL 标识"
+
+[fields.content]
+type = "richtext"
+required = true
+label = "正文"
+
+[fields.board]
+type = "relation"
+relation_type = "many_to_one"
+target = "forum_boards"
+foreign_key = "board_id"
+required = true
+label = "所属版块"
+
+[fields.author_id]
+type = "text"
+required = true
+auto_fill = "user_id"
+label = "发帖人"
+
+[fields.reply_count]
+type = "integer"
+default = 0
+private = true
+label = "回复数"
+
+[fields.view_count]
+type = "integer"
+default = 0
+private = true
+label = "浏览量"
+
+[fields.last_reply_at]
+type = "datetime"
+label = "最后回复时间"
+
+[fields.last_reply_user_id]
+type = "text"
+label = "最后回复人"
+
+[fields.is_pinned]
+type = "boolean"
+default = false
+label = "置顶"
+
+[fields.is_locked]
+type = "boolean"
+default = false
+label = "锁定"
+
+[fields.is_solved]
+type = "boolean"
+default = false
+label = "已解决"
+
+[fields.tags]
+type = "text"
+max_length = 200
+label = "标签"
+
+[[indexes]]
+fields = ["slug"]
+unique = true
+
+[[indexes]]
+fields = ["board_id", "is_pinned", "last_reply_at"]
+
+[[indexes]]
+fields = ["author_id", "created_at"]
+
+[list_view]
+default_sort = "is_pinned:desc,last_reply_at:desc"
+columns = ["title", "board", "author_id", "reply_count", "view_count", "is_pinned", "is_locked", "last_reply_at"]
+
+[api.list]
+access = "public"
+cache = true
+
+[api.get]
+access = "public"
+cache = false
+
+[api.create]
+access = "member"
+
+[api.update]
+access = "member"
+
+[api.delete]
+access = "member"

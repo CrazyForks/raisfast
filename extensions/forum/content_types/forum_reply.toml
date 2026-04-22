@@ -1,0 +1,76 @@
+[content_type]
+name = "Forum Reply"
+singular = "forum_reply"
+plural = "forum_replies"
+table = "forum_replies"
+description = "论坛回复"
+draft_publish = false
+timestamps = true
+soft_delete = false
+
+[fields.content]
+type = "richtext"
+required = true
+label = "回复内容"
+
+[fields.topic]
+type = "relation"
+relation_type = "many_to_one"
+target = "forum_topics"
+foreign_key = "topic_id"
+required = true
+immutable = true
+label = "所属主题"
+
+[fields.author_id]
+type = "text"
+required = true
+auto_fill = "user_id"
+immutable = true
+label = "回复人"
+
+[fields.parent_reply]
+type = "relation"
+relation_type = "many_to_one"
+target = "forum_replies"
+foreign_key = "parent_reply_id"
+immutable = true
+label = "父回复"
+
+[fields.is_answer]
+type = "boolean"
+default = false
+label = "最佳答案"
+
+[fields.vote_count]
+type = "integer"
+default = 0
+private = true
+label = "投票数"
+
+[[indexes]]
+fields = ["topic_id", "created_at"]
+
+[[indexes]]
+fields = ["author_id", "created_at"]
+
+[list_view]
+default_sort = "created_at:asc"
+columns = ["topic", "author_id", "vote_count", "is_answer", "created_at"]
+
+[api.list]
+access = "public"
+cache = true
+
+[api.get]
+access = "public"
+cache = true
+
+[api.create]
+access = "member"
+
+[api.update]
+access = "member"
+
+[api.delete]
+access = "member"

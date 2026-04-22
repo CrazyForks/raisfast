@@ -64,10 +64,12 @@ columns = ["order_no", "user_id", "status", "total_amount", "created_at"]
 
 [api.list]
 access = "admin"
+cache = true
 filter_auth = 'user_id = @request.auth.id'
 
 [api.get]
 access = "admin"
+cache = true
 
 [api.create]
 access = "admin"

@@ -316,7 +316,8 @@ pub async fn do_list(
 
     let cache_key = cms_list_cache_key(ct, &query);
     let cache_ttl = std::time::Duration::from_secs(state.config.rule_engine.cms_cache_ttl_secs);
-    if let Some(entry) = state.cms_cache.get(&cache_key)
+    if ct.api.list.cache
+        && let Some(entry) = state.cms_cache.get(&cache_key)
         && entry.value().1.elapsed() < cache_ttl
     {
         return Ok(entry.value().0.clone());
@@ -330,9 +331,11 @@ pub async fn do_list(
         "page_size": query.page_size,
     });
 
-    state
-        .cms_cache
-        .insert(cache_key, (result.clone(), std::time::Instant::now()));
+    if ct.api.list.cache {
+        state
+            .cms_cache
+            .insert(cache_key, (result.clone(), std::time::Instant::now()));
+    }
 
     Ok(result)
 }
@@ -345,7 +348,8 @@ pub async fn do_get(
 ) -> Result<serde_json::Value, AppError> {
     let cache_key = cms_detail_cache_key(ct, id_or_slug);
     let cache_ttl = std::time::Duration::from_secs(state.config.rule_engine.cms_cache_ttl_secs);
-    if let Some(entry) = state.cms_cache.get(&cache_key)
+    if ct.api.get.cache
+        && let Some(entry) = state.cms_cache.get(&cache_key)
         && entry.value().1.elapsed() < cache_ttl
     {
         return Ok(entry.value().0.clone());
@@ -383,8 +387,21 @@ pub async fn do_get(
     }
 
     state
-        .cms_cache
-        .insert(cache_key, (result.clone(), std::time::Instant::now()));
+        .plugins
+        .dispatch_action(
+            crate::plugins::HookPoint::ContentViewed,
+            &json!({
+                "content_type": ct.singular,
+                "id": result.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+            }),
+        )
+        .await;
+
+    if ct.api.get.cache {
+        state
+            .cms_cache
+            .insert(cache_key, (result.clone(), std::time::Instant::now()));
+    }
 
     Ok(result)
 }
@@ -395,9 +412,42 @@ async fn do_create(
     data: Value,
     save_ctx: &SaveContext,
 ) -> Result<serde_json::Value, AppError> {
+    let hook_data = json!({
+        "content_type": ct.singular,
+        "data": &data,
+    });
+    let filtered = state
+        .plugins
+        .dispatch_filter(crate::plugins::HookPoint::ContentCreating, hook_data)
+        .await?;
+
+    let data = filtered.get("data").cloned().unwrap_or(data);
+
     let repo = ContentRepository::new(state.pool.clone());
     let result = repo.create(ct, data, None, save_ctx).await?;
     invalidate_cms_cache(state, ct);
+
+    let id = result
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let slug = result
+        .get("slug")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    state
+        .plugins
+        .dispatch_action(
+            crate::plugins::HookPoint::ContentCreated,
+            &json!({
+                "content_type": ct.singular,
+                "id": id,
+                "slug": slug,
+            }),
+        )
+        .await;
+
     Ok(result)
 }
 
@@ -423,8 +473,32 @@ async fn do_update(
         }
     }
 
+    let hook_data = json!({
+        "content_type": ct.singular,
+        "id": id,
+        "data": &data,
+    });
+    let filtered = state
+        .plugins
+        .dispatch_filter(crate::plugins::HookPoint::ContentUpdating, hook_data)
+        .await?;
+
+    let data = filtered.get("data").cloned().unwrap_or(data);
+
     let result = repo.update(ct, id, data, None, save_ctx).await?;
     invalidate_cms_cache(state, ct);
+
+    state
+        .plugins
+        .dispatch_action(
+            crate::plugins::HookPoint::ContentUpdated,
+            &json!({
+                "content_type": ct.singular,
+                "id": id,
+            }),
+        )
+        .await;
+
     Ok(result)
 }
 
@@ -450,6 +524,18 @@ async fn do_delete(
 
     repo.delete(ct, id, None).await?;
     invalidate_cms_cache(state, ct);
+
+    state
+        .plugins
+        .dispatch_action(
+            crate::plugins::HookPoint::ContentDeleted,
+            &json!({
+                "content_type": ct.singular,
+                "id": id,
+            }),
+        )
+        .await;
+
     Ok(())
 }
 

@@ -61,29 +61,44 @@ export class ApiError extends Error {
   }
 }
 
+let refreshPromise: Promise<string | null> | null = null;
+
 async function refreshToken(): Promise<string | null> {
-  const store = useAuthStore.getState();
-  if (!store.refreshToken) return null;
+  if (refreshPromise) return refreshPromise;
 
-  const res = await fetch(`${API_BASE}/auth/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: store.refreshToken }),
-  });
+  refreshPromise = (async () => {
+    try {
+      const store = useAuthStore.getState();
+      if (!store.refreshToken) return null;
 
-  if (!res.ok) {
-    store.logout();
-    return null;
-  }
+      const res = await fetch(`${API_BASE}/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: store.refreshToken }),
+      });
 
-  const json = await res.json();
-  if (json.code !== 0) {
-    store.logout();
-    return null;
-  }
+      if (!res.ok) {
+        store.logout();
+        return null;
+      }
 
-  store.setTokens(json.data.access_token, json.data.refresh_token);
-  return json.data.access_token;
+      const json = await res.json();
+      if (json.code !== 0) {
+        store.logout();
+        return null;
+      }
+
+      store.setTokens(json.data.access_token, json.data.refresh_token);
+      return json.data.access_token;
+    } catch {
+      useAuthStore.getState().logout();
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
 }
 
 export async function apiRequest<T>(

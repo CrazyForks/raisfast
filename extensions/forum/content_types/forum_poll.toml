@@ -1,0 +1,62 @@
+[content_type]
+name = "Forum Poll"
+singular = "forum_poll"
+plural = "forum_polls"
+table = "forum_polls"
+description = "论坛投票"
+draft_publish = false
+timestamps = true
+soft_delete = false
+
+[fields.topic]
+type = "relation"
+relation_type = "many_to_one"
+target = "forum_topics"
+foreign_key = "topic_id"
+required = true
+immutable = true
+label = "所属主题"
+
+[fields.question]
+type = "text"
+required = true
+max_length = 500
+label = "投票问题"
+
+[fields.max_choices]
+type = "integer"
+required = true
+default = 1
+min = 1
+max = 20
+label = "每人最多选几项"
+
+[fields.is_closed]
+type = "boolean"
+default = false
+label = "已关闭"
+
+[[indexes]]
+fields = ["topic_id"]
+unique = true
+
+[list_view]
+default_sort = "created_at:desc"
+columns = ["topic", "question", "max_choices", "is_closed", "created_at"]
+
+[api.list]
+access = "admin"
+cache = true
+
+[api.get]
+access = "public"
+cache = false
+
+[api.create]
+access = "admin"
+
+[api.update]
+access = "admin"
+
+[api.delete]
+access = "admin"

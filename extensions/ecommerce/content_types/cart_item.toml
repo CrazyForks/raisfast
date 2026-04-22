@@ -35,9 +35,11 @@ columns = ["user_id", "product_id", "quantity", "created_at"]
 
 [api.list]
 access = "admin"
+cache = true
 
 [api.get]
 access = "admin"
+cache = true
 
 [api.create]
 access = "admin"

@@ -28,9 +28,9 @@
 //! - `Unauthorized` → `errors.unauthorized`
 //! - `NotFound` → 先翻译资源名称 `resources.{key}`，再代入 `errors.not_found`
 
-use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use axum::Json;
 use serde::Serialize;
 
 use crate::middleware::locale::current_locale;
@@ -154,7 +154,10 @@ impl AppError {
             AppError::TooManyRequests => rust_i18n::t!("errors.too_many_requests").to_string(),
             AppError::MethodNotAllowed => rust_i18n::t!("errors.method_not_allowed").to_string(),
             AppError::ServiceUnavailable => rust_i18n::t!("errors.service_unavailable").to_string(),
-            AppError::Internal(_) => rust_i18n::t!("errors.internal").to_string(),
+            AppError::Internal(err) => {
+                let base: String = rust_i18n::t!("errors.internal").into();
+                format!("{base}: {err}")
+            }
         }
     }
 }

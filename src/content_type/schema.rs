@@ -246,6 +246,7 @@ pub enum ApiAccess {
 /// access = "public"
 /// filter = 'status = "published"'
 /// filter_auth = 'status = "published" || author_id = @request.auth.id'
+/// cache = true
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiEndpointConfig {
@@ -256,6 +257,9 @@ pub struct ApiEndpointConfig {
     pub filter: Option<String>,
     /// 已登录用户的额外过滤（与 filter 取 OR）
     pub filter_auth: Option<String>,
+    /// 是否启用服务端缓存（默认 false）
+    #[serde(default)]
+    pub cache: bool,
 }
 
 impl Default for ApiEndpointConfig {
@@ -264,6 +268,7 @@ impl Default for ApiEndpointConfig {
             access: ApiAccess::Public,
             filter: None,
             filter_auth: None,
+            cache: false,
         }
     }
 }
@@ -293,6 +298,7 @@ fn api_endpoint_member() -> ApiEndpointConfig {
         access: ApiAccess::Member,
         filter: None,
         filter_auth: None,
+        cache: true,
     }
 }
 
@@ -301,6 +307,7 @@ fn api_endpoint_admin() -> ApiEndpointConfig {
         access: ApiAccess::Admin,
         filter: None,
         filter_auth: None,
+        cache: true,
     }
 }
 

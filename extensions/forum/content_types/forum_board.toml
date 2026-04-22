@@ -1,0 +1,94 @@
+[content_type]
+name = "Forum Board"
+singular = "forum_board"
+plural = "forum_boards"
+table = "forum_boards"
+description = "论坛版块"
+draft_publish = false
+slug_field = "name"
+timestamps = true
+soft_delete = false
+
+[fields.name]
+type = "text"
+required = true
+max_length = 100
+label = "版块名称"
+
+[fields.slug]
+type = "uid"
+target_field = "name"
+unique = true
+label = "URL 标识"
+
+[fields.description]
+type = "text"
+max_length = 500
+label = "版块描述"
+
+[fields.icon]
+type = "media"
+accept = ["image/*"]
+max_count = 1
+label = "版块图标"
+
+[fields.parent]
+type = "relation"
+relation_type = "many_to_one"
+target = "forum_boards"
+foreign_key = "parent_id"
+label = "父版块"
+
+[fields.sort_order]
+type = "integer"
+default = 0
+min = 0
+label = "排序权重"
+
+[fields.topic_count]
+type = "integer"
+default = 0
+private = true
+label = "主题数"
+
+[fields.post_count]
+type = "integer"
+default = 0
+private = true
+label = "帖子数"
+
+[fields.last_activity_at]
+type = "datetime"
+label = "最后活跃时间"
+
+[fields.last_topic_id]
+type = "text"
+label = "最后主题ID"
+
+[[indexes]]
+fields = ["slug"]
+unique = true
+
+[[indexes]]
+fields = ["parent_id", "sort_order"]
+
+[list_view]
+default_sort = "sort_order:asc"
+columns = ["name", "slug", "topic_count", "post_count", "last_activity_at"]
+
+[api.list]
+access = "public"
+cache = true
+
+[api.get]
+access = "public"
+cache = true
+
+[api.create]
+access = "admin"
+
+[api.update]
+access = "admin"
+
+[api.delete]
+access = "admin"

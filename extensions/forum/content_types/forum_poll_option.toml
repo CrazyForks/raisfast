@@ -1,0 +1,59 @@
+[content_type]
+name = "Forum Poll Option"
+singular = "forum_poll_option"
+plural = "forum_poll_options"
+table = "forum_poll_options"
+description = "投票选项"
+draft_publish = false
+timestamps = false
+soft_delete = false
+
+[fields.poll]
+type = "relation"
+relation_type = "many_to_one"
+target = "forum_polls"
+foreign_key = "poll_id"
+required = true
+immutable = true
+label = "所属投票"
+
+[fields.text]
+type = "text"
+required = true
+max_length = 200
+label = "选项文本"
+
+[fields.vote_count]
+type = "integer"
+default = 0
+private = true
+label = "得票数"
+
+[fields.sort_order]
+type = "integer"
+default = 0
+label = "排序"
+
+[[indexes]]
+fields = ["poll_id", "sort_order"]
+
+[list_view]
+default_sort = "sort_order:asc"
+columns = ["poll", "text", "vote_count", "sort_order"]
+
+[api.list]
+access = "public"
+cache = true
+
+[api.get]
+access = "public"
+cache = true
+
+[api.create]
+access = "admin"
+
+[api.update]
+access = "admin"
+
+[api.delete]
+access = "admin"

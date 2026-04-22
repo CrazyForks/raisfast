@@ -371,8 +371,23 @@ impl ContentRepository {
             values.push(tid.clone());
         }
 
+        let relation_column_map: std::collections::HashMap<String, String> = ct
+            .fields
+            .iter()
+            .filter(|f| f.field_type == super::schema::FieldType::Relation)
+            .map(|f| {
+                let fk = f
+                    .relation
+                    .as_ref()
+                    .and_then(|r| r.foreign_key.clone())
+                    .unwrap_or_else(|| format!("{}_id", f.name));
+                (f.name.clone(), fk)
+            })
+            .collect();
+
         for (key, val) in obj.iter() {
-            cols.push(key.clone());
+            let col = relation_column_map.get(key).cloned().unwrap_or_else(|| key.clone());
+            cols.push(col);
             placeholders.push(placeholder(idx));
             idx += 1;
             values.push(value_to_string(val));
@@ -456,9 +471,24 @@ impl ContentRepository {
         let mut values: Vec<String> = Vec::new();
         let mut idx = 1;
 
+        let relation_column_map: std::collections::HashMap<String, String> = ct
+            .fields
+            .iter()
+            .filter(|f| f.field_type == super::schema::FieldType::Relation)
+            .map(|f| {
+                let fk = f
+                    .relation
+                    .as_ref()
+                    .and_then(|r| r.foreign_key.clone())
+                    .unwrap_or_else(|| format!("{}_id", f.name));
+                (f.name.clone(), fk)
+            })
+            .collect();
+
         for (key, val) in obj.iter() {
             if ct.get_field(key).is_some() || key == "status" || key == "published_at" {
-                set_clauses.push(format!("{} = {}", key, placeholder(idx)));
+                let col = relation_column_map.get(key).cloned().unwrap_or_else(|| key.clone());
+                set_clauses.push(format!("{col} = {}", placeholder(idx)));
                 idx += 1;
                 values.push(value_to_string(val));
             }

@@ -21,6 +21,7 @@ import { ThemeToggle } from "@/components/common/theme-toggle";
 
 const navLinks = [
   { href: "/posts", label: "Posts" },
+  { href: "/forum", label: "Forum" },
   { href: "/shop", label: "Shop" },
   {
     href: "/feed.xml",

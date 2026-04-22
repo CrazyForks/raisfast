@@ -162,6 +162,9 @@ pub enum HookPoint {
     ContentUpdated,
     ContentDeleted,
 
+    // ── 内容访问 ──
+    ContentViewed,
+
     // ── 字段级 ──
     RenderMarkdown,
     FilterHtml,
@@ -190,6 +193,7 @@ impl HookPoint {
             HookPoint::ContentUpdating => "on_content_updating",
             HookPoint::ContentUpdated => "on_content_updated",
             HookPoint::ContentDeleted => "on_content_deleted",
+            HookPoint::ContentViewed => "on_content_viewed",
             HookPoint::RenderMarkdown => "render_markdown",
             HookPoint::FilterHtml => "filter_html",
             HookPoint::OnLogin => "on_login",
@@ -213,6 +217,7 @@ impl HookPoint {
             HookPoint::ContentUpdating,
             HookPoint::ContentUpdated,
             HookPoint::ContentDeleted,
+            HookPoint::ContentViewed,
             HookPoint::RenderMarkdown,
             HookPoint::FilterHtml,
             HookPoint::OnLogin,
@@ -328,8 +333,8 @@ version = "1.0.0"
     }
 
     #[test]
-    fn hookpoint_all_has_16_variants() {
-        assert_eq!(HookPoint::all().len(), 16);
+    fn hookpoint_all_has_17_variants() {
+        assert_eq!(HookPoint::all().len(), 17);
     }
 
     #[test]
