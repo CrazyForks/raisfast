@@ -9,8 +9,8 @@ use mlua::Lua;
 
 use crate::config::app::AppConfig;
 use crate::db::Pool;
-use crate::plugins::Permissions;
 use crate::plugins::host_common::HostContext;
+use crate::plugins::Permissions;
 
 /// 注册宿主函数到 Lua 全局作用域。
 pub fn register_host_functions(
@@ -19,17 +19,16 @@ pub fn register_host_functions(
     plugin_id: String,
     permissions: Permissions,
     pool: Option<Pool>,
+    event_bus: Option<crate::eventbus::EventBus>,
 ) -> anyhow::Result<()> {
     let globals = lua.globals();
     let host = lua.create_table()?;
 
-    let host_ctx = Arc::new(HostContext::new(
-        "lua",
-        config,
-        plugin_id,
-        permissions,
-        pool,
-    ));
+    let mut hc_inner = HostContext::new("lua", config, plugin_id, permissions, pool);
+    if let Some(bus) = event_bus {
+        hc_inner.set_event_bus(bus);
+    }
+    let host_ctx = Arc::new(hc_inner);
 
     let hc = host_ctx.clone();
     let log_fn = lua.create_function(move |_, (level, msg): (String, String)| {
@@ -79,9 +78,12 @@ pub fn register_host_functions(
     host.set("getPost", get_post_fn)?;
 
     let hc = host_ctx.clone();
-    let db_query_fn = lua.create_function(move |lua, sql: String| {
-        Ok(mlua::Value::String(lua.create_string(hc.db_query(&sql))?))
-    })?;
+    let db_query_fn =
+        lua.create_function(move |lua, (sql, params): (String, Option<String>)| {
+            Ok(mlua::Value::String(
+                lua.create_string(hc.db_query(&sql, params.as_deref()))?,
+            ))
+        })?;
     host.set("dbQuery", db_query_fn)?;
 
     let hc = host_ctx.clone();
@@ -151,12 +153,20 @@ pub fn register_host_functions(
     })?;
     host.set("fsList", fs_list_fn)?;
 
-    let hc = host_ctx;
+    let hc = host_ctx.clone();
     let fs_stat_fn = lua.create_function(move |lua, path: String| match hc.fs_stat(&path) {
         Ok(json) => Ok(mlua::Value::String(lua.create_string(&json)?)),
         Err(_) => Ok(mlua::Value::Nil),
     })?;
     host.set("fsStat", fs_stat_fn)?;
+
+    let hc = host_ctx;
+    let emit_event_fn = lua.create_function(move |lua, (event_type, data): (String, String)| {
+        Ok(mlua::Value::String(
+            lua.create_string(hc.emit_event(&event_type, &data))?,
+        ))
+    })?;
+    host.set("emitEvent", emit_event_fn)?;
 
     globals.set("Host", host)?;
     Ok(())
@@ -183,7 +193,7 @@ mod tests {
         let lua = create_sandboxed_lua();
         let config = make_test_config();
         let perms = Permissions::default();
-        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
         let host: mlua::Table = globals.get("Host").unwrap();
@@ -204,7 +214,7 @@ mod tests {
             config: vec!["app.*".into()],
             ..Permissions::default()
         };
-        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
         let host: mlua::Table = globals.get("Host").unwrap();
@@ -225,7 +235,7 @@ mod tests {
         let lua = create_sandboxed_lua();
         let config = make_test_config();
         let perms = Permissions::default();
-        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
         let host: mlua::Table = globals.get("Host").unwrap();
@@ -240,7 +250,7 @@ mod tests {
         let lua = create_sandboxed_lua();
         let config = make_test_config();
         let perms = Permissions::default();
-        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
         let host: mlua::Table = globals.get("Host").unwrap();
@@ -255,7 +265,7 @@ mod tests {
         let lua = create_sandboxed_lua();
         let config = make_test_config();
         let perms = Permissions::default();
-        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
         let host: mlua::Table = globals.get("Host").unwrap();
@@ -270,7 +280,7 @@ mod tests {
         let lua = create_sandboxed_lua();
         let config = make_test_config();
         let perms = Permissions::default();
-        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
         let host: mlua::Table = globals.get("Host").unwrap();
@@ -285,7 +295,7 @@ mod tests {
         let lua = create_sandboxed_lua();
         let config = make_test_config();
         let perms = Permissions::default();
-        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
         let host: mlua::Table = globals.get("Host").unwrap();
@@ -300,7 +310,7 @@ mod tests {
         let lua = create_sandboxed_lua();
         let config = make_test_config();
         let perms = Permissions::default();
-        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
         let host: mlua::Table = globals.get("Host").unwrap();
@@ -315,7 +325,7 @@ mod tests {
         let lua = create_sandboxed_lua();
         let config = make_test_config();
         let perms = Permissions::default();
-        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
         let host: mlua::Table = globals.get("Host").unwrap();
@@ -330,7 +340,7 @@ mod tests {
         let lua = create_sandboxed_lua();
         let config = make_test_config();
         let perms = Permissions::default();
-        register_host_functions(&lua, config, "test-plugin".into(), perms, None).unwrap();
+        register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
         let host: mlua::Table = globals.get("Host").unwrap();

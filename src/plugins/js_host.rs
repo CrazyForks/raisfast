@@ -19,11 +19,17 @@ pub fn register_host_functions(
     plugin_id: String,
     permissions: Permissions,
     pool: Option<Pool>,
+    event_bus: Option<crate::eventbus::EventBus>,
 ) -> rquickjs::Result<()> {
     let global = ctx.globals();
     let host = Object::new(ctx.clone())?;
 
-    let host_ctx = Arc::new(HostContext::new("js", config, plugin_id, permissions, pool));
+    let mut hc_inner =
+        HostContext::new("js", config, plugin_id, permissions, pool);
+    if let Some(bus) = event_bus {
+        hc_inner.set_event_bus(bus);
+    }
+    let host_ctx = Arc::new(hc_inner);
 
     let hc = host_ctx.clone();
     let log_fn = Function::new(ctx.clone(), move |level: String, msg: String| {
@@ -68,9 +74,12 @@ pub fn register_host_functions(
     host.set("getPost", get_post_fn)?;
 
     let hc = host_ctx.clone();
-    let db_query_fn = Function::new(ctx.clone(), move |sql: String| -> String {
-        hc.db_query(&sql)
-    })?;
+    let db_query_fn = Function::new(
+        ctx.clone(),
+        move |sql: String, params: Option<String>| -> String {
+            hc.db_query(&sql, params.as_deref())
+        },
+    )?;
     host.set("dbQuery", db_query_fn)?;
 
     let hc = host_ctx.clone();
@@ -124,11 +133,18 @@ pub fn register_host_functions(
     })?;
     host.set("fsList", fs_list_fn)?;
 
-    let hc = host_ctx;
-    let fs_stat_fn = Function::new(ctx, move |path: String| -> Option<String> {
+    let hc = host_ctx.clone();
+    let fs_stat_fn = Function::new(ctx.clone(), move |path: String| -> Option<String> {
         hc.fs_stat(&path).ok()
     })?;
     host.set("fsStat", fs_stat_fn)?;
+
+    let hc = host_ctx;
+    let emit_event_fn =
+        Function::new(ctx, move |event_type: String, data: String| -> String {
+            hc.emit_event(&event_type, &data)
+        })?;
+    host.set("emitEvent", emit_event_fn)?;
 
     global.set("Host", host)?;
     Ok(())
@@ -151,7 +167,7 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None)
+            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
                 .unwrap();
 
             let global = ctx.globals();
@@ -178,7 +194,7 @@ mod tests {
         };
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None)
+            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
                 .unwrap();
 
             let global = ctx.globals();
@@ -202,7 +218,7 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None)
+            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
                 .unwrap();
 
             let global = ctx.globals();
@@ -223,7 +239,7 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None)
+            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
                 .unwrap();
 
             let global = ctx.globals();
@@ -244,7 +260,7 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None)
+            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
                 .unwrap();
 
             let global = ctx.globals();
@@ -265,7 +281,7 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None)
+            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
                 .unwrap();
 
             let global = ctx.globals();
@@ -286,7 +302,7 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None)
+            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
                 .unwrap();
 
             let global = ctx.globals();
@@ -307,14 +323,14 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None)
+            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
                 .unwrap();
 
             let global = ctx.globals();
             let host: Object = global.get("Host").unwrap();
             let db_fn: Function = host.get("dbQuery").unwrap();
 
-            let result: String = db_fn.call(("SELECT 1",)).unwrap();
+            let result: String = db_fn.call(("SELECT 1", rquickjs::Undefined)).unwrap();
             assert!(result.contains("no database access"));
         })
         .await;
@@ -328,14 +344,14 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None)
+            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
                 .unwrap();
 
             let global = ctx.globals();
             let host: Object = global.get("Host").unwrap();
             let db_fn: Function = host.get("dbQuery").unwrap();
 
-            let result: String = db_fn.call(("DELETE FROM posts",)).unwrap();
+            let result: String = db_fn.call(("DELETE FROM posts", rquickjs::Undefined)).unwrap();
             assert!(result.contains("only SELECT"));
         })
         .await;
@@ -349,7 +365,7 @@ mod tests {
         let perms = Permissions::default();
 
         ctx.with(|ctx| {
-            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None)
+            register_host_functions(ctx.clone(), config, "test-plugin".into(), perms, None, None)
                 .unwrap();
 
             let global = ctx.globals();

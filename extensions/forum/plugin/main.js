@@ -49,8 +49,8 @@ function nowISO() {
     return new Date().toISOString();
 }
 
-function query(sql) {
-    var result = Host.dbQuery(sql);
+function query(sql, params) {
+    var result = Host.dbQuery(sql, params ? JSON.stringify(params) : null);
     if (!result || result.indexOf("error:") === 0) return null;
     return JSON.parse(result);
 }
@@ -58,11 +58,6 @@ function query(sql) {
 function exec(sql, params) {
     var result = Host.dbExecute(sql, params ? JSON.stringify(params) : null);
     return JSON.parse(result);
-}
-
-function escapeSQL(str) {
-    if (str === null || str === undefined) return "";
-    return String(str).replace(/'/g, "''");
 }
 
 // ── Hooks ───────────────────────────────────────────────────
@@ -75,7 +70,7 @@ Plugin.on_content_creating = function (input) {
     if (ct === "forum_reply") {
         var topicId = body.topic_id;
         if (topicId) {
-            var topics = query("SELECT is_locked FROM forum_topics WHERE id = '" + escapeSQL(topicId) + "'");
+            var topics = query("SELECT is_locked FROM forum_topics WHERE id = ?", [topicId]);
             if (topics && topics.length > 0 && topics[0].is_locked) {
                 return JSON.stringify({ status: 400, body: JSON.stringify({ ok: false, error: "topic is locked" }) });
             }
@@ -91,7 +86,7 @@ Plugin.on_content_created = function (input) {
     var id = data.id;
 
     if (ct === "forum_topic") {
-        var topics = query("SELECT board_id FROM forum_topics WHERE id = '" + escapeSQL(id) + "'");
+        var topics = query("SELECT board_id FROM forum_topics WHERE id = ?", [id]);
         if (topics && topics.length > 0) {
             var now = nowISO();
             exec("UPDATE forum_boards SET topic_count = topic_count + 1, post_count = post_count + 1, last_activity_at = ?, last_topic_id = ? WHERE id = ?",
@@ -100,20 +95,22 @@ Plugin.on_content_created = function (input) {
     }
 
     if (ct === "forum_reply") {
-        var replies = query("SELECT topic_id, author_id FROM forum_replies WHERE id = '" + escapeSQL(id) + "'");
+        var replies = query("SELECT topic_id, author_id FROM forum_replies WHERE id = ?", [id]);
         if (replies && replies.length > 0) {
             var reply = replies[0];
             var now = nowISO();
             exec("UPDATE forum_topics SET reply_count = reply_count + 1, last_reply_at = ?, last_reply_user_id = ?, updated_at = ? WHERE id = ?",
                 [now, reply.author_id, now, reply.topic_id]);
 
-            var topics = query("SELECT board_id FROM forum_topics WHERE id = '" + escapeSQL(reply.topic_id) + "'");
+            var topics = query("SELECT board_id FROM forum_topics WHERE id = ?", [reply.topic_id]);
             if (topics && topics.length > 0) {
                 exec("UPDATE forum_boards SET post_count = post_count + 1, last_activity_at = ? WHERE id = ?",
                     [now, topics[0].board_id]);
             }
         }
     }
+
+    return ok(data);
 };
 
 Plugin.on_content_deleted = function (input) {
@@ -122,7 +119,7 @@ Plugin.on_content_deleted = function (input) {
     var id = data.id;
 
     if (ct === "forum_topic") {
-        var topics = query("SELECT board_id FROM forum_topics WHERE id = '" + escapeSQL(id) + "'");
+        var topics = query("SELECT board_id FROM forum_topics WHERE id = ?", [id]);
         if (topics && topics.length > 0) {
             exec("UPDATE forum_boards SET topic_count = CASE WHEN topic_count > 0 THEN topic_count - 1 ELSE 0 END, post_count = CASE WHEN post_count > 0 THEN post_count - 1 ELSE 0 END WHERE id = ?",
                 [topics[0].board_id]);
@@ -130,12 +127,14 @@ Plugin.on_content_deleted = function (input) {
     }
 
     if (ct === "forum_reply") {
-        var replies = query("SELECT topic_id FROM forum_replies WHERE id = '" + escapeSQL(id) + "'");
+        var replies = query("SELECT topic_id FROM forum_replies WHERE id = ?", [id]);
         if (replies && replies.length > 0) {
             exec("UPDATE forum_topics SET reply_count = CASE WHEN reply_count > 0 THEN reply_count - 1 ELSE 0 END WHERE id = ?",
                 [replies[0].topic_id]);
         }
     }
+
+    return ok(data);
 };
 
 Plugin.on_content_viewed = function (input) {
@@ -146,12 +145,13 @@ Plugin.on_content_viewed = function (input) {
     if (ct === "forum_topic") {
         exec("UPDATE forum_topics SET view_count = view_count + 1 WHERE id = ?", [id]);
     }
+
+    return ok(data);
 };
 
 // ── GET /boards/:slug/topics ────────────────────────────────
 
 Plugin.listBoardTopics = function (input) {
-    var fullPath = input.path || "";
     var slug = routeParam(input, 2);
     var page = 1;
     var pageSize = 20;
@@ -159,19 +159,20 @@ Plugin.listBoardTopics = function (input) {
     if (pageSize < 1 || pageSize > 100) pageSize = 20;
     var offset = (page - 1) * pageSize;
 
-    var boards = query("SELECT id FROM forum_boards WHERE slug = '" + escapeSQL(slug) + "'");
+    var boards = query("SELECT id FROM forum_boards WHERE slug = ?", [slug]);
     if (!boards || boards.length === 0) return ok(err(404, "board not found for slug: " + slug));
     var boardId = boards[0].id;
 
-    var totalResult = query("SELECT COUNT(*) as cnt FROM forum_topics WHERE board_id = '" + boardId + "'");
+    var totalResult = query("SELECT COUNT(*) as cnt FROM forum_topics WHERE board_id = ?", [boardId]);
     var total = (totalResult && totalResult[0]) ? parseInt(totalResult[0].cnt, 10) : 0;
 
     var rows = query(
         "SELECT id, title, slug, author_id, reply_count, view_count, is_pinned, is_locked, is_solved, " +
         "last_reply_at, last_reply_user_id, tags, created_at " +
-        "FROM forum_topics WHERE board_id = '" + boardId + "' " +
+        "FROM forum_topics WHERE board_id = ? " +
         "ORDER BY is_pinned DESC, last_reply_at DESC, created_at DESC " +
-        "LIMIT " + pageSize + " OFFSET " + offset
+        "LIMIT ? OFFSET ?",
+        [boardId, pageSize, offset]
     );
 
     return ok({ items: rows || [], total: total, page: page, page_size: pageSize, board_id: boardId });
@@ -185,11 +186,11 @@ Plugin.acceptAnswer = function (input) {
     var userId = data.user_id;
     if (!userId) return ok(err(400, "user_id required"));
 
-    var replies = query("SELECT id, topic_id, author_id FROM forum_replies WHERE id = '" + escapeSQL(replyId) + "' AND status = 'published'");
+    var replies = query("SELECT id, topic_id, author_id FROM forum_replies WHERE id = ?", [replyId]);
     if (!replies || replies.length === 0) return ok(err(404, "reply not found"));
 
     var reply = replies[0];
-    var topics = query("SELECT id, author_id FROM forum_topics WHERE id = '" + escapeSQL(reply.topic_id) + "' AND status = 'published'");
+    var topics = query("SELECT id, author_id FROM forum_topics WHERE id = ?", [reply.topic_id]);
     if (!topics || topics.length === 0) return ok(err(404, "topic not found"));
 
     if (topics[0].author_id !== userId) return ok(err(403, "only topic author can accept answer"));
@@ -217,7 +218,7 @@ Plugin.vote = function (input) {
     if (!targetId) return ok(err(400, "target_id required"));
     if (targetType !== "topic" && targetType !== "reply") return ok(err(400, "target_type must be topic or reply"));
 
-    var existing = query("SELECT id, value FROM forum_votes WHERE target_type = '" + escapeSQL(targetType) + "' AND target_id = '" + escapeSQL(targetId) + "' AND user_id = '" + escapeSQL(userId) + "'");
+    var existing = query("SELECT id, value FROM forum_votes WHERE target_type = ? AND target_id = ? AND user_id = ?", [targetType, targetId, userId]);
     if (existing && existing.length > 0) {
         var oldValue = parseInt(existing[0].value, 10);
         var diff = value - oldValue;
@@ -227,7 +228,7 @@ Plugin.vote = function (input) {
     } else {
         var id = genId();
         var now = nowISO();
-        exec("INSERT INTO forum_votes (id, target_type, target_id, user_id, value, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'published', ?, ?)",
+        exec("INSERT INTO forum_votes (id, tenant_id, target_type, target_id, user_id, value, created_at, updated_at) VALUES (?, 'default', ?, ?, ?, ?, ?, ?)",
             [id, targetType, targetId, userId, value, now, now]);
         updateVoteCount(targetType, targetId, value);
     }
@@ -247,7 +248,7 @@ Plugin.unvote = function (input) {
     if (!targetType) return ok(err(400, "target_type required"));
     if (!targetId) return ok(err(400, "target_id required"));
 
-    var existing = query("SELECT id, value FROM forum_votes WHERE target_type = '" + escapeSQL(targetType) + "' AND target_id = '" + escapeSQL(targetId) + "' AND user_id = '" + escapeSQL(userId) + "'");
+    var existing = query("SELECT id, value FROM forum_votes WHERE target_type = ? AND target_id = ? AND user_id = ?", [targetType, targetId, userId]);
     if (!existing || existing.length === 0) return ok(err(404, "vote not found"));
 
     var oldValue = parseInt(existing[0].value, 10);
@@ -280,11 +281,11 @@ Plugin.createPoll = function (input) {
     if (maxChoices < 1) maxChoices = 1;
     if (maxChoices > options.length) maxChoices = options.length;
 
-    var topics = query("SELECT id, author_id FROM forum_topics WHERE id = '" + escapeSQL(topicId) + "'");
+    var topics = query("SELECT id, author_id FROM forum_topics WHERE id = ?", [topicId]);
     if (!topics || topics.length === 0) return ok(err(404, "topic not found"));
     if (topics[0].author_id !== userId) return ok(err(403, "only topic author can create poll"));
 
-    var existing = query("SELECT id FROM forum_polls WHERE topic_id = '" + escapeSQL(topicId) + "'");
+    var existing = query("SELECT id FROM forum_polls WHERE topic_id = ?", [topicId]);
     if (existing && existing.length > 0) return ok(err(400, "poll already exists for this topic"));
 
     var pollId = genId();
@@ -332,18 +333,18 @@ Plugin.getPoll = function (input) {
         }
     }
 
-    var polls = query("SELECT id, topic_id, question, max_choices, is_closed, created_at FROM forum_polls WHERE topic_id = '" + escapeSQL(topicId) + "'");
+    var polls = query("SELECT id, topic_id, question, max_choices, is_closed, created_at FROM forum_polls WHERE topic_id = ?", [topicId]);
     if (!polls || polls.length === 0) return ok(null);
 
     var poll = polls[0];
-    var options = query("SELECT id, text, CAST(vote_count AS TEXT) as vote_count, CAST(sort_order AS TEXT) as sort_order FROM forum_poll_options WHERE poll_id = '" + poll.id + "' ORDER BY sort_order");
+    var options = query("SELECT id, text, CAST(vote_count AS TEXT) as vote_count, CAST(sort_order AS TEXT) as sort_order FROM forum_poll_options WHERE poll_id = ? ORDER BY sort_order", [poll.id]);
 
-    var totalResult = query("SELECT CAST(SUM(vote_count) AS TEXT) as total FROM forum_poll_options WHERE poll_id = '" + poll.id + "'");
+    var totalResult = query("SELECT CAST(SUM(vote_count) AS TEXT) as total FROM forum_poll_options WHERE poll_id = ?", [poll.id]);
     var totalVotes = (totalResult && totalResult[0] && totalResult[0].total) ? parseInt(totalResult[0].total, 10) : 0;
 
     var userVotes = [];
     if (userId) {
-        var votes = query("SELECT option_id FROM forum_poll_votes WHERE poll_id = '" + poll.id + "' AND user_id = '" + escapeSQL(userId) + "'");
+        var votes = query("SELECT option_id FROM forum_poll_votes WHERE poll_id = ? AND user_id = ?", [poll.id, userId]);
         if (votes) {
             for (var i = 0; i < votes.length; i++) {
                 userVotes.push(votes[i].option_id);
@@ -385,7 +386,7 @@ Plugin.castVote = function (input) {
     if (!userId) return ok(err(400, "user_id required"));
     if (!optionIds || optionIds.length === 0) return ok(err(400, "option_ids required"));
 
-    var polls = query("SELECT id, topic_id, question, max_choices, is_closed FROM forum_polls WHERE id = '" + escapeSQL(pollId) + "'");
+    var polls = query("SELECT id, topic_id, question, max_choices, is_closed FROM forum_polls WHERE id = ?", [pollId]);
     if (!polls || polls.length === 0) return ok(err(404, "poll not found"));
 
     var poll = polls[0];
@@ -394,12 +395,12 @@ Plugin.castVote = function (input) {
     var maxChoices = parseInt(poll.max_choices, 10);
     if (optionIds.length > maxChoices) return ok(err(400, "too many choices (max " + maxChoices + ")"));
 
-    var existingVotes = query("SELECT option_id FROM forum_poll_votes WHERE poll_id = '" + escapeSQL(pollId) + "' AND user_id = '" + escapeSQL(userId) + "'");
+    var existingVotes = query("SELECT option_id FROM forum_poll_votes WHERE poll_id = ? AND user_id = ?", [pollId, userId]);
     if (existingVotes && existingVotes.length > 0) return ok(err(400, "already voted"));
 
     for (var i = 0; i < optionIds.length; i++) {
         var optId = optionIds[i];
-        var opts = query("SELECT id FROM forum_poll_options WHERE id = '" + escapeSQL(optId) + "' AND poll_id = '" + escapeSQL(pollId) + "'");
+        var opts = query("SELECT id FROM forum_poll_options WHERE id = ? AND poll_id = ?", [optId, pollId]);
         if (!opts || opts.length === 0) return ok(err(400, "option not found: " + optId));
 
         var voteId = genId();
@@ -419,10 +420,10 @@ Plugin.deletePoll = function (input) {
 
     if (!userId) return ok(err(400, "user_id required"));
 
-    var polls = query("SELECT id, topic_id FROM forum_polls WHERE id = '" + escapeSQL(pollId) + "'");
+    var polls = query("SELECT id, topic_id FROM forum_polls WHERE id = ?", [pollId]);
     if (!polls || polls.length === 0) return ok(err(404, "poll not found"));
 
-    var topics = query("SELECT author_id FROM forum_topics WHERE id = '" + escapeSQL(polls[0].topic_id) + "'");
+    var topics = query("SELECT author_id FROM forum_topics WHERE id = ?", [polls[0].topic_id]);
     if (!topics || topics.length === 0 || topics[0].author_id !== userId) return ok(err(403, "only topic author can delete poll"));
 
     exec("DELETE FROM forum_poll_votes WHERE poll_id = ?", [pollId]);

@@ -11,6 +11,7 @@ use crate::db::Pool;
 use crate::plugins::Permissions;
 use crate::plugins::permissions::PermissionChecker;
 use crate::plugins::vfs::VirtualFs;
+use crate::eventbus::{EventBus, Event};
 use sqlx::Arguments;
 use std::sync::Mutex;
 
@@ -31,6 +32,7 @@ pub struct HostContext {
     pool: Option<Pool>,
     tx: Mutex<Option<TxState>>,
     vfs: Option<Arc<VirtualFs>>,
+    event_bus: Option<EventBus>,
 }
 
 impl Clone for HostContext {
@@ -43,6 +45,7 @@ impl Clone for HostContext {
             pool: self.pool.clone(),
             tx: Mutex::new(None),
             vfs: self.vfs.clone(),
+            event_bus: self.event_bus.clone(),
         }
     }
 }
@@ -65,7 +68,13 @@ impl HostContext {
             pool,
             tx: Mutex::new(None),
             vfs: None,
+            event_bus: None,
         }
+    }
+
+    /// 设置事件总线（在 PluginManager 初始化后调用）
+    pub fn set_event_bus(&mut self, bus: EventBus) {
+        self.event_bus = Some(bus);
     }
 
     /// 返回插件 ID
@@ -213,9 +222,12 @@ impl HostContext {
         })
     }
 
-    /// 执行只读 SQL 查询（返回 JSON 数组字符串）
+    /// 执行只读 SQL 查询（返回 JSON 数组字符串）。
+    ///
+    /// 当 `params_json` 为 `Some` 时使用参数化查询（防 SQL 注入），
+    /// 为 `None` 时执行原始 SQL（向后兼容）。
     #[must_use]
-    pub fn db_query(&self, sql: &str) -> String {
+    pub fn db_query(&self, sql: &str, params_json: Option<&str>) -> String {
         if !PermissionChecker::is_readonly_query(sql) {
             return "error: only SELECT queries are allowed".to_string();
         }
@@ -232,11 +244,24 @@ impl HostContext {
         if !PermissionChecker::is_table_readable(&self.permissions, &table) {
             return format!("error: no read permission for table: {table}");
         }
+        let parsed_params = Self::parse_params(params_json);
+        if let Err(e) = &parsed_params {
+            return format!(r#"{{"error":"invalid params: {e}"}}"#);
+        }
         let handle = tokio::runtime::Handle::current();
         let sql = crate::db::dialect::translate(sql).into_owned();
         tokio::task::block_in_place(|| {
             match handle.block_on(async {
-                let rows = sqlx::query(&sql).fetch_all(pool).await?;
+                let rows = match parsed_params.unwrap() {
+                    Some(params) => {
+                        let mut args = sqlx::sqlite::SqliteArguments::default();
+                        for p in &params {
+                            Self::add_param(&mut args, p);
+                        }
+                        sqlx::query_with(&sql, args).fetch_all(pool).await?
+                    }
+                    None => sqlx::query(&sql).fetch_all(pool).await?,
+                };
                 let json = crate::plugins::rows_to_json(&rows);
                 Ok::<_, sqlx::Error>(json)
             }) {
@@ -270,23 +295,9 @@ impl HostContext {
         if !PermissionChecker::is_table_writable(&self.permissions, &table) {
             return format!(r#"{{"error":"no write permission for table: {table}"}}"#);
         }
-        let parsed_params = match params_json {
-            Some(pj) if !pj.is_empty() => {
-                let params: Vec<serde_json::Value> = match serde_json::from_str(pj) {
-                    Ok(p) => p,
-                    Err(e) => return format!(r#"{{"error":"invalid params JSON: {e}"}}"#),
-                };
-                for p in &params {
-                    if matches!(
-                        p,
-                        serde_json::Value::Array(_) | serde_json::Value::Object(_)
-                    ) {
-                        return format!(r#"{{"error":"unsupported param type: {p}"}}"#);
-                    }
-                }
-                Some(params)
-            }
-            _ => None,
+        let parsed_params = match Self::parse_params(params_json) {
+            Ok(p) => p,
+            Err(e) => return format!(r#"{{"error":"{e}"}}"#),
         };
 
         let tx_guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
@@ -317,25 +328,7 @@ impl HostContext {
                 Some(params) => {
                     let mut args = sqlx::sqlite::SqliteArguments::default();
                     for p in &params {
-                        match p {
-                            serde_json::Value::String(s) => {
-                                args.add(s.clone()).ok();
-                            }
-                            serde_json::Value::Number(n) => {
-                                if let Some(i) = n.as_i64() {
-                                    args.add(i).ok();
-                                } else {
-                                    args.add(n.as_f64().unwrap_or(0.0)).ok();
-                                }
-                            }
-                            serde_json::Value::Bool(b) => {
-                                args.add(*b).ok();
-                            }
-                            serde_json::Value::Null => {
-                                args.add(Option::<String>::None).ok();
-                            }
-                            _ => {}
-                        }
+                        Self::add_param(&mut args, p);
                     }
                     handle.block_on(async { sqlx::query_with(&sql, args).execute(pool).await })
                 }
@@ -477,6 +470,74 @@ impl HostContext {
         let info = vfs.stat(path).map_err(|e| e.to_string())?;
         serde_json::to_string(&info).map_err(|e| format!("error: {e}"))
     }
+
+    /// 插件主动触发自定义事件，通过 EventBus 广播。
+    ///
+    /// 其他插件可通过 Hook 监听，WebSocket 客户端也会收到推送。
+    /// 返回 `{"ok":true}` 或 `{"error":"..."}`。
+    #[must_use]
+    pub fn emit_event(&self, event_type: &str, data: &str) -> String {
+        match &self.event_bus {
+            Some(bus) => {
+                let data_value: serde_json::Value = serde_json::from_str(data)
+                    .unwrap_or(serde_json::Value::String(data.to_string()));
+                bus.emit(Event::Custom {
+                    source: self.plugin_id.clone(),
+                    event_type: event_type.to_string(),
+                    data: data_value,
+                });
+                tracing::info!(
+                    "[plugin:{}] emitted custom event: {}",
+                    self.plugin_id,
+                    event_type
+                );
+                r#"{"ok":true}"#.to_string()
+            }
+            None => r#"{"error":"event bus not available"}"#.to_string(),
+        }
+    }
+
+    /// 解析参数 JSON 为 Vec<serde_json::Value>
+    fn parse_params(
+        params_json: Option<&str>,
+    ) -> Result<Option<Vec<serde_json::Value>>, String> {
+        match params_json {
+            Some(pj) if !pj.is_empty() => {
+                let params: Vec<serde_json::Value> = serde_json::from_str(pj)
+                    .map_err(|e| format!("invalid params JSON: {e}"))?;
+                for p in &params {
+                    if matches!(p, serde_json::Value::Array(_) | serde_json::Value::Object(_)) {
+                        return Err(format!("unsupported param type: {p}"));
+                    }
+                }
+                Ok(Some(params))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// 将单个 JSON Value 添加到 sqlx 参数列表
+    fn add_param(args: &mut sqlx::sqlite::SqliteArguments, p: &serde_json::Value) {
+        match p {
+            serde_json::Value::String(s) => {
+                args.add(s.clone()).ok();
+            }
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    args.add(i).ok();
+                } else {
+                    args.add(n.as_f64().unwrap_or(0.0)).ok();
+                }
+            }
+            serde_json::Value::Bool(b) => {
+                args.add(*b).ok();
+            }
+            serde_json::Value::Null => {
+                args.add(Option::<String>::None).ok();
+            }
+            _ => {}
+        }
+    }
 }
 
 /// 在连接上执行参数化或原始写操作
@@ -585,7 +646,7 @@ mod tests {
     fn host_context_db_query_rejects_non_select() {
         let config = make_test_config();
         let ctx = HostContext::new("test", config, "p1".into(), Permissions::default(), None);
-        let result = ctx.db_query("DELETE FROM posts");
+        let result = ctx.db_query("DELETE FROM posts", None);
         assert!(result.contains("error"));
         assert!(!result.contains("status"));
     }
@@ -615,7 +676,7 @@ mod tests {
     fn host_context_db_query_returns_error_without_pool() {
         let config = make_test_config();
         let ctx = HostContext::new("test", config, "p1".into(), Permissions::default(), None);
-        let result = ctx.db_query("SELECT 1");
+        let result = ctx.db_query("SELECT 1", None);
         assert!(result.contains("no database access"));
     }
 
@@ -653,11 +714,11 @@ mod tests {
         let config = make_test_config();
         let ctx = HostContext::new("test", config, "p1".into(), Permissions::default(), None);
         assert!(
-            ctx.db_query("INSERT INTO posts VALUES(1)")
+            ctx.db_query("INSERT INTO posts VALUES(1)", None)
                 .contains("error")
         );
-        assert!(ctx.db_query("UPDATE posts SET title='x'").contains("error"));
-        assert!(ctx.db_query("DELETE FROM posts").contains("error"));
+        assert!(ctx.db_query("UPDATE posts SET title='x'", None).contains("error"));
+        assert!(ctx.db_query("DELETE FROM posts", None).contains("error"));
     }
 
     #[test]
@@ -669,7 +730,7 @@ mod tests {
         };
         // No pool → first check is "no database access", but even with pool it should fail
         let ctx = HostContext::new("test", config, "p1".into(), perms, None);
-        let result = ctx.db_query("SELECT * FROM posts");
+        let result = ctx.db_query("SELECT * FROM posts", None);
         assert!(result.contains("no database access"));
     }
 
@@ -787,7 +848,7 @@ mod tests {
         let config = make_test_config();
         let ctx = HostContext::new("test", config, "p1".into(), perms, Some(pool));
 
-        let result = ctx.db_query("SELECT COUNT(*) as cnt FROM posts");
+        let result = ctx.db_query("SELECT COUNT(*) as cnt FROM posts", None);
         assert!(!result.contains("error"));
         assert!(result.contains("cnt"));
     }
@@ -807,7 +868,7 @@ mod tests {
         let config = make_test_config();
         let ctx = HostContext::new("test", config, "p1".into(), perms, Some(pool));
 
-        let result = ctx.db_query("SELECT * FROM posts");
+        let result = ctx.db_query("SELECT * FROM posts", None);
         assert!(result.contains("no read permission"));
     }
 
@@ -826,7 +887,7 @@ mod tests {
         let config = make_test_config();
         let ctx = HostContext::new("test", config, "p1".into(), perms, Some(pool));
 
-        let result = ctx.db_query("SELECT COUNT(*) as cnt FROM posts");
+        let result = ctx.db_query("SELECT COUNT(*) as cnt FROM posts", None);
         assert!(!result.contains("error"));
     }
 

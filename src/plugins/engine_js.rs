@@ -54,10 +54,15 @@ pub struct JsEngine {
     config: Arc<AppConfig>,
     pool: Option<Pool>,
     pool_size: usize,
+    event_bus: Option<crate::eventbus::EventBus>,
 }
 
 impl JsEngine {
-    pub async fn new(config: &AppConfig, pool: Option<Pool>) -> anyhow::Result<Self> {
+    pub async fn new(
+        config: &AppConfig,
+        pool: Option<Pool>,
+        event_bus: Option<crate::eventbus::EventBus>,
+    ) -> anyhow::Result<Self> {
         let default_memory_limit_bytes = (config.plugin_max_memory_mb as usize) * 1024 * 1024;
         let pool_size = config.plugin_js_pool_size.max(1) as usize;
 
@@ -69,6 +74,7 @@ impl JsEngine {
             config: Arc::new(config.clone()),
             pool,
             pool_size,
+            event_bus,
         })
     }
 
@@ -99,6 +105,7 @@ impl JsEngine {
                 plugin_id,
                 perms,
                 self.pool.clone(),
+                self.event_bus.clone(),
             )?;
             ctx.eval::<(), _>(code)?;
             Ok::<_, rquickjs::Error>(())
@@ -302,13 +309,13 @@ mod tests {
 
     #[tokio::test]
     async fn js_engine_create() {
-        let engine = JsEngine::new(&test_config(), None).await;
+        let engine = JsEngine::new(&test_config(), None, None).await;
         assert!(engine.is_ok());
     }
 
     #[tokio::test]
     async fn js_engine_load_and_call_filter() {
-        let engine = JsEngine::new(&test_config(), None).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
         let code = r#"
 var Plugin = {
@@ -338,7 +345,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_call_filter_missing_plugin() {
-        let engine = JsEngine::new(&test_config(), None).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
         let result: Option<serde_json::Value> = engine
             .call_filter("nonexistent", "on_post_creating", &serde_json::json!({}))
             .await
@@ -348,7 +355,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_call_filter_missing_function() {
-        let engine = JsEngine::new(&test_config(), None).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
         let code = r#"var Plugin = {};"#;
         engine
@@ -365,7 +372,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_call_action() {
-        let engine = JsEngine::new(&test_config(), None).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
         let code = r#"
 var Plugin = {
@@ -392,7 +399,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_call_string_filter() {
-        let engine = JsEngine::new(&test_config(), None).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
         let code = r#"
 var Plugin = {
@@ -421,7 +428,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_unload_plugin() {
-        let engine = JsEngine::new(&test_config(), None).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
         let code = r#"var Plugin = {};"#;
         engine
@@ -436,7 +443,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_multiple_plugins() {
-        let engine = JsEngine::new(&test_config(), None).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
         for i in 0..3 {
             let code = format!(
@@ -453,7 +460,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_host_log_available() {
-        let engine = JsEngine::new(&test_config(), None).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
         let code = r#"
 var Plugin = {
@@ -472,7 +479,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_host_get_config_returns_value() {
-        let engine = JsEngine::new(&test_config(), None).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
         let code = r#"
 var Plugin = {
@@ -502,7 +509,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_syntax_error_fails_load() {
-        let engine = JsEngine::new(&test_config(), None).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
         let result = engine
             .load_plugin_default("test-bad-syntax", "var !!!invalid!!!")
             .await;
@@ -513,7 +520,7 @@ var Plugin = {
     async fn js_engine_timeout_interrupts_long_execution() {
         let mut config = (*test_config()).clone();
         config.plugin_default_timeout_ms = 100;
-        let engine = JsEngine::new(&Arc::new(config), None).await.unwrap();
+        let engine = JsEngine::new(&Arc::new(config), None, None).await.unwrap();
 
         let code = r#"
 var Plugin = {
@@ -537,7 +544,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_filter_chain_multiple_plugins() {
-        let engine = JsEngine::new(&test_config(), None).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
         let code_a = r#"
 var Plugin = {
@@ -579,7 +586,7 @@ var Plugin = {
 
     #[tokio::test]
     async fn js_engine_action_exception_does_not_crash() {
-        let engine = JsEngine::new(&test_config(), None).await.unwrap();
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
         let code = r#"
 var Plugin = {

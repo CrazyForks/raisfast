@@ -152,6 +152,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         Arc::new(config.clone()),
         crate::plugins::PluginManagerOptions {
             pool: Some(pool.clone()),
+            event_bus: Some(eventbus.clone()),
         },
     )
     .await;

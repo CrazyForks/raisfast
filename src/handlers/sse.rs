@@ -3,6 +3,7 @@
 //! 将 `EventBus` 的事件流转换为 HTTP SSE 推送，供前端实时接收业务事件。
 //! 支持按事件类型过滤和心跳保活。
 
+use std::borrow::Cow;
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -25,25 +26,26 @@ pub struct SubscribeQuery {
 }
 
 /// 提取事件类型名称
-pub fn event_type_name(event: &Event) -> &'static str {
+pub fn event_type_name(event: &Event) -> Cow<'static, str> {
     match event {
-        Event::PostCreating { .. } => "PostCreating",
-        Event::PostCreated { .. } => "PostCreated",
-        Event::PostUpdated { .. } => "PostUpdated",
-        Event::PostDeleted { .. } => "PostDeleted",
-        Event::CommentCreated { .. } => "CommentCreated",
-        Event::CommentDeleted { .. } => "CommentDeleted",
-        Event::ContentCreating { .. } => "ContentCreating",
-        Event::ContentCreated { .. } => "ContentCreated",
-        Event::ContentUpdating { .. } => "ContentUpdating",
-        Event::ContentUpdated { .. } => "ContentUpdated",
-        Event::ContentDeleted { .. } => "ContentDeleted",
-        Event::UserRegistered { .. } => "UserRegistered",
-        Event::UserLoggedIn { .. } => "UserLoggedIn",
-        Event::MediaUploaded { .. } => "MediaUploaded",
-        Event::MediaDeleted { .. } => "MediaDeleted",
-        Event::PasswordResetRequested { .. } => "PasswordResetRequested",
-        Event::EmailVerificationRequested { .. } => "EmailVerificationRequested",
+        Event::PostCreating { .. } => Cow::Borrowed("PostCreating"),
+        Event::PostCreated { .. } => Cow::Borrowed("PostCreated"),
+        Event::PostUpdated { .. } => Cow::Borrowed("PostUpdated"),
+        Event::PostDeleted { .. } => Cow::Borrowed("PostDeleted"),
+        Event::CommentCreated { .. } => Cow::Borrowed("CommentCreated"),
+        Event::CommentDeleted { .. } => Cow::Borrowed("CommentDeleted"),
+        Event::ContentCreating { .. } => Cow::Borrowed("ContentCreating"),
+        Event::ContentCreated { .. } => Cow::Borrowed("ContentCreated"),
+        Event::ContentUpdating { .. } => Cow::Borrowed("ContentUpdating"),
+        Event::ContentUpdated { .. } => Cow::Borrowed("ContentUpdated"),
+        Event::ContentDeleted { .. } => Cow::Borrowed("ContentDeleted"),
+        Event::UserRegistered { .. } => Cow::Borrowed("UserRegistered"),
+        Event::UserLoggedIn { .. } => Cow::Borrowed("UserLoggedIn"),
+        Event::MediaUploaded { .. } => Cow::Borrowed("MediaUploaded"),
+        Event::MediaDeleted { .. } => Cow::Borrowed("MediaDeleted"),
+        Event::PasswordResetRequested { .. } => Cow::Borrowed("PasswordResetRequested"),
+        Event::EmailVerificationRequested { .. } => Cow::Borrowed("EmailVerificationRequested"),
+        Event::Custom { event_type, .. } => Cow::Owned(event_type.clone()),
     }
 }
 
@@ -75,7 +77,7 @@ pub async fn subscribe(
 
         let type_name = event_type_name(arc_event.as_ref());
 
-        if !filter_types.is_empty() && !filter_types.iter().any(|f| f == type_name) {
+        if !filter_types.is_empty() && !filter_types.iter().any(|f| f == type_name.as_ref()) {
             return None;
         }
 
@@ -170,9 +172,17 @@ mod tests {
                 "MediaUploaded",
             ),
             (Event::MediaDeleted { id: "1".into() }, "MediaDeleted"),
+            (
+                Event::Custom {
+                    source: "test-plugin".into(),
+                    event_type: "OrderCreated".into(),
+                    data: serde_json::json!({"order_id": "o1"}),
+                },
+                "OrderCreated",
+            ),
         ];
 
-        assert_eq!(cases.len(), 10, "所有 Event 变体都应有对应名称");
+        assert_eq!(cases.len(), 11, "所有 Event 变体都应有对应名称");
         for (event, expected_name) in &cases {
             assert_eq!(event_type_name(event), *expected_name);
         }
@@ -252,7 +262,7 @@ mod tests {
                 .unwrap()
                 .unwrap();
             let name = event_type_name(event.as_ref());
-            if allowed.iter().any(|a| a == name) {
+            if allowed.iter().any(|a| *a == name.as_ref()) {
                 received.push(name.to_string());
             }
         }
@@ -292,7 +302,7 @@ mod tests {
                 .unwrap()
                 .unwrap();
             let name = event_type_name(event.as_ref());
-            if allowed.iter().any(|a| a == name) {
+            if allowed.iter().any(|a| *a == name.as_ref()) {
                 received.push(name.to_string());
             }
         }

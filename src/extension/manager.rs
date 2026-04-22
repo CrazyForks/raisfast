@@ -208,6 +208,31 @@ impl ExtensionManager {
                     ext_id
                 ))
             })?;
+        } else if let Some(ref existing) = db_record {
+            let new_version = &manifest.extension.version;
+            if existing.version != *new_version {
+                tracing::info!(
+                    "extension '{}' upgrading: {} → {}",
+                    ext_id,
+                    existing.version,
+                    new_version
+                );
+                if let Err(e) = self
+                    .run_extension_migrations(ext_root, &existing.version, new_version)
+                    .await
+                {
+                    tracing::error!("extension '{}' migration failed: {e}", ext_id);
+                }
+                let (_, now) = crate::utils::id::new_id_and_timestamp();
+                model::update_version(&self.pool, ext_id, new_version, &manifest.extension.name, &now)
+                    .await
+                    .map_err(|e| {
+                        AppError::Internal(anyhow::anyhow!(
+                            "extension '{}': update version failed: {e}",
+                            ext_id
+                        ))
+                    })?;
+            }
         }
 
         if let Some(ct_dir) = manifest.content_types_dir(ext_root)
@@ -286,6 +311,68 @@ impl ExtensionManager {
         }
 
         Ok(names)
+    }
+
+    /// 执行 Extension 目录下的自定义 SQL 迁移脚本。
+    ///
+    /// 迁移文件放在 `extensions/{ext_id}/migrations/` 目录下，
+    /// 文件名格式：`{version}.sql`（如 `0.2.0.sql`）。
+    /// 仅执行版本号大于 old_version 且小于等于 new_version 的脚本。
+    async fn run_extension_migrations(
+        &self,
+        ext_root: &Path,
+        old_version: &str,
+        new_version: &str,
+    ) -> AppResult<()> {
+        let migrations_dir = ext_root.join("migrations");
+        if !migrations_dir.exists() {
+            tracing::debug!(
+                "no migrations/ directory for extension, skipping custom migrations"
+            );
+            return Ok(());
+        }
+
+        let entries = std::fs::read_dir(&migrations_dir).map_err(|e| {
+            AppError::Internal(anyhow::anyhow!(
+                "cannot read migrations dir {migrations_dir:?}: {e}"
+            ))
+        })?;
+
+        let mut migration_files: Vec<(String, std::path::PathBuf)> = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "sql") {
+                let stem = path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                migration_files.push((stem, path));
+            }
+        }
+
+        migration_files.sort_by(|a, b| a.0.cmp(&b.0));
+
+        for (version, path) in &migration_files {
+            if version.as_str() > old_version && version.as_str() <= new_version {
+                let sql =
+                    std::fs::read_to_string(path)
+                        .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+                tracing::info!("running extension migration: {} ({})", path.display(), version);
+                sqlx::query(&sql)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| {
+                        AppError::Internal(anyhow::anyhow!(
+                            "migration {} failed: {e}",
+                            path.display()
+                        ))
+                    })?;
+            }
+        }
+
+        Ok(())
     }
 
     /// 获取所有已加载 Extension 列表

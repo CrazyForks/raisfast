@@ -97,6 +97,13 @@ pub enum Event {
         email: String,
         verify_token: String,
     },
+
+    // ── 插件自定义事件 ──
+    Custom {
+        source: String,
+        event_type: String,
+        data: serde_json::Value,
+    },
 }
 
 /// 事件订阅者

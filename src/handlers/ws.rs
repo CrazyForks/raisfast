@@ -107,7 +107,7 @@ async fn handle_socket(socket: WebSocket, state: crate::AppState, initial_filter
                         let type_name = event_type_name(arc_event.as_ref());
 
                         if !filter_types.is_empty()
-                            && !filter_types.iter().any(|f| f == type_name)
+                            && !filter_types.iter().any(|f| f == type_name.as_ref())
                         {
                             continue;
                         }

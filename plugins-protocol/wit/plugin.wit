@@ -52,7 +52,7 @@ interface host-api {
     get-data: func(key: string) -> option<string>;
     set-data: func(key: string, value: string) -> bool;
     get-post: func(slug: string) -> option<string>;
-    db-query: func(sql: string) -> string;
+    db-query: func(sql: string, params: option<string>) -> string;
     db-execute: func(sql: string, params: option<string>) -> string;
     db-begin: func() -> string;
     db-commit: func() -> string;
@@ -63,6 +63,7 @@ interface host-api {
     fs-exists: func(path: string) -> bool;
     fs-list: func(path: string) -> option<string>;
     fs-stat: func(path: string) -> option<string>;
+    emit-event: func(event-type: string, data: string) -> string;
 }
 
 interface plugin-hooks {

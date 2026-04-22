@@ -1,5 +1,3 @@
-// ── 工具函数 ──────────────────────────────────────────────────
-
 var Plugin = {};
 
 function ok(result) {
@@ -14,13 +12,29 @@ function err(status, msg) {
 }
 
 function parseBody(input) {
-    try { return input.body ? JSON.parse(input.body) : {}; }
-    catch (e) { return {}; }
+    try {
+        if (typeof input === "string") {
+            var parsed = JSON.parse(input);
+            if (parsed && typeof parsed.body === "string" && parsed.body.charAt(0) === "{") {
+                return JSON.parse(parsed.body);
+            }
+            return parsed;
+        }
+        if (input && input.body) return JSON.parse(input.body);
+        return {};
+    } catch (e) { return {}; }
 }
 
-function routeParam(input) {
-    var parts = (input.path || "").replace(/\/+$/, "").split("/");
-    return parts[parts.length - 1];
+function routeParam(input, index) {
+    var obj = input;
+    if (typeof input === "string") {
+        try { obj = JSON.parse(input); } catch (e) { return ""; }
+    }
+    var path = (obj.path || "").replace(/\/+$/, "");
+    var qIdx = path.indexOf("?");
+    if (qIdx >= 0) path = path.substring(0, qIdx);
+    var parts = path.split("/");
+    return parts[parts.length - (index || 1)];
 }
 
 function genId() {
@@ -31,8 +45,8 @@ function genId() {
     });
 }
 
-function query(sql) {
-    var result = Host.dbQuery(sql);
+function query(sql, params) {
+    var result = Host.dbQuery(sql, params ? JSON.stringify(params) : null);
     if (!result || result.indexOf("error:") === 0) return null;
     return JSON.parse(result);
 }
@@ -54,7 +68,7 @@ Plugin.listProducts = function(input) {
 
 Plugin.getProduct = function(input) {
     var id = routeParam(input);
-    var rows = query("SELECT id, name, slug, description, price, compare_at_price, stock, sku, images, featured, weight FROM products WHERE id = '" + id + "' AND status = 'published'");
+    var rows = query("SELECT id, name, slug, description, price, compare_at_price, stock, sku, images, featured, weight FROM products WHERE id = ? AND status = 'published'", [id]);
     if (!rows) return ok(err(500, "query failed"));
     if (rows.length === 0) return ok(err(404, "product not found"));
     return ok(rows[0]);
@@ -66,7 +80,7 @@ Plugin.viewCart = function(input) {
     var data = parseBody(input);
     var userId = data.user_id;
     if (!userId) return ok(err(400, "user_id required"));
-    var rows = query("SELECT c.id as cart_id, c.product_id, c.quantity, p.name, p.price, p.stock, p.images, p.sku FROM cart_items c LEFT JOIN products p ON c.product_id = p.id WHERE c.user_id = '" + userId + "' ORDER BY c.created_at DESC");
+    var rows = query("SELECT c.id as cart_id, c.product_id, c.quantity, p.name, p.price, p.stock, p.sku FROM cart_items c LEFT JOIN products p ON c.product_id = p.id WHERE c.user_id = ?", [userId]);
     if (!rows) return ok(err(500, "query failed"));
     var total = 0;
     for (var i = 0; i < rows.length; i++) {
@@ -85,13 +99,13 @@ Plugin.addToCart = function(input) {
     var quantity = data.quantity || 1;
     if (!userId || !productId) return ok(err(400, "user_id and product_id required"));
 
-    var products = query("SELECT id, name, price, stock, status FROM products WHERE id = '" + productId + "'");
+    var products = query("SELECT id, name, price, stock, status FROM products WHERE id = ?", [productId]);
     if (!products) return ok(err(500, "query failed"));
     if (products.length === 0) return ok(err(404, "product not found"));
     if (products[0].status !== "published") return ok(err(400, "product not available"));
     if (products[0].stock < quantity) return ok(err(400, "insufficient stock"));
 
-    var existing = query("SELECT id, quantity FROM cart_items WHERE user_id = '" + userId + "' AND product_id = '" + productId + "'");
+    var existing = query("SELECT id, quantity FROM cart_items WHERE user_id = ? AND product_id = ?", [userId, productId]);
     if (!existing) return ok(err(500, "query failed"));
 
     if (existing.length > 0) {
@@ -100,7 +114,8 @@ Plugin.addToCart = function(input) {
         if (r.error) return ok(err(500, r.error));
     } else {
         var id = genId();
-        var r = exec("INSERT INTO cart_items (id, user_id, product_id, quantity) VALUES (?, ?, ?, ?)", [id, userId, productId, quantity]);
+        var now = new Date().toISOString();
+        var r = exec("INSERT INTO cart_items (id, tenant_id, user_id, product_id, quantity, created_at, updated_at) VALUES (?, 'default', ?, ?, ?, ?, ?)", [id, userId, productId, quantity, now, now]);
         if (r.error) return ok(err(500, r.error));
     }
     return ok({ added: true });
@@ -140,14 +155,14 @@ Plugin.removeCartItem = function(input) {
     return ok({ removed: true });
 }
 
-// ── POST /checkout ───────────────────────────────────────────
+// ── POST /checkout (事务) ────────────────────────────────────
 
 Plugin.checkout = function(input) {
     var data = parseBody(input);
     var userId = data.user_id;
     if (!userId) return ok(err(400, "user_id required"));
 
-    var cartItems = query("SELECT c.id as cart_id, c.product_id, c.quantity, p.name, p.price, p.stock, p.status FROM cart_items c LEFT JOIN products p ON c.product_id = p.id WHERE c.user_id = '" + userId + "'");
+    var cartItems = query("SELECT c.id as cart_id, c.product_id, c.quantity, p.name, p.price, p.stock, p.status FROM cart_items c LEFT JOIN products p ON c.product_id = p.id WHERE c.user_id = ?", [userId]);
     if (!cartItems) return ok(err(500, "query failed"));
     if (cartItems.length === 0) return ok(err(400, "cart is empty"));
 
@@ -167,15 +182,21 @@ Plugin.checkout = function(input) {
         orderItems.push({ product_id: item.product_id, product_name: item.name, price: item.price, quantity: item.quantity, subtotal: subtotal });
     }
 
+    var beginResult = JSON.parse(Host.dbBegin());
+    if (!beginResult.ok) return ok(err(500, "failed to begin transaction"));
+
     var orderId = genId();
     var orderNo = "ORD-" + Date.now().toString(36).toUpperCase() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase();
     var shippingJson = data.shipping_address ? JSON.stringify(data.shipping_address) : "";
 
     var r = exec(
-        "INSERT INTO orders (id, order_no, user_id, status, total_amount, shipping_address, note) VALUES (?, ?, ?, 'pending', ?, ?, ?)",
-        [orderId, orderNo, userId, totalAmount, shippingJson, data.note || ""]
+        "INSERT INTO orders (id, tenant_id, order_no, user_id, status, total_amount, shipping_address, note, created_at, updated_at) VALUES (?, 'default', ?, ?, 'pending', ?, ?, ?, ?, ?)",
+        [orderId, orderNo, userId, totalAmount, shippingJson, data.note || "", new Date().toISOString(), new Date().toISOString()]
     );
-    if (r.error) return ok(err(500, "create order failed: " + r.error));
+    if (r.error) {
+        Host.dbRollback();
+        return ok(err(500, "create order failed: " + r.error));
+    }
 
     for (var i = 0; i < orderItems.length; i++) {
         var oi = orderItems[i];
@@ -185,18 +206,21 @@ Plugin.checkout = function(input) {
             [oiId, orderId, oi.product_id, oi.product_name, oi.price, oi.quantity, oi.subtotal]
         );
         if (r2.error) {
-            exec("UPDATE orders SET status = 'cancelled' WHERE id = ?", [orderId]);
+            Host.dbRollback();
             return ok(err(500, "create order item failed: " + r2.error));
         }
 
         var r3 = exec("UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?", [oi.quantity, oi.product_id, oi.quantity]);
         if (r3.error || r3.rows_affected === 0) {
-            exec("UPDATE orders SET status = 'cancelled' WHERE id = ?", [orderId]);
+            Host.dbRollback();
             return ok(err(500, "stock deduction failed for " + oi.product_name));
         }
     }
 
     exec("DELETE FROM cart_items WHERE user_id = ?", [userId]);
+
+    var commitResult = JSON.parse(Host.dbCommit());
+    if (!commitResult.ok) return ok(err(500, "commit failed"));
 
     return ok({
         order_id: orderId,
@@ -212,7 +236,7 @@ Plugin.checkout = function(input) {
 Plugin.listOrders = function(input) {
     var data = parseBody(input);
     if (!data.user_id) return ok(err(400, "user_id required"));
-    var rows = query("SELECT id, order_no, status, total_amount, note, created_at FROM orders WHERE user_id = '" + data.user_id + "' ORDER BY created_at DESC LIMIT 50");
+    var rows = query("SELECT id, order_no, status, total_amount, note, created_at FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 50", [data.user_id]);
     if (!rows) return ok(err(500, "query failed"));
     return ok({ items: rows, total: rows.length });
 }
@@ -223,13 +247,13 @@ Plugin.getOrder = function(input) {
     var orderId = routeParam(input);
     var data = parseBody(input);
     if (!orderId) return ok(err(400, "order id required"));
-    var orders = query("SELECT id, order_no, user_id, status, total_amount, shipping_address, note, paid_at, shipped_at, created_at FROM orders WHERE id = '" + orderId + "'");
+    var orders = query("SELECT id, order_no, user_id, status, total_amount, shipping_address, note, paid_at, shipped_at, created_at FROM orders WHERE id = ?", [orderId]);
     if (!orders) return ok(err(500, "query failed"));
     if (orders.length === 0) return ok(err(404, "order not found"));
     var order = orders[0];
     if (data.user_id && order.user_id !== data.user_id) return ok(err(403, "forbidden"));
 
-    var items = query("SELECT id, product_id, product_name, price, quantity, subtotal FROM order_items WHERE order_id = '" + orderId + "'");
+    var items = query("SELECT id, product_id, product_name, price, quantity, subtotal FROM order_items WHERE order_id = ?", [orderId]);
     order.items = items || [];
     return ok(order);
 }

@@ -40,8 +40,8 @@ impl Host for Arc<HostContext> {
         (**self).get_post(&slug)
     }
 
-    fn db_query(&mut self, sql: String) -> String {
-        (**self).db_query(&sql)
+    fn db_query(&mut self, sql: String, params: Option<String>) -> String {
+        (**self).db_query(&sql, params.as_deref())
     }
 
     fn db_execute(&mut self, sql: String, params: Option<String>) -> String {
@@ -85,5 +85,9 @@ impl Host for Arc<HostContext> {
 
     fn fs_stat(&mut self, path: String) -> Option<String> {
         (**self).fs_stat(&path).ok()
+    }
+
+    fn emit_event(&mut self, event_type: String, data: String) -> String {
+        (**self).emit_event(&event_type, &data)
     }
 }
