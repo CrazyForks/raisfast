@@ -62,6 +62,9 @@ pub struct ListParams {
     /// 跳过 COUNT(*) 查询以提升性能，total 返回 -1
     #[serde(default)]
     pub skip_total: Option<bool>,
+    /// 额外字段过滤（匹配 content type schema 字段名）
+    #[serde(flatten)]
+    pub extra: HashMap<String, String>,
 }
 
 /// 为所有 content type 注册动态路由（启动时调用）
@@ -295,11 +298,25 @@ pub async fn do_list(
         .map(|(w, p)| (Some(w), p))
         .unwrap_or_default();
 
+    let filters: HashMap<String, Value> = params
+        .extra
+        .iter()
+        .filter(|(key, _)| ct.get_field(key).is_some())
+        .map(|(k, v)| {
+            let col = ct
+                .get_field(k)
+                .and_then(|f| f.relation.as_ref().map(|r| r.foreign_key.clone()))
+                .flatten()
+                .unwrap_or_else(|| k.clone());
+            (col, Value::String(v.clone()))
+        })
+        .collect();
+
     let query = ContentQuery {
         page: params.page.unwrap_or(1),
         page_size: params.page_size.unwrap_or(20),
         sort: params.sort,
-        filters: HashMap::new(),
+        filters,
         status: if ct.draft_publish {
             Some(params.status.unwrap_or_else(|| "published".into()))
         } else {

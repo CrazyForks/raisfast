@@ -117,19 +117,11 @@ export const forum = {
 
   listBoardTopics: async (slug: string, page = 1, pageSize = 20) => {
     const boards = await api.get<PaginatedResult<ForumBoard>>("/cms/forum_boards?page_size=100").then((d) => d.items);
-    const board = boards.find((b) => b.slug === slug);
+    const board = boards.find((b: ForumBoard) => b.slug === slug);
     if (!board) throw new Error("Board not found");
-    const result = await api.get<PaginatedResult<ForumTopic>>(
-      `/cms/forum_topics?page=${page}&page_size=${pageSize}`,
-    );
-    const filtered = result.items.filter((t) => t.board_id === board.id);
-    return {
-      items: filtered,
-      total: filtered.length,
-      page,
-      page_size: pageSize,
-      board_id: board.id,
-    } as BoardTopicsResult;
+    return api.get<BoardTopicsResult>(
+      `/cms/forum_topics?page=${page}&page_size=${pageSize}&board=${board.id}`,
+    ).then((result) => ({ ...result, board_id: board.id }));
   },
 
   getTopic: (id: string) =>
@@ -175,4 +167,13 @@ export const forum = {
 
   deletePoll: (userId: string, pollId: string) =>
     pluginDelete<{ deleted: true }>(`/polls/${pollId}`, { user_id: userId }),
+
+  updateTopic: (id: string, data: Record<string, unknown>) =>
+    api.put<ForumTopic>(`/cms/forum_topics/${id}`, data),
+
+  deleteTopic: (id: string) =>
+    api.delete(`/cms/forum_topics/${id}`),
+
+  deleteReply: (id: string) =>
+    api.delete(`/cms/forum_replies/${id}`),
 };

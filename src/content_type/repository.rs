@@ -136,7 +136,13 @@ impl ContentRepository {
         }
 
         for (key, val) in &query.filters {
-            if let Some(_field) = ct.get_field(key) {
+            let matches_field = ct.get_field(key).is_some();
+            let matches_fk = ct.fields.iter().any(|f| {
+                f.relation
+                    .as_ref()
+                    .is_some_and(|r| r.foreign_key.as_deref() == Some(key.as_str()))
+            });
+            if matches_field || matches_fk {
                 where_clauses.push(format!("{} = {}", key, placeholder(param_idx)));
                 params.push(val.clone());
                 param_idx += 1;

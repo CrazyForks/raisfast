@@ -52,6 +52,7 @@ impl QueryRoot {
             search,
             include,
             skip_total,
+            extra: std::collections::HashMap::new(),
         };
 
         let result = do_list(&state, &ct, params, auth.as_ref())

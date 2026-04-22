@@ -15,8 +15,13 @@ import {
   Send,
   Reply,
   BarChart3,
+  Trash2,
+  PinOff,
+  Unlock,
+  Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -65,6 +70,18 @@ function ReplyItem({
     },
     onError: () => toast.error("Failed to accept answer"),
   });
+
+  const deleteReplyMut = useMutation({
+    mutationFn: () => forum.deleteReply(reply.id),
+    onSuccess: () => {
+      toast.success("Reply deleted");
+      queryClient.invalidateQueries({ queryKey: ["forum-topic", topic.id] });
+    },
+    onError: () => toast.error("Failed to delete reply"),
+  });
+
+  const isAdmin = useAuthStore((s) => s.isAdmin());
+  const canDeleteReply = isAdmin || reply.author_id === user?.id;
 
   return (
     <div className={`space-y-2 py-4 ${reply.is_answer ? "rounded-lg border-2 border-green-500/30 bg-green-500/5 p-4" : ""}`}>
@@ -133,6 +150,18 @@ function ReplyItem({
               >
                 <CheckCircle2 className="h-3 w-3" />
                 Accept
+              </Button>
+            )}
+            {canDeleteReply && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 text-xs text-destructive hover:text-destructive"
+                onClick={() => { if (confirm("Delete this reply?")) deleteReplyMut.mutate(); }}
+                disabled={deleteReplyMut.isPending}
+              >
+                <Trash2 className="h-3 w-3" />
+                Delete
               </Button>
             )}
           </div>
@@ -351,6 +380,7 @@ function PollWidget({ topicId, isAuthor }: { topicId: string; isAuthor: boolean 
 
 export default function TopicDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = React.use(params);
+  const router = useRouter();
   const queryClient = useQueryClient();
   const isLoggedIn = useAuthStore((s) => s.isLoggedIn());
   const { user } = useAuthStore();
@@ -367,6 +397,28 @@ export default function TopicDetailPage({ params }: { params: Promise<{ id: stri
     mutationFn: (value: number) =>
       forum.vote(user!.id, "topic", id, value),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["forum-topic", id] }),
+  });
+
+  const isAdmin = useAuthStore((s) => s.isAdmin());
+  const isAuthor = topic?.author_id === user?.id;
+  const canManage = isAdmin || isAuthor;
+
+  const pinMut = useMutation({
+    mutationFn: (pinned: boolean) => forum.updateTopic(id, { is_pinned: pinned }),
+    onSuccess: () => { toast.success("Updated"); queryClient.invalidateQueries({ queryKey: ["forum-topic", id] }); },
+    onError: () => toast.error("Failed"),
+  });
+
+  const lockMut = useMutation({
+    mutationFn: (locked: boolean) => forum.updateTopic(id, { is_locked: locked }),
+    onSuccess: () => { toast.success("Updated"); queryClient.invalidateQueries({ queryKey: ["forum-topic", id] }); },
+    onError: () => toast.error("Failed"),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: () => forum.deleteTopic(id),
+    onSuccess: () => { toast.success("Deleted"); router.push("/forum"); },
+    onError: () => toast.error("Failed to delete"),
   });
 
   if (isLoading) {
@@ -402,9 +454,9 @@ export default function TopicDetailPage({ params }: { params: Promise<{ id: stri
 
       <div>
         <div className="flex items-center gap-2">
-          {topic.is_pinned && <Pin className="h-4 w-4 text-orange-500" />}
-          {topic.is_locked && <Lock className="h-4 w-4 text-yellow-500" />}
-          {topic.is_solved && <CheckCircle2 className="h-4 w-4 text-green-500" />}
+          {topic.is_pinned === true && <Pin className="h-4 w-4 text-orange-500" />}
+          {topic.is_locked === true && <Lock className="h-4 w-4 text-yellow-500" />}
+          {topic.is_solved === true && <CheckCircle2 className="h-4 w-4 text-green-500" />}
           <h1 className="text-xl font-bold">{topic.title}</h1>
         </div>
         <div className="mt-2 flex items-center gap-3 text-sm text-muted-foreground">
@@ -461,6 +513,50 @@ export default function TopicDetailPage({ params }: { params: Promise<{ id: stri
               <ThumbsDown className="h-3 w-3" />
             </Button>
           </div>
+          {canManage && mounted && (
+            <div className="mt-3 flex items-center gap-1.5 border-t pt-3">
+              <Link href={`/forum/topic/${id}/edit`}>
+                <Button variant="outline" size="sm" className="h-7 gap-1 text-xs">
+                  <Pencil className="h-3 w-3" />
+                  Edit
+                </Button>
+              </Link>
+              {isAdmin && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1 text-xs"
+                  onClick={() => pinMut.mutate(!topic.is_pinned)}
+                  disabled={pinMut.isPending}
+                >
+                  {topic.is_pinned ? <PinOff className="h-3 w-3" /> : <Pin className="h-3 w-3" />}
+                  {topic.is_pinned ? "Unpin" : "Pin"}
+                </Button>
+              )}
+              {isAdmin && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1 text-xs"
+                  onClick={() => lockMut.mutate(!topic.is_locked)}
+                  disabled={lockMut.isPending}
+                >
+                  {topic.is_locked ? <Unlock className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+                  {topic.is_locked ? "Unlock" : "Lock"}
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1 text-xs text-destructive hover:text-destructive"
+                onClick={() => { if (confirm("Delete this topic?")) deleteMut.mutate(); }}
+                disabled={deleteMut.isPending}
+              >
+                <Trash2 className="h-3 w-3" />
+                Delete
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -536,9 +632,7 @@ function RepliesList({
   const { data, isLoading } = useQuery({
     queryKey: ["forum-replies", topicId],
     queryFn: async () => {
-      const res = await api.get<PaginatedResult<ForumReply>>("/cms/forum_replies?page_size=100");
-      const filtered = res.items.filter((r) => r.topic_id === topicId);
-      return { items: filtered, total: filtered.length };
+      return api.get<PaginatedResult<ForumReply>>(`/cms/forum_replies?page_size=100&topic=${topicId}`);
     },
   });
 
