@@ -60,6 +60,21 @@ pub enum Job {
         keys: Vec<String>,
     },
     GenerateSitemap,
+    SendPasswordResetEmail {
+        user_id: String,
+        email: String,
+        reset_token: String,
+    },
+    SendSmsCode {
+        phone: String,
+        code: String,
+        purpose: String,
+    },
+    SendEmailVerification {
+        user_id: String,
+        email: String,
+        verify_token: String,
+    },
     /// 自定义任务类型，支持任意 `job_type` + JSON payload
     ///
     /// 内置 Handler 无法匹配时，WorkerRunner 会 fallback 到插件调度。
@@ -81,6 +96,9 @@ impl Job {
             Job::RebuildSearchIndex { .. } => "rebuild_search_index",
             Job::InvalidateCache { .. } => "invalidate_cache",
             Job::GenerateSitemap => "generate_sitemap",
+            Job::SendPasswordResetEmail { .. } => "send_password_reset_email",
+            Job::SendSmsCode { .. } => "send_sms_code",
+            Job::SendEmailVerification { .. } => "send_email_verification",
             Job::Custom { job_type, .. } => job_type,
         }
     }

@@ -1,164 +1,89 @@
 //! WASM 宿主函数 — Component Model 绑定层
 //!
-//! 通过 wasmtime component Linker 注册 `host-api` 接口实现。
-//! 所有函数通过 `Caller<'_, Arc<HostContext>>` 访问公共业务逻辑。
+//! 通过 wasmtime 26 bindgen 生成的 Host trait 实现导入接口。
+//! 所有函数委托给 HostContext 的业务逻辑方法。
 
 use std::sync::Arc;
 
-use wasmtime::component::Linker;
-
+use crate::plugins::bindings::rust_blog::plugin_protocol::host_api::Host;
+use crate::plugins::bindings::rust_blog::plugin_protocol::types::Host as TypesHost;
 use crate::plugins::host_common::HostContext;
 
-/// 注册所有 Host Functions 到 component Linker。
-pub fn register_host_functions(linker: &mut Linker<Arc<HostContext>>) -> anyhow::Result<()> {
-    linker
-        .root()
-        .instance("host-api")?
-        .func_wrap("log", host_log)?
-        .func_wrap("get-config", host_get_config)?
-        .func_wrap("http-get", host_http_get)?
-        .func_wrap("http-post", host_http_post)?
-        .func_wrap("get-data", host_get_data)?
-        .func_wrap("set-data", host_set_data)?
-        .func_wrap("get-post", host_get_post)?
-        .func_wrap("db-query", host_db_query)?
-        .func_wrap("db-execute", host_db_execute)?
-        .func_wrap("db-begin", host_db_begin)?
-        .func_wrap("db-commit", host_db_commit)?
-        .func_wrap("db-rollback", host_db_rollback)?
-        .func_wrap("fs-read", host_fs_read)?
-        .func_wrap("fs-write", host_fs_write)?
-        .func_wrap("fs-delete", host_fs_delete)?
-        .func_wrap("fs-exists", host_fs_exists)?
-        .func_wrap("fs-list", host_fs_list)?
-        .func_wrap("fs-stat", host_fs_stat)?;
-    Ok(())
-}
+impl TypesHost for Arc<HostContext> {}
 
-fn host_log(
-    mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>,
-    level: String,
-    msg: String,
-) {
-    caller.data().log(&level, &msg);
-}
+impl Host for Arc<HostContext> {
+    fn log(&mut self, level: String, msg: String) {
+        (**self).log(&level, &msg);
+    }
 
-fn host_get_config(
-    mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>,
-    key: String,
-) -> Option<String> {
-    caller.data().get_config(&key)
-}
+    fn get_config(&mut self, key: String) -> Option<String> {
+        (**self).get_config(&key)
+    }
 
-fn host_http_get(
-    mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>,
-    url: String,
-) -> Option<String> {
-    let result = caller.data().http_get(&url);
-    Some(result)
-}
+    fn http_get(&mut self, url: String) -> Option<String> {
+        Some((**self).http_get(&url))
+    }
 
-fn host_http_post(
-    mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>,
-    url: String,
-    body: String,
-) -> Option<String> {
-    let result = caller.data().http_post(&url, &body);
-    Some(result)
-}
+    fn http_post(&mut self, url: String, body: String) -> Option<String> {
+        Some((**self).http_post(&url, &body))
+    }
 
-fn host_get_data(
-    mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>,
-    key: String,
-) -> Option<String> {
-    caller.data().get_data(&key)
-}
+    fn get_data(&mut self, key: String) -> Option<String> {
+        (**self).get_data(&key)
+    }
 
-fn host_set_data(
-    mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>,
-    key: String,
-    value: String,
-) -> bool {
-    caller.data().set_data(&key, &value)
-}
+    fn set_data(&mut self, key: String, value: String) -> bool {
+        (**self).set_data(&key, &value)
+    }
 
-fn host_get_post(
-    mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>,
-    slug: String,
-) -> Option<String> {
-    caller.data().get_post(&slug)
-}
+    fn get_post(&mut self, slug: String) -> Option<String> {
+        (**self).get_post(&slug)
+    }
 
-fn host_db_query(
-    mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>,
-    sql: String,
-) -> String {
-    caller.data().db_query(&sql)
-}
+    fn db_query(&mut self, sql: String) -> String {
+        (**self).db_query(&sql)
+    }
 
-fn host_db_execute(
-    mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>,
-    sql: String,
-    params: Option<String>,
-) -> String {
-    caller.data().db_execute(&sql, params.as_deref())
-}
+    fn db_execute(&mut self, sql: String, params: Option<String>) -> String {
+        (**self).db_execute(&sql, params.as_deref())
+    }
 
-fn host_db_begin(mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>) -> String {
-    caller.data().db_begin()
-}
+    fn db_begin(&mut self) -> String {
+        (**self).db_begin()
+    }
 
-fn host_db_commit(mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>) -> String {
-    caller.data().db_commit()
-}
+    fn db_commit(&mut self) -> String {
+        (**self).db_commit()
+    }
 
-fn host_db_rollback(mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>) -> String {
-    caller.data().db_rollback()
-}
+    fn db_rollback(&mut self) -> String {
+        (**self).db_rollback()
+    }
 
-fn host_fs_read(
-    mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>,
-    path: String,
-) -> Option<String> {
-    caller.data().fs_read(&path).ok()
-}
+    fn fs_read(&mut self, path: String) -> Option<String> {
+        (**self).fs_read(&path).ok()
+    }
 
-fn host_fs_write(
-    mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>,
-    path: String,
-    content: String,
-) -> bool {
-    caller.data().fs_write(&path, &content).is_ok()
-}
+    fn fs_write(&mut self, path: String, content: String) -> bool {
+        (**self).fs_write(&path, &content).is_ok()
+    }
 
-fn host_fs_delete(
-    mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>,
-    path: String,
-) -> bool {
-    caller.data().fs_delete(&path).is_ok()
-}
+    fn fs_delete(&mut self, path: String) -> bool {
+        (**self).fs_delete(&path).is_ok()
+    }
 
-fn host_fs_exists(
-    mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>,
-    path: String,
-) -> bool {
-    caller.data().fs_exists(&path).unwrap_or(false)
-}
+    fn fs_exists(&mut self, path: String) -> bool {
+        (**self).fs_exists(&path).unwrap_or(false)
+    }
 
-fn host_fs_list(
-    mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>,
-    path: String,
-) -> Option<String> {
-    caller
-        .data()
-        .fs_list(&path)
-        .ok()
-        .map(|entries| serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string()))
-}
+    fn fs_list(&mut self, path: String) -> Option<String> {
+        (**self)
+            .fs_list(&path)
+            .ok()
+            .map(|entries| serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string()))
+    }
 
-fn host_fs_stat(
-    mut caller: wasmtime::StoreContextMut<'_, Arc<HostContext>>,
-    path: String,
-) -> Option<String> {
-    caller.data().fs_stat(&path).ok()
+    fn fs_stat(&mut self, path: String) -> Option<String> {
+        (**self).fs_stat(&path).ok()
+    }
 }

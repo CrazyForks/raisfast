@@ -120,6 +120,22 @@ pub(crate) async fn test_pool() -> rust_blog::db::Pool {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(include_str!("../migrations/019_oauth.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(include_str!("../migrations/020_password_reset.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(include_str!("../migrations/021_phone.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(include_str!("../migrations/022_email_verification.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
         pool
     }
 }
@@ -175,6 +191,9 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
         )),
         storage: rust_blog::storage::create_storage(&config).expect("failed to create storage"),
         cms_cache: Arc::new(dashmap::DashMap::new()),
+        oauth_registry: Arc::new(rust_blog::oauth::OAuthProviderRegistry::default()),
+        email_sender: rust_blog::notifier::build_email_sender(&config),
+        sms_sender: rust_blog::notifier::build_sms_sender(&config),
     };
     let max_upload = state.config.max_upload_size;
 

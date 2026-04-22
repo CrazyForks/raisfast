@@ -52,4 +52,12 @@ impl UserRepository for SqlxUserRepository {
     async fn update_role(&self, id: &str, role: &str, tenant_id: Option<&str>) -> AppResult<User> {
         user::update_role(&self.pool, id, role, tenant_id).await
     }
+
+    async fn find_by_phone(&self, phone: &str) -> AppResult<Option<User>> {
+        user::find_by_phone(&self.pool, phone).await
+    }
+
+    async fn update_phone(&self, id: &str, phone: &str, tenant_id: Option<&str>) -> AppResult<()> {
+        user::update_phone(&self.pool, id, phone, tenant_id).await
+    }
 }

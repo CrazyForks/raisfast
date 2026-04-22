@@ -5,9 +5,11 @@
 
 pub mod cache;
 pub mod email;
+pub mod email_verification;
 pub mod publish;
 pub mod search_index;
 pub mod sitemap;
+pub mod sms;
 pub mod thumbnail;
 pub mod webhook;
 
@@ -16,22 +18,44 @@ use std::sync::Arc;
 use crate::cache::CacheStore;
 use crate::config::app::AppConfig;
 use crate::db::Pool;
+use crate::notifier::{EmailSender, SmsSender};
 use crate::search::SearchEngine;
 use crate::worker::JobHandlerRegistry;
 
 /// 将所有真实 Handler 注册到 Registry
-///
-/// 在 `server/mod.rs` 的 `spawn_workers()` 中调用，替换 `LogJobHandler` 占位符。
 pub fn register_all(
     registry: &mut JobHandlerRegistry,
     pool: Pool,
     config: Arc<AppConfig>,
     search: Arc<dyn SearchEngine>,
     cache: Arc<dyn CacheStore>,
+    email_sender: Arc<dyn EmailSender>,
+    sms_sender: Arc<dyn SmsSender>,
 ) {
     registry.register(
         "send_welcome_email",
-        Box::new(email::SendWelcomeEmailHandler::new(config.clone())),
+        Box::new(email::SendWelcomeEmailHandler::new(
+            config.clone(),
+            email_sender.clone(),
+        )),
+    );
+    registry.register(
+        "send_password_reset_email",
+        Box::new(email::SendPasswordResetEmailHandler::new(
+            config.clone(),
+            email_sender.clone(),
+        )),
+    );
+    registry.register(
+        "send_sms_code",
+        Box::new(sms::SendSmsCodeHandler::new(sms_sender)),
+    );
+    registry.register(
+        "send_email_verification",
+        Box::new(email_verification::SendEmailVerificationHandler::new(
+            config.clone(),
+            email_sender,
+        )),
     );
     registry.register(
         "generate_thumbnail",

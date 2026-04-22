@@ -89,6 +89,7 @@ async function refreshToken(): Promise<string | null> {
 export async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
+  overrideToken?: string,
 ): Promise<T> {
   const store = useAuthStore.getState();
   const locale =
@@ -98,8 +99,9 @@ export async function apiRequest<T>(
   headers.set("Content-Type", "application/json");
   headers.set("Accept-Language", locale);
 
-  if (store.accessToken) {
-    headers.set("Authorization", `Bearer ${store.accessToken}`);
+  const token = overrideToken || store.accessToken;
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
   }
 
   const tenantStore = useTenantStore.getState();
@@ -127,7 +129,7 @@ export async function apiRequest<T>(
 }
 
 export const api = {
-  get: <T>(path: string) => apiRequest<T>(path),
+  get: <T>(path: string, token?: string) => apiRequest<T>(path, {}, token),
 
   post: <T>(path: string, body: unknown) =>
     apiRequest<T>(path, {

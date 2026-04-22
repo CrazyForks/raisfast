@@ -12,7 +12,7 @@ use crate::content_type::ContentTypeRegistry;
 use crate::db::connection::init_pool;
 use crate::handlers::{
     api_token, auth, category, comment, cron, health, media, options, plugin, post, rbac, rss, sse,
-    stats, tag, tenant, user, workflow,
+    stats, tag, tenant, user, workflow, ws,
 };
 use crate::middleware::locale::locale_middleware;
 use crate::middleware::metrics;
@@ -64,6 +64,34 @@ fn build_search_engine(config: &AppConfig) -> Arc<dyn SearchEngine> {
             Arc::new(NoopSearchEngine)
         }
     }
+}
+
+/// 构建 OAuth Provider 注册表
+fn build_oauth_registry(config: &AppConfig) -> crate::oauth::OAuthProviderRegistry {
+    let mut registry = crate::oauth::OAuthProviderRegistry::new();
+    if let Some(gh) = &config.oauth.github {
+        registry.register(Box::new(crate::oauth::github::GitHubProvider::new(
+            gh.client_id.clone(),
+            gh.client_secret.clone(),
+        )));
+        tracing::info!("OAuth provider registered: github");
+    }
+    if let Some(google) = &config.oauth.google {
+        registry.register(Box::new(crate::oauth::google::GoogleProvider::new(
+            google.client_id.clone(),
+            google.client_secret.clone(),
+        )));
+        tracing::info!("OAuth provider registered: google");
+    }
+    if let Some(wechat) = &config.oauth.wechat {
+        registry.register(Box::new(crate::oauth::wechat::WechatProvider::new(
+            wechat.app_id.clone(),
+            wechat.app_secret.clone(),
+            config.base_url.clone(),
+        )));
+        tracing::info!("OAuth provider registered: wechat");
+    }
+    registry
 }
 
 /// 构建 CORS 中间件。
@@ -181,6 +209,9 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         extension_service,
         storage,
         cms_cache: Arc::new(dashmap::DashMap::new()),
+        oauth_registry: Arc::new(build_oauth_registry(config)),
+        email_sender: crate::notifier::build_email_sender(config),
+        sms_sender: crate::notifier::build_sms_sender(config),
     };
 
     spawn_event_subscriber(eventbus.clone(), state.plugins.clone());
@@ -213,6 +244,38 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         )
         .route("/auth/refresh", http_post(auth::refresh))
         .route("/auth/logout", http_post(auth::logout))
+        .route("/auth/forgot-password", http_post(auth::forgot_password))
+        .route("/auth/reset-password", http_post(auth::reset_password))
+        .route("/auth/set-password", http_post(auth::set_password))
+        .route("/auth/config", get(auth::auth_config))
+        .route("/auth/sms/send", http_post(auth::send_sms_code))
+        .route("/auth/sms/verify", http_post(auth::verify_sms))
+        .route("/auth/phone/bind", http_post(auth::bind_phone))
+        .route("/auth/verify-email", http_post(auth::verify_email))
+        .route(
+            "/auth/resend-verification",
+            http_post(auth::resend_verification),
+        )
+        .route(
+            "/auth/oauth/{provider}",
+            get(crate::handlers::oauth::redirect_to_provider),
+        )
+        .route(
+            "/auth/oauth/{provider}/callback",
+            get(crate::handlers::oauth::callback),
+        )
+        .route(
+            "/auth/oauth/providers",
+            get(crate::handlers::oauth::list_providers),
+        )
+        .route(
+            "/auth/oauth/bindings",
+            get(crate::handlers::oauth::list_bindings),
+        )
+        .route(
+            "/auth/oauth/{provider}/unbind",
+            delete(crate::handlers::oauth::unbind),
+        )
         .route("/tokens", get(api_token::list).post(api_token::create))
         .route("/tokens/{id}", delete(api_token::delete))
         .route("/users/me", get(user::get_me).put(user::update_me))
@@ -248,7 +311,27 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         .route("/media", get(media::list))
         .route("/media/stats", get(media::stats))
         .route("/media/{id}", delete(media::delete))
-        .route("/events", get(sse::subscribe))
+        .route("/events", get(sse::subscribe));
+
+    let api_v1 = if config.websocket_enabled {
+        tracing::info!("WebSocket enabled at /api/v1/ws");
+        api_v1.route("/ws", get(ws::ws_handler))
+    } else {
+        api_v1
+    };
+
+    let api_v1 = if config.graphql_enabled {
+        tracing::info!("GraphQL enabled at /api/v1/graphql");
+        api_v1.route(
+            "/graphql",
+            get(crate::graphql::handler::graphiql_handler)
+                .post(crate::graphql::handler::graphql_handler),
+        )
+    } else {
+        api_v1
+    };
+
+    let api_v1 = api_v1
         .route("/admin/posts", get(post::admin_list))
         .route("/admin/posts/{slug}", get(post::admin_get))
         .route("/admin/plugins", get(plugin::list))
@@ -751,6 +834,20 @@ fn spawn_audit_subscriber(
                             Some(format!("filename={filename}")),
                         ),
                         Event::MediaDeleted { id } => ("delete", "media", id.clone(), None, None),
+                        Event::PasswordResetRequested { user_id, email, .. } => (
+                            "password_reset_request",
+                            "user",
+                            user_id.clone(),
+                            None,
+                            Some(format!("email={email}")),
+                        ),
+                        Event::EmailVerificationRequested { user_id, email, .. } => (
+                            "email_verification_request",
+                            "user",
+                            user_id.clone(),
+                            None,
+                            Some(format!("email={email}")),
+                        ),
                         _ => continue,
                     };
 
@@ -821,6 +918,10 @@ fn spawn_webhook_subscriber(
                         Event::UserLoggedIn { .. } => "user.loggedIn",
                         Event::MediaUploaded { .. } => "media.uploaded",
                         Event::MediaDeleted { .. } => "media.deleted",
+                        Event::PasswordResetRequested { .. } => "user.passwordResetRequested",
+                        Event::EmailVerificationRequested { .. } => {
+                            "user.emailVerificationRequested"
+                        }
                         _ => continue,
                     };
 
@@ -928,6 +1029,15 @@ async fn spawn_workers(
         sqlx::query(include_str!("../migrations/008_cron_execution_log.sql"))
             .execute(&pool)
             .await?;
+        sqlx::query(include_str!("../migrations/020_password_reset.sql"))
+            .execute(&pool)
+            .await?;
+        sqlx::query(include_str!("../migrations/021_phone.sql"))
+            .execute(&pool)
+            .await?;
+        sqlx::query(include_str!("../migrations/022_email_verification.sql"))
+            .execute(&pool)
+            .await?;
         if config.cron_seed_enabled {
             seed_defaults(&pool, &config.cron_schedules).await?;
         }
@@ -945,6 +1055,8 @@ async fn spawn_workers(
         Arc::new(config.clone()),
         search,
         cache,
+        crate::notifier::build_email_sender(config),
+        crate::notifier::build_sms_sender(config),
     );
 
     let cron = CronScheduler::new(

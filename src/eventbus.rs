@@ -85,6 +85,18 @@ pub enum Event {
     MediaDeleted {
         id: String,
     },
+
+    // ── 认证 ──
+    PasswordResetRequested {
+        user_id: String,
+        email: String,
+        reset_token: String,
+    },
+    EmailVerificationRequested {
+        user_id: String,
+        email: String,
+        verify_token: String,
+    },
 }
 
 /// 事件订阅者

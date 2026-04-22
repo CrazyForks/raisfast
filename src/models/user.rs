@@ -24,9 +24,11 @@ pub struct User {
     pub username: String,
     pub password_hash: String,
     pub role: String,
+    pub phone: Option<String>,
     pub avatar: Option<String>,
     pub bio: Option<String>,
     pub website: Option<String>,
+    pub email_verified: i64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -50,6 +52,26 @@ pub async fn find_by_email(
         q = q.bind(tid);
     }
     let user = q.fetch_optional(pool).await?;
+    Ok(user)
+}
+
+/// 根据用户名查找用户
+pub async fn find_by_username(pool: &crate::db::Pool, username: &str) -> AppResult<Option<User>> {
+    let sql = crate::db::dialect::translate("SELECT * FROM users WHERE username = ?");
+    let user = sqlx::query_as::<_, User>(&sql)
+        .bind(username)
+        .fetch_optional(pool)
+        .await?;
+    Ok(user)
+}
+
+/// 根据手机号查找用户
+pub async fn find_by_phone(pool: &crate::db::Pool, phone: &str) -> AppResult<Option<User>> {
+    let sql = crate::db::dialect::translate("SELECT * FROM users WHERE phone = ?");
+    let user = sqlx::query_as::<_, User>(&sql)
+        .bind(phone)
+        .fetch_optional(pool)
+        .await?;
     Ok(user)
 }
 
@@ -175,6 +197,27 @@ pub async fn update_password(
     );
     let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql).bind(new_password_hash).bind(now).bind(id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    q.execute(pool).await?;
+    Ok(())
+}
+
+/// 绑定手机号
+pub async fn update_phone(
+    pool: &crate::db::Pool,
+    id: &str,
+    phone: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    let now = Utc::now().to_rfc3339();
+    let sql = format!(
+        "UPDATE users SET phone = ?, updated_at = ? WHERE id = ?{}",
+        tenant_filter(tenant_id)
+    );
+    let sql = crate::db::dialect::translate(&sql);
+    let mut q = sqlx::query(&sql).bind(phone).bind(now).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }

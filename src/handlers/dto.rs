@@ -65,6 +65,81 @@ pub struct UpdateRoleRequest {
     pub role: String,
 }
 
+/// 请求密码重置
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct ForgotPasswordRequest {
+    #[validate(email)]
+    pub email: String,
+}
+
+/// 重置密码
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct ResetPasswordRequest {
+    #[validate(length(min = 1))]
+    pub token: String,
+    #[validate(length(min = 8, max = 128), custom(function = "validate_password"))]
+    pub new_password: String,
+}
+
+/// OAuth 用户设置密码
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct SetPasswordRequest {
+    #[validate(length(min = 8, max = 128), custom(function = "validate_password"))]
+    pub new_password: String,
+}
+
+/// 发送短信验证码
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct SendSmsCodeRequest {
+    #[validate(length(min = 5, max = 20))]
+    pub phone: String,
+    #[validate(length(min = 1, max = 30))]
+    pub purpose: String,
+}
+
+/// 验证短信验证码（注册/登录）
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct VerifySmsRequest {
+    #[validate(length(min = 5, max = 20))]
+    pub phone: String,
+    #[validate(length(min = 4, max = 8))]
+    pub code: String,
+    #[validate(length(min = 1, max = 30))]
+    pub purpose: String,
+}
+
+/// 绑定手机号
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct BindPhoneRequest {
+    #[validate(length(min = 5, max = 20))]
+    pub phone: String,
+    #[validate(length(min = 4, max = 8))]
+    pub code: String,
+}
+
+/// 认证配置响应
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AuthConfigResponse {
+    pub registration_email_enabled: bool,
+    pub registration_sms_enabled: bool,
+    pub oauth_providers: Vec<String>,
+    pub require_email_verification: bool,
+}
+
+/// 验证邮箱
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct VerifyEmailRequest {
+    #[validate(length(min = 1))]
+    pub token: String,
+}
+
+/// 重新发送验证邮件
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct ResendVerificationRequest {
+    #[validate(email)]
+    pub email: String,
+}
+
 /// 用户公开信息响应
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 #[non_exhaustive]
@@ -73,6 +148,7 @@ pub struct UserResponse {
     pub email: String,
     pub username: String,
     pub role: String,
+    pub phone: Option<String>,
     pub avatar: Option<String>,
     pub bio: Option<String>,
     pub website: Option<String>,
@@ -87,6 +163,7 @@ impl From<User> for UserResponse {
             email: user.email,
             username: user.username,
             role: user.role,
+            phone: user.phone,
             avatar: user.avatar,
             bio: user.bio,
             website: user.website,

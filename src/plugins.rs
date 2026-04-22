@@ -983,10 +983,11 @@ impl PluginManager {
                 #[cfg(feature = "plugin-wasm")]
                 LoadedPluginInstance::Wasm(wasm) => {
                     let mut instance = wasm.acquire().await;
+                    let content_str = content.to_string();
                     let timeout = std::time::Duration::from_millis(instance.timeout_ms());
                     tokio::time::timeout(timeout, async {
                         tokio::task::block_in_place(|| {
-                            instance.call_string_filter(func_name, content)
+                            instance.call_json_filter::<String>(func_name, &content_str)
                         })
                     })
                     .await

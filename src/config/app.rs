@@ -30,6 +30,8 @@ use serde::{Deserialize, Serialize};
 /// | `PLUGIN_LUA_POOL_SIZE` | u32 | `4` | Lua 实例池大小 |
 /// | `PLUGIN_JS_POOL_SIZE` | u32 | `4` | JS 实例池大小 |
 /// | `APP_TIMEZONE` | String | `UTC` | 站点时区（IANA 格式，如 `Asia/Shanghai`） |
+/// | `GRAPHQL_ENABLED` | bool | `false` | 是否启用 GraphQL API |
+/// | `WEBSOCKET_ENABLED` | bool | `false` | 是否启用 WebSocket 实时推送 |
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub host: String,
@@ -132,6 +134,52 @@ pub struct AppConfig {
     pub s3_public_url: Option<String>,
     #[serde(default)]
     pub rule_engine: RuleEngineConfig,
+    /// 是否启用 GraphQL API（默认 false）
+    #[serde(default)]
+    pub graphql_enabled: bool,
+    /// 是否启用 WebSocket 实时推送（默认 false）
+    #[serde(default)]
+    pub websocket_enabled: bool,
+    #[serde(default)]
+    pub oauth: crate::config::oauth::OAuthConfig,
+    #[serde(default = "default_true")]
+    pub registration_email_enabled: bool,
+    #[serde(default)]
+    pub registration_sms_enabled: bool,
+    #[serde(default = "default_sms_code_expires_in")]
+    pub sms_code_expires_in: u64,
+    #[serde(default = "default_sms_code_length")]
+    pub sms_code_length: u32,
+    #[serde(default = "default_sms_rate_limit_secs")]
+    pub sms_rate_limit_secs: u64,
+    #[serde(default)]
+    pub require_email_verification: bool,
+    #[serde(default = "default_email_provider")]
+    pub email_provider: String,
+    pub email_smtp_host: Option<String>,
+    #[serde(default = "default_email_smtp_port")]
+    pub email_smtp_port: u16,
+    pub email_smtp_user: Option<String>,
+    pub email_smtp_pass: Option<String>,
+    pub email_from: Option<String>,
+    pub email_from_name: Option<String>,
+    pub email_sendgrid_api_key: Option<String>,
+    pub email_resend_api_key: Option<String>,
+    pub email_aliyun_access_key_id: Option<String>,
+    pub email_aliyun_access_key_secret: Option<String>,
+    pub email_aliyun_region: Option<String>,
+    pub email_tencent_secret_id: Option<String>,
+    pub email_tencent_secret_key: Option<String>,
+    pub email_tencent_region: Option<String>,
+    #[serde(default = "default_sms_provider")]
+    pub sms_provider: String,
+    pub sms_aliyun_access_key_id: Option<String>,
+    pub sms_aliyun_access_key_secret: Option<String>,
+    pub sms_aliyun_sign_name: Option<String>,
+    pub sms_aliyun_template_code: Option<String>,
+    pub sms_twilio_account_sid: Option<String>,
+    pub sms_twilio_auth_token: Option<String>,
+    pub sms_twilio_from: Option<String>,
 }
 
 /// API Rule 引擎配置
@@ -410,6 +458,30 @@ fn default_plugin_vfs_max_total_size() -> usize {
     10485760 // 10 MB
 }
 
+fn default_sms_code_expires_in() -> u64 {
+    300
+}
+
+fn default_sms_code_length() -> u32 {
+    6
+}
+
+fn default_sms_rate_limit_secs() -> u64 {
+    60
+}
+
+fn default_email_provider() -> String {
+    "log".into()
+}
+
+fn default_email_smtp_port() -> u16 {
+    587
+}
+
+fn default_sms_provider() -> String {
+    "log".into()
+}
+
 const DEFAULT_JWT_SECRET: &str = "change-me-in-production-at-least-32-chars";
 
 impl AppConfig {
@@ -614,6 +686,99 @@ impl AppConfig {
             s3_region: env::var("S3_REGION").unwrap_or_else(|_| default_s3_region()),
             s3_public_url: env::var("S3_PUBLIC_URL").ok().filter(|s| !s.is_empty()),
             rule_engine: RuleEngineConfig::from_env(),
+            graphql_enabled: env::var("GRAPHQL_ENABLED")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(false),
+            websocket_enabled: env::var("WEBSOCKET_ENABLED")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(false),
+            oauth: crate::config::oauth::OAuthConfig::from_env(),
+            registration_email_enabled: env::var("REGISTRATION_EMAIL_ENABLED")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(true),
+            registration_sms_enabled: env::var("REGISTRATION_SMS_ENABLED")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(false),
+            sms_code_expires_in: env::var("SMS_CODE_EXPIRES_IN")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_sms_code_expires_in()),
+            sms_code_length: env::var("SMS_CODE_LENGTH")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_sms_code_length()),
+            sms_rate_limit_secs: env::var("SMS_RATE_LIMIT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_sms_rate_limit_secs()),
+            require_email_verification: env::var("REQUIRE_EMAIL_VERIFICATION")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(false),
+            email_provider: env::var("EMAIL_PROVIDER")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(default_email_provider),
+            email_smtp_host: env::var("EMAIL_SMTP_HOST").ok().filter(|s| !s.is_empty()),
+            email_smtp_port: env::var("EMAIL_SMTP_PORT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_email_smtp_port()),
+            email_smtp_user: env::var("EMAIL_SMTP_USER").ok().filter(|s| !s.is_empty()),
+            email_smtp_pass: env::var("EMAIL_SMTP_PASS").ok().filter(|s| !s.is_empty()),
+            email_from: env::var("EMAIL_FROM").ok().filter(|s| !s.is_empty()),
+            email_from_name: env::var("EMAIL_FROM_NAME").ok().filter(|s| !s.is_empty()),
+            email_sendgrid_api_key: env::var("EMAIL_SENDGRID_API_KEY")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            email_resend_api_key: env::var("EMAIL_RESEND_API_KEY")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            email_aliyun_access_key_id: env::var("EMAIL_ALIYUN_ACCESS_KEY_ID")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            email_aliyun_access_key_secret: env::var("EMAIL_ALIYUN_ACCESS_KEY_SECRET")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            email_aliyun_region: env::var("EMAIL_ALIYUN_REGION")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            email_tencent_secret_id: env::var("EMAIL_TENCENT_SECRET_ID")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            email_tencent_secret_key: env::var("EMAIL_TENCENT_SECRET_KEY")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            email_tencent_region: env::var("EMAIL_TENCENT_REGION")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            sms_provider: env::var("SMS_PROVIDER")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(default_sms_provider),
+            sms_aliyun_access_key_id: env::var("SMS_ALIYUN_ACCESS_KEY_ID")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            sms_aliyun_access_key_secret: env::var("SMS_ALIYUN_ACCESS_KEY_SECRET")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            sms_aliyun_sign_name: env::var("SMS_ALIYUN_SIGN_NAME")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            sms_aliyun_template_code: env::var("SMS_ALIYUN_TEMPLATE_CODE")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            sms_twilio_account_sid: env::var("SMS_TWILIO_ACCOUNT_SID")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            sms_twilio_auth_token: env::var("SMS_TWILIO_AUTH_TOKEN")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            sms_twilio_from: env::var("SMS_TWILIO_FROM").ok().filter(|s| !s.is_empty()),
         }
     }
 
@@ -683,6 +848,44 @@ impl AppConfig {
             s3_region: default_s3_region(),
             s3_public_url: None,
             rule_engine: RuleEngineConfig::default(),
+            graphql_enabled: false,
+            websocket_enabled: false,
+            oauth: crate::config::oauth::OAuthConfig {
+                enabled: false,
+                redirect_url: "http://localhost:3000/auth/callback".into(),
+                github: None,
+                google: None,
+                wechat: None,
+            },
+            registration_email_enabled: true,
+            registration_sms_enabled: false,
+            sms_code_expires_in: default_sms_code_expires_in(),
+            sms_code_length: default_sms_code_length(),
+            sms_rate_limit_secs: default_sms_rate_limit_secs(),
+            require_email_verification: false,
+            email_provider: default_email_provider(),
+            email_smtp_host: None,
+            email_smtp_port: default_email_smtp_port(),
+            email_smtp_user: None,
+            email_smtp_pass: None,
+            email_from: None,
+            email_from_name: None,
+            email_sendgrid_api_key: None,
+            email_resend_api_key: None,
+            email_aliyun_access_key_id: None,
+            email_aliyun_access_key_secret: None,
+            email_aliyun_region: None,
+            email_tencent_secret_id: None,
+            email_tencent_secret_key: None,
+            email_tencent_region: None,
+            sms_provider: default_sms_provider(),
+            sms_aliyun_access_key_id: None,
+            sms_aliyun_access_key_secret: None,
+            sms_aliyun_sign_name: None,
+            sms_aliyun_template_code: None,
+            sms_twilio_account_sid: None,
+            sms_twilio_auth_token: None,
+            sms_twilio_from: None,
         }
     }
 

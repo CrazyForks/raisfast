@@ -34,7 +34,9 @@ debug = 1  # 默认是 2（最大），设为 1 或 false 可大幅减小体积
 
 [dependencies]
 # Web framework
-axum = { version = "0.8", features = ["macros", "multipart"] }
+axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
+async-graphql = "7"
+async-graphql-axum = "7"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures = "0.3"
@@ -58,7 +60,9 @@ chrono = { version = "0.4", features = ["serde", "clock"] }
 chrono-tz = "0.10"
 hex = "0.4"
 hmac = "0.12"
-sha2 = "0.10"
+ sha2 = "0.10"
+sha1 = "0.10"
+base64 = "0.22"
 
 # Security
 argon2 = "0.5"
@@ -84,6 +88,7 @@ validator = { version = "0.19", features = ["derive"] }
 
 # URL encoding
 serde_urlencoded = "0.7"
+urlencoding = "2"
 
 # Content
 comrak = { version = "0.36", default-features = false, features = ["shortcodes"] }
@@ -123,6 +128,7 @@ aws-sdk-s3 = { version = "1", optional = true }
 aws-config = { version = "1", optional = true }
 regex = "1.12.3"
 tera = "1"
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls-tls", "hostname"] }
 
 dashmap = "6"
 arc-swap = "1"

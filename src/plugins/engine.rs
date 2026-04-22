@@ -13,10 +13,10 @@ use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
 use crate::plugins::bindings::PluginWorld;
-use crate::plugins::bindings::plugin_hooks::CommentInput;
-use crate::plugins::bindings::plugin_hooks::ContentEvent;
-use crate::plugins::bindings::plugin_hooks::PostInput;
-use crate::plugins::bindings::plugin_hooks::PostOutput;
+use crate::plugins::bindings::exports::rust_blog::plugin_protocol::plugin_hooks::CommentInput;
+use crate::plugins::bindings::exports::rust_blog::plugin_protocol::plugin_hooks::ContentEvent;
+use crate::plugins::bindings::exports::rust_blog::plugin_protocol::plugin_hooks::PostInput;
+use crate::plugins::bindings::exports::rust_blog::plugin_protocol::plugin_hooks::PostOutput;
 use crate::plugins::host_common::HostContext;
 
 const DEFAULT_FUEL: u64 = 10_000_000;
@@ -33,6 +33,7 @@ pub struct WasmComponentInstance {
     bindings: PluginWorld,
     timeout_ms: u64,
     fuel_limit: u64,
+    #[allow(dead_code)]
     plugin_id: String,
 }
 
@@ -45,11 +46,13 @@ impl WasmInstancePool {
         timeout_ms: u64,
         pool_size: usize,
     ) -> anyhow::Result<Self> {
-        let module = wasmtime::Module::from_binary(engine, wasm_bytes)?;
-        let component = wasmtime::component::Component::from_module(engine, module)?;
+        let component = wasmtime::component::Component::from_binary(engine, wasm_bytes)?;
 
         let mut linker = wasmtime::component::Linker::new(engine);
-        super::host::register_host_functions(&mut linker)?;
+        PluginWorld::add_to_linker(
+            &mut linker,
+            |ctx: &mut Arc<HostContext>| -> &mut Arc<HostContext> { ctx },
+        )?;
 
         let mut instances = Vec::with_capacity(pool_size);
         for _ in 0..pool_size {
@@ -57,7 +60,7 @@ impl WasmInstancePool {
             let mut store = wasmtime::Store::new(engine, ctx);
             store.set_fuel(DEFAULT_FUEL)?;
 
-            let (bindings, _) = PluginWorld::instantiate(&mut store, &component, &linker)?;
+            let bindings = PluginWorld::instantiate(&mut store, &component, &linker)?;
 
             instances.push(Mutex::new(WasmComponentInstance {
                 store,
@@ -103,7 +106,7 @@ impl WasmComponentInstance {
         match func_name {
             "on_post_creating" | "on_post_updating" => {
                 let wit = json_to_post_input(&input_val)?;
-                let hooks = self.bindings.plugin_hooks();
+                let hooks = self.bindings.rust_blog_plugin_protocol_plugin_hooks();
                 let result = match func_name {
                     "on_post_creating" => hooks.call_on_post_creating(&mut self.store, &wit)?,
                     "on_post_updating" => hooks.call_on_post_updating(&mut self.store, &wit)?,
@@ -115,7 +118,7 @@ impl WasmComponentInstance {
             }
             "on_comment_creating" => {
                 let wit = json_to_comment_input(&input_val)?;
-                let hooks = self.bindings.plugin_hooks();
+                let hooks = self.bindings.rust_blog_plugin_protocol_plugin_hooks();
                 let result = hooks.call_on_comment_creating(&mut self.store, &wit)?;
                 Ok(result
                     .map(|r| comment_input_to_json(&r))
@@ -123,7 +126,7 @@ impl WasmComponentInstance {
             }
             "on_content_creating" | "on_content_updating" => {
                 let wit = json_to_content_event(&input_val)?;
-                let hooks = self.bindings.plugin_hooks();
+                let hooks = self.bindings.rust_blog_plugin_protocol_plugin_hooks();
                 let result = match func_name {
                     "on_content_creating" => {
                         hooks.call_on_content_creating(&mut self.store, &wit)?
@@ -139,7 +142,7 @@ impl WasmComponentInstance {
             }
             "render_markdown" | "filter_html" => {
                 let s = input_val.as_str().unwrap_or("");
-                let hooks = self.bindings.plugin_hooks();
+                let hooks = self.bindings.rust_blog_plugin_protocol_plugin_hooks();
                 let result = match func_name {
                     "render_markdown" => hooks.call_render_markdown(&mut self.store, s)?,
                     "filter_html" => hooks.call_filter_html(&mut self.store, s)?,
@@ -159,7 +162,7 @@ impl WasmComponentInstance {
     ) -> anyhow::Result<()> {
         self.store.set_fuel(self.fuel_limit)?;
         let input_val = serde_json::to_value(input)?;
-        let hooks = self.bindings.plugin_hooks();
+        let hooks = self.bindings.rust_blog_plugin_protocol_plugin_hooks();
 
         match func_name {
             "on_post_created" | "on_post_updated" => {

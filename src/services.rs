@@ -10,6 +10,7 @@ pub mod api_token;
 pub mod auth;
 pub mod comment;
 pub mod media;
+pub mod oauth;
 pub mod options;
 pub mod post;
 pub mod rbac;

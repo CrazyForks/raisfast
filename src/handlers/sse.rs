@@ -25,7 +25,7 @@ pub struct SubscribeQuery {
 }
 
 /// 提取事件类型名称
-fn event_type_name(event: &Event) -> &'static str {
+pub fn event_type_name(event: &Event) -> &'static str {
     match event {
         Event::PostCreating { .. } => "PostCreating",
         Event::PostCreated { .. } => "PostCreated",
@@ -42,6 +42,8 @@ fn event_type_name(event: &Event) -> &'static str {
         Event::UserLoggedIn { .. } => "UserLoggedIn",
         Event::MediaUploaded { .. } => "MediaUploaded",
         Event::MediaDeleted { .. } => "MediaDeleted",
+        Event::PasswordResetRequested { .. } => "PasswordResetRequested",
+        Event::EmailVerificationRequested { .. } => "EmailVerificationRequested",
     }
 }
 

@@ -178,6 +178,12 @@ pub trait UserRepository: Send + Sync {
 
     /// 管理员更新用户角色
     async fn update_role(&self, id: &str, role: &str, tenant_id: Option<&str>) -> AppResult<User>;
+
+    /// 根据手机号查找用户
+    async fn find_by_phone(&self, phone: &str) -> AppResult<Option<User>>;
+
+    /// 绑定手机号
+    async fn update_phone(&self, id: &str, phone: &str, tenant_id: Option<&str>) -> AppResult<()>;
 }
 
 /// 分类 Repository 接口

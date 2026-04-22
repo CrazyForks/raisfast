@@ -78,6 +78,28 @@ impl JobEnqueuer {
                     size: 300,
                 })]
             }
+            Event::PasswordResetRequested {
+                user_id,
+                email,
+                reset_token,
+            } => {
+                vec![NewJob::from(Job::SendPasswordResetEmail {
+                    user_id: user_id.clone(),
+                    email: email.clone(),
+                    reset_token: reset_token.clone(),
+                })]
+            }
+            Event::EmailVerificationRequested {
+                user_id,
+                email,
+                verify_token,
+            } => {
+                vec![NewJob::from(Job::SendEmailVerification {
+                    user_id: user_id.clone(),
+                    email: email.clone(),
+                    verify_token: verify_token.clone(),
+                })]
+            }
             _ => vec![],
         }
     }

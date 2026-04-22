@@ -3,3 +3,4 @@
 //! 从环境变量加载配置，支持通过 `.env` 文件设置默认值。
 
 pub mod app;
+pub mod oauth;

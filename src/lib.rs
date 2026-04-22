@@ -15,9 +15,12 @@ pub mod db;
 pub mod errors;
 pub mod eventbus;
 pub mod extension;
+pub mod graphql;
 pub mod handlers;
 pub mod middleware;
 pub mod models;
+pub mod notifier;
+pub mod oauth;
 pub mod plugins;
 pub mod repositories;
 pub mod search;
@@ -35,6 +38,8 @@ use db::Pool;
 use eventbus::EventBus;
 use extension::manager::ExtensionManager;
 use extension::service::ExtensionService;
+use notifier::{EmailSender, SmsSender};
+use oauth::OAuthProviderRegistry;
 use plugins::PluginManager;
 use repositories::{
     CategoryRepository, CommentRepository, MediaRepository, PostRepository, RefreshTokenRepository,
@@ -81,4 +86,7 @@ pub struct AppState {
     pub extension_service: Arc<ExtensionService>,
     pub storage: Arc<dyn Storage>,
     pub cms_cache: Arc<dashmap::DashMap<String, (serde_json::Value, std::time::Instant)>>,
+    pub oauth_registry: Arc<OAuthProviderRegistry>,
+    pub email_sender: Arc<dyn EmailSender>,
+    pub sms_sender: Arc<dyn SmsSender>,
 }

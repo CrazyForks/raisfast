@@ -247,7 +247,7 @@ pub async fn dynamic_admin_cms_handler(
 
 // ── 核心业务逻辑（共享于固定路由和动态路由） ──────────────────────
 
-fn cms_list_cache_key(ct: &ContentTypeSchema, query: &ContentQuery) -> String {
+pub fn cms_list_cache_key(ct: &ContentTypeSchema, query: &ContentQuery) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
@@ -270,7 +270,7 @@ fn cms_list_cache_key(ct: &ContentTypeSchema, query: &ContentQuery) -> String {
     format!("cms:{}:{h:x}", ct.plural)
 }
 
-fn cms_detail_cache_key(ct: &ContentTypeSchema, id_or_slug: &str) -> String {
+pub fn cms_detail_cache_key(ct: &ContentTypeSchema, id_or_slug: &str) -> String {
     format!("cms:{}:detail:{id_or_slug}", ct.plural)
 }
 
@@ -279,7 +279,7 @@ fn invalidate_cms_cache(state: &AppState, ct: &ContentTypeSchema) {
     state.cms_cache.retain(|k, _| !k.starts_with(&prefix));
 }
 
-async fn do_list(
+pub async fn do_list(
     state: &AppState,
     ct: &ContentTypeSchema,
     params: ListParams,
@@ -337,7 +337,7 @@ async fn do_list(
     Ok(result)
 }
 
-async fn do_get(
+pub async fn do_get(
     state: &AppState,
     ct: &ContentTypeSchema,
     id_or_slug: &str,
