@@ -29,6 +29,9 @@ storage-s3 = ["aws-sdk-s3", "aws-config"]
 # ── OpenAPI / Swagger UI ────────────────────────────────────────────
 openapi = ["utoipa-swagger-ui"]
 
+# ── Tauri desktop mode ────────────────────────────────────────────
+tauri = ["dep:tauri"]
+
 [profile.dev]
 debug = 1  # 默认是 2（最大），设为 1 或 false 可大幅减小体积
 
@@ -129,6 +132,7 @@ aws-config = { version = "1", optional = true }
 regex = "1.12.3"
 tera = "1"
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls-tls", "hostname"] }
+tauri = { version = "2", features = ["devtools"], optional = true }
 
 dashmap = "6"
 arc-swap = "1"

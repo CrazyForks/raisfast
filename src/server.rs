@@ -8,8 +8,6 @@ use std::time::Duration;
 use crate::AppState;
 use crate::cache::MemoryCache;
 use crate::config::app::AppConfig;
-use crate::content_type::ContentTypeRegistry;
-use crate::db::connection::init_pool;
 use crate::handlers::{
     api_token, auth, category, comment, cron, health, media, options, plugin, post, rbac, rss, sse,
     stats, tag, tenant, user, workflow, ws,
@@ -19,16 +17,6 @@ use crate::middleware::metrics;
 use crate::middleware::rate_limit::{
     RateLimiterSet, comment_rate_limit, global_rate_limit, login_rate_limit, register_rate_limit,
 };
-use crate::repositories::{
-    CachedPostRepository, OptionsRepository, PostRepository, RbacRepository,
-    SqlxCategoryRepository, SqlxCommentRepository, SqlxMediaRepository, SqlxOptionsRepository,
-    SqlxPostRepository, SqlxRbacRepository, SqlxRefreshTokenRepository, SqlxTagRepository,
-    SqlxTenantRepository, SqlxUserRepository, TenantRepository,
-};
-use crate::search::{NoopSearchEngine, SearchEngine};
-use crate::services::options::OptionsService;
-use crate::services::rbac::RbacService;
-use crate::services::tenant::TenantService;
 use axum::Extension;
 use axum::extract::State;
 use axum::http::HeaderValue;
@@ -41,58 +29,6 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::Level;
-
-/// 构建搜索引擎实例
-fn build_search_engine(config: &AppConfig) -> Arc<dyn SearchEngine> {
-    match config.search_engine.as_str() {
-        #[cfg(feature = "search-tantivy")]
-        "tantivy" => match crate::search::TantivyEngine::open(&config.search_index_dir) {
-            Ok(engine) => {
-                tracing::info!(
-                    "search engine: tantivy (index: {})",
-                    config.search_index_dir
-                );
-                Arc::new(engine)
-            }
-            Err(e) => {
-                tracing::error!("failed to open tantivy index: {e}, falling back to noop");
-                Arc::new(NoopSearchEngine)
-            }
-        },
-        _ => {
-            tracing::info!("search engine: none (LIKE fallback)");
-            Arc::new(NoopSearchEngine)
-        }
-    }
-}
-
-/// 构建 OAuth Provider 注册表
-fn build_oauth_registry(config: &AppConfig) -> crate::oauth::OAuthProviderRegistry {
-    let mut registry = crate::oauth::OAuthProviderRegistry::new();
-    if let Some(gh) = &config.oauth.github {
-        registry.register(Box::new(crate::oauth::github::GitHubProvider::new(
-            gh.client_id.clone(),
-            gh.client_secret.clone(),
-        )));
-        tracing::info!("OAuth provider registered: github");
-    }
-    if let Some(google) = &config.oauth.google {
-        registry.register(Box::new(crate::oauth::google::GoogleProvider::new(
-            google.client_id.clone(),
-            google.client_secret.clone(),
-        )));
-        tracing::info!("OAuth provider registered: google");
-    }
-    if let Some(wechat) = &config.oauth.wechat {
-        registry.register(Box::new(crate::oauth::wechat::WechatProvider::new(
-            wechat.app_id.clone(),
-            wechat.app_secret.clone(),
-            config.base_url.clone(),
-        )));
-        tracing::info!("OAuth provider registered: wechat");
-    }
-    registry
-}
 
 /// 构建 CORS 中间件。
 fn build_cors(config: &AppConfig) -> CorsLayer {
@@ -119,105 +55,11 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
     let upload_dir = config.upload_dir.clone();
     let static_dir = config.static_dir.clone();
     let max_upload = config.max_upload_size;
-    let pool = init_pool(&config.database_url, config.db_pool_size).await?;
 
-    let eventbus = crate::eventbus::EventBus::new(256);
-
+    let state = crate::build_app_state(config).await?;
+    let pool = state.pool.clone();
+    let eventbus = state.eventbus.clone();
     let worker_pool = pool.clone();
-
-    let sqlx_repo = SqlxPostRepository::new(pool.clone());
-    let cache: std::sync::Arc<dyn crate::cache::CacheStore> =
-        std::sync::Arc::new(MemoryCache::new());
-    let post_repo: Arc<dyn PostRepository> =
-        Arc::new(CachedPostRepository::new(sqlx_repo, cache, None));
-
-    let user_repo: Arc<dyn crate::repositories::UserRepository> =
-        Arc::new(SqlxUserRepository::new(pool.clone()));
-    let category_repo: Arc<dyn crate::repositories::CategoryRepository> =
-        Arc::new(SqlxCategoryRepository::new(pool.clone()));
-    let tag_repo: Arc<dyn crate::repositories::TagRepository> =
-        Arc::new(SqlxTagRepository::new(pool.clone()));
-    let comment_repo: Arc<dyn crate::repositories::CommentRepository> =
-        Arc::new(SqlxCommentRepository::new(pool.clone()));
-    let media_repo: Arc<dyn crate::repositories::MediaRepository> =
-        Arc::new(SqlxMediaRepository::new(pool.clone()));
-    let refresh_token_repo: Arc<dyn crate::repositories::RefreshTokenRepository> =
-        Arc::new(SqlxRefreshTokenRepository::new(pool.clone()));
-
-    let search: Arc<dyn SearchEngine> = build_search_engine(config);
-
-    let ct_registry = Arc::new(ContentTypeRegistry::new());
-
-    let plugin_manager = crate::plugins::PluginManager::new_empty(
-        Arc::new(config.clone()),
-        crate::plugins::PluginManagerOptions {
-            pool: Some(pool.clone()),
-            event_bus: Some(eventbus.clone()),
-        },
-    )
-    .await;
-
-    let extension_manager = crate::extension::manager::ExtensionManager::new(
-        ct_registry.clone(),
-        plugin_manager.clone(),
-        pool.clone(),
-        config,
-    )
-    .await;
-
-    let options_repo: Arc<dyn OptionsRepository> =
-        Arc::new(SqlxOptionsRepository::new(pool.clone()));
-    let options_service = Arc::new(OptionsService::new(options_repo).await);
-
-    let rbac_repo: Arc<dyn RbacRepository> = Arc::new(SqlxRbacRepository::new(pool.clone()));
-    let rbac_service = Arc::new(RbacService::new(rbac_repo));
-
-    let tenant_repo: Arc<dyn TenantRepository> = Arc::new(SqlxTenantRepository::new(pool.clone()));
-    let tenant_service = Arc::new(TenantService::new(tenant_repo));
-    let audit_service = Arc::new(crate::audit::AuditService::new(pool.clone()));
-    let webhook_service = Arc::new(crate::webhook::WebhookService::new(pool.clone()));
-
-    let extension_service = Arc::new(crate::extension::service::ExtensionService::new(
-        pool.clone(),
-    ));
-
-    let storage = crate::storage::create_storage(config)?;
-
-    let state = AppState {
-        pool: pool.clone(),
-        config: Arc::new(config.clone()),
-        jwt_decoding_key: jsonwebtoken::DecodingKey::from_secret(config.jwt_secret.as_bytes()),
-        plugins: plugin_manager,
-        eventbus: eventbus.clone(),
-        post_repo,
-        user_repo,
-        category_repo,
-        tag_repo,
-        comment_repo,
-        media_repo,
-        refresh_token_repo,
-        search,
-        content_type_registry: ct_registry,
-        options: options_service,
-        rbac: rbac_service,
-        tenant: tenant_service,
-        audit: audit_service,
-        webhook: webhook_service.clone(),
-        workflow: Arc::new(crate::services::workflow::WorkflowService::new(
-            pool.clone(),
-        )),
-        extension_manager,
-        extension_service,
-        storage,
-        cms_cache: Arc::new(dashmap::DashMap::new()),
-        oauth_registry: Arc::new(build_oauth_registry(config)),
-        email_sender: crate::notifier::build_email_sender(config),
-        sms_sender: crate::notifier::build_sms_sender(config),
-    };
-
-    spawn_event_subscriber(eventbus.clone(), state.plugins.clone());
-    spawn_audit_subscriber(eventbus.clone(), state.audit.clone(), state.tenant.clone());
-    spawn_webhook_subscriber(eventbus.clone(), state.webhook.clone());
 
     if config.worker_enabled {
         let cache_for_workers: Arc<dyn crate::cache::CacheStore> = Arc::new(MemoryCache::new());
@@ -704,7 +546,7 @@ async fn handle_plugin_route(
 }
 
 /// 启动 EventBus 后台订阅者，将业务事件转发给插件系统。
-fn spawn_event_subscriber(
+pub fn spawn_event_subscriber(
     eventbus: crate::eventbus::EventBus,
     plugins: Arc<crate::plugins::PluginManager>,
 ) {
@@ -748,7 +590,7 @@ fn spawn_event_subscriber(
 }
 
 /// 启动审计日志订阅者，将所有业务事件写入 `audit_log` 表。
-fn spawn_audit_subscriber(
+pub fn spawn_audit_subscriber(
     eventbus: crate::eventbus::EventBus,
     audit: Arc<crate::audit::AuditService>,
     tenant_service: Arc<crate::services::tenant::TenantService>,
@@ -888,7 +730,7 @@ fn spawn_audit_subscriber(
 }
 
 /// 启动 Webhook 事件投递订阅者
-fn spawn_webhook_subscriber(
+pub fn spawn_webhook_subscriber(
     eventbus: crate::eventbus::EventBus,
     webhook_service: Arc<crate::webhook::WebhookService>,
 ) {

@@ -64,7 +64,10 @@ mod tests {
         let config = Arc::new(crate::config::app::AppConfig::test_defaults());
         let mgr = PluginManager::new_with_options(
             config,
-            crate::plugins::PluginManagerOptions { pool: None, event_bus: None },
+            crate::plugins::PluginManagerOptions {
+                pool: None,
+                event_bus: None,
+            },
         )
         .await;
         let dispatcher = PluginCronDispatcher::new(mgr);

@@ -121,8 +121,24 @@ impl OptionsService {
             .upsert_value(key, &value_str, "default", &now)
             .await?;
 
-        if let Some(entry) = self.cache.write().await.get_mut(key) {
-            entry.value = value;
+        {
+            let mut cache = self.cache.write().await;
+            if let Some(entry) = cache.get_mut(key) {
+                entry.value = value;
+            } else {
+                cache.insert(
+                    key.to_string(),
+                    OptionEntry {
+                        key: key.to_string(),
+                        value,
+                        type_: "string".to_string(),
+                        label: key.to_string(),
+                        description: None,
+                        validation: None,
+                        is_public: false,
+                    },
+                );
+            }
         }
         Ok(())
     }

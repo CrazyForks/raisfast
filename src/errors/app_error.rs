@@ -28,9 +28,9 @@
 //! - `Unauthorized` → `errors.unauthorized`
 //! - `NotFound` → 先翻译资源名称 `resources.{key}`，再代入 `errors.not_found`
 
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde::Serialize;
 
 use crate::middleware::locale::current_locale;

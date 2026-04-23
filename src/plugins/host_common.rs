@@ -8,10 +8,10 @@ use std::sync::Arc;
 
 use crate::config::app::AppConfig;
 use crate::db::Pool;
+use crate::eventbus::{Event, EventBus};
 use crate::plugins::Permissions;
 use crate::plugins::permissions::PermissionChecker;
 use crate::plugins::vfs::VirtualFs;
-use crate::eventbus::{EventBus, Event};
 use sqlx::Arguments;
 use std::sync::Mutex;
 
@@ -498,15 +498,16 @@ impl HostContext {
     }
 
     /// 解析参数 JSON 为 Vec<serde_json::Value>
-    fn parse_params(
-        params_json: Option<&str>,
-    ) -> Result<Option<Vec<serde_json::Value>>, String> {
+    fn parse_params(params_json: Option<&str>) -> Result<Option<Vec<serde_json::Value>>, String> {
         match params_json {
             Some(pj) if !pj.is_empty() => {
-                let params: Vec<serde_json::Value> = serde_json::from_str(pj)
-                    .map_err(|e| format!("invalid params JSON: {e}"))?;
+                let params: Vec<serde_json::Value> =
+                    serde_json::from_str(pj).map_err(|e| format!("invalid params JSON: {e}"))?;
                 for p in &params {
-                    if matches!(p, serde_json::Value::Array(_) | serde_json::Value::Object(_)) {
+                    if matches!(
+                        p,
+                        serde_json::Value::Array(_) | serde_json::Value::Object(_)
+                    ) {
                         return Err(format!("unsupported param type: {p}"));
                     }
                 }
@@ -717,7 +718,10 @@ mod tests {
             ctx.db_query("INSERT INTO posts VALUES(1)", None)
                 .contains("error")
         );
-        assert!(ctx.db_query("UPDATE posts SET title='x'", None).contains("error"));
+        assert!(
+            ctx.db_query("UPDATE posts SET title='x'", None)
+                .contains("error")
+        );
         assert!(ctx.db_query("DELETE FROM posts", None).contains("error"));
     }
 

@@ -392,7 +392,10 @@ impl ContentRepository {
             .collect();
 
         for (key, val) in obj.iter() {
-            let col = relation_column_map.get(key).cloned().unwrap_or_else(|| key.clone());
+            let col = relation_column_map
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| key.clone());
             cols.push(col);
             placeholders.push(placeholder(idx));
             idx += 1;
@@ -493,7 +496,10 @@ impl ContentRepository {
 
         for (key, val) in obj.iter() {
             if ct.get_field(key).is_some() || key == "status" || key == "published_at" {
-                let col = relation_column_map.get(key).cloned().unwrap_or_else(|| key.clone());
+                let col = relation_column_map
+                    .get(key)
+                    .cloned()
+                    .unwrap_or_else(|| key.clone());
                 set_clauses.push(format!("{col} = {}", placeholder(idx)));
                 idx += 1;
                 values.push(value_to_string(val));

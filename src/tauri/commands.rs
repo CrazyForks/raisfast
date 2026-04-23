@@ -1,0 +1,415 @@
+//! Tauri Commands — 对应 HTTP handlers 的业务逻辑
+//!
+//! 每个 command 调用 `services/` 层的同一个函数，
+//! 只是把 Axum extractors 替换为普通函数参数。
+
+use crate::content_type::repository::SaveContext;
+use crate::tauri::AppManagedState;
+use tauri::State as TauriState;
+
+// ── Auth ──────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn auth_register(
+    state: TauriState<'_, AppManagedState>,
+    username: String,
+    email: String,
+    password: String,
+) -> Result<serde_json::Value, String> {
+    let req = crate::handlers::dto::RegisterRequest {
+        username,
+        email,
+        password,
+    };
+    crate::services::auth::register(
+        state.0.user_repo.as_ref(),
+        &state.0.eventbus,
+        req,
+        None,
+        false,
+        &state.0.pool,
+    )
+    .await
+    .map_err(|e| e.to_string())
+    .map(|r| serde_json::to_value(r).unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn auth_login(
+    state: TauriState<'_, AppManagedState>,
+    email: String,
+    password: String,
+) -> Result<serde_json::Value, String> {
+    let req = crate::handlers::dto::LoginRequest { email, password };
+    crate::services::auth::login(
+        state.0.user_repo.as_ref(),
+        state.0.refresh_token_repo.as_ref(),
+        &state.0.plugins,
+        &state.0.eventbus,
+        &req,
+        &state.0.config.jwt_secret,
+        state.0.config.jwt_access_expires,
+        state.0.config.jwt_refresh_expires,
+        None,
+        false,
+    )
+    .await
+    .map_err(|e| e.to_string())
+    .map(|r| serde_json::to_value(r).unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn auth_get_me(
+    state: TauriState<'_, AppManagedState>,
+    user_id: String,
+) -> Result<serde_json::Value, String> {
+    crate::services::auth::get_me(state.0.user_repo.as_ref(), &user_id, None)
+        .await
+        .map_err(|e| e.to_string())
+        .map(|r| serde_json::to_value(r).unwrap_or_default())
+}
+
+// ── Posts ─────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn post_list(
+    state: TauriState<'_, AppManagedState>,
+    page: Option<i64>,
+    page_size: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    let (items, total) = crate::services::post::list_posts(
+        state.0.post_repo.as_ref(),
+        page.unwrap_or(1),
+        page_size.unwrap_or(20),
+        None,
+        None,
+        None,
+        &state.0.plugins,
+        Some(state.0.search.as_ref()),
+        None,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(serde_json::json!({
+        "items": items,
+        "total": total,
+        "page": page.unwrap_or(1),
+        "page_size": page_size.unwrap_or(20),
+    }))
+}
+
+#[tauri::command]
+pub async fn post_get(
+    state: TauriState<'_, AppManagedState>,
+    slug: String,
+) -> Result<serde_json::Value, String> {
+    crate::services::post::get_post(state.0.post_repo.as_ref(), &slug, &state.0.plugins, None)
+        .await
+        .map_err(|e| e.to_string())
+        .map(|r| serde_json::to_value(r).unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn post_create(
+    state: TauriState<'_, AppManagedState>,
+    user_id: String,
+    title: String,
+    content: String,
+) -> Result<serde_json::Value, String> {
+    let req = crate::handlers::dto::CreatePostRequest {
+        title,
+        content,
+        excerpt: None,
+        cover_image: None,
+        status: None,
+        category_id: None,
+        tag_ids: None,
+    };
+    crate::services::post::create_post(
+        state.0.post_repo.as_ref(),
+        &state.0.plugins,
+        &state.0.eventbus,
+        &user_id,
+        req,
+        None,
+    )
+    .await
+    .map_err(|e| e.to_string())
+    .map(|r| serde_json::to_value(r).unwrap_or_default())
+}
+
+// ── CMS Content Types ─────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn cms_list(
+    state: TauriState<'_, AppManagedState>,
+    plural: String,
+    page: Option<i64>,
+    page_size: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    let ct = state
+        .0
+        .content_type_registry
+        .get_by_plural(&plural)
+        .ok_or_else(|| format!("content type '{}' not found", plural))?;
+    let params = crate::content_type::handler::ListParams {
+        page,
+        page_size,
+        sort: None,
+        status: None,
+        search: None,
+        include: None,
+        skip_total: None,
+        extra: Default::default(),
+    };
+    crate::content_type::handler::do_list(&state.0, &ct, params, None)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn cms_get(
+    state: TauriState<'_, AppManagedState>,
+    plural: String,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    let ct = state
+        .0
+        .content_type_registry
+        .get_by_plural(&plural)
+        .ok_or_else(|| format!("content type '{}' not found", plural))?;
+    crate::content_type::handler::do_get(&state.0, &ct, &id, None)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn cms_create(
+    state: TauriState<'_, AppManagedState>,
+    plural: String,
+    data: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let ct = state
+        .0
+        .content_type_registry
+        .get_by_plural(&plural)
+        .ok_or_else(|| format!("content type '{}' not found", plural))?;
+    let save_ctx = SaveContext::default();
+    crate::content_type::handler::do_create(&state.0, &ct, data, &save_ctx)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn cms_update(
+    state: TauriState<'_, AppManagedState>,
+    plural: String,
+    id: String,
+    data: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let ct = state
+        .0
+        .content_type_registry
+        .get_by_plural(&plural)
+        .ok_or_else(|| format!("content type '{}' not found", plural))?;
+    let save_ctx = SaveContext::default();
+    crate::content_type::handler::do_update(&state.0, &ct, &id, data, &save_ctx, None)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn cms_delete(
+    state: TauriState<'_, AppManagedState>,
+    plural: String,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    let ct = state
+        .0
+        .content_type_registry
+        .get_by_plural(&plural)
+        .ok_or_else(|| format!("content type '{}' not found", plural))?;
+    crate::content_type::handler::do_delete(&state.0, &ct, &id, None)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({"deleted": true}))
+}
+
+// ── Stats / Dashboard ─────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn stats_overview(
+    state: TauriState<'_, AppManagedState>,
+) -> Result<serde_json::Value, String> {
+    let svc = crate::services::stats::StatsService::new(state.0.pool.clone());
+    svc.overview(None).await.map_err(|e| e.to_string())
+}
+
+// ── Options ───────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn options_get(
+    state: TauriState<'_, AppManagedState>,
+    key: String,
+) -> Result<serde_json::Value, String> {
+    Ok(state
+        .0
+        .options
+        .get(&key)
+        .await
+        .unwrap_or(serde_json::Value::Null))
+}
+
+#[tauri::command]
+pub async fn options_set(
+    state: TauriState<'_, AppManagedState>,
+    key: String,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    state
+        .0
+        .options
+        .set(&key, value)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ── Media ─────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn media_list(
+    state: TauriState<'_, AppManagedState>,
+    user_id: String,
+    page: Option<i64>,
+    page_size: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    let (items, total) = crate::services::media::list(
+        state.0.media_repo.as_ref(),
+        &user_id,
+        page.unwrap_or(1),
+        page_size.unwrap_or(20),
+        None,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(serde_json::json!({
+        "items": items,
+        "total": total,
+        "page": page.unwrap_or(1),
+        "page_size": page_size.unwrap_or(20),
+    }))
+}
+
+// ── Content Type Schema 管理 ──────────────────────────────────────
+
+#[tauri::command]
+pub async fn schema_list(
+    state: TauriState<'_, AppManagedState>,
+) -> Result<serde_json::Value, String> {
+    let schemas = state.0.content_type_registry.all();
+    let list: Vec<serde_json::Value> = schemas
+        .iter()
+        .map(|s| serde_json::to_value(s.as_ref()).unwrap_or_default())
+        .collect();
+    Ok(serde_json::json!({"items": list, "total": list.len()}))
+}
+
+#[tauri::command]
+pub async fn schema_get(
+    state: TauriState<'_, AppManagedState>,
+    singular: String,
+) -> Result<serde_json::Value, String> {
+    let ct = state
+        .0
+        .content_type_registry
+        .get(&singular)
+        .ok_or_else(|| format!("content type '{}' not found", singular))?;
+    Ok(serde_json::to_value(ct.as_ref()).unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn schema_create(
+    state: TauriState<'_, AppManagedState>,
+    req: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let req: crate::content_type::schema::CreateContentTypeRequest =
+        serde_json::from_value(req).map_err(|e| format!("invalid request: {e}"))?;
+
+    let schema = crate::content_type::schema::ContentTypeSchema {
+        extension_id: None,
+        name: req.name,
+        singular: req.singular.clone(),
+        plural: req.plural,
+        table: req.table.clone(),
+        description: req.description,
+        draft_publish: req.draft_publish,
+        slug_field: req.slug_field,
+        timestamps: req.timestamps,
+        soft_delete: req.soft_delete,
+        versioning: req.versioning,
+        fields: req.fields,
+        indexes: vec![],
+        list_view: None,
+        api: crate::content_type::schema::ApiConfig::default(),
+        cached_column_names: None,
+        cached_rules: None,
+    };
+
+    if crate::plugins::permissions::PermissionChecker::is_protected_table(
+        &schema.table,
+        &state.0.config.protected_tables,
+    ) {
+        return Err(format!(
+            "table '{}' is a protected system table",
+            schema.table
+        ));
+    }
+
+    if state
+        .0
+        .content_type_registry
+        .get(&schema.singular)
+        .is_some()
+    {
+        return Err(format!("content type '{}' already exists", schema.singular));
+    }
+
+    let dir = std::path::Path::new(&state.0.config.content_type_dir);
+    schema
+        .save_to_dir(dir)
+        .map_err(|e| format!("save failed: {e}"))?;
+
+    let repo = crate::content_type::repository::ContentRepository::new(state.0.pool.clone());
+    repo.migrate(&schema)
+        .await
+        .map_err(|e| format!("migration failed: {e}"))?;
+
+    state
+        .0
+        .content_type_registry
+        .register(schema.clone(), &state.0.config.rule_engine);
+
+    Ok(serde_json::to_value(&schema).unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn schema_delete(
+    state: TauriState<'_, AppManagedState>,
+    singular: String,
+) -> Result<serde_json::Value, String> {
+    if state.0.content_type_registry.get(&singular).is_none() {
+        return Err(format!("content type '{}' not found", singular));
+    }
+
+    let path =
+        std::path::Path::new(&state.0.config.content_type_dir).join(format!("{singular}.toml"));
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| format!("delete failed: {e}"))?;
+    }
+
+    state.0.content_type_registry.unregister(&singular);
+
+    Ok(serde_json::json!({"deleted": true}))
+}

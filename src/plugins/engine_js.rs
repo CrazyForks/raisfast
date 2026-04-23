@@ -609,4 +609,113 @@ var Plugin = {
             .await;
         assert!(result.is_err());
     }
+
+    async fn eval_js_str(code: &str) -> Result<String, rquickjs::Error> {
+        let rt = AsyncRuntime::new()?;
+        let ctx = AsyncContext::full(&rt).await?;
+        let result: String = ctx
+            .with(|ctx| {
+                let v: rquickjs::Value = ctx.eval(code)?;
+                let s = v
+                    .as_string()
+                    .map(|s| s.to_string().unwrap_or_default())
+                    .unwrap_or_else(|| format!("{v:?}"));
+                Ok::<String, rquickjs::Error>(s)
+            })
+            .await?;
+        Ok(result)
+    }
+
+    #[tokio::test]
+    async fn qjs_let_const() {
+        let r = eval_js_str("let x = 1; const y = 2; String(x + y)").await;
+        assert!(r.is_ok(), "let/const should work: {:?}", r.err());
+        assert_eq!(r.unwrap(), "3");
+    }
+
+    #[tokio::test]
+    async fn qjs_arrow_function() {
+        let r = eval_js_str("var add = (a, b) => a + b; String(add(1, 2))").await;
+        assert!(r.is_ok(), "arrow function should work: {:?}", r.err());
+        assert_eq!(r.unwrap(), "3");
+    }
+
+    #[tokio::test]
+    async fn qjs_optional_chaining() {
+        let r = eval_js_str("var obj = {a:{b:1}}; String(obj?.a?.b ?? 'no')").await;
+        assert!(r.is_ok(), "optional chaining should work: {:?}", r.err());
+        assert_eq!(r.unwrap(), "1");
+    }
+
+    #[tokio::test]
+    async fn qjs_nullish_coalescing() {
+        let r = eval_js_str("null ?? 'default'").await;
+        assert!(r.is_ok(), "nullish coalescing should work: {:?}", r.err());
+        assert_eq!(r.unwrap(), "default");
+    }
+
+    #[tokio::test]
+    async fn qjs_template_literals() {
+        let r = eval_js_str("var name = 'world'; `hello ${name}`").await;
+        assert!(r.is_ok(), "template literals should work: {:?}", r.err());
+        assert_eq!(r.unwrap(), "hello world");
+    }
+
+    #[tokio::test]
+    async fn qjs_for_of() {
+        let r = eval_js_str("var s = ''; for (var x of [1,2,3]) { s += x; } s").await;
+        assert!(r.is_ok(), "for...of should work: {:?}", r.err());
+        assert_eq!(r.unwrap(), "123");
+    }
+
+    #[tokio::test]
+    async fn qjs_destructuring() {
+        let r = eval_js_str("var {a, b} = {a:1, b:2}; String(a + b)").await;
+        assert!(r.is_ok(), "destructuring should work: {:?}", r.err());
+        assert_eq!(r.unwrap(), "3");
+    }
+
+    #[tokio::test]
+    async fn qjs_default_params() {
+        let r =
+            eval_js_str("function greet(name = 'world') { return 'hello ' + name; } greet()").await;
+        assert!(r.is_ok(), "default params should work: {:?}", r.err());
+        assert_eq!(r.unwrap(), "hello world");
+    }
+
+    #[tokio::test]
+    async fn qjs_spread() {
+        let r = eval_js_str("var a = [1,2]; var b = [...a, 3]; String(b.length)").await;
+        assert!(r.is_ok(), "spread should work: {:?}", r.err());
+        assert_eq!(r.unwrap(), "3");
+    }
+
+    #[tokio::test]
+    async fn qjs_object_shorthand() {
+        let r = eval_js_str("var x = 1; var obj = {x}; String(obj.x)").await;
+        assert!(r.is_ok(), "object shorthand should work: {:?}", r.err());
+        assert_eq!(r.unwrap(), "1");
+    }
+
+    #[tokio::test]
+    async fn qjs_class_syntax() {
+        let r = eval_js_str(
+            "class Foo { constructor(v) { this.v = v; } get_val() { return this.v; } } String(new Foo(42).get_val())"
+        ).await;
+        assert!(r.is_ok(), "class syntax should work: {:?}", r.err());
+        assert_eq!(r.unwrap(), "42");
+    }
+
+    #[tokio::test]
+    async fn qjs_promise_async_await() {
+        let r = eval_js_str("async function f() { return 42; } typeof f()").await;
+        assert!(r.is_ok(), "async/await should work: {:?}", r.err());
+    }
+
+    #[tokio::test]
+    async fn qjs_exponentiation() {
+        let r = eval_js_str("String(2 ** 10)").await;
+        assert!(r.is_ok(), "exponentiation should work: {:?}", r.err());
+        assert_eq!(r.unwrap(), "1024");
+    }
 }

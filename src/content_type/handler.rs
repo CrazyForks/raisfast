@@ -423,7 +423,7 @@ pub async fn do_get(
     Ok(result)
 }
 
-async fn do_create(
+pub async fn do_create(
     state: &AppState,
     ct: &ContentTypeSchema,
     data: Value,
@@ -468,7 +468,7 @@ async fn do_create(
     Ok(result)
 }
 
-async fn do_update(
+pub async fn do_update(
     state: &AppState,
     ct: &ContentTypeSchema,
     id: &str,
@@ -519,7 +519,7 @@ async fn do_update(
     Ok(result)
 }
 
-async fn do_delete(
+pub async fn do_delete(
     state: &AppState,
     ct: &ContentTypeSchema,
     id: &str,

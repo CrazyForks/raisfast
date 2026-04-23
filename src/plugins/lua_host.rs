@@ -9,8 +9,8 @@ use mlua::Lua;
 
 use crate::config::app::AppConfig;
 use crate::db::Pool;
-use crate::plugins::host_common::HostContext;
 use crate::plugins::Permissions;
+use crate::plugins::host_common::HostContext;
 
 /// 注册宿主函数到 Lua 全局作用域。
 pub fn register_host_functions(

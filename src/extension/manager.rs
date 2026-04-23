@@ -224,14 +224,20 @@ impl ExtensionManager {
                     tracing::error!("extension '{}' migration failed: {e}", ext_id);
                 }
                 let (_, now) = crate::utils::id::new_id_and_timestamp();
-                model::update_version(&self.pool, ext_id, new_version, &manifest.extension.name, &now)
-                    .await
-                    .map_err(|e| {
-                        AppError::Internal(anyhow::anyhow!(
-                            "extension '{}': update version failed: {e}",
-                            ext_id
-                        ))
-                    })?;
+                model::update_version(
+                    &self.pool,
+                    ext_id,
+                    new_version,
+                    &manifest.extension.name,
+                    &now,
+                )
+                .await
+                .map_err(|e| {
+                    AppError::Internal(anyhow::anyhow!(
+                        "extension '{}': update version failed: {e}",
+                        ext_id
+                    ))
+                })?;
             }
         }
 
@@ -326,9 +332,7 @@ impl ExtensionManager {
     ) -> AppResult<()> {
         let migrations_dir = ext_root.join("migrations");
         if !migrations_dir.exists() {
-            tracing::debug!(
-                "no migrations/ directory for extension, skipping custom migrations"
-            );
+            tracing::debug!("no migrations/ directory for extension, skipping custom migrations");
             return Ok(());
         }
 
@@ -356,19 +360,16 @@ impl ExtensionManager {
 
         for (version, path) in &migration_files {
             if version.as_str() > old_version && version.as_str() <= new_version {
-                let sql =
-                    std::fs::read_to_string(path)
-                        .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
-                tracing::info!("running extension migration: {} ({})", path.display(), version);
-                sqlx::query(&sql)
-                    .execute(&self.pool)
-                    .await
-                    .map_err(|e| {
-                        AppError::Internal(anyhow::anyhow!(
-                            "migration {} failed: {e}",
-                            path.display()
-                        ))
-                    })?;
+                let sql = std::fs::read_to_string(path)
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+                tracing::info!(
+                    "running extension migration: {} ({})",
+                    path.display(),
+                    version
+                );
+                sqlx::query(&sql).execute(&self.pool).await.map_err(|e| {
+                    AppError::Internal(anyhow::anyhow!("migration {} failed: {e}", path.display()))
+                })?;
             }
         }
 

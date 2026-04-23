@@ -24,8 +24,7 @@ pub fn register_host_functions(
     let global = ctx.globals();
     let host = Object::new(ctx.clone())?;
 
-    let mut hc_inner =
-        HostContext::new("js", config, plugin_id, permissions, pool);
+    let mut hc_inner = HostContext::new("js", config, plugin_id, permissions, pool);
     if let Some(bus) = event_bus {
         hc_inner.set_event_bus(bus);
     }
@@ -140,10 +139,9 @@ pub fn register_host_functions(
     host.set("fsStat", fs_stat_fn)?;
 
     let hc = host_ctx;
-    let emit_event_fn =
-        Function::new(ctx, move |event_type: String, data: String| -> String {
-            hc.emit_event(&event_type, &data)
-        })?;
+    let emit_event_fn = Function::new(ctx, move |event_type: String, data: String| -> String {
+        hc.emit_event(&event_type, &data)
+    })?;
     host.set("emitEvent", emit_event_fn)?;
 
     global.set("Host", host)?;
@@ -351,7 +349,9 @@ mod tests {
             let host: Object = global.get("Host").unwrap();
             let db_fn: Function = host.get("dbQuery").unwrap();
 
-            let result: String = db_fn.call(("DELETE FROM posts", rquickjs::Undefined)).unwrap();
+            let result: String = db_fn
+                .call(("DELETE FROM posts", rquickjs::Undefined))
+                .unwrap();
             assert!(result.contains("only SELECT"));
         })
         .await;

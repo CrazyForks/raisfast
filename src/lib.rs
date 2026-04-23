@@ -2,6 +2,10 @@
 //!
 //! 基于 Rust + Axum 构建的功能完整的博客系统，支持 `SQLite` / `PostgreSQL` / `MySQL`。
 //! 架构分层：Handler → Service → Repository → Model → DB。
+//!
+//! 同时支持两种运行模式：
+//! - **server** — 独立 HTTP 服务器（Axum）
+//! - **tauri** — Tauri 桌面应用后端（共享 Service 层）
 
 #![deny(unsafe_code)]
 #![allow(clippy::missing_errors_doc)]
@@ -30,6 +34,9 @@ pub mod storage;
 pub mod utils;
 pub mod webhook;
 pub mod worker;
+
+#[cfg(feature = "tauri")]
+pub mod tauri;
 
 use audit::AuditService;
 use config::app::AppConfig;
@@ -89,4 +96,162 @@ pub struct AppState {
     pub oauth_registry: Arc<OAuthProviderRegistry>,
     pub email_sender: Arc<dyn EmailSender>,
     pub sms_sender: Arc<dyn SmsSender>,
+}
+
+/// 构建 AppState（HTTP 服务器和 Tauri 共享）
+pub async fn build_app_state(config: &AppConfig) -> anyhow::Result<AppState> {
+    let pool = crate::db::connection::init_pool(&config.database_url, config.db_pool_size).await?;
+    let eventbus = EventBus::new(256);
+
+    let sqlx_repo = crate::repositories::SqlxPostRepository::new(pool.clone());
+    let cache: Arc<dyn crate::cache::CacheStore> = Arc::new(crate::cache::MemoryCache::new());
+    let post_repo: Arc<dyn PostRepository> = Arc::new(
+        crate::repositories::CachedPostRepository::new(sqlx_repo, cache, None),
+    );
+
+    let user_repo: Arc<dyn UserRepository> =
+        Arc::new(crate::repositories::SqlxUserRepository::new(pool.clone()));
+    let category_repo: Arc<dyn crate::repositories::CategoryRepository> = Arc::new(
+        crate::repositories::SqlxCategoryRepository::new(pool.clone()),
+    );
+    let tag_repo: Arc<dyn crate::repositories::TagRepository> =
+        Arc::new(crate::repositories::SqlxTagRepository::new(pool.clone()));
+    let comment_repo: Arc<dyn crate::repositories::CommentRepository> = Arc::new(
+        crate::repositories::SqlxCommentRepository::new(pool.clone()),
+    );
+    let media_repo: Arc<dyn crate::repositories::MediaRepository> =
+        Arc::new(crate::repositories::SqlxMediaRepository::new(pool.clone()));
+    let refresh_token_repo: Arc<dyn crate::repositories::RefreshTokenRepository> = Arc::new(
+        crate::repositories::SqlxRefreshTokenRepository::new(pool.clone()),
+    );
+
+    let search: Arc<dyn SearchEngine> = build_search_engine(config);
+    let ct_registry = Arc::new(ContentTypeRegistry::new());
+
+    let plugin_manager = PluginManager::new_empty(
+        Arc::new(config.clone()),
+        crate::plugins::PluginManagerOptions {
+            pool: Some(pool.clone()),
+            event_bus: Some(eventbus.clone()),
+        },
+    )
+    .await;
+
+    let extension_manager = ExtensionManager::new(
+        ct_registry.clone(),
+        plugin_manager.clone(),
+        pool.clone(),
+        config,
+    )
+    .await;
+
+    let options_repo: Arc<dyn crate::repositories::OptionsRepository> = Arc::new(
+        crate::repositories::SqlxOptionsRepository::new(pool.clone()),
+    );
+    let options_service = Arc::new(OptionsService::new(options_repo).await);
+
+    let rbac_repo: Arc<dyn crate::repositories::RbacRepository> =
+        Arc::new(crate::repositories::SqlxRbacRepository::new(pool.clone()));
+    let rbac_service = Arc::new(RbacService::new(rbac_repo));
+
+    let tenant_repo: Arc<dyn crate::repositories::TenantRepository> =
+        Arc::new(crate::repositories::SqlxTenantRepository::new(pool.clone()));
+    let tenant_service = Arc::new(TenantService::new(tenant_repo));
+    let audit_service = Arc::new(crate::audit::AuditService::new(pool.clone()));
+    let webhook_service = Arc::new(crate::webhook::WebhookService::new(pool.clone()));
+
+    let extension_service = Arc::new(crate::extension::service::ExtensionService::new(
+        pool.clone(),
+    ));
+
+    let storage = crate::storage::create_storage(config)?;
+
+    let state = AppState {
+        pool: pool.clone(),
+        config: Arc::new(config.clone()),
+        jwt_decoding_key: jsonwebtoken::DecodingKey::from_secret(config.jwt_secret.as_bytes()),
+        plugins: plugin_manager,
+        eventbus: eventbus.clone(),
+        post_repo,
+        user_repo,
+        category_repo,
+        tag_repo,
+        comment_repo,
+        media_repo,
+        refresh_token_repo,
+        search,
+        content_type_registry: ct_registry,
+        options: options_service,
+        rbac: rbac_service,
+        tenant: tenant_service,
+        audit: audit_service,
+        webhook: webhook_service.clone(),
+        workflow: Arc::new(WorkflowService::new(pool.clone())),
+        extension_manager,
+        extension_service,
+        storage,
+        cms_cache: Arc::new(dashmap::DashMap::new()),
+        oauth_registry: Arc::new(build_oauth_registry(config)),
+        email_sender: crate::notifier::build_email_sender(config),
+        sms_sender: crate::notifier::build_sms_sender(config),
+    };
+
+    crate::server::spawn_event_subscriber(eventbus.clone(), state.plugins.clone());
+    crate::server::spawn_audit_subscriber(
+        eventbus.clone(),
+        state.audit.clone(),
+        state.tenant.clone(),
+    );
+    crate::server::spawn_webhook_subscriber(eventbus.clone(), state.webhook.clone());
+
+    Ok(state)
+}
+
+/// 构建搜索引擎实例
+pub fn build_search_engine(config: &AppConfig) -> Arc<dyn SearchEngine> {
+    match config.search_engine.as_str() {
+        #[cfg(feature = "search-tantivy")]
+        "tantivy" => match crate::search::TantivyEngine::open(&config.search_index_dir) {
+            Ok(engine) => {
+                tracing::info!(
+                    "search engine: tantivy (index: {})",
+                    config.search_index_dir
+                );
+                Arc::new(engine)
+            }
+            Err(e) => {
+                tracing::error!("failed to open tantivy index: {e}, falling back to noop");
+                Arc::new(crate::search::NoopSearchEngine)
+            }
+        },
+        _ => Arc::new(crate::search::NoopSearchEngine),
+    }
+}
+
+/// 构建 OAuth Provider 注册表
+pub fn build_oauth_registry(config: &AppConfig) -> OAuthProviderRegistry {
+    let mut registry = OAuthProviderRegistry::new();
+    if let Some(gh) = &config.oauth.github {
+        registry.register(Box::new(crate::oauth::github::GitHubProvider::new(
+            gh.client_id.clone(),
+            gh.client_secret.clone(),
+        )));
+        tracing::info!("OAuth provider registered: github");
+    }
+    if let Some(google) = &config.oauth.google {
+        registry.register(Box::new(crate::oauth::google::GoogleProvider::new(
+            google.client_id.clone(),
+            google.client_secret.clone(),
+        )));
+        tracing::info!("OAuth provider registered: google");
+    }
+    if let Some(wechat) = &config.oauth.wechat {
+        registry.register(Box::new(crate::oauth::wechat::WechatProvider::new(
+            wechat.app_id.clone(),
+            wechat.app_secret.clone(),
+            config.base_url.clone(),
+        )));
+        tracing::info!("OAuth provider registered: wechat");
+    }
+    registry
 }

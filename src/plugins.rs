@@ -216,7 +216,14 @@ impl PluginManager {
     ///
     /// 返回 `Arc` 是因为热重载 watcher 需要持有自引用来执行 reload。
     pub async fn new(config: Arc<AppConfig>) -> Arc<Self> {
-        Self::new_with_options(config, PluginManagerOptions { pool: None, event_bus: None }).await
+        Self::new_with_options(
+            config,
+            PluginManagerOptions {
+                pool: None,
+                event_bus: None,
+            },
+        )
+        .await
     }
 
     /// 带可选依赖创建 `PluginManager`
@@ -265,8 +272,8 @@ impl PluginManager {
             .expect("failed to create js engine");
 
         #[cfg(feature = "plugin-lua")]
-        let lua_engine =
-            LuaEngine::new(&config, opts.pool.clone(), opts.event_bus).expect("failed to create lua engine");
+        let lua_engine = LuaEngine::new(&config, opts.pool.clone(), opts.event_bus)
+            .expect("failed to create lua engine");
 
         let (reload_tx, reload_rx) = tokio::sync::mpsc::channel::<PathBuf>(32);
         let (event_tx, _) = tokio::sync::broadcast::channel::<Arc<PluginEvent>>(256);
@@ -1375,7 +1382,9 @@ impl PluginManager {
                                     .unwrap_or("errors.internal")
                                     .to_string()
                             };
-                            let data = plugin_resp.remove("data").unwrap_or(serde_json::Value::Null);
+                            let data = plugin_resp
+                                .remove("data")
+                                .unwrap_or(serde_json::Value::Null);
                             serde_json::json!({ "code": code, "message": message, "data": data })
                                 .to_string()
                         } else {

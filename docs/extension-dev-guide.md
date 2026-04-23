@@ -943,22 +943,29 @@ ws.send(JSON.stringify({
 }));
 ```
 
-### 6.8 QuickJS 限制
+### 6.8 QuickJS 语法支持
 
-JS 插件运行在 QuickJS 沙箱中，**不支持以下 ES6+ 特性**：
+JS 插件运行在 QuickJS 沙箱中，支持 **ES2024** 绝大多数特性：
 
-| 不支持 | 替代方案 |
-|--------|----------|
-| `let` / `const` | 用 `var` |
-| 箭头函数 `() => {}` | 用 `function() {}` |
-| 模板字符串 `` `hello ${name}` `` | 用字符串拼接 `"hello " + name` |
-| 可选链 `obj?.prop` | 用 `obj && obj.prop` |
-| `new URL()` | 手动解析字符串 |
-| `async` / `await` / `Promise` | 全部同步 |
-| `for...of` | 用 `for (var i = 0; i < arr.length; i++)` |
-| 解构赋值 `const {a} = obj` | 用 `var a = obj.a` |
-| `class` 语法 | 用 `function` + 原型 |
-| `import` / `export` | 单文件，全局 `Plugin` 对象 |
+| 特性 | 支持情况 | 示例 |
+|------|----------|------|
+| `let` / `const` | ✅ | `const name = "hello"; let count = 0;` |
+| 箭头函数 | ✅ | `const add = (a, b) => a + b;` |
+| 模板字符串 | ✅ | `` `hello ${name}` `` |
+| 可选链 `?.` | ✅ | `data?.name?.first` |
+| 空值合并 `??` | ✅ | `value ?? "default"` |
+| `for...of` | ✅ | `for (const item of arr) { ... }` |
+| 解构赋值 | ✅ | `const {a, b} = obj;` |
+| 默认参数 | ✅ | `function greet(name = "world") { ... }` |
+| 展开运算符 `...` | ✅ | `const b = [...a, 3];` |
+| 对象简写 | ✅ | `const obj = {x, y};` |
+| `class` 语法 | ✅ | `class Foo { constructor() {} }` |
+| `async` / `await` | ✅（但插件函数为同步调用） | `async function f() { ... }` |
+| 指数运算符 `**` | ✅ | `2 ** 10` |
+| `import` / `export` | ❌ | 单文件，使用全局 `Plugin` 对象 |
+| `new URL()` | ❌ | 手动解析字符串 |
+
+**最佳实践**：推荐使用 `const`/`let`、箭头函数、可选链、模板字符串等现代语法编写插件。
 
 ### 6.9 框架响应格式统一
 
@@ -1393,17 +1400,18 @@ var rows = query("SELECT * FROM forum_topics WHERE status = 'published'");
 var rows = query("SELECT * FROM forum_topics WHERE id = ?", [id]);
 ```
 
-### 4. 使用 ES6+ 语法
+### 4. 仍不支持 `import/export` 和 `new URL()`
 
 ```javascript
-// ❌ 错误 — QuickJS 不支持
-const name = data?.name ?? "default";
-const result = items.map(i => i.id);
+// ❌ 错误 — QuickJS 不支持 ES Module
+import { something } from "lib";
 
-// ✅ 正确 — 使用 ES5
-var name = (data && data.name) ? data.name : "default";
-var result = [];
-for (var i = 0; i < items.length; i++) { result.push(items[i].id); }
+// ❌ 错误 — QuickJS 不内置 URL 构造函数
+const url = new URL("https://example.com/path");
+
+// ✅ 正确 — 单文件，全局 Plugin 对象；手动解析路径
+const path = input.path || "";
+const parts = path.split("/");
 ```
 
 ### 5. 前端 Boolean 比较
