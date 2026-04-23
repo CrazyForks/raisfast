@@ -676,6 +676,8 @@ const translations: Record<string, string> = {
 
   // ── Layout CRM ──
   "layout.crm": "CRM",
+  "layout.pages": "Pages",
+  "layout.reusableBlocks": "Blocks",
 
   // ── CRM ──
   "crm.dashboard": "CRM Dashboard",
@@ -774,6 +776,47 @@ const translations: Record<string, string> = {
   "crm.conversionRate": "Conversion",
   "crm.byType": "By Type",
   "crm.byOutcome": "By Outcome",
+
+  // ── Pages ──
+  "pages.title": "Pages",
+  "pages.newPage": "New Page",
+  "pages.editPage": "Edit Page",
+  "pages.pageDeleted": "Page deleted",
+  "pages.pageCreated": "Page created",
+  "pages.pageUpdated": "Page updated",
+  "pages.failedToDelete": "Failed to delete page",
+  "pages.failedToCreate": "Failed to create page",
+  "pages.failedToUpdate": "Failed to update page",
+  "pages.statusUpdated": "Page status updated",
+  "pages.failedToUpdateStatus": "Failed to update status",
+  "pages.confirmDelete": "Are you sure you want to delete this page?",
+  "pages.noPages": "No pages found.",
+  "pages.publish": "Publish",
+  "pages.unpublish": "Unpublish",
+  "pages.preview": "Preview",
+  "pages.slug": "Slug",
+  "pages.template": "Template",
+  "pages.createdAt": "Created",
+  "pages.basicInfo": "Basic Info",
+  "pages.titleLabel": "Title",
+  "pages.titlePlaceholder": "Enter page title...",
+  "pages.coverImage": "Cover Image",
+  "pages.metaTitle": "Meta Title",
+  "pages.metaDescription": "Meta Description",
+  "pages.ogImage": "OG Image",
+  "pages.content": "Content",
+  "pages.blockMode": "Blocks",
+  "pages.saveDraft": "Save Draft",
+  "pages.writeContent": "Write your page content...",
+  "pages.addBlock": "Add Block",
+  "pages.chooseBlock": "Choose a block type",
+  "pages.reusableBlocks": "Reusable Blocks",
+  "pages.createReusable": "Create Reusable Block",
+  "pages.editReusable": "Edit Reusable Block",
+  "pages.rbName": "Name",
+  "pages.rbType": "Block Type",
+  "pages.rbDescription": "Description",
+  "pages.rbContent": "Content",
 };
 
 export default translations;

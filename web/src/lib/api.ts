@@ -63,6 +63,12 @@ export class ApiError extends Error {
 
 let refreshPromise: Promise<string | null> | null = null;
 
+function redirectToList() {
+  if (typeof window !== "undefined" && !window.location.pathname.startsWith("/auth/")) {
+    window.location.href = `/auth/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+  }
+}
+
 async function refreshToken(): Promise<string | null> {
   if (refreshPromise) return refreshPromise;
 
@@ -131,12 +137,19 @@ export async function apiRequest<T>(
     if (newToken) {
       headers.set("Authorization", `Bearer ${newToken}`);
       res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+    } else {
+      redirectToList();
+      throw new ApiError(40100, "errors.unauthorized");
     }
+  } else if (res.status === 401) {
+    redirectToList();
+    throw new ApiError(40100, "errors.unauthorized");
   }
 
   const json = await res.json();
 
   if (json.code !== 0) {
+    if (json.code === 40100) redirectToList();
     throw new ApiError(json.code, json.message);
   }
 

@@ -25,6 +25,7 @@ pub mod email_verification;
 pub mod media;
 pub mod oauth;
 pub mod options;
+pub mod page;
 pub mod password_reset;
 pub mod plugin_storage;
 pub mod post;

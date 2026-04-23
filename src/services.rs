@@ -12,6 +12,7 @@ pub mod comment;
 pub mod media;
 pub mod oauth;
 pub mod options;
+pub mod page;
 pub mod post;
 pub mod rbac;
 pub mod stats;

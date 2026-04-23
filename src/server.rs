@@ -9,8 +9,8 @@ use crate::AppState;
 use crate::cache::MemoryCache;
 use crate::config::app::AppConfig;
 use crate::handlers::{
-    api_token, auth, category, comment, cron, health, media, options, plugin, post, rbac, rss, sse,
-    stats, tag, tenant, user, workflow, ws,
+    api_token, auth, category, comment, cron, health, media, options, page, plugin, post, rbac,
+    rss, sse, stats, tag, tenant, user, workflow, ws,
 };
 use crate::middleware::locale::locale_middleware;
 use crate::middleware::metrics;
@@ -138,6 +138,9 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
             "/posts/{slug}",
             get(post::get).put(post::update).delete(post::delete),
         )
+        .route("/pages", get(page::list).post(page::create))
+        .route("/pages/sitemap", get(page::sitemap))
+        .route("/pages/{slug}", get(page::get_by_slug))
         .route("/posts/{slug}/comments", get(comment::list))
         .route(
             "/posts/{slug}/comments",
@@ -177,6 +180,21 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
     let api_v1 = api_v1
         .route("/admin/posts", get(post::admin_list))
         .route("/admin/posts/{slug}", get(post::admin_get))
+        .route("/admin/pages", get(page::admin_list))
+        .route(
+            "/admin/pages/{id}",
+            get(page::admin_get).put(page::update).delete(page::delete),
+        )
+        .route("/admin/pages/{id}/status", put(page::update_status))
+        .route("/admin/pages/reorder", put(page::reorder))
+        .route(
+            "/admin/reusable-blocks",
+            get(page::list_reusable).post(page::create_reusable),
+        )
+        .route(
+            "/admin/reusable-blocks/{id}",
+            get(page::get_reusable).put(page::update_reusable).delete(page::delete_reusable),
+        )
         .route("/admin/plugins", get(plugin::list))
         .route(
             "/admin/plugins/{id}",

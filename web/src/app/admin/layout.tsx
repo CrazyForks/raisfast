@@ -37,6 +37,8 @@ import {
   FileBarChart,
   StickyNote,
   CalendarCheck,
+  LayoutTemplate,
+  Blocks,
 } from "lucide-react";
 
 import {
@@ -69,6 +71,8 @@ function useContentItems() {
     { label: t("layout.tags"), href: "/admin/tags", icon: Tag },
     { label: t("layout.comments"), href: "/admin/comments", icon: MessageSquare },
     { label: t("layout.media"), href: "/admin/media", icon: Image },
+    { label: t("layout.pages"), href: "/admin/pages", icon: LayoutTemplate },
+    { label: t("layout.reusableBlocks"), href: "/admin/reusable-blocks", icon: Blocks },
     { label: t("layout.contentTypes"), href: "/admin/content-types", icon: Layers },
   ];
 }

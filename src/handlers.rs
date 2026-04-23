@@ -27,6 +27,7 @@ pub mod health;
 pub mod media;
 pub mod oauth;
 pub mod options;
+pub mod page;
 pub mod plugin;
 pub mod post;
 pub mod rbac;

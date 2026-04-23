@@ -676,6 +676,8 @@ const translations: Record<string, string> = {
 
   // ── Layout CRM ──
   "layout.crm": "CRM",
+  "layout.pages": "页面",
+  "layout.reusableBlocks": "可复用块",
 
   // ── CRM ──
   "crm.dashboard": "CRM 仪表盘",
@@ -774,6 +776,47 @@ const translations: Record<string, string> = {
   "crm.conversionRate": "转化率",
   "crm.byType": "按类型",
   "crm.byOutcome": "按结果",
+
+  // ── Pages ──
+  "pages.title": "页面",
+  "pages.newPage": "新建页面",
+  "pages.editPage": "编辑页面",
+  "pages.pageDeleted": "页面已删除",
+  "pages.pageCreated": "页面已创建",
+  "pages.pageUpdated": "页面已更新",
+  "pages.failedToDelete": "删除页面失败",
+  "pages.failedToCreate": "创建页面失败",
+  "pages.failedToUpdate": "更新页面失败",
+  "pages.statusUpdated": "页面状态已更新",
+  "pages.failedToUpdateStatus": "更新状态失败",
+  "pages.confirmDelete": "确定要删除此页面吗？",
+  "pages.noPages": "暂无页面。",
+  "pages.publish": "发布",
+  "pages.unpublish": "取消发布",
+  "pages.preview": "预览",
+  "pages.slug": "路径别名",
+  "pages.template": "模板",
+  "pages.createdAt": "创建时间",
+  "pages.basicInfo": "基本信息",
+  "pages.titleLabel": "标题",
+  "pages.titlePlaceholder": "输入页面标题...",
+  "pages.coverImage": "封面图",
+  "pages.metaTitle": "SEO 标题",
+  "pages.metaDescription": "SEO 描述",
+  "pages.ogImage": "OG 图片",
+  "pages.content": "内容",
+  "pages.blockMode": "可视化块",
+  "pages.saveDraft": "保存草稿",
+  "pages.writeContent": "输入页面内容...",
+  "pages.addBlock": "添加块",
+  "pages.chooseBlock": "选择块类型",
+  "pages.reusableBlocks": "可复用块",
+  "pages.createReusable": "创建可复用块",
+  "pages.editReusable": "编辑可复用块",
+  "pages.rbName": "名称",
+  "pages.rbType": "块类型",
+  "pages.rbDescription": "描述",
+  "pages.rbContent": "内容",
 };
 
 export default translations;
