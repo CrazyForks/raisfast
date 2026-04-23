@@ -1,0 +1,77 @@
+[content_type]
+name = "Note"
+singular = "note"
+plural = "notes"
+table = "crm_notes"
+description = "备注/跟进记录"
+draft_publish = false
+timestamps = true
+
+[fields.content]
+type = "richtext"
+required = true
+label = "内容"
+
+[fields.contact]
+type = "relation"
+relation_type = "many_to_one"
+target = "contacts"
+foreign_key = "contact_id"
+label = "关联联系人"
+
+[fields.company]
+type = "relation"
+relation_type = "many_to_one"
+target = "companies"
+foreign_key = "company_id"
+label = "关联公司"
+
+[fields.deal]
+type = "relation"
+relation_type = "many_to_one"
+target = "deals"
+foreign_key = "deal_id"
+label = "关联商机"
+
+[fields.owner_id]
+type = "text"
+auto_fill = "user_id"
+label = "创建者"
+
+[fields.pinned]
+type = "boolean"
+default = false
+label = "置顶"
+
+[[indexes]]
+fields = ["contact_id", "created_at"]
+
+[[indexes]]
+fields = ["company_id", "created_at"]
+
+[[indexes]]
+fields = ["deal_id", "created_at"]
+
+[[indexes]]
+fields = ["owner_id", "created_at"]
+
+[list_view]
+default_sort = "pinned:desc,created_at:desc"
+columns = ["content", "contact", "company", "deal", "pinned", "owner_id", "created_at"]
+
+[api.list]
+access = "member"
+
+[api.get]
+access = "member"
+
+[api.create]
+access = "member"
+
+[api.update]
+access = "member"
+filter = "@auth.id == owner_id || @auth.role == 'admin'"
+
+[api.delete]
+access = "member"
+filter = "@auth.id == owner_id || @auth.role == 'admin'"

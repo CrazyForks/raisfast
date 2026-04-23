@@ -1,0 +1,105 @@
+[content_type]
+name = "Activity"
+singular = "activity"
+plural = "activities"
+table = "crm_activities"
+description = "活动/互动记录"
+draft_publish = false
+timestamps = true
+
+[fields.type]
+type = "enum"
+enum_values = ["call", "email", "meeting", "note", "task", "demo", "follow_up"]
+required = true
+default = "note"
+label = "活动类型"
+
+[fields.subject]
+type = "text"
+required = true
+max_length = 300
+label = "主题"
+
+[fields.content]
+type = "richtext"
+label = "内容"
+
+[fields.contact]
+type = "relation"
+relation_type = "many_to_one"
+target = "contacts"
+foreign_key = "contact_id"
+label = "关联联系人"
+
+[fields.company]
+type = "relation"
+relation_type = "many_to_one"
+target = "companies"
+foreign_key = "company_id"
+label = "关联公司"
+
+[fields.deal]
+type = "relation"
+relation_type = "many_to_one"
+target = "deals"
+foreign_key = "deal_id"
+label = "关联商机"
+
+[fields.owner_id]
+type = "text"
+auto_fill = "user_id"
+label = "负责人"
+
+[fields.activity_date]
+type = "datetime"
+required = true
+label = "活动时间"
+
+[fields.duration_minutes]
+type = "integer"
+min = 0
+label = "时长(分钟)"
+
+[fields.outcome]
+type = "enum"
+enum_values = ["successful", "unsuccessful", "scheduled", "cancelled"]
+label = "结果"
+
+[[indexes]]
+fields = ["type"]
+
+[[indexes]]
+fields = ["contact_id", "activity_date"]
+
+[[indexes]]
+fields = ["company_id"]
+
+[[indexes]]
+fields = ["deal_id"]
+
+[[indexes]]
+fields = ["owner_id", "activity_date"]
+
+[[indexes]]
+fields = ["activity_date"]
+
+[list_view]
+default_sort = "activity_date:desc"
+columns = ["type", "subject", "contact", "company", "deal", "activity_date", "outcome", "owner_id"]
+
+[api.list]
+access = "member"
+
+[api.get]
+access = "member"
+
+[api.create]
+access = "member"
+
+[api.update]
+access = "member"
+filter = "@auth.id == owner_id || @auth.role == 'admin'"
+
+[api.delete]
+access = "member"
+filter = "@auth.id == owner_id || @auth.role == 'admin'"

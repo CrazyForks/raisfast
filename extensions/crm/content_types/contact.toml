@@ -1,0 +1,108 @@
+[content_type]
+name = "Contact"
+singular = "contact"
+plural = "contacts"
+table = "crm_contacts"
+description = "联系人"
+draft_publish = false
+timestamps = true
+
+[fields.first_name]
+type = "text"
+required = true
+max_length = 100
+label = "名"
+
+[fields.last_name]
+type = "text"
+required = true
+max_length = 100
+label = "姓"
+
+[fields.email]
+type = "email"
+required = true
+unique = true
+label = "邮箱"
+
+[fields.phone]
+type = "text"
+label = "电话"
+
+[fields.mobile]
+type = "text"
+label = "手机"
+
+[fields.job_title]
+type = "text"
+label = "职位"
+
+[fields.company]
+type = "relation"
+relation_type = "many_to_one"
+target = "companies"
+foreign_key = "company_id"
+label = "所属公司"
+
+[fields.source]
+type = "enum"
+enum_values = ["website", "referral", "linkedin", "cold_call", "event", "advertisement", "other"]
+default = "other"
+label = "来源渠道"
+
+[fields.status]
+type = "enum"
+enum_values = ["active", "inactive", "converted", "churned"]
+default = "active"
+label = "状态"
+
+[fields.lifecycle_stage]
+type = "enum"
+enum_values = ["subscriber", "lead", "marketing_qualified_lead", "sales_qualified_lead", "opportunity", "customer", "evangelist"]
+default = "lead"
+label = "生命周期阶段"
+
+[fields.owner_id]
+type = "text"
+auto_fill = "user_id"
+label = "负责人"
+
+[fields.notes]
+type = "richtext"
+label = "备注"
+
+[[indexes]]
+fields = ["email"]
+unique = true
+
+[[indexes]]
+fields = ["company_id"]
+
+[[indexes]]
+fields = ["owner_id", "created_at"]
+
+[[indexes]]
+fields = ["status"]
+
+[[indexes]]
+fields = ["lifecycle_stage"]
+
+[list_view]
+default_sort = "created_at:desc"
+columns = ["first_name", "last_name", "email", "company", "job_title", "status", "lifecycle_stage", "owner_id"]
+
+[api.list]
+access = "member"
+
+[api.get]
+access = "member"
+
+[api.create]
+access = "member"
+
+[api.update]
+access = "member"
+filter = "@auth.id == owner_id || @auth.role == 'admin'"
+
+[api.delete]
+access = "admin"

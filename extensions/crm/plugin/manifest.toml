@@ -1,0 +1,78 @@
+[plugin]
+id = "com.rust-blog.crm"
+name = "CRM API"
+version = "0.1.0"
+description = "CRM 销售漏斗、Pipeline 管理、联系人时间线"
+author = "rust-blog"
+license = "MIT"
+runtime = "js"
+language = "js"
+entry = "main.js"
+
+[permissions]
+max_memory_mb = 16
+timeout_ms = 5000
+database = [
+    "crm_contacts",
+    "crm_companies",
+    "crm_deals",
+    "crm_activities",
+    "crm_notes",
+]
+config = ["app.*"]
+
+[hooks.on-content-created]
+priority = 50
+
+[hooks.on-content-updated]
+priority = 50
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/crm/pipeline"
+handler = "getPipeline"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/crm/pipeline/:dealId"
+handler = "getDealDetail"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/crm/deals/:dealId/stage"
+handler = "updateDealStage"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/crm/contacts/:contactId/timeline"
+handler = "getContactTimeline"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/crm/companies/:companyId/timeline"
+handler = "getCompanyTimeline"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/crm/stats"
+handler = "getDashboardStats"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/crm/leaderboard"
+handler = "getLeaderboard"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/crm/contacts/:contactId/convert"
+handler = "convertLead"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/crm/reports/funnel"
+handler = "getFunnelReport"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/crm/reports/activities"
+handler = "getActivityReport"

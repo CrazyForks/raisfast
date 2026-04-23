@@ -30,6 +30,13 @@ import {
   KeyRound,
   GitBranch,
   Languages,
+  Handshake,
+  Kanban,
+  Contact,
+  Building,
+  FileBarChart,
+  StickyNote,
+  CalendarCheck,
 } from "lucide-react";
 
 import {
@@ -63,6 +70,20 @@ function useContentItems() {
     { label: t("layout.comments"), href: "/admin/comments", icon: MessageSquare },
     { label: t("layout.media"), href: "/admin/media", icon: Image },
     { label: t("layout.contentTypes"), href: "/admin/content-types", icon: Layers },
+  ];
+}
+
+function useCrmItems() {
+  const { t } = useT();
+  return [
+    { label: t("crm.dashboard"), href: "/admin/crm/dashboard", icon: Handshake },
+    { label: t("crm.pipeline"), href: "/admin/crm/pipeline", icon: Kanban },
+    { label: t("crm.contacts"), href: "/admin/crm/contacts", icon: Contact },
+    { label: t("crm.companies"), href: "/admin/crm/companies", icon: Building },
+    { label: t("crm.deals"), href: "/admin/crm/deals", icon: FileText },
+    { label: t("crm.activities"), href: "/admin/crm/activities", icon: CalendarCheck },
+    { label: t("crm.notes"), href: "/admin/crm/notes", icon: StickyNote },
+    { label: t("crm.reports"), href: "/admin/crm/reports", icon: FileBarChart },
   ];
 }
 
@@ -142,6 +163,7 @@ export default function AdminLayout({
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const contentItems = useContentItems();
+  const crmItems = useCrmItems();
   const systemItems = useSystemItems();
   const { t } = useT();
 
@@ -228,6 +250,34 @@ export default function AdminLayout({
             <SidebarGroupContent>
               <SidebarMenu>
                 {contentItems.map((item) => {
+                  const active = getIsActive(item.href);
+                  return (
+                    <SidebarMenuItem key={item.href}>
+                      <SidebarMenuButton
+                        render={<Link href={item.href} />}
+                        isActive={active}
+                        tooltip={item.label}
+                      >
+                        <item.icon />
+                        <span>{item.label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          <SidebarSeparator />
+
+          <SidebarGroup>
+            <SidebarGroupLabel>
+              <ChevronDown className="size-3" />
+              {t("layout.crm")}
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {crmItems.map((item) => {
                   const active = getIsActive(item.href);
                   return (
                     <SidebarMenuItem key={item.href}>
