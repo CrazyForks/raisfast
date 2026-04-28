@@ -48,7 +48,6 @@ pub(crate) fn test_config() -> AppConfig {
         .to_string_lossy()
         .into();
     cfg.base_url = "http://localhost:9000".into();
-    cfg.extension_dir = "./__nonexistent_extensions__".into();
     cfg
 }
 
@@ -179,21 +178,12 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
         workflow: Arc::new(rust_blog::services::workflow::WorkflowService::new(
             pool.clone(),
         )),
-        extension_manager: rust_blog::extension::manager::ExtensionManager::new(
-            Arc::new(rust_blog::content_type::ContentTypeRegistry::new()),
-            PluginManager::new(config.clone()).await,
-            pool.clone(),
-            &config,
-        )
-        .await,
-        extension_service: Arc::new(rust_blog::extension::service::ExtensionService::new(
-            pool.clone(),
-        )),
         storage: rust_blog::storage::create_storage(&config).expect("failed to create storage"),
         cms_cache: Arc::new(dashmap::DashMap::new()),
         oauth_registry: Arc::new(rust_blog::oauth::OAuthProviderRegistry::default()),
         email_sender: rust_blog::notifier::build_email_sender(&config),
         sms_sender: rust_blog::notifier::build_sms_sender(&config),
+        route_registry: Arc::new(Vec::new()),
     };
     let max_upload = state.config.max_upload_size;
 
@@ -303,23 +293,6 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
             get(rust_blog::webhook::handler::get)
                 .put(rust_blog::webhook::handler::update)
                 .delete(rust_blog::webhook::handler::delete),
-        )
-        .route(
-            "/admin/extensions",
-            get(rust_blog::extension::handler::list),
-        )
-        .route(
-            "/admin/extensions/{id}",
-            get(rust_blog::extension::handler::get)
-                .delete(rust_blog::extension::handler::uninstall),
-        )
-        .route(
-            "/admin/extensions/{id}/enable",
-            http_post(rust_blog::extension::handler::enable),
-        )
-        .route(
-            "/admin/extensions/{id}/disable",
-            http_post(rust_blog::extension::handler::disable),
         )
         .route(
             "/admin/workflows",
@@ -533,8 +506,6 @@ mod category;
 mod comment;
 #[path = "api/cron.rs"]
 mod cron;
-#[path = "api/extension.rs"]
-mod extension;
 #[path = "api/health.rs"]
 mod health;
 #[path = "api/media.rs"]

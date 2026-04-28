@@ -72,7 +72,7 @@ fn parse_product() -> ContentTypeSchema {
 
 fn parse_article() -> ContentTypeSchema {
     ContentTypeSchema::parse_from_file(std::path::Path::new(
-        "extensions/first-ext/content_types/article.toml",
+        "extensions/content_types/first-ext_article.toml",
     ))
     .unwrap()
 }
@@ -174,7 +174,7 @@ async fn create_and_find_by_id() {
     assert_eq!(created["status"], "draft");
 
     let found = repo
-        .find_by_id(&ct, created["id"].as_str().unwrap(), None)
+        .find_by_id(&ct, created["id"].as_str().unwrap(), None, true)
         .await
         .unwrap()
         .unwrap();
@@ -226,7 +226,7 @@ async fn find_by_slug() {
     .unwrap();
 
     let found = repo
-        .find_by_slug(&ct, "slug-test", Some("draft"), None)
+        .find_by_slug(&ct, "slug-test", Some("draft"), None, true)
         .await
         .unwrap()
         .unwrap();
@@ -264,6 +264,8 @@ async fn find_paginated() {
         skip_total: false,
         rule_where: None,
         rule_params: Vec::new(),
+        max_page_size: 100,
+        include_private: false,
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 15);
@@ -282,6 +284,8 @@ async fn find_paginated() {
         skip_total: false,
         rule_where: None,
         rule_params: Vec::new(),
+        max_page_size: 100,
+        include_private: false,
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 15);
@@ -327,6 +331,8 @@ async fn find_with_status_filter() {
         skip_total: false,
         rule_where: None,
         rule_params: Vec::new(),
+        max_page_size: 100,
+        include_private: false,
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 1);
@@ -387,7 +393,7 @@ async fn delete_removes_record() {
 
     repo.delete(&ct, &id, None).await.unwrap();
 
-    let found = repo.find_by_id(&ct, &id, None).await.unwrap();
+    let found = repo.find_by_id(&ct, &id, None, true).await.unwrap();
     assert!(found.is_none());
 
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM ct_products")
@@ -486,21 +492,21 @@ async fn tenant_isolation() {
     let id_b = b["id"].as_str().unwrap();
 
     assert!(
-        repo.find_by_id(&ct, id_a, Some("tenant_b"))
+        repo.find_by_id(&ct, id_a, Some("tenant_b"), true)
             .await
             .unwrap()
             .is_none(),
         "tenant_b should not see tenant_a's data"
     );
     assert!(
-        repo.find_by_id(&ct, id_b, Some("tenant_a"))
+        repo.find_by_id(&ct, id_b, Some("tenant_a"), true)
             .await
             .unwrap()
             .is_none(),
         "tenant_a should not see tenant_b's data"
     );
     assert!(
-        repo.find_by_id(&ct, id_a, Some("tenant_a"))
+        repo.find_by_id(&ct, id_a, Some("tenant_a"), true)
             .await
             .unwrap()
             .is_some(),
@@ -520,6 +526,8 @@ async fn tenant_isolation() {
         skip_total: false,
         rule_where: None,
         rule_params: Vec::new(),
+        max_page_size: 100,
+        include_private: false,
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 1);
@@ -547,7 +555,7 @@ async fn delete_respects_tenant() {
     repo.delete(&ct, id_a, Some("tenant_b")).await.unwrap();
 
     assert!(
-        repo.find_by_id(&ct, id_a, Some("tenant_a"))
+        repo.find_by_id(&ct, id_a, Some("tenant_a"), true)
             .await
             .unwrap()
             .is_some(),
@@ -556,7 +564,7 @@ async fn delete_respects_tenant() {
 
     repo.delete(&ct, id_a, Some("tenant_a")).await.unwrap();
     assert!(
-        repo.find_by_id(&ct, id_a, Some("tenant_a"))
+        repo.find_by_id(&ct, id_a, Some("tenant_a"), true)
             .await
             .unwrap()
             .is_none(),
@@ -595,6 +603,8 @@ async fn find_with_custom_sort() {
         skip_total: false,
         rule_where: None,
         rule_params: Vec::new(),
+        max_page_size: 100,
+        include_private: false,
     };
     let (items, _) = repo.find(&ct, query).await.unwrap();
     assert_eq!(items[0]["title"], "Beta");
@@ -642,6 +652,8 @@ async fn find_with_field_filter() {
         skip_total: false,
         rule_where: None,
         rule_params: Vec::new(),
+        max_page_size: 100,
+        include_private: false,
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 1);
@@ -677,6 +689,8 @@ async fn partial_field_selection() {
         skip_total: false,
         rule_where: None,
         rule_params: Vec::new(),
+        max_page_size: 100,
+        include_private: false,
     };
     let (items, _) = repo.find(&ct, query).await.unwrap();
     let obj = items[0].as_object().unwrap();

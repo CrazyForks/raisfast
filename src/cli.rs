@@ -2,8 +2,9 @@
 //!
 //! 使用 clap derive 定义命令行结构，将每个子命令分发到对应模块执行。
 
+mod ct_cmd;
 mod db_cmd;
-mod ext_cmd;
+mod plugin_cmd;
 mod server_cmd;
 
 use rust_blog::config::app::AppConfig;
@@ -29,10 +30,15 @@ enum Commands {
         #[command(subcommand)]
         action: DbAction,
     },
-    /// Extension management
-    Ext {
+    /// Content type management
+    Ct {
         #[command(subcommand)]
-        action: ExtAction,
+        action: CtAction,
+    },
+    /// Plugin management
+    Plugin {
+        #[command(subcommand)]
+        action: PluginAction,
     },
 }
 
@@ -61,23 +67,32 @@ pub enum DbAction {
 }
 
 #[derive(Subcommand)]
-pub enum ExtAction {
-    /// Create a new extension from template
+pub enum CtAction {
+    /// Create a new content type TOML file
     New {
-        /// Extension ID (used as directory name)
+        /// Content type name (e.g. "product")
+        name: String,
+    },
+    /// Validate content type TOML files
+    Check {
+        /// Path to check (default: content_type_dir)
+        path: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum PluginAction {
+    /// Create a new plugin from template
+    New {
+        /// Plugin ID (e.g. "my-plugin")
         id: String,
-        /// Plugin runtime: js, lua, wasm
+        /// Runtime: js, lua, or wasm
         #[arg(short, long, default_value = "js")]
         runtime: String,
     },
-    /// Validate extension manifests and content types
+    /// Validate plugin manifests
     Check {
-        /// Path to extension directory (default: ./extensions)
-        path: Option<String>,
-    },
-    /// Preview all routes registered by extensions
-    Routes {
-        /// Path to extension directory (default: ./extensions)
+        /// Path to check (default: plugin_dir)
         path: Option<String>,
     },
 }
@@ -121,22 +136,28 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
             db_cmd::backup(config, &output)?;
         }
 
-        Some(Commands::Ext {
-            action: ExtAction::New { id, runtime },
+        Some(Commands::Ct {
+            action: CtAction::New { name },
         }) => {
-            ext_cmd::create_new(config, &id, &runtime)?;
+            ct_cmd::create_new(config, &name)?;
         }
 
-        Some(Commands::Ext {
-            action: ExtAction::Check { path },
+        Some(Commands::Ct {
+            action: CtAction::Check { path },
         }) => {
-            ext_cmd::check(config, path.as_deref())?;
+            ct_cmd::check(config, path.as_deref())?;
         }
 
-        Some(Commands::Ext {
-            action: ExtAction::Routes { path },
+        Some(Commands::Plugin {
+            action: PluginAction::New { id, runtime },
         }) => {
-            ext_cmd::routes(config, path.as_deref())?;
+            plugin_cmd::create_new(config, &id, &runtime)?;
+        }
+
+        Some(Commands::Plugin {
+            action: PluginAction::Check { path },
+        }) => {
+            plugin_cmd::check(config, path.as_deref())?;
         }
     }
 

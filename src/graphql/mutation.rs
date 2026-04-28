@@ -114,7 +114,7 @@ impl MutationRoot {
 
         let repo = ContentRepository::new(state.pool.clone());
         let existing = repo
-            .find_by_id(&ct, id.as_str(), None)
+            .find_by_id(&ct, id.as_str(), None, true)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
@@ -176,7 +176,7 @@ impl MutationRoot {
 
         let repo = ContentRepository::new(state.pool.clone());
         let existing = repo
-            .find_by_id(&ct, id.as_str(), None)
+            .find_by_id(&ct, id.as_str(), None, true)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 

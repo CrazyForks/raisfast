@@ -37,7 +37,7 @@
 **现状**：
 - 完整的 Content-Type Builder 页面（1013 行），支持创建/编辑 content type
 - 字段类型：text, richtext, email, password, uid, integer, bigint, decimal, float, date, datetime, time, boolean, enum, json, media, relation
-- 字段配置：required, unique, private, immutable, label, description, default, max_length, min/max, enum values, relation config, media config
+- 字段配置：required, unique, private, immutable, label, description, default, max_length, min/max, enum_values, relation config, media config
 - 字段上下移动排序、删除字段
 - draft/publish, timestamps, soft_delete, slug_field 开关
 

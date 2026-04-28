@@ -49,6 +49,7 @@ pub struct AppConfig {
     pub cors_origins: Option<String>,
     pub tls_cert_path: Option<String>,
     pub tls_key_path: Option<String>,
+    #[serde(default = "default_plugin_dir")]
     pub plugin_dir: Option<String>,
     #[serde(default)]
     pub plugin_hot_reload: bool,
@@ -118,8 +119,6 @@ pub struct AppConfig {
     pub content_type_dir: String,
     #[serde(default = "default_timezone")]
     pub timezone: String,
-    #[serde(default = "default_extension_dir")]
-    pub extension_dir: String,
     #[serde(default = "default_protected_tables")]
     pub protected_tables: Vec<String>,
     #[serde(default = "default_storage_driver")]
@@ -218,6 +217,8 @@ pub struct RuleEngineConfig {
     pub regex_like_single_char: String,
     /// CMS 列表缓存 TTL（秒，默认 30）
     pub cms_cache_ttl_secs: u64,
+    /// CMS 列表单页最大条数（默认 100）
+    pub cms_max_page_size: u64,
 }
 
 impl Default for RuleEngineConfig {
@@ -237,6 +238,7 @@ impl Default for RuleEngineConfig {
             regex_like_wildcard: ".*".into(),
             regex_like_single_char: ".".into(),
             cms_cache_ttl_secs: 30,
+            cms_max_page_size: 100,
         }
     }
 }
@@ -271,6 +273,10 @@ impl RuleEngineConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(defaults.cms_cache_ttl_secs),
+            cms_max_page_size: env::var("CMS_MAX_PAGE_SIZE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.cms_max_page_size),
         }
     }
 }
@@ -307,15 +313,15 @@ fn default_search_index_dir() -> String {
 }
 
 fn default_content_type_dir() -> String {
-    "./content_types".into()
+    "./extensions/content_types".into()
+}
+
+fn default_plugin_dir() -> Option<String> {
+    Some("./extensions/plugins".into())
 }
 
 fn default_timezone() -> String {
     "UTC".into()
-}
-
-fn default_extension_dir() -> String {
-    "./extensions".into()
 }
 
 pub fn default_protected_tables() -> Vec<String> {
@@ -323,7 +329,6 @@ pub fn default_protected_tables() -> Vec<String> {
         "users".into(),
         "roles".into(),
         "permissions".into(),
-        "extensions".into(),
         "audit_log".into(),
         "plugin_storage".into(),
         "options".into(),
@@ -666,10 +671,6 @@ impl AppConfig {
                 .ok()
                 .filter(|v| !v.is_empty())
                 .unwrap_or_else(default_timezone),
-            extension_dir: env::var("EXTENSION_DIR")
-                .ok()
-                .filter(|v| !v.is_empty())
-                .unwrap_or_else(default_extension_dir),
             protected_tables: env::var("PROTECTED_TABLES")
                 .ok()
                 .filter(|s| !s.is_empty())
@@ -803,7 +804,7 @@ impl AppConfig {
             cors_origins: None,
             tls_cert_path: None,
             tls_key_path: None,
-            plugin_dir: None,
+            plugin_dir: default_plugin_dir(),
             plugin_hot_reload: false,
             plugin_max_memory_mb: default_plugin_max_memory(),
             plugin_default_timeout_ms: default_plugin_timeout(),
@@ -838,7 +839,6 @@ impl AppConfig {
             search_index_dir: default_search_index_dir(),
             content_type_dir: default_content_type_dir(),
             timezone: default_timezone(),
-            extension_dir: default_extension_dir(),
             protected_tables: default_protected_tables(),
             storage_driver: default_storage_driver(),
             s3_endpoint: None,

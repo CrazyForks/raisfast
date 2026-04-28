@@ -373,6 +373,8 @@ async fn tauri_cms_create_and_list() {
     let query = ContentQuery {
         page: 1,
         page_size: 20,
+        max_page_size: 100,
+        include_private: false,
         ..Default::default()
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
@@ -392,7 +394,7 @@ async fn tauri_cms_get_by_id() {
     let created = repo.create(&ct, data, None, &save_ctx).await.unwrap();
 
     let id = created["id"].as_str().unwrap();
-    let found = repo.find_by_id(&ct, id, None).await.unwrap().unwrap();
+    let found = repo.find_by_id(&ct, id, None, true).await.unwrap().unwrap();
     assert_eq!(found["title"], "Read book");
 }
 
@@ -413,7 +415,7 @@ async fn tauri_cms_update() {
         .await
         .unwrap();
 
-    let found = repo.find_by_id(&ct, &id, None).await.unwrap().unwrap();
+    let found = repo.find_by_id(&ct, &id, None, true).await.unwrap().unwrap();
     assert_eq!(found["title"], "Updated");
 }
 
@@ -431,7 +433,7 @@ async fn tauri_cms_delete() {
     let id = created["id"].as_str().unwrap().to_string();
     repo.delete(&ct, &id, None).await.unwrap();
 
-    let found = repo.find_by_id(&ct, &id, None).await.unwrap();
+    let found = repo.find_by_id(&ct, &id, None, true).await.unwrap();
     assert!(found.is_none(), "deleted item should not exist");
 }
 
@@ -599,6 +601,8 @@ async fn tauri_cms_list_with_pagination() {
     let query = ContentQuery {
         page: 1,
         page_size: 2,
+        max_page_size: 100,
+        include_private: false,
         ..Default::default()
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
@@ -608,6 +612,8 @@ async fn tauri_cms_list_with_pagination() {
     let query2 = ContentQuery {
         page: 2,
         page_size: 2,
+        max_page_size: 100,
+        include_private: false,
         ..Default::default()
     };
     let (items2, _) = repo.find(&ct, query2).await.unwrap();
@@ -616,6 +622,8 @@ async fn tauri_cms_list_with_pagination() {
     let query3 = ContentQuery {
         page: 3,
         page_size: 2,
+        max_page_size: 100,
+        include_private: false,
         ..Default::default()
     };
     let (items3, _) = repo.find(&ct, query3).await.unwrap();
@@ -676,6 +684,7 @@ async fn tauri_build_app_state_succeeds() {
     config.log_dir = format!("{}/logs", dir.path().display());
     config.content_type_dir = format!("{}/content_types", dir.path().display());
     config.plugin_dir = None;
+    std::fs::create_dir_all(&config.content_type_dir).unwrap();
 
     let result = rust_blog::build_app_state(&config).await;
     assert!(

@@ -414,7 +414,7 @@ max = 99999
 
 [fields.status]
 type = "enum"
-values = ["draft", "published", "archived"]
+enum_values = ["draft", "published", "archived"]
 default = "draft"
 
 [fields.secret]

@@ -323,12 +323,14 @@ pub async fn do_list(
             None
         },
         search: params.search,
-        fields: None,
+        fields: ct.api.list.fields.clone(),
         tenant_id: None,
         include,
         skip_total: params.skip_total.unwrap_or(false),
         rule_where,
         rule_params,
+        max_page_size: state.config.rule_engine.cms_max_page_size as i64,
+        include_private: false,
     };
 
     let cache_key = cms_list_cache_key(ct, &query);
@@ -380,7 +382,7 @@ pub async fn do_get(
     };
 
     let item = if id_or_slug.contains('-') && !id_or_slug.contains('/') {
-        repo.find_by_slug(ct, id_or_slug, status, None)
+        repo.find_by_slug(ct, id_or_slug, status, None, false)
             .await?
             .or(None)
     } else {
@@ -389,7 +391,7 @@ pub async fn do_get(
 
     let item = match item {
         Some(data) => Some(data),
-        None => repo.find_by_id(ct, id_or_slug, None).await?,
+        None => repo.find_by_id(ct, id_or_slug, None, false).await?,
     };
 
     let result = item.ok_or_else(|| AppError::not_found(&format!("{}/{}", ct.name, id_or_slug)))?;
@@ -419,6 +421,8 @@ pub async fn do_get(
             .cms_cache
             .insert(cache_key, (result.clone(), std::time::Instant::now()));
     }
+
+    let result = filter_fields(result, ct.api.get.fields.as_deref());
 
     Ok(result)
 }
@@ -481,7 +485,7 @@ pub async fn do_update(
     if let Some(rules) = ct.cached_rules.as_ref()
         && let Some(rule) = rules.update.filter.as_ref()
     {
-        let existing = repo.find_by_id(ct, id, None).await?;
+        let existing = repo.find_by_id(ct, id, None, true).await?;
         if let Some(record) = existing {
             let ctx = super::rule_engine::RuleContext::from_auth(auth);
             if !rule.evaluate(&record, &ctx, &state.config.rule_engine) {
@@ -530,7 +534,7 @@ pub async fn do_delete(
     if let Some(rules) = ct.cached_rules.as_ref()
         && let Some(rule) = rules.delete.filter.as_ref()
     {
-        let existing = repo.find_by_id(ct, id, None).await?;
+        let existing = repo.find_by_id(ct, id, None, true).await?;
         if let Some(record) = existing {
             let ctx = super::rule_engine::RuleContext::from_auth(auth);
             if !rule.evaluate(&record, &ctx, &state.config.rule_engine) {
@@ -576,6 +580,8 @@ async fn do_admin_list(
         skip_total: params.skip_total.unwrap_or(false),
         rule_where: None,
         rule_params: Vec::new(),
+        max_page_size: state.config.rule_engine.cms_max_page_size as i64,
+        include_private: true,
     };
     let (items, total) = repo.find(ct, query.clone()).await?;
     Ok(json!({
@@ -592,7 +598,7 @@ async fn do_admin_get(
     id: &str,
 ) -> Result<serde_json::Value, AppError> {
     let repo = ContentRepository::new(state.pool.clone());
-    let item = repo.find_by_id(ct, id, None).await?;
+    let item = repo.find_by_id(ct, id, None, true).await?;
     item.ok_or_else(|| AppError::not_found(&format!("{}/{}", ct.name, id)))
 }
 
@@ -744,7 +750,6 @@ pub async fn create_schema(
     Json(req): Json<super::schema::CreateContentTypeRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let schema = super::schema::ContentTypeSchema {
-        extension_id: None,
         name: req.name,
         singular: req.singular.clone(),
         plural: req.plural,
@@ -896,6 +901,34 @@ pub async fn update_schema(
     Ok(Json(crate::errors::response::ApiResponse::success(
         updated.clone(),
     )))
+}
+
+/// 过滤 JSON 对象，只保留白名单字段 + 系统字段
+/// 白名单为空时返回原始对象（不过滤）
+fn filter_fields(mut value: serde_json::Value, fields: Option<&[String]>) -> serde_json::Value {
+    let Some(allowed) = fields else {
+        return value;
+    };
+    if allowed.is_empty() {
+        return value;
+    }
+    let Some(obj) = value.as_object_mut() else {
+        return value;
+    };
+    let system_keys: Vec<String> = obj
+        .keys()
+        .filter(|k| {
+            *k == "id"
+                || *k == "status"
+                || *k == "published_at"
+                || *k == "created_at"
+                || *k == "updated_at"
+                || *k == "deleted_at"
+        })
+        .cloned()
+        .collect();
+    obj.retain(|k, _| allowed.contains(&k.to_string()) || system_keys.contains(k));
+    value
 }
 
 fn parse_include(s: &str) -> Vec<String> {

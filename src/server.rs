@@ -30,6 +30,34 @@ use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::Level;
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RouteInfo {
+    pub method: String,
+    pub path: String,
+    pub source: String,
+    pub source_name: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RouteRegistry {
+    routes: Vec<RouteInfo>,
+}
+
+impl RouteRegistry {
+    pub fn record(&mut self, method: &str, path: &str, source: &str, source_name: &str) {
+        self.routes.push(RouteInfo {
+            method: method.to_string(),
+            path: path.to_string(),
+            source: source.to_string(),
+            source_name: source_name.to_string(),
+        });
+    }
+
+    pub fn into_vec(self) -> Vec<RouteInfo> {
+        self.routes
+    }
+}
+
 /// 构建 CORS 中间件。
 fn build_cors(config: &AppConfig) -> CorsLayer {
     match &config.cors_origins {
@@ -50,13 +78,21 @@ fn build_cors(config: &AppConfig) -> CorsLayer {
     }
 }
 
-/// 组装完整的应用路由（含数据库连接池初始化）。
+macro_rules! reg_route {
+    ($router:ident, $registry:ident, $path:literal, $handler:expr, $source:expr, $name:expr, [$($method:literal),+ $(,)?]) => {
+        $router = $router.route($path, $handler);
+        $($registry.record($method, concat!("/api/v1", $path), $source, $name);)+
+    };
+}
+
 async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Result<axum::Router> {
     let upload_dir = config.upload_dir.clone();
     let static_dir = config.static_dir.clone();
     let max_upload = config.max_upload_size;
 
-    let state = crate::build_app_state(config).await?;
+    let mut registry = RouteRegistry::default();
+
+    let mut state = crate::build_app_state(config).await?;
     let pool = state.pool.clone();
     let eventbus = state.eventbus.clone();
     let worker_pool = pool.clone();
@@ -75,256 +111,144 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
     }
 
     let cors = build_cors(config);
+    let mut api_v1 = axum::Router::new();
 
-    let api_v1 = axum::Router::new()
-        .route(
-            "/auth/register",
-            http_post(auth::register).layer(from_fn(register_rate_limit)),
-        )
-        .route(
-            "/auth/login",
-            http_post(auth::login).layer(from_fn(login_rate_limit)),
-        )
-        .route("/auth/refresh", http_post(auth::refresh))
-        .route("/auth/logout", http_post(auth::logout))
-        .route("/auth/forgot-password", http_post(auth::forgot_password))
-        .route("/auth/reset-password", http_post(auth::reset_password))
-        .route("/auth/set-password", http_post(auth::set_password))
-        .route("/auth/config", get(auth::auth_config))
-        .route("/auth/sms/send", http_post(auth::send_sms_code))
-        .route("/auth/sms/verify", http_post(auth::verify_sms))
-        .route("/auth/phone/bind", http_post(auth::bind_phone))
-        .route("/auth/verify-email", http_post(auth::verify_email))
-        .route(
-            "/auth/resend-verification",
-            http_post(auth::resend_verification),
-        )
-        .route(
-            "/auth/oauth/{provider}",
-            get(crate::handlers::oauth::redirect_to_provider),
-        )
-        .route(
-            "/auth/oauth/{provider}/callback",
-            get(crate::handlers::oauth::callback),
-        )
-        .route(
-            "/auth/oauth/providers",
-            get(crate::handlers::oauth::list_providers),
-        )
-        .route(
-            "/auth/oauth/bindings",
-            get(crate::handlers::oauth::list_bindings),
-        )
-        .route(
-            "/auth/oauth/{provider}/unbind",
-            delete(crate::handlers::oauth::unbind),
-        )
-        .route("/tokens", get(api_token::list).post(api_token::create))
-        .route("/tokens/{id}", delete(api_token::delete))
-        .route("/users/me", get(user::get_me).put(user::update_me))
-        .route("/users/me/password", put(user::change_password))
-        .route("/users/{id}", get(user::get_user))
-        .route("/users/{id}/role", put(user::update_role))
-        .route("/users", get(user::list_users))
-        .route("/categories", get(category::list).post(category::create))
-        .route(
-            "/categories/{id}",
-            put(category::update).delete(category::delete),
-        )
-        .route("/tags", get(tag::list).post(tag::create))
-        .route("/tags/{id}", delete(tag::delete))
-        .route("/posts", get(post::list).post(post::create))
-        .route(
-            "/posts/{slug}",
-            get(post::get).put(post::update).delete(post::delete),
-        )
-        .route("/pages", get(page::list).post(page::create))
-        .route("/pages/sitemap", get(page::sitemap))
-        .route("/pages/{slug}", get(page::get_by_slug))
-        .route("/posts/{slug}/comments", get(comment::list))
-        .route(
-            "/posts/{slug}/comments",
-            http_post(comment::create_guest).layer(from_fn(comment_rate_limit)),
-        )
-        .route("/posts/{slug}/comments/authed", http_post(comment::create))
-        .route("/comments/{id}", delete(comment::delete))
-        .route("/comments/{id}/status", put(comment::update_status))
-        .route("/comments", get(comment::list_all))
-        .route(
-            "/media/upload",
-            http_post(media::upload).layer(RequestBodyLimitLayer::new(max_upload)),
-        )
-        .route("/media", get(media::list))
-        .route("/media/stats", get(media::stats))
-        .route("/media/{id}", delete(media::delete))
-        .route("/events", get(sse::subscribe));
+    reg_route!(api_v1, registry, "/auth/register", http_post(auth::register).layer(from_fn(register_rate_limit)), "system", "auth", ["POST"]);
+    reg_route!(api_v1, registry, "/auth/login", http_post(auth::login).layer(from_fn(login_rate_limit)), "system", "auth", ["POST"]);
+    reg_route!(api_v1, registry, "/auth/refresh", http_post(auth::refresh), "system", "auth", ["POST"]);
+    reg_route!(api_v1, registry, "/auth/logout", http_post(auth::logout), "system", "auth", ["POST"]);
+    reg_route!(api_v1, registry, "/auth/forgot-password", http_post(auth::forgot_password), "system", "auth", ["POST"]);
+    reg_route!(api_v1, registry, "/auth/reset-password", http_post(auth::reset_password), "system", "auth", ["POST"]);
+    reg_route!(api_v1, registry, "/auth/set-password", http_post(auth::set_password), "system", "auth", ["POST"]);
+    reg_route!(api_v1, registry, "/auth/config", get(auth::auth_config), "system", "auth", ["GET"]);
+    reg_route!(api_v1, registry, "/auth/sms/send", http_post(auth::send_sms_code), "system", "auth", ["POST"]);
+    reg_route!(api_v1, registry, "/auth/sms/verify", http_post(auth::verify_sms), "system", "auth", ["POST"]);
+    reg_route!(api_v1, registry, "/auth/phone/bind", http_post(auth::bind_phone), "system", "auth", ["POST"]);
+    reg_route!(api_v1, registry, "/auth/verify-email", http_post(auth::verify_email), "system", "auth", ["POST"]);
+    reg_route!(api_v1, registry, "/auth/resend-verification", http_post(auth::resend_verification), "system", "auth", ["POST"]);
+    reg_route!(api_v1, registry, "/auth/oauth/{provider}", get(crate::handlers::oauth::redirect_to_provider), "system", "auth", ["GET"]);
+    reg_route!(api_v1, registry, "/auth/oauth/{provider}/callback", get(crate::handlers::oauth::callback), "system", "auth", ["GET"]);
+    reg_route!(api_v1, registry, "/auth/oauth/providers", get(crate::handlers::oauth::list_providers), "system", "auth", ["GET"]);
+    reg_route!(api_v1, registry, "/auth/oauth/bindings", get(crate::handlers::oauth::list_bindings), "system", "auth", ["GET"]);
+    reg_route!(api_v1, registry, "/auth/oauth/{provider}/unbind", delete(crate::handlers::oauth::unbind), "system", "auth", ["DELETE"]);
 
-    let api_v1 = if config.websocket_enabled {
+    reg_route!(api_v1, registry, "/tokens", get(api_token::list).post(api_token::create), "system", "tokens", ["GET", "POST"]);
+    reg_route!(api_v1, registry, "/tokens/{id}", delete(api_token::delete), "system", "tokens", ["DELETE"]);
+    reg_route!(api_v1, registry, "/users/me", get(user::get_me).put(user::update_me), "system", "users", ["GET", "PUT"]);
+    reg_route!(api_v1, registry, "/users/me/password", put(user::change_password), "system", "users", ["PUT"]);
+    reg_route!(api_v1, registry, "/users/{id}", get(user::get_user), "system", "users", ["GET"]);
+    reg_route!(api_v1, registry, "/users/{id}/role", put(user::update_role), "system", "users", ["PUT"]);
+    reg_route!(api_v1, registry, "/users", get(user::list_users), "system", "users", ["GET"]);
+    reg_route!(api_v1, registry, "/categories", get(category::list).post(category::create), "system", "categories", ["GET", "POST"]);
+    reg_route!(api_v1, registry, "/categories/{id}", put(category::update).delete(category::delete), "system", "categories", ["PUT", "DELETE"]);
+    reg_route!(api_v1, registry, "/tags", get(tag::list).post(tag::create), "system", "tags", ["GET", "POST"]);
+    reg_route!(api_v1, registry, "/tags/{id}", delete(tag::delete), "system", "tags", ["DELETE"]);
+    reg_route!(api_v1, registry, "/posts", get(post::list).post(post::create), "system", "posts", ["GET", "POST"]);
+    reg_route!(api_v1, registry, "/posts/{slug}", get(post::get).put(post::update).delete(post::delete), "system", "posts", ["GET", "PUT", "DELETE"]);
+    reg_route!(api_v1, registry, "/pages", get(page::list).post(page::create), "system", "pages", ["GET", "POST"]);
+    reg_route!(api_v1, registry, "/pages/sitemap", get(page::sitemap), "system", "pages", ["GET"]);
+    reg_route!(api_v1, registry, "/pages/{slug}", get(page::get_by_slug), "system", "pages", ["GET"]);
+    reg_route!(api_v1, registry, "/posts/{slug}/comments", get(comment::list), "system", "comments", ["GET"]);
+    reg_route!(api_v1, registry, "/posts/{slug}/comments", http_post(comment::create_guest).layer(from_fn(comment_rate_limit)), "system", "comments", ["POST"]);
+    reg_route!(api_v1, registry, "/posts/{slug}/comments/authed", http_post(comment::create), "system", "comments", ["POST"]);
+    reg_route!(api_v1, registry, "/comments/{id}", delete(comment::delete), "system", "comments", ["DELETE"]);
+    reg_route!(api_v1, registry, "/comments/{id}/status", put(comment::update_status), "system", "comments", ["PUT"]);
+    reg_route!(api_v1, registry, "/comments", get(comment::list_all), "system", "comments", ["GET"]);
+    reg_route!(api_v1, registry, "/media/upload", http_post(media::upload).layer(RequestBodyLimitLayer::new(max_upload)), "system", "media", ["POST"]);
+    reg_route!(api_v1, registry, "/media", get(media::list), "system", "media", ["GET"]);
+    reg_route!(api_v1, registry, "/media/stats", get(media::stats), "system", "media", ["GET"]);
+    reg_route!(api_v1, registry, "/media/{id}", delete(media::delete), "system", "media", ["DELETE"]);
+    reg_route!(api_v1, registry, "/events", get(sse::subscribe), "system", "sse", ["GET"]);
+
+    if config.websocket_enabled {
         tracing::info!("WebSocket enabled at /api/v1/ws");
-        api_v1.route("/ws", get(ws::ws_handler))
-    } else {
-        api_v1
-    };
-
-    let api_v1 = if config.graphql_enabled {
+        reg_route!(api_v1, registry, "/ws", get(ws::ws_handler), "system", "ws", ["GET"]);
+    }
+    if config.graphql_enabled {
         tracing::info!("GraphQL enabled at /api/v1/graphql");
-        api_v1.route(
-            "/graphql",
-            get(crate::graphql::handler::graphiql_handler)
-                .post(crate::graphql::handler::graphql_handler),
-        )
-    } else {
-        api_v1
-    };
+        reg_route!(api_v1, registry, "/graphql", get(crate::graphql::handler::graphiql_handler).post(crate::graphql::handler::graphql_handler), "system", "graphql", ["GET", "POST"]);
+    }
 
-    let api_v1 = api_v1
-        .route("/admin/posts", get(post::admin_list))
-        .route("/admin/posts/{slug}", get(post::admin_get))
-        .route("/admin/pages", get(page::admin_list))
-        .route(
-            "/admin/pages/{id}",
-            get(page::admin_get).put(page::update).delete(page::delete),
-        )
-        .route("/admin/pages/{id}/status", put(page::update_status))
-        .route("/admin/pages/reorder", put(page::reorder))
-        .route(
-            "/admin/reusable-blocks",
-            get(page::list_reusable).post(page::create_reusable),
-        )
-        .route(
-            "/admin/reusable-blocks/{id}",
-            get(page::get_reusable).put(page::update_reusable).delete(page::delete_reusable),
-        )
-        .route("/admin/plugins", get(plugin::list))
-        .route(
-            "/admin/plugins/{id}",
-            get(plugin::get).delete(plugin::remove),
-        )
-        .route("/admin/plugins/{id}/enable", http_post(plugin::enable))
-        .route("/admin/plugins/{id}/disable", http_post(plugin::disable))
-        .route("/admin/plugins/{id}/reload", http_post(plugin::reload))
-        .route("/admin/crons", get(cron::list).post(cron::create))
-        .route(
-            "/admin/crons/{id}",
-            get(cron::get).put(cron::update).delete(cron::delete),
-        )
-        .route("/admin/crons/{id}/toggle", http_post(cron::toggle))
-        .route("/admin/crons/logs", get(cron::logs))
-        .route("/admin/crons/logs/cleanup", http_post(cron::cleanup_logs))
-        .route(
-            "/admin/rbac/roles",
-            get(rbac::list_roles).post(rbac::create_role),
-        )
-        .route(
-            "/admin/rbac/roles/{id}",
-            put(rbac::update_role).delete(rbac::delete_role),
-        )
-        .route(
-            "/admin/rbac/roles/{id}/permissions",
-            get(rbac::get_permissions).put(rbac::set_permissions),
-        )
-        .route("/admin/stats", get(stats::overview))
-        .route("/admin/stats/content/{table}", get(stats::content_stats))
-        .route("/admin/stats/trends", get(stats::trends))
-        .route("/options/public", get(options::get_public_options))
-        .route(
-            "/admin/options",
-            get(options::list_options).put(options::update_options),
-        )
-        .route(
-            "/admin/options/{key}",
-            get(options::get_option)
-                .put(options::set_option)
-                .delete(options::delete_option),
-        )
-        .route(
-            "/admin/tenants",
-            get(tenant::list_tenants).post(tenant::create_tenant),
-        )
-        .route(
-            "/admin/tenants/{id}",
-            get(tenant::get_tenant)
-                .put(tenant::update_tenant)
-                .delete(tenant::delete_tenant),
-        )
-        .route("/admin/audit", get(crate::audit::handler::list))
-        .route("/admin/audit/{id}", get(crate::audit::handler::get))
-        .route(
-            "/admin/webhooks",
-            get(crate::webhook::handler::list).post(crate::webhook::handler::create),
-        )
-        .route(
-            "/admin/webhooks/{id}",
-            get(crate::webhook::handler::get)
-                .put(crate::webhook::handler::update)
-                .delete(crate::webhook::handler::delete),
-        )
-        .route(
-            "/admin/content-types",
-            get(crate::content_type::handler::list_schemas)
-                .post(crate::content_type::handler::create_schema),
-        )
-        .route(
-            "/admin/content-types/{singular}",
-            get(crate::content_type::handler::get_schema)
-                .put(crate::content_type::handler::update_schema)
-                .delete(crate::content_type::handler::delete_schema),
-        )
-        .route("/admin/extensions", get(crate::extension::handler::list))
-        .route(
-            "/admin/extensions/{id}",
-            get(crate::extension::handler::get).delete(crate::extension::handler::uninstall),
-        )
-        .route(
-            "/admin/extensions/{id}/enable",
-            http_post(crate::extension::handler::enable),
-        )
-        .route(
-            "/admin/extensions/{id}/disable",
-            http_post(crate::extension::handler::disable),
-        )
-        .route(
-            "/admin/workflows",
-            get(workflow::list).post(workflow::create),
-        )
-        .route(
-            "/admin/workflows/{id}",
-            get(workflow::get).delete(workflow::delete),
-        )
-        .route("/admin/workflows/{id}/start", http_post(workflow::start))
-        .route("/admin/workflows/instances", get(workflow::list_instances))
-        .route(
-            "/admin/workflows/instances/{id}",
-            get(workflow::get_instance),
-        )
-        .route(
-            "/admin/workflows/instances/{id}/execute",
-            http_post(workflow::execute_step),
-        )
-        .route(
-            "/admin/workflows/instances/{id}/cancel",
-            http_post(workflow::cancel_instance),
-        )
-        .route(
-            "/admin/workflows/instances/{id}/logs",
-            get(workflow::get_step_logs),
-        )
+    reg_route!(api_v1, registry, "/admin/posts", get(post::admin_list), "system", "admin/posts", ["GET"]);
+    reg_route!(api_v1, registry, "/admin/posts/{slug}", get(post::admin_get), "system", "admin/posts", ["GET"]);
+    reg_route!(api_v1, registry, "/admin/pages", get(page::admin_list), "system", "admin/pages", ["GET"]);
+    reg_route!(api_v1, registry, "/admin/pages/{id}", get(page::admin_get).put(page::update).delete(page::delete), "system", "admin/pages", ["GET", "PUT", "DELETE"]);
+    reg_route!(api_v1, registry, "/admin/pages/{id}/status", put(page::update_status), "system", "admin/pages", ["PUT"]);
+    reg_route!(api_v1, registry, "/admin/pages/reorder", put(page::reorder), "system", "admin/pages", ["PUT"]);
+    reg_route!(api_v1, registry, "/admin/reusable-blocks", get(page::list_reusable).post(page::create_reusable), "system", "admin/pages", ["GET", "POST"]);
+    reg_route!(api_v1, registry, "/admin/reusable-blocks/{id}", get(page::get_reusable).put(page::update_reusable).delete(page::delete_reusable), "system", "admin/pages", ["GET", "PUT", "DELETE"]);
+    reg_route!(api_v1, registry, "/admin/plugins", get(plugin::list), "system", "admin/plugins", ["GET"]);
+    reg_route!(api_v1, registry, "/admin/plugins/{id}", get(plugin::get).delete(plugin::remove), "system", "admin/plugins", ["GET", "DELETE"]);
+    reg_route!(api_v1, registry, "/admin/plugins/{id}/enable", http_post(plugin::enable), "system", "admin/plugins", ["POST"]);
+    reg_route!(api_v1, registry, "/admin/plugins/{id}/disable", http_post(plugin::disable), "system", "admin/plugins", ["POST"]);
+    reg_route!(api_v1, registry, "/admin/plugins/{id}/reload", http_post(plugin::reload), "system", "admin/plugins", ["POST"]);
+    reg_route!(api_v1, registry, "/admin/crons", get(cron::list).post(cron::create), "system", "admin/crons", ["GET", "POST"]);
+    reg_route!(api_v1, registry, "/admin/crons/{id}", get(cron::get).put(cron::update).delete(cron::delete), "system", "admin/crons", ["GET", "PUT", "DELETE"]);
+    reg_route!(api_v1, registry, "/admin/crons/{id}/toggle", http_post(cron::toggle), "system", "admin/crons", ["POST"]);
+    reg_route!(api_v1, registry, "/admin/crons/logs", get(cron::logs), "system", "admin/crons", ["GET"]);
+    reg_route!(api_v1, registry, "/admin/crons/logs/cleanup", http_post(cron::cleanup_logs), "system", "admin/crons", ["POST"]);
+    reg_route!(api_v1, registry, "/admin/rbac/roles", get(rbac::list_roles).post(rbac::create_role), "system", "admin/rbac", ["GET", "POST"]);
+    reg_route!(api_v1, registry, "/admin/rbac/roles/{id}", put(rbac::update_role).delete(rbac::delete_role), "system", "admin/rbac", ["PUT", "DELETE"]);
+    reg_route!(api_v1, registry, "/admin/rbac/roles/{id}/permissions", get(rbac::get_permissions).put(rbac::set_permissions), "system", "admin/rbac", ["GET", "PUT"]);
+    reg_route!(api_v1, registry, "/admin/stats", get(stats::overview), "system", "admin/stats", ["GET"]);
+    reg_route!(api_v1, registry, "/admin/stats/content/{table}", get(stats::content_stats), "system", "admin/stats", ["GET"]);
+    reg_route!(api_v1, registry, "/admin/stats/trends", get(stats::trends), "system", "admin/stats", ["GET"]);
+    reg_route!(api_v1, registry, "/options/public", get(options::get_public_options), "system", "options", ["GET"]);
+    reg_route!(api_v1, registry, "/admin/options", get(options::list_options).put(options::update_options), "system", "admin/options", ["GET", "PUT"]);
+    reg_route!(api_v1, registry, "/admin/options/{key}", get(options::get_option).put(options::set_option).delete(options::delete_option), "system", "admin/options", ["GET", "PUT", "DELETE"]);
+    reg_route!(api_v1, registry, "/admin/tenants", get(tenant::list_tenants).post(tenant::create_tenant), "system", "admin/tenants", ["GET", "POST"]);
+    reg_route!(api_v1, registry, "/admin/tenants/{id}", get(tenant::get_tenant).put(tenant::update_tenant).delete(tenant::delete_tenant), "system", "admin/tenants", ["GET", "PUT", "DELETE"]);
+    reg_route!(api_v1, registry, "/admin/audit", get(crate::audit::handler::list), "system", "admin/audit", ["GET"]);
+    reg_route!(api_v1, registry, "/admin/audit/{id}", get(crate::audit::handler::get), "system", "admin/audit", ["GET"]);
+    reg_route!(api_v1, registry, "/admin/webhooks", get(crate::webhook::handler::list).post(crate::webhook::handler::create), "system", "admin/webhooks", ["GET", "POST"]);
+    reg_route!(api_v1, registry, "/admin/webhooks/{id}", get(crate::webhook::handler::get).put(crate::webhook::handler::update).delete(crate::webhook::handler::delete), "system", "admin/webhooks", ["GET", "PUT", "DELETE"]);
+    reg_route!(api_v1, registry, "/admin/content-types", get(crate::content_type::handler::list_schemas).post(crate::content_type::handler::create_schema), "system", "admin/content-types", ["GET", "POST"]);
+    reg_route!(api_v1, registry, "/admin/content-types/{singular}", get(crate::content_type::handler::get_schema).put(crate::content_type::handler::update_schema).delete(crate::content_type::handler::delete_schema), "system", "admin/content-types", ["GET", "PUT", "DELETE"]);
+    reg_route!(api_v1, registry, "/admin/workflows", get(workflow::list).post(workflow::create), "system", "admin/workflows", ["GET", "POST"]);
+    reg_route!(api_v1, registry, "/admin/workflows/{id}", get(workflow::get).delete(workflow::delete), "system", "admin/workflows", ["GET", "DELETE"]);
+    reg_route!(api_v1, registry, "/admin/workflows/{id}/start", http_post(workflow::start), "system", "admin/workflows", ["POST"]);
+    reg_route!(api_v1, registry, "/admin/workflows/instances", get(workflow::list_instances), "system", "admin/workflows", ["GET"]);
+    reg_route!(api_v1, registry, "/admin/workflows/instances/{id}", get(workflow::get_instance), "system", "admin/workflows", ["GET"]);
+    reg_route!(api_v1, registry, "/admin/workflows/instances/{id}/execute", http_post(workflow::execute_step), "system", "admin/workflows", ["POST"]);
+    reg_route!(api_v1, registry, "/admin/workflows/instances/{id}/cancel", http_post(workflow::cancel_instance), "system", "admin/workflows", ["POST"]);
+    reg_route!(api_v1, registry, "/admin/workflows/instances/{id}/logs", get(workflow::get_step_logs), "system", "admin/workflows", ["GET"]);
+
+    api_v1 = api_v1
         .layer(from_fn(global_rate_limit))
         .layer(Extension(limiters))
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024));
 
-    let api_v1 =
-        crate::content_type::handler::register_content_routes(api_v1, &state.content_type_registry);
+    api_v1 = crate::content_type::handler::register_content_routes(api_v1, &state.content_type_registry);
 
-    let api_v1 = api_v1
-        .route(
-            "/cms/{*path}",
-            axum::routing::any(crate::content_type::handler::dynamic_cms_handler),
-        )
-        .route(
-            "/admin/cms/{*path}",
-            axum::routing::any(crate::content_type::handler::dynamic_admin_cms_handler),
-        );
+    for ct in state.content_type_registry.all() {
+        let plural = &ct.plural;
+        let name = &ct.singular;
+        for (method, suffix) in [("GET", ""), ("POST", ""), ("GET", "/{id_or_slug}"), ("PUT", "/{id_or_slug}"), ("DELETE", "/{id_or_slug}")] {
+            registry.record(method, &format!("/api/v1/cms/{}{}", plural, suffix), "content_type", name);
+        }
+        registry.record("GET", &format!("/api/v1/admin/cms/{}", plural), "content_type", name);
+        registry.record("GET", &format!("/api/v1/admin/cms/{}/{{id_or_slug}}", plural), "content_type", name);
+    }
+
+    api_v1 = api_v1
+        .route("/cms/{*path}", axum::routing::any(crate::content_type::handler::dynamic_cms_handler))
+        .route("/admin/cms/{*path}", axum::routing::any(crate::content_type::handler::dynamic_admin_cms_handler))
+        .route("/routes", get(list_routes))
+        .route("/health", get(health::health));
+
+    registry.record("GET", "/api/v1/health", "system", "health");
+
+    {
+        let plugin_routes = state.plugins.all_plugin_routes().await;
+        for (method, path, ext_id) in &plugin_routes {
+            registry.record(method, path, "plugin", ext_id);
+        }
+    }
+
+    registry.record("GET", "/api/v1/routes", "system", "system");
+
+    let routes_vec = registry.into_vec();
+    state.route_registry = Arc::new(routes_vec);
 
     let app = axum::Router::new()
         .route("/health", get(health::health))
@@ -949,4 +873,17 @@ async fn spawn_workers(
         config.worker_concurrency,
         config.worker_poll_interval_ms,
     );
+}
+
+async fn list_routes(State(state): State<AppState>) -> impl IntoResponse {
+    use serde_json::json;
+
+    let mut routes: Vec<RouteInfo> = state.route_registry.as_ref().clone();
+    routes.sort_by(|a, b| a.source.cmp(&b.source).then_with(|| a.path.cmp(&b.path)));
+
+    axum::Json(json!({
+        "code": 0,
+        "data": routes,
+        "message": "ok"
+    }))
 }

@@ -24,7 +24,7 @@ import {
   ShieldCheck,
   ChevronDown,
   PenLine,
-  Package,
+  Puzzle,
   Moon,
   Sun,
   KeyRound,
@@ -95,7 +95,7 @@ function useSystemItems() {
   const { t } = useT();
   return [
     { label: t("layout.users"), href: "/admin/users", icon: Users },
-    { label: t("layout.extensions"), href: "/admin/extensions", icon: Package },
+    { label: t("layout.plugins"), href: "/admin/plugins", icon: Puzzle },
     { label: t("layout.rolesPermissions"), href: "/admin/rbac", icon: ShieldCheck },
     { label: t("layout.cron"), href: "/admin/crons", icon: Clock },
     { label: t("layout.tenants"), href: "/admin/tenants", icon: Building2 },

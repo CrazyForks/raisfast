@@ -338,7 +338,6 @@ pub async fn schema_create(
         serde_json::from_value(req).map_err(|e| format!("invalid request: {e}"))?;
 
     let schema = crate::content_type::schema::ContentTypeSchema {
-        extension_id: None,
         name: req.name,
         singular: req.singular.clone(),
         plural: req.plural,

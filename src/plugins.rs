@@ -250,7 +250,7 @@ impl PluginManager {
         manager
     }
 
-    /// 创建空的 `PluginManager`（不扫描目录），由 ExtensionManager 调度加载
+    /// 创建空的 `PluginManager`（不扫描目录），需手动调用 load_plugin
     pub async fn new_empty(config: Arc<AppConfig>, opts: PluginManagerOptions) -> Arc<Self> {
         Self::build_instance(config, opts).await
     }
@@ -1054,6 +1054,19 @@ impl PluginManager {
     /// 获取已加载插件数量
     pub async fn plugin_count(&self) -> usize {
         self.plugins.read().await.len()
+    }
+
+    /// 获取所有插件的声明式路由（用于路由注册表）
+    pub async fn all_plugin_routes(&self) -> Vec<(String, String, String)> {
+        let plugins = self.plugins.read().await;
+        let mut routes = Vec::new();
+        for p in plugins.values() {
+            let ext_id = p.manifest.plugin.id.clone();
+            for route in &p.manifest.routes {
+                routes.push((route.method.clone(), route.path.clone(), ext_id.clone()));
+            }
+        }
+        routes
     }
 
     /// 获取所有已加载插件的元数据

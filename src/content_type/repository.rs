@@ -85,6 +85,10 @@ pub struct ContentQuery {
     pub rule_where: Option<String>,
     /// API Rule 编译产生的额外参数
     pub rule_params: Vec<String>,
+    /// 单页最大条数（由 handler 从 config 传入）
+    pub max_page_size: i64,
+    /// 是否包含 private 字段（admin API 设为 true）
+    pub include_private: bool,
 }
 
 /// 泛型内容 Repository
@@ -112,7 +116,7 @@ impl ContentRepository {
         ct: &ContentTypeSchema,
         query: ContentQuery,
     ) -> Result<(Vec<Value>, i64), AppError> {
-        let columns = ct.column_names(query.fields.as_deref());
+        let columns = ct.column_names(query.fields.as_deref(), query.include_private);
         let select_cols = columns.join(", ");
         let table = &ct.table;
 
@@ -188,7 +192,7 @@ impl ContentRepository {
         let order_sql = build_order_by(query.sort.as_deref(), ct);
 
         let page = query.page.max(1);
-        let page_size = query.page_size.clamp(1, 100);
+        let page_size = query.page_size.clamp(1, query.max_page_size.max(1));
         let offset = (page - 1) * page_size;
 
         let data_sql = format!(
@@ -228,8 +232,9 @@ impl ContentRepository {
         ct: &ContentTypeSchema,
         id: &str,
         tenant_id: Option<&str>,
+        include_private: bool,
     ) -> Result<Option<Value>, AppError> {
-        let columns = ct.column_names(None);
+        let columns = ct.column_names(None, include_private);
         let select_cols = columns.join(", ");
         let tid = self.resolve_tenant(&ct.table, tenant_id).await;
 
@@ -277,8 +282,9 @@ impl ContentRepository {
         slug: &str,
         status: Option<&str>,
         tenant_id: Option<&str>,
+        include_private: bool,
     ) -> Result<Option<Value>, AppError> {
-        let columns = ct.column_names(None);
+        let columns = ct.column_names(None, include_private);
         let select_cols = columns.join(", ");
         let tid = self.resolve_tenant(&ct.table, tenant_id).await;
 
@@ -424,7 +430,7 @@ impl ContentRepository {
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("commit failed: {e}")))?;
 
-        self.find_by_id(ct, &id, tenant_id)
+        self.find_by_id(ct, &id, tenant_id, true)
             .await
             .transpose()
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created record not found")))?
@@ -443,7 +449,7 @@ impl ContentRepository {
         save_ctx: &SaveContext,
     ) -> Result<Value, AppError> {
         if ct.versioning
-            && let Some(current) = self.find_by_id(ct, id, tenant_id).await?
+            && let Some(current) = self.find_by_id(ct, id, tenant_id, true).await?
         {
             let _ = crate::models::content_revision::create_revision(
                 &self.pool,
@@ -547,7 +553,7 @@ impl ContentRepository {
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("commit failed: {e}")))?;
 
-        self.find_by_id(ct, id, tenant_id)
+        self.find_by_id(ct, id, tenant_id, true)
             .await
             .transpose()
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("updated record not found")))?
@@ -694,11 +700,21 @@ impl ContentRepository {
 }
 
 /// 构建 SELECT 列名列表（替代 json_object，用于直接 SELECT col1, col2, ...）
-pub fn build_column_names(ct: &ContentTypeSchema, requested: Option<&[String]>) -> Vec<String> {
+pub fn build_column_names(ct: &ContentTypeSchema, requested: Option<&[String]>, include_private: bool) -> Vec<String> {
     let mut cols = Vec::new();
     cols.push("id".into());
 
     for field in &ct.fields {
+        if !include_private && field.private {
+            continue;
+        }
+
+        if let Some(req) = requested
+            && !req.contains(&field.name)
+        {
+            continue;
+        }
+
         if field.field_type == FieldType::Relation {
             match field.relation.as_ref().map(|r| &r.relation_type) {
                 Some(RelationType::ManyToOne | RelationType::OneToOne) => {
@@ -715,13 +731,7 @@ pub fn build_column_names(ct: &ContentTypeSchema, requested: Option<&[String]>) 
             continue;
         }
 
-        if let Some(req) = requested {
-            if req.contains(&field.name) {
-                cols.push(field.name.clone());
-            }
-        } else {
-            cols.push(field.name.clone());
-        }
+        cols.push(field.name.clone());
     }
 
     if ct.draft_publish {
@@ -895,7 +905,7 @@ unique = true
         )
         .unwrap();
 
-        let cols = build_column_names(&ct, None);
+        let cols = build_column_names(&ct, None, false);
         assert!(cols.contains(&"id".to_string()));
         assert!(cols.contains(&"name".to_string()));
         assert!(cols.contains(&"slug".to_string()));

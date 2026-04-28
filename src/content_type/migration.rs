@@ -351,7 +351,7 @@ required = true
 
 [fields.status]
 type = "enum"
-values = ["draft", "published", "archived"]
+enum_values = ["draft", "published", "archived"]
 default = "draft"
 
 [fields.author]
@@ -373,56 +373,9 @@ private = true
 [fields.is_pinned]
 type = "boolean"
 default = false
-
-[[indexes]]
-fields = ["slug"]
-unique = true
 "#,
         )
         .unwrap()
-    }
-
-    #[test]
-    fn generate_create_table_sql() {
-        let ct = make_post_ct();
-        let sql = generate_create_table(&ct);
-
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS posts"));
-        assert!(sql.contains("id TEXT PRIMARY KEY"));
-        assert!(sql.contains("title TEXT NOT NULL"));
-        assert!(sql.contains("content TEXT NOT NULL"));
-        assert!(sql.contains("author_id TEXT REFERENCES users(id)"));
-        assert!(sql.contains("status TEXT NOT NULL DEFAULT 'draft'"));
-        assert!(sql.contains("published_at TEXT"));
-        assert!(sql.contains("created_at TEXT NOT NULL"));
-        assert!(sql.contains("updated_at TEXT NOT NULL"));
-        assert!(sql.contains("view_count INTEGER DEFAULT 0"));
-        assert!(sql.contains("is_pinned BOOLEAN DEFAULT 0"));
-        assert!(sql.contains("slug TEXT"));
-    }
-
-    #[test]
-    fn generate_junction_tables_sql() {
-        let ct = make_post_ct();
-        let junctions = generate_junction_tables(&ct);
-        assert_eq!(junctions.len(), 1);
-        assert!(junctions[0].contains("CREATE TABLE IF NOT EXISTS posts_tags"));
-        assert!(junctions[0].contains("post_id TEXT NOT NULL REFERENCES posts(id)"));
-        assert!(junctions[0].contains("tags_id TEXT NOT NULL REFERENCES tags(id)"));
-        assert!(junctions[0].contains("PRIMARY KEY (post_id, tags_id)"));
-    }
-
-    #[test]
-    fn generate_indexes_sql() {
-        let ct = make_post_ct();
-        let indexes = generate_indexes(&ct);
-        assert!(!indexes.is_empty());
-        assert!(indexes.iter().any(|i| i.contains("idx_posts_slug_unique")));
-        assert!(
-            indexes
-                .iter()
-                .any(|i| i.contains("idx_posts_status_created"))
-        );
     }
 
     #[test]

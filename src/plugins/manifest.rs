@@ -41,6 +41,53 @@ pub struct RouteDef {
     #[serde(default)]
     pub auth: crate::content_type::schema::ApiAccess,
     pub permission: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub input: Vec<RouteParam>,
+    #[serde(default)]
+    pub output: RouteOutput,
+}
+
+/// 路由参数定义
+#[derive(Debug, Clone, Deserialize)]
+pub struct RouteParam {
+    pub name: String,
+    #[serde(default = "default_query")]
+    pub r#in: String,
+    #[serde(default)]
+    pub r#type: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub default: Option<toml::Value>,
+}
+
+fn default_query() -> String {
+    "query".into()
+}
+
+/// 路由输出定义
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RouteOutput {
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub content_type: Option<String>,
+    #[serde(default)]
+    pub fields: Vec<RouteOutputField>,
+}
+
+/// 输出字段定义
+#[derive(Debug, Clone, Deserialize)]
+pub struct RouteOutputField {
+    pub name: String,
+    #[serde(default)]
+    pub r#type: String,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// Admin 页面定义
@@ -476,5 +523,90 @@ version = "1.0.0"
 "#;
         let m: PluginManifest = toml::from_str(toml).unwrap();
         assert!(m.cron.is_empty());
+    }
+
+    #[test]
+    fn parse_manifest_with_route_params() {
+        let toml = r#"
+[plugin]
+id = "com.example.ecommerce"
+name = "E-Commerce"
+version = "0.1.0"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/ecommerce/products"
+handler = "listProducts"
+description = "获取商品列表"
+
+[[routes.input]]
+name = "page"
+in = "query"
+type = "integer"
+description = "页码"
+
+[[routes.input]]
+name = "page_size"
+in = "query"
+type = "integer"
+description = "每页数量"
+default = 20
+
+[[routes.input]]
+name = "category_id"
+in = "query"
+type = "string"
+description = "按分类筛选"
+
+[routes.output]
+description = "商品分页列表"
+
+[[routes.output.fields]]
+name = "data"
+type = "array"
+description = "商品列表"
+
+[[routes.output.fields]]
+name = "total"
+type = "integer"
+description = "总数"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/ecommerce/cart"
+handler = "addToCart"
+description = "添加到购物车"
+
+[[routes.input]]
+name = "product_id"
+in = "body"
+type = "string"
+required = true
+description = "商品ID"
+
+[[routes.input]]
+name = "quantity"
+in = "body"
+type = "integer"
+required = true
+description = "数量"
+default = 1
+"#;
+        let m: PluginManifest = toml::from_str(toml).unwrap();
+        assert_eq!(m.routes.len(), 2);
+
+        let r0 = &m.routes[0];
+        assert_eq!(r0.method, "GET");
+        assert_eq!(r0.input.len(), 3);
+        assert_eq!(r0.input[0].name, "page");
+        assert_eq!(r0.input[0].r#in, "query");
+        assert!(!r0.input[0].required);
+        assert_eq!(r0.output.fields.len(), 2);
+
+        let r1 = &m.routes[1];
+        assert_eq!(r1.method, "POST");
+        assert_eq!(r1.input.len(), 2);
+        assert!(r1.input[0].required);
+        assert_eq!(r1.input[1].default, Some(toml::Value::Integer(1)));
     }
 }

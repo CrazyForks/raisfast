@@ -10,9 +10,6 @@ use crate::errors::app_error::AppError;
 /// 内容类型定义
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentTypeSchema {
-    /// 来源 Extension ID（None = 独立注册）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extension_id: Option<String>,
     /// 显示名称（如 "Post"）
     pub name: String,
     /// 单数标识（如 "post"），用于 API 路径和注册表 key
@@ -110,7 +107,7 @@ pub struct FieldSchema {
     /// 自动填充来源（从请求上下文注入，优先级高于 default 和客户端传值）
     #[serde(default)]
     pub auto_fill: Option<AutoFillSource>,
-    /// 私有字段，不出现在 API 响应中
+    /// 私有字段，公开 API 响应中隐藏（仅 admin API 返回）
     #[serde(default)]
     pub private: bool,
     /// 创建后不可修改
@@ -260,6 +257,10 @@ pub struct ApiEndpointConfig {
     /// 是否启用服务端缓存（默认 false）
     #[serde(default)]
     pub cache: bool,
+    /// API 返回字段白名单（默认空=返回全部非 private 字段）
+    /// 仅对 list/get 端点有效，create/update/delete 忽略此配置
+    #[serde(default)]
+    pub fields: Option<Vec<String>>,
 }
 
 impl Default for ApiEndpointConfig {
@@ -269,6 +270,7 @@ impl Default for ApiEndpointConfig {
             filter: None,
             filter_auth: None,
             cache: false,
+            fields: None,
         }
     }
 }
@@ -299,6 +301,7 @@ fn api_endpoint_member() -> ApiEndpointConfig {
         filter: None,
         filter_auth: None,
         cache: true,
+        fields: None,
     }
 }
 
@@ -308,6 +311,7 @@ fn api_endpoint_admin() -> ApiEndpointConfig {
         filter: None,
         filter_auth: None,
         cache: true,
+        fields: None,
     }
 }
 
@@ -502,7 +506,7 @@ impl ContentTypeSchema {
                 relation,
                 media_config,
                 enum_values: field_toml
-                    .get("values")
+                    .get("enum_values")
                     .and_then(|v| v.as_array())
                     .map(|arr| {
                         arr.iter()
@@ -513,7 +517,6 @@ impl ContentTypeSchema {
         }
 
         Ok(ContentTypeSchema {
-            extension_id: None,
             name: toml.content_type.name,
             singular: toml.content_type.singular,
             plural: toml.content_type.plural,
@@ -536,7 +539,7 @@ impl ContentTypeSchema {
     /// 预计算并缓存 SELECT 列名列表
     pub fn cache_select_columns(&mut self) {
         self.cached_column_names = Some(crate::content_type::repository::build_column_names(
-            self, None,
+            self, None, true,
         ));
     }
 
@@ -568,17 +571,20 @@ impl ContentTypeSchema {
         }
     }
 
-    /// 获取缓存的列名列表，未缓存时回退到动态计算
-    pub fn column_names(&self, requested: Option<&[String]>) -> Vec<String> {
-        if requested.is_none()
+    /// 获取列名列表
+    ///
+    /// `include_private=false` 时过滤掉 `private` 字段（公开 API 用）。
+    /// `include_private=true` 时返回全部字段（admin API 用）。
+    pub fn column_names(&self, requested: Option<&[String]>, include_private: bool) -> Vec<String> {
+        if include_private && requested.is_none()
             && let Some(ref cached) = self.cached_column_names
         {
             return cached.clone();
         }
-        crate::content_type::repository::build_column_names(self, requested)
+        crate::content_type::repository::build_column_names(self, requested, include_private)
     }
 
-    /// 获取非私有字段列表（API 响应用）
+    /// 获取非私有字段列表
     #[must_use]
     pub fn public_fields(&self) -> Vec<&FieldSchema> {
         self.fields.iter().filter(|f| !f.private).collect()
@@ -765,7 +771,7 @@ fn field_to_toml(field: &FieldSchema) -> toml::Value {
     }
     if let Some(ref vals) = field.enum_values {
         t.insert(
-            "values".into(),
+            "enum_values".into(),
             toml::Value::Array(
                 vals.iter()
                     .map(|v| toml::Value::String(v.clone()))
@@ -1038,7 +1044,7 @@ required = true
 
 [fields.status]
 type = "enum"
-values = ["draft", "published", "archived"]
+enum_values = ["draft", "published", "archived"]
 default = "draft"
 
 [fields.author]
@@ -1141,7 +1147,7 @@ type = "password"
 
 [fields.f_enum]
 type = "enum"
-values = ["a", "b"]
+enum_values = ["a", "b"]
 
 [fields.f_uid]
 type = "uid"

@@ -571,7 +571,6 @@ mod tests {
             "users".into(),
             "roles".into(),
             "permissions".into(),
-            "extensions".into(),
             "audit_log".into(),
             "plugin_storage".into(),
             "options".into(),
@@ -586,14 +585,6 @@ mod tests {
     fn is_protected_table_users() {
         assert!(PermissionChecker::is_protected_table(
             "users",
-            &default_protected()
-        ));
-    }
-
-    #[test]
-    fn is_protected_table_extensions() {
-        assert!(PermissionChecker::is_protected_table(
-            "extensions",
             &default_protected()
         ));
     }

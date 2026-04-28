@@ -63,7 +63,6 @@ export interface ListViewConfig {
 }
 
 export interface ContentTypeSchema {
-  extension_id?: string | null;
   name: string;
   singular: string;
   plural: string;

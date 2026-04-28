@@ -130,7 +130,7 @@ label = "封面图片"
 
 [fields.status]
 type = "enum"
-values = ["draft", "published", "archived"]
+enum_values = ["draft", "published", "archived"]
 default = "draft"
 label = "状态"
 
@@ -156,7 +156,7 @@ label = "标签"
 [fields.view_count]
 type = "integer"
 default = 0
-private = true                         # 不出现在 API 响应中
+private = true
 label = "浏览量"
 
 [fields.is_pinned]
@@ -247,7 +247,7 @@ required = true
 
 [fields.layout]
 type = "enum"
-values = ["full", "sidebar", "landing"]
+enum_values = ["full", "sidebar", "landing"]
 default = "full"
 ```
 
@@ -283,7 +283,7 @@ default = "full"
 | `required` | bool | 是否必填 |
 | `unique` | bool | 是否唯一 |
 | `default` | value | 默认值 |
-| `private` | bool | 私有字段，不出现在 API 响应中 |
+| `private` | bool | 私有字段，公开 API 隐藏，admin API 可见 |
 | `label` | string | Admin UI 显示标签 |
 | `description` | string | 字段说明 |
 | `immutable` | bool | 创建后不可修改 |
@@ -441,7 +441,7 @@ impl ContentRepository {
         ct: &ContentTypeSchema,
         query: ContentQuery,
     ) -> AppResult<(Vec<serde_json::Value>, i64)> {
-        // 1. 构建 SELECT 子句：只选非 private 字段
+        // 1. 构建 SELECT 子句：过滤 private 字段
         // 2. 构建 WHERE 子句：filters + status
         // 3. 构建 ORDER BY 子句
         // 4. 构建 LIMIT/OFFSET
@@ -1259,7 +1259,7 @@ features = ["search", "rss", "comments", "pagination"]
 [theme.settings]
 [theme.settings.color_scheme]
 type = "enum"
-values = ["light", "dark", "auto"]
+enum_values = ["light", "dark", "auto"]
 default = "auto"
 label = "配色方案"
 

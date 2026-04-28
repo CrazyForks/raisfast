@@ -18,7 +18,6 @@ pub mod content_type;
 pub mod db;
 pub mod errors;
 pub mod eventbus;
-pub mod extension;
 pub mod graphql;
 pub mod handlers;
 pub mod middleware;
@@ -43,8 +42,6 @@ use config::app::AppConfig;
 use content_type::ContentTypeRegistry;
 use db::Pool;
 use eventbus::EventBus;
-use extension::manager::ExtensionManager;
-use extension::service::ExtensionService;
 use notifier::{EmailSender, SmsSender};
 use oauth::OAuthProviderRegistry;
 use plugins::PluginManager;
@@ -89,13 +86,12 @@ pub struct AppState {
     pub audit: Arc<AuditService>,
     pub webhook: Arc<WebhookService>,
     pub workflow: Arc<WorkflowService>,
-    pub extension_manager: Arc<ExtensionManager>,
-    pub extension_service: Arc<ExtensionService>,
     pub storage: Arc<dyn Storage>,
     pub cms_cache: Arc<dashmap::DashMap<String, (serde_json::Value, std::time::Instant)>>,
     pub oauth_registry: Arc<OAuthProviderRegistry>,
     pub email_sender: Arc<dyn EmailSender>,
     pub sms_sender: Arc<dyn SmsSender>,
+    pub route_registry: Arc<Vec<crate::server::RouteInfo>>,
 }
 
 /// 构建 AppState（HTTP 服务器和 Tauri 共享）
@@ -126,22 +122,24 @@ pub async fn build_app_state(config: &AppConfig) -> anyhow::Result<AppState> {
     );
 
     let search: Arc<dyn SearchEngine> = build_search_engine(config);
-    let ct_registry = Arc::new(ContentTypeRegistry::new());
+    let ct_registry = Arc::new(ContentTypeRegistry::load_from_dir(
+        std::path::Path::new(&config.content_type_dir),
+        &config.rule_engine,
+    )?);
 
-    let plugin_manager = PluginManager::new_empty(
+    {
+        let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
+        for schema in ct_registry.all() {
+            repo.migrate(&schema).await?;
+        }
+    }
+
+    let plugin_manager = PluginManager::new_with_options(
         Arc::new(config.clone()),
         crate::plugins::PluginManagerOptions {
             pool: Some(pool.clone()),
             event_bus: Some(eventbus.clone()),
         },
-    )
-    .await;
-
-    let extension_manager = ExtensionManager::new(
-        ct_registry.clone(),
-        plugin_manager.clone(),
-        pool.clone(),
-        config,
     )
     .await;
 
@@ -159,10 +157,6 @@ pub async fn build_app_state(config: &AppConfig) -> anyhow::Result<AppState> {
     let tenant_service = Arc::new(TenantService::new(tenant_repo));
     let audit_service = Arc::new(crate::audit::AuditService::new(pool.clone()));
     let webhook_service = Arc::new(crate::webhook::WebhookService::new(pool.clone()));
-
-    let extension_service = Arc::new(crate::extension::service::ExtensionService::new(
-        pool.clone(),
-    ));
 
     let storage = crate::storage::create_storage(config)?;
 
@@ -187,13 +181,12 @@ pub async fn build_app_state(config: &AppConfig) -> anyhow::Result<AppState> {
         audit: audit_service,
         webhook: webhook_service.clone(),
         workflow: Arc::new(WorkflowService::new(pool.clone())),
-        extension_manager,
-        extension_service,
         storage,
         cms_cache: Arc::new(dashmap::DashMap::new()),
         oauth_registry: Arc::new(build_oauth_registry(config)),
         email_sender: crate::notifier::build_email_sender(config),
         sms_sender: crate::notifier::build_sms_sender(config),
+        route_registry: Arc::new(Vec::new()),
     };
 
     crate::server::spawn_event_subscriber(eventbus.clone(), state.plugins.clone());

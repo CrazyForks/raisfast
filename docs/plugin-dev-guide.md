@@ -1,317 +1,572 @@
-# 插件开发指南
+# Plugin 开发指南
 
-> rust-blog 支持两种插件运行时：**WASM**（Rust 编写）和 **JavaScript**（QuickJS）。
-> 本文档聚焦 JS 插件开发。
+## 概述
 
----
+Plugin 系统是 rust-blog 的运行时扩展机制，支持三种语言运行时，可独立于 Content Type 运行。Plugin 可以注册钩子、定时任务、自定义路由，并通过 Host API 访问数据库、HTTP、配置等受控资源。
 
-## 快速开始
-
-### 1. 创建插件目录
+## 架构
 
 ```
-plugins/my-plugin/
-├── plugin.toml    # 插件清单
-└── index.js       # JS 入口
+plugins/
+  └── {plugin-id}/
+       ├── manifest.toml    # 插件清单
+       └── main.js          # 入口文件（JS/Lua/WASM）
+              ↓ 启动加载
+PluginManager（Arc 共享）
+  ├─ 拓扑排序（依赖顺序）
+  ├─ 实例池（round-robin 并发）
+  └─ 热重载（文件系统监听）
+              ↓ Hook 派发
+Host API（沙箱权限控制）
+  ├─ Host.dbQuery / dbExecute
+  ├─ Host.httpGet / httpPost
+  ├─ Host.getConfig
+  ├─ Host.getData / setData（KV 存储）
+  ├─ Host.fsRead / fsWrite（VFS）
+  └─ Host.emitEvent
 ```
 
-### 2. 编写 plugin.toml
+### 核心模块
+
+| 模块 | 文件 | 职责 |
+|------|------|------|
+| PluginManager | `src/plugins.rs` | 加载/卸载/hook 派发/热重载/事件总线 |
+| Manifest | `src/plugins/manifest.rs` | TOML 清单解析 |
+| Permissions | `src/plugins/permissions.rs` | 权限校验 + SQL 注入防护 + SSRF 防护 |
+| JS Engine | `src/plugins/engine_js.rs` | QuickJS 运行时 + 实例池 |
+| JS Host | `src/plugins/js_host.rs` | JS → Rust Host API 桥接 |
+| Lua Engine | `src/plugins/engine_lua.rs` | Lua 5.4 运行时 + 实例池 |
+| Lua Host | `src/plugins/lua_host.rs` | Lua → Rust Host API 桥接 |
+| WASM Engine | `src/plugins/engine.rs` | wasmtime 运行时 |
+| WASM Host | `src/plugins/host.rs` | WASM → Rust Host API 桥接 |
+| Host Common | `src/plugins/host_common.rs` | 共享 Host 逻辑 |
+| VFS | `src/plugins/vfs.rs` | 插件隔离虚拟文件系统 |
+| HTTP Client | `src/plugins/http_client.rs` | 插件 HTTP 请求 |
+| CLI | `src/cli/plugin_cmd.rs` | `plugin new` / `plugin check` |
+
+## 三种运行时
+
+| 运行时 | Cargo Feature | 入口文件 | 引擎 |
+|--------|--------------|----------|------|
+| JavaScript | `plugin-js` | `main.js` | rquickjs (QuickJS) |
+| Lua | `plugin-lua` | `init.lua` | mlua (Lua 5.4) |
+| WASM | `plugin-wasm` | `plugin.wasm` | wasmtime |
+
+三种运行时可同时编译、同时加载。
+
+### 实例池
+
+每个插件创建多个运行时实例（由 `PLUGIN_JS_POOL_SIZE` / `PLUGIN_LUA_POOL_SIZE` / `PLUGIN_WASM_POOL_SIZE` 控制），以 round-robin 方式分发请求，避免并发瓶颈。
+
+## Manifest 文件 (`manifest.toml`)
+
+### 最小示例
 
 ```toml
 [plugin]
-id = "com.example.my-plugin"      # 全局唯一 ID（反向域名格式）
-name = "My Plugin"                 # 显示名称
-version = "1.0.0"                  # 语义化版本
-description = "插件描述"
-author = "Your Name"
-license = "MIT"
-runtime = "js"                     # 必须设为 "js"
-language = "javascript"            # 或 "typescript"
-entry = "index.js"                 # JS 入口文件名（默认 index.js）
+id = "com.example.my-plugin"
+name = "My Plugin"
+version = "0.1.0"
+runtime = "js"
+entry = "main.js"
 
 [permissions]
-max_memory_mb = 8                  # 内存限制（默认 32MB）
-timeout_ms = 2000                  # 单次 Hook 执行超时（默认 5000ms）
-
-[hooks.on_post_creating]           # 注册的 Hook，key 用下划线或短横线均可
-priority = 10                      # 优先级，数字越小越先执行
-
-[hooks.filter_html]
-priority = 20
+max_memory_mb = 16
+timeout_ms = 5000
 ```
 
-### 3. 编写 index.js
+### `[plugin]` 字段
 
-```javascript
-var Plugin = {
-    on_post_creating: function(inputJson) {
-        var input = JSON.parse(inputJson);
-        // 修改输入数据
-        input.title = input.title.trim();
-        return JSON.stringify(input);
-    },
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `id` | string | 是 | — | 插件唯一 ID（建议反向域名格式） |
+| `name` | string | 是 | — | 显示名称 |
+| `version` | string | 是 | — | 语义版本号 |
+| `description` | string | 否 | `""` | 描述 |
+| `author` | string | 否 | — | 作者 |
+| `license` | string | 否 | — | 许可证 |
+| `runtime` | string | 否 | `"wasm"` | 运行时：`js` / `lua` / `wasm` |
+| `language` | string | 否 | `"rust"` | 语言标识 |
+| `entry` | string | 否 | `"index.js"` | 入口文件名 |
+| `wasm` | string | 否 | `"plugin.wasm"` | WASM 文件路径 |
 
-    filter_html: function(html) {
-        // 在 <head> 后注入 OG 标签
-        return html.replace("<head>", '<head><meta property="og:type" content="article">');
-    }
-};
-```
-
-### 4. 部署
-
-```bash
-# 手动复制
-cp -r plugins-examples-js/my-plugin/ plugins/my-plugin/
-
-# 或用 justfile（需添加到 justfile）
-just plugins-js-build
-```
-
----
-
-## Hook 类型
-
-### JSON Filter — 修改数据
-
-接收 JSON 字符串，返回修改后的 JSON 字符串。
-
-| Hook | 触发时机 | 数据内容 |
-|------|----------|----------|
-| `on_post_creating` | 文章创建前 | `{ title, content, excerpt, category_id, ... }` |
-| `on_post_updating` | 文章更新前 | 同上 + `id` |
-| `on_comment_creating` | 评论创建前 | `{ content, post_id, parent_id, ... }` |
-
-```javascript
-on_post_creating: function(inputJson) {
-    var input = JSON.parse(inputJson);
-    input.excerpt = input.content.substring(0, 200);
-    return JSON.stringify(input);  // 必须返回 JSON 字符串
-}
-```
-
-### JSON Action — 通知/副作用
-
-接收 JSON 字符串，无返回值。适合日志、通知、缓存清理等。
-
-| Hook | 触发时机 | 数据内容 |
-|------|----------|----------|
-| `on_post_created` | 文章创建后 | `{ id, title, slug, ... }` |
-| `on_post_updated` | 文章更新后 | 同上 |
-| `on_post_deleted` | 文章删除后 | `{ id }` |
-| `on_comment_created` | 评论创建后 | `{ id, content, post_id, ... }` |
-| `on_login` | 用户登录后 | `{ email, success }` |
-
-```javascript
-on_post_created: function(dataJson) {
-    var data = JSON.parse(dataJson);
-    Host.log("info", "New post: " + data.title);
-}
-```
-
-### String Filter — 修改原始字符串
-
-| Hook | 触发时机 | 输入 | 返回 |
-|------|----------|------|------|
-| `render_markdown` | Markdown 渲染（替代默认渲染器） | Markdown 原文 | HTML 字符串 |
-| `filter_html` | HTML 后处理 | HTML 字符串 | 修改后的 HTML |
-
-```javascript
-render_markdown: function(content) {
-    // 自定义渲染逻辑
-    return "<p>" + content + "</p>";
-}
-```
-
-### Route Handler — 自定义路由
-
-```javascript
-handle_route: function(routeJson) {
-    var route = JSON.parse(routeJson);
-    // route.path, route.method
-    return JSON.stringify({
-        status: 200,
-        body: JSON.stringify({ message: "Hello from plugin!" })
-    });
-}
-```
-
-需要在 `plugin.toml` 中配置 `match` 模式：
+### `[permissions]` 权限声明
 
 ```toml
-[hooks.handle_route]
-match = "/api/v1/custom/*"    # glob 风格，* 匹配单段路径
-priority = 5
+[permissions]
+max_memory_mb = 16
+timeout_ms = 5000
+http = ["api.example.com", "*.github.com"]
+config = ["app.*", "jwt.*"]
+database = ["read:products", "write:orders", "categories"]
+filesystem = ["read-write"]
 ```
 
----
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `max_memory_mb` | int | 配置默认值 | 单实例内存上限 |
+| `timeout_ms` | int | 配置默认值 | Hook 执行超时 |
+| `http` | string[] | `[]`（禁止） | HTTP 白名单 |
+| `config` | string[] | `[]`（禁止） | 配置读取白名单 |
+| `database` | string[] | `[]`（禁止） | 数据库权限 |
+| `filesystem` | string[] | `[]`（禁止） | 文件系统权限 |
 
-## 宿主 API
+#### 数据库权限格式
 
-插件通过全局 `Host` 对象与宿主交互。
+| 格式 | 权限 |
+|------|------|
+| `"read:TABLE"` | 只读 |
+| `"write:TABLE"` | 只写 |
+| `"TABLE"` | 读写 |
+| `"*"` | 所有表（受保护表除外） |
 
-### Host.log(level, message)
+#### HTTP 白名单
 
-写入宿主日志。
+- 精确域名：`api.example.com`
+- 通配符子域：`*.github.com`
+- 路径通配：`api.example.com/v1/*`
+
+内置 SSRF 防护：自动阻止 localhost、127.x、10.x、172.16-31.x、192.168.x、169.254.x、::1。
+
+#### 受保护表
+
+以下系统表即使声明 `"*"` 也不可访问：
+
+```
+users, roles, permissions, audit_log, plugin_storage, options,
+rbac_roles, rbac_permissions, rbac_role_permissions, tenants
+```
+
+### `[hooks.XXX]` 钩子注册
+
+```toml
+[hooks.on-content-created]
+priority = 50
+
+[hooks.on-content-updating]
+priority = 100
+
+[hooks.render-markdown]
+priority = 10
+```
+
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `priority` | int | 100 | 优先级，数字越小越先执行 |
+
+钩子名使用连字符（`on-content-created`），系统自动转换为下划线（`on_content_created`）。
+
+### 17 种钩子
+
+| 钩子名 | 类型 | 说明 |
+|--------|------|------|
+| `on-content-creating` | filter | 内容创建前，可修改数据 |
+| `on-content-created` | action | 内容创建后 |
+| `on-content-updating` | filter | 内容更新前，可修改数据 |
+| `on-content-updated` | action | 内容更新后 |
+| `on-content-deleted` | action | 内容删除后 |
+| `on-content-viewed` | action | 内容被浏览 |
+| `on-post-creating` | filter | 文章创建前（兼容） |
+| `on-post-created` | action | 文章创建后（兼容） |
+| `on-post-updating` | filter | 文章更新前（兼容） |
+| `on-post-updated` | action | 文章更新后（兼容） |
+| `on-post-deleted` | action | 文章删除后（兼容） |
+| `on-comment-creating` | filter | 评论创建前（兼容） |
+| `on-comment-created` | action | 评论创建后（兼容） |
+| `render-markdown` | filter | Markdown 渲染覆盖（第一个返回 wins） |
+| `filter-html` | filter | HTML 过滤 |
+| `on-login` | action | 用户登录后 |
+| `on-cron-tick` | action | 定时任务触发 |
+
+**filter 类型**：可修改数据，返回值传递给下一个插件。
+**action 类型**：仅副作用，返回值忽略。
+
+### `[[cron]]` 定时任务
+
+```toml
+[[cron]]
+label = "每日统计"
+job_type = "daily_stats"
+cron_expr = "0 0 * * *"
+payload = """{"type": "full"}"""
+enabled = true
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `label` | string | 是 | 任务名称 |
+| `job_type` | string | 是 | 任务类型（传给 `on_cron_tick`） |
+| `cron_expr` | string | 是 | Cron 表达式 |
+| `payload` | string | 否 | 附带数据 |
+| `enabled` | bool | 否 | 默认 true |
+
+### `[[routes]]` 自定义路由
+
+```toml
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/crm/pipeline"
+handler = "getPipeline"
+auth = "admin"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/crm/contacts/:contactId"
+handler = "getContact"
+auth = "public"
+```
+
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|------|------|------|------|------|
+| `method` | string | 是 | — | HTTP 方法 |
+| `path` | string | 是 | — | 路由路径，支持 `:param` 占位符 |
+| `handler` | string | 是 | — | 对应 Plugin 对象的函数名 |
+| `auth` | string | 否 | `default` | `none` / `public` / `member` / `admin` |
+| `description` | string | 否 | — | 描述 |
+| `permission` | string | 否 | — | 额外权限要求 |
+
+自定义路由的响应由框架统一包装为 `{ code: 0, message: "success", data: ... }` 格式。
+
+## Host API
+
+所有运行时通过统一的 `Host.*` 接口访问宿主功能：
+
+### 数据库
 
 ```javascript
-Host.log("info", "这条消息会出现在宿主日志中");
-Host.log("warn", "警告信息");
-Host.log("error", "错误信息");
+// 参数化查询（防注入）
+const rows = JSON.parse(Host.dbQuery("SELECT * FROM products WHERE price > ?", JSON.stringify([100])));
+const affected = Host.dbExecute("UPDATE products SET stock = stock - 1 WHERE id = ?", JSON.stringify([id]));
+
+// 事务
+Host.dbBegin();
+Host.dbExecute("INSERT INTO orders ...", null);
+Host.dbExecute("UPDATE products ...", null);
+Host.dbCommit();  // 或 Host.dbRollback()
 ```
 
-### Host.getConfig(key)
+| 函数 | 说明 | 权限 |
+|------|------|------|
+| `Host.dbQuery(sql, params?)` | SELECT 查询 | `database` read |
+| `Host.dbExecute(sql, params?)` | INSERT/UPDATE/DELETE | `database` write |
+| `Host.dbBegin()` | 开启事务 | 需要 pool |
+| `Host.dbCommit()` | 提交事务 | 活跃事务 |
+| `Host.dbRollback()` | 回滚事务 | 活跃事务 |
 
-读取宿主配置。返回字符串或 `null`。
+> **注意**：`dbQuery` 返回的整数列是 `null`，需用 `CAST(col AS TEXT)` 转为字符串后再 `parseInt`。
+
+### HTTP
 
 ```javascript
-var env = Host.getConfig("app.env");        // "development" / "production"
-var port = Host.getConfig("app.port");       // "3000"
-var baseUrl = Host.getConfig("app.base_url"); // "http://localhost:3000"
-var maxSize = Host.getConfig("upload.max_size");
+const html = Host.httpGet("https://api.example.com/data");
+const result = Host.httpPost("https://api.example.com/webhook", JSON.stringify({event: "test"}));
 ```
 
-支持的 key：
+### KV 存储
 
-| Key | 说明 |
-|-----|------|
-| `app.host` | 监听地址 |
-| `app.port` | 监听端口 |
-| `app.env` | 运行环境 |
-| `app.base_url` | 站点 URL |
-| `jwt.access_expires` | Access Token 过期时间（秒） |
-| `jwt.refresh_expires` | Refresh Token 过期时间（秒） |
-| `upload.dir` | 上传目录 |
-| `upload.max_size` | 上传大小限制（字节） |
-| `plugin.max_memory_mb` | 插件内存限制 |
-| `plugin.default_timeout_ms` | 插件超时时间 |
+```javascript
+Host.setData("last_sync", "2026-01-01");
+const val = Host.getData("last_sync");
+```
 
-> 注意：`jwt.secret` 和 `database_url` 等敏感配置不暴露给插件。
+每个插件有独立命名空间，互不干扰。
 
----
+### 配置
 
-## TypeScript 开发
+```javascript
+const host = Host.getConfig("app.host");
+const env = Host.getConfig("app.env");
+```
 
-### 1. 安装 SDK 类型定义
+允许的配置键（需在 `permissions.config` 白名单中）：
+`app.host`, `app.port`, `app.env`, `app.base_url`, `jwt.access_expires`, `jwt.refresh_expires`, `upload.dir`, `upload.max_size`
 
-在插件目录创建 `tsconfig.json`：
+### 文件系统（VFS）
 
-```json
-{
-  "compilerOptions": {
-    "target": "ES2021",
-    "module": "ES2020",
-    "strict": true,
-    "noEmit": true,
-    "baseUrl": "..",
-    "paths": {
-      "rust-blog-plugin-sdk": ["plugins-sdk-js"]
-    }
+```javascript
+Host.fsWrite("/reports/daily.json", reportJson);
+const data = Host.fsRead("/reports/daily.json");
+const exists = Host.fsExists("/reports/daily.json");
+const files = Host.fsList("/reports");
+Host.fsDelete("/reports/old.json");
+```
+
+每个插件在 `{VFS_ROOT}/{plugin_id}/` 下有隔离沙箱，路径不能包含 `..`。
+
+### 其他
+
+```javascript
+Host.log("info", "Processing order " + orderId);
+Host.log("warn", "Low stock detected");
+Host.log("error", "Payment failed: " + error);
+Host.emitEvent("order.created", JSON.stringify({orderId: id}));
+```
+
+## 编写 JS 插件
+
+### 项目结构
+
+```
+plugins/my-plugin/
+  ├── manifest.toml
+  └── main.js
+```
+
+### 代码模板
+
+```javascript
+var Plugin = {};
+
+// ── 工具函数 ──
+
+var ok = function(data) {
+  return JSON.stringify({ status: 200, body: JSON.stringify(data) });
+};
+
+var error = function(code, msg) {
+  return JSON.stringify({ status: code, body: JSON.stringify({ error: msg }) });
+};
+
+var query = function(sql, params) {
+  var result = Host.dbQuery(sql, params ? JSON.stringify(params) : null);
+  if (!result || result.indexOf("error:") === 0) return null;
+  return JSON.parse(result);
+};
+
+// ── Hook ──
+
+Plugin.on_content_created = function(input) {
+  var data = JSON.parse(input);
+  if (data.content_type === "product") {
+    Host.log("info", "[my-plugin] new product: " + data.id);
   }
-}
-```
+  return ok(data);
+};
 
-### 2. 编写 TypeScript
+// ── 自定义路由 ──
 
-```typescript
-/// <reference path="../../plugins-sdk-js/index.d.ts" />
+Plugin.getStats = function(input) {
+  var rows = query("SELECT COUNT(*) as cnt FROM products WHERE status = 'published'");
+  return ok({ total: rows ? rows[0].cnt : 0 });
+};
 
-var Plugin: PluginHooks = {
-    on_post_creating(inputJson: string): string {
-        var input = JSON.parse(inputJson);
-        input.excerpt = input.content.substring(0, 200);
-        return JSON.stringify(input);
-    }
+// ── 定时任务 ──
+
+Plugin.on_cron_tick = function(input) {
+  var data = JSON.parse(input);
+  if (data.job_type === "daily_cleanup") {
+    Host.dbExecute("DELETE FROM sessions WHERE expires_at < datetime('now')", null);
+    Host.log("info", "[my-plugin] daily cleanup done");
+  }
 };
 ```
 
-### 3. 编译为 JS
+### 关键约定
 
-```bash
-# 用 esbuild 编译
-npx esbuild plugins-examples-js/my-plugin/src/index.ts \
-    --outfile=plugins-examples-js/my-plugin/index.js \
-    --bundle --format=iife --target=es2021
+- 必须导出全局 `Plugin` 对象
+- Filter 钩子：接收 JSON 字符串，返回修改后的 JSON 字符串
+- Action 钩子：接收 JSON 字符串，返回值被忽略
+- 路由处理：接收 `{ path, method, body, headers }` JSON，返回 `{ status, body }` JSON 字符串
+- 使用 `var` 而非 `let`/`const`（QuickJS 兼容性更好）
+- 支持 ES2024 语法
 
-# 或用 justfile
-just plugins-ts-build
+## 编写 Lua 插件
+
+### 项目结构
+
+```
+plugins/my-plugin/
+  ├── manifest.toml
+  └── init.lua
 ```
 
----
+### 代码模板
 
-## 安全限制
+```lua
+Plugin = {}
 
-JS 插件运行在 QuickJS 沙箱中：
+function Plugin.on_content_created(data)
+    if data.content_type == "product" then
+        Host.log("info", "[my-plugin] new product: " .. data.id)
+    end
+    return data
+end
 
-| 限制 | 说明 |
-|------|------|
-| **内存** | 默认 32MB，可在 `[permissions]` 中配置 |
-| **超时** | 默认 5000ms，超时自动中断 |
-| **无文件系统** | 不能读写文件 |
-| **无网络** | 不能发起 HTTP 请求 |
-| **隔离作用域** | 每个插件独立的全局对象，互不干扰 |
+function Plugin.on_cron_tick(data)
+    if data.job_type == "daily_cleanup" then
+        Host.dbExecute("DELETE FROM sessions WHERE expires_at < datetime('now')", nil)
+        Host.log("info", "[my-plugin] cleanup done")
+    end
+end
+```
 
----
+### 关键约定
+
+- 必须导出全局 `Plugin` 表
+- Filter 钩子：接收 Lua table，返回修改后的 table（无需 JSON 序列化）
+- 沙箱环境：仅暴露 `table`, `string`, `math`, `utf8`, `coroutine` 标准库（无 IO/OS/debug）
+- 指令限制：5,000,000 条
+
+## 错误恢复
+
+- 连续 **5 次** 错误自动禁用插件
+- 错误计数在成功执行时重置
+- 可通过 Admin API 手动重新启用
+- 插件超时/崩溃时自动回滚未提交的事务
 
 ## 热重载
 
-当 `PLUGIN_HOT_RELOAD=true` 时，修改 `plugins/` 目录下的 `.js` 或 `.wasm` 文件会自动触发插件重载：
+当 `PLUGIN_HOT_RELOAD=true`（默认开启）时：
+
+1. 文件系统监听器监控插件目录的 `.js` / `.lua` / `.wasm` 文件变化
+2. 1 秒防抖
+3. 自动卸载 + 重新加载变化的插件
+4. 发出 `PluginReloaded` 事件
+
+## 管理 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/admin/plugins` | 列出所有插件（含状态/健康/指标） |
+| GET | `/api/v1/admin/plugins/{id}` | 插件详情 |
+| POST | `/api/v1/admin/plugins/{id}/enable` | 启用 |
+| POST | `/api/v1/admin/plugins/{id}/disable` | 禁用 |
+| POST | `/api/v1/admin/plugins/{id}/reload` | 热重载 |
+| DELETE | `/api/v1/admin/plugins/{id}` | 卸载 |
+
+## CLI 命令
+
+```bash
+# 创建新插件
+rust-blog plugin new my-plugin --runtime js    # JavaScript
+rust-blog plugin new my-plugin --runtime lua   # Lua
+rust-blog plugin new my-plugin --runtime wasm  # WASM
+
+# 校验插件
+rust-blog plugin check                      # 校验默认目录
+rust-blog plugin check ./plugins/my-plugin  # 校验指定目录
+```
+
+## 环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PLUGIN_DIR` | `./extensions/plugins` | 插件目录 |
+| `PLUGIN_VFS_ROOT` | `./plugins-data` | VFS 根目录 |
+| `PLUGIN_VFS_MAX_FILE_SIZE` | `1048576` | 单文件最大 1MB |
+| `PLUGIN_VFS_MAX_TOTAL_SIZE` | `10485760` | 总配额 10MB |
+| `PLUGIN_WASM_POOL_SIZE` | `4` | WASM 实例池大小 |
+| `PLUGIN_JS_POOL_SIZE` | `4` | JS 实例池大小 |
+| `PLUGIN_LUA_POOL_SIZE` | `4` | Lua 实例池大小 |
+
+## 完整示例：CRM 插件
 
 ```
- PLUGIN_HOT_RELOAD=true cargo run
+plugins/crm/
+  ├── manifest.toml
+  └── main.js
 ```
 
-> 热重载仅监听文件变化，不会自动编译 TypeScript。开发 TS 插件时需手动或用 watch 模式运行 esbuild。
+**manifest.toml：**
 
----
+```toml
+[plugin]
+id = "com.rust-blog.crm"
+name = "CRM API"
+version = "0.1.0"
+description = "CRM sales funnel, Pipeline management, Contact timeline"
+runtime = "js"
+entry = "main.js"
 
-## 完整示例
+[permissions]
+max_memory_mb = 16
+timeout_ms = 5000
+database = ["crm_contacts", "crm_companies", "crm_deals", "crm_activities", "crm_notes"]
+config = ["app.*"]
 
-### Welcome Email（JS）
+[hooks.on-content-created]
+priority = 50
+
+[hooks.on-content-updated]
+priority = 50
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/crm/pipeline"
+handler = "getPipeline"
+auth = "admin"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/crm/contacts"
+handler = "listContacts"
+auth = "admin"
+
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/crm/contacts"
+handler = "createContact"
+auth = "admin"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/crm/contacts/:contactId"
+handler = "getContact"
+auth = "admin"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/crm/dashboard"
+handler = "getDashboard"
+auth = "admin"
+```
+
+**main.js（节选）：**
 
 ```javascript
-// plugins/welcome-email/index.js
-var Plugin = {
-    on_login: function(dataJson) {
-        var data = JSON.parse(dataJson);
-        if (data.success) {
-            Host.log("info", "User logged in: " + data.email);
-        }
-    }
+var Plugin = {};
+
+var ok = function(data) {
+  return JSON.stringify({ status: 200, body: JSON.stringify(data) });
+};
+
+var query = function(sql, params) {
+  var result = Host.dbQuery(sql, params ? JSON.stringify(params) : null);
+  if (!result || result.indexOf("error:") === 0) return null;
+  return JSON.parse(result);
+};
+
+Plugin.getPipeline = function(input) {
+  var stages = ["lead", "qualified", "proposal", "negotiation", "closed_won", "closed_lost"];
+  var pipeline = [];
+  for (var i = 0; i < stages.length; i++) {
+    var rows = query(
+      "SELECT COUNT(*) as cnt FROM crm_deals WHERE stage = ?",
+      [stages[i]]
+    );
+    pipeline.push({ stage: stages[i], count: rows ? parseInt(rows[0].cnt) : 0 });
+  }
+  return ok({ stages: pipeline });
+};
+
+Plugin.createContact = function(input) {
+  var data = JSON.parse(input);
+  var body = JSON.parse(data.body);
+  var id = Host.dbQuery("SELECT LOWER(HEX(RANDOMBLOB(16))) as id", null);
+  var newId = JSON.parse(id)[0].id;
+  Host.dbExecute(
+    "INSERT INTO crm_contacts (id, name, email, company_id, status) VALUES (?, ?, ?, ?, ?)",
+    JSON.stringify([newId, body.name, body.email || "", body.company_id || "", "active"])
+  );
+  return ok({ id: newId, name: body.name });
+};
+
+Plugin.on_content_created = function(input) {
+  var data = JSON.parse(input);
+  if (data.content_type === "crm_contacts") {
+    Host.log("info", "[crm] new contact created: " + data.id);
+    Host.emitEvent("crm.lead_created", JSON.stringify({ contactId: data.id }));
+  }
+  return ok(data);
 };
 ```
-
-### SEO Optimizer（JS）
-
-```javascript
-// plugins/seo-optimizer-js/index.js
-var Plugin = {
-    on_post_creating: function(inputJson) {
-        var input = JSON.parse(inputJson);
-        if (!input.excerpt || input.excerpt === "") {
-            var plain = input.content
-                .replace(/```[\s\S]*?```/g, "")
-                .replace(/[#*_`]/g, "")
-                .replace(/\s+/g, " ")
-                .trim();
-            input.excerpt = plain.substring(0, 200);
-            if (plain.length > 200) input.excerpt += "...";
-        }
-        return JSON.stringify(input);
-    },
-
-    filter_html: function(html) {
-        var meta = '<meta property="og:type" content="article">';
-        return html.replace("<head>", "<head>" + meta);
-    }
-};
-```
-
----
-
-## 调试技巧
-
-1. **查看日志** — `Host.log()` 输出到宿主 tracing 日志，开发环境默认打印到终端
-2. **错误不崩溃** — 插件 Hook 抛异常时，宿主会跳过该插件继续执行，不影响请求
-3. **禁用插件** — 在 `.env` 中设置 `PLUGIN_DISABLED=com.example.bad-plugin`
-4. **超时测试** — 设置短超时 `[permissions] timeout_ms = 100` 来验证中断机制
