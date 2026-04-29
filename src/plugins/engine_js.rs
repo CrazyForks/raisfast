@@ -1,15 +1,20 @@
-//! `QuickJS` 引擎封装
+//! QuickJS 引擎封装
 //!
 //! 基于 rquickjs 的 `AsyncRuntime` / `AsyncContext`，
 //! 支持 JavaScript 插件在 tokio 异步环境中运行。
 //! 每个插件拥有独立的 AsyncRuntime + AsyncContext（完全隔离的内存空间）。
+//!
+//! ESM 模式：插件使用 `import/export` 语法，
+//! 框架从 module namespace 收集 export 函数注册到 Plugin 对象。
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-use rquickjs::{AsyncContext, AsyncRuntime, Function, Object};
+use rquickjs::loader::Resolver;
+use rquickjs::{AsyncContext, AsyncRuntime, Ctx, Function, Module, Object, Value};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
@@ -23,9 +28,6 @@ struct PluginSlot {
     context: AsyncContext,
 }
 
-/// JS 实例池
-///
-/// 为单个 JS 插件维护多个独立 Runtime+Context，支持并发执行。
 struct JsInstancePool {
     instances: Vec<Mutex<PluginSlot>>,
     next: AtomicUsize,
@@ -45,6 +47,64 @@ impl JsInstancePool {
         self.instances[idx].lock().await
     }
 }
+
+// ── ESM Module Loader ────────────────────────────────────────────
+
+struct PluginResolver;
+
+impl Resolver for PluginResolver {
+    fn resolve<'js>(&mut self, _ctx: &Ctx<'js>, _base: &str, name: &str) -> rquickjs::Result<String> {
+        Ok(name.to_string())
+    }
+}
+
+struct PluginLoader {
+    plugin_dir: PathBuf,
+    sdk_source: &'static str,
+}
+
+impl PluginLoader {
+    fn new(plugin_dir: PathBuf, sdk_source: &'static str) -> Self {
+        Self {
+            plugin_dir,
+            sdk_source,
+        }
+    }
+}
+
+impl rquickjs::loader::Loader for PluginLoader {
+    fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str) -> rquickjs::Result<Module<'js>> {
+        let source = match name {
+            "sdk" => self.sdk_source.to_string(),
+            n if n.starts_with("./") || n.starts_with("../") => {
+                let path = self.plugin_dir.join(n);
+                let canonical =
+                    path.canonicalize().map_err(|e| {
+                        rquickjs::Error::new_loading_message(name, &format!("path error: {e}"))
+                    })?;
+                let plugin_canonical = self.plugin_dir.canonicalize().unwrap_or_else(|_| self.plugin_dir.clone());
+                if !canonical.starts_with(&plugin_canonical) {
+                    return Err(rquickjs::Error::new_loading_message(
+                        name,
+                        "path traversal denied",
+                    ));
+                }
+                std::fs::read_to_string(&canonical).map_err(|e| {
+                    rquickjs::Error::new_loading_message(name, &format!("read error: {e}"))
+                })?
+            }
+            _ => {
+                return Err(rquickjs::Error::new_loading_message(
+                    name,
+                    "unknown module",
+                ));
+            }
+        };
+        Module::declare(ctx.clone(), name, source)
+    }
+}
+
+// ── JS Engine ────────────────────────────────────────────────────
 
 pub struct JsEngine {
     pools: Mutex<HashMap<String, Arc<JsInstancePool>>>,
@@ -83,6 +143,8 @@ impl JsEngine {
         code: &str,
         plugin_id: &str,
         permissions: &Permissions,
+        plugin_dir: &Path,
+        sdk_source: &'static str,
     ) -> anyhow::Result<PluginSlot> {
         let memory_limit = permissions
             .max_memory_mb
@@ -94,20 +156,42 @@ impl JsEngine {
         runtime.set_memory_limit(memory_limit).await;
         runtime.set_max_stack_size(512 * 1024).await;
 
+        runtime
+            .set_loader(PluginResolver, PluginLoader::new(plugin_dir.to_path_buf(), sdk_source))
+            .await;
+
         let ctx = AsyncContext::full(&runtime).await?;
         let config = self.config.clone();
-        let plugin_id = plugin_id.to_string();
+        let plugin_id_owned = plugin_id.to_string();
         let perms = permissions.clone();
         ctx.with(|ctx| {
             super::js_host::register_host_functions(
                 ctx.clone(),
                 config,
-                plugin_id,
+                plugin_id_owned,
                 perms,
                 self.pool.clone(),
                 self.event_bus.clone(),
             )?;
-            ctx.eval::<(), _>(code)?;
+
+            let module = Module::declare(ctx.clone(), "index.js", code)?;
+            let (evaled, _promise) = module.eval()?;
+            _promise.finish::<()>()?;
+
+            let ns = evaled.namespace()?;
+            let global = ctx.globals();
+            let plugin_obj = Object::new(ctx.clone())?;
+
+            for key_result in ns.keys::<String>() {
+                let key = key_result?;
+                let Ok(func) = ns.get::<_, Function>(&key) else {
+                    continue;
+                };
+                plugin_obj.set(&key, func)?;
+            }
+
+            global.set("Plugin", plugin_obj)?;
+
             Ok::<_, rquickjs::Error>(())
         })
         .await?;
@@ -123,10 +207,12 @@ impl JsEngine {
         id: &str,
         code: &str,
         permissions: Permissions,
+        plugin_dir: &Path,
+        sdk_source: &'static str,
     ) -> anyhow::Result<()> {
         let mut instances = Vec::with_capacity(self.pool_size);
         for _ in 0..self.pool_size {
-            instances.push(self.create_instance(code, id, &permissions).await?);
+            instances.push(self.create_instance(code, id, &permissions, plugin_dir, sdk_source).await?);
         }
 
         self.permissions_map
@@ -142,7 +228,7 @@ impl JsEngine {
 
     #[cfg(test)]
     pub async fn load_plugin_default(&self, id: &str, code: &str) -> anyhow::Result<()> {
-        self.load_plugin(id, code, Permissions::default()).await
+        self.load_plugin(id, code, Permissions::default(), Path::new("."), crate::plugins::sdk_v1::JS_SDK_V1).await
     }
 
     pub async fn unload_plugin(&self, id: &str) {
@@ -186,8 +272,12 @@ impl JsEngine {
                     Ok(f) => f,
                     Err(_) => return Ok(None),
                 };
-                let result_str: String = func.call((input_json,))?;
-                let output: T = serde_json::from_str(&result_str)?;
+                let result_value: Value = func.call((input_json,))?;
+                let result_str = ctx
+                    .json_stringify(&result_value)
+                    .map_err(|e| anyhow::anyhow!("json stringify error: {e}"))?
+                    .ok_or_else(|| anyhow::anyhow!("json stringify returned undefined"))?;
+                let output: T = serde_json::from_str(&result_str.to_string()?)?;
                 Ok(Some(output))
             })
             .await;
@@ -279,8 +369,9 @@ impl JsEngine {
                     Ok(f) => f,
                     Err(_) => return Ok(None),
                 };
-                let result_str: String = func.call((input_owned,))?;
-                Ok(Some(result_str))
+                let result_value: Value = func.call((input_owned,))?;
+                let js_string = rquickjs::String::from_value(result_value)?;
+                Ok(Some(js_string.to_string()?))
             })
             .await;
 
@@ -318,13 +409,11 @@ mod tests {
         let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
         let code = r#"
-var Plugin = {
-    on_post_creating: function(inputJson) {
-        var input = JSON.parse(inputJson);
-        input.title = input.title.toUpperCase();
-        return JSON.stringify(input);
-    }
-};
+export function on_post_creating(inputJson) {
+    var input = JSON.parse(inputJson);
+    input.title = input.title.toUpperCase();
+    return input;
+}
 "#;
         engine
             .load_plugin_default("test-filter", code)
@@ -357,7 +446,7 @@ var Plugin = {
     async fn js_engine_call_filter_missing_function() {
         let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
-        let code = r#"var Plugin = {};"#;
+        let code = r#"export const noop = 1;"#;
         engine
             .load_plugin_default("test-nofunc", code)
             .await
@@ -375,12 +464,12 @@ var Plugin = {
         let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
         let code = r#"
-var Plugin = {
-    on_post_created: function(dataJson) {
-        var data = JSON.parse(dataJson);
-        Host.log("info", "post created: " + data.id);
-    }
-};
+import { logInfo } from 'sdk';
+
+export function on_post_created(dataJson) {
+    var data = JSON.parse(dataJson);
+    logInfo("post created: " + data.id);
+}
 "#;
         engine
             .load_plugin_default("test-action", code)
@@ -402,11 +491,9 @@ var Plugin = {
         let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
         let code = r#"
-var Plugin = {
-    filter_html: function(html) {
-        return html.replace("<head>", '<head><meta property="og:type" content="article">');
-    }
-};
+export function filter_html(html) {
+    return html.replace("<head>", '<head><meta property="og:type" content="article">');
+}
 "#;
         engine
             .load_plugin_default("test-strfilter", code)
@@ -430,7 +517,7 @@ var Plugin = {
     async fn js_engine_unload_plugin() {
         let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
-        let code = r#"var Plugin = {};"#;
+        let code = r#"export const noop = 1;"#;
         engine
             .load_plugin_default("test-unload", code)
             .await
@@ -447,7 +534,7 @@ var Plugin = {
 
         for i in 0..3 {
             let code = format!(
-                r#"var Plugin = {{ on_post_creating: function(j) {{ var d = JSON.parse(j); d.idx = {i}; return JSON.stringify(d); }} }};"#
+                r#"export function on_post_creating(j) {{ var d = JSON.parse(j); d.idx = {i}; return d; }}"#
             );
             engine
                 .load_plugin_default(&format!("plugin-{i}"), &code)
@@ -463,11 +550,11 @@ var Plugin = {
         let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
         let code = r#"
-var Plugin = {
-    on_post_created: function(dataJson) {
-        Host.log("info", "test message");
-    }
-};
+import { logInfo } from 'sdk';
+
+export function on_post_created(dataJson) {
+    logInfo("test message");
+}
 "#;
         engine.load_plugin_default("test-host", code).await.unwrap();
 
@@ -482,24 +569,24 @@ var Plugin = {
         let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
         let code = r#"
-var Plugin = {
-    on_post_created: function(dataJson) {
-        var env = Host.getConfig("app.env");
-        if (env !== "test") {
-            throw new Error("expected test, got: " + env);
-        }
-        var unknown = Host.getConfig("nonexistent.key");
-        if (unknown != null) {
-            throw new Error("expected null for unknown key");
-        }
+import { configGet } from 'sdk';
+
+export function on_post_created(dataJson) {
+    var env = configGet("app.env");
+    if (env !== "test") {
+        throw new Error("expected test, got: " + env);
     }
-};
+    var unknown = configGet("nonexistent.key");
+    if (unknown != null) {
+        throw new Error("expected null for unknown key");
+    }
+}
 "#;
         let perms = Permissions {
             config: vec!["app.*".into()],
             ..Permissions::default()
         };
-        engine.load_plugin("test-cfg", code, perms).await.unwrap();
+        engine.load_plugin("test-cfg", code, perms, Path::new("."), crate::plugins::sdk_v1::JS_SDK_V1).await.unwrap();
 
         let result = engine
             .call_action("test-cfg", "on_post_created", &serde_json::json!({}))
@@ -523,13 +610,11 @@ var Plugin = {
         let engine = JsEngine::new(&Arc::new(config), None, None).await.unwrap();
 
         let code = r#"
-var Plugin = {
-    on_post_creating: function(inputJson) {
-        var start = Date.now();
-        while (Date.now() - start < 10000) {}
-        return inputJson;
-    }
-};
+export function on_post_creating(inputJson) {
+    var start = Date.now();
+    while (Date.now() - start < 10000) {}
+    return inputJson;
+}
 "#;
         engine
             .load_plugin_default("test-timeout", code)
@@ -547,22 +632,18 @@ var Plugin = {
         let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
         let code_a = r#"
-var Plugin = {
-    on_post_creating: function(inputJson) {
-        var input = JSON.parse(inputJson);
-        input.tags = ["a"];
-        return JSON.stringify(input);
-    }
-};
+export function on_post_creating(inputJson) {
+    var input = JSON.parse(inputJson);
+    input.tags = ["a"];
+    return input;
+}
 "#;
         let code_b = r#"
-var Plugin = {
-    on_post_creating: function(inputJson) {
-        var input = JSON.parse(inputJson);
-        input.tags.push("b");
-        return JSON.stringify(input);
-    }
-};
+export function on_post_creating(inputJson) {
+    var input = JSON.parse(inputJson);
+    input.tags.push("b");
+    return input;
+}
 "#;
         engine.load_plugin_default("chain-a", code_a).await.unwrap();
         engine.load_plugin_default("chain-b", code_b).await.unwrap();
@@ -589,11 +670,9 @@ var Plugin = {
         let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
 
         let code = r#"
-var Plugin = {
-    on_post_created: function(dataJson) {
-        throw new Error("intentional error");
-    }
-};
+export function on_post_created(dataJson) {
+    throw new Error("intentional error");
+}
 "#;
         engine
             .load_plugin_default("test-throw", code)

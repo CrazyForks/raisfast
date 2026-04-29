@@ -5,6 +5,7 @@
 //! 每个插件拥有独立的 Lua 状态（隔离的全局作用域）。
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 
@@ -87,6 +88,8 @@ impl LuaEngine {
         plugin_id: &str,
         permissions: &Permissions,
         memory_limit: usize,
+        plugin_dir: &Path,
+        sdk_source: &'static str,
     ) -> anyhow::Result<Lua> {
         let lua = Self::create_sandboxed_lua(memory_limit)?;
         super::lua_host::register_host_functions(
@@ -97,8 +100,49 @@ impl LuaEngine {
             self.pool.clone(),
             self.event_bus.clone(),
         )?;
-        lua.load(code).exec()?;
+        Self::register_require(&lua, plugin_dir, sdk_source)?;
+        lua.load(code).set_name("init.lua").exec()?;
         Ok(lua)
+    }
+
+    fn register_require(lua: &Lua, plugin_dir: &Path, sdk_source: &'static str) -> anyhow::Result<()> {
+        let globals = lua.globals();
+
+        let dir = plugin_dir.to_path_buf();
+        let sdk = sdk_source.to_string();
+
+        let require_fn = lua.create_function(move |lua, name: String| -> mlua::Result<mlua::Table> {
+            match name.as_str() {
+                "sdk" => {
+                    lua.load(&sdk).set_name("sdk").exec()?;
+                    let module: mlua::Table = lua.globals().get("_sdk_module")?;
+                    Ok(module)
+                }
+                n if n.starts_with("./") || n.starts_with("../") => {
+                    let path = dir.join(&name);
+                    let canonical = path
+                        .canonicalize()
+                        .map_err(|e| mlua::Error::runtime(format!("path error: {e}")))?;
+                    let plugin_canonical =
+                        dir.canonicalize().unwrap_or_else(|_| dir.clone());
+                    if !canonical.starts_with(&plugin_canonical) {
+                        return Err(mlua::Error::runtime("path traversal denied"));
+                    }
+                    let source = std::fs::read_to_string(&canonical)
+                        .map_err(|e| mlua::Error::runtime(format!("read error: {e}")))?;
+                    lua.load(&source).set_name(&name).exec()?;
+                    let module: mlua::Table = lua
+                        .globals()
+                        .get("_module")
+                        .or_else(|_| lua.create_table())?;
+                    Ok(module)
+                }
+                _ => Err(mlua::Error::runtime(format!("module not found: {name}"))),
+            }
+        })?;
+
+        globals.set("require", require_fn)?;
+        Ok(())
     }
 
     pub async fn load_plugin(
@@ -106,11 +150,13 @@ impl LuaEngine {
         id: &str,
         code: &str,
         permissions: Permissions,
+        plugin_dir: &Path,
+        sdk_source: &'static str,
     ) -> anyhow::Result<()> {
         let memory_limit = (self.config.plugin_max_memory_mb as usize) * 1024 * 1024;
         let mut instances = Vec::with_capacity(self.pool_size);
         for _ in 0..self.pool_size {
-            instances.push(self.create_instance(code, id, &permissions, memory_limit)?);
+            instances.push(self.create_instance(code, id, &permissions, memory_limit, plugin_dir, sdk_source)?);
         }
 
         self.permissions_map
@@ -126,7 +172,7 @@ impl LuaEngine {
 
     #[cfg(test)]
     pub async fn load_plugin_default(&self, id: &str, code: &str) -> anyhow::Result<()> {
-        self.load_plugin(id, code, Permissions::default()).await
+        self.load_plugin(id, code, Permissions::default(), Path::new("."), crate::plugins::sdk_v1::LUA_SDK_V1).await
     }
 
     pub async fn unload_plugin(&self, id: &str) {
@@ -497,7 +543,7 @@ Plugin = {
             config: vec!["app.*".into()],
             ..Permissions::default()
         };
-        engine.load_plugin("test-cfg", code, perms).await.unwrap();
+        engine.load_plugin("test-cfg", code, perms, Path::new("."), crate::plugins::sdk_v1::LUA_SDK_V1).await.unwrap();
 
         let result = engine
             .call_action("test-cfg", "on_post_created", &serde_json::json!({}))

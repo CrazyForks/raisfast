@@ -19,11 +19,13 @@ PluginManager（Arc 共享）
               ↓ Hook 派发
 Host API（沙箱权限控制）
   ├─ Host.dbQuery / dbExecute
+  ├─ Host.dbBegin / dbCommit / dbRollback
   ├─ Host.httpGet / httpPost
   ├─ Host.getConfig
   ├─ Host.getData / setData（KV 存储）
-  ├─ Host.fsRead / fsWrite（VFS）
-  └─ Host.emitEvent
+  ├─ Host.fsRead / fsWrite / fsDelete / fsExists / fsList（VFS）
+  ├─ Host.log / emitEvent
+  └─ Host.newId
 ```
 
 ### 核心模块
@@ -300,9 +302,16 @@ Host.log("info", "Processing order " + orderId);
 Host.log("warn", "Low stock detected");
 Host.log("error", "Payment failed: " + error);
 Host.emitEvent("order.created", JSON.stringify({orderId: id}));
+const id = Host.newId();  // UUID v7
 ```
 
-## 编写 JS 插件
+| 函数 | 说明 |
+|------|------|
+| `Host.log(level, msg)` | 日志输出（level: `info`/`warn`/`error`） |
+| `Host.emitEvent(type, data)` | 发射事件到事件总线 |
+| `Host.newId()` | 生成 UUID v7（时间排序，与系统主键一致） |
+
+## 编写 JS 插件（ES Module + SDK）
 
 ### 项目结构
 
@@ -315,62 +324,81 @@ plugins/my-plugin/
 ### 代码模板
 
 ```javascript
-var Plugin = {};
-
-// ── 工具函数 ──
-
-var ok = function(data) {
-  return JSON.stringify({ status: 200, body: JSON.stringify(data) });
-};
-
-var error = function(code, msg) {
-  return JSON.stringify({ status: code, body: JSON.stringify({ error: msg }) });
-};
-
-var query = function(sql, params) {
-  var result = Host.dbQuery(sql, params ? JSON.stringify(params) : null);
-  if (!result || result.indexOf("error:") === 0) return null;
-  return JSON.parse(result);
-};
+import { dbQuery, dbExec, ok, fail, extractJson, logInfo, newId } from 'sdk';
 
 // ── Hook ──
 
-Plugin.on_content_created = function(input) {
-  var data = JSON.parse(input);
-  if (data.content_type === "product") {
-    Host.log("info", "[my-plugin] new product: " + data.id);
+export function on_content_created(input) {
+  const data = extractJson(input, "body");
+  if (data?.content_type === "product") {
+    logInfo("[my-plugin] new product: " + data.id);
   }
   return ok(data);
-};
+}
 
 // ── 自定义路由 ──
 
-Plugin.getStats = function(input) {
-  var rows = query("SELECT COUNT(*) as cnt FROM products WHERE status = 'published'");
-  return ok({ total: rows ? rows[0].cnt : 0 });
-};
+export function getProduct(input) {
+  const id = extractJson(input, "params.id");
+  if (!id) return fail(400, "id required");
+  const rows = dbQuery("SELECT * FROM products WHERE id = ?", [id]);
+  if (!rows || rows.length === 0) return fail(404, "product not found");
+  return ok(rows[0]);
+}
 
 // ── 定时任务 ──
 
-Plugin.on_cron_tick = function(input) {
-  var data = JSON.parse(input);
-  if (data.job_type === "daily_cleanup") {
-    Host.dbExecute("DELETE FROM sessions WHERE expires_at < datetime('now')", null);
-    Host.log("info", "[my-plugin] daily cleanup done");
+export function on_cron_tick(input) {
+  const data = extractJson(input, "body");
+  if (data?.job_type === "daily_cleanup") {
+    dbExec("DELETE FROM sessions WHERE expires_at < datetime('now')");
+    logInfo("[my-plugin] daily cleanup done");
   }
-};
+}
 ```
+
+### SDK v1 API（`import { ... } from 'sdk'`）
+
+| 函数 | 说明 |
+|------|------|
+| `dbQuery(sql, params?)` | 参数化 SELECT 查询，返回对象数组；错误时抛异常 |
+| `dbExec(sql, params?)` | INSERT/UPDATE/DELETE，返回 `{ error?, rows_affected }` |
+| `dbBegin()` | 开启事务（失败时抛异常） |
+| `dbCommit()` | 提交事务（失败时抛异常） |
+| `dbRollback()` | 回滚事务 |
+| `ok(data)` | 成功响应：返回数据，框架自动包装为 `{code:0, data}` |
+| `fail(status, msg)` | 错误响应：框架包装为 `{code:N, message}` |
+| `extractJson(input, field?)` | 从 JSON 中提取指定字段（支持 `params.id` 点号路径），不存在返回 `null` |
+| `logInfo(msg)` / `logWarn(msg)` / `logError(msg)` | 日志输出 |
+| `newId()` | 生成 UUID v7（时间排序，与系统一致） |
+| `eventEmit(type, data)` | 发射事件到事件总线 |
+| `httpGet(url)` | HTTP GET 返回原始字符串 |
+| `httpGetJson(url)` | HTTP GET 并解析 JSON |
+| `httpPost(url, body)` | HTTP POST 返回原始字符串 |
+| `httpPostJson(url, body)` | HTTP POST 并解析 JSON |
+| `configGet(key)` | 读取配置（需 `config` 权限） |
+| `storeGet(key)` / `storeSet(key, val)` | KV 存储 |
+| `vfsRead(path)` / `vfsWrite(path, content)` | 虚拟文件系统读写 |
+| `vfsDelete(path)` / `vfsExists(path)` | 虚拟文件系统删除/判断存在 |
+| `vfsList(path)` | 列出目录下文件，返回数组 |
 
 ### 关键约定
 
-- 必须导出全局 `Plugin` 对象
-- Filter 钩子：接收 JSON 字符串，返回修改后的 JSON 字符串
+- **必须使用 `export function`** 导出 handler（ES Module 模式，引擎自动收集到 Plugin 对象）
+- 路由处理：`input` 包含 `{ path, method, body, headers, params }`，直接 `return ok(data)` 或 `return fail(status, msg)`
+- Filter 钩子：接收 JSON 字符串 `input`，用 `extractJson(input, "body")` 提取数据
 - Action 钩子：接收 JSON 字符串，返回值被忽略
-- 路由处理：接收 `{ path, method, body, headers }` JSON，返回 `{ status, body }` JSON 字符串
-- 使用 `var` 而非 `let`/`const`（QuickJS 兼容性更好）
-- 支持 ES2024 语法
+- 支持 ES2024 完整语法（`let`/`const`、箭头函数、`async/await`、可选链等）
+- `dbQuery()` 查询失败时抛异常，可用 `try/catch` 捕获
+- `dbQuery()` 返回的整数列为 `null`，必须用 `CAST(col AS TEXT)` 转为字符串后再 `parseInt`
 
-## 编写 Lua 插件
+### 相对路径导入
+
+```javascript
+import { helper } from './utils.js';
+```
+
+## 编写 Lua 插件（SDK 模式）
 
 ### 项目结构
 
@@ -383,29 +411,67 @@ plugins/my-plugin/
 ### 代码模板
 
 ```lua
+local sdk = require("sdk")
+
 Plugin = {}
 
-function Plugin.on_content_created(data)
-    if data.content_type == "product" then
-        Host.log("info", "[my-plugin] new product: " .. data.id)
+Plugin.on_content_created = function(input)
+    local data = sdk.extractJson(input, "body")
+    if data and data.content_type == "product" then
+        sdk.logInfo("[my-plugin] new product: " .. tostring(data.id))
     end
-    return data
+    return sdk.ok(data)
 end
 
-function Plugin.on_cron_tick(data)
+Plugin.on_cron_tick = function(input)
+    local data = sdk.extractJson(input, "body")
     if data.job_type == "daily_cleanup" then
-        Host.dbExecute("DELETE FROM sessions WHERE expires_at < datetime('now')", nil)
-        Host.log("info", "[my-plugin] cleanup done")
+        sdk.dbExec("DELETE FROM sessions WHERE expires_at < datetime('now')")
+        sdk.logInfo("[my-plugin] cleanup done")
     end
+end
+
+Plugin.getStats = function(input)
+    local result = sdk.dbQuery("SELECT CAST(COUNT(*) AS TEXT) as cnt FROM products WHERE status = 'published'")
+    return sdk.ok({ total = tonumber(result[1].cnt) or 0 })
 end
 ```
 
+### SDK v1 API（`local sdk = require("sdk")`）
+
+| 函数 | 说明 |
+|------|------|
+| `sdk.dbQuery(sql, params?)` | 参数化 SELECT 查询，返回数组表；错误时抛异常 |
+| `sdk.dbExec(sql, params?)` | INSERT/UPDATE/DELETE，返回结果表 |
+| `sdk.dbBegin()` | 开启事务（失败时抛异常） |
+| `sdk.dbCommit()` | 提交事务（失败时抛异常） |
+| `sdk.dbRollback()` | 回滚事务 |
+| `sdk.ok(data)` | 成功响应：返回数据，框架自动包装 |
+| `sdk.fail(status, msg)` | 错误响应：框架包装为 `{code:N, message}` |
+| `sdk.extractJson(input, field?)` | 从 JSON 中提取指定字段（支持点号路径），不存在返回 `nil` |
+| `sdk.logInfo(msg)` / `sdk.logWarn(msg)` / `sdk.logError(msg)` | 日志输出 |
+| `sdk.newId()` | 生成 UUID v7（时间排序，与系统一致） |
+| `sdk.eventEmit(type, data)` | 发射事件 |
+| `sdk.httpGet(url)` | HTTP GET 返回原始字符串 |
+| `sdk.httpGetJson(url)` | HTTP GET 并解析 JSON |
+| `sdk.httpPost(url, body)` | HTTP POST 返回原始字符串 |
+| `sdk.httpPostJson(url, body)` | HTTP POST 并解析 JSON |
+| `sdk.configGet(key)` | 读取配置 |
+| `sdk.storeGet(key)` / `sdk.storeSet(key, val)` | KV 存储 |
+| `sdk.vfsRead(path)` / `sdk.vfsWrite(path, content)` | 虚拟文件系统读写 |
+| `sdk.vfsDelete(path)` / `sdk.vfsExists(path)` | 虚拟文件系统删除/判断存在 |
+| `sdk.vfsList(path)` | 列出目录下文件，返回数组 |
+
 ### 关键约定
 
-- 必须导出全局 `Plugin` 表
-- Filter 钩子：接收 Lua table，返回修改后的 table（无需 JSON 序列化）
+- 必须导出全局 `Plugin` 表（Lua 不强制 ESM，但仍需 `Plugin = {}`）
+- 使用 `local sdk = require("sdk")` 导入 SDK 模块
+- Filter 钩子：接收 Lua table，返回 Lua table
+- 路由处理：`input` 包含 `{ path, method, body, headers, params }`，直接 `return sdk.ok(data)` 或 `return sdk.fail(status, msg)`
 - 沙箱环境：仅暴露 `table`, `string`, `math`, `utf8`, `coroutine` 标准库（无 IO/OS/debug）
 - 指令限制：5,000,000 条
+- `sdk.dbQuery()` 查询失败时抛异常，可用 `pcall` 捕获
+- `sdk.dbQuery()` 返回的整数列在 Lua 中可能为 `nil`，建议用 `CAST(col AS TEXT)` 转换
 
 ## 错误恢复
 
@@ -474,7 +540,7 @@ plugins/crm/
 id = "com.rust-blog.crm"
 name = "CRM API"
 version = "0.1.0"
-description = "CRM sales funnel, Pipeline management, Contact timeline"
+description = "CRM 销售漏斗、Pipeline 管理、联系人时间线"
 runtime = "js"
 entry = "main.js"
 
@@ -494,79 +560,50 @@ priority = 50
 method = "GET"
 path = "/api/v1/plugins/crm/pipeline"
 handler = "getPipeline"
-auth = "admin"
 
 [[routes]]
 method = "GET"
-path = "/api/v1/plugins/crm/contacts"
-handler = "listContacts"
-auth = "admin"
+path = "/api/v1/plugins/crm/pipeline/:dealId"
+handler = "getDealDetail"
 
 [[routes]]
 method = "POST"
-path = "/api/v1/plugins/crm/contacts"
-handler = "createContact"
-auth = "admin"
-
-[[routes]]
-method = "GET"
-path = "/api/v1/plugins/crm/contacts/:contactId"
-handler = "getContact"
-auth = "admin"
-
-[[routes]]
-method = "GET"
-path = "/api/v1/plugins/crm/dashboard"
-handler = "getDashboard"
-auth = "admin"
+path = "/api/v1/plugins/crm/deals/:dealId/stage"
+handler = "updateDealStage"
 ```
 
 **main.js（节选）：**
 
 ```javascript
-var Plugin = {};
+import { dbQuery, dbExec, ok, fail, extractJson, logInfo, eventEmit, newId } from 'sdk';
 
-var ok = function(data) {
-  return JSON.stringify({ status: 200, body: JSON.stringify(data) });
-};
+export function getPipeline() {
+    const stages = ["prospecting", "qualification", "proposal", "negotiation", "closed_won", "closed_lost"];
+    const pipeline = [];
+    for (const stage of stages) {
+        const rows = dbQuery(
+            `SELECT id, title, amount FROM crm_deals WHERE stage = ? ORDER BY amount DESC`,
+            [stage]
+        );
+        pipeline.push({ stage, deals: rows || [] });
+    }
+    return ok({ stages: pipeline });
+}
 
-var query = function(sql, params) {
-  var result = Host.dbQuery(sql, params ? JSON.stringify(params) : null);
-  if (!result || result.indexOf("error:") === 0) return null;
-  return JSON.parse(result);
-};
+export function getDealDetail(input) {
+    const dealId = extractJson(input, "params.dealId");
+    if (!dealId) return fail(400, "deal id required");
+    const deals = dbQuery(`SELECT * FROM crm_deals WHERE id = ?`, [dealId]);
+    if (!deals || deals.length === 0) return fail(404, "deal not found");
+    return ok(deals[0]);
+}
 
-Plugin.getPipeline = function(input) {
-  var stages = ["lead", "qualified", "proposal", "negotiation", "closed_won", "closed_lost"];
-  var pipeline = [];
-  for (var i = 0; i < stages.length; i++) {
-    var rows = query(
-      "SELECT COUNT(*) as cnt FROM crm_deals WHERE stage = ?",
-      [stages[i]]
-    );
-    pipeline.push({ stage: stages[i], count: rows ? parseInt(rows[0].cnt) : 0 });
-  }
-  return ok({ stages: pipeline });
-};
-
-Plugin.createContact = function(input) {
-  var data = JSON.parse(input);
-  var body = JSON.parse(data.body);
-  var id = Host.dbQuery("SELECT LOWER(HEX(RANDOMBLOB(16))) as id", null);
-  var newId = JSON.parse(id)[0].id;
-  Host.dbExecute(
-    "INSERT INTO crm_contacts (id, name, email, company_id, status) VALUES (?, ?, ?, ?, ?)",
-    JSON.stringify([newId, body.name, body.email || "", body.company_id || "", "active"])
-  );
-  return ok({ id: newId, name: body.name });
-};
-
-Plugin.on_content_created = function(input) {
-  var data = JSON.parse(input);
-  if (data.content_type === "crm_contacts") {
-    Host.log("info", "[crm] new contact created: " + data.id);
-    Host.emitEvent("crm.lead_created", JSON.stringify({ contactId: data.id }));
-  }
-  return ok(data);
-};
+export function on_content_created(input) {
+    const data = extractJson(input, "body");
+    if (data.content_type === "contact") {
+        logInfo(`[crm] new contact: ${data.id}`);
+        eventEmit("crm.lead_created", JSON.stringify({ contact_id: data.id }));
+    }
+    return ok(data);
+}
 ```

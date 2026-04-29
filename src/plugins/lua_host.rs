@@ -5,12 +5,12 @@
 
 use std::sync::Arc;
 
-use mlua::Lua;
+use mlua::{Lua, LuaSerdeExt};
 
 use crate::config::app::AppConfig;
 use crate::db::Pool;
-use crate::plugins::Permissions;
 use crate::plugins::host_common::HostContext;
+use crate::plugins::Permissions;
 
 /// 注册宿主函数到 Lua 全局作用域。
 pub fn register_host_functions(
@@ -160,13 +160,34 @@ pub fn register_host_functions(
     })?;
     host.set("fsStat", fs_stat_fn)?;
 
-    let hc = host_ctx;
+    let hc = host_ctx.clone();
     let emit_event_fn = lua.create_function(move |lua, (event_type, data): (String, String)| {
         Ok(mlua::Value::String(
             lua.create_string(hc.emit_event(&event_type, &data))?,
         ))
     })?;
     host.set("emitEvent", emit_event_fn)?;
+
+    let new_id_fn = lua.create_function(move |lua, ()| -> mlua::Result<mlua::String> {
+        lua.create_string(host_ctx.new_uuid())
+    })?;
+    host.set("newId", new_id_fn)?;
+
+    let json_encode_fn =
+        lua.create_function(move |lua, val: mlua::Value| -> mlua::Result<String> {
+            let json_val: serde_json::Value = lua.from_value(val)?;
+            serde_json::to_string(&json_val)
+                .map_err(|e| mlua::Error::runtime(format!("json encode error: {e}")))
+        })?;
+    host.set("jsonEncode", json_encode_fn)?;
+
+    let json_decode_fn =
+        lua.create_function(move |lua, json_str: String| -> mlua::Result<mlua::Value> {
+            let json_val: serde_json::Value = serde_json::from_str(&json_str)
+                .map_err(|e| mlua::Error::runtime(format!("json decode error: {e}")))?;
+            lua.to_value(&json_val)
+        })?;
+    host.set("jsonDecode", json_decode_fn)?;
 
     globals.set("Host", host)?;
     Ok(())

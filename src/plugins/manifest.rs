@@ -149,6 +149,9 @@ pub struct PluginInfo {
     pub wasm: String,
     #[serde(default = "default_entry")]
     pub entry: String,
+    /// SDK 版本（默认 "v1"）
+    #[serde(default = "default_sdk_version")]
+    pub sdk_version: String,
 }
 
 fn default_runtime() -> String {
@@ -165,6 +168,10 @@ fn default_wasm() -> String {
 
 fn default_entry() -> String {
     "index.js".into()
+}
+
+fn default_sdk_version() -> String {
+    "v1".into()
 }
 
 /// 插件权限声明

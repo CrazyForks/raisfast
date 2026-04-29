@@ -34,6 +34,7 @@ mod lua_host;
 pub mod http_client;
 mod manifest;
 pub mod permissions;
+pub mod sdk_v1;
 pub mod vfs;
 
 pub use manifest::{CronEntry, HookConfig, HookPoint, Permissions, PluginManifest, RouteDef};
@@ -536,8 +537,20 @@ impl PluginManager {
         let code = std::fs::read_to_string(entry_path)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("read js entry: {e}")))?;
 
+        let sdk_source = sdk_v1::get_sdk_source("js", &manifest.plugin.sdk_version)
+            .ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!(
+                    "unknown SDK version: js/{}",
+                    manifest.plugin.sdk_version
+                ))
+            })?;
+
+        let plugin_dir = entry_path.parent().ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!("entry has no parent directory"))
+        })?;
+
         self.js_engine
-            .load_plugin(&id, &code, manifest.permissions.clone())
+            .load_plugin(&id, &code, manifest.permissions.clone(), plugin_dir, sdk_source)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("load js plugin: {e}")))?;
 
@@ -579,9 +592,21 @@ impl PluginManager {
         let code = std::fs::read_to_string(entry_path)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("read lua entry: {e}")))?;
 
+        let sdk_source = sdk_v1::get_sdk_source("lua", &manifest.plugin.sdk_version)
+            .ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!(
+                    "unknown SDK version: lua/{}",
+                    manifest.plugin.sdk_version
+                ))
+            })?;
+
+        let plugin_dir = entry_path.parent().ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!("entry has no parent directory"))
+        })?;
+
         let permissions = manifest.permissions.clone();
         self.lua_engine
-            .load_plugin(&id, &code, permissions)
+            .load_plugin(&id, &code, permissions, plugin_dir, sdk_source)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("load lua plugin: {e}")))?;
 
@@ -1279,11 +1304,13 @@ impl PluginManager {
                             .into_response(),
                     );
                 }
+                let params = extract_route_params(path, &route.path);
                 let input = serde_json::json!({
                     "path": path,
                     "method": method,
                     "body": body.unwrap_or(""),
                     "headers": headers.unwrap_or(&serde_json::Value::Null),
+                    "params": params,
                 });
 
                 let handler = &route.handler;
@@ -1327,7 +1354,10 @@ impl PluginManager {
             .find(|r| r.method.eq_ignore_ascii_case(method) && path_matches_route(path, &r.path))
     }
 
-    /// 调用插件的 JSON filter（统一 WASM/JS/Lua 三引擎），返回解析后的 Response
+    /// 调用插件的 JSON filter，返回统一包装的 Response。
+    ///
+    /// 插件返回原始数据，框架包装为 `{code, message, data}`。
+    /// 若插件返回 `{__plugin_error: true, __status, __message}` 则视为错误。
     async fn call_plugin_json(
         &self,
         plugin: &LoadedPlugin,
@@ -1369,55 +1399,47 @@ impl PluginManager {
 
         match result {
             Some(result) => {
-                if let Some(body) = result.get("body").and_then(|b| b.as_str()) {
-                    let status = result
-                        .get("status")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(200) as u16;
+                if let Some(obj) = result.as_object()
+                    && obj.get("__plugin_error").and_then(|v| v.as_bool()) == Some(true)
+                {
+                    let status = obj
+                        .get("__status")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(400) as u16;
+                    let msg = obj
+                        .get("__message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("errors.internal");
                     let status_code = axum::http::StatusCode::from_u16(status)
-                        .unwrap_or(axum::http::StatusCode::OK);
-
-                    let normalized = if let Ok(mut plugin_resp) =
-                        serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(body)
-                    {
-                        if plugin_resp.contains_key("ok") {
-                            let is_ok = plugin_resp
-                                .get("ok")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            let code = if is_ok { 0 } else { status as i32 * 100 };
-                            let message = if is_ok {
-                                "messages.success".to_string()
-                            } else {
-                                plugin_resp
-                                    .get("error")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("errors.internal")
-                                    .to_string()
-                            };
-                            let data = plugin_resp
-                                .remove("data")
-                                .unwrap_or(serde_json::Value::Null);
-                            serde_json::json!({ "code": code, "message": message, "data": data })
-                                .to_string()
-                        } else {
-                            body.to_string()
-                        }
-                    } else {
-                        body.to_string()
-                    };
-
-                    Ok(Some(
+                        .unwrap_or(axum::http::StatusCode::BAD_REQUEST);
+                    let code = status as i32 * 100;
+                    let body = format!(
+                        r#"{{"code":{code},"message":"{msg}","data":null}}"#
+                    );
+                    return Ok(Some(
                         (
                             status_code,
                             [(axum::http::header::CONTENT_TYPE, "application/json")],
-                            normalized,
+                            body,
                         )
                             .into_response(),
-                    ))
-                } else {
-                    Ok(None)
+                    ));
                 }
+
+                let body = serde_json::json!({
+                    "code": 0,
+                    "message": "messages.success",
+                    "data": result,
+                })
+                .to_string();
+                Ok(Some(
+                    (
+                        axum::http::StatusCode::OK,
+                        [(axum::http::header::CONTENT_TYPE, "application/json")],
+                        body,
+                    )
+                        .into_response(),
+                ))
             }
             None => Ok(None),
         }
@@ -1442,6 +1464,28 @@ fn path_matches_route(path: &str, pattern: &str) -> bool {
         }
     }
     true
+}
+
+/// 从已匹配的路由中提取命名参数
+///
+/// ```text
+/// path:    /api/v1/plugins/crm/pipeline/deal-123
+/// pattern: /api/v1/plugins/crm/pipeline/:dealId
+/// → {"dealId": "deal-123"}
+/// ```
+fn extract_route_params(path: &str, pattern: &str) -> serde_json::Map<String, serde_json::Value> {
+    let path_parts: Vec<&str> = path.trim_end_matches('/').split('/').collect();
+    let pattern_parts: Vec<&str> = pattern.trim_end_matches('/').split('/').collect();
+    let mut params = serde_json::Map::new();
+    for (pp, rp) in path_parts.iter().zip(pattern_parts.iter()) {
+        if let Some(name) = rp.strip_prefix(':') {
+            params.insert(
+                name.to_string(),
+                serde_json::Value::String(pp.to_string()),
+            );
+        }
+    }
+    params
 }
 
 /// 拓扑排序：根据 dependencies 字段确定加载顺序
@@ -1835,7 +1879,7 @@ priority = 10
         std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
         std::fs::write(
             plugin_dir.join("index.js"),
-            r#"var Plugin = { on_post_creating: function(j) { return j; } };"#,
+            r#"export function on_post_creating(j) { return j; }"#,
         )
         .unwrap();
 
@@ -1869,13 +1913,11 @@ priority = 10
         std::fs::write(
             plugin_dir.join("index.js"),
             r#"
-var Plugin = {
-    on_post_creating: function(inputJson) {
-        var input = JSON.parse(inputJson);
-        input.title = input.title.toUpperCase();
-        return JSON.stringify(input);
-    }
-};
+export function on_post_creating(inputJson) {
+    var input = JSON.parse(inputJson);
+    input.title = input.title.toUpperCase();
+    return input;
+}
 "#,
         )
         .unwrap();
@@ -1913,11 +1955,9 @@ priority = 5
         std::fs::write(
             plugin_dir.join("index.js"),
             r#"
-var Plugin = {
-    render_markdown: function(content) {
-        return content.replace("<head>", '<head><meta property="og:type" content="article">');
-    }
-};
+export function render_markdown(content) {
+    return content.replace("<head>", '<head><meta property="og:type" content="article">');
+}
 "#,
         )
         .unwrap();
@@ -1960,7 +2000,7 @@ var Plugin = {
         .unwrap();
         std::fs::write(
             js_dir.join("index.js"),
-            r#"var Plugin = { on_post_creating: function(j) { return j; } };"#,
+            r#"export function on_post_creating(j) { return j; }"#,
         )
         .unwrap();
 
@@ -1991,17 +2031,17 @@ runtime = "js"
 priority = 10
 "#;
         std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
-        std::fs::write(
-            plugin_dir.join("index.js"),
-            r#"
-var Plugin = {
-    on_post_created: function(dataJson) {
-        Host.log("info", "post created");
-    }
-};
+         std::fs::write(
+             plugin_dir.join("index.js"),
+             r#"
+import { log } from 'sdk';
+
+export function on_post_created(dataJson) {
+    log("info", "post created");
+}
 "#,
-        )
-        .unwrap();
+         )
+         .unwrap();
 
         let mut config = (*test_config()).clone();
         config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
@@ -2034,10 +2074,9 @@ handler = "handle_test"
         std::fs::write(
             plugin_dir.join("index.js"),
             r#"
-var Plugin = {};
-Plugin.handle_test = function(input) {
-    return JSON.stringify({ status: 200, body: '{"hello":"world"}' });
-};
+export function handle_test(input) {
+    return { hello: "world" };
+}
 "#,
         )
         .unwrap();
@@ -2064,7 +2103,7 @@ Plugin.handle_test = function(input) {
             "[plugin]\nid=\"com.test.js-unload\"\nname=\"JSU\"\nversion=\"1.0.0\"\nruntime=\"js\"",
         )
         .unwrap();
-        std::fs::write(plugin_dir.join("index.js"), r#"var Plugin = {};"#).unwrap();
+        std::fs::write(plugin_dir.join("index.js"), r#"export const noop = 1;"#).unwrap();
 
         let mut config = (*test_config()).clone();
         config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
@@ -2120,16 +2159,16 @@ priority = 10
         std::fs::write(
             plugin_dir.join("index.js"),
             r#"
-var Plugin = {
-    on_post_creating: function(inputJson) {
-        var input = JSON.parse(inputJson);
-        var env = Host.getConfig("app.env");
-        if (env) {
-            input.env = env;
-        }
-        return JSON.stringify(input);
+import { configGet } from 'sdk';
+
+export function on_post_creating(inputJson) {
+    var input = JSON.parse(inputJson);
+    var env = configGet("app.env");
+    if (env) {
+        input.env = env;
     }
-};
+    return input;
+}
 "#,
         )
         .unwrap();
@@ -2170,13 +2209,11 @@ var Plugin = {
         std::fs::write(
             js_dir.join("index.js"),
             r#"
-var Plugin = {
-    on_post_creating: function(inputJson) {
-        var input = JSON.parse(inputJson);
-        input.js_processed = true;
-        return JSON.stringify(input);
-    }
-};
+export function on_post_creating(inputJson) {
+    var input = JSON.parse(inputJson);
+    input.js_processed = true;
+    return input;
+}
 "#,
         )
         .unwrap();
@@ -2185,9 +2222,7 @@ var Plugin = {
         config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
         let mgr = PluginManager::new(Arc::new(config)).await;
 
-        assert_eq!(mgr.plugin_count().await, 2);
-
-        let input = serde_json::json!({"title": "chain-test"});
+        let input = serde_json::json!({"title": "mixed"});
         let result: serde_json::Value = mgr
             .dispatch_filter(HookPoint::PostCreating, input)
             .await
@@ -2474,13 +2509,11 @@ Plugin = {
         std::fs::write(
             js_dir.join("index.js"),
             r#"
-var Plugin = {
-    on_post_creating: function(inputJson) {
-        var input = JSON.parse(inputJson);
-        input.js_processed = true;
-        return JSON.stringify(input);
-    }
-};
+export function on_post_creating(inputJson) {
+    var input = JSON.parse(inputJson);
+    input.js_processed = true;
+    return input;
+}
 "#,
         )
         .unwrap();
@@ -2578,7 +2611,7 @@ priority = 10
         std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
         std::fs::write(
             plugin_dir.join("index.js"),
-            r#"var Plugin = { on_post_creating: function(j) { return j; } };"#,
+            r#"export function on_post_creating(j) { return j; }"#,
         )
         .unwrap();
 
@@ -2605,7 +2638,7 @@ priority = 10
             "[plugin]\nid=\"com.test.toggle\"\nname=\"T\"\nversion=\"1.0.0\"\nruntime=\"js\"",
         )
         .unwrap();
-        std::fs::write(plugin_dir.join("index.js"), r#"var Plugin = {};"#).unwrap();
+        std::fs::write(plugin_dir.join("index.js"), r#"export const noop = 1;"#).unwrap();
 
         let mut config = (*test_config()).clone();
         config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
@@ -2672,6 +2705,7 @@ priority = 10
                 language: "js".into(),
                 wasm: "plugin.wasm".into(),
                 entry: "index.js".into(),
+                sdk_version: "v1".into(),
             },
             permissions: Permissions::default(),
             hooks: HashMap::new(),

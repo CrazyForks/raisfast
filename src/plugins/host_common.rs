@@ -92,6 +92,10 @@ impl HostContext {
     }
 
     /// 日志输出
+    pub fn new_uuid(&self) -> String {
+        uuid::Uuid::now_v7().to_string()
+    }
+
     pub fn log(&self, level: &str, msg: &str) {
         let tag = self.runtime_label;
         match level {

@@ -138,6 +138,10 @@ pub fn register_host_functions(
     })?;
     host.set("fsStat", fs_stat_fn)?;
 
+    let hc = host_ctx.clone();
+    let new_id_fn = Function::new(ctx.clone(), move || -> String { hc.new_uuid() })?;
+    host.set("newId", new_id_fn)?;
+
     let hc = host_ctx;
     let emit_event_fn = Function::new(ctx, move |event_type: String, data: String| -> String {
         hc.emit_event(&event_type, &data)
