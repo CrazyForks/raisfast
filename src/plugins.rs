@@ -537,20 +537,26 @@ impl PluginManager {
         let code = std::fs::read_to_string(entry_path)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("read js entry: {e}")))?;
 
-        let sdk_source = sdk_v1::get_sdk_source("js", &manifest.plugin.sdk_version)
-            .ok_or_else(|| {
+        let sdk_source =
+            sdk_v1::get_sdk_source("js", &manifest.plugin.sdk_version).ok_or_else(|| {
                 AppError::Internal(anyhow::anyhow!(
                     "unknown SDK version: js/{}",
                     manifest.plugin.sdk_version
                 ))
             })?;
 
-        let plugin_dir = entry_path.parent().ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("entry has no parent directory"))
-        })?;
+        let plugin_dir = entry_path
+            .parent()
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("entry has no parent directory")))?;
 
         self.js_engine
-            .load_plugin(&id, &code, manifest.permissions.clone(), plugin_dir, sdk_source)
+            .load_plugin(
+                &id,
+                &code,
+                manifest.permissions.clone(),
+                plugin_dir,
+                sdk_source,
+            )
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("load js plugin: {e}")))?;
 
@@ -592,17 +598,17 @@ impl PluginManager {
         let code = std::fs::read_to_string(entry_path)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("read lua entry: {e}")))?;
 
-        let sdk_source = sdk_v1::get_sdk_source("lua", &manifest.plugin.sdk_version)
-            .ok_or_else(|| {
+        let sdk_source =
+            sdk_v1::get_sdk_source("lua", &manifest.plugin.sdk_version).ok_or_else(|| {
                 AppError::Internal(anyhow::anyhow!(
                     "unknown SDK version: lua/{}",
                     manifest.plugin.sdk_version
                 ))
             })?;
 
-        let plugin_dir = entry_path.parent().ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("entry has no parent directory"))
-        })?;
+        let plugin_dir = entry_path
+            .parent()
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("entry has no parent directory")))?;
 
         let permissions = manifest.permissions.clone();
         self.lua_engine
@@ -1402,10 +1408,7 @@ impl PluginManager {
                 if let Some(obj) = result.as_object()
                     && obj.get("__plugin_error").and_then(|v| v.as_bool()) == Some(true)
                 {
-                    let status = obj
-                        .get("__status")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(400) as u16;
+                    let status = obj.get("__status").and_then(|v| v.as_u64()).unwrap_or(400) as u16;
                     let msg = obj
                         .get("__message")
                         .and_then(|v| v.as_str())
@@ -1413,9 +1416,7 @@ impl PluginManager {
                     let status_code = axum::http::StatusCode::from_u16(status)
                         .unwrap_or(axum::http::StatusCode::BAD_REQUEST);
                     let code = status as i32 * 100;
-                    let body = format!(
-                        r#"{{"code":{code},"message":"{msg}","data":null}}"#
-                    );
+                    let body = format!(r#"{{"code":{code},"message":"{msg}","data":null}}"#);
                     return Ok(Some(
                         (
                             status_code,
@@ -1479,10 +1480,7 @@ fn extract_route_params(path: &str, pattern: &str) -> serde_json::Map<String, se
     let mut params = serde_json::Map::new();
     for (pp, rp) in path_parts.iter().zip(pattern_parts.iter()) {
         if let Some(name) = rp.strip_prefix(':') {
-            params.insert(
-                name.to_string(),
-                serde_json::Value::String(pp.to_string()),
-            );
+            params.insert(name.to_string(), serde_json::Value::String(pp.to_string()));
         }
     }
     params
@@ -2031,17 +2029,17 @@ runtime = "js"
 priority = 10
 "#;
         std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
-         std::fs::write(
-             plugin_dir.join("index.js"),
-             r#"
+        std::fs::write(
+            plugin_dir.join("index.js"),
+            r#"
 import { log } from 'sdk';
 
 export function on_post_created(dataJson) {
     log("info", "post created");
 }
 "#,
-         )
-         .unwrap();
+        )
+        .unwrap();
 
         let mut config = (*test_config()).clone();
         config.plugin_dir = Some(dir.path().to_string_lossy().to_string());

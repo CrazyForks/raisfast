@@ -20,7 +20,6 @@ plural = "products"
 table = "ct_products"
 description = "商品"
 draft_publish = true
-timestamps = true
 soft_delete = false
 
 [fields.title]
@@ -70,6 +69,21 @@ fn parse_product() -> ContentTypeSchema {
     ContentTypeSchema::parse_from_str(PRODUCT_TOML).unwrap()
 }
 
+fn now_str() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+fn with_timestamps(data: serde_json::Value) -> serde_json::Value {
+    let mut obj = data
+        .as_object()
+        .expect("with_timestamps: expected JSON object")
+        .clone();
+    let now = now_str();
+    obj.insert("created_at".into(), serde_json::json!(now));
+    obj.insert("updated_at".into(), serde_json::json!(now));
+    serde_json::Value::Object(obj)
+}
+
 fn parse_article() -> ContentTypeSchema {
     ContentTypeSchema::parse_from_file(std::path::Path::new(
         "extensions/content_types/first-ext_article.toml",
@@ -85,7 +99,6 @@ async fn schema_parse_product() {
     assert_eq!(ct.plural, "products");
     assert_eq!(ct.table, "ct_products");
     assert!(ct.draft_publish);
-    assert!(ct.timestamps);
     assert!(!ct.soft_delete);
     assert!(ct.fields.iter().any(|f| f.name == "title" && f.required));
     assert!(ct.fields.iter().any(|f| f.name == "price"));
@@ -156,13 +169,13 @@ async fn create_and_find_by_id() {
     let created = repo
         .create(
             &ct,
-            json!({
+            with_timestamps(json!({
                 "title": "Test Product",
                 "slug": "test-product",
                 "price": 99,
                 "description": "A test product",
                 "in_stock": true
-            }),
+            })),
             None,
             &SaveContext::default(),
         )
@@ -192,11 +205,11 @@ async fn create_sets_defaults() {
     let created = repo
         .create(
             &ct,
-            json!({
+            with_timestamps(json!({
                 "title": "Minimal",
                 "slug": "minimal",
                 "price": 0
-            }),
+            })),
             None,
             &SaveContext::default(),
         )
@@ -218,7 +231,7 @@ async fn find_by_slug() {
 
     repo.create(
         &ct,
-        json!({"title": "Slug Test", "slug": "slug-test", "price": 10}),
+        with_timestamps(json!({"title": "Slug Test", "slug": "slug-test", "price": 10})),
         None,
         &SaveContext::default(),
     )
@@ -243,7 +256,9 @@ async fn find_paginated() {
     for i in 1..=15 {
         repo.create(
             &ct,
-            json!({"title": format!("Item {i}"), "slug": format!("item-{i}"), "price": i}),
+            with_timestamps(
+                json!({"title": format!("Item {i}"), "slug": format!("item-{i}"), "price": i}),
+            ),
             None,
             &SaveContext::default(),
         )
@@ -302,7 +317,9 @@ async fn find_with_status_filter() {
     let _draft = repo
         .create(
             &ct,
-            json!({"title": "Draft", "slug": "draft", "price": 1, "status": "draft"}),
+            with_timestamps(
+                json!({"title": "Draft", "slug": "draft", "price": 1, "status": "draft"}),
+            ),
             None,
             &SaveContext::default(),
         )
@@ -311,7 +328,7 @@ async fn find_with_status_filter() {
     let _published = repo
         .create(
             &ct,
-            json!({"title": "Published", "slug": "published", "price": 2, "status": "published"}),
+            with_timestamps(json!({"title": "Published", "slug": "published", "price": 2, "status": "published"})),
             None,
             &SaveContext::default(),
         )
@@ -349,7 +366,7 @@ async fn update_changes_fields() {
     let created = repo
         .create(
             &ct,
-            json!({"title": "Original", "slug": "original", "price": 50}),
+            with_timestamps(json!({"title": "Original", "slug": "original", "price": 50})),
             None,
             &SaveContext::default(),
         )
@@ -383,7 +400,7 @@ async fn delete_removes_record() {
     let created = repo
         .create(
             &ct,
-            json!({"title": "To Delete", "slug": "to-delete", "price": 1}),
+            with_timestamps(json!({"title": "To Delete", "slug": "to-delete", "price": 1})),
             None,
             &SaveContext::default(),
         )
@@ -412,7 +429,6 @@ name = "Note"
 singular = "note"
 plural = "notes"
 table = "ct_notes"
-timestamps = true
 soft_delete = true
 
 [fields.title]
@@ -429,7 +445,7 @@ required = true
     let created = repo
         .create(
             &ct,
-            json!({"title": "Soft Delete Me"}),
+            with_timestamps(json!({"title": "Soft Delete Me"})),
             None,
             &SaveContext::default(),
         )
@@ -454,7 +470,13 @@ async fn registry_load_and_lookup() {
     let ct = parse_product();
     let registry = ContentTypeRegistry::new();
     let reserved = rust_blog::config::app::BuiltinsConfig::default().reserved_route_segments();
-    registry.register(ct, &rust_blog::config::app::RuleEngineConfig::default(), &reserved).unwrap();
+    registry
+        .register(
+            ct,
+            &rust_blog::config::app::RuleEngineConfig::default(),
+            &reserved,
+        )
+        .unwrap();
 
     assert_eq!(registry.len(), 1);
     assert!(registry.get("product").is_some());
@@ -473,7 +495,7 @@ async fn tenant_isolation() {
     let a = repo
         .create(
             &ct,
-            json!({"title": "Tenant A Product", "slug": "tenant-a", "price": 100}),
+            with_timestamps(json!({"title": "Tenant A Product", "slug": "tenant-a", "price": 100})),
             Some("tenant_a"),
             &SaveContext::default(),
         )
@@ -482,7 +504,7 @@ async fn tenant_isolation() {
     let b = repo
         .create(
             &ct,
-            json!({"title": "Tenant B Product", "slug": "tenant-b", "price": 200}),
+            with_timestamps(json!({"title": "Tenant B Product", "slug": "tenant-b", "price": 200})),
             Some("tenant_b"),
             &SaveContext::default(),
         )
@@ -545,7 +567,7 @@ async fn delete_respects_tenant() {
     let a = repo
         .create(
             &ct,
-            json!({"title": "A", "slug": "a", "price": 1}),
+            with_timestamps(json!({"title": "A", "slug": "a", "price": 1})),
             Some("tenant_a"),
             &SaveContext::default(),
         )
@@ -583,7 +605,7 @@ async fn find_with_custom_sort() {
     for (title, price) in [("Alpha", 30), ("Beta", 10), ("Gamma", 20)] {
         repo.create(
             &ct,
-            json!({"title": title, "slug": title.to_lowercase(), "price": price}),
+            with_timestamps(json!({"title": title, "slug": title.to_lowercase(), "price": price})),
             None,
             &SaveContext::default(),
         )
@@ -622,7 +644,7 @@ async fn find_with_field_filter() {
 
     repo.create(
         &ct,
-        json!({"title": "Expensive", "slug": "expensive", "price": 999}),
+        with_timestamps(json!({"title": "Expensive", "slug": "expensive", "price": 999})),
         None,
         &SaveContext::default(),
     )
@@ -630,7 +652,7 @@ async fn find_with_field_filter() {
     .unwrap();
     repo.create(
         &ct,
-        json!({"title": "Cheap", "slug": "cheap", "price": 1}),
+        with_timestamps(json!({"title": "Cheap", "slug": "cheap", "price": 1})),
         None,
         &SaveContext::default(),
     )
@@ -670,7 +692,7 @@ async fn partial_field_selection() {
 
     repo.create(
         &ct,
-        json!({"title": "Select", "slug": "select", "price": 42}),
+        with_timestamps(json!({"title": "Select", "slug": "select", "price": 42})),
         None,
         &SaveContext::default(),
     )
@@ -710,7 +732,7 @@ async fn create_auto_generates_id_and_timestamps() {
     let result = repo
         .create(
             &ct,
-            json!({"title": "Auto", "slug": "auto", "price": 1}),
+            with_timestamps(json!({"title": "Auto", "slug": "auto", "price": 1})),
             None,
             &SaveContext::default(),
         )
@@ -746,7 +768,7 @@ async fn update_with_no_fields_returns_error() {
     let created = repo
         .create(
             &ct,
-            json!({"title": "X", "slug": "x", "price": 1}),
+            with_timestamps(json!({"title": "X", "slug": "x", "price": 1})),
             None,
             &SaveContext::default(),
         )
@@ -778,7 +800,6 @@ name = "Note"
 singular = "note"
 plural = "notes"
 table = "ct_notes_v2"
-timestamps = true
 
 [fields.title]
 type = "text"
@@ -795,7 +816,6 @@ name = "Note"
 singular = "note"
 plural = "notes"
 table = "ct_notes_v2"
-timestamps = true
 
 [fields.title]
 type = "text"
@@ -815,7 +835,7 @@ default = 0
     let created = repo
         .create(
             &ct_v2,
-            json!({"title": "V2", "body": "hello", "priority": 5}),
+            with_timestamps(json!({"title": "V2", "body": "hello", "priority": 5})),
             None,
             &SaveContext::default(),
         )
@@ -833,7 +853,6 @@ name = "Article"
 singular = "article"
 plural = "articles"
 table = "ct_versioned_articles"
-timestamps = true
 versioning = true
 
 [fields.title]
@@ -870,7 +889,7 @@ async fn versioning_creates_revision_on_update() {
     let created = repo
         .create(
             &ct,
-            json!({"title": "V1 Title", "content": "V1 Content"}),
+            with_timestamps(json!({"title": "V1 Title", "content": "V1 Content"})),
             None,
             &SaveContext::default(),
         )
@@ -914,7 +933,12 @@ async fn versioning_multiple_updates_create_multiple_revisions() {
     repo.migrate(&ct).await.unwrap();
 
     let created = repo
-        .create(&ct, json!({"title": "Rev0"}), None, &SaveContext::default())
+        .create(
+            &ct,
+            with_timestamps(json!({"title": "Rev0"})),
+            None,
+            &SaveContext::default(),
+        )
         .await
         .unwrap();
     let id = created["id"].as_str().unwrap();
@@ -965,7 +989,12 @@ async fn versioning_delete_cleans_up_revisions() {
     repo.migrate(&ct).await.unwrap();
 
     let created = repo
-        .create(&ct, json!({"title": "Temp"}), None, &SaveContext::default())
+        .create(
+            &ct,
+            with_timestamps(json!({"title": "Temp"})),
+            None,
+            &SaveContext::default(),
+        )
         .await
         .unwrap();
     let id = created["id"].as_str().unwrap();
@@ -1003,7 +1032,6 @@ name = "Note"
 singular = "note"
 plural = "notes"
 table = "ct_no_versioning"
-timestamps = true
 
 [fields.title]
 type = "text"
@@ -1019,7 +1047,7 @@ required = true
     let created = repo
         .create(
             &ct,
-            json!({"title": "NoRev"}),
+            with_timestamps(json!({"title": "NoRev"})),
             None,
             &SaveContext::default(),
         )

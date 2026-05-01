@@ -68,12 +68,6 @@ impl MutationRoot {
                             serde_json::Value::String(auth.tenant_id.clone()),
                         );
                     }
-                    AutoFillSource::CurrentTimestamp => {
-                        obj.insert(
-                            field.name.clone(),
-                            serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
-                        );
-                    }
                 }
             }
         }

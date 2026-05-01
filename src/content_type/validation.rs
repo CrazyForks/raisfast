@@ -509,9 +509,10 @@ immutable = true
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct).await.unwrap();
 
+        let now = crate::utils::tz::now_str();
         repo.create(
             &ct,
-            json!({"name": "A", "code": "ABC"}),
+            json!({"name": "A", "code": "ABC", "created_at": now, "updated_at": now}),
             None,
             &Default::default(),
         )
@@ -535,10 +536,11 @@ immutable = true
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct).await.unwrap();
 
+        let now = crate::utils::tz::now_str();
         let created = repo
             .create(
                 &ct,
-                json!({"name": "Test", "secret": "sauce"}),
+                json!({"name": "Test", "secret": "sauce", "created_at": now, "updated_at": now}),
                 None,
                 &Default::default(),
             )
@@ -562,10 +564,11 @@ immutable = true
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct).await.unwrap();
 
+        let now = crate::utils::tz::now_str();
         let created = repo
             .create(
                 &ct,
-                json!({"name": "Test", "code": "XYZ"}),
+                json!({"name": "Test", "code": "XYZ", "created_at": now, "updated_at": now}),
                 None,
                 &Default::default(),
             )

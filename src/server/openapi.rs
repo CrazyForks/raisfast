@@ -5,9 +5,9 @@
 //! `/api/docs` 重定向到在线 Swagger UI。
 
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
 #[cfg(feature = "openapi")]
 use axum::response::Redirect;
+use axum::response::{IntoResponse, Response};
 use utoipa::OpenApi;
 
 use crate::handlers::dto;

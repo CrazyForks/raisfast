@@ -58,13 +58,42 @@ pub fn generate_create_table(ct: &ContentTypeSchema) -> String {
         cols.push("    published_at TEXT".to_string());
     }
 
-    if ct.timestamps {
+    let user_col_names: std::collections::HashSet<&str> = ct
+        .fields
+        .iter()
+        .map(|f| f.name.as_str())
+        .chain(
+            ct.fields
+                .iter()
+                .filter(|f| f.field_type == FieldType::Relation)
+                .filter_map(|f| {
+                    f.relation
+                        .as_ref()
+                        .and_then(|r| r.foreign_key.as_deref())
+                        .or_else(|| Some(f.name.as_str()).filter(|n| n.ends_with("_id")))
+                }),
+        )
+        .collect();
+
+    if !user_col_names.contains("created_at") {
         cols.push("    created_at TEXT NOT NULL".to_string());
+    }
+    if !user_col_names.contains("updated_at") {
         cols.push("    updated_at TEXT NOT NULL".to_string());
+    }
+    if !user_col_names.contains("created_by") {
+        cols.push("    created_by TEXT".to_string());
+    }
+    if !user_col_names.contains("updated_by") {
+        cols.push("    updated_by TEXT".to_string());
     }
 
     if ct.soft_delete {
         cols.push("    deleted_at TEXT".to_string());
+    }
+
+    if !ct.builtin {
+        cols.push("    __meta TEXT DEFAULT '{}'".to_string());
     }
 
     let mut sql = format!("CREATE TABLE IF NOT EXISTS {} (\n", ct.table);
@@ -228,24 +257,41 @@ pub fn generate_alter_table(ct: &ContentTypeSchema, existing_columns: &[String])
         }
     }
 
-    if ct.timestamps {
-        if !existing.contains("created_at") {
-            stmts.push(format!(
-                "ALTER TABLE {} ADD COLUMN created_at TEXT NOT NULL",
-                ct.table
-            ));
-        }
-        if !existing.contains("updated_at") {
-            stmts.push(format!(
-                "ALTER TABLE {} ADD COLUMN updated_at TEXT NOT NULL",
-                ct.table
-            ));
-        }
+    if !existing.contains("created_at") {
+        stmts.push(format!(
+            "ALTER TABLE {} ADD COLUMN created_at TEXT NOT NULL",
+            ct.table
+        ));
+    }
+    if !existing.contains("updated_at") {
+        stmts.push(format!(
+            "ALTER TABLE {} ADD COLUMN updated_at TEXT NOT NULL",
+            ct.table
+        ));
+    }
+    if !existing.contains("created_by") {
+        stmts.push(format!(
+            "ALTER TABLE {} ADD COLUMN created_by TEXT",
+            ct.table
+        ));
+    }
+    if !existing.contains("updated_by") {
+        stmts.push(format!(
+            "ALTER TABLE {} ADD COLUMN updated_by TEXT",
+            ct.table
+        ));
     }
 
     if ct.soft_delete && !existing.contains("deleted_at") {
         stmts.push(format!(
             "ALTER TABLE {} ADD COLUMN deleted_at TEXT",
+            ct.table
+        ));
+    }
+
+    if !ct.builtin && !existing.contains("__meta") {
+        stmts.push(format!(
+            "ALTER TABLE {} ADD COLUMN __meta TEXT DEFAULT '{{}}'",
             ct.table
         ));
     }
@@ -279,12 +325,15 @@ pub fn expected_columns(ct: &ContentTypeSchema) -> Vec<String> {
         cols.push("status".into());
         cols.push("published_at".into());
     }
-    if ct.timestamps {
-        cols.push("created_at".into());
-        cols.push("updated_at".into());
-    }
+    cols.push("created_at".into());
+    cols.push("updated_at".into());
+    cols.push("created_by".into());
+    cols.push("updated_by".into());
     if ct.soft_delete {
         cols.push("deleted_at".into());
+    }
+    if !ct.builtin {
+        cols.push("__meta".into());
     }
 
     cols
@@ -334,7 +383,6 @@ plural = "posts"
 table = "posts"
 draft_publish = true
 slug_field = "title"
-timestamps = true
 
 [fields.title]
 type = "text"
@@ -387,7 +435,6 @@ name = "Tag"
 singular = "tag"
 plural = "tags"
 table = "tags"
-timestamps = true
 
 [fields.name]
 type = "text"
@@ -416,7 +463,6 @@ name = "Product"
 singular = "product"
 plural = "products"
 table = "products"
-timestamps = true
 soft_delete = true
 
 [fields.name]
@@ -440,7 +486,6 @@ singular = "post"
 plural = "posts"
 table = "posts"
 draft_publish = true
-timestamps = true
 
 [fields.title]
 type = "text"
@@ -466,7 +511,7 @@ default = false
         )
         .unwrap();
 
-        // 模拟 DB 已有 id, title, slug, content, status, published_at, created_at, updated_at
+        // 模拟 DB 已有 id, title, slug, content, status, published_at, created_at, updated_at, created_by, updated_by, __meta
         let existing = vec![
             "id".into(),
             "title".into(),
@@ -476,6 +521,9 @@ default = false
             "published_at".into(),
             "created_at".into(),
             "updated_at".into(),
+            "created_by".into(),
+            "updated_by".into(),
+            "__meta".into(),
         ];
 
         let stmts = generate_alter_table(&ct, &existing);
@@ -501,7 +549,6 @@ name = "Tag"
 singular = "tag"
 plural = "tags"
 table = "tags"
-timestamps = true
 
 [fields.name]
 type = "text"
@@ -520,6 +567,9 @@ unique = true
             "slug".into(),
             "created_at".into(),
             "updated_at".into(),
+            "created_by".into(),
+            "updated_by".into(),
+            "__meta".into(),
         ];
 
         let stmts = generate_alter_table(&ct, &existing);
@@ -536,7 +586,6 @@ singular = "post"
 plural = "posts"
 table = "posts"
 draft_publish = true
-timestamps = true
 soft_delete = true
 
 [fields.title]
@@ -571,7 +620,6 @@ singular = "post"
 plural = "posts"
 table = "posts"
 draft_publish = true
-timestamps = true
 
 [fields.title]
 type = "text"
@@ -589,6 +637,8 @@ foreign_key = "author_id"
         assert!(cols.contains(&"id".to_string()));
         assert!(cols.contains(&"title".to_string()));
         assert!(cols.contains(&"author_id".to_string()));
+        assert!(cols.contains(&"created_by".to_string()));
+        assert!(cols.contains(&"updated_by".to_string()));
         assert!(cols.contains(&"status".to_string()));
         assert!(cols.contains(&"created_at".to_string()));
     }

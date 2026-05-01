@@ -1,0 +1,280 @@
+//! ownable Aspect — 创建时注入 created_by，更新时注入 updated_by
+//!
+//! 默认内置，所有表自动生效。
+//! priority = -500（数据注入层，在业务逻辑之前执行）。
+
+use async_trait::async_trait;
+use serde_json::json;
+
+use super::{
+    Advice, Aspect, AspectResult, ColumnDef, DataBeforeCreateContext, DataBeforeUpdateContext,
+    Layer, Operation, Pointcut, TargetMatcher, When,
+};
+
+pub struct OwnableAspect;
+
+#[async_trait]
+impl Aspect for OwnableAspect {
+    fn name(&self) -> &str {
+        "ownable"
+    }
+
+    fn priority(&self) -> i32 {
+        -500
+    }
+
+    fn pointcuts(&self) -> Vec<Pointcut> {
+        vec![
+            Pointcut {
+                layer: Layer::Data,
+                operation: Operation::Create,
+                when: When::Before,
+                target: TargetMatcher::All,
+            },
+            Pointcut {
+                layer: Layer::Data,
+                operation: Operation::Update,
+                when: When::Before,
+                target: TargetMatcher::All,
+            },
+        ]
+    }
+
+    fn columns(&self) -> Vec<ColumnDef> {
+        vec![
+            ColumnDef {
+                name: "created_by".into(),
+                sql_type: "TEXT".into(),
+                default: None,
+            },
+            ColumnDef {
+                name: "updated_by".into(),
+                sql_type: "TEXT".into(),
+                default: None,
+            },
+        ]
+    }
+
+    async fn on_data_before_create(&self, ctx: &mut DataBeforeCreateContext) -> AspectResult {
+        if let Some(user_id) = &ctx.base.user_id {
+            ctx.record.insert("created_by".into(), json!(user_id));
+            ctx.record.insert("updated_by".into(), json!(user_id));
+        }
+        Ok(Advice::Continue)
+    }
+
+    async fn on_data_before_update(&self, ctx: &mut DataBeforeUpdateContext) -> AspectResult {
+        if let Some(user_id) = &ctx.base.user_id {
+            ctx.new_record.insert("updated_by".into(), json!(user_id));
+        }
+        Ok(Advice::Continue)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::aspects::engine::AspectEngine;
+    use crate::aspects::timestampable::TimestampableAspect;
+    use crate::aspects::{BaseContext, DataBeforeCreateContext, Record};
+
+    async fn dispatch_create(
+        engine: &AspectEngine,
+        table: &str,
+        ctx: &mut DataBeforeCreateContext,
+    ) -> Result<Option<serde_json::Value>, anyhow::Error> {
+        engine.dispatch_data_before_create(table, ctx).await
+    }
+
+    #[tokio::test]
+    async fn injects_created_by() {
+        let engine = AspectEngine::new();
+        engine.register(OwnableAspect);
+
+        let mut ctx = DataBeforeCreateContext {
+            base: BaseContext::new(Some("user-123".into()), "default".into(), "now".into()),
+            table: "articles".into(),
+            record: Record::new(),
+            schema: None,
+        };
+
+        dispatch_create(&engine, "articles", &mut ctx)
+            .await
+            .unwrap();
+
+        assert_eq!(ctx.record.get("created_by").unwrap(), &json!("user-123"));
+        assert_eq!(ctx.record.get("updated_by").unwrap(), &json!("user-123"));
+    }
+
+    #[tokio::test]
+    async fn no_created_by_without_user() {
+        let engine = AspectEngine::new();
+        engine.register(OwnableAspect);
+
+        let mut ctx = DataBeforeCreateContext {
+            base: BaseContext::new(None, "default".into(), "now".into()),
+            table: "articles".into(),
+            record: Record::new(),
+            schema: None,
+        };
+
+        dispatch_create(&engine, "articles", &mut ctx)
+            .await
+            .unwrap();
+
+        assert!(ctx.record.get("created_by").is_none());
+        assert!(ctx.record.get("updated_by").is_none());
+    }
+
+    #[tokio::test]
+    async fn provides_created_by_and_updated_by_columns() {
+        let cols = OwnableAspect.columns();
+        assert_eq!(cols.len(), 2);
+        assert_eq!(cols[0].name, "created_by");
+        assert_eq!(cols[1].name, "updated_by");
+    }
+
+    #[tokio::test]
+    async fn combined_with_timestampable() {
+        let engine = AspectEngine::new();
+        engine.register(OwnableAspect);
+        engine.register(TimestampableAspect);
+
+        let mut ctx = DataBeforeCreateContext {
+            base: BaseContext::new(
+                Some("user-1".into()),
+                "default".into(),
+                "2026-01-01T00:00:00Z".into(),
+            ),
+            table: "articles".into(),
+            record: Record::new(),
+            schema: None,
+        };
+
+        dispatch_create(&engine, "articles", &mut ctx)
+            .await
+            .unwrap();
+
+        assert_eq!(ctx.record.get("created_by").unwrap(), &json!("user-1"));
+        assert_eq!(
+            ctx.record.get("created_at").unwrap(),
+            &json!("2026-01-01T00:00:00Z")
+        );
+        assert_eq!(
+            ctx.record.get("updated_at").unwrap(),
+            &json!("2026-01-01T00:00:00Z")
+        );
+    }
+
+    #[tokio::test]
+    async fn overwrites_existing_created_by() {
+        let engine = AspectEngine::new();
+        engine.register(OwnableAspect);
+
+        let mut record = Record::new();
+        record.insert("created_by".into(), json!("old-user"));
+
+        let mut ctx = DataBeforeCreateContext {
+            base: BaseContext::new(Some("new-user".into()), "default".into(), "now".into()),
+            table: "articles".into(),
+            record,
+            schema: None,
+        };
+
+        dispatch_create(&engine, "articles", &mut ctx)
+            .await
+            .unwrap();
+
+        assert_eq!(ctx.record.get("created_by").unwrap(), &json!("new-user"));
+    }
+
+    #[tokio::test]
+    async fn updates_updated_by_on_update() {
+        let engine = AspectEngine::new();
+        engine.register(OwnableAspect);
+
+        let mut new_record = Record::new();
+        new_record.insert("title".into(), json!("updated"));
+
+        let mut ctx = DataBeforeUpdateContext {
+            base: BaseContext::new(Some("user-1".into()), "default".into(), "now".into()),
+            table: "articles".into(),
+            old_record: {
+                let mut r = Record::new();
+                r.insert("created_by".into(), json!("original-user"));
+                r
+            },
+            new_record,
+            schema: None,
+        };
+
+        let result: Result<Option<serde_json::Value>, _> = engine
+            .dispatch_data_before_update("articles", &mut ctx)
+            .await;
+        result.unwrap();
+
+        assert!(!ctx.new_record.contains_key("created_by"));
+        assert_eq!(ctx.new_record.get("updated_by").unwrap(), &json!("user-1"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_on_empty_table_name() {
+        let engine = AspectEngine::new();
+        engine.register(OwnableAspect);
+
+        let mut ctx = DataBeforeCreateContext {
+            base: BaseContext::new(Some("user-1".into()), "default".into(), "now".into()),
+            table: String::new(),
+            record: Record::new(),
+            schema: None,
+        };
+
+        dispatch_create(&engine, "", &mut ctx).await.unwrap();
+
+        assert_eq!(ctx.record.get("created_by").unwrap(), &json!("user-1"));
+    }
+
+    #[tokio::test]
+    async fn multiple_dispatches_accumulate() {
+        let engine = AspectEngine::new();
+        engine.register(OwnableAspect);
+
+        let mut ctx1 = DataBeforeCreateContext {
+            base: BaseContext::new(Some("user-a".into()), "default".into(), "now".into()),
+            table: "articles".into(),
+            record: Record::new(),
+            schema: None,
+        };
+        dispatch_create(&engine, "articles", &mut ctx1)
+            .await
+            .unwrap();
+        assert_eq!(ctx1.record.get("created_by").unwrap(), &json!("user-a"));
+
+        let mut ctx2 = DataBeforeCreateContext {
+            base: BaseContext::new(Some("user-b".into()), "default".into(), "now".into()),
+            table: "articles".into(),
+            record: Record::new(),
+            schema: None,
+        };
+        dispatch_create(&engine, "articles", &mut ctx2)
+            .await
+            .unwrap();
+        assert_eq!(ctx2.record.get("created_by").unwrap(), &json!("user-b"));
+    }
+
+    #[tokio::test]
+    async fn priority_is_negative_500() {
+        assert_eq!(OwnableAspect.priority(), -500);
+    }
+
+    #[tokio::test]
+    async fn pointcut_targets_all() {
+        let pcs = OwnableAspect.pointcuts();
+        assert_eq!(pcs.len(), 2);
+        assert!(matches!(pcs[0].target, TargetMatcher::All));
+        assert_eq!(pcs[0].layer, Layer::Data);
+        assert_eq!(pcs[0].operation, Operation::Create);
+        assert_eq!(pcs[0].when, When::Before);
+        assert_eq!(pcs[1].operation, Operation::Update);
+    }
+}

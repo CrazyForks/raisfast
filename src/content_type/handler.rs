@@ -115,18 +115,14 @@ pub fn register_content_routes(
                     })
                     .post({
                         let singular = singular.clone();
-                        move |auth, state, data| {
-                            create_handler(auth, state, singular.clone(), data)
-                        }
+                        move |auth, state, data| create_handler(auth, state, singular.clone(), data)
                     }),
                 )
                 .route(
                     &format!("/cms/{plural}/{{id_or_slug}}"),
                     axum::routing::get({
                         let singular = singular.clone();
-                        move |auth, state, path| {
-                            get_handler(auth, state, path, singular.clone())
-                        }
+                        move |auth, state, path| get_handler(auth, state, path, singular.clone())
                     })
                     .put({
                         let singular = singular.clone();
@@ -136,27 +132,21 @@ pub fn register_content_routes(
                     })
                     .delete({
                         let singular = singular.clone();
-                        move |auth, state, path| {
-                            delete_handler(auth, state, path, singular.clone())
-                        }
+                        move |auth, state, path| delete_handler(auth, state, path, singular.clone())
                     }),
                 )
                 .route(
                     &format!("/admin/cms/{plural}"),
                     axum::routing::get({
                         let singular = singular.clone();
-                        move |state, params| {
-                            admin_list_handler(state, singular.clone(), params)
-                        }
+                        move |state, params| admin_list_handler(state, singular.clone(), params)
                     }),
                 )
                 .route(
                     &format!("/admin/cms/{plural}/{{id_or_slug}}"),
                     axum::routing::get({
                         let singular = singular.clone();
-                        move |state, path| {
-                            admin_get_handler(state, path, singular.clone())
-                        }
+                        move |state, path| admin_get_handler(state, path, singular.clone())
                     }),
                 );
         }
@@ -243,8 +233,10 @@ pub async fn dynamic_cms_handler(
             }
             (axum::http::Method::PUT, None) => {
                 check_api_access(ct.api.update.access, auth.0.as_ref())?;
-                let Json(data) = body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
-                let result = do_single_update(&state, &ct, data, &save_ctx, auth.0.as_ref()).await?;
+                let Json(data) =
+                    body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
+                let result =
+                    do_single_update(&state, &ct, data, &save_ctx, auth.0.as_ref()).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
             }
             _ => Err(AppError::not_found(&format!("{method} {path}"))),
@@ -258,7 +250,8 @@ pub async fn dynamic_cms_handler(
             }
             (axum::http::Method::POST, None) => {
                 check_api_access(ct.api.create.access, auth.0.as_ref())?;
-                let Json(data) = body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
+                let Json(data) =
+                    body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
                 let result = do_create(&state, &ct, data, &save_ctx).await?;
                 Ok((
                     StatusCode::CREATED,
@@ -273,7 +266,8 @@ pub async fn dynamic_cms_handler(
             }
             (axum::http::Method::PUT, Some(id)) => {
                 check_api_access(ct.api.update.access, auth.0.as_ref())?;
-                let Json(data) = body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
+                let Json(data) =
+                    body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
                 let result = do_update(&state, &ct, &id, data, &save_ctx, auth.0.as_ref()).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
             }
@@ -423,6 +417,7 @@ pub async fn do_list(
     }
 
     let (items, total) = repo.find(ct, query.clone()).await?;
+    let items: Vec<Value> = items.into_iter().map(strip_meta).collect();
     let result = json!({
         "items": items,
         "total": total,
@@ -503,6 +498,7 @@ pub async fn do_get(
     }
 
     let result = filter_fields(result, ct.api.get.fields.as_deref());
+    let result = strip_meta(result);
 
     Ok(result)
 }
@@ -522,7 +518,30 @@ pub async fn do_create(
         .dispatch_filter(crate::plugins::HookPoint::ContentCreating, hook_data)
         .await?;
 
-    let data = filtered.get("data").cloned().unwrap_or(data);
+    let mut data = filtered.get("data").cloned().unwrap_or(data);
+
+    {
+        let record = data.as_object().cloned().unwrap_or_default();
+        let mut ctx = crate::aspects::DataBeforeCreateContext {
+            base: crate::aspects::BaseContext::new(
+                save_ctx.user_id.clone(),
+                save_ctx
+                    .tenant_id
+                    .clone()
+                    .unwrap_or_else(|| "default".into()),
+                crate::utils::tz::now_str(),
+            ),
+            table: ct.table.clone(),
+            record,
+            schema: Some(std::sync::Arc::new(ct.clone())),
+        };
+        state
+            .aspect_engine
+            .dispatch_data_before_create(&ct.table, &mut ctx)
+            .await
+            .map_err(AppError::Internal)?;
+        data = Value::Object(ctx.record);
+    }
 
     let repo = ContentRepository::new(state.pool.clone());
     let result = repo.create(ct, data, None, save_ctx).await?;
@@ -537,6 +556,28 @@ pub async fn do_create(
         .get("slug")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+
+    {
+        let record = result.as_object().cloned().unwrap_or_default();
+        let mut after_ctx = crate::aspects::DataAfterCreateContext {
+            base: crate::aspects::BaseContext::new(
+                save_ctx.user_id.clone(),
+                save_ctx
+                    .tenant_id
+                    .clone()
+                    .unwrap_or_else(|| "default".into()),
+                crate::utils::tz::now_str(),
+            ),
+            table: ct.table.clone(),
+            record,
+            schema: Some(std::sync::Arc::new(ct.clone())),
+        };
+        let _ = state
+            .aspect_engine
+            .dispatch_data_after_create(&ct.table, &mut after_ctx)
+            .await;
+    }
+
     state
         .plugins
         .dispatch_action(
@@ -584,10 +625,61 @@ pub async fn do_update(
         .dispatch_filter(crate::plugins::HookPoint::ContentUpdating, hook_data)
         .await?;
 
-    let data = filtered.get("data").cloned().unwrap_or(data);
+    let mut data = filtered.get("data").cloned().unwrap_or(data);
+
+    {
+        let old_record = repo
+            .find_by_id(ct, id, None, true)
+            .await?
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+        let new_record = data.as_object().cloned().unwrap_or_default();
+        let mut ctx = crate::aspects::DataBeforeUpdateContext {
+            base: crate::aspects::BaseContext::new(
+                save_ctx.user_id.clone(),
+                save_ctx
+                    .tenant_id
+                    .clone()
+                    .unwrap_or_else(|| "default".into()),
+                crate::utils::tz::now_str(),
+            ),
+            table: ct.table.clone(),
+            old_record,
+            new_record,
+            schema: Some(std::sync::Arc::new(ct.clone())),
+        };
+        state
+            .aspect_engine
+            .dispatch_data_before_update(&ct.table, &mut ctx)
+            .await
+            .map_err(AppError::Internal)?;
+        data = Value::Object(ctx.new_record);
+    }
 
     let result = repo.update(ct, id, data, None, save_ctx).await?;
     invalidate_cms_cache(state, ct);
+
+    {
+        let new_record = result.as_object().cloned().unwrap_or_default();
+        let mut after_ctx = crate::aspects::DataAfterUpdateContext {
+            base: crate::aspects::BaseContext::new(
+                save_ctx.user_id.clone(),
+                save_ctx
+                    .tenant_id
+                    .clone()
+                    .unwrap_or_else(|| "default".into()),
+                crate::utils::tz::now_str(),
+            ),
+            table: ct.table.clone(),
+            old_record: serde_json::Map::new(),
+            new_record,
+            schema: Some(std::sync::Arc::new(ct.clone())),
+        };
+        let _ = state
+            .aspect_engine
+            .dispatch_data_after_update(&ct.table, &mut after_ctx)
+            .await;
+    }
 
     state
         .plugins
@@ -625,6 +717,23 @@ pub async fn do_delete(
 
     repo.delete(ct, id, None).await?;
     invalidate_cms_cache(state, ct);
+
+    {
+        let mut after_ctx = crate::aspects::DataAfterDeleteContext {
+            base: crate::aspects::BaseContext::new(
+                None,
+                "default".into(),
+                crate::utils::tz::now_str(),
+            ),
+            table: ct.table.clone(),
+            record: serde_json::Map::new(),
+            schema: Some(std::sync::Arc::new(ct.clone())),
+        };
+        let _ = state
+            .aspect_engine
+            .dispatch_data_after_delete(&ct.table, &mut after_ctx)
+            .await;
+    }
 
     state
         .plugins
@@ -715,6 +824,7 @@ pub async fn do_single_get(
     }
 
     let result = filter_fields(result, ct.api.get.fields.as_deref());
+    let result = strip_meta(result);
     Ok(result)
 }
 
@@ -942,9 +1052,10 @@ pub async fn create_schema(
         kind: req.kind,
         draft_publish: req.draft_publish,
         slug_field: req.slug_field,
-        timestamps: req.timestamps,
         soft_delete: req.soft_delete,
         versioning: req.versioning,
+        builtin: req.builtin,
+        implements: req.implements,
         fields: req.fields,
         indexes: vec![],
         list_view: None,
@@ -1050,14 +1161,14 @@ pub async fn update_schema(
     if let Some(slug_field) = req.slug_field {
         updated.slug_field = slug_field;
     }
-    if let Some(timestamps) = req.timestamps {
-        updated.timestamps = timestamps;
-    }
     if let Some(soft_delete) = req.soft_delete {
         updated.soft_delete = soft_delete;
     }
     if let Some(versioning) = req.versioning {
         updated.versioning = versioning;
+    }
+    if let Some(implements) = req.implements {
+        updated.implements = implements;
     }
     if let Some(fields) = req.fields {
         updated.fields = fields;
@@ -1117,6 +1228,13 @@ fn filter_fields(mut value: serde_json::Value, fields: Option<&[String]>) -> ser
         .cloned()
         .collect();
     obj.retain(|k, _| allowed.contains(&k.to_string()) || system_keys.contains(k));
+    value
+}
+
+fn strip_meta(mut value: serde_json::Value) -> serde_json::Value {
+    if let Some(obj) = value.as_object_mut() {
+        obj.remove("__meta");
+    }
     value
 }
 

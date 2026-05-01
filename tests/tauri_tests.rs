@@ -13,6 +13,17 @@ use rust_blog::db::tenant;
 use rust_blog::repositories::*;
 use rust_blog::services::{auth, options, post, stats};
 
+fn with_timestamps(data: serde_json::Value) -> serde_json::Value {
+    let mut obj = data
+        .as_object()
+        .expect("with_timestamps: expected JSON object")
+        .clone();
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    obj.insert("created_at".into(), serde_json::json!(now));
+    obj.insert("updated_at".into(), serde_json::json!(now));
+    serde_json::Value::Object(obj)
+}
+
 fn test_config() -> AppConfig {
     let mut config = AppConfig::test_defaults();
     config.database_url = "sqlite::memory:".into();
@@ -62,10 +73,9 @@ singular = "todo"
 plural = "todos"
 table = "test_todos"
 description = "测试待办"
-draft_publish = false
-timestamps = true
+    draft_publish = false
 
-[fields.title]
+    [fields.title]
 type = "text"
 required = true
 label = "标题"
@@ -355,16 +365,22 @@ async fn tauri_cms_create_and_list() {
     let ct = parse_todo_ct();
     let registry = rust_blog::content_type::ContentTypeRegistry::new();
     let config = test_config();
-    registry.register(ct.clone(), &config.rule_engine, &config.builtins.reserved_route_segments()).unwrap();
+    registry
+        .register(
+            ct.clone(),
+            &config.rule_engine,
+            &config.builtins.reserved_route_segments(),
+        )
+        .unwrap();
     let repo = ContentRepository::new(pool.clone());
     repo.migrate(&ct).await.unwrap();
 
     let save_ctx = SaveContext::default();
-    let data = serde_json::json!({
+    let data = with_timestamps(serde_json::json!({
         "title": "Buy milk",
         "done": false,
         "priority": "high"
-    });
+    }));
 
     let created = repo.create(&ct, data, None, &save_ctx).await.unwrap();
     assert_eq!(created["title"], "Buy milk");
@@ -389,7 +405,7 @@ async fn tauri_cms_get_by_id() {
     repo.migrate(&ct).await.unwrap();
 
     let save_ctx = SaveContext::default();
-    let data = serde_json::json!({"title": "Read book", "done": false});
+    let data = with_timestamps(serde_json::json!({"title": "Read book", "done": false}));
     let created = repo.create(&ct, data, None, &save_ctx).await.unwrap();
 
     let id = created["id"].as_str().unwrap();
@@ -405,7 +421,7 @@ async fn tauri_cms_update() {
     repo.migrate(&ct).await.unwrap();
 
     let save_ctx = SaveContext::default();
-    let data = serde_json::json!({"title": "Original", "done": false});
+    let data = with_timestamps(serde_json::json!({"title": "Original", "done": false}));
     let created = repo.create(&ct, data, None, &save_ctx).await.unwrap();
 
     let id = created["id"].as_str().unwrap().to_string();
@@ -414,7 +430,11 @@ async fn tauri_cms_update() {
         .await
         .unwrap();
 
-    let found = repo.find_by_id(&ct, &id, None, true).await.unwrap().unwrap();
+    let found = repo
+        .find_by_id(&ct, &id, None, true)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(found["title"], "Updated");
 }
 
@@ -426,7 +446,7 @@ async fn tauri_cms_delete() {
     repo.migrate(&ct).await.unwrap();
 
     let save_ctx = SaveContext::default();
-    let data = serde_json::json!({"title": "To delete", "done": false});
+    let data = with_timestamps(serde_json::json!({"title": "To delete", "done": false}));
     let created = repo.create(&ct, data, None, &save_ctx).await.unwrap();
 
     let id = created["id"].as_str().unwrap().to_string();
@@ -444,7 +464,7 @@ async fn tauri_cms_boolean_field_stored_as_integer() {
     repo.migrate(&ct).await.unwrap();
 
     let save_ctx = SaveContext::default();
-    let data = serde_json::json!({"title": "Boolean test", "done": true});
+    let data = with_timestamps(serde_json::json!({"title": "Boolean test", "done": true}));
     let created = repo.create(&ct, data, None, &save_ctx).await.unwrap();
 
     assert_eq!(created["done"], 1);
@@ -458,7 +478,7 @@ async fn tauri_cms_enum_field_validation() {
     repo.migrate(&ct).await.unwrap();
 
     let save_ctx = SaveContext::default();
-    let data = serde_json::json!({"title": "Enum test", "priority": "low"});
+    let data = with_timestamps(serde_json::json!({"title": "Enum test", "priority": "low"}));
     let created = repo.create(&ct, data, None, &save_ctx).await.unwrap();
 
     assert_eq!(created["priority"], "low");
@@ -473,7 +493,13 @@ async fn tauri_registry_register_and_query() {
     let registry = rust_blog::content_type::ContentTypeRegistry::new();
     let config = test_config();
     let ct = parse_todo_ct();
-    registry.register(ct, &config.rule_engine, &config.builtins.reserved_route_segments()).unwrap();
+    registry
+        .register(
+            ct,
+            &config.rule_engine,
+            &config.builtins.reserved_route_segments(),
+        )
+        .unwrap();
 
     assert!(registry.get("todo").is_some());
     assert!(registry.get_by_plural("todos").is_some());
@@ -487,7 +513,13 @@ async fn tauri_registry_unregister() {
     let registry = rust_blog::content_type::ContentTypeRegistry::new();
     let config = test_config();
     let ct = parse_todo_ct();
-    registry.register(ct, &config.rule_engine, &config.builtins.reserved_route_segments()).unwrap();
+    registry
+        .register(
+            ct,
+            &config.rule_engine,
+            &config.builtins.reserved_route_segments(),
+        )
+        .unwrap();
 
     assert_eq!(registry.len(), 1);
     let removed = registry.unregister("todo");
@@ -516,8 +548,20 @@ label = "内容"
 "#;
     let ct2 = ContentTypeSchema::parse_from_str(ct2_toml).unwrap();
 
-    registry.register(ct1, &config.rule_engine, &config.builtins.reserved_route_segments()).unwrap();
-    registry.register(ct2, &config.rule_engine, &config.builtins.reserved_route_segments()).unwrap();
+    registry
+        .register(
+            ct1,
+            &config.rule_engine,
+            &config.builtins.reserved_route_segments(),
+        )
+        .unwrap();
+    registry
+        .register(
+            ct2,
+            &config.rule_engine,
+            &config.builtins.reserved_route_segments(),
+        )
+        .unwrap();
 
     let all = registry.all();
     assert_eq!(all.len(), 2);
@@ -593,7 +637,8 @@ async fn tauri_cms_list_with_pagination() {
 
     let save_ctx = SaveContext::default();
     for i in 0..5 {
-        let data = serde_json::json!({"title": format!("Todo {}", i), "done": false});
+        let data =
+            with_timestamps(serde_json::json!({"title": format!("Todo {}", i), "done": false}));
         repo.create(&ct, data, None, &save_ctx).await.unwrap();
     }
 
@@ -663,7 +708,7 @@ auto_fill = "user_id"
         tenant_id: None,
     };
 
-    let data = serde_json::json!({"title": "Auto fill test"});
+    let data = with_timestamps(serde_json::json!({"title": "Auto fill test"}));
     let created = repo.create(&ct, data, None, &save_ctx).await.unwrap();
 
     assert_eq!(created["author_id"], "user-123");

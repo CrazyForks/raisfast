@@ -161,6 +161,7 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
         refresh_token_repo: Arc::new(SqlxRefreshTokenRepository::new(pool.clone())),
         search: Arc::new(NoopSearchEngine),
         content_type_registry: Arc::new(rust_blog::content_type::ContentTypeRegistry::new()),
+        aspect_engine: Arc::new(rust_blog::aspects::engine::AspectEngine::new()),
         options: Arc::new(
             rust_blog::services::options::OptionsService::new(Arc::new(
                 SqlxOptionsRepository::new(pool.clone()),

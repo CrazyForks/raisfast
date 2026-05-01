@@ -42,15 +42,18 @@ pub struct ContentTypeSchema {
     pub draft_publish: bool,
     /// 自动从哪个字段生成 slug
     pub slug_field: Option<String>,
-    /// 是否自动维护 `created_at` / `updated_at`
-    #[serde(default = "default_true")]
-    pub timestamps: bool,
     /// 是否软删除
     #[serde(default)]
     pub soft_delete: bool,
     /// 是否启用内容版本历史
     #[serde(default)]
     pub versioning: bool,
+    /// 是否为内置 content type（内置 CT 不注入默认字段，字段全部显式定义）
+    #[serde(default)]
+    pub builtin: bool,
+    /// 声明实现的 Protocol 列表（如 ["versionable", "cacheable"]）
+    #[serde(default)]
+    pub implements: Vec<String>,
     /// 索引定义
     #[serde(default)]
     pub indexes: Vec<IndexDef>,
@@ -98,8 +101,6 @@ pub enum AutoFillSource {
     UserRole,
     /// 当前租户 ID
     CurrentTenantId,
-    /// 当前 ISO 8601 时间戳（与 timestamps 不同，可用于任意字段）
-    CurrentTimestamp,
 }
 
 /// 字段定义
@@ -364,10 +365,6 @@ pub fn check_api_access(
     }
 }
 
-fn default_true() -> bool {
-    true
-}
-
 /// TOML 解析用的顶层结构
 #[derive(Debug, Deserialize)]
 struct ContentTypeToml {
@@ -389,14 +386,16 @@ struct ContentTypeHeader {
     #[serde(default)]
     draft_publish: bool,
     slug_field: Option<String>,
-    #[serde(default = "default_true")]
-    timestamps: bool,
     #[serde(default)]
     soft_delete: bool,
     #[serde(default)]
     versioning: bool,
     #[serde(default)]
     kind: ContentKind,
+    #[serde(default)]
+    builtin: bool,
+    #[serde(default)]
+    implements: Vec<String>,
 }
 
 impl ContentTypeSchema {
@@ -472,7 +471,6 @@ impl ContentTypeSchema {
                     "user_id" => Some(AutoFillSource::UserId),
                     "user_role" => Some(AutoFillSource::UserRole),
                     "current_tenant_id" => Some(AutoFillSource::CurrentTenantId),
-                    "current_timestamp" => Some(AutoFillSource::CurrentTimestamp),
                     _ => None,
                 });
 
@@ -542,9 +540,10 @@ impl ContentTypeSchema {
             fields,
             draft_publish: toml.content_type.draft_publish,
             slug_field: toml.content_type.slug_field,
-            timestamps: toml.content_type.timestamps,
             soft_delete: toml.content_type.soft_delete,
             versioning: toml.content_type.versioning,
+            builtin: toml.content_type.builtin,
+            implements: toml.content_type.implements,
             indexes: toml.indexes.unwrap_or_default(),
             list_view: toml.list_view,
             api: toml.api.unwrap_or_default(),
@@ -593,7 +592,8 @@ impl ContentTypeSchema {
     /// `include_private=false` 时过滤掉 `private` 字段（公开 API 用）。
     /// `include_private=true` 时返回全部字段（admin API 用）。
     pub fn column_names(&self, requested: Option<&[String]>, include_private: bool) -> Vec<String> {
-        if include_private && requested.is_none()
+        if include_private
+            && requested.is_none()
             && let Some(ref cached) = self.cached_column_names
         {
             return cached.clone();
@@ -671,14 +671,25 @@ impl ContentTypeSchema {
         if let Some(ref sf) = self.slug_field {
             header.insert("slug_field".into(), toml::Value::String(sf.clone()));
         }
-        if !self.timestamps {
-            header.insert("timestamps".into(), toml::Value::Boolean(false));
-        }
         if self.soft_delete {
             header.insert("soft_delete".into(), toml::Value::Boolean(true));
         }
         if self.versioning {
             header.insert("versioning".into(), toml::Value::Boolean(true));
+        }
+        if self.builtin {
+            header.insert("builtin".into(), toml::Value::Boolean(true));
+        }
+        if !self.implements.is_empty() {
+            header.insert(
+                "implements".into(),
+                toml::Value::Array(
+                    self.implements
+                        .iter()
+                        .map(|p| toml::Value::String(p.clone()))
+                        .collect(),
+                ),
+            );
         }
         if self.kind == ContentKind::Single {
             header.insert("kind".into(), toml::Value::String("single".into()));
@@ -797,7 +808,6 @@ fn field_to_toml(field: &FieldSchema) -> toml::Value {
             AutoFillSource::UserId => "user_id",
             AutoFillSource::UserRole => "user_role",
             AutoFillSource::CurrentTenantId => "current_tenant_id",
-            AutoFillSource::CurrentTimestamp => "current_timestamp",
         };
         t.insert("auto_fill".into(), toml::Value::String(val.into()));
     }
@@ -974,12 +984,14 @@ pub struct CreateContentTypeRequest {
     #[serde(default)]
     pub draft_publish: bool,
     pub slug_field: Option<String>,
-    #[serde(default = "default_true")]
-    pub timestamps: bool,
     #[serde(default)]
     pub soft_delete: bool,
     #[serde(default)]
     pub versioning: bool,
+    #[serde(default)]
+    pub builtin: bool,
+    #[serde(default)]
+    pub implements: Vec<String>,
     #[serde(default)]
     pub fields: Vec<FieldSchema>,
 }
@@ -999,11 +1011,11 @@ pub struct UpdateContentTypeRequest {
     #[serde(default)]
     pub slug_field: Option<Option<String>>,
     #[serde(default)]
-    pub timestamps: Option<bool>,
-    #[serde(default)]
     pub soft_delete: Option<bool>,
     #[serde(default)]
     pub versioning: Option<bool>,
+    #[serde(default)]
+    pub implements: Option<Vec<String>>,
     #[serde(default)]
     pub fields: Option<Vec<FieldSchema>>,
     #[serde(default)]
@@ -1039,7 +1051,6 @@ max_length = 200
         assert_eq!(ct.plural, "pages");
         assert_eq!(ct.table, "pages");
         assert!(!ct.draft_publish);
-        assert!(ct.timestamps);
         assert_eq!(ct.fields.len(), 1);
         assert_eq!(ct.fields[0].name, "title");
         assert_eq!(ct.fields[0].field_type, FieldType::Text);

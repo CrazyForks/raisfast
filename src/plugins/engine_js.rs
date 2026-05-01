@@ -53,7 +53,12 @@ impl JsInstancePool {
 struct PluginResolver;
 
 impl Resolver for PluginResolver {
-    fn resolve<'js>(&mut self, _ctx: &Ctx<'js>, _base: &str, name: &str) -> rquickjs::Result<String> {
+    fn resolve<'js>(
+        &mut self,
+        _ctx: &Ctx<'js>,
+        _base: &str,
+        name: &str,
+    ) -> rquickjs::Result<String> {
         Ok(name.to_string())
     }
 }
@@ -78,11 +83,13 @@ impl rquickjs::loader::Loader for PluginLoader {
             "sdk" => self.sdk_source.to_string(),
             n if n.starts_with("./") || n.starts_with("../") => {
                 let path = self.plugin_dir.join(n);
-                let canonical =
-                    path.canonicalize().map_err(|e| {
-                        rquickjs::Error::new_loading_message(name, &format!("path error: {e}"))
-                    })?;
-                let plugin_canonical = self.plugin_dir.canonicalize().unwrap_or_else(|_| self.plugin_dir.clone());
+                let canonical = path.canonicalize().map_err(|e| {
+                    rquickjs::Error::new_loading_message(name, &format!("path error: {e}"))
+                })?;
+                let plugin_canonical = self
+                    .plugin_dir
+                    .canonicalize()
+                    .unwrap_or_else(|_| self.plugin_dir.clone());
                 if !canonical.starts_with(&plugin_canonical) {
                     return Err(rquickjs::Error::new_loading_message(
                         name,
@@ -94,10 +101,7 @@ impl rquickjs::loader::Loader for PluginLoader {
                 })?
             }
             _ => {
-                return Err(rquickjs::Error::new_loading_message(
-                    name,
-                    "unknown module",
-                ));
+                return Err(rquickjs::Error::new_loading_message(name, "unknown module"));
             }
         };
         Module::declare(ctx.clone(), name, source)
@@ -157,7 +161,10 @@ impl JsEngine {
         runtime.set_max_stack_size(512 * 1024).await;
 
         runtime
-            .set_loader(PluginResolver, PluginLoader::new(plugin_dir.to_path_buf(), sdk_source))
+            .set_loader(
+                PluginResolver,
+                PluginLoader::new(plugin_dir.to_path_buf(), sdk_source),
+            )
             .await;
 
         let ctx = AsyncContext::full(&runtime).await?;
@@ -212,7 +219,10 @@ impl JsEngine {
     ) -> anyhow::Result<()> {
         let mut instances = Vec::with_capacity(self.pool_size);
         for _ in 0..self.pool_size {
-            instances.push(self.create_instance(code, id, &permissions, plugin_dir, sdk_source).await?);
+            instances.push(
+                self.create_instance(code, id, &permissions, plugin_dir, sdk_source)
+                    .await?,
+            );
         }
 
         self.permissions_map
@@ -228,7 +238,14 @@ impl JsEngine {
 
     #[cfg(test)]
     pub async fn load_plugin_default(&self, id: &str, code: &str) -> anyhow::Result<()> {
-        self.load_plugin(id, code, Permissions::default(), Path::new("."), crate::plugins::sdk_v1::JS_SDK_V1).await
+        self.load_plugin(
+            id,
+            code,
+            Permissions::default(),
+            Path::new("."),
+            crate::plugins::sdk_v1::JS_SDK_V1,
+        )
+        .await
     }
 
     pub async fn unload_plugin(&self, id: &str) {
@@ -586,7 +603,16 @@ export function on_post_created(dataJson) {
             config: vec!["app.*".into()],
             ..Permissions::default()
         };
-        engine.load_plugin("test-cfg", code, perms, Path::new("."), crate::plugins::sdk_v1::JS_SDK_V1).await.unwrap();
+        engine
+            .load_plugin(
+                "test-cfg",
+                code,
+                perms,
+                Path::new("."),
+                crate::plugins::sdk_v1::JS_SDK_V1,
+            )
+            .await
+            .unwrap();
 
         let result = engine
             .call_action("test-cfg", "on_post_created", &serde_json::json!({}))

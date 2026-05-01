@@ -40,7 +40,6 @@ impl SaveContext {
             AutoFillSource::UserId => self.user_id.as_ref().map(|id| json!(id)),
             AutoFillSource::UserRole => self.user_role.as_ref().map(|r| json!(r)),
             AutoFillSource::CurrentTenantId => self.tenant_id.as_ref().map(|t| json!(t)),
-            AutoFillSource::CurrentTimestamp => Some(json!(crate::utils::tz::now_str())),
         }
     }
 
@@ -413,7 +412,6 @@ impl ContentRepository {
 
         super::validation::validate_create_tx(&self.pool, ct, &data).await?;
         let id = uuid::Uuid::now_v7().to_string();
-        let now = crate::utils::tz::now_str();
 
         let obj = data
             .as_object_mut()
@@ -421,16 +419,17 @@ impl ContentRepository {
 
         obj.insert("id".into(), json!(id));
 
-        if ct.timestamps {
-            obj.insert("created_at".into(), json!(now.clone()));
-            obj.insert("updated_at".into(), json!(now));
-        }
-
         if ct.draft_publish && obj.get("status").is_none() {
             obj.insert("status".to_string(), json!("draft"));
         }
 
         save_ctx.inject_auto_fill(ct, obj);
+
+        if !ct.builtin && !ct.implements.is_empty() {
+            let mut meta = serde_json::Map::new();
+            meta.insert("protocols".into(), json!(ct.implements));
+            obj.insert("__meta".into(), json!(meta));
+        }
 
         let tid = self.resolve_tenant(&ct.table, tenant_id).await;
 
@@ -531,15 +530,12 @@ impl ContentRepository {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("begin tx: {e}")))?;
 
         super::validation::validate_update_tx(&self.pool, ct, id, &data).await?;
-        let now = crate::utils::tz::now_str();
 
         let obj = data
             .as_object_mut()
             .ok_or_else(|| AppError::BadRequest("request body must be a JSON object".into()))?;
 
         obj.remove("id");
-        obj.remove("created_at");
-        obj.remove("updated_at");
 
         save_ctx.inject_auto_fill(ct, obj);
 
@@ -564,7 +560,11 @@ impl ContentRepository {
             .collect();
 
         for (key, val) in obj.iter() {
-            if ct.get_field(key).is_some() || key == "status" || key == "published_at" {
+            if ct.get_field(key).is_some()
+                || key == "status"
+                || key == "published_at"
+                || key == "updated_at"
+            {
                 let col = relation_column_map
                     .get(key)
                     .cloned()
@@ -577,12 +577,6 @@ impl ContentRepository {
 
         if set_clauses.is_empty() {
             return Err(AppError::BadRequest("no fields to update".into()));
-        }
-
-        if ct.timestamps {
-            set_clauses.push(format!("updated_at = {}", placeholder(idx)));
-            idx += 1;
-            values.push(now);
         }
 
         let mut where_parts = vec![format!("id = {}", placeholder(idx))];
@@ -763,7 +757,11 @@ impl ContentRepository {
 }
 
 /// 构建 SELECT 列名列表（替代 json_object，用于直接 SELECT col1, col2, ...）
-pub fn build_column_names(ct: &ContentTypeSchema, requested: Option<&[String]>, include_private: bool) -> Vec<String> {
+pub fn build_column_names(
+    ct: &ContentTypeSchema,
+    requested: Option<&[String]>,
+    include_private: bool,
+) -> Vec<String> {
     let mut cols = Vec::new();
     cols.push("id".into());
 
@@ -801,12 +799,15 @@ pub fn build_column_names(ct: &ContentTypeSchema, requested: Option<&[String]>, 
         cols.push("status".into());
         cols.push("published_at".into());
     }
-    if ct.timestamps {
-        cols.push("created_at".into());
-        cols.push("updated_at".into());
-    }
+    cols.push("created_at".into());
+    cols.push("updated_at".into());
+    cols.push("created_by".into());
+    cols.push("updated_by".into());
     if ct.soft_delete {
         cols.push("deleted_at".into());
+    }
+    if !ct.builtin {
+        cols.push("__meta".into());
     }
 
     cols

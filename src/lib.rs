@@ -10,6 +10,7 @@
 #![deny(unsafe_code)]
 #![allow(clippy::missing_errors_doc)]
 
+pub mod aspects;
 pub mod audit;
 pub mod cache;
 pub mod commands;
@@ -80,6 +81,7 @@ pub struct AppState {
     pub refresh_token_repo: Arc<dyn RefreshTokenRepository>,
     pub search: Arc<dyn SearchEngine>,
     pub content_type_registry: Arc<ContentTypeRegistry>,
+    pub aspect_engine: Arc<crate::aspects::engine::AspectEngine>,
     pub options: Arc<OptionsService>,
     pub rbac: Arc<RbacService>,
     pub tenant: Arc<TenantService>,
@@ -122,6 +124,15 @@ pub async fn build_app_state(config: &AppConfig) -> anyhow::Result<AppState> {
     );
 
     let search: Arc<dyn SearchEngine> = build_search_engine(config);
+
+    let aspect_engine = Arc::new(crate::aspects::engine::AspectEngine::new());
+    aspect_engine.register(crate::aspects::ownable::OwnableAspect);
+    aspect_engine.register(crate::aspects::timestampable::TimestampableAspect);
+    tracing::info!(
+        "aspect engine initialized with {} aspect(s)",
+        aspect_engine.aspects().len()
+    );
+
     let reserved = config.builtins.reserved_route_segments();
     let ct_registry = Arc::new(ContentTypeRegistry::load_from_dir(
         std::path::Path::new(&config.content_type_dir),
@@ -178,6 +189,7 @@ pub async fn build_app_state(config: &AppConfig) -> anyhow::Result<AppState> {
         refresh_token_repo,
         search,
         content_type_registry: ct_registry,
+        aspect_engine,
         options: options_service,
         rbac: rbac_service,
         tenant: tenant_service,
