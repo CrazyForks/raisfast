@@ -226,7 +226,14 @@ pub async fn create(
         cover_image: req.cover_image,
     };
 
-    let page = page_service::create_page(&state.pool, cmd, tenant.as_str()).await?;
+    let page = page_service::create_page(
+        &state.pool,
+        &state.aspect_engine,
+        Some(&author.user_id),
+        cmd,
+        tenant.as_str(),
+    )
+    .await?;
     Ok(ApiResponse::success(page))
 }
 
@@ -255,7 +262,14 @@ pub async fn update(
         cover_image: req.cover_image,
     };
 
-    let page = page_service::update_page(&state.pool, cmd, tenant.as_str()).await?;
+    let page = page_service::update_page(
+        &state.pool,
+        &state.aspect_engine,
+        None,
+        cmd,
+        tenant.as_str(),
+    )
+    .await?;
     Ok(ApiResponse::success(page))
 }
 
@@ -265,7 +279,14 @@ pub async fn delete(
     tenant: ResolvedTenant,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    page_service::delete_page(&state.pool, &id, tenant.as_str()).await?;
+    page_service::delete_page(
+        &state.pool,
+        &state.aspect_engine,
+        None,
+        &id,
+        tenant.as_str(),
+    )
+    .await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -276,7 +297,15 @@ pub async fn update_status(
     Path(id): Path<String>,
     Json(req): Json<UpdateStatusRequest>,
 ) -> AppResult<ApiResponse<crate::models::page::Page>> {
-    let page = page_service::update_status(&state.pool, &id, &req.status, tenant.as_str()).await?;
+    let page = page_service::update_status(
+        &state.pool,
+        &state.aspect_engine,
+        None,
+        &id,
+        &req.status,
+        tenant.as_str(),
+    )
+    .await?;
     Ok(ApiResponse::success(page))
 }
 
@@ -327,6 +356,8 @@ pub async fn create_reusable(
     validation::validate(&req)?;
     let block = page_service::create_reusable(
         &state.pool,
+        &state.aspect_engine,
+        None,
         &req.name,
         &req.block_type,
         &req.content,
@@ -347,6 +378,8 @@ pub async fn update_reusable(
     validation::validate(&req)?;
     let block = page_service::update_reusable(
         &state.pool,
+        &state.aspect_engine,
+        None,
         &id,
         req.name.as_deref(),
         req.block_type.as_deref(),
@@ -364,6 +397,13 @@ pub async fn delete_reusable(
     tenant: ResolvedTenant,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    page_service::delete_reusable(&state.pool, &id, tenant.as_str()).await?;
+    page_service::delete_reusable(
+        &state.pool,
+        &state.aspect_engine,
+        None,
+        &id,
+        tenant.as_str(),
+    )
+    .await?;
     Ok(ApiResponse::success(()))
 }

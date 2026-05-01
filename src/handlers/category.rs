@@ -46,8 +46,15 @@ pub async fn create(
     Json(req): Json<CreateCategoryRequest>,
 ) -> AppResult<ApiResponse<crate::models::category::Category>> {
     validation::validate(&req)?;
-    let category =
-        post::create_category(state.category_repo.as_ref(), req, tenant.as_str()).await?;
+    let category = post::create_category(
+        state.category_repo.as_ref(),
+        &state.aspect_engine,
+        &state.pool,
+        Some(&_author.user_id),
+        req,
+        tenant.as_str(),
+    )
+    .await?;
     Ok(ApiResponse::success(category))
 }
 
@@ -66,8 +73,16 @@ pub async fn update(
     Json(req): Json<UpdateCategoryRequest>,
 ) -> AppResult<ApiResponse<crate::models::category::Category>> {
     validation::validate(&req)?;
-    let category =
-        post::update_category(state.category_repo.as_ref(), &id, req, tenant.as_str()).await?;
+    let category = post::update_category(
+        state.category_repo.as_ref(),
+        &state.aspect_engine,
+        &state.pool,
+        Some(&_author.user_id),
+        &id,
+        req,
+        tenant.as_str(),
+    )
+    .await?;
     Ok(ApiResponse::success(category))
 }
 
@@ -83,6 +98,14 @@ pub async fn delete(
     tenant: ResolvedTenant,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    post::delete_category(state.category_repo.as_ref(), &id, tenant.as_str()).await?;
+    post::delete_category(
+        state.category_repo.as_ref(),
+        &state.aspect_engine,
+        &state.pool,
+        Some(&_author.user_id),
+        &id,
+        tenant.as_str(),
+    )
+    .await?;
     Ok(ApiResponse::success(()))
 }

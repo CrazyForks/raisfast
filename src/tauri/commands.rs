@@ -130,6 +130,8 @@ pub async fn post_create(
         state.0.post_repo.as_ref(),
         &state.0.plugins,
         &state.0.eventbus,
+        &state.0.aspect_engine,
+        &state.0.pool,
         &user_id,
         req,
         None,

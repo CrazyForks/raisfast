@@ -45,7 +45,15 @@ pub async fn create(
     Json(req): Json<CreateTagRequest>,
 ) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
     validation::validate(&req)?;
-    let tag = post::create_tag(state.tag_repo.as_ref(), req, tenant.as_str()).await?;
+    let tag = post::create_tag(
+        state.tag_repo.as_ref(),
+        &state.aspect_engine,
+        &state.pool,
+        Some(&_author.user_id),
+        req,
+        tenant.as_str(),
+    )
+    .await?;
     Ok(ApiResponse::success(tag))
 }
 
@@ -61,6 +69,14 @@ pub async fn delete(
     tenant: ResolvedTenant,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    post::delete_tag(state.tag_repo.as_ref(), &id, tenant.as_str()).await?;
+    post::delete_tag(
+        state.tag_repo.as_ref(),
+        &state.aspect_engine,
+        &state.pool,
+        Some(&_author.user_id),
+        &id,
+        tenant.as_str(),
+    )
+    .await?;
     Ok(ApiResponse::success(()))
 }

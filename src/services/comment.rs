@@ -3,12 +3,14 @@
 //! 处理评论相关的业务逻辑，包括评论创建（含嵌套深度校验）、
 //! 评论列表获取（树形结构）、评论删除和状态管理。
 
+use crate::aspects::engine::AspectEngine;
 use crate::commands::CreateCommentCmd;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::eventbus::{Event, EventBus};
 use crate::models::comment::{self, CommentResponse};
 use crate::plugins::{HookPoint, PluginManager};
 use crate::repositories::{CommentRepository, PostRepository};
+use crate::services::aspect_dispatch::{AspectDispatch, id_record};
 
 /// 评论输入数据（用于 Hook 传递）
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -41,6 +43,8 @@ pub async fn create_comment(
     nickname: Option<&str>,
     email: Option<&str>,
     tenant_id: Option<&str>,
+    aspect_engine: &AspectEngine,
+    pool: &crate::db::pool::Pool,
 ) -> AppResult<CommentResponse> {
     let p = post_repo
         .find_by_slug(post_slug, tenant_id)
@@ -72,6 +76,14 @@ pub async fn create_comment(
         .dispatch_filter(HookPoint::CommentCreating, comment_input)
         .await?;
 
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "comments",
+        user_id: author_id,
+        tenant_id,
+    };
+    dsp.before_create(id_record("")).await?;
     let c = comment_repo
         .create(
             CreateCommentCmd {
@@ -85,6 +97,7 @@ pub async fn create_comment(
             tenant_id,
         )
         .await?;
+    dsp.after_create(id_record(&c.id)).await;
 
     eventbus.emit(Event::CommentCreated {
         id: c.id.clone(),
@@ -136,6 +149,8 @@ pub async fn delete_comment(
     user_id: &str,
     role: &str,
     tenant_id: Option<&str>,
+    aspect_engine: &AspectEngine,
+    pool: &crate::db::pool::Pool,
 ) -> AppResult<()> {
     let c = comment_repo
         .find_by_id(comment_id, tenant_id)
@@ -144,7 +159,17 @@ pub async fn delete_comment(
 
     crate::utils::auth::require_owner_or_admin_opt(role, user_id, c.author_id.as_deref())?;
 
-    comment_repo.delete(comment_id, tenant_id).await
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "comments",
+        user_id: Some(user_id),
+        tenant_id,
+    };
+    dsp.before_delete(id_record(comment_id)).await?;
+    comment_repo.delete(comment_id, tenant_id).await?;
+    dsp.after_delete().await;
+    Ok(())
 }
 
 /// 更新评论状态。
@@ -155,11 +180,24 @@ pub async fn update_comment_status(
     comment_id: &str,
     status: &str,
     tenant_id: Option<&str>,
+    aspect_engine: &AspectEngine,
+    pool: &crate::db::pool::Pool,
 ) -> AppResult<()> {
     if status != "approved" && status != "spam" && status != "pending" {
         return Err(AppError::BadRequest("invalid_comment_status".into()));
     }
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "comments",
+        user_id: None,
+        tenant_id,
+    };
+    dsp.before_update(id_record(comment_id), id_record(comment_id))
+        .await?;
     comment_repo
         .update_status(comment_id, status, tenant_id)
-        .await
+        .await?;
+    dsp.after_update(id_record(comment_id)).await;
+    Ok(())
 }

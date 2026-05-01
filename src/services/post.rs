@@ -10,6 +10,8 @@
 
 use slug::slugify;
 
+use crate::aspects::Record;
+use crate::aspects::engine::AspectEngine;
 use crate::commands::{
     CreateCategoryCmd, CreatePostCmd, FindPublishedQuery, UpdateCategoryCmd, UpdatePostCmd,
 };
@@ -22,6 +24,7 @@ use crate::models::post::PostJoinedRow;
 use crate::plugins::{HookPoint, PluginManager};
 use crate::repositories::{CategoryRepository, PostRepository, TagRepository};
 use crate::search::SearchEngine;
+use crate::services::aspect_dispatch::{AspectDispatch, id_record};
 
 async fn joined_row_to_response(
     r: PostJoinedRow,
@@ -70,11 +73,22 @@ async fn build_post_response_from_repo(
 /// 从分类名称自动生成 slug。
 pub async fn create_category(
     category_repo: &dyn CategoryRepository,
+    aspect_engine: &AspectEngine,
+    pool: &crate::db::pool::Pool,
+    user_id: Option<&str>,
     req: CreateCategoryRequest,
     tenant_id: Option<&str>,
 ) -> AppResult<crate::models::category::Category> {
     let slug = slugify(&req.name);
-    category_repo
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "categories",
+        user_id,
+        tenant_id,
+    };
+    dsp.before_create(id_record("")).await?;
+    let result = category_repo
         .create(
             CreateCategoryCmd {
                 name: req.name,
@@ -85,7 +99,11 @@ pub async fn create_category(
             },
             tenant_id,
         )
-        .await
+        .await;
+    if let Ok(ref cat) = result {
+        dsp.after_create(id_record(&cat.id)).await;
+    }
+    result
 }
 
 /// 更新分类。
@@ -93,6 +111,9 @@ pub async fn create_category(
 /// 若名称变更，自动重新生成 slug。
 pub async fn update_category(
     category_repo: &dyn CategoryRepository,
+    aspect_engine: &AspectEngine,
+    pool: &crate::db::pool::Pool,
+    user_id: Option<&str>,
     id: &str,
     req: UpdateCategoryRequest,
     tenant_id: Option<&str>,
@@ -100,7 +121,15 @@ pub async fn update_category(
     let existing = category_repo.find_by_id(id, tenant_id).await?;
     let new_slug = req.name.as_ref().map(slugify).unwrap_or(existing.slug);
 
-    category_repo
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "categories",
+        user_id,
+        tenant_id,
+    };
+    dsp.before_update(id_record(id), id_record(id)).await?;
+    let result = category_repo
         .update(
             UpdateCategoryCmd {
                 id: id.to_string(),
@@ -112,16 +141,33 @@ pub async fn update_category(
             },
             tenant_id,
         )
-        .await
+        .await;
+    if let Ok(ref cat) = result {
+        dsp.after_update(id_record(&cat.id)).await;
+    }
+    result
 }
 
 /// 删除分类。
 pub async fn delete_category(
     category_repo: &dyn CategoryRepository,
+    aspect_engine: &AspectEngine,
+    pool: &crate::db::pool::Pool,
+    user_id: Option<&str>,
     id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    category_repo.delete(id, tenant_id).await
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "categories",
+        user_id,
+        tenant_id,
+    };
+    dsp.before_delete(id_record(id)).await?;
+    category_repo.delete(id, tenant_id).await?;
+    dsp.after_delete().await;
+    Ok(())
 }
 
 /// 获取所有分类列表。
@@ -149,20 +195,48 @@ pub async fn list_categories_paginated(
 /// 从标签名称自动生成 slug。
 pub async fn create_tag(
     tag_repo: &dyn TagRepository,
+    aspect_engine: &AspectEngine,
+    pool: &crate::db::pool::Pool,
+    user_id: Option<&str>,
     req: CreateTagRequest,
     tenant_id: Option<&str>,
 ) -> AppResult<crate::models::tag::Tag> {
     let slug = slugify(&req.name);
-    tag_repo.create(&req.name, &slug, tenant_id).await
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "tags",
+        user_id,
+        tenant_id,
+    };
+    dsp.before_create(id_record("")).await?;
+    let result = tag_repo.create(&req.name, &slug, tenant_id).await;
+    if let Ok(ref tag) = result {
+        dsp.after_create(id_record(&tag.id)).await;
+    }
+    result
 }
 
 /// 删除标签。
 pub async fn delete_tag(
     tag_repo: &dyn TagRepository,
+    aspect_engine: &AspectEngine,
+    pool: &crate::db::pool::Pool,
+    user_id: Option<&str>,
     id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    tag_repo.delete(id, tenant_id).await
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "tags",
+        user_id,
+        tenant_id,
+    };
+    dsp.before_delete(id_record(id)).await?;
+    tag_repo.delete(id, tenant_id).await?;
+    dsp.after_delete().await;
+    Ok(())
 }
 
 /// 获取所有标签列表。
@@ -218,10 +292,13 @@ fn extract_excerpt(content: &str, max_len: usize) -> String {
 /// - 若未提供摘要，从内容中自动提取前 200 字符。
 /// - 通过 Repository 创建文章并同步关联标签，确保原子性。
 #[tracing::instrument(skip(repo, plugins, eventbus), fields(slug = tracing::field::Empty))]
+#[allow(clippy::too_many_arguments)]
 pub async fn create_post(
     repo: &dyn PostRepository,
     plugins: &PluginManager,
     eventbus: &EventBus,
+    aspect_engine: &AspectEngine,
+    pool: &crate::db::pool::Pool,
     author_id: &str,
     req: CreatePostRequest,
     tenant_id: Option<&str>,
@@ -237,22 +314,28 @@ pub async fn create_post(
         std::string::ToString::to_string,
     );
 
-    let p = repo
-        .create(
-            CreatePostCmd {
-                title: req.title,
-                slug,
-                content: req.content,
-                excerpt: Some(excerpt),
-                cover_image: req.cover_image,
-                status: status.to_string(),
-                author_id: author_id.to_string(),
-                category_id: req.category_id.filter(|s: &String| !s.is_empty()),
-                tag_ids: req.tag_ids,
-            },
-            tenant_id,
-        )
-        .await?;
+    let cmd = CreatePostCmd {
+        title: req.title,
+        slug,
+        content: req.content,
+        excerpt: Some(excerpt),
+        cover_image: req.cover_image,
+        status: status.to_string(),
+        author_id: author_id.to_string(),
+        category_id: req.category_id.filter(|s: &String| !s.is_empty()),
+        tag_ids: req.tag_ids,
+    };
+
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "posts",
+        user_id: Some(author_id),
+        tenant_id,
+    };
+    dsp.before_create(id_record("")).await?;
+    let p = repo.create(cmd, tenant_id).await?;
+    dsp.after_create(id_record(&p.id)).await;
 
     let resp = build_post_response_from_repo(repo, &p.id, plugins, tenant_id).await?;
     tracing::Span::current().record("slug", &resp.slug);
@@ -270,11 +353,15 @@ pub async fn create_post(
 /// - 若标题变更，重新生成唯一 slug。
 /// - 重新生成摘要（若内容变更）。
 /// - 通过 Repository 更新文章并同步关联标签，确保原子性。
+#[allow(clippy::too_many_arguments)]
 pub async fn update_post(
     repo: &dyn PostRepository,
     plugins: &PluginManager,
+    aspect_engine: &AspectEngine,
+    pool: &crate::db::pool::Pool,
     id: &str,
     req: UpdatePostRequest,
+    user_id: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<PostResponse> {
     let req = plugins
@@ -302,21 +389,28 @@ pub async fn update_post(
         .clone()
         .unwrap_or_else(|| extract_excerpt(content, 200));
 
-    repo.update(
-        UpdatePostCmd {
-            id: id.to_string(),
-            title: req.title,
-            slug,
-            content: Some(content.to_string()),
-            excerpt: Some(excerpt),
-            cover_image: req.cover_image,
-            status: req.status,
-            category_id: req.category_id.filter(|s: &String| !s.is_empty()),
-            tag_ids: req.tag_ids,
-        },
+    let cmd = UpdatePostCmd {
+        id: id.to_string(),
+        title: req.title,
+        slug,
+        content: Some(content.to_string()),
+        excerpt: Some(excerpt),
+        cover_image: req.cover_image,
+        status: req.status,
+        category_id: req.category_id.filter(|s: &String| !s.is_empty()),
+        tag_ids: req.tag_ids,
+    };
+
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "posts",
+        user_id,
         tenant_id,
-    )
-    .await?;
+    };
+    dsp.before_update(Record::new(), Record::new()).await?;
+    repo.update(cmd, tenant_id).await?;
+    dsp.after_update(id_record(id)).await;
 
     build_post_response_from_repo(repo, id, plugins, tenant_id).await
 }
@@ -324,10 +418,23 @@ pub async fn update_post(
 /// 删除文章。
 pub async fn delete_post(
     repo: &dyn PostRepository,
+    aspect_engine: &AspectEngine,
+    pool: &crate::db::pool::Pool,
     id: &str,
+    user_id: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    repo.delete(id, tenant_id).await
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "posts",
+        user_id,
+        tenant_id,
+    };
+    dsp.before_delete(id_record(id)).await?;
+    repo.delete(id, tenant_id).await?;
+    dsp.after_delete().await;
+    Ok(())
 }
 
 /// 带权限校验的文章更新。
@@ -338,6 +445,8 @@ pub async fn update_post_with_auth(
     repo: &dyn PostRepository,
     plugins: &PluginManager,
     eventbus: &EventBus,
+    aspect_engine: &AspectEngine,
+    pool: &crate::db::pool::Pool,
     slug: &str,
     user_id: &str,
     role: &str,
@@ -351,7 +460,17 @@ pub async fn update_post_with_auth(
 
     crate::utils::auth::require_owner_or_admin(role, user_id, &existing.author_id)?;
 
-    let resp = update_post(repo, plugins, &existing.id, req, tenant_id).await?;
+    let resp = update_post(
+        repo,
+        plugins,
+        aspect_engine,
+        pool,
+        &existing.id,
+        req,
+        Some(user_id),
+        tenant_id,
+    )
+    .await?;
     eventbus.emit(Event::PostUpdated {
         id: existing.id.clone(),
         slug: resp.slug.clone(),
@@ -367,6 +486,8 @@ pub async fn delete_post_with_auth(
     repo: &dyn PostRepository,
     _plugins: &PluginManager,
     eventbus: &EventBus,
+    aspect_engine: &AspectEngine,
+    pool: &crate::db::pool::Pool,
     slug: &str,
     user_id: &str,
     role: &str,
@@ -381,7 +502,15 @@ pub async fn delete_post_with_auth(
 
     let id = existing.id.clone();
     let slug = slug.to_string();
-    delete_post(repo, &existing.id, tenant_id).await?;
+    delete_post(
+        repo,
+        aspect_engine,
+        pool,
+        &existing.id,
+        Some(user_id),
+        tenant_id,
+    )
+    .await?;
     eventbus.emit(Event::PostDeleted { id, slug });
     Ok(())
 }

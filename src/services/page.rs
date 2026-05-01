@@ -4,9 +4,11 @@
 
 use slug::slugify;
 
+use crate::aspects::engine::AspectEngine;
 use crate::commands::{CreatePageCmd, UpdatePageCmd};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::models::page;
+use crate::services::aspect_dispatch::{AspectDispatch, id_record};
 
 fn validate_blocks_json(blocks: &str) -> AppResult<Vec<page::PageBlock>> {
     serde_json::from_str(blocks)
@@ -54,6 +56,8 @@ pub async fn list_all(
 
 pub async fn create_page(
     pool: &crate::db::Pool,
+    aspect_engine: &AspectEngine,
+    user_id: Option<&str>,
     cmd: CreatePageCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<page::Page> {
@@ -68,7 +72,16 @@ pub async fn create_page(
     };
 
     let (id, _) = crate::utils::id::new_id_and_timestamp();
-    page::create(
+
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "pages",
+        user_id,
+        tenant_id,
+    };
+    dsp.before_create(id_record("")).await?;
+    let result = page::create(
         pool,
         &id,
         &cmd.title,
@@ -86,11 +99,15 @@ pub async fn create_page(
         cmd.cover_image.as_deref(),
         tenant_id,
     )
-    .await
+    .await;
+    dsp.after_create(id_record(&id)).await;
+    result
 }
 
 pub async fn update_page(
     pool: &crate::db::Pool,
+    aspect_engine: &AspectEngine,
+    user_id: Option<&str>,
     cmd: UpdatePageCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<page::Page> {
@@ -98,7 +115,16 @@ pub async fn update_page(
         validate_blocks_json(blocks)?;
     }
 
-    page::update(
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "pages",
+        user_id,
+        tenant_id,
+    };
+    dsp.before_update(id_record(&cmd.id), id_record(&cmd.id))
+        .await?;
+    let result = page::update(
         pool,
         &cmd.id,
         cmd.title.as_deref(),
@@ -115,19 +141,35 @@ pub async fn update_page(
         cmd.cover_image.as_deref(),
         tenant_id,
     )
-    .await
+    .await;
+    dsp.after_update(id_record(&cmd.id)).await;
+    result
 }
 
 pub async fn delete_page(
     pool: &crate::db::Pool,
+    aspect_engine: &AspectEngine,
+    user_id: Option<&str>,
     id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    page::delete(pool, id, tenant_id).await
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "pages",
+        user_id,
+        tenant_id,
+    };
+    dsp.before_delete(id_record(id)).await?;
+    let result = page::delete(pool, id, tenant_id).await;
+    dsp.after_delete().await;
+    result
 }
 
 pub async fn update_status(
     pool: &crate::db::Pool,
+    aspect_engine: &AspectEngine,
+    user_id: Option<&str>,
     id: &str,
     status: &str,
     tenant_id: Option<&str>,
@@ -136,7 +178,17 @@ pub async fn update_status(
     if !valid.contains(&status) {
         return Err(AppError::BadRequest(format!("invalid status: {status}")));
     }
-    page::update_status(pool, id, status, tenant_id).await
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "pages",
+        user_id,
+        tenant_id,
+    };
+    dsp.before_update(id_record(id), id_record(id)).await?;
+    let result = page::update_status(pool, id, status, tenant_id).await;
+    dsp.after_update(id_record(id)).await;
+    result
 }
 
 pub async fn reorder(
@@ -171,8 +223,11 @@ pub async fn get_reusable(
     page::find_reusable_by_id(pool, id, tenant_id).await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create_reusable(
     pool: &crate::db::Pool,
+    aspect_engine: &AspectEngine,
+    user_id: Option<&str>,
     name: &str,
     block_type: &str,
     content: &str,
@@ -181,11 +236,26 @@ pub async fn create_reusable(
 ) -> AppResult<page::ReusableBlock> {
     validate_blocks_json(content)?;
     let (id, _) = crate::utils::id::new_id_and_timestamp();
-    page::create_reusable(pool, &id, name, block_type, content, description, tenant_id).await
+
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "reusable_blocks",
+        user_id,
+        tenant_id,
+    };
+    dsp.before_create(id_record("")).await?;
+    let result =
+        page::create_reusable(pool, &id, name, block_type, content, description, tenant_id).await;
+    dsp.after_create(id_record(&id)).await;
+    result
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn update_reusable(
     pool: &crate::db::Pool,
+    aspect_engine: &AspectEngine,
+    user_id: Option<&str>,
     id: &str,
     name: Option<&str>,
     block_type: Option<&str>,
@@ -196,15 +266,38 @@ pub async fn update_reusable(
     if let Some(c) = content {
         validate_blocks_json(c)?;
     }
-    page::update_reusable(pool, id, name, block_type, content, description, tenant_id).await
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "reusable_blocks",
+        user_id,
+        tenant_id,
+    };
+    dsp.before_update(id_record(id), id_record(id)).await?;
+    let result =
+        page::update_reusable(pool, id, name, block_type, content, description, tenant_id).await;
+    dsp.after_update(id_record(id)).await;
+    result
 }
 
 pub async fn delete_reusable(
     pool: &crate::db::Pool,
+    aspect_engine: &AspectEngine,
+    user_id: Option<&str>,
     id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    page::delete_reusable(pool, id, tenant_id).await
+    let dsp = AspectDispatch {
+        engine: aspect_engine,
+        pool,
+        table: "reusable_blocks",
+        user_id,
+        tenant_id,
+    };
+    dsp.before_delete(id_record(id)).await?;
+    let result = page::delete_reusable(pool, id, tenant_id).await;
+    dsp.after_delete().await;
+    result
 }
 
 pub fn generate_slug(title: &str) -> String {

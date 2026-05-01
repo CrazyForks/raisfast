@@ -76,6 +76,8 @@ pub async fn create(
         None,
         None,
         tenant.as_str(),
+        &state.aspect_engine,
+        &state.pool,
     )
     .await?;
 
@@ -108,6 +110,8 @@ pub async fn create_guest(
         Some(nickname),
         req.email.as_deref(),
         tenant.as_str(),
+        &state.aspect_engine,
+        &state.pool,
     )
     .await?;
 
@@ -127,6 +131,8 @@ pub async fn delete(
         &auth_user.user_id,
         &auth_user.role,
         tenant.as_str(),
+        &state.aspect_engine,
+        &state.pool,
     )
     .await?;
     Ok(ApiResponse::success(()))
@@ -146,6 +152,8 @@ pub async fn update_status(
         &id,
         &req.status,
         tenant.as_str(),
+        &state.aspect_engine,
+        &state.pool,
     )
     .await?;
     Ok(ApiResponse::success(()))
