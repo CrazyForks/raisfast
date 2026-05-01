@@ -28,6 +28,8 @@ pub fn register_commands() -> impl Fn(tauri::ipc::Invoke) -> bool {
         crate::tauri::commands::cms_create,
         crate::tauri::commands::cms_update,
         crate::tauri::commands::cms_delete,
+        crate::tauri::commands::cms_single_get,
+        crate::tauri::commands::cms_single_update,
         crate::tauri::commands::stats_overview,
         crate::tauri::commands::options_get,
         crate::tauri::commands::options_set,

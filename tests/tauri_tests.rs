@@ -355,8 +355,7 @@ async fn tauri_cms_create_and_list() {
     let ct = parse_todo_ct();
     let registry = rust_blog::content_type::ContentTypeRegistry::new();
     let config = test_config();
-    registry.register(ct.clone(), &config.rule_engine);
-
+    registry.register(ct.clone(), &config.rule_engine, &config.builtins.reserved_route_segments()).unwrap();
     let repo = ContentRepository::new(pool.clone());
     repo.migrate(&ct).await.unwrap();
 
@@ -474,7 +473,7 @@ async fn tauri_registry_register_and_query() {
     let registry = rust_blog::content_type::ContentTypeRegistry::new();
     let config = test_config();
     let ct = parse_todo_ct();
-    registry.register(ct, &config.rule_engine);
+    registry.register(ct, &config.rule_engine, &config.builtins.reserved_route_segments()).unwrap();
 
     assert!(registry.get("todo").is_some());
     assert!(registry.get_by_plural("todos").is_some());
@@ -488,7 +487,7 @@ async fn tauri_registry_unregister() {
     let registry = rust_blog::content_type::ContentTypeRegistry::new();
     let config = test_config();
     let ct = parse_todo_ct();
-    registry.register(ct, &config.rule_engine);
+    registry.register(ct, &config.rule_engine, &config.builtins.reserved_route_segments()).unwrap();
 
     assert_eq!(registry.len(), 1);
     let removed = registry.unregister("todo");
@@ -517,8 +516,8 @@ label = "内容"
 "#;
     let ct2 = ContentTypeSchema::parse_from_str(ct2_toml).unwrap();
 
-    registry.register(ct1, &config.rule_engine);
-    registry.register(ct2, &config.rule_engine);
+    registry.register(ct1, &config.rule_engine, &config.builtins.reserved_route_segments()).unwrap();
+    registry.register(ct2, &config.rule_engine, &config.builtins.reserved_route_segments()).unwrap();
 
     let all = registry.all();
     assert_eq!(all.len(), 2);

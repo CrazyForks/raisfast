@@ -453,7 +453,8 @@ required = true
 async fn registry_load_and_lookup() {
     let ct = parse_product();
     let registry = ContentTypeRegistry::new();
-    registry.register(ct, &rust_blog::config::app::RuleEngineConfig::default());
+    let reserved = rust_blog::config::app::BuiltinsConfig::default().reserved_route_segments();
+    registry.register(ct, &rust_blog::config::app::RuleEngineConfig::default(), &reserved).unwrap();
 
     assert_eq!(registry.len(), 1);
     assert!(registry.get("product").is_some());

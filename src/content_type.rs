@@ -9,7 +9,6 @@
 //! # 设计参考
 //!
 //! - Strapi v5 Content Type Builder
-//! - `WordPress` Custom Post Type
 //!
 //! # 使用流程
 //!
@@ -71,6 +70,7 @@ impl ContentTypeRegistry {
     pub fn load_from_dir(
         dir: &Path,
         rule_config: &crate::config::app::RuleEngineConfig,
+        reserved_segments: &[&str],
     ) -> Result<Self, AppError> {
         let registry = Self::new();
         let entries = std::fs::read_dir(dir).map_err(|e| {
@@ -89,7 +89,7 @@ impl ContentTypeRegistry {
                     schema.name,
                     schema.table
                 );
-                registry.register(schema, rule_config);
+                registry.register(schema, rule_config, reserved_segments)?;
             }
         }
 
@@ -100,13 +100,18 @@ impl ContentTypeRegistry {
 
     /// 注册单个 content type（线程安全）。
     ///
-    /// 如果 CT 表名与系统保护表冲突则跳过并打印警告。
-    /// 使用 ArcSwap RCU 模式：读取当前快照 → 修改副本 → 原子替换。
+    /// 检查 singular/plural/table 全局唯一性：
+    /// - table 不能和系统保护表冲突
+    /// - singular/plural/table 不能和其他已注册 content type 冲突
+    /// - singular/plural 不能和内置路由段冲突（posts, categories, tags 等）
     pub fn register(
         &self,
         schema: ContentTypeSchema,
         rule_config: &crate::config::app::RuleEngineConfig,
-    ) {
+        reserved_segments: &[&str],
+    ) -> Result<(), AppError> {
+        let mut conflicts = Vec::new();
+
         let protected = {
             let guard = self.inner.load();
             guard.protected_tables.clone()
@@ -116,13 +121,77 @@ impl ContentTypeRegistry {
             &schema.table,
             &protected,
         ) {
-            tracing::warn!(
-                "skipping content type '{}': table '{}' is a protected system table",
-                schema.name,
+            conflicts.push(format!(
+                "table '{}' is a protected system table",
                 schema.table
-            );
-            return;
+            ));
         }
+
+        if reserved_segments.contains(&schema.singular.as_str()) {
+            conflicts.push(format!(
+                "singular '{}' conflicts with a built-in route",
+                schema.singular
+            ));
+        }
+        if reserved_segments.contains(&schema.plural.as_str()) {
+            conflicts.push(format!(
+                "plural '{}' conflicts with a built-in route",
+                schema.plural
+            ));
+        }
+
+        {
+            let guard = self.inner.load();
+
+            if let Some(existing) = guard.types.get(&schema.singular)
+                && (existing.table != schema.table || existing.plural != schema.plural)
+            {
+                conflicts.push(format!(
+                    "singular '{}' already used by '{}'",
+                    schema.singular, existing.name
+                ));
+            }
+            if let Some(conflict_singular) = guard.by_plural.get(&schema.plural)
+                && conflict_singular != &schema.singular
+            {
+                let name = guard
+                    .types
+                    .get(conflict_singular)
+                    .map(|ct| ct.name.as_str())
+                    .unwrap_or(conflict_singular);
+                conflicts.push(format!(
+                    "plural '{}' already used by '{}'",
+                    schema.plural, name
+                ));
+            }
+            if let Some(conflict_singular) = guard.by_table.get(&schema.table)
+                && conflict_singular != &schema.singular
+            {
+                let name = guard
+                    .types
+                    .get(conflict_singular)
+                    .map(|ct| ct.name.as_str())
+                    .unwrap_or(conflict_singular);
+                conflicts.push(format!(
+                    "table '{}' already used by '{}'",
+                    schema.table, name
+                ));
+            }
+        }
+
+        if !conflicts.is_empty() {
+            tracing::warn!(
+                "content type '{}' registration failed: {}",
+                schema.name,
+                conflicts.join("; ")
+            );
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "content type '{}' registration failed: {}",
+                schema.name,
+                conflicts.join("; ")
+            )));
+        }
+
         let mut schema = schema;
         schema.cache_select_columns();
         schema.cache_rules(rule_config);
@@ -143,6 +212,8 @@ impl ContentTypeRegistry {
             new_inner.types.insert(singular.clone(), arc.clone());
             new_inner
         });
+
+        Ok(())
     }
 
     /// 设置系统保护表列表

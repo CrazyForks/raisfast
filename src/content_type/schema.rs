@@ -7,6 +7,17 @@ use serde::{Deserialize, Serialize};
 use crate::config::app::RuleEngineConfig;
 use crate::errors::app_error::AppError;
 
+/// 内容类型种类
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ContentKind {
+    /// 集合类型（默认）：多条记录，完整 CRUD
+    #[default]
+    Collection,
+    /// 单条类型：只有一条记录，仅 GET/PUT，自动 upsert
+    Single,
+}
+
 /// 内容类型定义
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentTypeSchema {
@@ -18,6 +29,9 @@ pub struct ContentTypeSchema {
     pub plural: String,
     /// 数据库表名
     pub table: String,
+    /// 类型：collection（多条记录）或 single（仅一条记录）
+    #[serde(default)]
+    pub kind: ContentKind,
     /// 描述
     #[serde(default)]
     pub description: String,
@@ -381,6 +395,8 @@ struct ContentTypeHeader {
     soft_delete: bool,
     #[serde(default)]
     versioning: bool,
+    #[serde(default)]
+    kind: ContentKind,
 }
 
 impl ContentTypeSchema {
@@ -522,6 +538,7 @@ impl ContentTypeSchema {
             plural: toml.content_type.plural,
             table: toml.content_type.table,
             description: toml.content_type.description,
+            kind: toml.content_type.kind,
             fields,
             draft_publish: toml.content_type.draft_publish,
             slug_field: toml.content_type.slug_field,
@@ -614,6 +631,18 @@ impl ContentTypeSchema {
         self.fields.iter().find(|f| f.name == name)
     }
 
+    /// 是否为 Single Type
+    #[must_use]
+    pub fn is_single(&self) -> bool {
+        self.kind == ContentKind::Single
+    }
+
+    /// 是否为 Collection Type
+    #[must_use]
+    pub fn is_collection(&self) -> bool {
+        self.kind == ContentKind::Collection
+    }
+
     /// 获取 UID 字段（用于 slug）
     #[must_use]
     pub fn uid_field(&self) -> Option<&FieldSchema> {
@@ -650,6 +679,9 @@ impl ContentTypeSchema {
         }
         if self.versioning {
             header.insert("versioning".into(), toml::Value::Boolean(true));
+        }
+        if self.kind == ContentKind::Single {
+            header.insert("kind".into(), toml::Value::String("single".into()));
         }
 
         let mut fields_table = toml::Table::new();
@@ -938,6 +970,8 @@ pub struct CreateContentTypeRequest {
     #[serde(default)]
     pub description: String,
     #[serde(default)]
+    pub kind: ContentKind,
+    #[serde(default)]
     pub draft_publish: bool,
     pub slug_field: Option<String>,
     #[serde(default = "default_true")]
@@ -1210,16 +1244,16 @@ required = true
     #[test]
     fn registry_load_from_dir() {
         let dir = tempfile::tempdir().unwrap();
-        let path1 = dir.path().join("post.toml");
+        let path1 = dir.path().join("article.toml");
         let path2 = dir.path().join("page.toml");
         std::fs::write(
             &path1,
             r#"
 [content_type]
-name = "Post"
-singular = "post"
-plural = "posts"
-table = "posts"
+name = "Article"
+singular = "article"
+plural = "articles"
+table = "articles"
 
 [fields.title]
 type = "text"
@@ -1230,10 +1264,10 @@ type = "text"
             &path2,
             r#"
 [content_type]
-name = "Page"
-singular = "page"
-plural = "pages"
-table = "pages"
+name = "Document"
+singular = "document"
+plural = "documents"
+table = "documents"
 
 [fields.title]
 type = "text"
@@ -1241,16 +1275,18 @@ type = "text"
         )
         .unwrap();
 
+        let reserved = crate::config::app::BuiltinsConfig::default().reserved_route_segments();
         let reg = ContentTypeRegistry::load_from_dir(
             dir.path(),
             &crate::config::app::RuleEngineConfig::default(),
+            &reserved,
         )
         .unwrap();
         assert_eq!(reg.len(), 2);
-        assert!(reg.get("post").is_some());
-        assert!(reg.get("page").is_some());
+        assert!(reg.get("article").is_some());
+        assert!(reg.get("document").is_some());
         assert!(reg.get("nonexistent").is_none());
-        assert!(reg.get_by_table("posts").is_some());
+        assert!(reg.get_by_table("articles").is_some());
     }
 
     #[test]
@@ -1283,5 +1319,53 @@ type = "unknown_type"
 "#;
         let result = ContentTypeSchema::parse_from_str(toml);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_single_type() {
+        let toml = r#"
+[content_type]
+name = "SiteSetting"
+singular = "site_setting"
+plural = "site_settings"
+table = "site_settings"
+kind = "single"
+
+[fields.site_title]
+type = "text"
+default = "My Site"
+
+[fields.site_description]
+type = "text"
+"#;
+        let ct = ContentTypeSchema::parse_from_str(toml).unwrap();
+        assert_eq!(ct.name, "SiteSetting");
+        assert!(ct.is_single());
+        assert!(!ct.is_collection());
+        assert_eq!(ct.kind, ContentKind::Single);
+
+        let serialized = ct.to_toml().unwrap();
+        assert!(serialized.contains("kind = \"single\""));
+
+        let reparsed = ContentTypeSchema::parse_from_str(&serialized).unwrap();
+        assert!(reparsed.is_single());
+    }
+
+    #[test]
+    fn parse_collection_type_default() {
+        let toml = r#"
+[content_type]
+name = "Post"
+singular = "post"
+plural = "posts"
+table = "posts"
+
+[fields.title]
+type = "text"
+"#;
+        let ct = ContentTypeSchema::parse_from_str(toml).unwrap();
+        assert!(ct.is_collection());
+        assert!(!ct.is_single());
+        assert_eq!(ct.kind, ContentKind::Collection);
     }
 }

@@ -1,0 +1,562 @@
+-- ============================================================
+-- rust-blog 完整数据库 Schema
+-- 由所有 migration 文件合并而成，用于新部署一键初始化
+-- 生成日期：2026-04-30
+-- ============================================================
+
+-- ── 平台基础层（永不禁用） ──────────────────────────────────
+
+-- 用户
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    email TEXT UNIQUE NOT NULL,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'reader',
+    avatar TEXT,
+    bio TEXT,
+    website TEXT,
+    phone TEXT,
+    email_verified INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS NOT NULL;
+
+-- Refresh Tokens
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT UNIQUE NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);
+
+-- 站点配置
+CREATE TABLE IF NOT EXISTS options (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'text',
+    group_name TEXT NOT NULL DEFAULT 'general',
+    label TEXT NOT NULL DEFAULT '',
+    description TEXT,
+    validation TEXT,
+    is_public BOOLEAN NOT NULL DEFAULT 0,
+    autoload BOOLEAN NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    UNIQUE(tenant_id, key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_options_tenant_key ON options(tenant_id, key);
+
+-- RBAC 角色
+CREATE TABLE IF NOT EXISTS roles (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    is_system BOOLEAN NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_roles_tenant ON roles(tenant_id);
+
+-- RBAC 权限
+CREATE TABLE IF NOT EXISTS permissions (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    action TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    fields TEXT,
+    conditions TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_role_action_subject
+    ON permissions(role_id, action, subject);
+CREATE INDEX IF NOT EXISTS idx_permissions_tenant ON permissions(tenant_id);
+
+-- 租户
+CREATE TABLE IF NOT EXISTS tenants (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    domain TEXT UNIQUE,
+    config TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- 审计日志
+CREATE TABLE IF NOT EXISTS audit_log (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    actor_id TEXT,
+    actor_role TEXT,
+    action TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    subject_id TEXT,
+    detail TEXT,
+    ip_address TEXT,
+    user_agent TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_tenant ON audit_log(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(actor_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
+
+-- API Token
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    token_hash TEXT UNIQUE NOT NULL,
+    token_prefix TEXT NOT NULL,
+    scopes TEXT NOT NULL DEFAULT '["read","write"]',
+    last_used_at TEXT,
+    expires_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_tokens_user_id ON api_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_token_hash ON api_tokens(token_hash);
+
+-- Webhook 订阅
+CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    url TEXT NOT NULL,
+    secret TEXT NOT NULL,
+    events TEXT NOT NULL DEFAULT '[]',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    description TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_tenant ON webhook_subscriptions(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_enabled ON webhook_subscriptions(enabled);
+
+-- 插件 KV 存储
+CREATE TABLE IF NOT EXISTS plugin_storage (
+    plugin_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    expires_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (plugin_id, key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_plugin_storage_plugin ON plugin_storage(plugin_id);
+
+-- 内容版本历史
+CREATE TABLE IF NOT EXISTS content_revisions (
+    id TEXT PRIMARY KEY,
+    content_type TEXT NOT NULL,
+    record_id TEXT NOT NULL,
+    revision_number INTEGER NOT NULL,
+    snapshot TEXT NOT NULL,
+    created_by TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(content_type, record_id, revision_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_revisions_ct_record
+    ON content_revisions(content_type, record_id);
+CREATE INDEX IF NOT EXISTS idx_revisions_ct_record_rev
+    ON content_revisions(content_type, record_id, revision_number DESC);
+
+-- OAuth 账号绑定
+CREATE TABLE IF NOT EXISTS oauth_accounts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    provider_user_id TEXT NOT NULL,
+    email TEXT,
+    display_name TEXT,
+    avatar_url TEXT,
+    access_token TEXT,
+    refresh_token TEXT,
+    token_expires_at TEXT,
+    profile TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(provider, provider_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user ON oauth_accounts(user_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_accounts_provider ON oauth_accounts(provider, provider_user_id);
+
+-- OAuth 短期 state 存储（PKCE）
+CREATE TABLE IF NOT EXISTS oauth_states (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    code_verifier TEXT NOT NULL,
+    user_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
+
+-- 密码重置令牌
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires_at ON password_reset_tokens(expires_at);
+
+-- 短信验证码
+CREATE TABLE IF NOT EXISTS sms_codes (
+    id TEXT PRIMARY KEY,
+    phone TEXT NOT NULL,
+    code TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    verified_at TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    ip_address TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sms_codes_phone ON sms_codes(phone);
+CREATE INDEX IF NOT EXISTS idx_sms_codes_expires ON sms_codes(expires_at);
+
+-- 邮箱验证令牌
+CREATE TABLE IF NOT EXISTS email_verification_tokens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT NOT NULL UNIQUE,
+    email TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    verified_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_token ON email_verification_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user_id ON email_verification_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expires ON email_verification_tokens(expires_at);
+
+-- 后台任务队列
+CREATE TABLE IF NOT EXISTS jobs (
+    id           TEXT PRIMARY KEY,
+    job_type     TEXT NOT NULL,
+    payload      TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending',
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 3,
+    run_after    TEXT,
+    error        TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_run_after ON jobs(run_after) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs(job_type);
+
+-- 定时任务调度
+CREATE TABLE IF NOT EXISTS cron_schedules (
+    id           TEXT PRIMARY KEY,
+    label        TEXT NOT NULL,
+    job_type     TEXT NOT NULL,
+    payload      TEXT,
+    cron_expr    TEXT NOT NULL,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    last_run_at  TEXT,
+    next_run_at  TEXT NOT NULL,
+    plugin_id    TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cron_enabled ON cron_schedules(enabled);
+CREATE INDEX IF NOT EXISTS idx_cron_next_run ON cron_schedules(next_run_at) WHERE enabled = 1;
+CREATE INDEX IF NOT EXISTS idx_cron_plugin ON cron_schedules(plugin_id);
+
+-- Cron 执行历史
+CREATE TABLE IF NOT EXISTS cron_execution_log (
+    id           TEXT PRIMARY KEY,
+    schedule_id  TEXT NOT NULL,
+    job_type     TEXT NOT NULL,
+    label        TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'running',
+    duration_ms  INTEGER,
+    error        TEXT,
+    started_at   TEXT NOT NULL,
+    finished_at  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_cron_log_schedule ON cron_execution_log(schedule_id);
+CREATE INDEX IF NOT EXISTS idx_cron_log_status ON cron_execution_log(status);
+CREATE INDEX IF NOT EXISTS idx_cron_log_started ON cron_execution_log(started_at);
+
+-- ── 内置模块：Blog（BUILTIN_BLOG=true） ──────────────────
+
+-- 分类
+CREATE TABLE IF NOT EXISTS categories (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    name TEXT UNIQUE NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    description TEXT,
+    parent_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_categories_tenant ON categories(tenant_id);
+
+-- 标签
+CREATE TABLE IF NOT EXISTS tags (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    name TEXT UNIQUE NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_tags_tenant ON tags(tenant_id);
+
+-- 文章
+CREATE TABLE IF NOT EXISTS posts (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    title TEXT NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    content TEXT NOT NULL,
+    excerpt TEXT,
+    cover_image TEXT,
+    status TEXT NOT NULL DEFAULT 'draft',
+    author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
+    view_count INTEGER NOT NULL DEFAULT 0,
+    is_pinned INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    published_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_posts_slug ON posts(slug);
+CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status);
+CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(author_id);
+CREATE INDEX IF NOT EXISTS idx_posts_category ON posts(category_id);
+CREATE INDEX IF NOT EXISTS idx_posts_created ON posts(created_at);
+CREATE INDEX IF NOT EXISTS idx_posts_tenant ON posts(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_posts_status_created
+    ON posts(status, is_pinned DESC, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_status_category
+    ON posts(status, category_id);
+CREATE INDEX IF NOT EXISTS idx_posts_status_author
+    ON posts(status, author_id);
+
+-- 文章-标签（多对多）
+CREATE TABLE IF NOT EXISTS posts_tags (
+    post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (post_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_posts_tags_tag_id ON posts_tags(tag_id);
+
+-- 评论
+CREATE TABLE IF NOT EXISTS comments (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    author_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    nickname TEXT,
+    email TEXT,
+    content TEXT NOT NULL,
+    parent_id TEXT REFERENCES comments(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id);
+CREATE INDEX IF NOT EXISTS idx_comments_status ON comments(status);
+CREATE INDEX IF NOT EXISTS idx_comments_tenant ON comments(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_comments_post_status
+    ON comments(post_id, status);
+CREATE INDEX IF NOT EXISTS idx_comments_parent_id
+    ON comments(parent_id);
+
+-- ── 内置模块：Pages（BUILTIN_PAGES=true） ────────────────
+
+CREATE TABLE IF NOT EXISTS pages (
+    id               TEXT PRIMARY KEY,
+    tenant_id        TEXT NOT NULL DEFAULT 'default',
+    title            TEXT NOT NULL,
+    slug             TEXT NOT NULL,
+    content          TEXT,
+    blocks           TEXT,
+    meta_title       TEXT,
+    meta_description TEXT,
+    og_image         TEXT,
+    template         TEXT NOT NULL DEFAULT 'default',
+    parent_id        TEXT REFERENCES pages(id) ON DELETE SET NULL,
+    sort_order       INTEGER NOT NULL DEFAULT 0,
+    status           TEXT NOT NULL DEFAULT 'draft',
+    author_id        TEXT NOT NULL REFERENCES users(id),
+    cover_image      TEXT,
+    published_at     TEXT,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(tenant_id, slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pages_slug      ON pages(tenant_id, slug);
+CREATE INDEX IF NOT EXISTS idx_pages_status    ON pages(tenant_id, status);
+CREATE INDEX IF NOT EXISTS idx_pages_parent    ON pages(tenant_id, parent_id);
+CREATE INDEX IF NOT EXISTS idx_pages_author    ON pages(author_id);
+
+CREATE TABLE IF NOT EXISTS reusable_blocks (
+    id          TEXT PRIMARY KEY,
+    tenant_id   TEXT NOT NULL DEFAULT 'default',
+    name        TEXT NOT NULL,
+    block_type  TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    description TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_reusable_blocks_tenant ON reusable_blocks(tenant_id);
+
+-- ── 内置模块：Media（BUILTIN_MEDIA=true） ────────────────
+
+CREATE TABLE IF NOT EXISTS media (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    filepath TEXT NOT NULL,
+    mimetype TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    width INTEGER,
+    height INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_media_user_created
+    ON media(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_media_tenant ON media(tenant_id);
+
+-- ── 内置模块：Workflow（BUILTIN_WORKFLOW=true） ──────────
+
+CREATE TABLE IF NOT EXISTS workflow_definitions (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    steps TEXT NOT NULL,
+    initial_step TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS workflow_instances (
+    id TEXT PRIMARY KEY,
+    definition_id TEXT NOT NULL REFERENCES workflow_definitions(id),
+    status TEXT NOT NULL DEFAULT 'running',
+    current_step TEXT,
+    context TEXT NOT NULL DEFAULT '{}',
+    triggered_by TEXT,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_wf_instances_definition ON workflow_instances(definition_id);
+CREATE INDEX IF NOT EXISTS idx_wf_instances_status ON workflow_instances(status);
+
+CREATE TABLE IF NOT EXISTS workflow_step_logs (
+    id TEXT PRIMARY KEY,
+    instance_id TEXT NOT NULL REFERENCES workflow_instances(id),
+    step_id TEXT NOT NULL,
+    step_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    input TEXT,
+    output TEXT,
+    error TEXT,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_wf_step_logs_instance ON workflow_step_logs(instance_id);
+
+-- ============================================================
+-- 预置数据
+-- ============================================================
+
+-- 默认租户
+INSERT OR IGNORE INTO tenants (id, name, domain, config, status, created_at, updated_at) VALUES
+    ('default', 'Default', NULL, '{}', 'active', datetime('now'), datetime('now'));
+
+-- 系统角色
+INSERT OR IGNORE INTO roles (id, tenant_id, name, description, is_system, created_at, updated_at) VALUES
+    ('role-admin', 'default', 'admin', '超级管理员', 1, datetime('now'), datetime('now')),
+    ('role-editor', 'default', 'editor', '编辑', 0, datetime('now'), datetime('now')),
+    ('role-author', 'default', 'author', '作者', 0, datetime('now'), datetime('now')),
+    ('role-reader', 'default', 'reader', '读者', 1, datetime('now'), datetime('now'));
+
+-- admin 全局权限
+INSERT OR IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    ('perm-admin-all', 'default', 'role-admin', '*', '*', '["*"]', NULL, datetime('now'));
+
+-- editor 权限
+INSERT OR IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    ('perm-editor-ct-create', 'default', 'role-editor', 'content-type::*.*', 'content-type::*', '["*"]', NULL, datetime('now'));
+
+-- author 权限
+INSERT OR IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    ('perm-author-post-create', 'default', 'role-author', 'content-type::post.create', 'content-type::post', '["*"]', NULL, datetime('now')),
+    ('perm-author-post-read', 'default', 'role-author', 'content-type::post.read', 'content-type::post', '["*"]', NULL, datetime('now')),
+    ('perm-author-post-update', 'default', 'role-author', 'content-type::post.update', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', datetime('now')),
+    ('perm-author-post-delete', 'default', 'role-author', 'content-type::post.delete', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', datetime('now'));
+
+-- reader 权限
+INSERT OR IGNORE INTO permissions (id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    ('perm-reader-post-read', 'default', 'role-reader', 'content-type::post.read', 'content-type::post', '["title","slug","content","excerpt","status"]', NULL, datetime('now')),
+    ('perm-reader-comment-create', 'default', 'role-reader', 'content-type::comment.create', 'content-type::comment', '["content","nickname","email"]', NULL, datetime('now'));
+
+-- 站点配置
+INSERT OR IGNORE INTO options (id, tenant_id, key, value, type, group_name, label, description, validation, is_public, autoload, sort_order, updated_at) VALUES
+    ('opt-site-title', 'default', 'site_title', '"My Blog"', 'text', 'general', '站点标题', '显示在浏览器标题栏和页面头部', '{"max_length":100}', 1, 1, 1, datetime('now')),
+    ('opt-site-desc', 'default', 'site_description', '""', 'text', 'general', '站点描述', '简短描述站点用途', '{"max_length":500}', 1, 1, 2, datetime('now')),
+    ('opt-site-url', 'default', 'site_url', '""', 'url', 'general', '站点 URL', '如 https://example.com', NULL, 1, 1, 3, datetime('now')),
+    ('opt-admin-email', 'default', 'admin_email', '""', 'email', 'general', '管理员邮箱', NULL, NULL, 0, 1, 4, datetime('now')),
+    ('opt-timezone', 'default', 'timezone', '"UTC"', 'select', 'general', '时区', NULL, '{"values":["UTC","Asia/Shanghai","Asia/Tokyo","US/Eastern","US/Pacific","Europe/London","Europe/Berlin"]}', 1, 1, 5, datetime('now')),
+    ('opt-date-fmt', 'default', 'date_format', '"%Y-%m-%d"', 'select', 'general', '日期格式', NULL, '{"values":["%Y-%m-%d","%d/%m/%Y","%m/%d/%Y","%Y年%m月%d日"]}', 1, 1, 6, datetime('now')),
+    ('opt-per-page', 'default', 'posts_per_page', '10', 'integer', 'reading', '每页文章数', NULL, '{"min":1,"max":100}', 1, 1, 10, datetime('now')),
+    ('opt-rss-items', 'default', 'rss_items', '20', 'integer', 'reading', 'RSS 条目数', NULL, '{"min":1,"max":100}', 1, 1, 11, datetime('now')),
+    ('opt-permalink', 'default', 'permalink_structure', '"/:year/:month/:slug"', 'select', 'reading', 'URL 结构', NULL, '{"values":["/:year/:month/:slug","/:slug","/posts/:slug"]}', 1, 1, 12, datetime('now')),
+    ('opt-comment-mod', 'default', 'comment_moderation', 'true', 'boolean', 'discussion', '评论需审核', '开启后新评论需管理员审批', NULL, 0, 1, 20, datetime('now')),
+    ('opt-comment-order', 'default', 'comment_order', '"asc"', 'select', 'discussion', '评论排序', NULL, '{"values":["asc","desc"]}', 1, 1, 21, datetime('now')),
+    ('opt-default-role', 'default', 'default_role', '"reader"', 'select', 'discussion', '新用户默认角色', NULL, '{"values":["reader","author"]}', 0, 1, 22, datetime('now')),
+    ('opt-theme', 'default', 'theme', '"default"', 'select', 'appearance', '当前主题', NULL, '{"values":["default","corporate","minimal","warm"]}', 1, 1, 30, datetime('now')),
+    ('opt-maintenance', 'default', 'maintenance_mode', 'false', 'boolean', 'appearance', '维护模式', '开启后前台显示维护页面', NULL, 1, 1, 31, datetime('now'));

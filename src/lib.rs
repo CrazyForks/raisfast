@@ -122,10 +122,13 @@ pub async fn build_app_state(config: &AppConfig) -> anyhow::Result<AppState> {
     );
 
     let search: Arc<dyn SearchEngine> = build_search_engine(config);
+    let reserved = config.builtins.reserved_route_segments();
     let ct_registry = Arc::new(ContentTypeRegistry::load_from_dir(
         std::path::Path::new(&config.content_type_dir),
         &config.rule_engine,
+        &reserved,
     )?);
+    ct_registry.set_protected_tables(config.builtins.protected_tables());
 
     {
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());

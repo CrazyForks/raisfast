@@ -275,6 +275,69 @@ impl ContentRepository {
         Ok(result)
     }
 
+    /// 确保 Single Type 的唯一记录存在（不存在则自动创建），返回该记录
+    pub async fn ensure_single(
+        &self,
+        ct: &ContentTypeSchema,
+        tenant_id: Option<&str>,
+    ) -> Result<Value, AppError> {
+        let tid = self.resolve_tenant(&ct.table, tenant_id).await;
+
+        let mut where_parts = Vec::new();
+        if tid.is_some() {
+            where_parts.push(format!("tenant_id = {}", placeholder(1)));
+        }
+
+        let columns = ct.column_names(None, true);
+        let select_cols = columns.join(", ");
+
+        let sql = if where_parts.is_empty() {
+            format!("SELECT {select_cols} FROM {} LIMIT 1", ct.table)
+        } else {
+            format!(
+                "SELECT {select_cols} FROM {} WHERE {} LIMIT 1",
+                ct.table,
+                where_parts.join(" AND ")
+            )
+        };
+        let sql = crate::db::dialect::translate(&sql);
+
+        let mut q = sqlx::query(&sql);
+        if let Some(ref tid) = tid {
+            q = q.bind(tid);
+        }
+
+        let row = q
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+
+        if let Some(r) = row {
+            let mut result = row_to_value(&r, &columns);
+            if !ct.relation_fields().is_empty() {
+                super::resolver::resolve_relations(
+                    &self.pool,
+                    ct,
+                    std::slice::from_mut(&mut result),
+                    None,
+                )
+                .await?;
+            }
+            return Ok(result);
+        }
+
+        let save_ctx = SaveContext::default();
+        self.create(
+            ct,
+            json!({
+                "__single": true
+            }),
+            tenant_id,
+            &save_ctx,
+        )
+        .await
+    }
+
     /// 按 slug 查找
     pub async fn find_by_slug(
         &self,

@@ -242,7 +242,7 @@ impl HostContext {
             Some(t) => t,
             None => return "error: cannot parse table name from SQL".to_string(),
         };
-        if PermissionChecker::is_protected_table(&table, &self.config.protected_tables) {
+        if PermissionChecker::is_protected_table(&table, &self.config.builtins.protected_tables()) {
             return format!("error: table '{table}' is protected and cannot be read by plugins");
         }
         if !PermissionChecker::is_table_readable(&self.permissions, &table) {
@@ -291,7 +291,7 @@ impl HostContext {
             Some(t) => t,
             None => return r#"{"error":"cannot parse table name from SQL"}"#.to_string(),
         };
-        if PermissionChecker::is_protected_table(&table, &self.config.protected_tables) {
+        if PermissionChecker::is_protected_table(&table, &self.config.builtins.protected_tables()) {
             return format!(
                 r#"{{"error":"table '{table}' is protected and cannot be modified by plugins"}}"#
             );
@@ -607,6 +607,7 @@ mod tests {
     fn make_test_config() -> Arc<AppConfig> {
         let mut config = AppConfig::test_defaults();
         config.host = "127.0.0.1".into();
+        config.builtins.blog = false;
         Arc::new(config)
     }
 

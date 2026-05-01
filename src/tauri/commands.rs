@@ -142,6 +142,44 @@ pub async fn post_create(
 // ── CMS Content Types ─────────────────────────────────────────────
 
 #[tauri::command]
+pub async fn cms_single_get(
+    state: TauriState<'_, AppManagedState>,
+    singular: String,
+) -> Result<serde_json::Value, String> {
+    let ct = state
+        .0
+        .content_type_registry
+        .get(&singular)
+        .ok_or_else(|| format!("content type '{}' not found", singular))?;
+    if !ct.is_single() {
+        return Err(format!("content type '{}' is not a single type", singular));
+    }
+    crate::content_type::handler::do_single_get(&state.0, &ct, None)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn cms_single_update(
+    state: TauriState<'_, AppManagedState>,
+    singular: String,
+    data: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let ct = state
+        .0
+        .content_type_registry
+        .get(&singular)
+        .ok_or_else(|| format!("content type '{}' not found", singular))?;
+    if !ct.is_single() {
+        return Err(format!("content type '{}' is not a single type", singular));
+    }
+    let save_ctx = crate::content_type::repository::SaveContext::default();
+    crate::content_type::handler::do_single_update(&state.0, &ct, data, &save_ctx, None)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn cms_list(
     state: TauriState<'_, AppManagedState>,
     plural: String,
@@ -358,7 +396,7 @@ pub async fn schema_create(
 
     if crate::plugins::permissions::PermissionChecker::is_protected_table(
         &schema.table,
-        &state.0.config.protected_tables,
+        &state.0.config.builtins.protected_tables(),
     ) {
         return Err(format!(
             "table '{}' is a protected system table",
@@ -385,10 +423,12 @@ pub async fn schema_create(
         .await
         .map_err(|e| format!("migration failed: {e}"))?;
 
+    let reserved = state.0.config.builtins.reserved_route_segments();
     state
         .0
         .content_type_registry
-        .register(schema.clone(), &state.0.config.rule_engine);
+        .register(schema.clone(), &state.0.config.rule_engine, &reserved)
+        .map_err(|e| e.to_string())?;
 
     Ok(serde_json::to_value(&schema).unwrap_or_default())
 }

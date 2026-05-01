@@ -469,3 +469,252 @@ Tauri 适配        完整文档 + 教程      模板 CLI 规范         社区�
 - **rust-blog**：性能最强 + 扩展性最强 + 开发速度最快（补齐 Builder 后） + 部署最灵活
 
 **核心竞争力：用 Rust 的性能和安全性，做到 Node.js 方案的开发体验。**
+
+---
+
+## 8. 值得借鉴的设计
+
+### 8.1 Directus — 反向连接已有数据库
+
+Directus 不建表，而是读取现有数据库 schema，自动生成 Admin UI 和 API。用户可以用 SQL 直接建表，然后 Directus 自动识别。
+
+**借鉴方向：** 未来支持 `--connect-mode`，连已有 SQLite/PostgreSQL 自动生成 TOML 定义。
+
+**优先级：** P2 — 差异化功能，非 MVP 必需。
+
+### 8.2 Payload CMS — 字段级 Hook + 粒度 Access Control
+
+```typescript
+fields: [
+  {
+    name: 'price',
+    type: 'number',
+    access: {
+      read: ({ req: { user } }) => user.role === 'admin',
+      update: () => false,  // 创建后不可改
+    },
+    hooks: {
+      beforeValidate: [validatePrice],
+      afterChange: [syncToInventory],
+    },
+  }
+]
+```
+
+**借鉴方向：**
+
+- **字段级 Access Control（P0）** — 当前 API Rule 只到 endpoint 级别，企业场景需要字段级权限（如 `price` 字段仅 admin 可读、`author_id` 创建后不可改）。可在 TOML 字段定义中扩展 `access` 配置。
+- **字段级 Hook（P1）** — 当前 Hook 粒度是 content type 级别（ContentCreating/ContentUpdated），没有字段级。字段级 Hook 和插件系统天然配合，如 `price` 变更时自动触发库存同步。
+
+**优先级：** P0（字段级 Access Control）/ P1（字段级 Hook）
+
+### 8.3 Supabase — RLS（行级安全）
+
+```sql
+CREATE POLICY "users_can_read_own" ON posts
+  FOR SELECT USING (author_id = auth.uid());
+```
+
+直接在数据库层做行级权限，API 层完全不用管。
+
+**借鉴方向：** 我们的 API Rule 已经在应用层实现了等价功能（`filter = 'author_id = @request.auth.id'`），不需要数据库层 RLS（SQLite 也不支持）。当前方案已经足够。
+
+**优先级：** 已实现（等价方案）
+
+### 8.4 Sanity — 内容版本树
+
+```
+v1 ── v2 ── v3（draft）
+      └── v2a（另一个分支）
+```
+
+我们的 `content_revisions` 是线性历史列表。Sanity 做的是分支版本树，支持协作场景下多人同时编辑不同分支。
+
+**借鉴方向：** 目前不需要。未来如果做多人协作编辑（类似 Google Docs），可以考虑分支版本树。当前线性 revision 已经满足审计和回滚需求。
+
+**优先级：** P3
+
+### 8.5 PocketBase — Realtime 订阅
+
+```javascript
+pb.collection('posts').subscribe('*', (e) => {
+  console.log(e.action, e.record);
+});
+```
+
+PocketBase 通过 SSE 长连接实现 Collection 级别的数据变更实时推送。
+
+**借鉴方向：** 我们的 SSE 基础设施已就绪（`/api/v1/sse`），可以新增 Collection 级别的变更订阅：
+
+```
+GET /api/v1/cms/{plural}/subscribe
+```
+
+Content Type 的 create/update/delete 事件自动推送给订阅者。
+
+**优先级：** P1 — 差异化卖点，实现成本低
+
+### 8.6 Strapi — Content-Type Builder 可视化
+
+Strapi 的 Admin UI 提供 Content-Type Builder，支持在线：
+- 创建/编辑/删除 Content Type
+- 添加/删除字段（可视化表单）
+- 配置字段属性（类型、校验、关系）
+- 即时生效（无需重启）
+
+**借鉴方向：** 这是当前最优先需要补齐的能力。后端 API 已完备（`POST/PUT/DELETE /admin/content-types`），需要 Admin UI 前端对接。
+
+**优先级：** P0 — 没有这个不能叫产品
+
+### 8.7 借鉴优先级总结
+
+| 借鉴点 | 来源 | 优先级 | 理由 |
+|--------|------|--------|------|
+| Content-Type Builder 可视化 | Strapi | **P0** | 没有这个不能叫产品 |
+| 字段级 Access Control | Payload | **P0** | 企业场景刚需，API Rule 只到 endpoint 不够 |
+| Admin 多视图（Board/Calendar） | Notion | **P0** | Content Type Admin UI 差异化 |
+| Realtime SSE 订阅 | PocketBase | **P1** | 差异化卖点，基础设施已就绪 |
+| 字段级 Hook | Payload | **P1** | 和插件系统天然配合 |
+| 字段级 auto_generate（slug 等） | Keystone | **P1** | 减少硬编码，Content Type 更通用 |
+| 触发器 → 动作链（Flow） | Directus | **P1** | 整合现有 Webhook/Worker/Event |
+| 反向连接已有 DB | Directus | **P2** | 未来差异化 |
+| 付费会员系统 | Ghost | **P2** | 创作者经济场景 |
+| 服务端模板引擎（Tera） | Shopify | **P2** | 降低非开发者的自定义门槛 |
+| 分支版本树 | Sanity | **P3** | 多人协作才需要 |
+| Shortcode 动态组件 | WordPress | **P3** | 和 Block 系统重叠 |
+| Section + Entry Type | Craft | **P3** | 和 Dynamic Zone 类似 |
+
+---
+
+## 9. 补充借鉴设计
+
+### 9.1 WordPress — 短代码（Shortcode）
+
+在内容中嵌入动态组件：
+
+```
+[contact-form email="admin@example.com"]
+[gallery ids="1,2,3" columns="3"]
+[latest-posts count="5" category="tech"]
+```
+
+**借鉴方向：** 可以在 PageBlock 里加 `Shortcode` 类型，或让 Richtext 块支持 `[plugin.xxx]` 语法，渲染时调用插件返回 HTML。
+
+**优先级：** P3 — 和现有 Block 系统功能重叠
+
+### 9.2 Ghost — 会员 + 付费订阅
+
+Ghost 内置完整的付费会员系统：
+
+```
+免费会员 → 查看公开文章
+付费会员（$5/月）→ 查看付费文章 + Newsletter
+VIP（$15/月）→ 全部内容 + 社区
+```
+
+**借鉴方向：** 创作者经济最核心的功能。可通过 Content Type + 插件实现，但内置更方便。Stripe 集成 + 内容付费墙 + Newsletter 发送，是独立博客/创作者的刚需。
+
+**优先级：** P2
+
+### 9.3 Shopify Liquid — 服务端模板引擎
+
+```liquid
+{% for product in collection.products %}
+  <h2>{{ product.title }}</h2>
+  <span>{{ product.price | money }}</span>
+{% endfor %}
+```
+
+**借鉴方向：** 当前前端完全是 Next.js（React），不支持服务端模板渲染。如果加轻量模板引擎（Rust Tera），可以让非开发者通过模板文件自定义页面，不需要 React 开发能力。Tauri 桌面模式下尤其有价值 — 用户可以离线编辑模板。
+
+**优先级：** P2
+
+### 9.4 Notion — 多视图（Board/Calendar/Gallery）
+
+Notion 的"数据库"本质就是 Content Type，但它有多种视图：
+
+```
+Table View    → 表格（和当前 Admin UI 一样）
+Board View    → 看板（按 status 拖拽排序）
+Gallery View  → 卡片（按封面图展示）
+Calendar View → 日历（按日期排列）
+Timeline View → 甘特图
+```
+
+**借鉴方向：** 当前 Admin UI 只有 Table View。加 Board View 成本很低（前端拖拽组件 + 按 status 分组），但对用户体验提升巨大 — 拖拽改状态（draft → published）。Calendar View 适合按 `published_at` 排列内容。
+
+**优先级：** P0
+
+### 9.5 Directus — Flow 自动化
+
+Directus Flow 是可视化的自动化规则引擎：
+
+```
+当文章状态变为 published
+  → 调用 Webhook（通知搜索引擎）
+  → 发送邮件（通知作者）
+  → 更新缓存
+```
+
+**借鉴方向：** 已有 Webhook + Worker + Event 系统，但分散。整合成"触发器 → 动作链"的配置化界面：
+
+```toml
+[[flow]]
+trigger = "content_type.posts.after_update"
+condition = "status == 'published'"
+actions = [
+  { type = "webhook", url = "https://..." },
+  { type = "email", to = "author", template = "published" },
+  { type = "cache_purge", key = "cms:posts:*" },
+]
+```
+
+用户不需要写代码就能编排自动化流程。
+
+**优先级：** P1
+
+### 9.6 Craft CMS — Section + Entry Type
+
+Craft CMS 的内容模型更灵活：
+
+```
+Section（频道）
+  ├── Entry Type A（文章：标题+正文+标签）
+  ├── Entry Type B（视频：标题+视频URL+时长）
+  └── Entry Type C（链接：标题+URL+描述）
+```
+
+同一个 Section 下可以有多种 Entry Type，比 Strapi 的单一 Content Type 更灵活。
+
+**借鉴方向：** 类似 Strapi 的 Dynamic Zone。可以在 Content Type 里加字段类型 `entry_types`，允许同一条路由下渲染不同类型的条目。
+
+**优先级：** P3 — 和 Dynamic Zone 功能类似
+
+### 9.7 Keystone.js — 字段级 auto_generate
+
+```typescript
+fields: {
+  slug: {
+    type: 'text',
+    hooks: {
+      resolveInput: ({ resolvedData }) => slugify(resolvedData.title),
+    }
+  }
+}
+```
+
+**借鉴方向：** 当前 slug 生成在 service 层硬编码。如果做成字段级配置，Content Type 就更通用：
+
+```toml
+[fields.slug]
+type = "text"
+auto_generate = "slug"      # 从 title 字段自动生成
+auto_source = "title"
+
+[fields.published_at]
+type = "text"
+auto_generate = "timestamp"  # 状态变为 published 时自动填充
+auto_condition = "status == 'published'"
+```
+
+**优先级：** P1

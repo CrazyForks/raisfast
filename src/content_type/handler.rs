@@ -11,10 +11,11 @@ use axum::response::IntoResponse;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::repository::{ContentQuery, ContentRepository, SaveContext};
 use super::rule_engine::compile_rule_sql;
-use super::schema::{ContentTypeSchema, check_api_access};
+use super::schema::{ContentKind, ContentTypeSchema, check_api_access};
 use crate::AppState;
 use crate::errors::app_error::AppError;
 use crate::middleware::auth::OptionalAuth;
@@ -80,49 +81,85 @@ pub fn register_content_routes(
         let plural = ct.plural.clone();
         let singular = ct.singular.clone();
 
-        api = api
-            .route(
-                &format!("/cms/{plural}"),
-                axum::routing::get({
-                    let singular = singular.clone();
-                    move |auth, state, params| list_handler(auth, state, singular.clone(), params)
-                })
-                .post({
-                    let singular = singular.clone();
-                    move |auth, state, data| create_handler(auth, state, singular.clone(), data)
-                }),
-            )
-            .route(
-                &format!("/cms/{plural}/{{id_or_slug}}"),
-                axum::routing::get({
-                    let singular = singular.clone();
-                    move |auth, state, path| get_handler(auth, state, path, singular.clone())
-                })
-                .put({
-                    let singular = singular.clone();
-                    move |auth, state, path, data| {
-                        update_handler(auth, state, path, data, singular.clone())
-                    }
-                })
-                .delete({
-                    let singular = singular.clone();
-                    move |auth, state, path| delete_handler(auth, state, path, singular.clone())
-                }),
-            )
-            .route(
-                &format!("/admin/cms/{plural}"),
-                axum::routing::get({
-                    let singular = singular.clone();
-                    move |state, params| admin_list_handler(state, singular.clone(), params)
-                }),
-            )
-            .route(
-                &format!("/admin/cms/{plural}/{{id_or_slug}}"),
-                axum::routing::get({
-                    let singular = singular.clone();
-                    move |state, path| admin_get_handler(state, path, singular.clone())
-                }),
-            );
+        if ct.kind == ContentKind::Single {
+            api = api
+                .route(
+                    &format!("/cms/{singular}"),
+                    axum::routing::get({
+                        let singular = singular.clone();
+                        move |auth, state| single_get_handler(auth, state, singular.clone())
+                    })
+                    .put({
+                        let singular = singular.clone();
+                        move |auth, state, data| {
+                            single_update_handler(auth, state, data, singular.clone())
+                        }
+                    }),
+                )
+                .route(
+                    &format!("/admin/cms/{singular}"),
+                    axum::routing::get({
+                        let singular = singular.clone();
+                        move |state| admin_single_get_handler(state, singular.clone())
+                    }),
+                );
+        } else {
+            api = api
+                .route(
+                    &format!("/cms/{plural}"),
+                    axum::routing::get({
+                        let singular = singular.clone();
+                        move |auth, state, params| {
+                            list_handler(auth, state, singular.clone(), params)
+                        }
+                    })
+                    .post({
+                        let singular = singular.clone();
+                        move |auth, state, data| {
+                            create_handler(auth, state, singular.clone(), data)
+                        }
+                    }),
+                )
+                .route(
+                    &format!("/cms/{plural}/{{id_or_slug}}"),
+                    axum::routing::get({
+                        let singular = singular.clone();
+                        move |auth, state, path| {
+                            get_handler(auth, state, path, singular.clone())
+                        }
+                    })
+                    .put({
+                        let singular = singular.clone();
+                        move |auth, state, path, data| {
+                            update_handler(auth, state, path, data, singular.clone())
+                        }
+                    })
+                    .delete({
+                        let singular = singular.clone();
+                        move |auth, state, path| {
+                            delete_handler(auth, state, path, singular.clone())
+                        }
+                    }),
+                )
+                .route(
+                    &format!("/admin/cms/{plural}"),
+                    axum::routing::get({
+                        let singular = singular.clone();
+                        move |state, params| {
+                            admin_list_handler(state, singular.clone(), params)
+                        }
+                    }),
+                )
+                .route(
+                    &format!("/admin/cms/{plural}/{{id_or_slug}}"),
+                    axum::routing::get({
+                        let singular = singular.clone();
+                        move |state, path| {
+                            admin_get_handler(state, path, singular.clone())
+                        }
+                    }),
+                );
+        }
 
         if ct.versioning {
             let p = plural.clone();
@@ -157,9 +194,25 @@ fn parse_dynamic_path(path: &str) -> Option<(String, Option<String>)> {
     if segments.is_empty() {
         return None;
     }
-    let plural = segments[0].to_string();
+    let first = segments[0].to_string();
     let id = segments.get(1).map(|s| s.to_string());
-    Some((plural, id))
+    Some((first, id))
+}
+
+/// 根据 singular 或 plural 查找 content type
+fn resolve_content_type(
+    registry: &crate::content_type::ContentTypeRegistry,
+    segment: &str,
+) -> Option<(Arc<ContentTypeSchema>, bool)> {
+    if let Some(ct) = registry.get(segment)
+        && ct.is_single()
+    {
+        return Some((ct, true));
+    }
+    if let Some(ct) = registry.get_by_plural(segment) {
+        return Some((ct, false));
+    }
+    None
 }
 
 /// Catch-all 动态路由 handler（启动后新增的 content type 走这里）
@@ -171,52 +224,69 @@ pub async fn dynamic_cms_handler(
     Query(params): Query<ListParams>,
     body: Option<Json<Value>>,
 ) -> Result<impl IntoResponse, AppError> {
-    let Some((plural, id)) = parse_dynamic_path(&path) else {
+    let Some((segment, id)) = parse_dynamic_path(&path) else {
         return Err(AppError::not_found("invalid cms path"));
     };
 
-    let Some(ct) = state.content_type_registry.get_by_plural(&plural) else {
-        return Err(AppError::not_found(&plural));
+    let Some((ct, is_single)) = resolve_content_type(&state.content_type_registry, &segment) else {
+        return Err(AppError::not_found(&segment));
     };
 
     let save_ctx = SaveContext::from_optional_auth(&auth);
 
-    match (method.clone(), id) {
-        (axum::http::Method::GET, None) => {
-            check_api_access(ct.api.list.access, auth.0.as_ref())?;
-            let data = do_list(&state, &ct, params, auth.0.as_ref()).await?;
-            Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
+    if is_single {
+        match (method.clone(), id) {
+            (axum::http::Method::GET, None) => {
+                check_api_access(ct.api.get.access, auth.0.as_ref())?;
+                let data = do_single_get(&state, &ct, auth.0.as_ref()).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
+            }
+            (axum::http::Method::PUT, None) => {
+                check_api_access(ct.api.update.access, auth.0.as_ref())?;
+                let Json(data) = body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
+                let result = do_single_update(&state, &ct, data, &save_ctx, auth.0.as_ref()).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
+            }
+            _ => Err(AppError::not_found(&format!("{method} {path}"))),
         }
-        (axum::http::Method::POST, None) => {
-            check_api_access(ct.api.create.access, auth.0.as_ref())?;
-            let Json(data) = body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
-            let result = do_create(&state, &ct, data, &save_ctx).await?;
-            Ok((
-                StatusCode::CREATED,
-                Json(crate::errors::response::ApiResponse::success(result)),
-            )
+    } else {
+        match (method.clone(), id) {
+            (axum::http::Method::GET, None) => {
+                check_api_access(ct.api.list.access, auth.0.as_ref())?;
+                let data = do_list(&state, &ct, params, auth.0.as_ref()).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
+            }
+            (axum::http::Method::POST, None) => {
+                check_api_access(ct.api.create.access, auth.0.as_ref())?;
+                let Json(data) = body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
+                let result = do_create(&state, &ct, data, &save_ctx).await?;
+                Ok((
+                    StatusCode::CREATED,
+                    Json(crate::errors::response::ApiResponse::success(result)),
+                )
+                    .into_response())
+            }
+            (axum::http::Method::GET, Some(id)) => {
+                check_api_access(ct.api.get.access, auth.0.as_ref())?;
+                let data = do_get(&state, &ct, &id, auth.0.as_ref()).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
+            }
+            (axum::http::Method::PUT, Some(id)) => {
+                check_api_access(ct.api.update.access, auth.0.as_ref())?;
+                let Json(data) = body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
+                let result = do_update(&state, &ct, &id, data, &save_ctx, auth.0.as_ref()).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
+            }
+            (axum::http::Method::DELETE, Some(id)) => {
+                check_api_access(ct.api.delete.access, auth.0.as_ref())?;
+                do_delete(&state, &ct, &id, auth.0.as_ref()).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(
+                    json!({"deleted": true}),
+                ))
                 .into_response())
+            }
+            _ => Err(AppError::not_found(&format!("{method} {path}"))),
         }
-        (axum::http::Method::GET, Some(id)) => {
-            check_api_access(ct.api.get.access, auth.0.as_ref())?;
-            let data = do_get(&state, &ct, &id, auth.0.as_ref()).await?;
-            Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
-        }
-        (axum::http::Method::PUT, Some(id)) => {
-            check_api_access(ct.api.update.access, auth.0.as_ref())?;
-            let Json(data) = body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
-            let result = do_update(&state, &ct, &id, data, &save_ctx, auth.0.as_ref()).await?;
-            Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
-        }
-        (axum::http::Method::DELETE, Some(id)) => {
-            check_api_access(ct.api.delete.access, auth.0.as_ref())?;
-            do_delete(&state, &ct, &id, auth.0.as_ref()).await?;
-            Ok(Json(crate::errors::response::ApiResponse::success(
-                json!({"deleted": true}),
-            ))
-            .into_response())
-        }
-        _ => Err(AppError::not_found(&format!("{method} {path}"))),
     }
 }
 
@@ -227,24 +297,34 @@ pub async fn dynamic_admin_cms_handler(
     Path(path): Path<String>,
     Query(params): Query<ListParams>,
 ) -> Result<impl IntoResponse, AppError> {
-    let Some((plural, id)) = parse_dynamic_path(&path) else {
+    let Some((segment, id)) = parse_dynamic_path(&path) else {
         return Err(AppError::not_found("invalid admin cms path"));
     };
 
-    let Some(ct) = state.content_type_registry.get_by_plural(&plural) else {
-        return Err(AppError::not_found(&plural));
+    let Some((ct, is_single)) = resolve_content_type(&state.content_type_registry, &segment) else {
+        return Err(AppError::not_found(&segment));
     };
 
-    match (method.clone(), id) {
-        (axum::http::Method::GET, None) => {
-            let data = do_admin_list(&state, &ct, params).await?;
-            Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
+    if is_single {
+        match method.clone() {
+            axum::http::Method::GET => {
+                let data = do_admin_single_get(&state, &ct).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
+            }
+            _ => Err(AppError::not_found(&format!("{method} {path}"))),
         }
-        (axum::http::Method::GET, Some(id)) => {
-            let data = do_admin_get(&state, &ct, &id).await?;
-            Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
+    } else {
+        match (method.clone(), id) {
+            (axum::http::Method::GET, None) => {
+                let data = do_admin_list(&state, &ct, params).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
+            }
+            (axum::http::Method::GET, Some(id)) => {
+                let data = do_admin_get(&state, &ct, &id).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
+            }
+            _ => Err(AppError::not_found(&format!("{method} {path}"))),
         }
-        _ => Err(AppError::not_found(&format!("{method} {path}"))),
     }
 }
 
@@ -602,7 +682,111 @@ async fn do_admin_get(
     item.ok_or_else(|| AppError::not_found(&format!("{}/{}", ct.name, id)))
 }
 
+pub async fn do_single_get(
+    state: &AppState,
+    ct: &ContentTypeSchema,
+    auth: Option<&crate::middleware::auth::AuthIdentity>,
+) -> Result<serde_json::Value, AppError> {
+    let cache_key = format!("cms:{}:single", ct.singular);
+    let cache_ttl = std::time::Duration::from_secs(state.config.rule_engine.cms_cache_ttl_secs);
+    if ct.api.get.cache
+        && let Some(entry) = state.cms_cache.get(&cache_key)
+        && entry.value().1.elapsed() < cache_ttl
+    {
+        return Ok(entry.value().0.clone());
+    }
+
+    let repo = ContentRepository::new(state.pool.clone());
+    let result = repo.ensure_single(ct, None).await?;
+
+    if let Some(rules) = ct.cached_rules.as_ref()
+        && let Some(rule) = rules.get.filter.as_ref()
+    {
+        let ctx = super::rule_engine::RuleContext::from_auth(auth);
+        if !rule.evaluate(&result, &ctx, &state.config.rule_engine) {
+            return Err(AppError::not_found(&ct.name));
+        }
+    }
+
+    if ct.api.get.cache {
+        state
+            .cms_cache
+            .insert(cache_key, (result.clone(), std::time::Instant::now()));
+    }
+
+    let result = filter_fields(result, ct.api.get.fields.as_deref());
+    Ok(result)
+}
+
+pub async fn do_single_update(
+    state: &AppState,
+    ct: &ContentTypeSchema,
+    data: Value,
+    save_ctx: &SaveContext,
+    auth: Option<&crate::middleware::auth::AuthIdentity>,
+) -> Result<serde_json::Value, AppError> {
+    let repo = ContentRepository::new(state.pool.clone());
+    let existing = repo.ensure_single(ct, None).await?;
+    let id = existing
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    do_update(state, ct, &id, data, save_ctx, auth).await
+}
+
+async fn do_admin_single_get(
+    state: &AppState,
+    ct: &ContentTypeSchema,
+) -> Result<serde_json::Value, AppError> {
+    let repo = ContentRepository::new(state.pool.clone());
+    repo.ensure_single(ct, None).await
+}
+
 // ── 固定路由 handler（启动时注册的 content type） ──────────────
+
+async fn single_get_handler(
+    auth: OptionalAuth,
+    State(state): State<AppState>,
+    type_name: String,
+) -> Result<impl IntoResponse, AppError> {
+    let ct = state
+        .content_type_registry
+        .get(&type_name)
+        .ok_or_else(|| AppError::not_found(&type_name))?;
+    check_api_access(ct.api.get.access, auth.0.as_ref())?;
+    let data = do_single_get(&state, &ct, auth.0.as_ref()).await?;
+    Ok(Json(crate::errors::response::ApiResponse::success(data)))
+}
+
+async fn single_update_handler(
+    auth: OptionalAuth,
+    State(state): State<AppState>,
+    Json(data): Json<Value>,
+    type_name: String,
+) -> Result<impl IntoResponse, AppError> {
+    let ct = state
+        .content_type_registry
+        .get(&type_name)
+        .ok_or_else(|| AppError::not_found(&type_name))?;
+    check_api_access(ct.api.update.access, auth.0.as_ref())?;
+    let save_ctx = SaveContext::from_optional_auth(&auth);
+    let result = do_single_update(&state, &ct, data, &save_ctx, auth.0.as_ref()).await?;
+    Ok(Json(crate::errors::response::ApiResponse::success(result)))
+}
+
+async fn admin_single_get_handler(
+    State(state): State<AppState>,
+    type_name: String,
+) -> Result<impl IntoResponse, AppError> {
+    let ct = state
+        .content_type_registry
+        .get(&type_name)
+        .ok_or_else(|| AppError::not_found(&type_name))?;
+    let data = do_admin_single_get(&state, &ct).await?;
+    Ok(Json(crate::errors::response::ApiResponse::success(data)))
+}
 
 async fn list_handler(
     auth: OptionalAuth,
@@ -755,6 +939,7 @@ pub async fn create_schema(
         plural: req.plural,
         table: req.table.clone(),
         description: req.description,
+        kind: req.kind,
         draft_publish: req.draft_publish,
         slug_field: req.slug_field,
         timestamps: req.timestamps,
@@ -769,8 +954,8 @@ pub async fn create_schema(
     };
 
     if crate::plugins::permissions::PermissionChecker::is_protected_table(
-        &req.table,
-        &state.config.protected_tables,
+        &schema.table,
+        &state.config.builtins.protected_tables(),
     ) {
         return Err(AppError::BadRequest(format!(
             "table '{}' is a protected system table",
@@ -791,9 +976,11 @@ pub async fn create_schema(
     let repo = ContentRepository::new(state.pool.clone());
     repo.migrate(&schema).await?;
 
+    let reserved = state.config.builtins.reserved_route_segments();
     state
         .content_type_registry
-        .register(schema.clone(), &state.config.rule_engine);
+        .register(schema.clone(), &state.config.rule_engine, &reserved)
+        .map_err(|e| AppError::Conflict(e.to_string()))?;
 
     tracing::info!(
         "registered content type: {} (table={}, hot-reload)",
@@ -888,9 +1075,11 @@ pub async fn update_schema(
     let repo = ContentRepository::new(state.pool.clone());
     repo.migrate(&updated).await?;
 
+    let reserved = state.config.builtins.reserved_route_segments();
     state
         .content_type_registry
-        .register(updated.clone(), &state.config.rule_engine);
+        .register(updated.clone(), &state.config.rule_engine, &reserved)
+        .map_err(|e| AppError::Conflict(e.to_string()))?;
 
     tracing::info!(
         "updated content type: {} (table={}, hot-reload)",

@@ -119,8 +119,6 @@ pub struct AppConfig {
     pub content_type_dir: String,
     #[serde(default = "default_timezone")]
     pub timezone: String,
-    #[serde(default = "default_protected_tables")]
-    pub protected_tables: Vec<String>,
     #[serde(default = "default_storage_driver")]
     pub storage_driver: String,
     pub s3_endpoint: Option<String>,
@@ -153,6 +151,8 @@ pub struct AppConfig {
     pub sms_rate_limit_secs: u64,
     #[serde(default)]
     pub require_email_verification: bool,
+    #[serde(default)]
+    pub builtins: BuiltinsConfig,
     #[serde(default = "default_email_provider")]
     pub email_provider: String,
     pub email_smtp_host: Option<String>,
@@ -179,6 +179,141 @@ pub struct AppConfig {
     pub sms_twilio_account_sid: Option<String>,
     pub sms_twilio_auth_token: Option<String>,
     pub sms_twilio_from: Option<String>,
+}
+
+/// 内置模块开关
+///
+/// 控制哪些内置功能模块启用。禁用后对应路由不注册、
+/// 保护表和保留路由段自动释放（可被 Content Type 占用）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuiltinsConfig {
+    #[serde(default = "default_true")]
+    pub blog: bool,
+    #[serde(default = "default_true")]
+    pub pages: bool,
+    #[serde(default = "default_true")]
+    pub media: bool,
+    #[serde(default = "default_true")]
+    pub fulltext: bool,
+    #[serde(default = "default_true")]
+    pub workflow: bool,
+}
+
+impl Default for BuiltinsConfig {
+    fn default() -> Self {
+        Self {
+            blog: true,
+            pages: true,
+            media: true,
+            fulltext: true,
+            workflow: true,
+        }
+    }
+}
+
+impl BuiltinsConfig {
+    pub fn from_env() -> Self {
+        Self {
+            blog: env::var("BUILTIN_BLOG")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(true),
+            pages: env::var("BUILTIN_PAGES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(true),
+            media: env::var("BUILTIN_MEDIA")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(true),
+            fulltext: env::var("BUILTIN_FULLTEXT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(true),
+            workflow: env::var("BUILTIN_WORKFLOW")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(true),
+        }
+    }
+
+    /// 是否全部禁用（纯 Headless CMS 模式）
+    pub fn is_all_disabled(&self) -> bool {
+        !self.blog && !self.pages && !self.media && !self.fulltext && !self.workflow
+    }
+
+    /// 根据启用的模块返回保护表列表
+    pub fn protected_tables(&self) -> Vec<String> {
+        let mut tables = vec![
+            "users".into(),
+            "roles".into(),
+            "permissions".into(),
+            "audit_log".into(),
+            "plugin_storage".into(),
+            "options".into(),
+            "rbac_roles".into(),
+            "rbac_permissions".into(),
+            "rbac_role_permissions".into(),
+            "tenants".into(),
+            "api_tokens".into(),
+            "webhook_subscriptions".into(),
+            "content_revisions".into(),
+            "oauth_accounts".into(),
+            "password_resets".into(),
+        ];
+        if self.blog {
+            tables.extend([
+                "posts".into(),
+                "categories".into(),
+                "tags".into(),
+                "post_tags".into(),
+                "comments".into(),
+            ]);
+        }
+        if self.pages {
+            tables.extend(["pages".into(), "reusable_blocks".into()]);
+        }
+        if self.media {
+            tables.push("media".into());
+        }
+        tables
+    }
+
+    /// 根据启用的模块返回保留路由段
+    pub fn reserved_route_segments(&self) -> Vec<&'static str> {
+        let mut segments: Vec<&'static str> = vec![
+            "auth",
+            "admin",
+            "options",
+            "routes",
+            "health",
+            "plugins",
+            "oauth",
+            "cms",
+            "content-types",
+            "search",
+            "rss",
+            "sitemap",
+            "sse",
+            "password",
+            "tokens",
+            "users",
+            "events",
+        ];
+        if self.blog {
+            segments.extend(["posts", "categories", "tags", "comments"]);
+        }
+        if self.pages {
+            segments.push("pages");
+        }
+        if self.media {
+            segments.push("media");
+        }
+        if self.workflow {
+            segments.push("workflows");
+        }
+        segments
+    }
 }
 
 /// API Rule 引擎配置
@@ -322,21 +457,6 @@ fn default_plugin_dir() -> Option<String> {
 
 fn default_timezone() -> String {
     "UTC".into()
-}
-
-pub fn default_protected_tables() -> Vec<String> {
-    vec![
-        "users".into(),
-        "roles".into(),
-        "permissions".into(),
-        "audit_log".into(),
-        "plugin_storage".into(),
-        "options".into(),
-        "rbac_roles".into(),
-        "rbac_permissions".into(),
-        "rbac_role_permissions".into(),
-        "tenants".into(),
-    ]
 }
 
 #[must_use]
@@ -671,11 +791,6 @@ impl AppConfig {
                 .ok()
                 .filter(|v| !v.is_empty())
                 .unwrap_or_else(default_timezone),
-            protected_tables: env::var("PROTECTED_TABLES")
-                .ok()
-                .filter(|s| !s.is_empty())
-                .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
-                .unwrap_or_else(default_protected_tables),
             storage_driver: env::var("STORAGE_DRIVER")
                 .ok()
                 .filter(|v| !v.is_empty())
@@ -720,6 +835,7 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(false),
+            builtins: BuiltinsConfig::from_env(),
             email_provider: env::var("EMAIL_PROVIDER")
                 .ok()
                 .filter(|v| !v.is_empty())
@@ -839,7 +955,6 @@ impl AppConfig {
             search_index_dir: default_search_index_dir(),
             content_type_dir: default_content_type_dir(),
             timezone: default_timezone(),
-            protected_tables: default_protected_tables(),
             storage_driver: default_storage_driver(),
             s3_endpoint: None,
             s3_access_key: None,
@@ -863,6 +978,7 @@ impl AppConfig {
             sms_code_length: default_sms_code_length(),
             sms_rate_limit_secs: default_sms_rate_limit_secs(),
             require_email_verification: false,
+            builtins: BuiltinsConfig::default(),
             email_provider: default_email_provider(),
             email_smtp_host: None,
             email_smtp_port: default_email_smtp_port(),

@@ -139,25 +139,35 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
     reg_route!(api_v1, registry, "/users/{id}", get(user::get_user), "system", "users", ["GET"]);
     reg_route!(api_v1, registry, "/users/{id}/role", put(user::update_role), "system", "users", ["PUT"]);
     reg_route!(api_v1, registry, "/users", get(user::list_users), "system", "users", ["GET"]);
-    reg_route!(api_v1, registry, "/categories", get(category::list).post(category::create), "system", "categories", ["GET", "POST"]);
-    reg_route!(api_v1, registry, "/categories/{id}", put(category::update).delete(category::delete), "system", "categories", ["PUT", "DELETE"]);
-    reg_route!(api_v1, registry, "/tags", get(tag::list).post(tag::create), "system", "tags", ["GET", "POST"]);
-    reg_route!(api_v1, registry, "/tags/{id}", delete(tag::delete), "system", "tags", ["DELETE"]);
-    reg_route!(api_v1, registry, "/posts", get(post::list).post(post::create), "system", "posts", ["GET", "POST"]);
-    reg_route!(api_v1, registry, "/posts/{slug}", get(post::get).put(post::update).delete(post::delete), "system", "posts", ["GET", "PUT", "DELETE"]);
-    reg_route!(api_v1, registry, "/pages", get(page::list).post(page::create), "system", "pages", ["GET", "POST"]);
-    reg_route!(api_v1, registry, "/pages/sitemap", get(page::sitemap), "system", "pages", ["GET"]);
-    reg_route!(api_v1, registry, "/pages/{slug}", get(page::get_by_slug), "system", "pages", ["GET"]);
-    reg_route!(api_v1, registry, "/posts/{slug}/comments", get(comment::list), "system", "comments", ["GET"]);
-    reg_route!(api_v1, registry, "/posts/{slug}/comments", http_post(comment::create_guest).layer(from_fn(comment_rate_limit)), "system", "comments", ["POST"]);
-    reg_route!(api_v1, registry, "/posts/{slug}/comments/authed", http_post(comment::create), "system", "comments", ["POST"]);
-    reg_route!(api_v1, registry, "/comments/{id}", delete(comment::delete), "system", "comments", ["DELETE"]);
-    reg_route!(api_v1, registry, "/comments/{id}/status", put(comment::update_status), "system", "comments", ["PUT"]);
-    reg_route!(api_v1, registry, "/comments", get(comment::list_all), "system", "comments", ["GET"]);
-    reg_route!(api_v1, registry, "/media/upload", http_post(media::upload).layer(RequestBodyLimitLayer::new(max_upload)), "system", "media", ["POST"]);
-    reg_route!(api_v1, registry, "/media", get(media::list), "system", "media", ["GET"]);
-    reg_route!(api_v1, registry, "/media/stats", get(media::stats), "system", "media", ["GET"]);
-    reg_route!(api_v1, registry, "/media/{id}", delete(media::delete), "system", "media", ["DELETE"]);
+    // ── 内置模块路由（根据 builtins 配置条件注册） ──
+
+    if config.builtins.blog {
+        reg_route!(api_v1, registry, "/categories", get(category::list).post(category::create), "system", "categories", ["GET", "POST"]);
+        reg_route!(api_v1, registry, "/categories/{id}", put(category::update).delete(category::delete), "system", "categories", ["PUT", "DELETE"]);
+        reg_route!(api_v1, registry, "/tags", get(tag::list).post(tag::create), "system", "tags", ["GET", "POST"]);
+        reg_route!(api_v1, registry, "/tags/{id}", delete(tag::delete), "system", "tags", ["DELETE"]);
+        reg_route!(api_v1, registry, "/posts", get(post::list).post(post::create), "system", "posts", ["GET", "POST"]);
+        reg_route!(api_v1, registry, "/posts/{slug}", get(post::get).put(post::update).delete(post::delete), "system", "posts", ["GET", "PUT", "DELETE"]);
+        reg_route!(api_v1, registry, "/posts/{slug}/comments", get(comment::list), "system", "comments", ["GET"]);
+        reg_route!(api_v1, registry, "/posts/{slug}/comments", http_post(comment::create_guest).layer(from_fn(comment_rate_limit)), "system", "comments", ["POST"]);
+        reg_route!(api_v1, registry, "/posts/{slug}/comments/authed", http_post(comment::create), "system", "comments", ["POST"]);
+        reg_route!(api_v1, registry, "/comments/{id}", delete(comment::delete), "system", "comments", ["DELETE"]);
+        reg_route!(api_v1, registry, "/comments/{id}/status", put(comment::update_status), "system", "comments", ["PUT"]);
+        reg_route!(api_v1, registry, "/comments", get(comment::list_all), "system", "comments", ["GET"]);
+    }
+
+    if config.builtins.pages {
+        reg_route!(api_v1, registry, "/pages", get(page::list).post(page::create), "system", "pages", ["GET", "POST"]);
+        reg_route!(api_v1, registry, "/pages/sitemap", get(page::sitemap), "system", "pages", ["GET"]);
+        reg_route!(api_v1, registry, "/pages/{slug}", get(page::get_by_slug), "system", "pages", ["GET"]);
+    }
+
+    if config.builtins.media {
+        reg_route!(api_v1, registry, "/media/upload", http_post(media::upload).layer(RequestBodyLimitLayer::new(max_upload)), "system", "media", ["POST"]);
+        reg_route!(api_v1, registry, "/media", get(media::list), "system", "media", ["GET"]);
+        reg_route!(api_v1, registry, "/media/stats", get(media::stats), "system", "media", ["GET"]);
+        reg_route!(api_v1, registry, "/media/{id}", delete(media::delete), "system", "media", ["DELETE"]);
+    }
     reg_route!(api_v1, registry, "/events", get(sse::subscribe), "system", "sse", ["GET"]);
 
     if config.websocket_enabled {
@@ -169,14 +179,19 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         reg_route!(api_v1, registry, "/graphql", get(crate::graphql::handler::graphiql_handler).post(crate::graphql::handler::graphql_handler), "system", "graphql", ["GET", "POST"]);
     }
 
-    reg_route!(api_v1, registry, "/admin/posts", get(post::admin_list), "system", "admin/posts", ["GET"]);
-    reg_route!(api_v1, registry, "/admin/posts/{slug}", get(post::admin_get), "system", "admin/posts", ["GET"]);
-    reg_route!(api_v1, registry, "/admin/pages", get(page::admin_list), "system", "admin/pages", ["GET"]);
-    reg_route!(api_v1, registry, "/admin/pages/{id}", get(page::admin_get).put(page::update).delete(page::delete), "system", "admin/pages", ["GET", "PUT", "DELETE"]);
-    reg_route!(api_v1, registry, "/admin/pages/{id}/status", put(page::update_status), "system", "admin/pages", ["PUT"]);
-    reg_route!(api_v1, registry, "/admin/pages/reorder", put(page::reorder), "system", "admin/pages", ["PUT"]);
-    reg_route!(api_v1, registry, "/admin/reusable-blocks", get(page::list_reusable).post(page::create_reusable), "system", "admin/pages", ["GET", "POST"]);
-    reg_route!(api_v1, registry, "/admin/reusable-blocks/{id}", get(page::get_reusable).put(page::update_reusable).delete(page::delete_reusable), "system", "admin/pages", ["GET", "PUT", "DELETE"]);
+    if config.builtins.blog {
+        reg_route!(api_v1, registry, "/admin/posts", get(post::admin_list), "system", "admin/posts", ["GET"]);
+        reg_route!(api_v1, registry, "/admin/posts/{slug}", get(post::admin_get), "system", "admin/posts", ["GET"]);
+    }
+
+    if config.builtins.pages {
+        reg_route!(api_v1, registry, "/admin/pages", get(page::admin_list), "system", "admin/pages", ["GET"]);
+        reg_route!(api_v1, registry, "/admin/pages/{id}", get(page::admin_get).put(page::update).delete(page::delete), "system", "admin/pages", ["GET", "PUT", "DELETE"]);
+        reg_route!(api_v1, registry, "/admin/pages/{id}/status", put(page::update_status), "system", "admin/pages", ["PUT"]);
+        reg_route!(api_v1, registry, "/admin/pages/reorder", put(page::reorder), "system", "admin/pages", ["PUT"]);
+        reg_route!(api_v1, registry, "/admin/reusable-blocks", get(page::list_reusable).post(page::create_reusable), "system", "admin/pages", ["GET", "POST"]);
+        reg_route!(api_v1, registry, "/admin/reusable-blocks/{id}", get(page::get_reusable).put(page::update_reusable).delete(page::delete_reusable), "system", "admin/pages", ["GET", "PUT", "DELETE"]);
+    }
     reg_route!(api_v1, registry, "/admin/plugins", get(plugin::list), "system", "admin/plugins", ["GET"]);
     reg_route!(api_v1, registry, "/admin/plugins/{id}", get(plugin::get).delete(plugin::remove), "system", "admin/plugins", ["GET", "DELETE"]);
     reg_route!(api_v1, registry, "/admin/plugins/{id}/enable", http_post(plugin::enable), "system", "admin/plugins", ["POST"]);
@@ -204,14 +219,16 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
     reg_route!(api_v1, registry, "/admin/webhooks/{id}", get(crate::webhook::handler::get).put(crate::webhook::handler::update).delete(crate::webhook::handler::delete), "system", "admin/webhooks", ["GET", "PUT", "DELETE"]);
     reg_route!(api_v1, registry, "/admin/content-types", get(crate::content_type::handler::list_schemas).post(crate::content_type::handler::create_schema), "system", "admin/content-types", ["GET", "POST"]);
     reg_route!(api_v1, registry, "/admin/content-types/{singular}", get(crate::content_type::handler::get_schema).put(crate::content_type::handler::update_schema).delete(crate::content_type::handler::delete_schema), "system", "admin/content-types", ["GET", "PUT", "DELETE"]);
-    reg_route!(api_v1, registry, "/admin/workflows", get(workflow::list).post(workflow::create), "system", "admin/workflows", ["GET", "POST"]);
-    reg_route!(api_v1, registry, "/admin/workflows/{id}", get(workflow::get).delete(workflow::delete), "system", "admin/workflows", ["GET", "DELETE"]);
-    reg_route!(api_v1, registry, "/admin/workflows/{id}/start", http_post(workflow::start), "system", "admin/workflows", ["POST"]);
-    reg_route!(api_v1, registry, "/admin/workflows/instances", get(workflow::list_instances), "system", "admin/workflows", ["GET"]);
-    reg_route!(api_v1, registry, "/admin/workflows/instances/{id}", get(workflow::get_instance), "system", "admin/workflows", ["GET"]);
-    reg_route!(api_v1, registry, "/admin/workflows/instances/{id}/execute", http_post(workflow::execute_step), "system", "admin/workflows", ["POST"]);
-    reg_route!(api_v1, registry, "/admin/workflows/instances/{id}/cancel", http_post(workflow::cancel_instance), "system", "admin/workflows", ["POST"]);
-    reg_route!(api_v1, registry, "/admin/workflows/instances/{id}/logs", get(workflow::get_step_logs), "system", "admin/workflows", ["GET"]);
+    if config.builtins.workflow {
+        reg_route!(api_v1, registry, "/admin/workflows", get(workflow::list).post(workflow::create), "system", "admin/workflows", ["GET", "POST"]);
+        reg_route!(api_v1, registry, "/admin/workflows/{id}", get(workflow::get).delete(workflow::delete), "system", "admin/workflows", ["GET", "DELETE"]);
+        reg_route!(api_v1, registry, "/admin/workflows/{id}/start", http_post(workflow::start), "system", "admin/workflows", ["POST"]);
+        reg_route!(api_v1, registry, "/admin/workflows/instances", get(workflow::list_instances), "system", "admin/workflows", ["GET"]);
+        reg_route!(api_v1, registry, "/admin/workflows/instances/{id}", get(workflow::get_instance), "system", "admin/workflows", ["GET"]);
+        reg_route!(api_v1, registry, "/admin/workflows/instances/{id}/execute", http_post(workflow::execute_step), "system", "admin/workflows", ["POST"]);
+        reg_route!(api_v1, registry, "/admin/workflows/instances/{id}/cancel", http_post(workflow::cancel_instance), "system", "admin/workflows", ["POST"]);
+        reg_route!(api_v1, registry, "/admin/workflows/instances/{id}/logs", get(workflow::get_step_logs), "system", "admin/workflows", ["GET"]);
+    }
 
     api_v1 = api_v1
         .layer(from_fn(global_rate_limit))
@@ -223,11 +240,17 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
     for ct in state.content_type_registry.all() {
         let plural = &ct.plural;
         let name = &ct.singular;
-        for (method, suffix) in [("GET", ""), ("POST", ""), ("GET", "/{id_or_slug}"), ("PUT", "/{id_or_slug}"), ("DELETE", "/{id_or_slug}")] {
-            registry.record(method, &format!("/api/v1/cms/{}{}", plural, suffix), "content_type", name);
+        if ct.is_single() {
+            registry.record("GET", &format!("/api/v1/cms/{}", name), "content_type", name);
+            registry.record("PUT", &format!("/api/v1/cms/{}", name), "content_type", name);
+            registry.record("GET", &format!("/api/v1/admin/cms/{}", name), "content_type", name);
+        } else {
+            for (method, suffix) in [("GET", ""), ("POST", ""), ("GET", "/{id_or_slug}"), ("PUT", "/{id_or_slug}"), ("DELETE", "/{id_or_slug}")] {
+                registry.record(method, &format!("/api/v1/cms/{}{}", plural, suffix), "content_type", name);
+            }
+            registry.record("GET", &format!("/api/v1/admin/cms/{}", plural), "content_type", name);
+            registry.record("GET", &format!("/api/v1/admin/cms/{}/{{id_or_slug}}", plural), "content_type", name);
         }
-        registry.record("GET", &format!("/api/v1/admin/cms/{}", plural), "content_type", name);
-        registry.record("GET", &format!("/api/v1/admin/cms/{}/{{id_or_slug}}", plural), "content_type", name);
     }
 
     api_v1 = api_v1
