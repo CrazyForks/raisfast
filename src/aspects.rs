@@ -10,8 +10,6 @@
 //! - Event Layer — 事件发布/消费拦截（Phase 3）
 
 pub mod engine;
-pub mod ownable;
-pub mod timestampable;
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -67,14 +65,6 @@ pub struct JoinPointId {
 pub enum TargetMatcher {
     All,
     Tables(Vec<String>),
-    Custom(String),
-}
-
-#[derive(Debug, Clone)]
-pub struct TargetInfo {
-    pub table: Option<String>,
-    pub is_content_type: bool,
-    pub is_builtin: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +90,8 @@ impl Pointcut {
 #[derive(Debug)]
 pub enum Advice {
     Continue,
+    /// 跳过剩余 Aspect，但原始操作继续执行（类似 loop 的 break）。
+    /// 用途：缓存命中时跳过后续 Aspect 的数据处理。
     Skip,
     Return(Value),
 }
@@ -152,6 +144,7 @@ pub struct BaseContext {
     pub now: String,
     pub request_id: String,
     pub extensions: Extensions,
+    pub pool: Option<crate::db::pool::Pool>,
 }
 
 impl BaseContext {
@@ -163,7 +156,13 @@ impl BaseContext {
             now,
             request_id: String::new(),
             extensions: Extensions::new(),
+            pool: None,
         }
+    }
+
+    pub fn with_pool(mut self, pool: crate::db::pool::Pool) -> Self {
+        self.pool = Some(pool);
+        self
     }
 }
 
@@ -291,12 +290,115 @@ pub struct HttpAfterContext {
     pub response_body: Option<Value>,
 }
 
+// ─── SqlType ───
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SqlType {
+    Text,
+    Integer,
+    BigInt,
+    Real,
+    Boolean,
+    Blob,
+}
+
+impl SqlType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SqlType::Text => {
+                #[cfg(feature = "db-sqlite")]
+                {
+                    "TEXT"
+                }
+                #[cfg(feature = "db-postgres")]
+                {
+                    "TEXT"
+                }
+                #[cfg(feature = "db-mysql")]
+                {
+                    "VARCHAR(255)"
+                }
+            }
+            SqlType::Integer => {
+                #[cfg(feature = "db-sqlite")]
+                {
+                    "INTEGER"
+                }
+                #[cfg(feature = "db-postgres")]
+                {
+                    "INTEGER"
+                }
+                #[cfg(feature = "db-mysql")]
+                {
+                    "INT"
+                }
+            }
+            SqlType::BigInt => {
+                #[cfg(feature = "db-sqlite")]
+                {
+                    "INTEGER"
+                }
+                #[cfg(feature = "db-postgres")]
+                {
+                    "BIGINT"
+                }
+                #[cfg(feature = "db-mysql")]
+                {
+                    "BIGINT"
+                }
+            }
+            SqlType::Real => {
+                #[cfg(feature = "db-sqlite")]
+                {
+                    "REAL"
+                }
+                #[cfg(feature = "db-postgres")]
+                {
+                    "DOUBLE PRECISION"
+                }
+                #[cfg(feature = "db-mysql")]
+                {
+                    "DOUBLE"
+                }
+            }
+            SqlType::Boolean => {
+                #[cfg(feature = "db-sqlite")]
+                {
+                    "BOOLEAN"
+                }
+                #[cfg(feature = "db-postgres")]
+                {
+                    "BOOLEAN"
+                }
+                #[cfg(feature = "db-mysql")]
+                {
+                    "TINYINT(1)"
+                }
+            }
+            SqlType::Blob => {
+                #[cfg(feature = "db-sqlite")]
+                {
+                    "BLOB"
+                }
+                #[cfg(feature = "db-postgres")]
+                {
+                    "BYTEA"
+                }
+                #[cfg(feature = "db-mysql")]
+                {
+                    "BLOB"
+                }
+            }
+        }
+    }
+}
+
 // ─── ColumnDef ───
 
 #[derive(Debug, Clone)]
 pub struct ColumnDef {
     pub name: String,
-    pub sql_type: String,
+    pub sql_type: SqlType,
     pub default: Option<String>,
 }
 
@@ -539,12 +641,20 @@ mod tests {
     fn column_def_construction() {
         let col = ColumnDef {
             name: "created_by".into(),
-            sql_type: "TEXT".into(),
+            sql_type: SqlType::Text,
             default: None,
         };
         assert_eq!(col.name, "created_by");
-        assert_eq!(col.sql_type, "TEXT");
+        assert_eq!(col.sql_type, SqlType::Text);
+        assert_eq!(col.sql_type.as_str(), "TEXT");
         assert!(col.default.is_none());
+    }
+
+    #[test]
+    fn sql_type_as_str() {
+        assert_eq!(SqlType::Text.as_str(), "TEXT");
+        assert_eq!(SqlType::Integer.as_str(), "INTEGER");
+        assert_eq!(SqlType::Boolean.as_str(), "BOOLEAN");
     }
 
     #[test]

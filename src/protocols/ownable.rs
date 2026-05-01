@@ -1,15 +1,18 @@
-//! ownable Aspect — 创建时注入 created_by，更新时注入 updated_by
+//! ownable Protocol — 创建时注入 created_by，更新时注入 updated_by
 //!
 //! 默认内置，所有表自动生效。
-//! priority = -500（数据注入层，在业务逻辑之前执行）。
+//! 包含 1 个 Aspect：OwnableAspect（priority = -500）。
+
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::json;
 
-use super::{
+use crate::aspects::{
     Advice, Aspect, AspectResult, ColumnDef, DataBeforeCreateContext, DataBeforeUpdateContext,
-    Layer, Operation, Pointcut, TargetMatcher, When,
+    Layer, Operation, Pointcut, SqlType, TargetMatcher, When,
 };
+use crate::protocols::Protocol;
 
 pub struct OwnableAspect;
 
@@ -44,12 +47,12 @@ impl Aspect for OwnableAspect {
         vec![
             ColumnDef {
                 name: "created_by".into(),
-                sql_type: "TEXT".into(),
+                sql_type: SqlType::Text,
                 default: None,
             },
             ColumnDef {
                 name: "updated_by".into(),
-                sql_type: "TEXT".into(),
+                sql_type: SqlType::Text,
                 default: None,
             },
         ]
@@ -71,12 +74,32 @@ impl Aspect for OwnableAspect {
     }
 }
 
+pub struct OwnableProtocol;
+
+impl Protocol for OwnableProtocol {
+    fn name(&self) -> &str {
+        "ownable"
+    }
+
+    fn description(&self) -> &str {
+        "创建和更新时自动注入操作者 ID"
+    }
+
+    fn aspects(&self) -> Vec<Arc<dyn Aspect>> {
+        vec![Arc::new(OwnableAspect)]
+    }
+
+    fn built_in(&self) -> bool {
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::aspects::engine::AspectEngine;
-    use crate::aspects::timestampable::TimestampableAspect;
     use crate::aspects::{BaseContext, DataBeforeCreateContext, Record};
+    use crate::protocols::timestampable::TimestampableAspect;
 
     async fn dispatch_create(
         engine: &AspectEngine,

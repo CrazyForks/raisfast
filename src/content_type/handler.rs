@@ -20,6 +20,23 @@ use crate::AppState;
 use crate::errors::app_error::AppError;
 use crate::middleware::auth::OptionalAuth;
 
+fn make_base_ctx(state: &AppState, save_ctx: &SaveContext) -> crate::aspects::BaseContext {
+    crate::aspects::BaseContext::new(
+        save_ctx.user_id.clone(),
+        save_ctx
+            .tenant_id
+            .clone()
+            .unwrap_or_else(|| "default".into()),
+        crate::utils::tz::now_str(),
+    )
+    .with_pool(state.pool.clone())
+}
+
+fn make_base_ctx_anon(state: &AppState) -> crate::aspects::BaseContext {
+    crate::aspects::BaseContext::new(None, "default".into(), crate::utils::tz::now_str())
+        .with_pool(state.pool.clone())
+}
+
 /// 编译 API Rule 为 SQL WHERE 子句。
 ///
 /// 如果用户已登录且有 `filter_auth`，生成 `filter OR filter_auth`；
@@ -416,8 +433,48 @@ pub async fn do_list(
         return Ok(entry.value().0.clone());
     }
 
+    {
+        let mut read_ctx = crate::aspects::DataBeforeReadContext {
+            base: make_base_ctx_anon(state),
+            table: ct.table.clone(),
+            query: crate::aspects::ReadQuery::default(),
+            schema: Some(std::sync::Arc::new(ct.clone())),
+        };
+        if let Some(cached) = state
+            .aspect_engine
+            .dispatch_data_before_read(&ct.table, &mut read_ctx)
+            .await
+            .map_err(AppError::Internal)?
+        {
+            return Ok(cached);
+        }
+    }
+
     let (items, total) = repo.find(ct, query.clone()).await?;
-    let items: Vec<Value> = items.into_iter().map(strip_meta).collect();
+    let mut items: Vec<Value> = items.into_iter().map(strip_meta).collect();
+
+    {
+        let records: Vec<crate::aspects::Record> = items
+            .iter()
+            .filter_map(|v| v.as_object().cloned())
+            .collect();
+        let mut after_ctx = crate::aspects::DataAfterReadContext {
+            base: make_base_ctx_anon(state),
+            table: ct.table.clone(),
+            records,
+            schema: Some(std::sync::Arc::new(ct.clone())),
+        };
+        if let Err(e) = state
+            .aspect_engine
+            .dispatch_data_after_read(&ct.table, &mut after_ctx)
+            .await
+        {
+            tracing::warn!("aspect after_read dispatch error: {e}");
+        } else {
+            items = after_ctx.records.into_iter().map(Value::Object).collect();
+        }
+    }
+
     let result = json!({
         "items": items,
         "total": total,
@@ -523,14 +580,7 @@ pub async fn do_create(
     {
         let record = data.as_object().cloned().unwrap_or_default();
         let mut ctx = crate::aspects::DataBeforeCreateContext {
-            base: crate::aspects::BaseContext::new(
-                save_ctx.user_id.clone(),
-                save_ctx
-                    .tenant_id
-                    .clone()
-                    .unwrap_or_else(|| "default".into()),
-                crate::utils::tz::now_str(),
-            ),
+            base: make_base_ctx(state, save_ctx),
             table: ct.table.clone(),
             record,
             schema: Some(std::sync::Arc::new(ct.clone())),
@@ -560,22 +610,18 @@ pub async fn do_create(
     {
         let record = result.as_object().cloned().unwrap_or_default();
         let mut after_ctx = crate::aspects::DataAfterCreateContext {
-            base: crate::aspects::BaseContext::new(
-                save_ctx.user_id.clone(),
-                save_ctx
-                    .tenant_id
-                    .clone()
-                    .unwrap_or_else(|| "default".into()),
-                crate::utils::tz::now_str(),
-            ),
+            base: make_base_ctx(state, save_ctx),
             table: ct.table.clone(),
             record,
             schema: Some(std::sync::Arc::new(ct.clone())),
         };
-        let _ = state
+        if let Err(e) = state
             .aspect_engine
             .dispatch_data_after_create(&ct.table, &mut after_ctx)
-            .await;
+            .await
+        {
+            tracing::warn!("aspect after_create dispatch error: {e}");
+        }
     }
 
     state
@@ -635,14 +681,7 @@ pub async fn do_update(
             .unwrap_or_default();
         let new_record = data.as_object().cloned().unwrap_or_default();
         let mut ctx = crate::aspects::DataBeforeUpdateContext {
-            base: crate::aspects::BaseContext::new(
-                save_ctx.user_id.clone(),
-                save_ctx
-                    .tenant_id
-                    .clone()
-                    .unwrap_or_else(|| "default".into()),
-                crate::utils::tz::now_str(),
-            ),
+            base: make_base_ctx(state, save_ctx),
             table: ct.table.clone(),
             old_record,
             new_record,
@@ -662,23 +701,19 @@ pub async fn do_update(
     {
         let new_record = result.as_object().cloned().unwrap_or_default();
         let mut after_ctx = crate::aspects::DataAfterUpdateContext {
-            base: crate::aspects::BaseContext::new(
-                save_ctx.user_id.clone(),
-                save_ctx
-                    .tenant_id
-                    .clone()
-                    .unwrap_or_else(|| "default".into()),
-                crate::utils::tz::now_str(),
-            ),
+            base: make_base_ctx(state, save_ctx),
             table: ct.table.clone(),
             old_record: serde_json::Map::new(),
             new_record,
             schema: Some(std::sync::Arc::new(ct.clone())),
         };
-        let _ = state
+        if let Err(e) = state
             .aspect_engine
             .dispatch_data_after_update(&ct.table, &mut after_ctx)
-            .await;
+            .await
+        {
+            tracing::warn!("aspect after_update dispatch error: {e}");
+        }
     }
 
     state
@@ -720,19 +755,18 @@ pub async fn do_delete(
 
     {
         let mut after_ctx = crate::aspects::DataAfterDeleteContext {
-            base: crate::aspects::BaseContext::new(
-                None,
-                "default".into(),
-                crate::utils::tz::now_str(),
-            ),
+            base: make_base_ctx_anon(state),
             table: ct.table.clone(),
             record: serde_json::Map::new(),
             schema: Some(std::sync::Arc::new(ct.clone())),
         };
-        let _ = state
+        if let Err(e) = state
             .aspect_engine
             .dispatch_data_after_delete(&ct.table, &mut after_ctx)
-            .await;
+            .await
+        {
+            tracing::warn!("aspect after_delete dispatch error: {e}");
+        }
     }
 
     state

@@ -1,15 +1,18 @@
-//! timestampable Aspect — 自动注入 created_at / updated_at
+//! timestampable Protocol — 自动注入 created_at / updated_at
 //!
 //! 默认内置，所有表自动生效。
-//! priority = -400（在 ownable 之后、业务逻辑之前执行）。
+//! 包含 1 个 Aspect：TimestampableAspect（priority = -400）。
+
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::json;
 
-use super::{
+use crate::aspects::{
     Advice, Aspect, AspectResult, ColumnDef, DataBeforeCreateContext, DataBeforeUpdateContext,
-    Layer, Operation, Pointcut, TargetMatcher, When,
+    Layer, Operation, Pointcut, SqlType, TargetMatcher, When,
 };
+use crate::protocols::Protocol;
 
 pub struct TimestampableAspect;
 
@@ -44,12 +47,12 @@ impl Aspect for TimestampableAspect {
         vec![
             ColumnDef {
                 name: "created_at".into(),
-                sql_type: "TEXT".into(),
+                sql_type: SqlType::Text,
                 default: None,
             },
             ColumnDef {
                 name: "updated_at".into(),
-                sql_type: "TEXT".into(),
+                sql_type: SqlType::Text,
                 default: None,
             },
         ]
@@ -65,6 +68,26 @@ impl Aspect for TimestampableAspect {
         ctx.new_record
             .insert("updated_at".into(), json!(ctx.base.now));
         Ok(Advice::Continue)
+    }
+}
+
+pub struct TimestampableProtocol;
+
+impl Protocol for TimestampableProtocol {
+    fn name(&self) -> &str {
+        "timestampable"
+    }
+
+    fn description(&self) -> &str {
+        "创建和更新时自动注入时间戳"
+    }
+
+    fn aspects(&self) -> Vec<Arc<dyn Aspect>> {
+        vec![Arc::new(TimestampableAspect)]
+    }
+
+    fn built_in(&self) -> bool {
+        true
     }
 }
 

@@ -26,6 +26,7 @@ pub mod models;
 pub mod notifier;
 pub mod oauth;
 pub mod plugins;
+pub mod protocols;
 pub mod repositories;
 pub mod search;
 pub mod server;
@@ -82,6 +83,7 @@ pub struct AppState {
     pub search: Arc<dyn SearchEngine>,
     pub content_type_registry: Arc<ContentTypeRegistry>,
     pub aspect_engine: Arc<crate::aspects::engine::AspectEngine>,
+    pub protocol_registry: Arc<crate::protocols::ProtocolRegistry>,
     pub options: Arc<OptionsService>,
     pub rbac: Arc<RbacService>,
     pub tenant: Arc<TenantService>,
@@ -125,12 +127,17 @@ pub async fn build_app_state(config: &AppConfig) -> anyhow::Result<AppState> {
 
     let search: Arc<dyn SearchEngine> = build_search_engine(config);
 
+    let mut protocol_registry = crate::protocols::ProtocolRegistry::new();
+    protocol_registry.register(crate::protocols::ownable::OwnableProtocol);
+    protocol_registry.register(crate::protocols::timestampable::TimestampableProtocol);
+    let protocol_registry = Arc::new(protocol_registry);
+
     let aspect_engine = Arc::new(crate::aspects::engine::AspectEngine::new());
-    aspect_engine.register(crate::aspects::ownable::OwnableAspect);
-    aspect_engine.register(crate::aspects::timestampable::TimestampableAspect);
+    protocol_registry.register_aspects_into(&aspect_engine);
     tracing::info!(
-        "aspect engine initialized with {} aspect(s)",
-        aspect_engine.aspects().len()
+        "aspect engine initialized with {} aspect(s), {} protocol(s)",
+        aspect_engine.aspects().len(),
+        protocol_registry.names().len()
     );
 
     let reserved = config.builtins.reserved_route_segments();
@@ -190,6 +197,7 @@ pub async fn build_app_state(config: &AppConfig) -> anyhow::Result<AppState> {
         search,
         content_type_registry: ct_registry,
         aspect_engine,
+        protocol_registry,
         options: options_service,
         rbac: rbac_service,
         tenant: tenant_service,

@@ -25,6 +25,22 @@ pub struct AspectEngine {
     registry: RwLock<Vec<AspectEntry>>,
 }
 
+impl std::fmt::Debug for AspectEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let names: Vec<String> = self
+            .registry
+            .read()
+            .unwrap()
+            .iter()
+            .map(|e| e.aspect.name().to_string())
+            .collect();
+        f.debug_struct("AspectEngine")
+            .field("aspect_count", &names.len())
+            .field("aspects", &names)
+            .finish()
+    }
+}
+
 impl AspectEngine {
     pub fn new() -> Self {
         Self {
@@ -35,6 +51,10 @@ impl AspectEngine {
 
     pub fn register(&self, aspect: impl Aspect) {
         let arc: Arc<dyn Aspect> = Arc::new(aspect);
+        self.register_from_arc(arc);
+    }
+
+    pub fn register_from_arc(&self, arc: Arc<dyn Aspect>) {
         let pointcuts = arc.pointcuts();
 
         for pc in &pointcuts {
@@ -49,6 +69,28 @@ impl AspectEngine {
             pointcuts,
             enabled: true,
         });
+    }
+
+    pub fn enable(&self, name: &str) -> bool {
+        let mut registry = self.registry.write().unwrap();
+        for entry in registry.iter_mut() {
+            if entry.aspect.name() == name {
+                entry.enabled = true;
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn disable(&self, name: &str) -> bool {
+        let mut registry = self.registry.write().unwrap();
+        for entry in registry.iter_mut() {
+            if entry.aspect.name() == name {
+                entry.enabled = false;
+                return true;
+            }
+        }
+        false
     }
 
     pub fn aspects(&self) -> Vec<Arc<dyn Aspect>> {
@@ -77,12 +119,23 @@ impl AspectEngine {
     }
 
     fn get_aspects(&self, jp_id: &JoinPointId, table: &str) -> Vec<Arc<dyn Aspect>> {
+        let enabled_names: std::collections::HashSet<String> = self
+            .registry
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|e| e.enabled)
+            .map(|e| e.aspect.name().to_string())
+            .collect();
+
         let Some(aspects) = self.dispatch_table.get(jp_id) else {
             return Vec::new();
         };
         aspects
             .iter()
-            .filter(|a| matches_table_any(&a.pointcuts(), table))
+            .filter(|a| {
+                enabled_names.contains(a.name()) && matches_table_any(&a.pointcuts(), table)
+            })
             .cloned()
             .collect()
     }
@@ -102,7 +155,8 @@ impl AspectEngine {
         let aspects = self.get_aspects(&jp_id, table);
         for aspect in &aspects {
             match aspect.on_data_before_create(ctx).await {
-                Ok(Advice::Continue) | Ok(Advice::Skip) => continue,
+                Ok(Advice::Continue) => continue,
+                Ok(Advice::Skip) => break,
                 Ok(Advice::Return(val)) => return Ok(Some(val)),
                 Err(e) => return Err(e),
             }
@@ -122,7 +176,10 @@ impl AspectEngine {
         };
         let aspects = self.get_aspects(&jp_id, table);
         for aspect in &aspects {
-            aspect.on_data_after_create(ctx).await?;
+            match aspect.on_data_after_create(ctx).await {
+                Ok(_) => continue,
+                Err(e) => return Err(e),
+            }
         }
         Ok(())
     }
@@ -140,7 +197,8 @@ impl AspectEngine {
         let aspects = self.get_aspects(&jp_id, table);
         for aspect in &aspects {
             match aspect.on_data_before_read(ctx).await {
-                Ok(Advice::Continue) | Ok(Advice::Skip) => continue,
+                Ok(Advice::Continue) => continue,
+                Ok(Advice::Skip) => break,
                 Ok(Advice::Return(val)) => return Ok(Some(val)),
                 Err(e) => return Err(e),
             }
@@ -160,7 +218,10 @@ impl AspectEngine {
         };
         let aspects = self.get_aspects(&jp_id, table);
         for aspect in &aspects {
-            aspect.on_data_after_read(ctx).await?;
+            match aspect.on_data_after_read(ctx).await {
+                Ok(_) => continue,
+                Err(e) => return Err(e),
+            }
         }
         Ok(())
     }
@@ -178,7 +239,8 @@ impl AspectEngine {
         let aspects = self.get_aspects(&jp_id, table);
         for aspect in &aspects {
             match aspect.on_data_before_update(ctx).await {
-                Ok(Advice::Continue) | Ok(Advice::Skip) => continue,
+                Ok(Advice::Continue) => continue,
+                Ok(Advice::Skip) => break,
                 Ok(Advice::Return(val)) => return Ok(Some(val)),
                 Err(e) => return Err(e),
             }
@@ -198,7 +260,10 @@ impl AspectEngine {
         };
         let aspects = self.get_aspects(&jp_id, table);
         for aspect in &aspects {
-            aspect.on_data_after_update(ctx).await?;
+            match aspect.on_data_after_update(ctx).await {
+                Ok(_) => continue,
+                Err(e) => return Err(e),
+            }
         }
         Ok(())
     }
@@ -216,7 +281,8 @@ impl AspectEngine {
         let aspects = self.get_aspects(&jp_id, table);
         for aspect in &aspects {
             match aspect.on_data_before_delete(ctx).await {
-                Ok(Advice::Continue) | Ok(Advice::Skip) => continue,
+                Ok(Advice::Continue) => continue,
+                Ok(Advice::Skip) => break,
                 Ok(Advice::Return(val)) => return Ok(Some(val)),
                 Err(e) => return Err(e),
             }
@@ -236,7 +302,10 @@ impl AspectEngine {
         };
         let aspects = self.get_aspects(&jp_id, table);
         for aspect in &aspects {
-            aspect.on_data_after_delete(ctx).await?;
+            match aspect.on_data_after_delete(ctx).await {
+                Ok(_) => continue,
+                Err(e) => return Err(e),
+            }
         }
         Ok(())
     }
@@ -252,7 +321,6 @@ fn matches_target(matcher: &TargetMatcher, table: &str) -> bool {
     match matcher {
         TargetMatcher::All => true,
         TargetMatcher::Tables(tables) => tables.iter().any(|t| t == table),
-        TargetMatcher::Custom(_) => true,
     }
 }
 
@@ -264,8 +332,8 @@ fn matches_table_any(pointcuts: &[Pointcut], table: &str) -> bool {
 mod tests {
     use super::*;
     use crate::aspects::{
-        Advice, AspectResult, BaseContext, DataBeforeCreateContext, Layer, Operation, Pointcut,
-        Record, TargetMatcher, When,
+        Advice, AspectResult, BaseContext, ColumnDef, DataBeforeCreateContext, Layer, Operation,
+        Pointcut, Record, SqlType, TargetMatcher, When,
     };
 
     struct OrderTestAspect {
@@ -326,8 +394,8 @@ mod tests {
     #[tokio::test]
     async fn columns_for_returns_unique_columns() {
         let engine = AspectEngine::new();
-        engine.register(crate::aspects::ownable::OwnableAspect);
-        engine.register(crate::aspects::timestampable::TimestampableAspect);
+        engine.register(crate::protocols::ownable::OwnableAspect);
+        engine.register(crate::protocols::timestampable::TimestampableAspect);
 
         let cols = engine.columns_for("articles");
         let names: Vec<&str> = cols.iter().map(|c| c.name.as_str()).collect();
@@ -653,8 +721,8 @@ mod tests {
     #[tokio::test]
     async fn aspects_returns_all_registered() {
         let engine = AspectEngine::new();
-        engine.register(crate::aspects::ownable::OwnableAspect);
-        engine.register(crate::aspects::timestampable::TimestampableAspect);
+        engine.register(crate::protocols::ownable::OwnableAspect);
+        engine.register(crate::protocols::timestampable::TimestampableAspect);
 
         let aspects = engine.aspects();
         assert_eq!(aspects.len(), 2);
@@ -689,7 +757,7 @@ mod tests {
             fn columns(&self) -> Vec<ColumnDef> {
                 vec![ColumnDef {
                     name: "special_col".into(),
-                    sql_type: "TEXT".into(),
+                    sql_type: SqlType::Text,
                     default: None,
                 }]
             }
@@ -851,5 +919,52 @@ mod tests {
             ctx.record.get("consumed").unwrap(),
             &serde_json::json!("produced-value")
         );
+    }
+
+    #[tokio::test]
+    async fn disable_prevents_dispatch() {
+        let engine = AspectEngine::new();
+        engine.register(crate::protocols::ownable::OwnableAspect);
+
+        let found = engine.disable("ownable");
+        assert!(found);
+
+        let aspects = engine.aspects();
+        assert!(aspects.is_empty());
+
+        let mut ctx = DataBeforeCreateContext {
+            base: crate::aspects::BaseContext::new(
+                Some("user-1".into()),
+                "default".into(),
+                "now".into(),
+            ),
+            table: "articles".into(),
+            record: Record::new(),
+            schema: None,
+        };
+        let _: Result<Option<serde_json::Value>, _> = engine
+            .dispatch_data_before_create("articles", &mut ctx)
+            .await;
+        assert!(ctx.record.get("created_by").is_none());
+    }
+
+    #[tokio::test]
+    async fn enable_reactivates_aspect() {
+        let engine = AspectEngine::new();
+        engine.register(crate::protocols::ownable::OwnableAspect);
+        engine.disable("ownable");
+
+        let found = engine.enable("ownable");
+        assert!(found);
+
+        let aspects = engine.aspects();
+        assert_eq!(aspects.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn disable_unknown_returns_false() {
+        let engine = AspectEngine::new();
+        assert!(!engine.disable("nonexistent"));
+        assert!(!engine.enable("nonexistent"));
     }
 }
