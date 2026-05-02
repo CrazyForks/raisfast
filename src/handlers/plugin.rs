@@ -7,16 +7,17 @@ use axum::extract::{Path, Query, State};
 use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
-use crate::middleware::auth::AdminUser;
+use crate::middleware::auth::AuthUser;
 use crate::plugins::PluginInfoResponse;
 use crate::utils::pagination::PaginationParams;
 
 /// GET /api/v1/admin/plugins — 列出所有插件及状态（分页）
 pub async fn list(
-    _admin: AdminUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PluginInfoResponse>>> {
+    auth.ensure_admin()?;
     params.sanitize();
     let all = state.plugins.list_plugins_detail().await;
     let total = all.len() as i64;
@@ -31,10 +32,11 @@ pub async fn list(
 
 /// GET /api/v1/admin/plugins/:id — 插件详情
 pub async fn get(
-    _admin: AdminUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PluginInfoResponse>> {
+    auth.ensure_admin()?;
     let detail = state
         .plugins
         .get_plugin_detail(&id)
@@ -45,30 +47,33 @@ pub async fn get(
 
 /// POST /api/v1/admin/plugins/:id/enable — 启用插件
 pub async fn enable(
-    _admin: AdminUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
     state.plugins.enable_plugin(&id).await?;
     Ok(ApiResponse::success(()))
 }
 
 /// POST /api/v1/admin/plugins/:id/disable — 禁用插件
 pub async fn disable(
-    _admin: AdminUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
     state.plugins.disable_plugin(&id).await?;
     Ok(ApiResponse::success(()))
 }
 
 /// POST /api/v1/admin/plugins/:id/reload — 重载插件
 pub async fn reload(
-    _admin: AdminUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
     let plugin_dir = match &state.config.plugin_dir {
         Some(d) => std::path::PathBuf::from(d).join(&id),
         None => return Err(AppError::not_found("plugin")),
@@ -82,10 +87,11 @@ pub async fn reload(
 
 /// DELETE /api/v1/admin/plugins/:id — 卸载插件
 pub async fn remove(
-    _admin: AdminUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
     state.plugins.unload_plugin(&id).await;
     Ok(ApiResponse::success(()))
 }

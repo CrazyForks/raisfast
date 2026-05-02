@@ -46,7 +46,7 @@ async fn create_published_post_in_tenant(
 ) {
     let now = chrono::Utc::now().to_rfc3339();
     let sql = rust_blog::db::dialect::translate(
-        "INSERT INTO posts (id, tenant_id, title, slug, content, excerpt, status, author_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'content', 'excerpt', 'published', ?, ?, ?)",
+        "INSERT INTO posts (id, tenant_id, title, slug, content, excerpt, status, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, 'content', 'excerpt', 'published', ?, NULL, ?, ?)",
     );
     sqlx::query(&sql)
         .bind(id)

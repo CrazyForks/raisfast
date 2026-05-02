@@ -345,23 +345,27 @@ impl Default for ApiConfig {
 /// 检查指定访问级别是否允许当前请求通过
 pub fn check_api_access(
     access: ApiAccess,
-    auth_identity: Option<&crate::middleware::auth::AuthIdentity>,
+    auth: &crate::middleware::auth::AuthUser,
 ) -> Result<(), crate::errors::app_error::AppError> {
     match access {
         ApiAccess::None => Err(crate::errors::app_error::AppError::Forbidden),
         ApiAccess::Public => Ok(()),
         ApiAccess::Member => {
-            if auth_identity.is_some() {
+            if auth.is_authenticated() {
                 Ok(())
             } else {
                 Err(crate::errors::app_error::AppError::Unauthorized)
             }
         }
-        ApiAccess::Admin => match auth_identity {
-            Some(id) if id.role == "admin" => Ok(()),
-            Some(_) => Err(crate::errors::app_error::AppError::Forbidden),
-            None => Err(crate::errors::app_error::AppError::Unauthorized),
-        },
+        ApiAccess::Admin => {
+            if auth.is_admin() {
+                Ok(())
+            } else if auth.is_authenticated() {
+                Err(crate::errors::app_error::AppError::Forbidden)
+            } else {
+                Err(crate::errors::app_error::AppError::Unauthorized)
+            }
+        }
     }
 }
 

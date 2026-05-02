@@ -1229,7 +1229,7 @@ async fn shutdown_signal() {
 /// 当 axum 路由未匹配时，尝试分发给插件的 `manifest.routes` 声明式路由。
 /// 若所有插件均未处理，返回 404。
 async fn handle_plugin_route(
-    auth: crate::middleware::auth::OptionalAuth,
+    auth: crate::middleware::auth::AuthUser,
     State(state): State<AppState>,
     req: axum::extract::Request,
 ) -> axum::response::Response {
@@ -1267,7 +1267,7 @@ async fn handle_plugin_route(
             &method,
             body_str.as_deref(),
             Some(&headers_json),
-            auth.0.as_ref(),
+            &auth,
         )
         .await;
 

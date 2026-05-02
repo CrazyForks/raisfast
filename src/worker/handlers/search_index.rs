@@ -121,6 +121,16 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(include_str!("../../../migrations/023_create_pages.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(include_str!(
+            "../../../migrations/025_unify_system_columns.sql"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
         pool
     }
 
@@ -142,8 +152,8 @@ mod tests {
         let id = uuid::Uuid::now_v7().to_string();
         let now = crate::utils::tz::now_str();
         sqlx::query(
-            "INSERT INTO posts (id, title, slug, content, status, author_id, view_count, is_pinned, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, 'published', ?, 0, 0, ?, ?)",
+            "INSERT INTO posts (id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, 'published', ?, NULL, 0, 0, ?, ?)",
         )
         .bind(&id)
         .bind(title)

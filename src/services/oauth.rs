@@ -10,6 +10,7 @@ use chrono::Utc;
 use crate::commands::CreateUserCmd;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::handlers::dto::LoginResponse;
+use crate::middleware::auth::AuthUser;
 use crate::models::oauth;
 use crate::oauth::{OAuthProviderRegistry, OAuthUserInfo};
 use crate::repositories::{RefreshTokenRepository, UserRepository};
@@ -21,8 +22,9 @@ pub async fn initiate_oauth(
     pool: &crate::db::Pool,
     registry: &OAuthProviderRegistry,
     provider_name: &str,
-    current_user_id: Option<&str>,
+    auth: &AuthUser,
 ) -> AppResult<String> {
+    let current_user_id = auth.user_id();
     let provider = registry.get(provider_name).ok_or_else(|| {
         AppError::BadRequest(format!("unsupported OAuth provider: {provider_name}"))
     })?;
@@ -182,9 +184,10 @@ pub async fn handle_callback(
 /// 解绑 OAuth 账号
 pub async fn unbind_oauth(
     pool: &crate::db::Pool,
-    user_id: &str,
+    auth: &AuthUser,
     provider_name: &str,
 ) -> AppResult<()> {
+    let user_id = auth.ensure_authenticated()?;
     let user = crate::models::user::find_by_id(pool, user_id, None)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
@@ -209,8 +212,9 @@ pub async fn unbind_oauth(
 /// 获取用户已绑定的 Provider 列表
 pub async fn list_bindings(
     pool: &crate::db::Pool,
-    user_id: &str,
+    auth: &AuthUser,
 ) -> AppResult<Vec<OAuthBindingInfo>> {
+    let user_id = auth.ensure_authenticated()?;
     let accounts = oauth::find_by_user_id(pool, user_id).await?;
     Ok(accounts
         .into_iter()

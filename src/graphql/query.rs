@@ -3,7 +3,7 @@
 use super::types::{ContentConnection, ContentItem, JsonScalar, QueryRoot};
 use crate::content_type::handler::{ListParams, do_get, do_list};
 use crate::content_type::schema::check_api_access;
-use crate::middleware::auth::AuthIdentity;
+use crate::middleware::auth::AuthUser;
 use async_graphql::*;
 use std::sync::Arc;
 
@@ -13,8 +13,10 @@ fn get_state(ctx: &Context<'_>) -> Result<Arc<crate::AppState>> {
         .map_err(|_| async_graphql::Error::new("missing state"))
 }
 
-fn get_auth(ctx: &Context<'_>) -> Result<Option<AuthIdentity>> {
-    Ok(ctx.data::<Option<AuthIdentity>>().cloned().ok().flatten())
+fn get_auth(ctx: &Context<'_>) -> Result<AuthUser> {
+    ctx.data::<AuthUser>()
+        .cloned()
+        .map_err(|_| async_graphql::Error::new("missing auth"))
 }
 
 #[Object]
@@ -40,7 +42,7 @@ impl QueryRoot {
             async_graphql::Error::new(format!("content type '{}' not found", r#type))
         })?;
 
-        check_api_access(ct.api.list.access, auth.as_ref()).map_err(
+        check_api_access(ct.api.list.access, &auth).map_err(
             |e: crate::errors::app_error::AppError| async_graphql::Error::new(e.to_string()),
         )?;
 
@@ -55,7 +57,7 @@ impl QueryRoot {
             extra: std::collections::HashMap::new(),
         };
 
-        let result = do_list(&state, &ct, params, auth.as_ref())
+        let result = do_list(&state, &ct, params, &auth)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -77,7 +79,7 @@ impl QueryRoot {
             async_graphql::Error::new(format!("content type '{}' not found", r#type))
         })?;
 
-        let result = match do_get(&state, &ct, id.as_str(), auth.as_ref()).await {
+        let result = match do_get(&state, &ct, id.as_str(), &auth).await {
             Ok(val) => val,
             Err(crate::errors::app_error::AppError::NotFound(_)) => return Ok(None),
             Err(e) => return Err(async_graphql::Error::new(e.to_string())),

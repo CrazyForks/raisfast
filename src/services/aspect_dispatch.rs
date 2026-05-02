@@ -19,7 +19,7 @@ pub struct AspectDispatch<'a> {
 }
 
 impl AspectDispatch<'_> {
-    pub async fn before_create(&self, record: Record) -> AppResult<()> {
+    pub async fn before_create(&self, record: Record) -> AppResult<Record> {
         let mut ctx = DataBeforeCreateContext {
             base: self.make_base_ctx(),
             table: self.table.to_string(),
@@ -30,7 +30,7 @@ impl AspectDispatch<'_> {
             .dispatch_data_before_create(self.table, &mut ctx)
             .await
             .map_err(crate::errors::app_error::AppError::Internal)?;
-        Ok(())
+        Ok(ctx.record)
     }
 
     pub async fn after_create(&self, record: Record) {
@@ -49,7 +49,7 @@ impl AspectDispatch<'_> {
         }
     }
 
-    pub async fn before_update(&self, old_record: Record, new_record: Record) -> AppResult<()> {
+    pub async fn before_update(&self, old_record: Record, new_record: Record) -> AppResult<Record> {
         let mut ctx = DataBeforeUpdateContext {
             base: self.make_base_ctx(),
             table: self.table.to_string(),
@@ -61,7 +61,7 @@ impl AspectDispatch<'_> {
             .dispatch_data_before_update(self.table, &mut ctx)
             .await
             .map_err(crate::errors::app_error::AppError::Internal)?;
-        Ok(())
+        Ok(ctx.new_record)
     }
 
     pub async fn after_update(&self, new_record: Record) {
@@ -127,4 +127,12 @@ pub fn id_record(id: &str) -> Record {
     let mut r = Record::new();
     r.insert("id".into(), serde_json::json!(id));
     r
+}
+
+/// 从 Aspect dispatch 后的 Record 中提取字符串值
+pub fn get_str(record: &Record, key: &str) -> Option<String> {
+    record
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }

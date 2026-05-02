@@ -10,15 +10,14 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::handlers::dto::{CreateCommentRequest, UpdateCommentStatusRequest};
-use crate::middleware::auth::{AdminUser, AuthUser};
-use crate::middleware::tenant::ResolvedTenant;
+use crate::middleware::auth::AuthUser;
 use crate::services::comment as comment_service;
 use crate::utils::pagination::PaginationParams;
 
 /// 获取指定文章的评论列表（树形结构，分页）
 pub async fn list(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    tenant: ResolvedTenant,
     Path(slug): Path<String>,
     axum::extract::Query(params): axum::extract::Query<crate::utils::pagination::PaginationParams>,
 ) -> AppResult<
@@ -32,7 +31,7 @@ pub async fn list(
         &slug,
         p.page,
         p.page_size,
-        tenant.as_str(),
+        &auth,
     )
     .await?;
     Ok(p.paginate(comments, total))
@@ -40,26 +39,25 @@ pub async fn list(
 
 /// 管理员获取全局评论列表（分页）
 pub async fn list_all(
-    _admin: AdminUser,
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    tenant: ResolvedTenant,
     axum::extract::Query(params): axum::extract::Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<crate::models::comment::AdminCommentRow>>> {
+    auth.ensure_admin()?;
     let mut p = params;
     p.sanitize();
     let (comments, total) = state
         .comment_repo
-        .find_all_paginated(p.page, p.page_size, tenant.as_str())
+        .find_all_paginated(p.page, p.page_size, auth.tenant_id())
         .await?;
     Ok(p.paginate(comments, total))
 }
 
 /// 创建评论（已登录用户）
 pub async fn create(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    tenant: ResolvedTenant,
     Path(slug): Path<String>,
-    auth_user: AuthUser,
     Json(req): Json<CreateCommentRequest>,
 ) -> AppResult<ApiResponse<crate::models::comment::CommentResponse>> {
     validation::validate(&req)?;
@@ -70,14 +68,11 @@ pub async fn create(
         &state.plugins,
         &state.eventbus,
         &slug,
-        Some(&auth_user.user_id),
+        &auth,
         &req.content,
         req.parent_id.as_deref(),
         None,
         None,
-        tenant.as_str(),
-        &state.aspect_engine,
-        &state.pool,
     )
     .await?;
 
@@ -86,8 +81,8 @@ pub async fn create(
 
 /// 创建评论（访客）
 pub async fn create_guest(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    tenant: ResolvedTenant,
     Path(slug): Path<String>,
     Json(req): Json<CreateCommentRequest>,
 ) -> AppResult<ApiResponse<crate::models::comment::CommentResponse>> {
@@ -104,14 +99,11 @@ pub async fn create_guest(
         &state.plugins,
         &state.eventbus,
         &slug,
-        None,
+        &auth,
         &req.content,
         req.parent_id.as_deref(),
         Some(nickname),
         req.email.as_deref(),
-        tenant.as_str(),
-        &state.aspect_engine,
-        &state.pool,
     )
     .await?;
 
@@ -120,41 +112,24 @@ pub async fn create_guest(
 
 /// 删除评论
 pub async fn delete(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
-    auth_user: AuthUser,
-    tenant: ResolvedTenant,
 ) -> AppResult<ApiResponse<()>> {
-    comment_service::delete_comment(
-        state.comment_repo.as_ref(),
-        &id,
-        &auth_user.user_id,
-        &auth_user.role,
-        tenant.as_str(),
-        &state.aspect_engine,
-        &state.pool,
-    )
-    .await?;
+    comment_service::delete_comment(state.comment_repo.as_ref(), &id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
 /// 更新评论审核状态（管理员）
 pub async fn update_status(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    _admin: AdminUser,
-    tenant: ResolvedTenant,
     Path(id): Path<String>,
     Json(req): Json<UpdateCommentStatusRequest>,
 ) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
     validation::validate(&req)?;
-    comment_service::update_comment_status(
-        state.comment_repo.as_ref(),
-        &id,
-        &req.status,
-        tenant.as_str(),
-        &state.aspect_engine,
-        &state.pool,
-    )
-    .await?;
+    comment_service::update_comment_status(state.comment_repo.as_ref(), &id, &req.status, &auth)
+        .await?;
     Ok(ApiResponse::success(()))
 }

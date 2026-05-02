@@ -204,10 +204,20 @@ pub trait CategoryRepository: Send + Sync {
     async fn find_by_id(&self, id: &str, tenant_id: Option<&str>) -> AppResult<Category>;
 
     /// 创建新分类
-    async fn create(&self, cmd: CreateCategoryCmd, tenant_id: Option<&str>) -> AppResult<Category>;
+    async fn create(
+        &self,
+        cmd: CreateCategoryCmd,
+        tenant_id: Option<&str>,
+        created_by: Option<&str>,
+    ) -> AppResult<Category>;
 
     /// 更新分类
-    async fn update(&self, cmd: UpdateCategoryCmd, tenant_id: Option<&str>) -> AppResult<Category>;
+    async fn update(
+        &self,
+        cmd: UpdateCategoryCmd,
+        tenant_id: Option<&str>,
+        updated_by: Option<&str>,
+    ) -> AppResult<Category>;
 
     /// 删除分类
     async fn delete(&self, id: &str, tenant_id: Option<&str>) -> AppResult<()>;
@@ -228,7 +238,13 @@ pub trait TagRepository: Send + Sync {
     ) -> AppResult<(Vec<Tag>, i64)>;
 
     /// 创建新标签
-    async fn create(&self, name: &str, slug: &str, tenant_id: Option<&str>) -> AppResult<Tag>;
+    async fn create(
+        &self,
+        name: &str,
+        slug: &str,
+        tenant_id: Option<&str>,
+        created_by: Option<&str>,
+    ) -> AppResult<Tag>;
 
     /// 删除标签
     async fn delete(&self, id: &str, tenant_id: Option<&str>) -> AppResult<()>;

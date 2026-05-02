@@ -22,7 +22,7 @@ async fn guest_comment_success() {
     assert!(status.is_success(), "{status} {body:?}");
     assert_eq!(body["data"]["content"], "Nice!");
     assert_eq!(body["data"]["nickname"], "Guest1");
-    assert!(body["data"]["author_id"].is_null());
+    assert!(body["data"]["created_by"].is_null());
 }
 
 #[tokio::test]
@@ -55,7 +55,7 @@ async fn authed_comment_success() {
     .await;
     assert!(status.is_success(), "{status} {body:?}");
     assert_eq!(body["data"]["content"], "Auth comment");
-    assert!(body["data"]["author_id"].is_string());
+    assert!(body["data"]["created_by"].is_string());
 }
 
 #[tokio::test]

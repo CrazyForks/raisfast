@@ -47,10 +47,14 @@ pub struct RuleContext {
 
 impl RuleContext {
     /// 从请求认证信息构建上下文
-    pub fn from_auth(auth: Option<&crate::middleware::auth::AuthIdentity>) -> Self {
+    pub fn from_auth(auth: &crate::middleware::auth::AuthUser) -> Self {
         Self {
-            auth_user_id: auth.map(|a| a.user_id.clone()),
-            auth_role: auth.map(|a| a.role.clone()),
+            auth_user_id: auth.user_id().map(|s| s.to_string()),
+            auth_role: if auth.is_authenticated() {
+                Some(auth.role().to_string())
+            } else {
+                None
+            },
             body: None,
             query_params: None,
         }
@@ -602,22 +606,25 @@ impl<'a> SqlContext<'a> {
 pub fn compile_rule_sql(
     rule: &Rule,
     offset: usize,
-    auth: Option<&crate::middleware::auth::AuthIdentity>,
+    auth: &crate::middleware::auth::AuthUser,
     config: &RuleEngineConfig,
 ) -> Option<(String, Vec<String>)> {
     let needs_auth = expr_needs_auth(&rule.expr);
-    if needs_auth && auth.is_none() {
+    if needs_auth && !auth.is_authenticated() {
         return None;
     }
 
     let (mut sql, params) = rule.to_sql(offset, config);
 
-    if let Some(a) = auth {
+    if auth.is_authenticated() {
         if expr_has_auth_id(&rule.expr) {
-            sql = sql.replace("__AUTH_ID__", &format!("'{}'", a.user_id));
+            sql = sql.replace(
+                "__AUTH_ID__",
+                &format!("'{}'", auth.user_id().unwrap_or("")),
+            );
         }
         if expr_has_auth_role(&rule.expr) {
-            sql = sql.replace("__AUTH_ROLE__", &format!("'{}'", a.role));
+            sql = sql.replace("__AUTH_ROLE__", &format!("'{}'", auth.role()));
         }
     }
 
@@ -1112,7 +1119,7 @@ mod tests {
         let cfg = default_config();
         let rule = Rule::parse(r#"status = "published""#, &cfg).unwrap();
         let record = json!({"status": "published"});
-        let ctx = RuleContext::from_auth(None);
+        let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test("", "", ""));
         assert!(rule.evaluate(&record, &ctx, &cfg));
     }
 
@@ -1121,7 +1128,7 @@ mod tests {
         let cfg = default_config();
         let rule = Rule::parse(r#"status = "published""#, &cfg).unwrap();
         let record = json!({"status": "draft"});
-        let ctx = RuleContext::from_auth(None);
+        let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test("", "", ""));
         assert!(!rule.evaluate(&record, &ctx, &cfg));
     }
 
@@ -1157,7 +1164,7 @@ mod tests {
     fn eval_and_or() {
         let cfg = default_config();
         let rule = Rule::parse(r#"status = "published" || status = "draft""#, &cfg).unwrap();
-        let ctx = RuleContext::from_auth(None);
+        let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test("", "", ""));
 
         let record1 = json!({"status": "published"});
         assert!(rule.evaluate(&record1, &ctx, &cfg));
@@ -1172,7 +1179,7 @@ mod tests {
     #[test]
     fn eval_comparison_operators() {
         let cfg = default_config();
-        let ctx = RuleContext::from_auth(None);
+        let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test("", "", ""));
 
         let r1 = Rule::parse("age > 18", &cfg).unwrap();
         assert!(r1.evaluate(&json!({"age": 25}), &ctx, &cfg));
@@ -1192,7 +1199,7 @@ mod tests {
     fn eval_like() {
         let cfg = default_config();
         let rule = Rule::parse(r#"title ~ "%rust%""#, &cfg).unwrap();
-        let ctx = RuleContext::from_auth(None);
+        let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test("", "", ""));
 
         assert!(rule.evaluate(&json!({"title": "learning rust"}), &ctx, &cfg));
         assert!(!rule.evaluate(&json!({"title": "learning go"}), &ctx, &cfg));
@@ -1202,7 +1209,7 @@ mod tests {
     fn eval_not_like() {
         let cfg = default_config();
         let rule = Rule::parse(r#"title !~ "%spam%""#, &cfg).unwrap();
-        let ctx = RuleContext::from_auth(None);
+        let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test("", "", ""));
 
         assert!(rule.evaluate(&json!({"title": "hello world"}), &ctx, &cfg));
         assert!(!rule.evaluate(&json!({"title": "spam content"}), &ctx, &cfg));
@@ -1212,7 +1219,7 @@ mod tests {
     fn eval_isset() {
         let cfg = default_config();
         let rule = Rule::parse("title:isset", &cfg).unwrap();
-        let ctx = RuleContext::from_auth(None);
+        let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test("", "", ""));
 
         assert!(rule.evaluate(&json!({"title": "hello"}), &ctx, &cfg));
         assert!(!rule.evaluate(&json!({"title": null}), &ctx, &cfg));
@@ -1223,7 +1230,7 @@ mod tests {
     fn eval_length() {
         let cfg = default_config();
         let rule = Rule::parse("tags:length > 0", &cfg).unwrap();
-        let ctx = RuleContext::from_auth(None);
+        let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test("", "", ""));
 
         let record1 = json!({"tags": ["rust", "go"]});
         assert!(rule.evaluate(&record1, &ctx, &cfg));
@@ -1303,7 +1310,7 @@ mod tests {
     fn eval_null_comparison() {
         let cfg = default_config();
         let rule = Rule::parse("status = null", &cfg).unwrap();
-        let ctx = RuleContext::from_auth(None);
+        let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test("", "", ""));
 
         assert!(rule.evaluate(&json!({"status": null}), &ctx, &cfg));
         assert!(!rule.evaluate(&json!({"status": "active"}), &ctx, &cfg));
@@ -1315,7 +1322,8 @@ mod tests {
     fn compile_no_auth() {
         let cfg = default_config();
         let rule = Rule::parse(r#"status = "published""#, &cfg).unwrap();
-        let (sql, params) = compile_rule_sql(&rule, 0, None, &cfg).unwrap();
+        let auth = crate::middleware::auth::AuthUser::new_test("", "", "");
+        let (sql, params) = compile_rule_sql(&rule, 0, &auth, &cfg).unwrap();
         assert!(sql.contains("status"));
         assert_eq!(params, vec!["published"]);
     }
@@ -1324,12 +1332,8 @@ mod tests {
     fn compile_with_auth() {
         let cfg = default_config();
         let rule = Rule::parse("author_id = @request.auth.id", &cfg).unwrap();
-        let auth = crate::middleware::auth::AuthIdentity {
-            user_id: "user123".into(),
-            role: "member".into(),
-            tenant_id: String::new(),
-        };
-        let (sql, params) = compile_rule_sql(&rule, 0, Some(&auth), &cfg).unwrap();
+        let auth = crate::middleware::auth::AuthUser::new_test("user123", "member", "");
+        let (sql, params) = compile_rule_sql(&rule, 0, &auth, &cfg).unwrap();
         assert!(sql.contains("user123"));
         assert!(params.is_empty());
     }
@@ -1338,7 +1342,8 @@ mod tests {
     fn compile_needs_auth_but_none_returns_none() {
         let cfg = default_config();
         let rule = Rule::parse("author_id = @request.auth.id", &cfg).unwrap();
-        assert!(compile_rule_sql(&rule, 0, None, &cfg).is_none());
+        let auth = crate::middleware::auth::AuthUser::new_test("", "", "");
+        assert!(compile_rule_sql(&rule, 0, &auth, &cfg).is_none());
     }
 
     #[test]
@@ -1349,12 +1354,8 @@ mod tests {
             &cfg,
         )
         .unwrap();
-        let auth = crate::middleware::auth::AuthIdentity {
-            user_id: "abc".into(),
-            role: "member".into(),
-            tenant_id: String::new(),
-        };
-        let (sql, params) = compile_rule_sql(&rule, 0, Some(&auth), &cfg).unwrap();
+        let auth = crate::middleware::auth::AuthUser::new_test("abc", "member", "");
+        let (sql, params) = compile_rule_sql(&rule, 0, &auth, &cfg).unwrap();
         assert!(sql.contains("OR"));
         assert!(sql.contains("abc"));
         assert_eq!(params, vec!["published"]);

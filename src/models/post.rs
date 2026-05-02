@@ -28,7 +28,8 @@ pub struct Post {
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
     pub status: String,
-    pub author_id: String,
+    pub created_by: String,
+    pub updated_by: String,
     pub category_id: Option<String>,
     pub view_count: i64,
     pub is_pinned: bool,
@@ -119,7 +120,7 @@ pub async fn create_tx(
     let tid = resolve_tenant(tenant_id);
 
     let sql = crate::db::dialect::translate(
-        "INSERT INTO posts (id, tenant_id, title, slug, content, excerpt, cover_image, status, author_id, category_id, published_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO posts (id, tenant_id, title, slug, content, excerpt, cover_image, status, created_by, updated_by, category_id, published_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     sqlx::query(&sql)
         .bind(&id)
@@ -130,7 +131,8 @@ pub async fn create_tx(
         .bind(&cmd.excerpt)
         .bind(&cmd.cover_image)
         .bind(&cmd.status)
-        .bind(&cmd.author_id)
+        .bind(&cmd.created_by)
+        .bind(&cmd.updated_by)
         .bind(&cmd.category_id)
         .bind(&published_at)
         .bind(&now)
@@ -217,7 +219,7 @@ pub async fn update_tx(
     let slug = cmd.slug.as_deref().unwrap_or(&existing.slug);
 
     let sql = format!(
-        "UPDATE posts SET title = ?, slug = ?, content = ?, excerpt = ?, cover_image = ?, status = ?, category_id = ?, published_at = ?, updated_at = ? WHERE id = ?{}",
+        "UPDATE posts SET title = ?, slug = ?, content = ?, excerpt = ?, cover_image = ?, status = ?, category_id = ?, published_at = ?, updated_by = ?, updated_at = ? WHERE id = ?{}",
         tenant_filter(tenant_id)
     );
     let sql = crate::db::dialect::translate(&sql);
@@ -230,6 +232,7 @@ pub async fn update_tx(
         .bind(new_status)
         .bind(category_id)
         .bind(published_at)
+        .bind(&cmd.updated_by)
         .bind(now)
         .bind(&cmd.id);
     if let Some(tid) = tenant_id {
@@ -373,7 +376,7 @@ pub struct AuthorRow {
 /// 返回 `Ok(Some(username))` 或 `Ok(None)`（用户不存在时）。
 pub async fn get_author_name(
     pool: &crate::db::Pool,
-    author_id: &str,
+    created_by: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<String>> {
     let sql = format!(
@@ -381,7 +384,7 @@ pub async fn get_author_name(
         tenant_filter(tenant_id)
     );
     let sql = crate::db::dialect::translate(&sql);
-    let mut q = sqlx::query_as::<_, AuthorRow>(&sql).bind(author_id);
+    let mut q = sqlx::query_as::<_, AuthorRow>(&sql).bind(created_by);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -628,6 +631,16 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(include_str!("../../migrations/023_create_pages.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(include_str!(
+            "../../migrations/025_unify_system_columns.sql"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
         pool
     }
 
@@ -645,7 +658,7 @@ mod tests {
 
     async fn create_test_post(
         pool: &crate::db::Pool,
-        author_id: &str,
+        created_by: &str,
         status: &str,
         title: &str,
     ) -> Post {
@@ -658,7 +671,8 @@ mod tests {
                 excerpt: None,
                 cover_image: None,
                 status: status.to_string(),
-                author_id: author_id.to_string(),
+                created_by: created_by.to_string(),
+                updated_by: Some(created_by.to_string()),
                 category_id: None,
                 tag_ids: None,
             },
@@ -780,7 +794,8 @@ mod tests {
                 excerpt: None,
                 cover_image: None,
                 status: "published".to_string(),
-                author_id: uid,
+                created_by: uid.clone(),
+                updated_by: Some(uid),
                 category_id: Some(cat_id),
                 tag_ids: None,
             },
@@ -872,7 +887,8 @@ pub struct PostJoinedRow {
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
     pub status: String,
-    pub author_id: String,
+    pub created_by: String,
+    pub updated_by: String,
     pub category_id: Option<String>,
     pub view_count: i64,
     pub is_pinned: bool,
@@ -885,10 +901,10 @@ pub struct PostJoinedRow {
 
 const JOIN_SQL: &str = "\
     SELECT p.id, p.tenant_id, p.title, p.slug, p.content, p.excerpt, p.cover_image, p.status, \
-    p.author_id, p.category_id, p.view_count, p.is_pinned, p.created_at, p.updated_at, \
+    p.created_by, p.updated_by, p.category_id, p.view_count, p.is_pinned, p.created_at, p.updated_at, \
     p.published_at, u.username AS author_name, c.name AS category_name \
     FROM posts p \
-    LEFT JOIN users u ON p.author_id = u.id \
+    LEFT JOIN users u ON p.created_by = u.id \
     LEFT JOIN categories c ON p.category_id = c.id";
 
 /// 根据 ID 用 JOIN 查询单篇文章（含作者名和分类名）

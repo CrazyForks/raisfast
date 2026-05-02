@@ -325,7 +325,10 @@ CREATE TABLE IF NOT EXISTS categories (
     description TEXT,
     parent_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_by TEXT,
+    updated_by TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_categories_tenant ON categories(tenant_id);
@@ -336,7 +339,10 @@ CREATE TABLE IF NOT EXISTS tags (
     tenant_id TEXT NOT NULL DEFAULT 'default',
     name TEXT UNIQUE NOT NULL,
     slug TEXT UNIQUE NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_by TEXT,
+    updated_by TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_tags_tenant ON tags(tenant_id);
@@ -351,7 +357,8 @@ CREATE TABLE IF NOT EXISTS posts (
     excerpt TEXT,
     cover_image TEXT,
     status TEXT NOT NULL DEFAULT 'draft',
-    author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    updated_by TEXT,
     category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
     view_count INTEGER NOT NULL DEFAULT 0,
     is_pinned INTEGER NOT NULL DEFAULT 0,
@@ -362,7 +369,7 @@ CREATE TABLE IF NOT EXISTS posts (
 
 CREATE INDEX IF NOT EXISTS idx_posts_slug ON posts(slug);
 CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status);
-CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(author_id);
+CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(created_by);
 CREATE INDEX IF NOT EXISTS idx_posts_category ON posts(category_id);
 CREATE INDEX IF NOT EXISTS idx_posts_created ON posts(created_at);
 CREATE INDEX IF NOT EXISTS idx_posts_tenant ON posts(tenant_id);
@@ -371,7 +378,7 @@ CREATE INDEX IF NOT EXISTS idx_posts_status_created
 CREATE INDEX IF NOT EXISTS idx_posts_status_category
     ON posts(status, category_id);
 CREATE INDEX IF NOT EXISTS idx_posts_status_author
-    ON posts(status, author_id);
+    ON posts(status, created_by);
 
 -- 文章-标签（多对多）
 CREATE TABLE IF NOT EXISTS posts_tags (
@@ -387,13 +394,15 @@ CREATE TABLE IF NOT EXISTS comments (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-    author_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    updated_by TEXT,
     nickname TEXT,
     email TEXT,
     content TEXT NOT NULL,
     parent_id TEXT REFERENCES comments(id) ON DELETE CASCADE,
     status TEXT NOT NULL DEFAULT 'pending',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id);
@@ -420,7 +429,8 @@ CREATE TABLE IF NOT EXISTS pages (
     parent_id        TEXT REFERENCES pages(id) ON DELETE SET NULL,
     sort_order       INTEGER NOT NULL DEFAULT 0,
     status           TEXT NOT NULL DEFAULT 'draft',
-    author_id        TEXT NOT NULL REFERENCES users(id),
+    created_by       TEXT NOT NULL REFERENCES users(id),
+    updated_by       TEXT,
     cover_image      TEXT,
     published_at     TEXT,
     created_at       TEXT NOT NULL DEFAULT (datetime('now')),
@@ -431,7 +441,7 @@ CREATE TABLE IF NOT EXISTS pages (
 CREATE INDEX IF NOT EXISTS idx_pages_slug      ON pages(tenant_id, slug);
 CREATE INDEX IF NOT EXISTS idx_pages_status    ON pages(tenant_id, status);
 CREATE INDEX IF NOT EXISTS idx_pages_parent    ON pages(tenant_id, parent_id);
-CREATE INDEX IF NOT EXISTS idx_pages_author    ON pages(author_id);
+CREATE INDEX IF NOT EXISTS idx_pages_author    ON pages(created_by);
 
 CREATE TABLE IF NOT EXISTS reusable_blocks (
     id          TEXT PRIMARY KEY,
@@ -440,6 +450,8 @@ CREATE TABLE IF NOT EXISTS reusable_blocks (
     block_type  TEXT NOT NULL,
     content     TEXT NOT NULL,
     description TEXT,
+    created_by  TEXT,
+    updated_by  TEXT,
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );

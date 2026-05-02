@@ -4,7 +4,7 @@ use super::types::{ContentItem, DeleteResult, JsonScalar, MutationRoot};
 use crate::content_type::handler::cms_detail_cache_key;
 use crate::content_type::repository::{ContentRepository, SaveContext};
 use crate::content_type::schema::{AutoFillSource, check_api_access};
-use crate::middleware::auth::AuthIdentity;
+use crate::middleware::auth::AuthUser;
 use async_graphql::*;
 use std::sync::Arc;
 
@@ -14,12 +14,15 @@ fn get_state(ctx: &Context<'_>) -> Result<Arc<crate::AppState>> {
         .map_err(|_| async_graphql::Error::new("missing state"))
 }
 
-fn require_auth(ctx: &Context<'_>) -> Result<AuthIdentity> {
-    ctx.data::<Option<AuthIdentity>>()
+fn require_auth(ctx: &Context<'_>) -> Result<AuthUser> {
+    let auth = ctx
+        .data::<AuthUser>()
         .cloned()
-        .ok()
-        .flatten()
-        .ok_or_else(|| async_graphql::Error::new("authentication required"))
+        .map_err(|_| async_graphql::Error::new("missing auth"))?;
+    if !auth.is_authenticated() {
+        return Err(async_graphql::Error::new("authentication required"));
+    }
+    Ok(auth)
 }
 
 #[Object]
@@ -38,7 +41,7 @@ impl MutationRoot {
             async_graphql::Error::new(format!("content type '{}' not found", r#type))
         })?;
 
-        check_api_access(ct.api.create.access, Some(&auth)).map_err(
+        check_api_access(ct.api.create.access, &auth).map_err(
             |e: crate::errors::app_error::AppError| async_graphql::Error::new(e.to_string()),
         )?;
 
@@ -51,31 +54,35 @@ impl MutationRoot {
             if let Some(auto) = &field.auto_fill {
                 match auto {
                     AutoFillSource::UserId => {
-                        obj.insert(
-                            field.name.clone(),
-                            serde_json::Value::String(auth.user_id.clone()),
-                        );
+                        if let Some(uid) = auth.user_id() {
+                            obj.insert(
+                                field.name.clone(),
+                                serde_json::Value::String(uid.to_string()),
+                            );
+                        }
                     }
                     AutoFillSource::UserRole => {
                         obj.insert(
                             field.name.clone(),
-                            serde_json::Value::String(auth.role.clone()),
+                            serde_json::Value::String(auth.role().to_string()),
                         );
                     }
                     AutoFillSource::CurrentTenantId => {
-                        obj.insert(
-                            field.name.clone(),
-                            serde_json::Value::String(auth.tenant_id.clone()),
-                        );
+                        if let Some(tid) = auth.tenant_id() {
+                            obj.insert(
+                                field.name.clone(),
+                                serde_json::Value::String(tid.to_string()),
+                            );
+                        }
                     }
                 }
             }
         }
 
         let save_ctx = SaveContext {
-            user_id: Some(auth.user_id.clone()),
-            user_role: Some(auth.role.clone()),
-            tenant_id: Some(auth.tenant_id.clone()),
+            user_id: auth.user_id().map(|s| s.to_string()),
+            user_role: Some(auth.role().to_string()),
+            tenant_id: auth.tenant_id().map(|s| s.to_string()),
         };
 
         let repo = ContentRepository::new(state.pool.clone());
@@ -102,7 +109,7 @@ impl MutationRoot {
             async_graphql::Error::new(format!("content type '{}' not found", r#type))
         })?;
 
-        check_api_access(ct.api.update.access, Some(&auth)).map_err(
+        check_api_access(ct.api.update.access, &auth).map_err(
             |e: crate::errors::app_error::AppError| async_graphql::Error::new(e.to_string()),
         )?;
 
@@ -116,7 +123,7 @@ impl MutationRoot {
             && let Some(rules) = ct.cached_rules.as_ref()
             && let Some(rule) = rules.update.filter.as_ref()
         {
-            let rule_ctx = crate::content_type::rule_engine::RuleContext::from_auth(Some(&auth));
+            let rule_ctx = crate::content_type::rule_engine::RuleContext::from_auth(&auth);
             if !rule.evaluate(record, &rule_ctx, &state.config.rule_engine) {
                 return Err(async_graphql::Error::new("forbidden"));
             }
@@ -128,9 +135,9 @@ impl MutationRoot {
         };
 
         let save_ctx = SaveContext {
-            user_id: Some(auth.user_id.clone()),
-            user_role: Some(auth.role.clone()),
-            tenant_id: Some(auth.tenant_id.clone()),
+            user_id: auth.user_id().map(|s| s.to_string()),
+            user_role: Some(auth.role().to_string()),
+            tenant_id: auth.tenant_id().map(|s| s.to_string()),
         };
 
         let result = repo
@@ -164,7 +171,7 @@ impl MutationRoot {
             async_graphql::Error::new(format!("content type '{}' not found", r#type))
         })?;
 
-        check_api_access(ct.api.delete.access, Some(&auth)).map_err(
+        check_api_access(ct.api.delete.access, &auth).map_err(
             |e: crate::errors::app_error::AppError| async_graphql::Error::new(e.to_string()),
         )?;
 
@@ -178,7 +185,7 @@ impl MutationRoot {
             && let Some(rules) = ct.cached_rules.as_ref()
             && let Some(rule) = rules.delete.filter.as_ref()
         {
-            let rule_ctx = crate::content_type::rule_engine::RuleContext::from_auth(Some(&auth));
+            let rule_ctx = crate::content_type::rule_engine::RuleContext::from_auth(&auth);
             if !rule.evaluate(record, &rule_ctx, &state.config.rule_engine) {
                 return Err(async_graphql::Error::new("forbidden"));
             }

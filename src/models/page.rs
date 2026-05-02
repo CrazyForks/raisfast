@@ -24,7 +24,8 @@ pub struct Page {
     pub parent_id: Option<String>,
     pub sort_order: i64,
     pub status: String,
-    pub author_id: String,
+    pub created_by: String,
+    pub updated_by: Option<String>,
     pub cover_image: Option<String>,
     pub published_at: Option<String>,
     pub created_at: String,
@@ -39,6 +40,8 @@ pub struct ReusableBlock {
     pub block_type: String,
     pub content: String,
     pub description: Option<String>,
+    pub created_by: Option<String>,
+    pub updated_by: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -415,7 +418,7 @@ pub async fn create(
     parent_id: Option<&str>,
     sort_order: i64,
     status: &str,
-    author_id: &str,
+    created_by: &str,
     cover_image: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
@@ -427,7 +430,7 @@ pub async fn create(
     };
 
     let sql = crate::db::dialect::translate(
-        "INSERT INTO pages (id, tenant_id, title, slug, content, blocks, meta_title, meta_description, og_image, template, parent_id, sort_order, status, author_id, cover_image, published_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO pages (id, tenant_id, title, slug, content, blocks, meta_title, meta_description, og_image, template, parent_id, sort_order, status, created_by, updated_by, cover_image, published_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     let tid = tenant_id.unwrap_or("default");
     sqlx::query(&sql)
@@ -444,7 +447,8 @@ pub async fn create(
         .bind(parent_id)
         .bind(sort_order)
         .bind(status)
-        .bind(author_id)
+        .bind(created_by)
+        .bind(created_by)
         .bind(cover_image)
         .bind(&published_at)
         .bind(&now)
@@ -473,11 +477,15 @@ pub async fn update(
     sort_order: Option<i64>,
     status: Option<&str>,
     cover_image: Option<&str>,
+    updated_by: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
     let now = Utc::now().to_rfc3339();
     let mut sets = vec!["updated_at = ?".to_string()];
 
+    if updated_by.is_some() {
+        sets.push("updated_by = ?".to_string());
+    }
     if title.is_some() {
         sets.push("title = ?".to_string());
     }
@@ -524,6 +532,9 @@ pub async fn update(
     let sql = crate::db::dialect::translate(&sql_str);
 
     let mut q = sqlx::query(&sql).bind(&now);
+    if let Some(v) = updated_by {
+        q = q.bind(v);
+    }
     if let Some(v) = title {
         q = q.bind(v);
     }
@@ -590,6 +601,7 @@ pub async fn update_status(
     pool: &crate::db::Pool,
     id: &str,
     status: &str,
+    updated_by: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
     let now = Utc::now().to_rfc3339();
@@ -598,13 +610,16 @@ pub async fn update_status(
     } else {
         String::new()
     };
+    let updated_by_clause = updated_by.map(|_| "updated_by = ?, ").unwrap_or("");
     let sql = format!(
-        "UPDATE pages SET status = ?, {}updated_at = ? WHERE id = ?{}",
-        published_at_clause,
+        "UPDATE pages SET status = ?, {updated_by_clause}{published_at_clause}updated_at = ? WHERE id = ?{}",
         tenant_filter(tenant_id)
     );
     let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql).bind(status);
+    if let Some(v) = updated_by {
+        q = q.bind(v);
+    }
     if status == "published" {
         q = q.bind(&now);
     }
@@ -691,6 +706,7 @@ pub async fn list_reusable(
     Ok(q.fetch_all(pool).await?)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create_reusable(
     pool: &crate::db::Pool,
     id: &str,
@@ -698,11 +714,12 @@ pub async fn create_reusable(
     block_type: &str,
     content: &str,
     description: Option<&str>,
+    created_by: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<ReusableBlock> {
     let now = Utc::now().to_rfc3339();
     let sql = crate::db::dialect::translate(
-        "INSERT INTO reusable_blocks (id, tenant_id, name, block_type, content, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO reusable_blocks (id, tenant_id, name, block_type, content, description, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     let tid = tenant_id.unwrap_or("default");
     sqlx::query(&sql)
@@ -712,6 +729,8 @@ pub async fn create_reusable(
         .bind(block_type)
         .bind(content)
         .bind(description)
+        .bind(created_by)
+        .bind(created_by)
         .bind(&now)
         .bind(&now)
         .execute(pool)
@@ -722,6 +741,7 @@ pub async fn create_reusable(
         .ok_or_else(|| AppError::not_found("reusable_block"))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn update_reusable(
     pool: &crate::db::Pool,
     id: &str,
@@ -729,11 +749,15 @@ pub async fn update_reusable(
     block_type: Option<&str>,
     content: Option<&str>,
     description: Option<&str>,
+    updated_by: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<ReusableBlock> {
     let now = Utc::now().to_rfc3339();
     let mut sets = vec!["updated_at = ?".to_string()];
 
+    if updated_by.is_some() {
+        sets.push("updated_by = ?".to_string());
+    }
     if name.is_some() {
         sets.push("name = ?".to_string());
     }
@@ -756,6 +780,9 @@ pub async fn update_reusable(
     let sql = crate::db::dialect::translate(&sql_str);
 
     let mut q = sqlx::query(&sql).bind(&now);
+    if let Some(v) = updated_by {
+        q = q.bind(v);
+    }
     if let Some(v) = name {
         q = q.bind(v);
     }

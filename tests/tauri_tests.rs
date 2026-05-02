@@ -44,13 +44,15 @@ async fn setup_pool() -> sqlx::SqlitePool {
         include_str!("../migrations/019_oauth.sql"),
         include_str!("../migrations/021_phone.sql"),
         include_str!("../migrations/022_email_verification.sql"),
+        include_str!("../migrations/023_create_pages.sql"),
+        include_str!("../migrations/024_drop_extensions.sql"),
+        include_str!("../migrations/025_unify_system_columns.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }
     tenant::invalidate_cache().await;
     pool
 }
-
 async fn create_test_user(pool: &sqlx::SqlitePool, label: &str) -> String {
     let eventbus = rust_blog::eventbus::EventBus::new(16);
     let user_repo = SqlxUserRepository::new(pool.clone());
@@ -245,7 +247,12 @@ async fn tauri_auth_get_me_service() {
         .await
         .unwrap();
 
-    let result = auth::get_me(&user_repo, &user.id, None).await;
+    let auth = rust_blog::middleware::auth::AuthUser::from_parts(
+        Some(user.id.clone()),
+        "author".to_string(),
+        Some("default".to_string()),
+    );
+    let result = auth::get_me(&user_repo, &auth).await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap().id, user.id);
 }
@@ -279,21 +286,17 @@ async fn tauri_post_create_and_list() {
         tag_ids: None,
     };
 
-    let created = post::create_post(
-        post_repo.as_ref(),
-        &plugin_mgr,
-        &eventbus,
-        &rust_blog::aspects::engine::AspectEngine::new(),
-        &pool,
-        &author_id,
-        req,
+    let auth = rust_blog::middleware::auth::AuthUser::from_parts(
+        Some(author_id.clone()),
+        "author".to_string(),
         None,
-    )
-    .await
-    .unwrap();
+    );
+    let created = post::create_post(post_repo.as_ref(), &plugin_mgr, &eventbus, &auth, req)
+        .await
+        .unwrap();
 
     assert_eq!(created.title, "Test Post");
-    assert_eq!(created.author_id, author_id);
+    assert_eq!(created.created_by, author_id);
 
     let (items, total) = post::list_posts(
         post_repo.as_ref(),
@@ -304,7 +307,7 @@ async fn tauri_post_create_and_list() {
         None,
         &plugin_mgr,
         None,
-        None,
+        &auth,
     )
     .await
     .unwrap();
@@ -338,20 +341,16 @@ async fn tauri_post_get_by_slug() {
         tag_ids: None,
     };
 
-    let created = post::create_post(
-        post_repo.as_ref(),
-        &plugin_mgr,
-        &eventbus,
-        &rust_blog::aspects::engine::AspectEngine::new(),
-        &pool,
-        &author_id,
-        req,
+    let auth = rust_blog::middleware::auth::AuthUser::from_parts(
+        Some(author_id.clone()),
+        "author".to_string(),
         None,
-    )
-    .await
-    .unwrap();
+    );
+    let created = post::create_post(post_repo.as_ref(), &plugin_mgr, &eventbus, &auth, req)
+        .await
+        .unwrap();
 
-    let found = post::get_post(post_repo.as_ref(), &created.slug, &plugin_mgr, None)
+    let found = post::get_post(post_repo.as_ref(), &created.slug, &plugin_mgr, &auth)
         .await
         .unwrap();
 

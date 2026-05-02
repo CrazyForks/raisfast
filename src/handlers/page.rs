@@ -11,8 +11,7 @@ use crate::commands::{CreatePageCmd, UpdatePageCmd};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
-use crate::middleware::auth::AuthorUser;
-use crate::middleware::tenant::ResolvedTenant;
+use crate::middleware::auth::AuthUser;
 use crate::services::page as page_service;
 use crate::utils::pagination::PaginationParams;
 
@@ -112,8 +111,8 @@ pub struct SitemapEntry {
 // ── 公开 API ──
 
 pub async fn list(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    tenant: ResolvedTenant,
     Query(query): Query<PageListQuery>,
 ) -> AppResult<ApiResponse<PaginatedData<crate::models::page::Page>>> {
     let mut pagination = PaginationParams::default();
@@ -125,31 +124,27 @@ pub async fn list(
     }
     pagination.sanitize();
 
-    let (items, total) = page_service::list_published(
-        &state.pool,
-        pagination.page,
-        pagination.page_size,
-        tenant.as_str(),
-    )
-    .await?;
+    let (items, total) =
+        page_service::list_published(&state.pool, pagination.page, pagination.page_size, &auth)
+            .await?;
 
     Ok(pagination.paginate(items, total))
 }
 
 pub async fn get_by_slug(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    tenant: ResolvedTenant,
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<crate::models::page::Page>> {
-    let page = page_service::get_by_slug(&state.pool, &slug, tenant.as_str()).await?;
+    let page = page_service::get_by_slug(&state.pool, &slug, &auth).await?;
     Ok(ApiResponse::success(page))
 }
 
 pub async fn sitemap(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    tenant: ResolvedTenant,
 ) -> AppResult<ApiResponse<Vec<SitemapEntry>>> {
-    let entries = page_service::sitemap(&state.pool, tenant.as_str())
+    let entries = page_service::sitemap(&state.pool, &auth)
         .await?
         .into_iter()
         .map(|(slug, updated_at)| SitemapEntry { slug, updated_at })
@@ -160,11 +155,11 @@ pub async fn sitemap(
 // ── 管理 API ──
 
 pub async fn admin_list(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    _author: AuthorUser,
-    tenant: ResolvedTenant,
     Query(query): Query<AdminPageListQuery>,
 ) -> AppResult<ApiResponse<PaginatedData<crate::models::page::Page>>> {
+    auth.ensure_author()?;
     let mut pagination = PaginationParams::default();
     if let Some(page) = query.page {
         pagination.page = page.max(1);
@@ -179,7 +174,7 @@ pub async fn admin_list(
         pagination.page,
         pagination.page_size,
         query.status.as_deref(),
-        tenant.as_str(),
+        &auth,
     )
     .await?;
 
@@ -187,21 +182,21 @@ pub async fn admin_list(
 }
 
 pub async fn admin_get(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    _author: AuthorUser,
-    tenant: ResolvedTenant,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<crate::models::page::Page>> {
-    let page = page_service::get_by_id(&state.pool, &id, tenant.as_str()).await?;
+    auth.ensure_author()?;
+    let page = page_service::get_by_id(&state.pool, &id, &auth).await?;
     Ok(ApiResponse::success(page))
 }
 
 pub async fn create(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    author: AuthorUser,
-    tenant: ResolvedTenant,
     Json(req): Json<CreatePageRequest>,
 ) -> AppResult<ApiResponse<crate::models::page::Page>> {
+    auth.ensure_author()?;
     validation::validate(&req)?;
 
     let slug = req
@@ -222,28 +217,22 @@ pub async fn create(
         parent_id: req.parent_id,
         sort_order: req.sort_order.unwrap_or(0),
         status,
-        author_id: author.user_id.clone(),
+        created_by: auth.ensure_authenticated()?.to_string(),
+        updated_by: None,
         cover_image: req.cover_image,
     };
 
-    let page = page_service::create_page(
-        &state.pool,
-        &state.aspect_engine,
-        Some(&author.user_id),
-        cmd,
-        tenant.as_str(),
-    )
-    .await?;
+    let page = page_service::create_page(&state.pool, &auth, cmd).await?;
     Ok(ApiResponse::success(page))
 }
 
 pub async fn update(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    _author: AuthorUser,
-    tenant: ResolvedTenant,
     Path(id): Path<String>,
     Json(req): Json<UpdatePageRequest>,
 ) -> AppResult<ApiResponse<crate::models::page::Page>> {
+    auth.ensure_author()?;
     validation::validate(&req)?;
 
     let cmd = UpdatePageCmd {
@@ -260,150 +249,118 @@ pub async fn update(
         sort_order: req.sort_order,
         status: req.status,
         cover_image: req.cover_image,
+        updated_by: None,
     };
 
-    let page = page_service::update_page(
-        &state.pool,
-        &state.aspect_engine,
-        None,
-        cmd,
-        tenant.as_str(),
-    )
-    .await?;
+    let page = page_service::update_page(&state.pool, &auth, cmd).await?;
     Ok(ApiResponse::success(page))
 }
 
 pub async fn delete(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    _author: AuthorUser,
-    tenant: ResolvedTenant,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    page_service::delete_page(
-        &state.pool,
-        &state.aspect_engine,
-        None,
-        &id,
-        tenant.as_str(),
-    )
-    .await?;
+    auth.ensure_author()?;
+    page_service::delete_page(&state.pool, &id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
 pub async fn update_status(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    _author: AuthorUser,
-    tenant: ResolvedTenant,
     Path(id): Path<String>,
     Json(req): Json<UpdateStatusRequest>,
 ) -> AppResult<ApiResponse<crate::models::page::Page>> {
-    let page = page_service::update_status(
-        &state.pool,
-        &state.aspect_engine,
-        None,
-        &id,
-        &req.status,
-        tenant.as_str(),
-    )
-    .await?;
+    auth.ensure_author()?;
+    let page = page_service::update_status(&state.pool, &id, &req.status, &auth).await?;
     Ok(ApiResponse::success(page))
 }
 
 pub async fn reorder(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    _author: AuthorUser,
-    tenant: ResolvedTenant,
     Json(req): Json<ReorderRequest>,
 ) -> AppResult<ApiResponse<()>> {
+    auth.ensure_author()?;
     let items: Vec<(String, i64)> = req
         .items
         .into_iter()
         .map(|i| (i.id, i.sort_order))
         .collect();
-    page_service::reorder(&state.pool, items, tenant.as_str()).await?;
+    page_service::reorder(&state.pool, items, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
 // ── 可复用块 ──
 
 pub async fn list_reusable(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    _author: AuthorUser,
-    tenant: ResolvedTenant,
 ) -> AppResult<ApiResponse<Vec<crate::models::page::ReusableBlock>>> {
-    let items = page_service::list_reusable(&state.pool, tenant.as_str()).await?;
+    auth.ensure_author()?;
+    let items = page_service::list_reusable(&state.pool, &auth).await?;
     Ok(ApiResponse::success(items))
 }
 
 pub async fn get_reusable(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    _author: AuthorUser,
-    tenant: ResolvedTenant,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<crate::models::page::ReusableBlock>> {
-    let block = page_service::get_reusable(&state.pool, &id, tenant.as_str())
+    auth.ensure_author()?;
+    let block = page_service::get_reusable(&state.pool, &id, &auth)
         .await?
         .ok_or_else(|| AppError::not_found("reusable_block"))?;
     Ok(ApiResponse::success(block))
 }
 
 pub async fn create_reusable(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    _author: AuthorUser,
-    tenant: ResolvedTenant,
     Json(req): Json<CreateReusableRequest>,
 ) -> AppResult<ApiResponse<crate::models::page::ReusableBlock>> {
+    auth.ensure_author()?;
     validation::validate(&req)?;
     let block = page_service::create_reusable(
         &state.pool,
-        &state.aspect_engine,
-        None,
+        &auth,
         &req.name,
         &req.block_type,
         &req.content,
         req.description.as_deref(),
-        tenant.as_str(),
     )
     .await?;
     Ok(ApiResponse::success(block))
 }
 
 pub async fn update_reusable(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    _author: AuthorUser,
-    tenant: ResolvedTenant,
     Path(id): Path<String>,
     Json(req): Json<UpdateReusableRequest>,
 ) -> AppResult<ApiResponse<crate::models::page::ReusableBlock>> {
+    auth.ensure_author()?;
     validation::validate(&req)?;
     let block = page_service::update_reusable(
         &state.pool,
-        &state.aspect_engine,
-        None,
         &id,
+        &auth,
         req.name.as_deref(),
         req.block_type.as_deref(),
         req.content.as_deref(),
         req.description.as_deref(),
-        tenant.as_str(),
     )
     .await?;
     Ok(ApiResponse::success(block))
 }
 
 pub async fn delete_reusable(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    _author: AuthorUser,
-    tenant: ResolvedTenant,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    page_service::delete_reusable(
-        &state.pool,
-        &state.aspect_engine,
-        None,
-        &id,
-        tenant.as_str(),
-    )
-    .await?;
+    auth.ensure_author()?;
+    page_service::delete_reusable(&state.pool, &id, &auth).await?;
     Ok(ApiResponse::success(()))
 }

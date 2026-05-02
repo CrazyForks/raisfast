@@ -1276,7 +1276,7 @@ impl PluginManager {
         method: &str,
         body: Option<&str>,
         headers: Option<&serde_json::Value>,
-        auth: Option<&crate::middleware::auth::AuthIdentity>,
+        auth: &crate::middleware::auth::AuthUser,
     ) -> Option<axum::response::Response> {
         let plugins = self.plugins.read().await;
         if plugins.is_empty() {
@@ -1696,8 +1696,9 @@ mod tests {
     async fn dispatch_route_returns_none_with_no_plugins() {
         let config = test_config();
         let mgr = PluginManager::new(config).await;
+        let auth = crate::middleware::auth::AuthUser::new_test("", "", "");
         assert!(
-            mgr.dispatch_route("/api/v1/test", "GET", None, None, None)
+            mgr.dispatch_route("/api/v1/test", "GET", None, None, &auth)
                 .await
                 .is_none()
         );
@@ -2084,7 +2085,13 @@ export function handle_test(input) {
         let mgr = PluginManager::new(Arc::new(config)).await;
 
         let result = mgr
-            .dispatch_route("/api/v1/custom/test", "GET", None, None, None)
+            .dispatch_route(
+                "/api/v1/custom/test",
+                "GET",
+                None,
+                None,
+                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+            )
             .await;
         assert!(result.is_some());
     }
@@ -2921,17 +2928,35 @@ end
         let mgr = PluginManager::new(Arc::new(config)).await;
 
         let result = mgr
-            .dispatch_route("/api/v1/plugins/stats/ping", "GET", None, None, None)
+            .dispatch_route(
+                "/api/v1/plugins/stats/ping",
+                "GET",
+                None,
+                None,
+                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+            )
             .await;
         assert!(result.is_some(), "should match declared route");
 
         let result = mgr
-            .dispatch_route("/api/v1/plugins/stats/unknown", "GET", None, None, None)
+            .dispatch_route(
+                "/api/v1/plugins/stats/unknown",
+                "GET",
+                None,
+                None,
+                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+            )
             .await;
         assert!(result.is_none(), "should return none for undeclared path");
 
         let result = mgr
-            .dispatch_route("/api/v1/plugins/stats/ping", "POST", None, None, None)
+            .dispatch_route(
+                "/api/v1/plugins/stats/ping",
+                "POST",
+                None,
+                None,
+                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+            )
             .await;
         assert!(result.is_none(), "should not match wrong method");
     }

@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use super::schema::{AutoFillSource, ContentTypeSchema, FieldType, RelationType};
 use crate::db::Pool;
 use crate::errors::app_error::AppError;
-use crate::middleware::auth::OptionalAuth;
+use crate::middleware::auth::AuthUser;
 use sqlx::Row;
 
 /// 保存操作上下文（从 handler 层传递到 repository 层）
@@ -27,11 +27,11 @@ pub struct SaveContext {
 }
 
 impl SaveContext {
-    pub fn from_optional_auth(auth: &OptionalAuth) -> Self {
+    pub fn from_auth(auth: &AuthUser) -> Self {
         Self {
-            user_id: auth.0.as_ref().map(|a| a.user_id.clone()),
-            user_role: auth.0.as_ref().map(|a| a.role.clone()),
-            tenant_id: auth.0.as_ref().map(|a| a.tenant_id.clone()),
+            user_id: auth.user_id().map(|s| s.to_string()),
+            user_role: auth.is_authenticated().then(|| auth.role().to_string()),
+            tenant_id: auth.tenant_id().map(|s| s.to_string()),
         }
     }
 

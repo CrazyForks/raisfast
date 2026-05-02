@@ -4,6 +4,7 @@
 //! Token 格式为 `rblog_` + 64 字符 hex，创建时只返回一次明文。
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::middleware::auth::AuthUser;
 use crate::models::api_token;
 
 /// API Token 前缀
@@ -64,11 +65,12 @@ pub struct CreateTokenResult {
 /// 创建 API Token
 pub async fn create_token(
     pool: &crate::db::Pool,
-    user_id: &str,
+    auth: &AuthUser,
     name: &str,
     scopes: Vec<String>,
     expires_at: Option<&str>,
 ) -> AppResult<CreateTokenResult> {
+    let user_id = auth.ensure_authenticated()?;
     if name.trim().is_empty() {
         return Err(AppError::BadRequest("token name is required".into()));
     }
@@ -112,18 +114,19 @@ pub async fn create_token(
 /// 列出指定用户的 API Token（脱敏）
 pub async fn list_tokens(
     pool: &crate::db::Pool,
-    user_id: &str,
+    auth: &AuthUser,
 ) -> AppResult<Vec<api_token::ApiTokenListItem>> {
-    api_token::list_by_user(pool, user_id).await
+    api_token::list_by_user(pool, auth.ensure_authenticated()?).await
 }
 
 /// 删除 API Token（仅本人或管理员）
 pub async fn delete_token(
     pool: &crate::db::Pool,
     token_id: &str,
-    user_id: &str,
-    is_admin: bool,
+    auth: &AuthUser,
 ) -> AppResult<()> {
+    let user_id = auth.ensure_authenticated()?;
+    let is_admin = auth.is_admin();
     let token = api_token::find_by_id(pool, token_id)
         .await?
         .ok_or_else(|| AppError::NotFound("api_token".into()))?;
@@ -285,7 +288,8 @@ mod tests {
     #[tokio::test]
     async fn create_token_rejects_empty_name() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        let msg = create_token(&pool, "u1", "", vec!["read".into()], None)
+        let auth = crate::middleware::auth::AuthUser::new_test("u1", "author", "default");
+        let msg = create_token(&pool, &auth, "", vec!["read".into()], None)
             .await
             .unwrap_err()
             .to_string();
@@ -295,7 +299,8 @@ mod tests {
     #[tokio::test]
     async fn create_token_rejects_whitespace_name() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        let msg = create_token(&pool, "u1", "   ", vec!["read".into()], None)
+        let auth = crate::middleware::auth::AuthUser::new_test("u1", "author", "default");
+        let msg = create_token(&pool, &auth, "   ", vec!["read".into()], None)
             .await
             .unwrap_err()
             .to_string();
@@ -305,7 +310,8 @@ mod tests {
     #[tokio::test]
     async fn create_token_rejects_empty_scopes() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        let msg = create_token(&pool, "u1", "Test", vec![], None)
+        let auth = crate::middleware::auth::AuthUser::new_test("u1", "author", "default");
+        let msg = create_token(&pool, &auth, "Test", vec![], None)
             .await
             .unwrap_err()
             .to_string();
@@ -315,7 +321,8 @@ mod tests {
     #[tokio::test]
     async fn create_token_rejects_invalid_scope() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        let msg = create_token(&pool, "u1", "Test", vec!["superuser".into()], None)
+        let auth = crate::middleware::auth::AuthUser::new_test("u1", "author", "default");
+        let msg = create_token(&pool, &auth, "Test", vec!["superuser".into()], None)
             .await
             .unwrap_err()
             .to_string();
@@ -325,9 +332,10 @@ mod tests {
     #[tokio::test]
     async fn create_token_rejects_mixed_valid_invalid_scope() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let auth = crate::middleware::auth::AuthUser::new_test("u1", "author", "default");
         let msg = create_token(
             &pool,
-            "u1",
+            &auth,
             "Test",
             vec!["read".into(), "delete".into()],
             None,
@@ -342,9 +350,10 @@ mod tests {
     async fn create_token_success_with_valid_scopes() {
         let pool = setup_pool().await;
         insert_user(&pool, "u1", "author").await;
+        let auth = crate::middleware::auth::AuthUser::new_test("u1", "author", "default");
         let result = create_token(
             &pool,
-            "u1",
+            &auth,
             "CI/CD",
             vec!["read".into(), "write".into()],
             None,
@@ -460,7 +469,8 @@ mod tests {
         )
         .await
         .unwrap();
-        delete_token(&pool, &row.id, "u-del", false).await.unwrap();
+        let auth = crate::middleware::auth::AuthUser::new_test("u-del", "reader", "default");
+        delete_token(&pool, &row.id, &auth).await.unwrap();
         assert!(
             crate::models::api_token::find_by_id(&pool, &row.id)
                 .await
@@ -484,9 +494,8 @@ mod tests {
         )
         .await
         .unwrap();
-        delete_token(&pool, &row.id, "admin-user", true)
-            .await
-            .unwrap();
+        let auth = crate::middleware::auth::AuthUser::new_test("admin-user", "admin", "default");
+        delete_token(&pool, &row.id, &auth).await.unwrap();
     }
 
     #[tokio::test]
@@ -504,20 +513,14 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(
-            delete_token(&pool, &row.id, "other-user", false)
-                .await
-                .is_err()
-        );
+        let auth = crate::middleware::auth::AuthUser::new_test("other-user", "reader", "default");
+        assert!(delete_token(&pool, &row.id, &auth).await.is_err());
     }
 
     #[tokio::test]
     async fn delete_token_nonexistent_not_found() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        assert!(
-            delete_token(&pool, "no-such-id", "user", false)
-                .await
-                .is_err()
-        );
+        let auth = crate::middleware::auth::AuthUser::new_test("user", "reader", "default");
+        assert!(delete_token(&pool, "no-such-id", &auth).await.is_err());
     }
 }

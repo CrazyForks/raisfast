@@ -7,8 +7,7 @@ use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
 use crate::handlers::dto::CreateTagRequest;
-use crate::middleware::auth::AuthorUser;
-use crate::middleware::tenant::ResolvedTenant;
+use crate::middleware::auth::AuthUser;
 use crate::services::post;
 use crate::utils::pagination::PaginationParams;
 
@@ -17,14 +16,14 @@ use crate::utils::pagination::PaginationParams;
     responses((status = 200, description = "标签列表"))
 )]
 pub async fn list(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    tenant: ResolvedTenant,
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<crate::models::tag::Tag>>> {
     params.sanitize();
     let (items, total) = post::list_tags_paginated(
         state.tag_repo.as_ref(),
-        tenant.as_str(),
+        &auth,
         params.page,
         params.page_size,
     )
@@ -39,21 +38,13 @@ pub async fn list(
     responses((status = 200, description = "标签已创建"))
 )]
 pub async fn create(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    _author: AuthorUser,
-    tenant: ResolvedTenant,
     Json(req): Json<CreateTagRequest>,
 ) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
+    auth.ensure_author()?;
     validation::validate(&req)?;
-    let tag = post::create_tag(
-        state.tag_repo.as_ref(),
-        &state.aspect_engine,
-        &state.pool,
-        Some(&_author.user_id),
-        req,
-        tenant.as_str(),
-    )
-    .await?;
+    let tag = post::create_tag(state.tag_repo.as_ref(), &auth, req).await?;
     Ok(ApiResponse::success(tag))
 }
 
@@ -64,19 +55,11 @@ pub async fn create(
     responses((status = 200, description = "标签已删除"))
 )]
 pub async fn delete(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    _author: AuthorUser,
-    tenant: ResolvedTenant,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    post::delete_tag(
-        state.tag_repo.as_ref(),
-        &state.aspect_engine,
-        &state.pool,
-        Some(&_author.user_id),
-        &id,
-        tenant.as_str(),
-    )
-    .await?;
+    auth.ensure_author()?;
+    post::delete_tag(state.tag_repo.as_ref(), &id, &auth).await?;
     Ok(ApiResponse::success(()))
 }

@@ -18,7 +18,7 @@ use super::rule_engine::compile_rule_sql;
 use super::schema::{ContentKind, ContentTypeSchema, check_api_access};
 use crate::AppState;
 use crate::errors::app_error::AppError;
-use crate::middleware::auth::OptionalAuth;
+use crate::middleware::auth::AuthUser;
 
 fn make_base_ctx(state: &AppState, save_ctx: &SaveContext) -> crate::aspects::BaseContext {
     crate::aspects::BaseContext::new(
@@ -44,23 +44,23 @@ fn make_base_ctx_anon(state: &AppState) -> crate::aspects::BaseContext {
 /// 如果规则需要认证但用户未登录，返回 None（调用方应拒绝请求）。
 fn build_rule_sql(
     endpoint: &super::schema::CachedEndpointRules,
-    auth: Option<&crate::middleware::auth::AuthIdentity>,
+    auth: &AuthUser,
     config: &crate::config::app::RuleEngineConfig,
 ) -> Option<(String, Vec<String>)> {
     match (
         endpoint.filter.as_ref(),
         endpoint.filter_auth.as_ref(),
-        auth,
+        auth.is_authenticated(),
     ) {
         (None, None, _) => None,
-        (Some(rule), None, _) => compile_rule_sql(rule, 0, None, config),
-        (None, Some(_), None) => None,
-        (Some(rule), Some(_), None) => compile_rule_sql(rule, 0, None, config),
-        (None, Some(auth_rule), Some(a)) => compile_rule_sql(auth_rule, 0, Some(a), config),
-        (Some(rule), Some(auth_rule), Some(a)) => {
-            let (base_sql, mut base_params) = compile_rule_sql(rule, 0, None, config)?;
+        (Some(rule), None, _) => compile_rule_sql(rule, 0, auth, config),
+        (None, Some(_), false) => None,
+        (Some(rule), Some(_), false) => compile_rule_sql(rule, 0, auth, config),
+        (None, Some(auth_rule), true) => compile_rule_sql(auth_rule, 0, auth, config),
+        (Some(rule), Some(auth_rule), true) => {
+            let (base_sql, mut base_params) = compile_rule_sql(rule, 0, auth, config)?;
             let offset = base_params.len();
-            let (auth_sql, mut auth_params) = compile_rule_sql(auth_rule, offset, Some(a), config)?;
+            let (auth_sql, mut auth_params) = compile_rule_sql(auth_rule, offset, auth, config)?;
             let combined = format!("({base_sql} OR {auth_sql})");
             base_params.append(&mut auth_params);
             Some((combined, base_params))
@@ -224,7 +224,7 @@ fn resolve_content_type(
 
 /// Catch-all 动态路由 handler（启动后新增的 content type 走这里）
 pub async fn dynamic_cms_handler(
-    auth: OptionalAuth,
+    auth: AuthUser,
     State(state): State<AppState>,
     method: axum::http::Method,
     Path(path): Path<String>,
@@ -239,21 +239,20 @@ pub async fn dynamic_cms_handler(
         return Err(AppError::not_found(&segment));
     };
 
-    let save_ctx = SaveContext::from_optional_auth(&auth);
+    let save_ctx = SaveContext::from_auth(&auth);
 
     if is_single {
         match (method.clone(), id) {
             (axum::http::Method::GET, None) => {
-                check_api_access(ct.api.get.access, auth.0.as_ref())?;
-                let data = do_single_get(&state, &ct, auth.0.as_ref()).await?;
+                check_api_access(ct.api.get.access, &auth)?;
+                let data = do_single_get(&state, &ct, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             (axum::http::Method::PUT, None) => {
-                check_api_access(ct.api.update.access, auth.0.as_ref())?;
+                check_api_access(ct.api.update.access, &auth)?;
                 let Json(data) =
                     body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
-                let result =
-                    do_single_update(&state, &ct, data, &save_ctx, auth.0.as_ref()).await?;
+                let result = do_single_update(&state, &ct, data, &save_ctx, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
             }
             _ => Err(AppError::not_found(&format!("{method} {path}"))),
@@ -261,12 +260,12 @@ pub async fn dynamic_cms_handler(
     } else {
         match (method.clone(), id) {
             (axum::http::Method::GET, None) => {
-                check_api_access(ct.api.list.access, auth.0.as_ref())?;
-                let data = do_list(&state, &ct, params, auth.0.as_ref()).await?;
+                check_api_access(ct.api.list.access, &auth)?;
+                let data = do_list(&state, &ct, params, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             (axum::http::Method::POST, None) => {
-                check_api_access(ct.api.create.access, auth.0.as_ref())?;
+                check_api_access(ct.api.create.access, &auth)?;
                 let Json(data) =
                     body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
                 let result = do_create(&state, &ct, data, &save_ctx).await?;
@@ -277,20 +276,20 @@ pub async fn dynamic_cms_handler(
                     .into_response())
             }
             (axum::http::Method::GET, Some(id)) => {
-                check_api_access(ct.api.get.access, auth.0.as_ref())?;
-                let data = do_get(&state, &ct, &id, auth.0.as_ref()).await?;
+                check_api_access(ct.api.get.access, &auth)?;
+                let data = do_get(&state, &ct, &id, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             (axum::http::Method::PUT, Some(id)) => {
-                check_api_access(ct.api.update.access, auth.0.as_ref())?;
+                check_api_access(ct.api.update.access, &auth)?;
                 let Json(data) =
                     body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
-                let result = do_update(&state, &ct, &id, data, &save_ctx, auth.0.as_ref()).await?;
+                let result = do_update(&state, &ct, &id, data, &save_ctx, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
             }
             (axum::http::Method::DELETE, Some(id)) => {
-                check_api_access(ct.api.delete.access, auth.0.as_ref())?;
-                do_delete(&state, &ct, &id, auth.0.as_ref()).await?;
+                check_api_access(ct.api.delete.access, &auth)?;
+                do_delete(&state, &ct, &id, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(
                     json!({"deleted": true}),
                 ))
@@ -377,7 +376,7 @@ pub async fn do_list(
     state: &AppState,
     ct: &ContentTypeSchema,
     params: ListParams,
-    auth: Option<&crate::middleware::auth::AuthIdentity>,
+    auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
     let repo = ContentRepository::new(state.pool.clone());
     let include = params.include.as_deref().map(parse_include);
@@ -495,7 +494,7 @@ pub async fn do_get(
     state: &AppState,
     ct: &ContentTypeSchema,
     id_or_slug: &str,
-    auth: Option<&crate::middleware::auth::AuthIdentity>,
+    auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
     let cache_key = cms_detail_cache_key(ct, id_or_slug);
     let cache_ttl = std::time::Duration::from_secs(state.config.rule_engine.cms_cache_ttl_secs);
@@ -645,7 +644,7 @@ pub async fn do_update(
     id: &str,
     data: Value,
     save_ctx: &SaveContext,
-    auth: Option<&crate::middleware::auth::AuthIdentity>,
+    auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
     let repo = ContentRepository::new(state.pool.clone());
 
@@ -734,7 +733,7 @@ pub async fn do_delete(
     state: &AppState,
     ct: &ContentTypeSchema,
     id: &str,
-    auth: Option<&crate::middleware::auth::AuthIdentity>,
+    auth: &AuthUser,
 ) -> Result<(), AppError> {
     let repo = ContentRepository::new(state.pool.clone());
 
@@ -828,7 +827,7 @@ async fn do_admin_get(
 pub async fn do_single_get(
     state: &AppState,
     ct: &ContentTypeSchema,
-    auth: Option<&crate::middleware::auth::AuthIdentity>,
+    auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
     let cache_key = format!("cms:{}:single", ct.singular);
     let cache_ttl = std::time::Duration::from_secs(state.config.rule_engine.cms_cache_ttl_secs);
@@ -867,7 +866,7 @@ pub async fn do_single_update(
     ct: &ContentTypeSchema,
     data: Value,
     save_ctx: &SaveContext,
-    auth: Option<&crate::middleware::auth::AuthIdentity>,
+    auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
     let repo = ContentRepository::new(state.pool.clone());
     let existing = repo.ensure_single(ct, None).await?;
@@ -891,7 +890,7 @@ async fn do_admin_single_get(
 // ── 固定路由 handler（启动时注册的 content type） ──────────────
 
 async fn single_get_handler(
-    auth: OptionalAuth,
+    auth: AuthUser,
     State(state): State<AppState>,
     type_name: String,
 ) -> Result<impl IntoResponse, AppError> {
@@ -899,13 +898,13 @@ async fn single_get_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
-    check_api_access(ct.api.get.access, auth.0.as_ref())?;
-    let data = do_single_get(&state, &ct, auth.0.as_ref()).await?;
+    check_api_access(ct.api.get.access, &auth)?;
+    let data = do_single_get(&state, &ct, &auth).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(data)))
 }
 
 async fn single_update_handler(
-    auth: OptionalAuth,
+    auth: AuthUser,
     State(state): State<AppState>,
     Json(data): Json<Value>,
     type_name: String,
@@ -914,9 +913,9 @@ async fn single_update_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
-    check_api_access(ct.api.update.access, auth.0.as_ref())?;
-    let save_ctx = SaveContext::from_optional_auth(&auth);
-    let result = do_single_update(&state, &ct, data, &save_ctx, auth.0.as_ref()).await?;
+    check_api_access(ct.api.update.access, &auth)?;
+    let save_ctx = SaveContext::from_auth(&auth);
+    let result = do_single_update(&state, &ct, data, &save_ctx, &auth).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(result)))
 }
 
@@ -933,7 +932,7 @@ async fn admin_single_get_handler(
 }
 
 async fn list_handler(
-    auth: OptionalAuth,
+    auth: AuthUser,
     State(state): State<AppState>,
     type_name: String,
     Query(params): Query<ListParams>,
@@ -942,13 +941,13 @@ async fn list_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
-    check_api_access(ct.api.list.access, auth.0.as_ref())?;
-    let data = do_list(&state, &ct, params, auth.0.as_ref()).await?;
+    check_api_access(ct.api.list.access, &auth)?;
+    let data = do_list(&state, &ct, params, &auth).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(data)))
 }
 
 async fn get_handler(
-    auth: OptionalAuth,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(id_or_slug): Path<String>,
     type_name: String,
@@ -957,13 +956,13 @@ async fn get_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
-    check_api_access(ct.api.get.access, auth.0.as_ref())?;
-    let data = do_get(&state, &ct, &id_or_slug, auth.0.as_ref()).await?;
+    check_api_access(ct.api.get.access, &auth)?;
+    let data = do_get(&state, &ct, &id_or_slug, &auth).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(data)))
 }
 
 async fn create_handler(
-    auth: OptionalAuth,
+    auth: AuthUser,
     State(state): State<AppState>,
     type_name: String,
     Json(data): Json<Value>,
@@ -978,8 +977,8 @@ async fn create_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
-    check_api_access(ct.api.create.access, auth.0.as_ref())?;
-    let save_ctx = SaveContext::from_optional_auth(&auth);
+    check_api_access(ct.api.create.access, &auth)?;
+    let save_ctx = SaveContext::from_auth(&auth);
     let result = do_create(&state, &ct, data, &save_ctx).await?;
     Ok((
         StatusCode::CREATED,
@@ -988,7 +987,7 @@ async fn create_handler(
 }
 
 async fn update_handler(
-    auth: OptionalAuth,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(data): Json<Value>,
@@ -998,14 +997,14 @@ async fn update_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
-    check_api_access(ct.api.update.access, auth.0.as_ref())?;
-    let save_ctx = SaveContext::from_optional_auth(&auth);
-    let result = do_update(&state, &ct, &id, data, &save_ctx, auth.0.as_ref()).await?;
+    check_api_access(ct.api.update.access, &auth)?;
+    let save_ctx = SaveContext::from_auth(&auth);
+    let result = do_update(&state, &ct, &id, data, &save_ctx, &auth).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(result)))
 }
 
 async fn delete_handler(
-    auth: OptionalAuth,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
     type_name: String,
@@ -1014,8 +1013,8 @@ async fn delete_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
-    check_api_access(ct.api.delete.access, auth.0.as_ref())?;
-    do_delete(&state, &ct, &id, auth.0.as_ref()).await?;
+    check_api_access(ct.api.delete.access, &auth)?;
+    do_delete(&state, &ct, &id, &auth).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(
         json!({"deleted": true}),
     )))

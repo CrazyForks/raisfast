@@ -63,7 +63,8 @@ pub async fn auth_get_me(
     state: TauriState<'_, AppManagedState>,
     user_id: String,
 ) -> Result<serde_json::Value, String> {
-    crate::services::auth::get_me(state.0.user_repo.as_ref(), &user_id, None)
+    let auth = crate::middleware::auth::AuthUser::from_parts(Some(user_id), String::new(), None);
+    crate::services::auth::get_me(state.0.user_repo.as_ref(), &auth)
         .await
         .map_err(|e| e.to_string())
         .map(|r| serde_json::to_value(r).unwrap_or_default())
@@ -77,6 +78,7 @@ pub async fn post_list(
     page: Option<i64>,
     page_size: Option<i64>,
 ) -> Result<serde_json::Value, String> {
+    let auth = crate::middleware::auth::AuthUser::from_parts(None, String::new(), None);
     let (items, total) = crate::services::post::list_posts(
         state.0.post_repo.as_ref(),
         page.unwrap_or(1),
@@ -86,7 +88,7 @@ pub async fn post_list(
         None,
         &state.0.plugins,
         Some(state.0.search.as_ref()),
-        None,
+        &auth,
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -104,7 +106,8 @@ pub async fn post_get(
     state: TauriState<'_, AppManagedState>,
     slug: String,
 ) -> Result<serde_json::Value, String> {
-    crate::services::post::get_post(state.0.post_repo.as_ref(), &slug, &state.0.plugins, None)
+    let auth = crate::middleware::auth::AuthUser::from_parts(None, String::new(), None);
+    crate::services::post::get_post(state.0.post_repo.as_ref(), &slug, &state.0.plugins, &auth)
         .await
         .map_err(|e| e.to_string())
         .map(|r| serde_json::to_value(r).unwrap_or_default())
@@ -126,15 +129,14 @@ pub async fn post_create(
         category_id: None,
         tag_ids: None,
     };
+    let auth =
+        crate::middleware::auth::AuthUser::from_parts(Some(user_id), "author".to_string(), None);
     crate::services::post::create_post(
         state.0.post_repo.as_ref(),
         &state.0.plugins,
         &state.0.eventbus,
-        &state.0.aspect_engine,
-        &state.0.pool,
-        &user_id,
+        &auth,
         req,
-        None,
     )
     .await
     .map_err(|e| e.to_string())
@@ -324,12 +326,12 @@ pub async fn media_list(
     page: Option<i64>,
     page_size: Option<i64>,
 ) -> Result<serde_json::Value, String> {
+    let auth = crate::middleware::auth::AuthUser::from_parts(Some(user_id), String::new(), None);
     let (items, total) = crate::services::media::list(
         state.0.media_repo.as_ref(),
-        &user_id,
+        &auth,
         page.unwrap_or(1),
         page_size.unwrap_or(20),
-        None,
     )
     .await
     .map_err(|e| e.to_string())?;

@@ -3,7 +3,7 @@
 /// 创建评论
 pub struct CreateCommentCmd {
     pub post_id: String,
-    pub author_id: Option<String>,
+    pub created_by: Option<String>,
     pub nickname: Option<String>,
     pub email: Option<String>,
     pub content: String,

@@ -11,8 +11,7 @@ use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::handlers::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
-use crate::middleware::auth::{AuthUser, AuthorUser};
-use crate::middleware::tenant::ResolvedTenant;
+use crate::middleware::auth::AuthUser;
 use crate::services::post as post_service;
 use crate::utils::pagination::PaginationParams;
 
@@ -47,8 +46,8 @@ pub struct AdminPostListQuery {
     responses((status = 200, description = "文章列表"))
 )]
 pub async fn list(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    tenant: ResolvedTenant,
     Query(query): Query<PostListQuery>,
 ) -> AppResult<ApiResponse<PaginatedData<PostResponse>>> {
     let mut pagination = PaginationParams::default();
@@ -69,7 +68,7 @@ pub async fn list(
         query.q.as_deref(),
         &state.plugins,
         Some(state.search.as_ref()),
-        tenant.as_str(),
+        &auth,
     )
     .await?;
 
@@ -87,17 +86,12 @@ pub async fn list(
     responses((status = 200, description = "文章详情"))
 )]
 pub async fn get(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    tenant: ResolvedTenant,
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<PostResponse>> {
-    let post = post_service::get_post(
-        state.post_repo.as_ref(),
-        &slug,
-        &state.plugins,
-        tenant.as_str(),
-    )
-    .await?;
+    let post =
+        post_service::get_post(state.post_repo.as_ref(), &slug, &state.plugins, &auth).await?;
     Ok(ApiResponse::success(post))
 }
 
@@ -114,21 +108,18 @@ pub async fn get(
     responses((status = 200, description = "文章已创建"))
 )]
 pub async fn create(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    author: AuthorUser,
-    tenant: ResolvedTenant,
     Json(req): Json<CreatePostRequest>,
 ) -> AppResult<ApiResponse<PostResponse>> {
+    auth.ensure_author()?;
     validation::validate(&req)?;
     let post = post_service::create_post(
         state.post_repo.as_ref(),
         &state.plugins,
         &state.eventbus,
-        &state.aspect_engine,
-        &state.pool,
-        &author.user_id,
+        &auth,
         req,
-        tenant.as_str(),
     )
     .await?;
     Ok(ApiResponse::success(post))
@@ -148,24 +139,19 @@ pub async fn create(
     responses((status = 200, description = "文章已更新"))
 )]
 pub async fn update(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    auth_user: AuthUser,
-    tenant: ResolvedTenant,
     Path(slug): Path<String>,
     Json(req): Json<UpdatePostRequest>,
 ) -> AppResult<ApiResponse<PostResponse>> {
     validation::validate(&req)?;
-    let post = post_service::update_post_with_auth(
+    let post = post_service::update_post(
         state.post_repo.as_ref(),
         &state.plugins,
         &state.eventbus,
-        &state.aspect_engine,
-        &state.pool,
         &slug,
-        &auth_user.user_id,
-        &auth_user.role,
+        &auth,
         req,
-        tenant.as_str(),
     )
     .await?;
     Ok(ApiResponse::success(post))
@@ -183,21 +169,16 @@ pub async fn update(
     responses((status = 200, description = "文章已删除"))
 )]
 pub async fn delete(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    auth_user: AuthUser,
-    tenant: ResolvedTenant,
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    post_service::delete_post_with_auth(
+    post_service::delete_post(
         state.post_repo.as_ref(),
         &state.plugins,
         &state.eventbus,
-        &state.aspect_engine,
-        &state.pool,
         &slug,
-        &auth_user.user_id,
-        &auth_user.role,
-        tenant.as_str(),
+        &auth,
     )
     .await?;
     Ok(ApiResponse::success(()))
@@ -210,18 +191,14 @@ pub async fn delete(
 /// - **说明：** 根据 slug 获取任意状态的文章详情，不增加浏览量。
 /// - **返回：** `ApiResponse<PostResponse>`
 pub async fn admin_get(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    _author: AuthorUser,
-    tenant: ResolvedTenant,
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<PostResponse>> {
-    let post = post_service::get_post_any_status(
-        state.post_repo.as_ref(),
-        &slug,
-        &state.plugins,
-        tenant.as_str(),
-    )
-    .await?;
+    auth.ensure_author()?;
+    let post =
+        post_service::get_post_any_status(state.post_repo.as_ref(), &slug, &state.plugins, &auth)
+            .await?;
     Ok(ApiResponse::success(post))
 }
 
@@ -232,11 +209,11 @@ pub async fn admin_get(
 /// - **说明：** 分页查询全部文章（含 draft/published），支持按 `status` 筛选。
 /// - **返回：** `ApiResponse<PaginatedData<PostResponse>>`
 pub async fn admin_list(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    _author: AuthorUser,
-    tenant: ResolvedTenant,
     Query(query): Query<AdminPostListQuery>,
 ) -> AppResult<ApiResponse<PaginatedData<PostResponse>>> {
+    auth.ensure_author()?;
     let mut pagination = PaginationParams::default();
     if let Some(page) = query.page {
         pagination.page = page.max(1);
@@ -252,7 +229,7 @@ pub async fn admin_list(
         pagination.page_size,
         query.status.as_deref(),
         &state.plugins,
-        tenant.as_str(),
+        &auth,
     )
     .await?;
 

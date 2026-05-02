@@ -3,14 +3,13 @@
 //! 处理评论相关的业务逻辑，包括评论创建（含嵌套深度校验）、
 //! 评论列表获取（树形结构）、评论删除和状态管理。
 
-use crate::aspects::engine::AspectEngine;
 use crate::commands::CreateCommentCmd;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::eventbus::{Event, EventBus};
+use crate::middleware::auth::AuthUser;
 use crate::models::comment::{self, CommentResponse};
 use crate::plugins::{HookPoint, PluginManager};
 use crate::repositories::{CommentRepository, PostRepository};
-use crate::services::aspect_dispatch::{AspectDispatch, id_record};
 
 /// 评论输入数据（用于 Hook 传递）
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -37,22 +36,21 @@ pub async fn create_comment(
     plugins: &PluginManager,
     eventbus: &EventBus,
     post_slug: &str,
-    author_id: Option<&str>,
+    auth: &AuthUser,
     content: &str,
     parent_id: Option<&str>,
     nickname: Option<&str>,
     email: Option<&str>,
-    tenant_id: Option<&str>,
-    aspect_engine: &AspectEngine,
-    pool: &crate::db::pool::Pool,
 ) -> AppResult<CommentResponse> {
     let p = post_repo
-        .find_by_slug(post_slug, tenant_id)
+        .find_by_slug(post_slug, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("post"))?;
 
     if let Some(pid) = parent_id {
-        let all_comments = comment_repo.find_approved_by_post(&p.id, tenant_id).await?;
+        let all_comments = comment_repo
+            .find_approved_by_post(&p.id, auth.tenant_id())
+            .await?;
         let parent = all_comments
             .iter()
             .find(|c| c.id == pid)
@@ -76,28 +74,19 @@ pub async fn create_comment(
         .dispatch_filter(HookPoint::CommentCreating, comment_input)
         .await?;
 
-    let dsp = AspectDispatch {
-        engine: aspect_engine,
-        pool,
-        table: "comments",
-        user_id: author_id,
-        tenant_id,
-    };
-    dsp.before_create(id_record("")).await?;
     let c = comment_repo
         .create(
             CreateCommentCmd {
                 post_id: p.id,
-                author_id: author_id.map(std::string::ToString::to_string),
+                created_by: auth.user_id().map(|s| s.to_string()),
                 nickname: filtered.nickname,
                 email: filtered.email,
                 content: filtered.content,
                 parent_id: filtered.parent_id,
             },
-            tenant_id,
+            auth.tenant_id(),
         )
         .await?;
-    dsp.after_create(id_record(&c.id)).await;
 
     eventbus.emit(Event::CommentCreated {
         id: c.id.clone(),
@@ -108,7 +97,7 @@ pub async fn create_comment(
     Ok(CommentResponse {
         id: c.id,
         post_id: c.post_id,
-        author_id: c.author_id,
+        created_by: c.created_by,
         nickname: c.nickname,
         content: c.content,
         parent_id: c.parent_id,
@@ -127,15 +116,15 @@ pub async fn list_comments_paginated(
     post_slug: &str,
     page: i64,
     page_size: i64,
-    tenant_id: Option<&str>,
+    auth: &AuthUser,
 ) -> AppResult<(Vec<CommentResponse>, i64)> {
     let p = post_repo
-        .find_by_slug(post_slug, tenant_id)
+        .find_by_slug(post_slug, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("post"))?;
 
     let (comments, total) = comment_repo
-        .find_approved_by_post_paginated(&p.id, page, page_size, tenant_id)
+        .find_approved_by_post_paginated(&p.id, page, page_size, auth.tenant_id())
         .await?;
     Ok((comment::build_tree(&comments), total))
 }
@@ -146,29 +135,20 @@ pub async fn list_comments_paginated(
 pub async fn delete_comment(
     comment_repo: &dyn CommentRepository,
     comment_id: &str,
-    user_id: &str,
-    role: &str,
-    tenant_id: Option<&str>,
-    aspect_engine: &AspectEngine,
-    pool: &crate::db::pool::Pool,
+    auth: &AuthUser,
 ) -> AppResult<()> {
     let c = comment_repo
-        .find_by_id(comment_id, tenant_id)
+        .find_by_id(comment_id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("comment"))?;
 
-    crate::utils::auth::require_owner_or_admin_opt(role, user_id, c.author_id.as_deref())?;
+    crate::utils::auth::require_owner_or_admin_opt(
+        auth.role(),
+        auth.ensure_authenticated()?,
+        c.created_by.as_deref(),
+    )?;
 
-    let dsp = AspectDispatch {
-        engine: aspect_engine,
-        pool,
-        table: "comments",
-        user_id: Some(user_id),
-        tenant_id,
-    };
-    dsp.before_delete(id_record(comment_id)).await?;
-    comment_repo.delete(comment_id, tenant_id).await?;
-    dsp.after_delete().await;
+    comment_repo.delete(comment_id, auth.tenant_id()).await?;
     Ok(())
 }
 
@@ -179,25 +159,14 @@ pub async fn update_comment_status(
     comment_repo: &dyn CommentRepository,
     comment_id: &str,
     status: &str,
-    tenant_id: Option<&str>,
-    aspect_engine: &AspectEngine,
-    pool: &crate::db::pool::Pool,
+    auth: &AuthUser,
 ) -> AppResult<()> {
     if status != "approved" && status != "spam" && status != "pending" {
         return Err(AppError::BadRequest("invalid_comment_status".into()));
     }
-    let dsp = AspectDispatch {
-        engine: aspect_engine,
-        pool,
-        table: "comments",
-        user_id: None,
-        tenant_id,
-    };
-    dsp.before_update(id_record(comment_id), id_record(comment_id))
-        .await?;
     comment_repo
-        .update_status(comment_id, status, tenant_id)
+        .update_status(comment_id, status, auth.tenant_id())
         .await?;
-    dsp.after_update(id_record(comment_id)).await;
+
     Ok(())
 }

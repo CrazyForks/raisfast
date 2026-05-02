@@ -55,6 +55,7 @@ impl JobHandler for ScheduledPublishHandler {
                 status: Some("published".to_string()),
                 category_id: None,
                 tag_ids: None,
+                updated_by: None,
             },
             Some(crate::db::tenant::DEFAULT_TENANT),
         )
@@ -101,6 +102,16 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(include_str!("../../../migrations/023_create_pages.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(include_str!(
+            "../../../migrations/025_unify_system_columns.sql"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
         pool
     }
 
@@ -141,7 +152,8 @@ mod tests {
                 excerpt: None,
                 cover_image: None,
                 status: "draft".to_string(),
-                author_id,
+                created_by: author_id,
+                updated_by: None,
                 category_id: None,
                 tag_ids: None,
             },
@@ -178,7 +190,8 @@ mod tests {
                 excerpt: None,
                 cover_image: None,
                 status: "published".to_string(),
-                author_id,
+                created_by: author_id,
+                updated_by: None,
                 category_id: None,
                 tag_ids: None,
             },

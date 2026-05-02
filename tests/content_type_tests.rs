@@ -58,6 +58,8 @@ async fn setup_pool() -> sqlx::SqlitePool {
         include_str!("../migrations/010_rbac.sql"),
         include_str!("../migrations/011_tenants.sql"),
         include_str!("../migrations/016_content_revisions.sql"),
+        include_str!("../migrations/023_create_pages.sql"),
+        include_str!("../migrations/025_unify_system_columns.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }

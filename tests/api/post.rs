@@ -5,7 +5,7 @@ struct Ctx {
     app: axum::Router,
     state: AppState,
     tok: String,
-    author_id: String,
+    created_by: String,
     cat_id: String,
     tag_id: String,
 }
@@ -33,7 +33,7 @@ async fn setup() -> Ctx {
         app,
         state,
         tok,
-        author_id,
+        created_by: author_id,
         cat_id,
         tag_id,
     }

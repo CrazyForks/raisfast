@@ -18,6 +18,8 @@ pub struct Tag {
     pub tenant_id: String,
     pub name: String,
     pub slug: String,
+    pub updated_by: Option<String>,
+    pub updated_at: Option<String>,
     pub created_at: String,
 }
 
@@ -103,18 +105,21 @@ pub async fn create(
     name: &str,
     slug: &str,
     tenant_id: Option<&str>,
+    created_by: Option<&str>,
 ) -> AppResult<Tag> {
     let (id, now) = crate::utils::id::new_id_and_timestamp();
     let tid = resolve_tenant(tenant_id);
 
     let sql = crate::db::dialect::translate(
-        "INSERT INTO tags (id, tenant_id, name, slug, created_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO tags (id, tenant_id, name, slug, created_by, updated_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     );
     sqlx::query(&sql)
         .bind(&id)
         .bind(tid)
         .bind(name)
         .bind(slug)
+        .bind(created_by)
+        .bind(created_by)
         .bind(&now)
         .execute(pool)
         .await?;

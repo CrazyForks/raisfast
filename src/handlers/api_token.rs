@@ -34,14 +34,14 @@ pub struct CreateTokenRequest {
     responses((status = 201, description = "Token 创建成功"))
 )]
 pub async fn create(
-    user: AuthUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Json(body): Json<CreateTokenRequest>,
 ) -> AppResult<impl IntoResponse> {
     crate::errors::validation::validate(&body)?;
     let result = api_token::create_token(
         &state.pool,
-        &user.user_id,
+        &auth,
         &body.name,
         body.scopes,
         body.expires_at.as_deref(),
@@ -57,8 +57,8 @@ pub async fn create(
     security(("bearer_auth" = [])),
     responses((status = 200, description = "Token 列表"))
 )]
-pub async fn list(user: AuthUser, State(state): State<AppState>) -> AppResult<impl IntoResponse> {
-    let tokens = api_token::list_tokens(&state.pool, &user.user_id).await?;
+pub async fn list(auth: AuthUser, State(state): State<AppState>) -> AppResult<impl IntoResponse> {
+    let tokens = api_token::list_tokens(&state.pool, &auth).await?;
     Ok(Json(ApiResponse::success(tokens)))
 }
 
@@ -71,12 +71,11 @@ pub async fn list(user: AuthUser, State(state): State<AppState>) -> AppResult<im
     responses((status = 200, description = "Token 已删除"))
 )]
 pub async fn delete(
-    user: AuthUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<impl IntoResponse> {
-    let is_admin = user.role == "admin";
-    api_token::delete_token(&state.pool, &id, &user.user_id, is_admin).await?;
+    api_token::delete_token(&state.pool, &id, &auth).await?;
     Ok(Json(ApiResponse::success(
         serde_json::json!({"deleted": true}),
     )))

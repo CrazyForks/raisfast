@@ -8,7 +8,8 @@ pub struct CreatePostCmd {
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
     pub status: String,
-    pub author_id: String,
+    pub created_by: String,
+    pub updated_by: Option<String>,
     pub category_id: Option<String>,
     pub tag_ids: Option<Vec<String>>,
 }
@@ -24,6 +25,7 @@ pub struct UpdatePostCmd {
     pub status: Option<String>,
     pub category_id: Option<String>,
     pub tag_ids: Option<Vec<String>>,
+    pub updated_by: Option<String>,
 }
 
 /// 查询已发布文章

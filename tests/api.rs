@@ -135,6 +135,18 @@ pub(crate) async fn test_pool() -> rust_blog::db::Pool {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(include_str!("../migrations/023_create_pages.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(include_str!("../migrations/024_drop_extensions.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(include_str!("../migrations/025_unify_system_columns.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
         pool
     }
 }
@@ -161,8 +173,21 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
         refresh_token_repo: Arc::new(SqlxRefreshTokenRepository::new(pool.clone())),
         search: Arc::new(NoopSearchEngine),
         content_type_registry: Arc::new(rust_blog::content_type::ContentTypeRegistry::new()),
-        aspect_engine: Arc::new(rust_blog::aspects::engine::AspectEngine::new()),
-        protocol_registry: Arc::new(rust_blog::protocols::ProtocolRegistry::new()),
+        aspect_engine: {
+            let engine = rust_blog::aspects::engine::AspectEngine::new();
+            let mut reg = rust_blog::protocols::ProtocolRegistry::new();
+            reg.register(rust_blog::protocols::ownable::OwnableProtocol);
+            reg.register(rust_blog::protocols::timestampable::TimestampableProtocol);
+            let reg = Arc::new(reg);
+            reg.register_aspects_into(&engine);
+            Arc::new(engine)
+        },
+        protocol_registry: Arc::new({
+            let mut reg = rust_blog::protocols::ProtocolRegistry::new();
+            reg.register(rust_blog::protocols::ownable::OwnableProtocol);
+            reg.register(rust_blog::protocols::timestampable::TimestampableProtocol);
+            reg
+        }),
         options: Arc::new(
             rust_blog::services::options::OptionsService::new(Arc::new(
                 SqlxOptionsRepository::new(pool.clone()),

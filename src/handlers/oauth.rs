@@ -17,7 +17,7 @@ use crate::services::oauth;
 pub async fn redirect_to_provider(
     State(state): State<crate::AppState>,
     Path(provider): Path<String>,
-    auth: crate::middleware::auth::OptionalAuth,
+    auth: AuthUser,
 ) -> AppResult<impl IntoResponse> {
     if !state.config.oauth.enabled {
         tracing::warn!(
@@ -40,15 +40,8 @@ pub async fn redirect_to_provider(
         )));
     }
 
-    let current_user_id = auth.0.as_ref().map(|a| a.user_id.as_str());
-
-    let url = oauth::initiate_oauth(
-        &state.pool,
-        state.oauth_registry.as_ref(),
-        &provider,
-        current_user_id,
-    )
-    .await?;
+    let url =
+        oauth::initiate_oauth(&state.pool, state.oauth_registry.as_ref(), &provider, &auth).await?;
 
     Ok(Redirect::temporary(&url))
 }
@@ -130,7 +123,7 @@ pub async fn list_bindings(
     State(state): State<crate::AppState>,
     auth: AuthUser,
 ) -> AppResult<ApiResponse<Vec<oauth::OAuthBindingInfo>>> {
-    let bindings = oauth::list_bindings(&state.pool, &auth.user_id).await?;
+    let bindings = oauth::list_bindings(&state.pool, &auth).await?;
     Ok(ApiResponse::success(bindings))
 }
 
@@ -142,7 +135,7 @@ pub async fn unbind(
     auth: AuthUser,
     Path(provider): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    oauth::unbind_oauth(&state.pool, &auth.user_id, &provider).await?;
+    oauth::unbind_oauth(&state.pool, &auth, &provider).await?;
     Ok(ApiResponse::success(()))
 }
 

@@ -15,7 +15,6 @@ use crate::handlers::dto::{
     SetPasswordRequest, VerifyEmailRequest, VerifySmsRequest,
 };
 use crate::middleware::auth::AuthUser;
-use crate::middleware::tenant::ResolvedTenant;
 use crate::services::auth;
 
 /// 用户注册
@@ -24,8 +23,8 @@ use crate::services::auth;
     responses((status = 200, description = "注册成功"))
 )]
 pub async fn register(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    tenant: ResolvedTenant,
     Json(req): Json<RegisterRequest>,
 ) -> AppResult<ApiResponse<crate::handlers::dto::UserResponse>> {
     if !state.config.registration_email_enabled {
@@ -38,7 +37,7 @@ pub async fn register(
         state.user_repo.as_ref(),
         &state.eventbus,
         req,
-        tenant.as_str(),
+        auth.tenant_id(),
         state.config.require_email_verification,
         &state.pool,
     )
@@ -52,8 +51,8 @@ pub async fn register(
     responses((status = 200, description = "登录成功"))
 )]
 pub async fn login(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    tenant: ResolvedTenant,
     Json(req): Json<LoginRequest>,
 ) -> AppResult<ApiResponse<crate::handlers::dto::LoginResponse>> {
     validation::validate(&req)?;
@@ -66,7 +65,7 @@ pub async fn login(
         &state.config.jwt_secret,
         state.config.jwt_access_expires,
         state.config.jwt_refresh_expires,
-        tenant.as_str(),
+        auth.tenant_id(),
         state.config.require_email_verification,
     )
     .await?;
@@ -130,9 +129,9 @@ pub async fn refresh(
 )]
 pub async fn logout(
     State(state): State<crate::AppState>,
-    auth_user: crate::middleware::auth::AuthUser,
+    auth: AuthUser,
 ) -> AppResult<ApiResponse<()>> {
-    auth::logout(state.refresh_token_repo.as_ref(), &auth_user.user_id).await?;
+    auth::logout(state.refresh_token_repo.as_ref(), &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -142,8 +141,8 @@ pub async fn logout(
     responses((status = 200, description = "重置邮件已发送"))
 )]
 pub async fn forgot_password(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    tenant: ResolvedTenant,
     Json(req): Json<ForgotPasswordRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
@@ -152,7 +151,7 @@ pub async fn forgot_password(
         state.user_repo.as_ref(),
         &state.eventbus,
         &req.email,
-        tenant.as_str(),
+        auth.tenant_id(),
     )
     .await?;
     Ok(ApiResponse::success(()))
@@ -186,18 +185,16 @@ pub async fn reset_password(
     responses((status = 200, description = "密码已设置"))
 )]
 pub async fn set_password(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    auth_user: AuthUser,
-    tenant: ResolvedTenant,
     Json(req): Json<SetPasswordRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
     auth::set_password(
         state.user_repo.as_ref(),
         &state.pool,
-        &auth_user.user_id,
+        &auth,
         &req.new_password,
-        tenant.as_str(),
     )
     .await?;
     Ok(ApiResponse::success(()))
@@ -258,19 +255,17 @@ pub async fn verify_sms(
 
 /// 绑定手机号
 pub async fn bind_phone(
+    auth: AuthUser,
     State(state): State<crate::AppState>,
-    auth_user: AuthUser,
-    tenant: ResolvedTenant,
     Json(req): Json<BindPhoneRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
     auth::bind_phone(
         state.user_repo.as_ref(),
         &state.pool,
-        &auth_user.user_id,
+        &auth,
         &req.phone,
         &req.code,
-        tenant.as_str(),
     )
     .await?;
     Ok(ApiResponse::success(()))

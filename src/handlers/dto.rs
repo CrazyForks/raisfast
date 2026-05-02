@@ -229,7 +229,7 @@ pub struct PostResponse {
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
     pub status: String,
-    pub author_id: String,
+    pub created_by: String,
     pub author_name: Option<String>,
     pub category_id: Option<String>,
     pub category_name: Option<String>,

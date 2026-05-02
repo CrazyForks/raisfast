@@ -12,7 +12,8 @@ pub struct CreatePageCmd {
     pub parent_id: Option<String>,
     pub sort_order: i64,
     pub status: String,
-    pub author_id: String,
+    pub created_by: String,
+    pub updated_by: Option<String>,
     pub cover_image: Option<String>,
 }
 
@@ -30,4 +31,5 @@ pub struct UpdatePageCmd {
     pub sort_order: Option<i64>,
     pub status: Option<String>,
     pub cover_image: Option<String>,
+    pub updated_by: Option<String>,
 }

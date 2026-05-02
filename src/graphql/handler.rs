@@ -2,7 +2,7 @@
 
 use crate::AppState;
 use crate::graphql::types::{MutationRoot, QueryRoot};
-use crate::middleware::auth::OptionalAuth;
+use crate::middleware::auth::AuthUser;
 use async_graphql::EmptySubscription;
 use async_graphql::http::GraphQLPlaygroundConfig;
 use async_graphql::http::playground_source;
@@ -14,7 +14,7 @@ use std::sync::Arc;
 /// POST /api/v1/graphql
 pub async fn graphql_handler(
     State(state): State<AppState>,
-    OptionalAuth(auth): OptionalAuth,
+    auth: AuthUser,
     req: GraphQLRequest,
 ) -> GraphQLResponse {
     let state_arc: Arc<AppState> = Arc::new(state);

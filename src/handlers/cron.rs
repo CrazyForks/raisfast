@@ -10,7 +10,7 @@ use serde::Deserialize;
 use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
-use crate::middleware::auth::AdminUser;
+use crate::middleware::auth::AuthUser;
 use crate::utils::pagination::PaginationParams;
 use crate::worker::{
     CronSchedule, cleanup_execution_logs, create_schedule, delete_schedule, find_by_id,
@@ -61,10 +61,11 @@ fn default_limit() -> i64 {
 
 /// GET /api/v1/admin/crons — 列出所有调度（分页）
 pub async fn list(
-    _admin: AdminUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<CronSchedule>>> {
+    auth.ensure_admin()?;
     params.sanitize();
     let all = list_schedules(&state.pool).await?;
     let total = all.len() as i64;
@@ -79,10 +80,11 @@ pub async fn list(
 
 /// GET /api/v1/admin/crons/{id} — 调度详情
 pub async fn get(
-    _admin: AdminUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<CronSchedule>> {
+    auth.ensure_admin()?;
     let schedule = find_by_id(&state.pool, &id)
         .await?
         .ok_or_else(|| AppError::not_found("cron_schedule"))?;
@@ -91,10 +93,11 @@ pub async fn get(
 
 /// POST /api/v1/admin/crons — 创建调度
 pub async fn create(
-    _admin: AdminUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Json(req): Json<CreateCronRequest>,
 ) -> AppResult<ApiResponse<CronSchedule>> {
+    auth.ensure_admin()?;
     crate::errors::validation::validate(&req)?;
     let schedule = create_schedule(
         &state.pool,
@@ -110,11 +113,12 @@ pub async fn create(
 
 /// PUT /api/v1/admin/crons/{id} — 更新调度
 pub async fn update(
-    _admin: AdminUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateCronRequest>,
 ) -> AppResult<ApiResponse<CronSchedule>> {
+    auth.ensure_admin()?;
     crate::errors::validation::validate(&req)?;
     let updated = update_schedule(
         &state.pool,
@@ -131,21 +135,23 @@ pub async fn update(
 
 /// POST /api/v1/admin/crons/{id}/toggle — 启停切换
 pub async fn toggle(
-    _admin: AdminUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<ToggleBody>,
 ) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
     toggle_schedule(&state.pool, &id, body.enabled).await?;
     Ok(ApiResponse::success(()))
 }
 
 /// DELETE /api/v1/admin/crons/{id} — 删除调度
 pub async fn delete(
-    _admin: AdminUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
     delete_schedule(&state.pool, &id).await?;
     Ok(ApiResponse::success(()))
 }
@@ -156,10 +162,11 @@ pub async fn delete(
 /// - `?schedule_id=xxx` — 查某个调度的历史
 /// - 不传 — 查所有调度的最近记录
 pub async fn logs(
-    _admin: AdminUser,
+    auth: AuthUser,
     State(state): State<AppState>,
     Query(params): Query<LogQueryParams>,
 ) -> AppResult<ApiResponse<Vec<crate::worker::CronExecutionLog>>> {
+    auth.ensure_admin()?;
     let limit = params.limit.clamp(1, 100);
     let logs = if let Some(ref schedule_id) = params.schedule_id {
         list_execution_logs(&state.pool, schedule_id, limit).await?
@@ -171,9 +178,10 @@ pub async fn logs(
 
 /// POST /api/v1/admin/crons/logs/cleanup — 清理过期日志
 pub async fn cleanup_logs(
-    _admin: AdminUser,
+    auth: AuthUser,
     State(state): State<AppState>,
 ) -> AppResult<ApiResponse<u64>> {
+    auth.ensure_admin()?;
     let days = state.config.cron_log_retention_days;
     let count = cleanup_execution_logs(&state.pool, days).await?;
     Ok(ApiResponse::success(count))

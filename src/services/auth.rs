@@ -20,6 +20,7 @@ use crate::eventbus::{Event, EventBus};
 use crate::handlers::dto::{
     LoginResponse, RegisterRequest, UpdatePasswordRequest, UpdateUserRequest, UserResponse,
 };
+use crate::middleware::auth::AuthUser;
 use crate::plugins::{HookPoint, PluginManager};
 use crate::repositories::{RefreshTokenRepository, UserRepository};
 
@@ -358,19 +359,17 @@ pub async fn refresh(
 /// 删除该用户的所有刷新令牌，使其所有设备上的会话失效。
 pub async fn logout(
     refresh_token_repo: &dyn RefreshTokenRepository,
-    user_id: &str,
+    auth: &AuthUser,
 ) -> AppResult<()> {
-    refresh_token_repo.delete_by_user(user_id).await
+    refresh_token_repo
+        .delete_by_user(auth.ensure_authenticated()?)
+        .await
 }
 
 /// 获取当前用户资料。
-pub async fn get_me(
-    user_repo: &dyn UserRepository,
-    user_id: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<UserResponse> {
+pub async fn get_me(user_repo: &dyn UserRepository, auth: &AuthUser) -> AppResult<UserResponse> {
     let user = user_repo
-        .find_by_id(user_id, tenant_id)
+        .find_by_id(auth.ensure_authenticated()?, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
     Ok(user.into())
@@ -379,20 +378,19 @@ pub async fn get_me(
 /// 更新当前用户资料（用户名、简介、网站、头像）。
 pub async fn update_me(
     user_repo: &dyn UserRepository,
-    user_id: &str,
+    auth: &AuthUser,
     req: UpdateUserRequest,
-    tenant_id: Option<&str>,
 ) -> AppResult<UserResponse> {
     let user = user_repo
         .update_profile(
             UpdateProfileCmd {
-                id: user_id.to_string(),
+                id: auth.ensure_authenticated()?.to_string(),
                 username: req.username,
                 bio: req.bio,
                 website: req.website,
                 avatar: req.avatar,
             },
-            tenant_id,
+            auth.tenant_id(),
         )
         .await?;
     Ok(user.into())
@@ -405,10 +403,11 @@ pub async fn update_me(
 pub async fn change_password(
     user_repo: &dyn UserRepository,
     pool: &crate::db::Pool,
-    user_id: &str,
+    auth: &AuthUser,
     req: UpdatePasswordRequest,
-    tenant_id: Option<&str>,
 ) -> AppResult<()> {
+    let user_id = auth.ensure_authenticated()?;
+    let tenant_id = auth.tenant_id();
     let user = user_repo
         .find_by_id(user_id, tenant_id)
         .await?
@@ -550,10 +549,11 @@ pub async fn reset_password(
 pub async fn set_password(
     user_repo: &dyn UserRepository,
     pool: &crate::db::Pool,
-    user_id: &str,
+    auth: &AuthUser,
     new_password: &str,
-    tenant_id: Option<&str>,
 ) -> AppResult<()> {
+    let user_id = auth.ensure_authenticated()?;
+    let tenant_id = auth.tenant_id();
     let user = user_repo
         .find_by_id(user_id, tenant_id)
         .await?
@@ -784,11 +784,12 @@ pub async fn verify_sms_and_auth(
 pub async fn bind_phone(
     user_repo: &dyn UserRepository,
     pool: &crate::db::Pool,
-    user_id: &str,
+    auth: &AuthUser,
     phone: &str,
     code: &str,
-    tenant_id: Option<&str>,
 ) -> AppResult<()> {
+    let user_id = auth.ensure_authenticated()?;
+    let tenant_id = auth.tenant_id();
     if user_repo.find_by_phone(phone).await?.is_some() {
         return Err(AppError::Conflict("phone_already_bound".into()));
     }

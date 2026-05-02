@@ -22,6 +22,8 @@ pub struct Category {
     pub description: Option<String>,
     pub parent_id: Option<String>,
     pub sort_order: i64,
+    pub updated_by: Option<String>,
+    pub updated_at: Option<String>,
     pub created_at: String,
 }
 
@@ -106,12 +108,13 @@ pub async fn create(
     pool: &crate::db::Pool,
     cmd: &crate::commands::CreateCategoryCmd,
     tenant_id: Option<&str>,
+    created_by: Option<&str>,
 ) -> AppResult<Category> {
     let (id, now) = crate::utils::id::new_id_and_timestamp();
     let tid = resolve_tenant(tenant_id);
 
     let sql = crate::db::dialect::translate(
-        "INSERT INTO categories (id, tenant_id, name, slug, description, parent_id, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO categories (id, tenant_id, name, slug, description, parent_id, sort_order, created_by, updated_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     sqlx::query(&sql)
         .bind(&id)
@@ -121,6 +124,8 @@ pub async fn create(
         .bind(&cmd.description)
         .bind(&cmd.parent_id)
         .bind(cmd.sort_order)
+        .bind(created_by)
+        .bind(created_by)
         .bind(&now)
         .execute(pool)
         .await?;
@@ -135,8 +140,10 @@ pub async fn update(
     pool: &crate::db::Pool,
     cmd: &crate::commands::UpdateCategoryCmd,
     tenant_id: Option<&str>,
+    updated_by: Option<&str>,
 ) -> AppResult<Category> {
     let existing = find_by_id(pool, &cmd.id, tenant_id).await?;
+    let now = crate::utils::tz::now_str();
 
     let name = cmd.name.as_deref().unwrap_or(&existing.name);
     let slug = cmd.slug.as_deref().unwrap_or(&existing.slug);
@@ -153,7 +160,7 @@ pub async fn update(
     let sort = cmd.sort_order.unwrap_or(existing.sort_order);
 
     let sql = format!(
-        "UPDATE categories SET name = ?, slug = ?, description = ?, parent_id = ?, sort_order = ? WHERE id = ?{}",
+        "UPDATE categories SET name = ?, slug = ?, description = ?, parent_id = ?, sort_order = ?, updated_by = ?, updated_at = ? WHERE id = ?{}",
         tenant_filter(tenant_id)
     );
     let sql = crate::db::dialect::translate(&sql);
@@ -163,6 +170,8 @@ pub async fn update(
         .bind(desc)
         .bind(parent)
         .bind(sort)
+        .bind(updated_by)
+        .bind(&now)
         .bind(&cmd.id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);

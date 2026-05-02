@@ -16,7 +16,7 @@ use crate::errors::app_error::{AppError, AppResult};
 /// 评论完整数据库行模型
 ///
 /// 直接映射 `comments` 表的所有字段。
-/// `author_id` 非空表示已登录用户，`nickname`/`email` 用于访客评论。
+/// `created_by` 非空表示已登录用户，`nickname`/`email` 用于访客评论。
 /// `status` 可取 `pending`、`approved`、`rejected`。
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
@@ -24,13 +24,15 @@ pub struct Comment {
     pub id: String,
     pub tenant_id: String,
     pub post_id: String,
-    pub author_id: Option<String>,
+    pub created_by: Option<String>,
+    pub updated_by: Option<String>,
     pub nickname: Option<String>,
     pub email: Option<String>,
     pub content: String,
     pub parent_id: Option<String>,
     pub status: String,
     pub created_at: String,
+    pub updated_at: Option<String>,
 }
 
 /// 评论 API 响应模型（树形结构）
@@ -42,7 +44,7 @@ pub struct Comment {
 pub struct CommentResponse {
     pub id: String,
     pub post_id: String,
-    pub author_id: Option<String>,
+    pub created_by: Option<String>,
     pub nickname: Option<String>,
     pub content: String,
     pub parent_id: Option<String>,
@@ -85,17 +87,19 @@ pub async fn create(
     let tid = resolve_tenant(tenant_id);
 
     let sql = crate::db::dialect::translate(
-        "INSERT INTO comments (id, tenant_id, post_id, author_id, nickname, email, content, parent_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+        "INSERT INTO comments (id, tenant_id, post_id, created_by, updated_by, nickname, email, content, parent_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
     );
     sqlx::query(&sql)
         .bind(&id)
         .bind(tid)
         .bind(&cmd.post_id)
-        .bind(&cmd.author_id)
+        .bind(&cmd.created_by)
+        .bind(&cmd.created_by)
         .bind(&cmd.nickname)
         .bind(&cmd.email)
         .bind(&cmd.content)
         .bind(&cmd.parent_id)
+        .bind(&now)
         .bind(&now)
         .execute(pool)
         .await?;
@@ -190,7 +194,7 @@ pub struct AdminCommentRow {
     pub id: String,
     pub post_id: String,
     pub post_title: String,
-    pub author_id: Option<String>,
+    pub created_by: Option<String>,
     pub nickname: Option<String>,
     pub email: Option<String>,
     pub content: String,
@@ -207,7 +211,7 @@ pub async fn find_all_paginated(
 ) -> AppResult<(Vec<AdminCommentRow>, i64)> {
     let offset = (page - 1) * page_size;
     let sql_str = format!(
-        "SELECT c.id, c.post_id, p.title AS post_title, c.author_id, c.nickname, c.email, c.content, c.parent_id, c.status, c.created_at FROM comments c JOIN posts p ON c.post_id = p.id WHERE 1=1{} ORDER BY c.created_at DESC LIMIT ? OFFSET ?",
+        "SELECT c.id, c.post_id, p.title AS post_title, c.created_by, c.nickname, c.email, c.content, c.parent_id, c.status, c.created_at FROM comments c JOIN posts p ON c.post_id = p.id WHERE 1=1{} ORDER BY c.created_at DESC LIMIT ? OFFSET ?",
         tenant_filter_aliased("c", tenant_id)
     );
     let sql = crate::db::dialect::translate(&sql_str);
@@ -241,12 +245,13 @@ pub async fn update_status(
     status: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
+    let (_, now) = crate::utils::id::new_id_and_timestamp();
     let sql = format!(
-        "UPDATE comments SET status = ? WHERE id = ?{}",
+        "UPDATE comments SET status = ?, updated_at = ? WHERE id = ?{}",
         tenant_filter(tenant_id)
     );
     let sql = crate::db::dialect::translate(&sql);
-    let mut q = sqlx::query(&sql).bind(status).bind(id);
+    let mut q = sqlx::query(&sql).bind(status).bind(&now).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -325,7 +330,7 @@ pub fn build_tree(comments: &[Comment]) -> Vec<CommentResponse> {
                         CommentResponse {
                             id: c.id.clone(),
                             post_id: c.post_id.clone(),
-                            author_id: c.author_id.clone(),
+                            created_by: c.created_by.clone(),
                             nickname: c.nickname.clone(),
                             content: c.content.clone(),
                             parent_id: c.parent_id.clone(),
@@ -371,13 +376,15 @@ mod tests {
             id: id.to_string(),
             tenant_id: crate::db::tenant::DEFAULT_TENANT.to_string(),
             post_id: post_id.to_string(),
-            author_id: None,
+            created_by: None,
+            updated_by: None,
             nickname: None,
             email: None,
             content: "test".to_string(),
             parent_id: parent_id.map(|s| s.to_string()),
             status: "approved".to_string(),
             created_at: "2025-01-01T00:00:00Z".to_string(),
+            updated_at: None,
         }
     }
 
