@@ -107,15 +107,12 @@ fn inject_where(sql: &str) -> String {
     format!("{sql}{connector}tenant_id = ?")
 }
 
-/// 默认租户 ID。
-pub const DEFAULT_TENANT: &str = "default";
-
 /// 解析 `Option<&str>` 为有效的租户 ID。
 ///
 /// `None`（超管未指定租户）回退到 [`DEFAULT_TENANT`]。
 /// 用于 INSERT 等必须有值的场景。
 pub fn resolve_tenant(tenant_id: Option<&str>) -> &str {
-    tenant_id.unwrap_or(DEFAULT_TENANT)
+    tenant_id.unwrap_or(crate::constants::DEFAULT_TENANT)
 }
 
 fn sql_has_tenant(sql: &str) -> bool {

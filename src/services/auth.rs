@@ -42,7 +42,7 @@ pub struct Claims {
 }
 
 fn default_tenant_id() -> String {
-    crate::db::tenant::DEFAULT_TENANT.to_string()
+    crate::constants::DEFAULT_TENANT.to_string()
 }
 
 /// 校验密码强度。
@@ -156,7 +156,7 @@ pub fn generate_access_token_for_test(user_id: &str, role: &str) -> String {
     generate_access_token_internal(
         user_id,
         role,
-        crate::db::tenant::DEFAULT_TENANT,
+        crate::constants::DEFAULT_TENANT,
         "test-secret-key-at-least-32-characters-long",
         900,
     )

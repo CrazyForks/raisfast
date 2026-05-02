@@ -7,6 +7,7 @@ use crate::aspects::{
     BaseContext, DataAfterCreateContext, DataAfterDeleteContext, DataAfterUpdateContext,
     DataBeforeCreateContext, DataBeforeDeleteContext, DataBeforeUpdateContext, Record,
 };
+use crate::constants::DEFAULT_TENANT;
 use crate::db::pool::Pool;
 use crate::errors::app_error::AppResult;
 
@@ -115,7 +116,7 @@ impl AspectDispatch<'_> {
     fn make_base_ctx(&self) -> BaseContext {
         BaseContext::new(
             self.user_id.map(|s| s.to_string()),
-            self.tenant_id.unwrap_or("default").to_string(),
+            self.tenant_id.unwrap_or(DEFAULT_TENANT).to_string(),
             crate::utils::tz::now_str(),
         )
         .with_pool(self.pool.clone())

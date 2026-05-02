@@ -13,6 +13,7 @@
 pub mod aspects;
 pub mod audit;
 pub mod cache;
+pub mod constants;
 pub mod commands;
 pub mod config;
 pub mod content_type;
@@ -130,6 +131,9 @@ pub async fn build_app_state(config: &AppConfig) -> anyhow::Result<AppState> {
     let mut protocol_registry = crate::protocols::ProtocolRegistry::new();
     protocol_registry.register(crate::protocols::ownable::OwnableProtocol);
     protocol_registry.register(crate::protocols::timestampable::TimestampableProtocol);
+    protocol_registry.register(crate::protocols::soft_deletable::SoftDeletableProtocol);
+    protocol_registry.register(crate::protocols::versionable::VersionableProtocol);
+    protocol_registry.register(crate::protocols::cacheable::CacheableProtocol);
     let protocol_registry = Arc::new(protocol_registry);
 
     let aspect_engine = Arc::new(crate::aspects::engine::AspectEngine::new());
@@ -141,10 +145,12 @@ pub async fn build_app_state(config: &AppConfig) -> anyhow::Result<AppState> {
     );
 
     let reserved = config.builtins.reserved_route_segments();
+    let protocol_names: Vec<&str> = protocol_registry.names();
     let ct_registry = Arc::new(ContentTypeRegistry::load_from_dir(
         std::path::Path::new(&config.content_type_dir),
         &config.rule_engine,
         &reserved,
+        &protocol_names,
     )?);
     ct_registry.set_protected_tables(config.builtins.protected_tables());
 

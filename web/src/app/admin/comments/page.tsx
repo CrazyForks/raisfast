@@ -40,7 +40,8 @@ interface AdminComment {
   id: string;
   post_id: string;
   post_title: string;
-  author_id: string | null;
+  created_by: string | null;
+  updated_by: string | null;
   nickname: string | null;
   email: string | null;
   content: string;

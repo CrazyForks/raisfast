@@ -1295,6 +1295,7 @@ type = "text"
             dir.path(),
             &crate::config::app::RuleEngineConfig::default(),
             &reserved,
+            &["ownable", "timestampable", "soft_deletable", "versionable", "cacheable"],
         )
         .unwrap();
         assert_eq!(reg.len(), 2);

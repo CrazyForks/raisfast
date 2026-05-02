@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 
 use super::schema::{AutoFillSource, ContentTypeSchema, FieldType, RelationType};
 use crate::db::Pool;
+use crate::constants::*;
 use crate::errors::app_error::AppError;
 use crate::middleware::auth::AuthUser;
 use sqlx::Row;
@@ -122,6 +123,12 @@ impl ContentRepository {
         let mut where_clauses = Vec::new();
         let mut params: Vec<Value> = Vec::new();
         let mut param_idx = 1;
+
+        let has_soft_delete = ct.soft_delete
+            || ct.implements.contains(&"soft_deletable".to_string());
+        if has_soft_delete {
+            where_clauses.push(format!("{} IS NULL", COL_DELETED_AT));
+        }
 
         let tid = self.resolve_tenant(table, query.tenant_id.as_deref()).await;
         if let Some(ref tid) = tid {
@@ -353,6 +360,12 @@ impl ContentRepository {
         let mut where_parts = vec![format!("slug = {}", placeholder(1))];
         let mut idx = 2;
 
+        let has_soft_delete = ct.soft_delete
+            || ct.implements.contains(&"soft_deletable".to_string());
+        if has_soft_delete {
+            where_parts.push(format!("{} IS NULL", COL_DELETED_AT));
+        }
+
         if tid.is_some() {
             where_parts.push(format!("tenant_id = {}", placeholder(idx)));
             idx += 1;
@@ -428,7 +441,7 @@ impl ContentRepository {
         if !ct.builtin && !ct.implements.is_empty() {
             let mut meta = serde_json::Map::new();
             meta.insert("protocols".into(), json!(ct.implements));
-            obj.insert("__meta".into(), json!(meta));
+            obj.insert(COL_META.into(), json!(meta));
         }
 
         let tid = self.resolve_tenant(&ct.table, tenant_id).await;
@@ -439,7 +452,7 @@ impl ContentRepository {
         let mut idx = 1;
 
         if let Some(ref tid) = tid {
-            cols.push("tenant_id".to_string());
+            cols.push(COL_TENANT_ID.to_string());
             placeholders.push(placeholder(idx));
             idx += 1;
             values.push(tid.clone());
@@ -673,6 +686,53 @@ impl ContentRepository {
         Ok(())
     }
 
+    pub async fn soft_delete(
+        &self,
+        ct: &ContentTypeSchema,
+        id: &str,
+        deleted_at: &str,
+        deleted_by: Option<&str>,
+        tenant_id: Option<&str>,
+    ) -> Result<(), AppError> {
+        let tid = self.resolve_tenant(&ct.table, tenant_id).await;
+
+        let mut set_parts = vec![format!("{} = ?", COL_DELETED_AT)];
+        let mut values: Vec<String> = vec![deleted_at.to_string()];
+
+        if let Some(by) = deleted_by {
+            set_parts.push(format!("{} = ?", COL_DELETED_BY));
+            values.push(by.to_string());
+        }
+
+        let mut where_parts = vec!["id = ?".to_string()];
+        values.push(id.to_string());
+
+        if let Some(ref tid) = tid {
+            where_parts.push("tenant_id = ?".to_string());
+            values.push(tid.clone());
+        }
+
+        let raw_sql = format!(
+            "UPDATE {} SET {} WHERE {}",
+            ct.table,
+            set_parts.join(", "),
+            where_parts.join(" AND ")
+        );
+        let sql = crate::db::dialect::translate(&raw_sql);
+
+        let mut query = sqlx::query(&sql);
+        for v in &values {
+            query = query.bind(v);
+        }
+
+        query
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("soft_delete failed: {e}")))?;
+
+        Ok(())
+    }
+
     /// 执行 migration（建表 + 增量同步列）
     ///
     /// - 表不存在 → `CREATE TABLE`
@@ -799,15 +859,16 @@ pub fn build_column_names(
         cols.push("status".into());
         cols.push("published_at".into());
     }
-    cols.push("created_at".into());
-    cols.push("updated_at".into());
-    cols.push("created_by".into());
-    cols.push("updated_by".into());
-    if ct.soft_delete {
-        cols.push("deleted_at".into());
+    cols.push(COL_CREATED_AT.into());
+    cols.push(COL_UPDATED_AT.into());
+    cols.push(COL_CREATED_BY.into());
+    cols.push(COL_UPDATED_BY.into());
+    if ct.soft_delete || ct.implements.contains(&"soft_deletable".to_string()) {
+        cols.push(COL_DELETED_AT.into());
+        cols.push(COL_DELETED_BY.into());
     }
     if !ct.builtin {
-        cols.push("__meta".into());
+        cols.push(COL_META.into());
     }
 
     cols

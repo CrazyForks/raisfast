@@ -26,8 +26,11 @@
 //!
 //! 用户可通过 manifest.toml 定义 Protocol，组合已有 Aspect。
 
+pub mod cacheable;
 pub mod ownable;
+pub mod soft_deletable;
 pub mod timestampable;
+pub mod versionable;
 
 use std::collections::HashMap;
 use std::sync::Arc;

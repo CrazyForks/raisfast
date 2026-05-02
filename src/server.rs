@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::AppState;
+use crate::constants::DEFAULT_TENANT;
 use crate::cache::MemoryCache;
 use crate::config::app::AppConfig;
 use crate::handlers::{
@@ -976,19 +977,19 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         if ct.is_single() {
             registry.record(
                 "GET",
-                &format!("/api/v1/cms/{}", name),
+                &format!("{}/{}", crate::constants::CMS_PREFIX, name),
                 "content_type",
                 name,
             );
             registry.record(
                 "PUT",
-                &format!("/api/v1/cms/{}", name),
+                &format!("{}/{}", crate::constants::CMS_PREFIX, name),
                 "content_type",
                 name,
             );
             registry.record(
                 "GET",
-                &format!("/api/v1/admin/cms/{}", name),
+                &format!("{}/{}", crate::constants::CMS_ADMIN_PREFIX, name),
                 "content_type",
                 name,
             );
@@ -1002,20 +1003,20 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
             ] {
                 registry.record(
                     method,
-                    &format!("/api/v1/cms/{}{}", plural, suffix),
+                    &format!("{}/{}{}", crate::constants::CMS_PREFIX, plural, suffix),
                     "content_type",
                     name,
                 );
             }
             registry.record(
                 "GET",
-                &format!("/api/v1/admin/cms/{}", plural),
+                &format!("{}/{}", crate::constants::CMS_ADMIN_PREFIX, plural),
                 "content_type",
                 name,
             );
             registry.record(
                 "GET",
-                &format!("/api/v1/admin/cms/{}/{{id_or_slug}}", plural),
+                &format!("{}/{}/{{id_or_slug}}", crate::constants::CMS_ADMIN_PREFIX, plural),
                 "content_type",
                 name,
             );
@@ -1024,17 +1025,17 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
 
     api_v1 = api_v1
         .route(
-            "/cms/{*path}",
+            &format!("{}/{{*path}}", crate::constants::CMS_ROUTE),
             axum::routing::any(crate::content_type::handler::dynamic_cms_handler),
         )
         .route(
-            "/admin/cms/{*path}",
+            &format!("{}/{{*path}}", crate::constants::CMS_ADMIN_ROUTE),
             axum::routing::any(crate::content_type::handler::dynamic_admin_cms_handler),
         )
         .route("/routes", get(list_routes))
         .route("/health", get(health::health));
 
-    registry.record("GET", "/api/v1/health", "system", "health");
+    registry.record("GET", &format!("{}/health", crate::constants::API_PREFIX), "system", "health");
 
     {
         let plugin_routes = state.plugins.all_plugin_routes().await;
@@ -1043,7 +1044,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         }
     }
 
-    registry.record("GET", "/api/v1/routes", "system", "system");
+    registry.record("GET", &format!("{}/routes", crate::constants::API_PREFIX), "system", "system");
 
     let routes_vec = registry.into_vec();
     state.route_registry = Arc::new(routes_vec);
@@ -1054,7 +1055,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         .route("/readyz", get(health::readiness))
         .route("/metrics", get(metrics::metrics_endpoint))
         .route("/feed.xml", get(rss::feed))
-        .nest("/api/v1", api_v1)
+        .nest(crate::constants::API_PREFIX, api_v1)
         .nest_service("/uploads", ServeDir::new(&upload_dir))
         .nest_service("/static", ServeDir::new(&static_dir))
         .fallback(handle_plugin_route)
@@ -1339,7 +1340,7 @@ pub fn spawn_audit_subscriber(
 
     let mut rx = eventbus.subscribe();
     tokio::spawn(async move {
-        let default_tenant: &str = "default";
+        let default_tenant: &str = DEFAULT_TENANT;
         let _ = tenant_service;
         loop {
             match rx.recv().await {
@@ -1530,7 +1531,7 @@ pub fn spawn_webhook_subscriber(
                         }
                     };
 
-                    let subs = match webhook_service.find_enabled("default").await {
+                    let subs = match webhook_service.find_enabled(DEFAULT_TENANT).await {
                         Ok(s) => s,
                         Err(e) => {
                             tracing::warn!("webhook find_enabled error: {e}");

@@ -10,6 +10,7 @@ use std::sync::Arc;
 use serde_json::Value;
 use tokio::sync::RwLock;
 
+use crate::constants::DEFAULT_TENANT;
 use crate::errors::app_error::AppError;
 use crate::models::options::OptionRow;
 use crate::repositories::OptionsRepository;
@@ -102,7 +103,7 @@ impl OptionsService {
             return Some(entry);
         }
         let row: crate::models::options::OptionRow =
-            self.repo.find_by_key(key, "default").await.ok().flatten()?;
+            self.repo.find_by_key(key, DEFAULT_TENANT).await.ok().flatten()?;
         let entry = OptionEntry::from(&row);
         self.cache
             .write()
@@ -118,7 +119,7 @@ impl OptionsService {
         let now = crate::utils::tz::now_str();
 
         self.repo
-            .upsert_value(key, &value_str, "default", &now)
+            .upsert_value(key, &value_str, DEFAULT_TENANT, &now)
             .await?;
 
         {
@@ -152,7 +153,7 @@ impl OptionsService {
             let value_str = serde_json::to_string(value)
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("json serialize failed: {e}")))?;
             self.repo
-                .upsert_value(key, &value_str, "default", &now)
+                .upsert_value(key, &value_str, DEFAULT_TENANT, &now)
                 .await?;
         }
 
@@ -166,14 +167,14 @@ impl OptionsService {
 
     /// 删除配置
     pub async fn delete(&self, key: &str) -> Result<(), AppError> {
-        self.repo.delete_by_key(key, "default").await?;
+        self.repo.delete_by_key(key, DEFAULT_TENANT).await?;
         self.cache.write().await.remove(key);
         Ok(())
     }
 
     /// 获取所有配置（按分组组织）
     pub async fn get_grouped(&self) -> Result<Vec<OptionGroup>, AppError> {
-        let rows = self.repo.find_all("default").await?;
+        let rows = self.repo.find_all(DEFAULT_TENANT).await?;
         let mut group_map: HashMap<String, Vec<OptionEntry>> = HashMap::new();
         let mut group_labels: HashMap<String, String> = HashMap::new();
         let mut group_order: Vec<String> = Vec::new();
@@ -218,7 +219,7 @@ impl OptionsService {
     /// 获取公开配置（含元数据，按分组）
     pub async fn get_public_grouped(&self) -> Vec<OptionGroup> {
         let rows: Vec<crate::models::options::OptionRow> =
-            self.repo.find_all("default").await.unwrap_or_default();
+            self.repo.find_all(DEFAULT_TENANT).await.unwrap_or_default();
         let mut group_map: HashMap<String, Vec<OptionEntry>> = HashMap::new();
         let mut group_order: Vec<String> = Vec::new();
 

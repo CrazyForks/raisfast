@@ -30,7 +30,7 @@ impl JobHandler for ScheduledPublishHandler {
         let post = crate::models::post::find_by_id(
             &self.pool,
             post_id,
-            Some(crate::db::tenant::DEFAULT_TENANT),
+            Some(crate::constants::DEFAULT_TENANT),
         )
         .await?;
         let Some(post) = post else {
@@ -57,7 +57,7 @@ impl JobHandler for ScheduledPublishHandler {
                 tag_ids: None,
                 updated_by: None,
             },
-            Some(crate::db::tenant::DEFAULT_TENANT),
+            Some(crate::constants::DEFAULT_TENANT),
         )
         .await?;
 
@@ -123,7 +123,7 @@ mod tests {
                 username: "author".to_string(),
                 password_hash: "hash".to_string(),
             },
-            Some(crate::db::tenant::DEFAULT_TENANT),
+            Some(crate::constants::DEFAULT_TENANT),
         )
         .await
         .unwrap();
@@ -131,7 +131,7 @@ mod tests {
             pool,
             &u.id,
             "author",
-            Some(crate::db::tenant::DEFAULT_TENANT),
+            Some(crate::constants::DEFAULT_TENANT),
         )
         .await
         .unwrap();
@@ -157,7 +157,7 @@ mod tests {
                 category_id: None,
                 tag_ids: None,
             },
-            Some(crate::db::tenant::DEFAULT_TENANT),
+            Some(crate::constants::DEFAULT_TENANT),
         )
         .await
         .unwrap();
@@ -168,7 +168,7 @@ mod tests {
         };
         assert!(handler.handle(&job).await.is_ok());
 
-        let updated = post::find_by_id(&pool, &p.id, Some(crate::db::tenant::DEFAULT_TENANT))
+        let updated = post::find_by_id(&pool, &p.id, Some(crate::constants::DEFAULT_TENANT))
             .await
             .unwrap()
             .unwrap();
@@ -195,7 +195,7 @@ mod tests {
                 category_id: None,
                 tag_ids: None,
             },
-            Some(crate::db::tenant::DEFAULT_TENANT),
+            Some(crate::constants::DEFAULT_TENANT),
         )
         .await
         .unwrap();

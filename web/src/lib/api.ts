@@ -11,7 +11,8 @@ export interface Post {
   excerpt: string;
   cover_image: string;
   status: string;
-  author_id: string;
+  created_by: string;
+  updated_by: string | null;
   author_name: string;
   category_id: string;
   category_name: string;

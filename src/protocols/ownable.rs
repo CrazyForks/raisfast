@@ -12,6 +12,7 @@ use crate::aspects::{
     Advice, Aspect, AspectResult, ColumnDef, DataBeforeCreateContext, DataBeforeUpdateContext,
     Layer, Operation, Pointcut, SqlType, TargetMatcher, When,
 };
+use crate::constants::*;
 use crate::protocols::Protocol;
 
 pub struct OwnableAspect;
@@ -46,12 +47,12 @@ impl Aspect for OwnableAspect {
     fn columns(&self) -> Vec<ColumnDef> {
         vec![
             ColumnDef {
-                name: "created_by".into(),
+                name: COL_CREATED_BY.into(),
                 sql_type: SqlType::Text,
                 default: None,
             },
             ColumnDef {
-                name: "updated_by".into(),
+                name: COL_UPDATED_BY.into(),
                 sql_type: SqlType::Text,
                 default: None,
             },
@@ -60,15 +61,15 @@ impl Aspect for OwnableAspect {
 
     async fn on_data_before_create(&self, ctx: &mut DataBeforeCreateContext) -> AspectResult {
         if let Some(user_id) = &ctx.base.user_id {
-            ctx.record.insert("created_by".into(), json!(user_id));
-            ctx.record.insert("updated_by".into(), json!(user_id));
+            ctx.record.insert(COL_CREATED_BY.into(), json!(user_id));
+            ctx.record.insert(COL_UPDATED_BY.into(), json!(user_id));
         }
         Ok(Advice::Continue)
     }
 
     async fn on_data_before_update(&self, ctx: &mut DataBeforeUpdateContext) -> AspectResult {
         if let Some(user_id) = &ctx.base.user_id {
-            ctx.new_record.insert("updated_by".into(), json!(user_id));
+            ctx.new_record.insert(COL_UPDATED_BY.into(), json!(user_id));
         }
         Ok(Advice::Continue)
     }

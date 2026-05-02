@@ -221,7 +221,7 @@ impl FromRequestParts<AppState> for AuthUser {
                 (None, None) => RequestIdentity {
                     user_id: None,
                     role: String::new(),
-                    tenant_id: Some(crate::db::tenant::DEFAULT_TENANT.to_string()),
+                    tenant_id: Some(crate::constants::DEFAULT_TENANT.to_string()),
                     is_super_admin: false,
                 },
             };

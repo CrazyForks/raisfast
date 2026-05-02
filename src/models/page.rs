@@ -4,6 +4,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
+use crate::constants::DEFAULT_TENANT;
 use crate::db::tenant::tenant_filter;
 use crate::errors::app_error::{AppError, AppResult};
 
@@ -432,7 +433,7 @@ pub async fn create(
     let sql = crate::db::dialect::translate(
         "INSERT INTO pages (id, tenant_id, title, slug, content, blocks, meta_title, meta_description, og_image, template, parent_id, sort_order, status, created_by, updated_by, cover_image, published_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
-    let tid = tenant_id.unwrap_or("default");
+    let tid = tenant_id.unwrap_or(DEFAULT_TENANT);
     sqlx::query(&sql)
         .bind(id)
         .bind(tid)
@@ -721,7 +722,7 @@ pub async fn create_reusable(
     let sql = crate::db::dialect::translate(
         "INSERT INTO reusable_blocks (id, tenant_id, name, block_type, content, description, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
-    let tid = tenant_id.unwrap_or("default");
+    let tid = tenant_id.unwrap_or(DEFAULT_TENANT);
     sqlx::query(&sql)
         .bind(id)
         .bind(tid)

@@ -17,8 +17,18 @@ use super::repository::{ContentQuery, ContentRepository, SaveContext};
 use super::rule_engine::compile_rule_sql;
 use super::schema::{ContentKind, ContentTypeSchema, check_api_access};
 use crate::AppState;
+use crate::constants::*;
 use crate::errors::app_error::AppError;
 use crate::middleware::auth::AuthUser;
+
+fn make_base_ctx_from_auth(auth: &AuthUser, pool: &crate::db::pool::Pool) -> crate::aspects::BaseContext {
+    crate::aspects::BaseContext::new(
+        auth.user_id().map(|s| s.to_string()),
+        auth.tenant_id().unwrap_or(DEFAULT_TENANT).to_string(),
+        crate::utils::tz::now_str(),
+    )
+    .with_pool(pool.clone())
+}
 
 fn make_base_ctx(state: &AppState, save_ctx: &SaveContext) -> crate::aspects::BaseContext {
     crate::aspects::BaseContext::new(
@@ -26,14 +36,14 @@ fn make_base_ctx(state: &AppState, save_ctx: &SaveContext) -> crate::aspects::Ba
         save_ctx
             .tenant_id
             .clone()
-            .unwrap_or_else(|| "default".into()),
+            .unwrap_or_else(|| DEFAULT_TENANT.into()),
         crate::utils::tz::now_str(),
     )
     .with_pool(state.pool.clone())
 }
 
 fn make_base_ctx_anon(state: &AppState) -> crate::aspects::BaseContext {
-    crate::aspects::BaseContext::new(None, "default".into(), crate::utils::tz::now_str())
+    crate::aspects::BaseContext::new(None, DEFAULT_TENANT.into(), crate::utils::tz::now_str())
         .with_pool(state.pool.clone())
 }
 
@@ -93,6 +103,8 @@ pub fn register_content_routes(
     registry: &crate::content_type::ContentTypeRegistry,
 ) -> axum::Router<AppState> {
     let mut api = router;
+    let cms = crate::constants::CMS_ROUTE;
+    let admin_cms = crate::constants::CMS_ADMIN_ROUTE;
 
     for ct in registry.all() {
         let plural = ct.plural.clone();
@@ -101,7 +113,7 @@ pub fn register_content_routes(
         if ct.kind == ContentKind::Single {
             api = api
                 .route(
-                    &format!("/cms/{singular}"),
+                    &format!("{cms}/{singular}"),
                     axum::routing::get({
                         let singular = singular.clone();
                         move |auth, state| single_get_handler(auth, state, singular.clone())
@@ -114,7 +126,7 @@ pub fn register_content_routes(
                     }),
                 )
                 .route(
-                    &format!("/admin/cms/{singular}"),
+                    &format!("{admin_cms}/{singular}"),
                     axum::routing::get({
                         let singular = singular.clone();
                         move |state| admin_single_get_handler(state, singular.clone())
@@ -123,7 +135,7 @@ pub fn register_content_routes(
         } else {
             api = api
                 .route(
-                    &format!("/cms/{plural}"),
+                    &format!("{cms}/{plural}"),
                     axum::routing::get({
                         let singular = singular.clone();
                         move |auth, state, params| {
@@ -136,7 +148,7 @@ pub fn register_content_routes(
                     }),
                 )
                 .route(
-                    &format!("/cms/{plural}/{{id_or_slug}}"),
+                    &format!("{cms}/{plural}/{{id_or_slug}}"),
                     axum::routing::get({
                         let singular = singular.clone();
                         move |auth, state, path| get_handler(auth, state, path, singular.clone())
@@ -153,14 +165,14 @@ pub fn register_content_routes(
                     }),
                 )
                 .route(
-                    &format!("/admin/cms/{plural}"),
+                    &format!("{admin_cms}/{plural}"),
                     axum::routing::get({
                         let singular = singular.clone();
                         move |state, params| admin_list_handler(state, singular.clone(), params)
                     }),
                 )
                 .route(
-                    &format!("/admin/cms/{plural}/{{id_or_slug}}"),
+                    &format!("{admin_cms}/{plural}/{{id_or_slug}}"),
                     axum::routing::get({
                         let singular = singular.clone();
                         move |state, path| admin_get_handler(state, path, singular.clone())
@@ -172,19 +184,19 @@ pub fn register_content_routes(
             let p = plural.clone();
             api = api
                 .route(
-                    &format!("/admin/cms/{p}/{{id}}/revisions"),
+                    &format!("{admin_cms}/{p}/{{id}}/revisions"),
                     axum::routing::get(crate::handlers::content_revision::list_revisions),
                 )
                 .route(
-                    &format!("/admin/cms/{p}/{{id}}/revisions/{{revision_id}}"),
+                    &format!("{admin_cms}/{p}/{{id}}/revisions/{{revision_id}}"),
                     axum::routing::get(crate::handlers::content_revision::get_revision),
                 )
                 .route(
-                    &format!("/admin/cms/{p}/{{id}}/revisions/{{revision_id}}/restore"),
+                    &format!("{admin_cms}/{p}/{{id}}/revisions/{{revision_id}}/restore"),
                     axum::routing::post(crate::handlers::content_revision::restore_revision),
                 )
                 .route(
-                    &format!("/admin/cms/{p}/{{id}}/revisions/{{rev_a}}/diff/{{rev_b}}"),
+                    &format!("{admin_cms}/{p}/{{id}}/revisions/{{rev_a}}/diff/{{rev_b}}"),
                     axum::routing::get(crate::handlers::content_revision::diff_revisions),
                 );
         }
@@ -660,6 +672,18 @@ pub async fn do_update(
         }
     }
 
+    let old_record_value = repo.find_by_id(ct, id, None, true).await?;
+
+    if let Some(rules) = ct.cached_rules.as_ref()
+        && let Some(rule) = rules.update.filter.as_ref()
+        && let Some(ref record) = old_record_value
+    {
+        let ctx = super::rule_engine::RuleContext::from_auth(auth);
+        if !rule.evaluate(record, &ctx, &state.config.rule_engine) {
+            return Err(AppError::Forbidden);
+        }
+    }
+
     let hook_data = json!({
         "content_type": ct.singular,
         "id": id,
@@ -672,17 +696,16 @@ pub async fn do_update(
 
     let mut data = filtered.get("data").cloned().unwrap_or(data);
 
+    let old_record = old_record_value
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+
     {
-        let old_record = repo
-            .find_by_id(ct, id, None, true)
-            .await?
-            .and_then(|v| v.as_object().cloned())
-            .unwrap_or_default();
         let new_record = data.as_object().cloned().unwrap_or_default();
         let mut ctx = crate::aspects::DataBeforeUpdateContext {
             base: make_base_ctx(state, save_ctx),
             table: ct.table.clone(),
-            old_record,
+            old_record: old_record.clone(),
             new_record,
             schema: Some(std::sync::Arc::new(ct.clone())),
         };
@@ -702,7 +725,7 @@ pub async fn do_update(
         let mut after_ctx = crate::aspects::DataAfterUpdateContext {
             base: make_base_ctx(state, save_ctx),
             table: ct.table.clone(),
-            old_record: serde_json::Map::new(),
+            old_record,
             new_record,
             schema: Some(std::sync::Arc::new(ct.clone())),
         };
@@ -737,26 +760,54 @@ pub async fn do_delete(
 ) -> Result<(), AppError> {
     let repo = ContentRepository::new(state.pool.clone());
 
+    let existing = repo.find_by_id(ct, id, None, true).await?;
+    let value = existing.ok_or_else(|| AppError::not_found(&ct.singular))?;
+
+    let record: crate::aspects::Record = match value.as_object() {
+        Some(map) => map.clone(),
+        None => return Err(AppError::Internal(anyhow::anyhow!("record is not an object"))),
+    };
+
     if let Some(rules) = ct.cached_rules.as_ref()
         && let Some(rule) = rules.delete.filter.as_ref()
     {
-        let existing = repo.find_by_id(ct, id, None, true).await?;
-        if let Some(record) = existing {
-            let ctx = super::rule_engine::RuleContext::from_auth(auth);
-            if !rule.evaluate(&record, &ctx, &state.config.rule_engine) {
-                return Err(AppError::Forbidden);
-            }
+        let ctx = super::rule_engine::RuleContext::from_auth(auth);
+        if !rule.evaluate(&value, &ctx, &state.config.rule_engine) {
+            return Err(AppError::Forbidden);
         }
     }
 
-    repo.delete(ct, id, None).await?;
+    let mut before_ctx = crate::aspects::DataBeforeDeleteContext {
+        base: make_base_ctx_from_auth(auth, &state.pool),
+        table: ct.table.clone(),
+        record: record.clone(),
+        soft_delete: false,
+        schema: Some(std::sync::Arc::new(ct.clone())),
+    };
+    state
+        .aspect_engine
+        .dispatch_data_before_delete(&ct.table, &mut before_ctx)
+        .await
+        .map_err(crate::errors::app_error::AppError::Internal)?;
+
+    if before_ctx.soft_delete {
+        let deleted_at = before_ctx.record.get(COL_DELETED_AT)
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let deleted_by = before_ctx.record.get(COL_DELETED_BY)
+            .and_then(|v| v.as_str());
+        repo.soft_delete(ct, id, deleted_at, deleted_by, auth.tenant_id()).await?;
+    } else {
+        repo.delete(ct, id, auth.tenant_id()).await?;
+    }
+
     invalidate_cms_cache(state, ct);
 
     {
         let mut after_ctx = crate::aspects::DataAfterDeleteContext {
-            base: make_base_ctx_anon(state),
+            base: make_base_ctx_from_auth(auth, &state.pool),
             table: ct.table.clone(),
-            record: serde_json::Map::new(),
+            record,
             schema: Some(std::sync::Arc::new(ct.clone())),
         };
         if let Err(e) = state
@@ -1121,9 +1172,10 @@ pub async fn create_schema(
     repo.migrate(&schema).await?;
 
     let reserved = state.config.builtins.reserved_route_segments();
+    let protocol_names: Vec<&str> = state.protocol_registry.names();
     state
         .content_type_registry
-        .register(schema.clone(), &state.config.rule_engine, &reserved)
+        .register(schema.clone(), &state.config.rule_engine, &reserved, &protocol_names)
         .map_err(|e| AppError::Conflict(e.to_string()))?;
 
     tracing::info!(
@@ -1220,9 +1272,10 @@ pub async fn update_schema(
     repo.migrate(&updated).await?;
 
     let reserved = state.config.builtins.reserved_route_segments();
+    let protocol_names: Vec<&str> = state.protocol_registry.names();
     state
         .content_type_registry
-        .register(updated.clone(), &state.config.rule_engine, &reserved)
+        .register(updated.clone(), &state.config.rule_engine, &reserved, &protocol_names)
         .map_err(|e| AppError::Conflict(e.to_string()))?;
 
     tracing::info!(
@@ -1266,7 +1319,7 @@ fn filter_fields(mut value: serde_json::Value, fields: Option<&[String]>) -> ser
 
 fn strip_meta(mut value: serde_json::Value) -> serde_json::Value {
     if let Some(obj) = value.as_object_mut() {
-        obj.remove("__meta");
+        obj.remove(COL_META);
     }
     value
 }

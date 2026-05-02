@@ -1,35 +1,89 @@
-# Content Type 动态元数据架构设计
+# Content Type Protocol 架构设计
 
-> 版本：v4.0 · 日期：2026-04-30
+> 版本：v5.0 · 日期：2026-05-02
 
 ## 一、目标
 
-在 Content Type 系统中引入 `__meta` JSON 字段 + 协议（Protocol）机制，实现：
+在 Content Type 系统中通过 AOP（Aspect-Oriented Programming）框架 + Protocol 机制实现：
 
-1. **协议/ trait 抽象** — 多个 Content Type 声明公共行为，系统自动注入
+1. **协议/trait 抽象** — 多个 Content Type 声明公共行为，系统自动注入
 2. **默认能力** — 所有 CT 自动获得 `ownable` + `timestampable`，无需声明
-3. **内置 Protocol** — 极少量无争议的原子能力（`versionable`、`cacheable`）
-4. **插件自定义协议** — 第三方插件注册 Protocol，无限扩展
-5. **内置表复用 Protocol** — 内置 Blog/Pages 走同一套行为引擎
-6. **插件扩展数据** — 插件通过 `__meta` 给记录附加私有数据
+3. **内置 Protocol** — 无争议的原子能力（`soft_deletable`、`versionable`、`cacheable`）
+4. **插件自定义协议** — 第三方插件注册 Protocol，无限扩展（未实现）
+5. **`__meta` 元数据** — 记录附加私有数据（已实现基础版：存储 `protocols` 列表）
 
-## 二、Protocol 分级
+### 架构决策：内置表不接入 Protocol
+
+内置表（posts/pages/comments/categories/tags/media）是 typed struct + `sqlx::query().bind()`，
+字段和 SQL 完全静态。Protocol 注入的值需要绕一圈再塞回 struct，是负收益。
+
+**Content Type 表是动态 Record（`Map<String, Value>`），Aspect 修改 Record 直接成为 SQL 值源，路径最短。**
+
+因此：
+- 内置表 → Service 层直写 `created_by`/`updated_by`/`created_at`/`updated_at`
+- Content Type 表 → 走 AspectEngine dispatch，Aspect 注入值直接写入 Record
+
+## 二、三层分离
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ aspects/  — 纯框架层                                     │
+│   Aspect trait + AspectEngine + Context 类型             │
+│   不知道 Protocol 存在                                    │
+├─────────────────────────────────────────────────────────┤
+│ protocols/  — 业务 Protocol 实现（1:N 组合 Aspect）        │
+│   Protocol trait + ProtocolRegistry                      │
+│   每个 Protocol 包含 1 个 Aspect + columns() + name()     │
+├─────────────────────────────────────────────────────────┤
+│ services/aspect_dispatch.rs  — 预留（内置表已不使用）       │
+│ handler.rs  — 调用 aspect_engine.dispatch_xxx()           │
+└─────────────────────────────────────────────────────────┘
+```
+
+### AspectEngine 调度流程
+
+```
+handler::do_create()
+  → aspect_engine.dispatch_data_before_create(table, &mut ctx)
+    → get_aspects(JoinPointId{Data, Create, Before}, table)
+      → 按 priority 升序排列（数字越小越先执行）
+      → 只返回 enabled 且 pointcut 匹配 table 的 Aspect
+    → 依次调用 aspect.on_data_before_create(&mut ctx)
+      → Continue: 继续
+      → Skip: 跳过后续 Aspect，但原始操作继续
+      → Return(Value): 短路返回（用于缓存命中）
+  → repo.create() 写入数据库
+  → aspect_engine.dispatch_data_after_create(table, &mut ctx)
+    → 同上，但 after 只处理 Continue
+```
+
+### Priority 排序
+
+| Aspect | Priority | 说明 |
+|--------|----------|------|
+| OwnableAspect | -500 | 最先执行，注入 created_by/updated_by |
+| TimestampableAspect | -400 | 注入 created_at/updated_at |
+| SoftDeletableAspect | -300 | 删除时拦截，注入 deleted_at/deleted_by |
+| VersionableAspect | 500 | after_update 异步写 revision |
+| CacheableAspect | 1000 | 最后执行（目前占位） |
+
+## 三、Protocol 分级
 
 ```
 等级 1：默认内置（所有 CT 自动获得，不用声明）
-  - ownable       → author_id + 自动填当前用户
+  - ownable       → created_by + updated_by + 自动填当前用户
   - timestampable → created_at + updated_at
 
-等级 2：内置 Protocol（implements 声明，只有无争议的原子能力）
-  - versionable   → 自动写 revision（纯行为，无字段依赖）
-  - cacheable     → 自动缓存管理（纯行为，无字段依赖）
+等级 2：内置 Protocol（implements 声明）
+  - soft_deletable → 删除时标记 deleted_at 而非物理删除
+  - versionable    → 更新时自动写 revision 到 content_revisions 表
+  - cacheable      → 占位，当前仅日志（handler 层有独立 CMS 缓存实现）
 
-等级 3：插件 Protocol（implements 声明 + 安装对应插件）
-  - slugable      → seo 插件（slug 生成规则因场景而异）
+等级 3：插件 Protocol（implements 声明 + 安装对应插件）（未实现）
+  - slugable      → seo 插件
   - purchasable   → payment 插件
   - searchable    → search 插件
   - commentable   → comment 插件
-  - reviewable    → review 插件
   - ...无限扩展
 ```
 
@@ -45,23 +99,20 @@ Protocol 必须同时满足：
 |------|------|------|--------|------|
 | ownable | 是 | 几乎所有 CT | 是 | **默认内置** |
 | timestampable | 是 | 所有 CT | 是 | **默认内置** |
+| soft_deletable | 是 | 需要数据恢复的 CT | 是 | **内置 Protocol** |
 | versionable | 是 | 需要审计的 CT | 是 | **内置 Protocol** |
-| cacheable | 是 | 高读低写 CT | 是 | **内置 Protocol** |
-| publishable | **否** — 是 status + datetime 联动 | 只有内容型 CT | 否（status 语义各异） | **不适合** |
-| slugable | **否** — 依赖源字段 + 生成规则 | 大部分 CT | 否（规则各不相同） | **插件 Protocol** |
+| cacheable | 是 | 高读低写 CT | 是 | **内置 Protocol**（占位） |
+| publishable | **否** — 是 status + datetime 联动 | 只有内容型 CT | 否 | **不适合** |
+| slugable | **否** — 依赖源字段 + 生成规则 | 大部分 CT | 否 | **插件 Protocol** |
 | taggable | **否** — 依赖 relation 定义 | 部分 CT | 否 | **插件 Protocol** |
 | searchable | 是 | 部分 CT | 是 | **插件 Protocol** |
 | purchasable | 是 | 电商 CT | 是 | **插件 Protocol** |
 
 ### publishable 为什么不适合做内置 Protocol
 
-`publishable` 看似通用，实际引入了过多复杂性：
-
 - 绑定 `status` 字段语义（每个 CT 的 status 含义不同：draft/published vs pending/paid/shipped）
 - 绑定"草稿→发布"业务流程（不是所有 CT 都有这个流程）
 - 不是原子能力 — 是"datetime 字段 + status 联动逻辑"的组合
-
-用户需要发布行为时，用 `published_at` 字段 + 插件 Hook 即可，或者用插件提供 `publishable` Protocol。
 
 ### slugable 为什么适合做插件 Protocol
 
@@ -73,19 +124,17 @@ slug 不是独立存在的 — 它依赖另一个字段，而且生成规则各�
 | Product | name + category | `electronics/耳机-蓝牙` |
 | Event | title + date | `2026-05-01-tech-summit` |
 
-做成内置 Protocol 会限制灵活性，做成插件可以配置源字段和规则。
-
-## 三、分层设计
+## 四、数据分层
 
 ```
 ┌──────────────────────────────────────────────────┐
 │ 第 1 层：原生列（TOML 定义 + 默认内置 + Protocol 注入）│
 │  → 核心业务数据，参与查询/过滤/排序/索引            │
-│  → title, status, slug, price, author_id ...     │
+│  → title, status, slug, price, created_by ...    │
 ├──────────────────────────────────────────────────┤
 │ 第 2 层：__meta JSON（无需 ALTER TABLE）           │
 │  → 不参与查询过滤，按需读取                         │
-│  → protocols、plugin_data、ui、computed           │
+│  → protocols（已实现）、plugin_data、ui（未实现）    │
 ├──────────────────────────────────────────────────┤
 │ 第 3 层：关联表                                   │
 │  → 结构化关系、revision、tags                      │
@@ -94,9 +143,20 @@ slug 不是独立存在的 — 它依赖另一个字段，而且生成规则各�
 
 **核心原则：需要 WHERE / ORDER BY 的放原生列，其他的放 `__meta`。**
 
-## 四、`__meta` JSON 结构
+## 五、`__meta` JSON 结构
 
-每条 Content Type 记录自动包含一个 `__meta` JSON 列：
+每条 Content Type 记录（`!ct.builtin && !ct.implements.is_empty()`）自动包含 `__meta` JSON 列。
+
+### 已实现
+
+创建时自动写入：
+```json
+{
+  "protocols": ["versionable", "soft_deletable"]
+}
+```
+
+### 未来扩展（未实现）
 
 ```json
 {
@@ -118,14 +178,12 @@ slug 不是独立存在的 — 它依赖另一个字段，而且生成规则各�
 }
 ```
 
-### 各 key 职责
-
-| Key | 谁写 | 谁读 | 说明 |
-|-----|------|------|------|
-| `protocols` | TOML 定义 | 系统引擎 | 声明的协议（不含默认内置的 ownable/timestampable） |
-| `ui` | Admin UI / TOML | Admin 前端 | 列表显示字段、图标、颜色、布局偏好 |
-| `plugin_data.{plugin_id}` | 对应插件 | 对应插件 | 插件私有命名空间，互不干扰 |
-| `computed` | 系统/插件 | API 响应 | 运行时计算缓存的衍生数据 |
+| Key | 状态 | 谁写 | 谁读 | 说明 |
+|-----|------|------|------|------|
+| `protocols` | **已实现** | TOML 定义 | 系统引擎 | 声明的协议列表 |
+| `ui` | 未实现 | Admin UI / TOML | Admin 前端 | 列表显示字段、图标、颜色 |
+| `plugin_data.{plugin_id}` | 未实现 | 对应插件 | 对应插件 | 插件私有命名空间 |
+| `computed` | 未实现 | 系统/插件 | API 响应 | 运行时计算缓存的衍生数据 |
 
 ### 跨数据库支持
 
@@ -135,236 +193,217 @@ slug 不是独立存在的 — 它依赖另一个字段，而且生成规则各�
 | PostgreSQL | `JSONB` | GIN 索引（优秀） | `jsonb_set()` |
 | MySQL 8.0+ | `JSON` | 虚拟生成列 + 索引 | `JSON_SET()` |
 
-**策略：** `__meta` 不参与 WHERE/ORDER BY，SQLite 的 JSON 劣势不影响性能。
+## 六、5 个内置 Protocol 详解
 
-## 五、默认内置能力
+### 6.1 ownable — 所有权（默认内置，无需声明）
 
-所有 Content Type 自动获得，不需要在 `implements` 中声明：
-
-### ownable — 所有权
-
-自动注入字段：
-- `author_id` (text) — 创建时自动填充当前登录用户 ID
+- **Priority:** -500
+- **Pointcuts:** `before_create` + `before_update`
+- **注入字段:** `created_by` (text), `updated_by` (text)
 
 自动行为：
-- `POST /cms/{plural}` → 从 JWT 提取用户 ID 写入 `author_id`
-- Admin UI 显示 "只看我的" 过滤器
-- API Rule 支持 `author_id = @request.auth.id` 条件
+- `before_create` → 从 `ctx.base.user_id` 写入 `created_by` + `updated_by`
+- `before_update` → 写入 `updated_by`，不修改 `created_by`
 
-### timestampable — 时间戳
+### 6.2 timestampable — 时间戳（默认内置，无需声明）
 
-自动注入字段：
-- `created_at` (text, ISO 8601) — 创建时间
-- `updated_at` (text, ISO 8601) — 更新时间
-
-自动行为：
-- 创建时自动填充 `created_at` + `updated_at`
-- 更新时自动更新 `updated_at`
-
-注：`timestampable` 已经是当前系统的默认行为，Protocol 只是给它一个名字。
-
-## 六、内置 Protocol
-
-需要通过 `implements` 声明。只有无争议的原子能力才能成为内置 Protocol：
-
-### versionable — 版本控制
-
-自动注入字段：无
+- **Priority:** -400
+- **Pointcuts:** `before_create` + `before_update`
+- **注入字段:** `created_at` (text, ISO 8601), `updated_at` (text, ISO 8601)
 
 自动行为：
-- 每次更新自动写入 `content_revisions` 表
-- API 暴露 `GET /cms/{plural}/{id}/revisions`
-- 支持 `POST /cms/{plural}/{id}/revert/{version}` 回滚
+- `before_create` → 写入 `created_at` + `updated_at`（覆盖已有值）
+- `before_update` → 写入 `updated_at`，不修改 `created_at`
 
-### cacheable — 缓存
+### 6.3 soft_deletable — 软删除（需声明）
 
-自动注入字段：无
+- **Priority:** -300
+- **Pointcuts:** `before_delete`
+- **注入字段:** `deleted_at` (text), `deleted_by` (text)
 
-自动行为：
-- GET 请求自动缓存（TTL 由 CT 配置决定）
-- create/update/delete 自动清除缓存
-- Admin UI 显示缓存状态
-
-## 七、插件 Protocol
-
-### 概述
-
-插件通过 `manifest.toml` 声明 Protocol，用插件代码实现行为。第三方开发者可以发布"协议包"，任何 Content Type 只要 `implements` 就能获得完整能力。
-
-### 可能的插件 Protocol（示例）
-
-| Protocol | 插件 | 注入字段 | 注入路由 |
-|----------|------|---------|---------|
-| `slugable` | seo | slug (text, unique) | 无 |
-| `purchasable` | payment | price, currency, inventory | `POST /{id}/purchase` |
-| `searchable` | search | 无 | 无（Hook 注入） |
-| `commentable` | comment | 无 | `GET/POST /{id}/comments` |
-| `reviewable` | review | rating (computed) | `POST /{id}/review` |
-| `expirable` | scheduler | expires_at (datetime) | 无 |
-| `subscribable` | subscription | plan, billing_cycle | `POST /{id}/subscribe` |
-
-### 插件 manifest.toml
-
+声明方式（二选一）：
 ```toml
-[plugin]
-id = "payment"
-name = "Payment"
-version = "1.0.0"
-runtime = "js"
-entry = "main.js"
-
-[[protocol]]
-name = "purchasable"
-description = "可购买的商品，自动注入价格/库存字段和购买 API"
-
-[[protocol.fields]]
-name = "price"
-type = "number"
-required = true
-
-[[protocol.fields]]
-name = "currency"
-type = "select"
-options = ["CNY", "USD"]
-default = "CNY"
-
-[[protocol.fields]]
-name = "inventory"
-type = "integer"
-default = 0
-
-[[protocol.hooks]]
-on = "before_create"
-handler = "onPurchasableCreate"
-
-[[protocol.hooks]]
-on = "before_update"
-handler = "onPurchasableUpdate"
-
-[[protocol.routes]]
-method = "POST"
-path = "/{id}/purchase"
-handler = "handlePurchase"
-```
-
-### 插件 main.js
-
-```javascript
-export function onPurchasableCreate(ctx) {
-  if (!ctx.data.price || ctx.data.price <= 0) {
-    return sdk.fail(400, "price must be positive");
-  }
-  if (!ctx.data.inventory) {
-    ctx.data.inventory = 0;
-  }
-}
-
-export function onPurchasableUpdate(ctx) {
-  if (ctx.existing.inventory > 0 && ctx.data.inventory === 0) {
-    sdk.logInfo("product out of stock: " + ctx.record.id);
-    sdk.eventEmit("product.out_of_stock", ctx.record.id);
-  }
-}
-
-export async function handlePurchase(ctx) {
-  const product = await sdk.dbQuery(
-    `SELECT id, price, inventory FROM ${ctx.table} WHERE id = ?`,
-    [sdk.extractJson(ctx.input, "params.id")]
-  );
-
-  if (!product || product.inventory <= 0) {
-    return sdk.fail(400, "out of stock");
-  }
-
-  const quantity = sdk.extractJson(ctx.input, "body.quantity") || 1;
-  const total = product.price * quantity;
-
-  await sdk.dbExec(
-    `UPDATE ${ctx.table} SET inventory = inventory - ? WHERE id = ?`,
-    [quantity, product.id]
-  );
-
-  const orderId = sdk.newId();
-  await sdk.dbExec(
-    `INSERT INTO orders (id, product_id, quantity, total_price, status, user_id)
-     VALUES (?, ?, ?, ?, 'pending', ?)`,
-    [orderId, product.id, quantity, total, ctx.auth.id]
-  );
-
-  sdk.eventEmit("order.created", { orderId, total });
-  return sdk.ok({ orderId, total, currency: product.currency });
-}
-```
-
-### 依赖检查
-
-如果 Content Type 声明了 `implements = ["purchasable"]`，但 `payment` 插件未安装：
-
-```
-content type 'Product' registration failed:
-  protocol 'purchasable' not found (provided by plugin 'payment')
-```
-
-## 八、字段自动注入
-
-### 合并规则
-
-```
-Protocol 默认字段 + 用户自定义字段 → 合并
-用户显式定义了同名字段 → 用户覆盖（override）
-Protocol 要求类型不匹配 → 报错
-```
-
-自动注入只适用于**自定义 CT**。内置 CT（`builtin=true`）字段全部显式定义。
-
-### 示例：最小定义
-
-```toml
-# 自定义 CT — Protocol 字段可省略
 [content_type]
-name = "Product"
-singular = "product"
-plural = "products"
-table = "products"
-implements = ["versionable", "purchasable"]
-
-[fields.title]
-type = "text"
-
-[fields.description]
-type = "richtext"
-
-# 自动获得（默认内置）：
-#   ownable → author_id
-#   timestampable → created_at, updated_at
-# purchasable 自动注入：
-#   price, currency, inventory
-# versionable → 无字段，纯行为
+soft_delete = true
+# 或者
+implements = ["soft_deletable"]
 ```
 
-### 示例：覆盖默认值
+自动行为：
+- `before_delete` → 设置 `ctx.soft_delete = true`，注入 `deleted_at` + `deleted_by`
+- Handler 根据 `soft_delete` 标志调用 `repo.soft_delete()`（UPDATE SET deleted_at/deleted_by）而非 `repo.delete()`
+- `find()` (list) 和 `find_by_slug()` 自动过滤 `deleted_at IS NULL`
+- `find_by_id()` **不过滤**（管理员可查看已删除记录，delete 流程需要先读取）
+
+### 6.4 versionable — 版本控制（需声明）
+
+- **Priority:** 500
+- **Pointcuts:** `after_update`
+- **注入字段:** `version` (integer, default=1)（仅声明，version 历史存 content_revisions 表）
 
 ```toml
 [content_type]
-name = "Product"
-singular = "product"
-plural = "products"
-table = "products"
-implements = ["versionable", "purchasable"]
+versioning = true
+```
 
-[fields.title]
-type = "text"
+自动行为：
+- `after_update` → 异步 (`tokio::spawn`) 调用 `models::content_revision::create_revision()`
+- 将 `old_record` 作为 snapshot 存入 `content_revisions` 表
+- `revision_number` 自动递增（同一 content_type + record_id 下 MAX + 1）
 
-# 覆盖 purchasable 的默认 currency 字段
-[fields.currency]
-type = "select"
-options = ["CNY", "USD", "EUR", "JPY"]
-default = "CNY"
+`content_revisions` 表结构：
+
+```sql
+CREATE TABLE content_revisions (
+    id TEXT PRIMARY KEY,              -- UUID v7
+    content_type TEXT NOT NULL,       -- 表名
+    record_id TEXT NOT NULL,          -- 记录 ID
+    revision_number INTEGER NOT NULL, -- 自增版本号
+    snapshot TEXT NOT NULL,           -- JSON 快照（old_record）
+    created_by TEXT,                  -- 操作者
+    created_at TEXT NOT NULL,         -- 操作时间
+    UNIQUE(content_type, record_id, revision_number)
+);
+```
+
+支持 API：
+- `GET /cms/{plural}/{id}/revisions` — 列出版本历史
+- `GET /cms/{plural}/{id}/revisions/{revision_id}` — 获取快照
+- 版本间 diff 计算（`compute_diff`）
+
+### 6.5 cacheable — 缓存（需声明，当前占位）
+
+- **Priority:** 1000
+- **Pointcuts:** `after_read` + `after_create` + `after_update` + `after_delete`
+- **注入字段:** 无
+
+当前状态：所有 handler 仅输出 `tracing::debug!` 日志。
+
+CMS 缓存已在 handler 层独立实现（`DashMap` + TTL），不经过 AspectEngine：
+- `do_list` / `do_get` → 检查 `cms_cache`，命中则直接返回
+- `do_create` / `do_update` / `do_delete` → 调用 `invalidate_cms_cache()` 清除对应 CT 的所有缓存
+
+未来可将缓存引用注入 `BaseContext.extensions`，让 CacheableAspect 接管。
+
+## 七、Aspect 框架核心
+
+### Aspect trait
+
+```rust
+#[async_trait]
+pub trait Aspect: Send + Sync + 'static {
+    fn name(&self) -> &str;
+    fn priority(&self) -> i32 { 0 }
+    fn pointcuts(&self) -> Vec<Pointcut>;
+    fn columns(&self) -> Vec<ColumnDef> { vec![] }
+
+    // Data Layer (8 hooks)
+    async fn on_data_before_create(&self, ctx: &mut DataBeforeCreateContext) -> AspectResult;
+    async fn on_data_after_create(&self, ctx: &mut DataAfterCreateContext) -> AspectResult;
+    async fn on_data_before_read(&self, ctx: &mut DataBeforeReadContext) -> AspectResult;
+    async fn on_data_after_read(&self, ctx: &mut DataAfterReadContext) -> AspectResult;
+    async fn on_data_before_update(&self, ctx: &mut DataBeforeUpdateContext) -> AspectResult;
+    async fn on_data_after_update(&self, ctx: &mut DataAfterUpdateContext) -> AspectResult;
+    async fn on_data_before_delete(&self, ctx: &mut DataBeforeDeleteContext) -> AspectResult;
+    async fn on_data_after_delete(&self, ctx: &mut DataAfterDeleteContext) -> AspectResult;
+
+    // Access Layer, Event Layer, HTTP Layer (10 hooks)
+    // ...
+}
+```
+
+### Context 类型
+
+```
+BaseContext {
+    user_id: Option<String>,
+    user_role: Option<String>,
+    tenant_id: String,
+    now: String,                    // ISO 8601 时间戳
+    request_id: String,
+    extensions: Extensions,         // 类型安全的任意数据容器
+    pool: Option<Pool>,             // 数据库连接池
+}
+
+DataBeforeCreateContext { base, table, record, schema }
+DataAfterCreateContext  { base, table, record, schema }
+DataBeforeReadContext   { base, table, query, schema }
+DataAfterReadContext    { base, table, records: Vec<Record>, schema }
+DataBeforeUpdateContext { base, table, old_record, new_record, schema }
+DataAfterUpdateContext  { base, table, old_record, new_record, schema }
+DataBeforeDeleteContext { base, table, record, soft_delete: bool, schema }
+DataAfterDeleteContext  { base, table, record, schema }
+```
+
+其中 `Record = serde_json::Map<String, Value>`。
+
+### Handler 层 Dispatch 点
+
+| 函数 | Before Dispatch | After Dispatch | 说明 |
+|------|----------------|----------------|------|
+| `do_create` | `before_create` | `after_create` | 注入 created_by/at → 写 DB → 通知 |
+| `do_update` | `before_update` | `after_update` | 传入 old_record → 写 DB → versionable 存快照 |
+| `do_delete` | `before_delete` | `after_delete` | soft_delete 拦截 → 写 DB → 通知 |
+| `do_list` | `before_read` | `after_read` | 缓存命中可短路 → 查询 → Aspect 可修改记录 |
+| `do_get` | — | — | 不经过 AspectEngine（走独立 CMS 缓存） |
+
+### Advice 枚举
+
+```rust
+pub enum Advice {
+    Continue,         // 继续下一个 Aspect
+    Skip,             // 跳过后续 Aspect，原始操作继续
+    Return(Value),    // 短路返回（仅 before dispatch 支持）
+}
+```
+
+## 八、注册流程
+
+```rust
+// src/lib.rs — build_app_state()
+let mut protocol_registry = ProtocolRegistry::new();
+protocol_registry.register(OwnableProtocol);      // priority -500
+protocol_registry.register(TimestampableProtocol); // priority -400
+protocol_registry.register(SoftDeletableProtocol); // priority -300
+protocol_registry.register(VersionableProtocol);   // priority 500
+protocol_registry.register(CacheableProtocol);     // priority 1000
+
+let aspect_engine = AspectEngine::new();
+protocol_registry.register_aspects_into(&aspect_engine);
+// → 按 aspect name 去重，插入 dispatch_table，按 priority 排序
+```
+
+### 加载顺序
+
+```
+启动
+ │
+ ├── 1. 创建 ProtocolRegistry，注册 5 个内置 Protocol
+ │
+ ├── 2. 创建 AspectEngine，register_aspects_into()
+ │     → 按 JoinPointId 预计算 dispatch table
+ │     → priority 排序：ownable(-500) → timestampable(-400) →
+ │       soft_deletable(-300) → versionable(500) → cacheable(1000)
+ │
+ ├── 3. 加载插件 → 注册插件 Protocol（未实现）
+ │
+ ├── 4. 加载 Content Type TOML
+ │     ├── 解析 implements 列表
+ │     ├── repo.migrate() → CREATE TABLE / ALTER TABLE
+ │     │   ├── 默认列：id, tenant_id, status, slug...
+ │     │   ├── ownable 列：created_by, updated_by
+ │     │   ├── timestampable 列：created_at, updated_at
+ │     │   ├── soft_deletable 列：deleted_at, deleted_by（如有声明）
+ │     │   ├── versionable 列：version（如有声明）
+ │     │   └── __meta 列（!builtin && !implements.is_empty()）
+ │     └── 注册路由
+ │
+ └── 5. 启动 HTTP 服务器
 ```
 
 ## 九、TOML 定义方式
 
-### 最小 CT（无 Protocol）
+### 最小 CT（只有默认内置）
 
 ```toml
 [content_type]
@@ -380,10 +419,10 @@ type = "text"
 type = "url"
 required = true
 
-# 自动获得：author_id, created_at, updated_at
+# 自动获得：created_by, updated_by, created_at, updated_at
 ```
 
-### CT + 内置 Protocol
+### CT + 软删除
 
 ```toml
 [content_type]
@@ -391,10 +430,11 @@ name = "Article"
 singular = "article"
 plural = "articles"
 table = "articles"
-implements = ["versionable", "cacheable"]
+implements = ["soft_deletable"]
 
 [fields.title]
 type = "text"
+required = true
 
 [fields.content]
 type = "richtext"
@@ -403,9 +443,32 @@ type = "richtext"
 type = "select"
 options = ["draft", "published", "archived"]
 default = "draft"
+
+# 自动获得：created_by, updated_by, created_at, updated_at, deleted_at, deleted_by
 ```
 
-### CT + 插件 Protocol
+### CT + 版本控制
+
+```toml
+[content_type]
+name = "Document"
+singular = "document"
+plural = "documents"
+table = "documents"
+versioning = true
+
+[fields.title]
+type = "text"
+required = true
+
+[fields.body]
+type = "richtext"
+
+# 自动获得：created_by, updated_by, created_at, updated_at, version
+# 更新时自动存 revision 到 content_revisions 表
+```
+
+### CT + 全部内置 Protocol
 
 ```toml
 [content_type]
@@ -413,17 +476,41 @@ name = "Product"
 singular = "product"
 plural = "products"
 table = "products"
-implements = ["versionable", "purchasable"]
+implements = ["soft_deletable", "cacheable"]
+versioning = true
 
 [fields.title]
 type = "text"
+required = true
+
+[fields.price]
+type = "number"
+required = true
+
+# 自动获得：created_by, updated_by, created_at, updated_at
+# soft_deletable: deleted_at, deleted_by
+# versionable: version + content_revisions
+# cacheable: 占位
+```
+
+### CT + 插件 Protocol（未实现）
+
+```toml
+[content_type]
+name = "Product"
+singular = "product"
+plural = "products"
+table = "products"
+implements = ["soft_deletable", "versionable", "purchasable"]
+
+[fields.title]
+type = "text"
+required = true
 
 [fields.description]
 type = "richtext"
 
-# purchasable 自动注入：price, currency, inventory
-# versionable → 自动版本历史
-# 默认内置：author_id, created_at, updated_at
+# purchasable 由 payment 插件提供，自动注入 price, currency, inventory
 ```
 
 ### Single Type
@@ -442,282 +529,147 @@ type = "text"
 default = "My Site"
 ```
 
-### UI 配置
-
-```toml
-[content_type.ui]
-icon = "shopping-bag"
-color = "#8b5cf6"
-list_fields = ["title", "price", "status"]
-detail_layout = "two-column"
-hidden_fields = ["internal_notes"]
-```
-
-## 十、注册时检查流程
-
-```
-1. 系统启动
-2. 注入默认能力（ownable, timestampable）到所有 CT
-3. 注册内置 Protocol（versionable, cacheable）
-4. 加载插件 → 解析 manifest.toml → 注册插件 Protocol
-5. 解析 Content Type TOML → 读取 implements 列表
-6. 对每个协议：
-   a. 查找协议定义（内置 + 插件注册表）
-   b. 找不到 → 报错（未安装对应插件）
-   c. 合并协议默认字段到 CT（用户显式定义的覆盖默认）
-   d. 检查合并后字段类型是否匹配协议要求
-7. 全部通过 → 注册路由（内置 CRUD + 协议注入的额外路由）
-8. 任一失败 → 报错，拒绝注册
-```
-
-### 加载顺序图
-
-```
-启动
- │
- ├── 1. 注入默认能力
- │     所有 CT 自动获得 ownable + timestampable
- │
- ├── 2. 注册内置 Protocol
- │     versionable, cacheable
- │
- ├── 3. 加载插件
- │     ├── payment 插件 → 注册 purchasable
- │     ├── seo 插件 → 注册 slugable
- │     └── search 插件 → 注册 searchable
- │
- ├── 4. 加载 Content Type
- │     ├── Product.toml → implements ["versionable", "purchasable"]
- │     │   ├── 注入默认 → author_id, created_at, updated_at
- │     │   ├── purchasable → price, currency, inventory
- │     │   ├── 注册路由 + POST /cms/products/{id}/purchase
- │     │   └── versionable → 自动版本历史
- │     │
- │     └── Order.toml → implements []
- │         └── 只有默认：author_id, created_at, updated_at
- │
- └── 5. 启动 HTTP 服务器
-```
-
-## 十一、内置表复用 Protocol
-
-### 设计原则
-
-内置表（Blog/Pages/Media）字段全部**显式写全**（包括 Protocol 要求的字段），建表走静态 migration。**行为统一走 Protocol 引擎。**
-
-| | 内置 CT (`builtin=true`) | 自定义 CT |
-|---|---|---|
-| 字段定义 | 显式写全（含默认内置和 Protocol 字段） | Protocol 字段可省略，自动注入 |
-| 建表方式 | migration SQL 文件（静态） | `repo.migrate()` 动态 ALTER TABLE |
-| Protocol 行为 | 统一走 Protocol 引擎 | 统一走 Protocol 引擎 |
-| 可删除 | 否（可通过 `BUILTIN_xxx=false` 禁用） | 是 |
-
-### 内置 Post
-
-```toml
-[content_type]
-name = "Post"
-singular = "post"
-plural = "posts"
-table = "posts"
-implements = ["versionable"]
-builtin = true
-
-[content_type.ui]
-icon = "file-text"
-color = "#3b82f6"
-list_fields = ["title", "status", "created_at"]
-
-[fields.title]
-type = "text"
-required = true
-
-[fields.content]
-type = "richtext"
-
-[fields.excerpt]
-type = "text"
-
-[fields.cover_image]
-type = "url"
-
-[fields.is_pinned]
-type = "boolean"
-default = false
-
-[fields.view_count]
-type = "integer"
-default = 0
-
-[fields.status]
-type = "select"
-options = ["draft", "published", "archived"]
-default = "draft"
-
-[fields.slug]
-type = "text"
-unique = true
-
-[fields.author_id]
-type = "text"
-
-# created_at, updated_at 由 migration 保证
-```
-
-### 内置 Page
-
-```toml
-[content_type]
-name = "Page"
-singular = "page"
-plural = "pages"
-table = "pages"
-implements = ["versionable"]
-builtin = true
-
-[content_type.ui]
-icon = "layout"
-color = "#10b981"
-list_fields = ["title", "status", "template"]
-
-[fields.title]
-type = "text"
-required = true
-
-[fields.slug]
-type = "text"
-unique = true
-
-[fields.content]
-type = "richtext"
-
-[fields.blocks]
-type = "json"
-
-[fields.template]
-type = "select"
-options = ["default", "full", "landing", "contact"]
-default = "default"
-
-[fields.parent_id]
-type = "relation"
-target = "pages"
-
-[fields.sort_order]
-type = "integer"
-default = 0
-
-[fields.status]
-type = "select"
-options = ["draft", "published", "archived"]
-default = "draft"
-
-[fields.author_id]
-type = "text"
-
-[fields.meta_title]
-type = "text"
-
-[fields.meta_description]
-type = "text"
-
-[fields.og_image]
-type = "url"
-
-[fields.cover_image]
-type = "url"
-```
-
-### 行为统一
-
-```
-之前：
-  post_service::create_post()
-    → 手动 slugify(title)
-    → 手动 set author_id
-    → 手动 emit event
-
-  content_type handler::do_create()
-    → 泛型创建，无上述行为
-
-之后：
-  Protocol Engine::before_create(ct, data)
-    → ownable.on_create → 自动 author_id
-
-  Protocol Engine::after_create(ct, record)
-    → versionable.on_created → 自动写 revision
-    → event.emit("content.created")
-
-  # 内置 Post 和自定义 Product 走完全相同的代码路径
-```
-
-### 迁移策略
-
-| 阶段 | 内容 | 风险 |
-|------|------|------|
-| **Phase 1** | Protocol 引擎做好，只用于自定义 CT | 低 |
-| **Phase 2** | 内置 CT 加 `builtin=true` + `implements`，注册时验证字段 | 低 |
-| **Phase 3** | 内置 CT 的 service 层逐步替换为 Protocol 行为 | 中 |
-| **Phase 4** | 硬编码逻辑完全移除 | 高 |
-
-### "插件→原生晋升" 路径
-
-```
-1. JS 插件定义 purchasable Protocol + Product CT
-2. 用户使用，验证需求
-3. 用 Rust 重写 purchasable 为高性能 Protocol
-4. Product CT 的 TOML 不用改，只是 Protocol 来源变了
-5. 如果 Product 足够热门，升级为 builtin CT
-   → 字段写入 migration SQL
-   → 加 builtin = true
-   → 走原生 handler
-```
-
-## 十二、运行时行为
+## 十、运行时行为
 
 ### 创建记录
 
 ```
-POST /api/v1/cms/products
-{
-  "title": "Rust 编程指南",
-  "price": 89.00,
-  "currency": "CNY"
-}
+POST /api/v1/cms/articles
+{ "title": "Rust 编程指南", "content": "..." }
 ```
 
-系统自动执行：
-1. `ownable.on_create` → `author_id = current_user.id`
-2. `timestampable.on_create` → `created_at = now()`, `updated_at = now()`
-3. `purchasable.on_create` → `inventory = 0`
+Handler 执行链：
+1. **before_create dispatch**（按 priority 顺序）：
+   - `OwnableAspect.on_data_before_create` → `record["created_by"] = "user-123"`, `record["updated_by"] = "user-123"`
+   - `TimestampableAspect.on_data_before_create` → `record["created_at"] = "2026-05-02T12:00:00Z"`, `record["updated_at"] = "2026-05-02T12:00:00Z"`
+2. `repo.create()` → INSERT INTO
+3. **after_create dispatch**：
+   - （当前无 aspect 监听 after_create）
 
-实际写入数据库：
+写入数据库：
 ```json
 {
   "id": "0192abc...",
   "title": "Rust 编程指南",
-  "price": 89.00,
-  "currency": "CNY",
-  "inventory": 0,
-  "author_id": "user-123",
-  "created_at": "2026-04-30T12:00:00Z",
-  "updated_at": "2026-04-30T12:00:00Z",
-  "__meta": {
-    "protocols": ["versionable", "purchasable"]
-  }
+  "content": "...",
+  "created_by": "user-123",
+  "updated_by": "user-123",
+  "created_at": "2026-05-02T12:00:00Z",
+  "updated_at": "2026-05-02T12:00:00Z",
+  "__meta": { "protocols": ["soft_deletable"] }
 }
 ```
 
-### 协议注入的额外路由
+### 更新记录
 
 ```
-POST /api/v1/cms/products/0192abc.../purchase
-{ "quantity": 2 }
+PUT /api/v1/cms/articles/{id}
+{ "title": "Rust 编程指南（第2版）" }
 ```
 
-→ 由 `purchasable` 协议注册，调用 payment 插件的 `handlePurchase`
+Handler 执行链：
+1. `repo.find_by_id()` → 获取 `old_record`
+2. **before_update dispatch**：
+   - `OwnableAspect.on_data_before_update` → `new_record["updated_by"] = "user-123"`
+   - `TimestampableAspect.on_data_before_update` → `new_record["updated_at"] = "2026-05-02T13:00:00Z"`
+3. `repo.update()` → UPDATE SET
+4. **after_update dispatch**：
+   - `VersionableAspect.on_data_after_update` → `tokio::spawn(create_revision(pool, table, id, old_record, user_id))`
 
-## 十三、插件 meta 数据
+### 删除记录（软删除）
+
+```
+DELETE /api/v1/cms/articles/{id}
+```
+
+Handler 执行链：
+1. `repo.find_by_id()` → 获取 `record`
+2. **before_delete dispatch**：
+   - `SoftDeletableAspect.on_data_before_delete` → `ctx.soft_delete = true`, `record["deleted_at"] = "..."`, `record["deleted_by"] = "user-123"`
+3. 检查 `before_ctx.soft_delete == true` → 调用 `repo.soft_delete()` (UPDATE SET deleted_at, deleted_by)
+4. **after_delete dispatch**
+
+### 列表查询（软删除过滤）
+
+```
+GET /api/v1/cms/articles
+```
+
+`ContentRepository::find()` 自动添加 `WHERE deleted_at IS NULL`（当 `ct.soft_delete || ct.implements.contains("soft_deletable")`）。
+
+## 十一、数据库 Migration
+
+### CREATE TABLE（自定义 CT）
+
+```sql
+CREATE TABLE IF NOT EXISTS articles (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    -- 用户定义的字段
+    title TEXT,
+    content TEXT,
+    status TEXT DEFAULT 'draft',
+    -- ownable（默认内置）
+    created_by TEXT,
+    updated_by TEXT,
+    -- timestampable（默认内置）
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    -- soft_deletable（implements 声明）
+    deleted_at TEXT,
+    deleted_by TEXT,
+    -- versionable（versioning = true）
+    version INTEGER DEFAULT 1,
+    -- 元数据
+    __meta TEXT DEFAULT '{}'
+);
+```
+
+### ALTER TABLE（增量同步）
+
+`repo.migrate()` 对比 schema 与现有列，只补不删不改：
+
+```
+已有列: [id, title, created_at]
+需要列: [id, title, content, created_at, updated_at, deleted_at]
+
+ALTER TABLE articles ADD COLUMN content TEXT;
+ALTER TABLE articles ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'));
+ALTER TABLE articles ADD COLUMN deleted_at TEXT;
+```
+
+### 内置表
+
+内置表（posts/pages/comments/categories/tags）的列在 `migrations/*.sql` 中显式定义，不依赖运行时注入。
+
+## 十二、插件 Protocol（未实现）
+
+### 概述
+
+插件通过 `manifest.toml` 声明 Protocol，用插件代码实现行为。第三方开发者可以发布"协议包"，任何 Content Type 只要 `implements` 就能获得完整能力。
+
+### 可能的插件 Protocol（示例）
+
+| Protocol | 插件 | 注入字段 | 注入路由 |
+|----------|------|---------|---------|
+| `slugable` | seo | slug (text, unique) | 无 |
+| `purchasable` | payment | price, currency, inventory | `POST /{id}/purchase` |
+| `searchable` | search | 无 | 无（Hook 注入） |
+| `commentable` | comment | 无 | `GET/POST /{id}/comments` |
+| `reviewable` | review | rating (computed) | `POST /{id}/review` |
+| `expirable` | scheduler | expires_at (datetime) | 无 |
+| `subscribable` | subscription | plan, billing_cycle | `POST /{id}/subscribe` |
+
+### 依赖检查
+
+如果 Content Type 声明了 `implements = ["purchasable"]`，但 `payment` 插件未安装：
+
+```
+content type 'Product' registration failed:
+  protocol 'purchasable' not found (provided by plugin 'payment')
+```
+
+## 十三、插件 meta 数据（未实现）
 
 ### 命名空间隔离
 
@@ -744,47 +696,7 @@ POST /api/v1/cms/products/0192abc.../purchase
 - 跨插件读取需要在 manifest.toml 声明：`meta_read = ["analytics"]`
 - `plugin_data` 默认不返回公开 API
 
-### SDK 用法
-
-```javascript
-await sdk.storeMeta(recordId, { views_30d: 1234, bounce_rate: 0.32 });
-
-const meta = await sdk.getMeta(recordId);
-// { views_30d: 1234, bounce_rate: 0.32 }
-
-await sdk.storeMeta(recordId, { unique_visitors: 567 });
-// { views_30d: 1234, bounce_rate: 0.32, unique_visitors: 567 }
-```
-
-## 十四、API 影响
-
-### 响应示例
-
-```
-GET /api/v1/cms/products/0192abc...
-```
-
-```json
-{
-  "code": 0,
-  "data": {
-    "id": "0192abc...",
-    "title": "Rust 编程指南",
-    "price": 89.00,
-    "currency": "CNY",
-    "inventory": 42,
-    "author_id": "user-123",
-    "created_at": "2026-04-30T12:00:00Z",
-    "updated_at": "2026-04-30T12:00:00Z",
-    "__meta": {
-      "protocols": ["versionable", "purchasable"],
-      "computed": { "revenue_total": 7890.00 }
-    }
-  }
-}
-```
-
-### `__meta` 返回规则
+## 十四、`__meta` 返回规则
 
 | 场景 | 返回内容 |
 |------|---------|
@@ -794,162 +706,7 @@ GET /api/v1/cms/products/0192abc...
 | 列表 API | 不返回 `__meta` |
 | 详情 API | 返回 `__meta` |
 
-## 十五、数据库 Migration
-
-自定义 CT 自动建表时，默认添加 `__meta` 列 + 默认内置字段：
-
-```sql
-CREATE TABLE IF NOT EXISTS products (
-    id TEXT PRIMARY KEY,
-    tenant_id TEXT NOT NULL DEFAULT 'default',
-    -- 用户定义 + Protocol 注入的字段...
-    title TEXT,
-    price REAL,
-    currency TEXT DEFAULT 'CNY',
-    inventory INTEGER DEFAULT 0,
-
-    -- 默认内置
-    author_id TEXT,
-    __meta TEXT DEFAULT '{}',
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-```
-
-内置 CT 的字段在 migration SQL 中显式定义，不依赖运行时注入。
-
-## 十六、完整实例 — 电商系统
-
-### 商品（Product）
-
-```toml
-[content_type]
-name = "Product"
-singular = "product"
-plural = "products"
-table = "products"
-implements = ["versionable", "purchasable"]
-
-[content_type.ui]
-icon = "shopping-bag"
-color = "#8b5cf6"
-list_fields = ["title", "price", "inventory", "created_at"]
-
-[fields.title]
-type = "text"
-required = true
-
-[fields.description]
-type = "richtext"
-
-[fields.cover_image]
-type = "url"
-
-# 自动获得：
-#   ownable → author_id
-#   timestampable → created_at, updated_at
-# purchasable 自动注入 → price, currency, inventory
-# versionable → 自动版本历史
-# purchasable 注册路由 → POST /cms/products/{id}/purchase
-```
-
-### 订单（Order）
-
-```toml
-[content_type]
-name = "Order"
-singular = "order"
-plural = "orders"
-table = "orders"
-
-[fields.user_id]
-type = "relation"
-target = "users"
-required = true
-
-[fields.product_id]
-type = "relation"
-target = "products"
-required = true
-
-[fields.quantity]
-type = "integer"
-required = true
-default = 1
-
-[fields.total_price]
-type = "number"
-
-[fields.status]
-type = "select"
-options = ["pending", "paid", "shipped", "completed", "cancelled"]
-default = "pending"
-
-# 自动获得：author_id, created_at, updated_at
-# 无 Protocol — status 是纯业务字段，不绑定任何行为
-```
-
-### API 路由汇总
-
-```
-Product:
-  GET    /api/v1/cms/products              # 列表
-  POST   /api/v1/cms/products              # 创建（自动 author_id + timestamps + inventory 默认值）
-  GET    /api/v1/cms/products/{id}          # 详情
-  PUT    /api/v1/cms/products/{id}          # 更新（自动 updated_at + versionable 快照）
-  DELETE /api/v1/cms/products/{id}          # 删除
-  POST   /api/v1/cms/products/{id}/purchase # 购买（purchasable 协议注入）
-
-Order:
-  GET    /api/v1/cms/orders                # 列表
-  POST   /api/v1/cms/orders                # 创建（自动 author_id + timestamps）
-  GET    /api/v1/cms/orders/{id}            # 详情
-  PUT    /api/v1/cms/orders/{id}            # 更新
-  DELETE /api/v1/cms/orders/{id}            # 删除
-```
-
-## 十七、实现路线
-
-### Phase 1 — `__meta` 列 + 默认内置 + 内置 Protocol + 注册时检查
-
-**改动范围：**
-- `protocol.rs`（新文件）— Protocol 注册表 + 字段注入 + 合并检查
-- `schema.rs` — `ContentTypeSchema` 新增 `implements` 字段 + `ui` 配置
-- `content_type.rs` — `register()` 增加协议检查 + 默认内置字段注入
-- `repository.rs` — 自动建表时添加 `__meta` 列 + `author_id` 列
-
-**预计：** 2-3 天
-
-### Phase 2 — 协议自动行为 + 插件协议注册
-
-**改动范围：**
-- `handler.rs` — create/update 时检查协议，自动触发 Hook
-- `plugins/protocol.rs`（新文件）— 插件 manifest 解析 Protocol 定义
-- 插件加载流程 — 先加载插件注册协议，再加载 Content Type
-- API 响应附带 `__meta`
-
-**预计：** 3-4 天
-
-### Phase 3 — 插件 meta 读写 + 协议路由注入 + SDK
-
-**改动范围：**
-- `host_common.rs` — 新增 `get_meta()` / `store_meta()` Host API
-- `sdk/js_plugin_v1.js` — 新增 `sdk.getMeta()` / `sdk.storeMeta()`
-- `sdk/lua_plugin_v1.lua` — 同上
-- 协议路由注册 — 解析 `[[protocol.routes]]` 注册到路由表
-
-**预计：** 2-3 天
-
-### Phase 4 — 内置表迁移 + UI hints
-
-**改动范围：**
-- 内置 Post/Page 的 service 层逐步替换为 Protocol 行为
-- Admin 前端读取 `ui` 配置，个性化列表/详情页
-- 协议字段在 Admin 中标记来源
-
-**预计：** 3-4 天
-
-## 十八、与竞品对比
+## 十五、与竞品对比
 
 | 系统 | 类似机制 | 差异 |
 |------|---------|------|
@@ -962,6 +719,44 @@ Order:
 核心优势：
 
 1. **默认即有价值** — 所有 CT 自动获得 ownable + timestampable，零配置
-2. **内置只保留原子能力** — versionable 和 cacheable 无争议、无副作用
+2. **内置只保留原子能力** — soft_deletable、versionable、cacheable 无争议、无副作用
 3. **复杂能力交给插件** — slugable、purchasable 等由各自领域的插件提供
-4. **插件可扩展** — 第三方可以注册新 Protocol，WordPress `supports` 做不到
+4. **插件可扩展** — 第三方可以注册新 Protocol
+
+## 十六、实现进度
+
+### 已完成
+
+- [x] Aspect 框架核心（Aspect trait + AspectEngine + Context 类型）
+- [x] Protocol 层（Protocol trait + ProtocolRegistry）
+- [x] 5 个内置 Protocol（ownable / timestampable / soft_deletable / versionable / cacheable 占位）
+- [x] Content Type handler 完整 dispatch（before/after create/update/delete/read）
+- [x] `__meta` 基础版（创建时写入 `protocols` 列表）
+- [x] 内置表列名统一（migration 025: `created_by` / `updated_by` / `created_at` / `updated_at`）
+- [x] AuthUser 统一身份系统
+- [x] CMS 缓存（handler 层 DashMap + TTL）
+- [x] 集成测试（920 tests passed）
+
+### 未实现
+
+- [ ] 插件 Protocol 注册（manifest.toml 解析 + 动态加载）
+- [ ] `__meta` 扩展（ui / plugin_data / computed）
+- [ ] 插件 meta 读写 SDK（getMeta / storeMeta / deleteMeta）
+- [ ] 协议路由注入（`[[protocol.routes]]`）
+- [ ] 字段自动注入（Protocol 默认字段合并到 CT）
+- [ ] UI 配置（`[content_type.ui]`）
+- [ ] CacheableAspect 接入 CMS 缓存
+- [ ] 内置表接入 Protocol（已决定不做）
+
+### "插件→原生晋升" 路径
+
+```
+1. JS 插件定义 purchasable Protocol + Product CT
+2. 用户使用，验证需求
+3. 用 Rust 重写 purchasable 为高性能 Protocol
+4. Product CT 的 TOML 不用改，只是 Protocol 来源变了
+5. 如果 Product 足够热门，升级为 builtin CT
+   → 字段写入 migration SQL
+   → 加 builtin = true
+   → 走原生 handler（不走 Protocol Engine）
+```

@@ -12,6 +12,7 @@ use crate::aspects::{
     Advice, Aspect, AspectResult, ColumnDef, DataBeforeCreateContext, DataBeforeUpdateContext,
     Layer, Operation, Pointcut, SqlType, TargetMatcher, When,
 };
+use crate::constants::*;
 use crate::protocols::Protocol;
 
 pub struct TimestampableAspect;
@@ -46,12 +47,12 @@ impl Aspect for TimestampableAspect {
     fn columns(&self) -> Vec<ColumnDef> {
         vec![
             ColumnDef {
-                name: "created_at".into(),
+                name: COL_CREATED_AT.into(),
                 sql_type: SqlType::Text,
                 default: None,
             },
             ColumnDef {
-                name: "updated_at".into(),
+                name: COL_UPDATED_AT.into(),
                 sql_type: SqlType::Text,
                 default: None,
             },
@@ -59,14 +60,14 @@ impl Aspect for TimestampableAspect {
     }
 
     async fn on_data_before_create(&self, ctx: &mut DataBeforeCreateContext) -> AspectResult {
-        ctx.record.insert("created_at".into(), json!(ctx.base.now));
-        ctx.record.insert("updated_at".into(), json!(ctx.base.now));
+        ctx.record.insert(COL_CREATED_AT.into(), json!(ctx.base.now));
+        ctx.record.insert(COL_UPDATED_AT.into(), json!(ctx.base.now));
         Ok(Advice::Continue)
     }
 
     async fn on_data_before_update(&self, ctx: &mut DataBeforeUpdateContext) -> AspectResult {
         ctx.new_record
-            .insert("updated_at".into(), json!(ctx.base.now));
+            .insert(COL_UPDATED_AT.into(), json!(ctx.base.now));
         Ok(Advice::Continue)
     }
 }

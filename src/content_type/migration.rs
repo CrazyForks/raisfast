@@ -5,6 +5,8 @@
 
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
 
+use crate::constants::*;
+
 /// 根据内容类型定义生成 CREATE TABLE SQL
 #[must_use]
 pub fn generate_create_table(ct: &ContentTypeSchema) -> String {
@@ -75,25 +77,26 @@ pub fn generate_create_table(ct: &ContentTypeSchema) -> String {
         )
         .collect();
 
-    if !user_col_names.contains("created_at") {
-        cols.push("    created_at TEXT NOT NULL".to_string());
+    if !user_col_names.contains(COL_CREATED_AT) {
+        cols.push(format!("    {} TEXT NOT NULL", COL_CREATED_AT));
     }
-    if !user_col_names.contains("updated_at") {
-        cols.push("    updated_at TEXT NOT NULL".to_string());
+    if !user_col_names.contains(COL_UPDATED_AT) {
+        cols.push(format!("    {} TEXT NOT NULL", COL_UPDATED_AT));
     }
-    if !user_col_names.contains("created_by") {
-        cols.push("    created_by TEXT".to_string());
+    if !user_col_names.contains(COL_CREATED_BY) {
+        cols.push(format!("    {} TEXT", COL_CREATED_BY));
     }
-    if !user_col_names.contains("updated_by") {
-        cols.push("    updated_by TEXT".to_string());
+    if !user_col_names.contains(COL_UPDATED_BY) {
+        cols.push(format!("    {} TEXT", COL_UPDATED_BY));
     }
 
-    if ct.soft_delete {
-        cols.push("    deleted_at TEXT".to_string());
+    if ct.soft_delete || ct.implements.contains(&"soft_deletable".to_string()) {
+        cols.push(format!("    {} TEXT", COL_DELETED_AT));
+        cols.push(format!("    {} TEXT", COL_DELETED_BY));
     }
 
     if !ct.builtin {
-        cols.push("    __meta TEXT DEFAULT '{}'".to_string());
+        cols.push(format!("    {} TEXT DEFAULT '{{}}'", COL_META));
     }
 
     let mut sql = format!("CREATE TABLE IF NOT EXISTS {} (\n", ct.table);
@@ -257,42 +260,50 @@ pub fn generate_alter_table(ct: &ContentTypeSchema, existing_columns: &[String])
         }
     }
 
-    if !existing.contains("created_at") {
+    if !existing.contains(COL_CREATED_AT) {
         stmts.push(format!(
-            "ALTER TABLE {} ADD COLUMN created_at TEXT NOT NULL",
-            ct.table
+            "ALTER TABLE {} ADD COLUMN {} TEXT NOT NULL",
+            ct.table, COL_CREATED_AT
         ));
     }
-    if !existing.contains("updated_at") {
+    if !existing.contains(COL_UPDATED_AT) {
         stmts.push(format!(
-            "ALTER TABLE {} ADD COLUMN updated_at TEXT NOT NULL",
-            ct.table
+            "ALTER TABLE {} ADD COLUMN {} TEXT NOT NULL",
+            ct.table, COL_UPDATED_AT
         ));
     }
-    if !existing.contains("created_by") {
+    if !existing.contains(COL_CREATED_BY) {
         stmts.push(format!(
-            "ALTER TABLE {} ADD COLUMN created_by TEXT",
-            ct.table
+            "ALTER TABLE {} ADD COLUMN {} TEXT",
+            ct.table, COL_CREATED_BY
         ));
     }
-    if !existing.contains("updated_by") {
+    if !existing.contains(COL_UPDATED_BY) {
         stmts.push(format!(
-            "ALTER TABLE {} ADD COLUMN updated_by TEXT",
-            ct.table
-        ));
-    }
-
-    if ct.soft_delete && !existing.contains("deleted_at") {
-        stmts.push(format!(
-            "ALTER TABLE {} ADD COLUMN deleted_at TEXT",
-            ct.table
+            "ALTER TABLE {} ADD COLUMN {} TEXT",
+            ct.table, COL_UPDATED_BY
         ));
     }
 
-    if !ct.builtin && !existing.contains("__meta") {
+    let has_soft_delete = ct.soft_delete
+        || ct.implements.contains(&"soft_deletable".to_string());
+    if has_soft_delete && !existing.contains(COL_DELETED_AT) {
         stmts.push(format!(
-            "ALTER TABLE {} ADD COLUMN __meta TEXT DEFAULT '{{}}'",
-            ct.table
+            "ALTER TABLE {} ADD COLUMN {} TEXT",
+            ct.table, COL_DELETED_AT
+        ));
+    }
+    if has_soft_delete && !existing.contains(COL_DELETED_BY) {
+        stmts.push(format!(
+            "ALTER TABLE {} ADD COLUMN {} TEXT",
+            ct.table, COL_DELETED_BY
+        ));
+    }
+
+    if !ct.builtin && !existing.contains(COL_META) {
+        stmts.push(format!(
+            "ALTER TABLE {} ADD COLUMN {} TEXT DEFAULT '{{}}'",
+            ct.table, COL_META
         ));
     }
 
@@ -325,15 +336,16 @@ pub fn expected_columns(ct: &ContentTypeSchema) -> Vec<String> {
         cols.push("status".into());
         cols.push("published_at".into());
     }
-    cols.push("created_at".into());
-    cols.push("updated_at".into());
-    cols.push("created_by".into());
-    cols.push("updated_by".into());
-    if ct.soft_delete {
-        cols.push("deleted_at".into());
+    cols.push(COL_CREATED_AT.into());
+    cols.push(COL_UPDATED_AT.into());
+    cols.push(COL_CREATED_BY.into());
+    cols.push(COL_UPDATED_BY.into());
+    if ct.soft_delete || ct.implements.contains(&"soft_deletable".to_string()) {
+        cols.push(COL_DELETED_AT.into());
+        cols.push(COL_DELETED_BY.into());
     }
     if !ct.builtin {
-        cols.push("__meta".into());
+        cols.push(COL_META.into());
     }
 
     cols

@@ -477,6 +477,7 @@ async fn registry_load_and_lookup() {
             ct,
             &rust_blog::config::app::RuleEngineConfig::default(),
             &reserved,
+            &[],
         )
         .unwrap();
 
@@ -1091,4 +1092,275 @@ async fn versioning_diff_computes_correctly() {
 
     let removed = diff["removed"].as_object().unwrap();
     assert!(removed.is_empty());
+}
+
+#[tokio::test]
+async fn soft_delete_filtered_from_list() {
+    let pool = setup_pool().await;
+    let ct = ContentTypeSchema::parse_from_str(
+        r#"
+[content_type]
+name = "Note"
+singular = "note"
+plural = "notes"
+table = "ct_soft_filter_list"
+soft_delete = true
+
+[fields.title]
+type = "text"
+required = true
+
+[fields.slug]
+type = "uid"
+target_field = "title"
+"#,
+    )
+    .unwrap();
+
+    let repo = ContentRepository::new(pool.clone());
+    repo.migrate(&ct).await.unwrap();
+
+    repo.create(
+        &ct,
+        with_timestamps(json!({"title": "Visible Note", "slug": "visible"})),
+        None,
+        &SaveContext::default(),
+    )
+    .await
+    .unwrap();
+    let deleted = repo
+        .create(
+            &ct,
+            with_timestamps(json!({"title": "Deleted Note", "slug": "deleted"})),
+            None,
+            &SaveContext::default(),
+        )
+        .await
+        .unwrap();
+    let deleted_id = deleted["id"].as_str().unwrap();
+
+    let now = now_str();
+    repo.soft_delete(&ct, deleted_id, &now, None, None)
+        .await
+        .unwrap();
+
+    let query = ContentQuery {
+        page: 1,
+        page_size: 10,
+        sort: None,
+        filters: HashMap::new(),
+        status: None,
+        search: None,
+        fields: None,
+        tenant_id: None,
+        include: None,
+        skip_total: false,
+        rule_where: None,
+        rule_params: Vec::new(),
+        max_page_size: 100,
+        include_private: false,
+    };
+    let (items, total) = repo.find(&ct, query).await.unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["title"].as_str().unwrap(), "Visible Note");
+}
+
+#[tokio::test]
+async fn soft_delete_filtered_from_find_by_slug() {
+    let pool = setup_pool().await;
+    let ct = ContentTypeSchema::parse_from_str(
+        r#"
+[content_type]
+name = "Note"
+singular = "note"
+plural = "notes"
+table = "ct_soft_filter_slug"
+soft_delete = true
+
+[fields.title]
+type = "text"
+required = true
+
+[fields.slug]
+type = "uid"
+target_field = "title"
+"#,
+    )
+    .unwrap();
+
+    let repo = ContentRepository::new(pool.clone());
+    repo.migrate(&ct).await.unwrap();
+
+    let created = repo
+        .create(
+            &ct,
+            with_timestamps(json!({"title": "Gone", "slug": "gone"})),
+            None,
+            &SaveContext::default(),
+        )
+        .await
+        .unwrap();
+    let id = created["id"].as_str().unwrap();
+
+    let now = now_str();
+    repo.soft_delete(&ct, id, &now, None, None).await.unwrap();
+
+    let found = repo
+        .find_by_slug(&ct, "gone", None, None, true)
+        .await
+        .unwrap();
+    assert!(found.is_none());
+}
+
+#[tokio::test]
+async fn soft_delete_still_accessible_by_id() {
+    let pool = setup_pool().await;
+    let ct = ContentTypeSchema::parse_from_str(
+        r#"
+[content_type]
+name = "Note"
+singular = "note"
+plural = "notes"
+table = "ct_soft_find_by_id"
+soft_delete = true
+
+[fields.title]
+type = "text"
+required = true
+"#,
+    )
+    .unwrap();
+
+    let repo = ContentRepository::new(pool.clone());
+    repo.migrate(&ct).await.unwrap();
+
+    let created = repo
+        .create(
+            &ct,
+            with_timestamps(json!({"title": "Soft Deleted"})),
+            None,
+            &SaveContext::default(),
+        )
+        .await
+        .unwrap();
+    let id = created["id"].as_str().unwrap();
+
+    let now = now_str();
+    repo.soft_delete(&ct, id, &now, None, None).await.unwrap();
+
+    let found = repo.find_by_id(&ct, id, None, true).await.unwrap();
+    assert!(found.is_some());
+    assert_eq!(
+        found.unwrap()["title"].as_str().unwrap(),
+        "Soft Deleted"
+    );
+}
+
+#[tokio::test]
+async fn soft_delete_with_deleted_by() {
+    let pool = setup_pool().await;
+    let ct = ContentTypeSchema::parse_from_str(
+        r#"
+[content_type]
+name = "Note"
+singular = "note"
+plural = "notes"
+table = "ct_soft_deleted_by"
+soft_delete = true
+
+[fields.title]
+type = "text"
+required = true
+"#,
+    )
+    .unwrap();
+
+    let repo = ContentRepository::new(pool.clone());
+    repo.migrate(&ct).await.unwrap();
+
+    let created = repo
+        .create(
+            &ct,
+            with_timestamps(json!({"title": "Audit Me"})),
+            None,
+            &SaveContext::default(),
+        )
+        .await
+        .unwrap();
+    let id = created["id"].as_str().unwrap();
+
+    let now = now_str();
+    repo.soft_delete(&ct, id, &now, Some("user-123"), None)
+        .await
+        .unwrap();
+
+    let row: (String, String) =
+        sqlx::query_as("SELECT deleted_at, deleted_by FROM ct_soft_deleted_by WHERE id = ?")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!row.0.is_empty());
+    assert_eq!(row.1, "user-123");
+}
+
+#[tokio::test]
+async fn soft_delete_implements_trait_equivalent() {
+    let pool = setup_pool().await;
+    let ct = ContentTypeSchema::parse_from_str(
+        r#"
+[content_type]
+name = "Note"
+singular = "note"
+plural = "notes"
+table = "ct_soft_via_implements"
+
+implements = ["soft_deletable"]
+
+[fields.title]
+type = "text"
+required = true
+"#,
+    )
+    .unwrap();
+
+    assert!(ct.soft_delete || ct.implements.contains(&"soft_deletable".to_string()));
+
+    let repo = ContentRepository::new(pool.clone());
+    repo.migrate(&ct).await.unwrap();
+
+    let created = repo
+        .create(
+            &ct,
+            with_timestamps(json!({"title": "Implements Test"})),
+            None,
+            &SaveContext::default(),
+        )
+        .await
+        .unwrap();
+    let id = created["id"].as_str().unwrap();
+
+    let now = now_str();
+    repo.soft_delete(&ct, id, &now, None, None).await.unwrap();
+
+    let query = ContentQuery {
+        page: 1,
+        page_size: 10,
+        sort: None,
+        filters: HashMap::new(),
+        status: None,
+        search: None,
+        fields: None,
+        tenant_id: None,
+        include: None,
+        skip_total: false,
+        rule_where: None,
+        rule_params: Vec::new(),
+        max_page_size: 100,
+        include_private: false,
+    };
+    let (items, total) = repo.find(&ct, query).await.unwrap();
+    assert_eq!(total, 0);
+    assert!(items.is_empty());
 }

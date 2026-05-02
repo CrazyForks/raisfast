@@ -13,7 +13,8 @@ export interface Page {
   parent_id: string | null;
   sort_order: number;
   status: string;
-  author_id: string;
+  created_by: string;
+  updated_by: string | null;
   cover_image: string | null;
   published_at: string | null;
   created_at: string;

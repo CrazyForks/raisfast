@@ -84,7 +84,7 @@ impl TenantService {
 
     /// 删除租户（默认租户不可删除）
     pub async fn delete(&self, id: &str) -> Result<(), AppError> {
-        if id == crate::db::tenant::DEFAULT_TENANT {
+        if id == crate::constants::DEFAULT_TENANT {
             return Err(AppError::BadRequest("cannot delete default tenant".into()));
         }
         self.repo.delete(id).await

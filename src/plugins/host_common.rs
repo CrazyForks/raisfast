@@ -214,7 +214,7 @@ impl HostContext {
             match handle.block_on(crate::models::post::find_by_slug(
                 pool,
                 slug,
-                Some(crate::db::tenant::DEFAULT_TENANT),
+                Some(crate::constants::DEFAULT_TENANT),
             )) {
                 Ok(Some(post)) => serde_json::to_string(&post).ok(),
                 Ok(None) => None,

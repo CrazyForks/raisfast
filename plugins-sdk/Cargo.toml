@@ -1,8 +1,0 @@
-[package]
-name = "rust-blog-plugin-sdk"
-version = "0.2.0"
-edition = "2024"
-description = "rust-blog WASM 插件开发 SDK（基于 Component Model）"
-
-[dependencies]
-wit-bindgen = "0.41"

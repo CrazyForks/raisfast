@@ -1,0 +1,164 @@
+//! versionable Protocol — 更新时自动保存旧版本快照
+//!
+//! 包含 1 个 Aspect：VersionableAspect（priority = 500）。
+//! after_update 时将 old_record 存入 content_revisions 表。
+
+use std::sync::Arc;
+
+use async_trait::async_trait;
+
+use crate::aspects::{
+    Advice, Aspect, AspectResult, ColumnDef, DataAfterUpdateContext,
+    Layer, Operation, Pointcut, SqlType, TargetMatcher, When,
+};
+use crate::constants::*;
+use crate::protocols::Protocol;
+
+pub struct VersionableAspect;
+
+#[async_trait]
+impl Aspect for VersionableAspect {
+    fn name(&self) -> &str {
+        "versionable"
+    }
+
+    fn priority(&self) -> i32 {
+        500
+    }
+
+    fn pointcuts(&self) -> Vec<Pointcut> {
+        vec![Pointcut {
+            layer: Layer::Data,
+            operation: Operation::Update,
+            when: When::After,
+            target: TargetMatcher::All,
+        }]
+    }
+
+    fn columns(&self) -> Vec<ColumnDef> {
+        vec![ColumnDef {
+                name: COL_VERSION.into(),
+            sql_type: SqlType::Integer,
+            default: Some("1".into()),
+        }]
+    }
+
+    async fn on_data_after_update(&self, ctx: &mut DataAfterUpdateContext) -> AspectResult {
+        let Some(pool) = &ctx.base.pool else {
+            return Ok(Advice::Continue);
+        };
+
+        let id = ctx
+            .old_record
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if id.is_empty() {
+            return Ok(Advice::Continue);
+        }
+
+        let snapshot = serde_json::Value::Object(ctx.old_record.clone());
+        let user_id = ctx.base.user_id.clone();
+
+        let pool = pool.clone();
+        let table_name = ctx.table.clone();
+        let id = id.to_string();
+
+        tokio::spawn(async move {
+            let _ = crate::models::content_revision::create_revision(
+                &pool,
+                &table_name,
+                &id,
+                &snapshot,
+                user_id.as_deref(),
+            )
+            .await;
+        });
+
+        Ok(Advice::Continue)
+    }
+}
+
+pub struct VersionableProtocol;
+
+impl Protocol for VersionableProtocol {
+    fn name(&self) -> &str {
+        "versionable"
+    }
+
+    fn description(&self) -> &str {
+        "更新时自动保存旧版本快照"
+    }
+
+    fn aspects(&self) -> Vec<Arc<dyn Aspect>> {
+        vec![Arc::new(VersionableAspect)]
+    }
+
+    fn built_in(&self) -> bool {
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::aspects::engine::AspectEngine;
+    use crate::aspects::{BaseContext, Record};
+
+    #[tokio::test]
+    async fn provides_version_column() {
+        let cols = VersionableAspect.columns();
+        assert_eq!(cols.len(), 1);
+        assert_eq!(cols[0].name, "version");
+        assert_eq!(cols[0].sql_type, SqlType::Integer);
+    }
+
+    #[tokio::test]
+    async fn pointcut_targets_after_update() {
+        let pcs = VersionableAspect.pointcuts();
+        assert_eq!(pcs.len(), 1);
+        assert_eq!(pcs[0].operation, Operation::Update);
+        assert_eq!(pcs[0].when, When::After);
+    }
+
+    #[tokio::test]
+    async fn skips_without_pool() {
+        let engine = AspectEngine::new();
+        engine.register(VersionableAspect);
+
+        let mut ctx = DataAfterUpdateContext {
+            base: BaseContext::new(None, "default".into(), "now".into()),
+            table: "articles".into(),
+            old_record: Record::new(),
+            new_record: Record::new(),
+            schema: None,
+        };
+
+        let result: Result<_, _> = engine
+            .dispatch_data_after_update("articles", &mut ctx)
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn skips_without_id() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let engine = AspectEngine::new();
+        engine.register(VersionableAspect);
+
+        let mut ctx = DataAfterUpdateContext {
+            base: BaseContext::new(None, "default".into(), "now".into())
+                .with_pool(crate::db::pool::Pool::from(pool)),
+            table: "articles".into(),
+            old_record: Record::new(),
+            new_record: Record::new(),
+            schema: None,
+        };
+
+        let result: Result<_, _> = engine
+            .dispatch_data_after_update("articles", &mut ctx)
+            .await;
+        assert!(result.is_ok());
+    }
+}

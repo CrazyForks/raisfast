@@ -428,10 +428,11 @@ pub async fn schema_create(
         .map_err(|e| format!("migration failed: {e}"))?;
 
     let reserved = state.0.config.builtins.reserved_route_segments();
+    let protocol_names: Vec<&str> = state.0.protocol_registry.names();
     state
         .0
         .content_type_registry
-        .register(schema.clone(), &state.0.config.rule_engine, &reserved)
+        .register(schema.clone(), &state.0.config.rule_engine, &reserved, &protocol_names)
         .map_err(|e| e.to_string())?;
 
     Ok(serde_json::to_value(&schema).unwrap_or_default())

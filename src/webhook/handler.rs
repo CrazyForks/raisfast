@@ -56,7 +56,7 @@ pub async fn create(
     }
     let tenant_id = auth
         .tenant_id()
-        .unwrap_or(crate::db::tenant::DEFAULT_TENANT)
+        .unwrap_or(crate::constants::DEFAULT_TENANT)
         .to_string();
     let sub = state
         .webhook

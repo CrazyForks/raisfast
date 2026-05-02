@@ -373,6 +373,7 @@ async fn tauri_cms_create_and_list() {
             ct.clone(),
             &config.rule_engine,
             &config.builtins.reserved_route_segments(),
+            &[],
         )
         .unwrap();
     let repo = ContentRepository::new(pool.clone());
@@ -501,6 +502,7 @@ async fn tauri_registry_register_and_query() {
             ct,
             &config.rule_engine,
             &config.builtins.reserved_route_segments(),
+            &[],
         )
         .unwrap();
 
@@ -521,6 +523,7 @@ async fn tauri_registry_unregister() {
             ct,
             &config.rule_engine,
             &config.builtins.reserved_route_segments(),
+            &[],
         )
         .unwrap();
 
@@ -556,6 +559,7 @@ label = "内容"
             ct1,
             &config.rule_engine,
             &config.builtins.reserved_route_segments(),
+            &[],
         )
         .unwrap();
     registry
@@ -563,6 +567,7 @@ label = "内容"
             ct2,
             &config.rule_engine,
             &config.builtins.reserved_route_segments(),
+            &[],
         )
         .unwrap();
 

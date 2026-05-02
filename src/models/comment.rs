@@ -374,7 +374,7 @@ mod tests {
     fn make_comment(id: &str, post_id: &str, parent_id: Option<&str>) -> Comment {
         Comment {
             id: id.to_string(),
-            tenant_id: crate::db::tenant::DEFAULT_TENANT.to_string(),
+            tenant_id: crate::constants::DEFAULT_TENANT.to_string(),
             post_id: post_id.to_string(),
             created_by: None,
             updated_by: None,

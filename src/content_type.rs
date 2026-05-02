@@ -71,6 +71,7 @@ impl ContentTypeRegistry {
         dir: &Path,
         rule_config: &crate::config::app::RuleEngineConfig,
         reserved_segments: &[&str],
+        valid_protocols: &[&str],
     ) -> Result<Self, AppError> {
         let registry = Self::new();
         let entries = std::fs::read_dir(dir).map_err(|e| {
@@ -83,13 +84,22 @@ impl ContentTypeRegistry {
             let entry = entry.map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "toml") {
-                let schema = ContentTypeSchema::parse_from_file(&path)?;
+                let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+                let schema = match ContentTypeSchema::parse_from_file(&path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!("skipping {file_name}: parse error: {e}");
+                        continue;
+                    }
+                };
                 tracing::info!(
                     "loaded content type: {} (table={})",
                     schema.name,
                     schema.table
                 );
-                registry.register(schema, rule_config, reserved_segments)?;
+                if let Err(e) = registry.register(schema, rule_config, reserved_segments, valid_protocols) {
+                    tracing::warn!("skipping {file_name}: register error: {e}");
+                }
             }
         }
 
@@ -109,6 +119,7 @@ impl ContentTypeRegistry {
         schema: ContentTypeSchema,
         rule_config: &crate::config::app::RuleEngineConfig,
         reserved_segments: &[&str],
+        valid_protocols: &[&str],
     ) -> Result<(), AppError> {
         let mut conflicts = Vec::new();
 
@@ -189,6 +200,20 @@ impl ContentTypeRegistry {
                 "content type '{}' registration failed: {}",
                 schema.name,
                 conflicts.join("; ")
+            )));
+        }
+
+        let unknown: Vec<&str> = schema
+            .implements
+            .iter()
+            .map(|s| s.as_str())
+            .filter(|name| !valid_protocols.contains(name))
+            .collect();
+        if !unknown.is_empty() {
+            return Err(AppError::BadRequest(format!(
+                "content type '{}' references unknown protocol(s): {}",
+                schema.name,
+                unknown.join(", ")
             )));
         }
 

@@ -676,7 +676,7 @@ mod tests {
                 category_id: None,
                 tag_ids: None,
             },
-            Some(crate::db::tenant::DEFAULT_TENANT),
+            Some(crate::constants::DEFAULT_TENANT),
         )
         .await
         .unwrap()
@@ -685,7 +685,7 @@ mod tests {
     #[tokio::test]
     async fn find_joined_by_ids_empty() {
         let pool = setup_pool().await;
-        let result = find_joined_by_ids(&pool, &[], Some(crate::db::tenant::DEFAULT_TENANT))
+        let result = find_joined_by_ids(&pool, &[], Some(crate::constants::DEFAULT_TENANT))
             .await
             .unwrap();
         assert!(result.is_empty());
@@ -699,7 +699,7 @@ mod tests {
         let result = find_joined_by_ids(
             &pool,
             &[p.id.clone()],
-            Some(crate::db::tenant::DEFAULT_TENANT),
+            Some(crate::constants::DEFAULT_TENANT),
         )
         .await
         .unwrap();
@@ -719,7 +719,7 @@ mod tests {
         let result = find_joined_by_ids(
             &pool,
             &[p1.id.clone(), p3.id.clone()],
-            Some(crate::db::tenant::DEFAULT_TENANT),
+            Some(crate::constants::DEFAULT_TENANT),
         )
         .await
         .unwrap();
@@ -738,7 +738,7 @@ mod tests {
         let result = find_joined_by_ids(
             &pool,
             &[p.id.clone()],
-            Some(crate::db::tenant::DEFAULT_TENANT),
+            Some(crate::constants::DEFAULT_TENANT),
         )
         .await
         .unwrap();
@@ -751,7 +751,7 @@ mod tests {
         let result = find_joined_by_ids(
             &pool,
             &["nonexistent-id".to_string()],
-            Some(crate::db::tenant::DEFAULT_TENANT),
+            Some(crate::constants::DEFAULT_TENANT),
         )
         .await
         .unwrap();
@@ -767,7 +767,7 @@ mod tests {
         let result = find_joined_by_ids(
             &pool,
             &[pub_post.id.clone(), draft_post.id.clone()],
-            Some(crate::db::tenant::DEFAULT_TENANT),
+            Some(crate::constants::DEFAULT_TENANT),
         )
         .await
         .unwrap();
@@ -799,14 +799,14 @@ mod tests {
                 category_id: Some(cat_id),
                 tag_ids: None,
             },
-            Some(crate::db::tenant::DEFAULT_TENANT),
+            Some(crate::constants::DEFAULT_TENANT),
         )
         .await
         .unwrap();
         let result = find_joined_by_ids(
             &pool,
             &[p.id.clone()],
-            Some(crate::db::tenant::DEFAULT_TENANT),
+            Some(crate::constants::DEFAULT_TENANT),
         )
         .await
         .unwrap();
@@ -817,7 +817,7 @@ mod tests {
     #[tokio::test]
     async fn count_published_by_ids_empty() {
         let pool = setup_pool().await;
-        let count = count_published_by_ids(&pool, &[], Some(crate::db::tenant::DEFAULT_TENANT))
+        let count = count_published_by_ids(&pool, &[], Some(crate::constants::DEFAULT_TENANT))
             .await
             .unwrap();
         assert_eq!(count, 0);
@@ -828,7 +828,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
         let p = create_test_post(&pool, &uid, "published", "计数文章").await;
-        let count = count_published_by_ids(&pool, &[p.id], Some(crate::db::tenant::DEFAULT_TENANT))
+        let count = count_published_by_ids(&pool, &[p.id], Some(crate::constants::DEFAULT_TENANT))
             .await
             .unwrap();
         assert_eq!(count, 1);
@@ -839,7 +839,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
         let p = create_test_post(&pool, &uid, "draft", "草稿").await;
-        let count = count_published_by_ids(&pool, &[p.id], Some(crate::db::tenant::DEFAULT_TENANT))
+        let count = count_published_by_ids(&pool, &[p.id], Some(crate::constants::DEFAULT_TENANT))
             .await
             .unwrap();
         assert_eq!(count, 0);
@@ -855,7 +855,7 @@ mod tests {
         let count = count_published_by_ids(
             &pool,
             &[p1.id, p2.id, p3.id],
-            Some(crate::db::tenant::DEFAULT_TENANT),
+            Some(crate::constants::DEFAULT_TENANT),
         )
         .await
         .unwrap();
@@ -868,7 +868,7 @@ mod tests {
         let count = count_published_by_ids(
             &pool,
             &["fake-id".to_string()],
-            Some(crate::db::tenant::DEFAULT_TENANT),
+            Some(crate::constants::DEFAULT_TENANT),
         )
         .await
         .unwrap();
