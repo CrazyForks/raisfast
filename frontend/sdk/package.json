@@ -1,0 +1,36 @@
+{
+  "name": "@raisfast/sdk",
+  "version": "0.1.0",
+  "description": "RaisFast frontend SDK",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "pnpm build"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "typescript": "^5",
+    "vitest": "^4.1.4"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anomalyco/rust-blog",
+    "directory": "frontend/sdk"
+  },
+  "keywords": ["raisfast", "cms", "sdk", "headless-cms"]
+}
