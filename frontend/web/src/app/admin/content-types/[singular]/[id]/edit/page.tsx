@@ -85,7 +85,7 @@ export default function EditCmsItemPage({
 
   const updateMutation = useMutation({
     mutationFn: (data: Record<string, unknown>) =>
-      client.send(`/cms/${schema!.plural}/${id}`, { method: "PUT", body: data }),
+      client.collection(schema!.plural).update(id, data),
     onSuccess: () => {
       toast.success(t("common.updated", { name: schema!.name }));
       router.push(`/admin/content-types/${singular}`);

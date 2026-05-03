@@ -52,7 +52,7 @@ export default function ProfilePage() {
       setUser({
         id: updated.id,
         email: updated.email,
-        username: updated.nickname,
+        username: updated.username,
         role: updated.role,
         avatar: updated.avatar,
         bio: null,

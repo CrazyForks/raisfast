@@ -9,10 +9,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::aspects::{
-    Advice, Aspect, AspectResult,
-    DataAfterCreateContext, DataAfterDeleteContext, DataAfterReadContext,
-    DataAfterUpdateContext,
-    Layer, Operation, Pointcut, TargetMatcher, When,
+    Advice, Aspect, AspectResult, DataAfterCreateContext, DataAfterDeleteContext,
+    DataAfterReadContext, DataAfterUpdateContext, Layer, Operation, Pointcut, TargetMatcher, When,
 };
 use crate::protocols::Protocol;
 

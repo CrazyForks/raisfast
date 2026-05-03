@@ -78,6 +78,14 @@ pub enum CtAction {
         /// Path to check (default: content_type_dir)
         path: Option<String>,
     },
+    /// Generate TypeScript types from content type TOML files
+    Types {
+        /// Specific content type singular name (e.g. "article"). Omit to generate all.
+        singular: Option<String>,
+        /// Output file path (default: stdout)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -146,6 +154,12 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
             action: CtAction::Check { path },
         }) => {
             ct_cmd::check(config, path.as_deref())?;
+        }
+
+        Some(Commands::Ct {
+            action: CtAction::Types { singular, output },
+        }) => {
+            ct_cmd::generate_types(config, singular.as_deref(), output.as_deref())?;
         }
 
         Some(Commands::Plugin {

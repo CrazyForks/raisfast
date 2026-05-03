@@ -450,14 +450,9 @@ export default function WorkflowEditorPage() {
       setSaving(true);
       try {
         const steps = nodesToSteps(nodes);
-        const id = `wf-${Date.now()}`;
-        await client.send("/admin/workflows", {
-          method: "POST",
-          body: {
-            id,
-            name: name || t("workflows.editor.untitled"),
-            steps,
-          },
+        await client.admin.workflows.create({
+          name: name || t("workflows.editor.untitled"),
+          steps,
         });
         toast.success(t("workflows.editor.workflowSaved"));
         router.push("/admin/workflows");

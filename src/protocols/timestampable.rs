@@ -60,8 +60,10 @@ impl Aspect for TimestampableAspect {
     }
 
     async fn on_data_before_create(&self, ctx: &mut DataBeforeCreateContext) -> AspectResult {
-        ctx.record.insert(COL_CREATED_AT.into(), json!(ctx.base.now));
-        ctx.record.insert(COL_UPDATED_AT.into(), json!(ctx.base.now));
+        ctx.record
+            .insert(COL_CREATED_AT.into(), json!(ctx.base.now));
+        ctx.record
+            .insert(COL_UPDATED_AT.into(), json!(ctx.base.now));
         Ok(Advice::Continue)
     }
 

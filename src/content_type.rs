@@ -97,7 +97,9 @@ impl ContentTypeRegistry {
                     schema.name,
                     schema.table
                 );
-                if let Err(e) = registry.register(schema, rule_config, reserved_segments, valid_protocols) {
+                if let Err(e) =
+                    registry.register(schema, rule_config, reserved_segments, valid_protocols)
+                {
                     tracing::warn!("skipping {file_name}: register error: {e}");
                 }
             }

@@ -6,6 +6,11 @@ import { Collection } from "./collection";
 import { Users } from "./users";
 import { Media } from "./media";
 import { Health } from "./health";
+import { Posts } from "./posts";
+import { Categories } from "./categories";
+import { Tags } from "./tags";
+import { Comments } from "./comments";
+import { Pages } from "./pages";
 import { SDKError } from "./errors";
 import type {
   AfterSendHook,
@@ -21,6 +26,11 @@ export class RaisFast {
   readonly users: Users;
   readonly media: Media;
   readonly health: Health;
+  readonly posts: Posts;
+  readonly categories: Categories;
+  readonly tags: Tags;
+  readonly comments: Comments;
+  readonly pages: Pages;
   readonly authStore: IAuthStore;
   private readonly http: HttpClient;
 
@@ -35,6 +45,11 @@ export class RaisFast {
     this.users = new Users(this.http);
     this.media = new Media(this.http);
     this.health = new Health(this.http);
+    this.posts = new Posts(this.http);
+    this.categories = new Categories(this.http);
+    this.tags = new Tags(this.http);
+    this.comments = new Comments(this.http);
+    this.pages = new Pages(this.http);
   }
 
   collection<T = Record<string, unknown>>(name: string): Collection<T> {

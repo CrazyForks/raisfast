@@ -85,7 +85,7 @@ function InstanceDetail({ instance }: { instance: WorkflowInstance }) {
   const queryClient = useQueryClient();
 
   const cancelMutation = useMutation({
-    mutationFn: () => client.send(`/admin/workflows/instances/${instance.id}/cancel`, { method: "POST", body: {} }),
+    mutationFn: () => client.admin.workflows.cancelInstance(instance.id),
     onSuccess: () => {
       toast.success(t("workflows.instances.cancelled"));
       queryClient.invalidateQueries({ queryKey: ["workflow-instances"] });

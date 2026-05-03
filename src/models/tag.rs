@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use ts_rs::TS;
 
 use crate::db::tenant::{resolve_tenant, tenant_filter};
 use crate::errors::app_error::{AppError, AppResult};
@@ -12,7 +13,7 @@ use crate::errors::app_error::{AppError, AppResult};
 /// 标签完整数据库行模型
 ///
 /// 直接映射 `tags` 表的所有字段。
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone, TS)]
 pub struct Tag {
     pub id: String,
     pub tenant_id: String,

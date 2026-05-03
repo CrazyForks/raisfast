@@ -2,11 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use ts_rs::TS;
 
 use crate::errors::app_error::AppResult;
 
 /// 审计日志完整数据库行
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone, TS)]
 pub struct AuditEntry {
     pub id: String,
     pub tenant_id: String,

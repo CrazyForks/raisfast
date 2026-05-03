@@ -54,7 +54,7 @@ export default function LoginPage() {
     try {
       const data = await client.auth.login(values.email, values.password);
       store.login(
-        { id: data.user.id, email: data.user.email, username: data.user.nickname, role: data.user.role, avatar: data.user.avatar, bio: null },
+        { id: data.user.id, email: data.user.email, username: data.user.username, role: data.user.role, avatar: data.user.avatar, bio: data.user.bio ?? null },
         data.access_token,
         data.refresh_token,
       );
@@ -77,7 +77,7 @@ export default function LoginPage() {
     if (!unverifiedEmail) return;
     setResending(true);
     try {
-      await client.send("/auth/resend-verification", { method: "POST", body: { email: unverifiedEmail } });
+      await client.auth.resendVerification(unverifiedEmail);
       toast.success("Verification email sent");
       setUnverifiedEmail(null);
     } catch (err) {

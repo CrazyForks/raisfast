@@ -29,7 +29,7 @@ export function UserMenu({ onAction }: UserMenuProps) {
 
   async function handleLogout() {
     try {
-      await client.send("/auth/logout", { method: "POST" });
+      await client.auth.logout();
     } catch {
       // ignore errors on logout
     }

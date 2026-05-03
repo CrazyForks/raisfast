@@ -28,7 +28,7 @@ export default function ContentTypesPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (singular: string) =>
-      client.send(`/admin/content-types/${singular}`, { method: "DELETE" }),
+      client.admin.contentTypes.delete(singular),
     onSuccess: () => {
       toast.success(t("contentTypes.contentTypeDeleted"));
       queryClient.invalidateQueries({ queryKey: ["content-types"] });

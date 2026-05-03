@@ -6,6 +6,7 @@
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::api_token;
+use ts_rs::TS;
 
 /// API Token 前缀
 const TOKEN_PREFIX: &str = "rblog_";
@@ -51,7 +52,7 @@ pub fn is_api_token(token: &str) -> bool {
 }
 
 /// 创建 API Token 返回结果
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, TS)]
 pub struct CreateTokenResult {
     pub id: String,
     pub name: String,

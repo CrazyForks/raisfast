@@ -82,7 +82,7 @@ export default function TagsPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: TagForm) => client.send("/tags", { method: "POST", body: data }),
+    mutationFn: (data: TagForm) => client.tags.create(data),
     onSuccess: () => {
       toast.success(t("tags.tagCreated"));
       queryClient.invalidateQueries({ queryKey: ["tags"] });
@@ -116,7 +116,7 @@ export default function TagsPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => client.send(`/tags/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) => client.tags.delete(id),
     onSuccess: () => {
       toast.success(t("tags.tagDeleted"));
       queryClient.invalidateQueries({ queryKey: ["tags"] });

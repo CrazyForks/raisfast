@@ -1251,10 +1251,7 @@ required = true
 
     let found = repo.find_by_id(&ct, id, None, true).await.unwrap();
     assert!(found.is_some());
-    assert_eq!(
-        found.unwrap()["title"].as_str().unwrap(),
-        "Soft Deleted"
-    );
+    assert_eq!(found.unwrap()["title"].as_str().unwrap(), "Soft Deleted");
 }
 
 #[tokio::test]

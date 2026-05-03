@@ -150,7 +150,7 @@ export default function CronDetailPage() {
 
   const toggleMutation = useMutation({
     mutationFn: (enabled: boolean) =>
-      client.send(`/admin/crons/${encodeURIComponent(id)}/toggle`, { method: "POST", body: { enabled } }),
+      client.admin.crons.toggle(encodeURIComponent(id)),
     onSuccess: () => {
       toast.success(t("cron.scheduleToggled"));
       queryClient.invalidateQueries({ queryKey: ["cron", id] });
@@ -162,7 +162,7 @@ export default function CronDetailPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => client.send(`/admin/crons/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    mutationFn: () => client.admin.crons.delete(encodeURIComponent(id)),
     onSuccess: () => {
       toast.success(t("cron.scheduleDeleted"));
       queryClient.invalidateQueries({ queryKey: ["crons"] });
@@ -175,9 +175,9 @@ export default function CronDetailPage() {
 
   const cleanupMutation = useMutation({
     mutationFn: () =>
-      client.send("/admin/crons/logs/cleanup", { method: "POST", body: {} }) as Promise<number>,
-    onSuccess: (count: number) => {
-      toast.success(t("cron.cleanedUp", { count }));
+      client.admin.crons.cleanupLogs(),
+    onSuccess: () => {
+      toast.success(t("cron.cleanedUp"));
       queryClient.invalidateQueries({ queryKey: ["cron-logs", id] });
     },
     onError: (err) => {

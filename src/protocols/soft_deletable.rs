@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::aspects::{
-    Advice, Aspect, AspectResult, ColumnDef, DataBeforeDeleteContext,
-    Layer, Operation, Pointcut, SqlType, TargetMatcher, When,
+    Advice, Aspect, AspectResult, ColumnDef, DataBeforeDeleteContext, Layer, Operation, Pointcut,
+    SqlType, TargetMatcher, When,
 };
 use crate::constants::*;
 use crate::protocols::Protocol;
@@ -53,7 +53,8 @@ impl Aspect for SoftDeletableAspect {
 
     async fn on_data_before_delete(&self, ctx: &mut DataBeforeDeleteContext) -> AspectResult {
         ctx.soft_delete = true;
-        ctx.record.insert(COL_DELETED_AT.into(), json!(ctx.base.now));
+        ctx.record
+            .insert(COL_DELETED_AT.into(), json!(ctx.base.now));
         if let Some(user_id) = &ctx.base.user_id {
             ctx.record.insert(COL_DELETED_BY.into(), json!(user_id));
         }
@@ -93,17 +94,27 @@ mod tests {
         engine.register(SoftDeletableAspect);
 
         let mut ctx = DataBeforeDeleteContext {
-            base: BaseContext::new(Some("user-1".into()), "default".into(), "2026-01-01T00:00:00Z".into()),
+            base: BaseContext::new(
+                Some("user-1".into()),
+                "default".into(),
+                "2026-01-01T00:00:00Z".into(),
+            ),
             table: "articles".into(),
             record: Record::new(),
             soft_delete: false,
             schema: None,
         };
 
-        engine.dispatch_data_before_delete("articles", &mut ctx).await.unwrap();
+        engine
+            .dispatch_data_before_delete("articles", &mut ctx)
+            .await
+            .unwrap();
 
         assert!(ctx.soft_delete);
-        assert_eq!(ctx.record.get("deleted_at").unwrap(), &json!("2026-01-01T00:00:00Z"));
+        assert_eq!(
+            ctx.record.get("deleted_at").unwrap(),
+            &json!("2026-01-01T00:00:00Z")
+        );
         assert_eq!(ctx.record.get("deleted_by").unwrap(), &json!("user-1"));
     }
 
@@ -120,7 +131,10 @@ mod tests {
             schema: None,
         };
 
-        engine.dispatch_data_before_delete("articles", &mut ctx).await.unwrap();
+        engine
+            .dispatch_data_before_delete("articles", &mut ctx)
+            .await
+            .unwrap();
 
         assert!(ctx.soft_delete);
         assert!(ctx.record.contains_key("deleted_at"));

@@ -49,7 +49,7 @@ export default function VerifyEmailPage() {
     if (!email) return;
     setResending(true);
     try {
-      await client.send("/auth/resend-verification", { method: "POST", body: { email } });
+      await client.auth.resendVerification(email);
       toast.success("Verification email sent");
     } catch (err) {
       if (err instanceof SDKError) {

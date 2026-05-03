@@ -85,12 +85,7 @@ function CommentForm({
       parent_id?: string;
       nickname?: string;
       email?: string;
-    }) => {
-      const endpoint = isLoggedIn
-        ? `/posts/${postSlug}/comments/authed`
-        : `/posts/${postSlug}/comments`;
-      return client.send(endpoint, { method: "POST", body: data });
-    },
+    }) => client.comments.create(postSlug, data),
     onSuccess: () => {
       toast.success("Comment posted");
       setContent("");

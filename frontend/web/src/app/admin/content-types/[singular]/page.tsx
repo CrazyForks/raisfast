@@ -118,7 +118,7 @@ export default function ContentTypeListPage({
     }: {
       plural: string;
       id: string;
-    }) => client.send(`/cms/${plural}/${id}`, { method: "DELETE" }),
+    }) => client.collection(plural).delete(id),
     onSuccess: () => {
       toast.success(t("contentTypes.itemDeleted"));
       if (schema) {

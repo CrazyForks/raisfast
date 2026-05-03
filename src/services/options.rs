@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use tokio::sync::RwLock;
+use ts_rs::TS;
 
 use crate::constants::DEFAULT_TENANT;
 use crate::errors::app_error::AppError;
@@ -21,7 +22,7 @@ fn parse_value(value_str: &str) -> Value {
 }
 
 /// 分组信息
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, TS)]
 pub struct OptionGroup {
     pub key: String,
     pub label: String,
@@ -29,14 +30,17 @@ pub struct OptionGroup {
 }
 
 /// 单条配置（值 + 元数据）
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, TS)]
 pub struct OptionEntry {
     pub key: String,
+    #[ts(type = "unknown")]
     pub value: Value,
     #[serde(rename = "type")]
+    #[ts(rename = "type")]
     pub type_: String,
     pub label: String,
     pub description: Option<String>,
+    #[ts(type = "unknown")]
     pub validation: Option<Value>,
     pub is_public: bool,
 }
@@ -102,8 +106,12 @@ impl OptionsService {
         if let Some(entry) = self.cache.read().await.get(key).cloned() {
             return Some(entry);
         }
-        let row: crate::models::options::OptionRow =
-            self.repo.find_by_key(key, DEFAULT_TENANT).await.ok().flatten()?;
+        let row: crate::models::options::OptionRow = self
+            .repo
+            .find_by_key(key, DEFAULT_TENANT)
+            .await
+            .ok()
+            .flatten()?;
         let entry = OptionEntry::from(&row);
         self.cache
             .write()

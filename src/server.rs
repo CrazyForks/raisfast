@@ -6,9 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::AppState;
-use crate::constants::DEFAULT_TENANT;
 use crate::cache::MemoryCache;
 use crate::config::app::AppConfig;
+use crate::constants::DEFAULT_TENANT;
 use crate::handlers::{
     api_token, auth, category, comment, cron, health, media, options, page, plugin, post, rbac,
     rss, sse, stats, tag, tenant, user, workflow, ws,
@@ -1016,7 +1016,11 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
             );
             registry.record(
                 "GET",
-                &format!("{}/{}/{{id_or_slug}}", crate::constants::CMS_ADMIN_PREFIX, plural),
+                &format!(
+                    "{}/{}/{{id_or_slug}}",
+                    crate::constants::CMS_ADMIN_PREFIX,
+                    plural
+                ),
                 "content_type",
                 name,
             );
@@ -1035,7 +1039,12 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         .route("/routes", get(list_routes))
         .route("/health", get(health::health));
 
-    registry.record("GET", &format!("{}/health", crate::constants::API_PREFIX), "system", "health");
+    registry.record(
+        "GET",
+        &format!("{}/health", crate::constants::API_PREFIX),
+        "system",
+        "health",
+    );
 
     {
         let plugin_routes = state.plugins.all_plugin_routes().await;
@@ -1044,7 +1053,12 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
         }
     }
 
-    registry.record("GET", &format!("{}/routes", crate::constants::API_PREFIX), "system", "system");
+    registry.record(
+        "GET",
+        &format!("{}/routes", crate::constants::API_PREFIX),
+        "system",
+        "system",
+    );
 
     let routes_vec = registry.into_vec();
     state.route_registry = Arc::new(routes_vec);

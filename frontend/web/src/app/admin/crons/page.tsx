@@ -47,28 +47,7 @@ import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
 import { client } from "@/lib/raisfast";
-import { SDKError } from "@raisfast/sdk";
-
-interface CronSchedule {
-  id: string;
-  label: string;
-  job_type: string;
-  payload: string | null;
-  cron_expr: string;
-  enabled: boolean;
-  last_run_at: string | null;
-  next_run_at: string;
-  plugin_id: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-interface PaginatedData<T> {
-  items: T[];
-  total: number;
-  page: number;
-  page_size: number;
-}
+import { SDKError, type CronJob, type PaginatedData } from "@raisfast/sdk";
 
 function formatTime(iso: string | null): string {
   if (!iso) return "-";
@@ -105,7 +84,7 @@ export default function CronsPage() {
     cron_expr: "",
     enabled: true,
   });
-  const [editCron, setEditCron] = useState<CronSchedule | null>(null);
+  const [editCron, setEditCron] = useState<CronJob | null>(null);
   const [editLabel, setEditLabel] = useState("");
   const [editCronExpr, setEditCronExpr] = useState("");
   const [editPayload, setEditPayload] = useState("");
@@ -113,12 +92,12 @@ export default function CronsPage() {
   const cronsQuery = useQuery({
     queryKey: ["crons", page],
     queryFn: () =>
-      client.send<PaginatedData<CronSchedule>>("/admin/crons", { query: { page: String(page), page_size: String(pageSize) } }),
+      client.send<PaginatedData<CronJob>>("/admin/crons", { query: { page: String(page), page_size: String(pageSize) } }),
   });
 
   const createMutation = useMutation({
     mutationFn: (body: Record<string, unknown>) =>
-      client.send<CronSchedule>("/admin/crons", { method: "POST", body }),
+      client.send<CronJob>("/admin/crons", { method: "POST", body }),
     onSuccess: () => {
       toast.success(t("cron.scheduleCreated"));
       queryClient.invalidateQueries({ queryKey: ["crons"] });
@@ -132,7 +111,7 @@ export default function CronsPage() {
 
   const toggleMutation = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      client.send(`/admin/crons/${id}/toggle`, { method: "POST", body: { enabled } }),
+      client.admin.crons.toggle(id),
     onSuccess: () => {
       toast.success(t("cron.scheduleToggled"));
       queryClient.invalidateQueries({ queryKey: ["crons"] });
@@ -143,7 +122,7 @@ export default function CronsPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => client.send(`/admin/crons/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) => client.admin.crons.delete(id),
     onSuccess: () => {
       toast.success(t("cron.scheduleDeleted"));
       queryClient.invalidateQueries({ queryKey: ["crons"] });
@@ -160,7 +139,7 @@ export default function CronsPage() {
     }: {
       id: string;
       data: { label?: string; cron_expr?: string; payload?: string };
-    }) => client.send(`/admin/crons/${id}`, { method: "PUT", body: data }),
+    }) => client.admin.crons.update(id, data as Partial<CronJob>),
     onSuccess: () => {
       toast.success(t("cron.scheduleUpdated"));
       queryClient.invalidateQueries({ queryKey: ["crons"] });
@@ -171,7 +150,7 @@ export default function CronsPage() {
     },
   });
 
-  function startEdit(c: CronSchedule) {
+  function startEdit(c: CronJob) {
     setEditCron(c);
     setEditLabel(c.label);
     setEditCronExpr(c.cron_expr);
@@ -310,7 +289,7 @@ export default function CronsPage() {
                   <TableCell colSpan={7} className="text-center py-8">
                     <div className="flex flex-col items-center gap-2 text-muted-foreground">
                       <Clock className="size-8" />
-                      <p>{t("cron.noCronSchedules")}</p>
+                      <p>{t("cron.noCronJobs")}</p>
                       <p className="text-xs">
                         {t("cron.seedHint")}
                       </p>

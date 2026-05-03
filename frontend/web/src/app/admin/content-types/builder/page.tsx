@@ -58,7 +58,7 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { client } from "@/lib/raisfast";
-import { SDKError } from "@raisfast/sdk";
+import { SDKError, type ContentTypeSchema as ContentTypeSchemaSDK, type FieldDef as FieldDefSDK } from "@raisfast/sdk";
 import type { FieldSchema, ContentTypeSchema } from "@/components/admin/field-renderer";
 
 type FieldType = FieldSchema["field_type"];
@@ -290,7 +290,7 @@ export default function ContentTypeBuilderPage() {
       });
 
       if (isEditMode) {
-        return client.send(`/admin/content-types/${editSingular}`, { method: "PUT", body: {
+        return client.admin.contentTypes.update(editSingular, {
           name: base.name,
           description: base.description,
           draft_publish: base.draft_publish,
@@ -298,10 +298,10 @@ export default function ContentTypeBuilderPage() {
           soft_delete: base.soft_delete,
           slug_field: base.slug_field || null,
           fields: fieldPayloads,
-        }});
+        } as unknown as Partial<ContentTypeSchemaSDK>);
       }
 
-      return client.send("/admin/content-types", { method: "POST", body: {
+      return client.admin.contentTypes.create({
         name: base.name,
         singular: base.singular,
         plural: base.plural,
@@ -312,7 +312,7 @@ export default function ContentTypeBuilderPage() {
         soft_delete: base.soft_delete,
         slug_field: base.slug_field || null,
         fields: fieldPayloads,
-      }});
+      } as unknown as ContentTypeSchemaSDK);
     },
     onSuccess: () => {
       toast.success(

@@ -102,7 +102,7 @@ export default function PluginsPage() {
   });
 
   const enableMutation = useMutation({
-    mutationFn: (id: string) => client.send(`/admin/plugins/${id}/enable`, { method: "POST", body: {} }),
+    mutationFn: (id: string) => client.admin.plugins.enable(id),
     onSuccess: () => {
       toast.success(t("plugins.pluginEnabled"));
       queryClient.invalidateQueries({ queryKey: ["plugins"] });
@@ -113,7 +113,7 @@ export default function PluginsPage() {
   });
 
   const disableMutation = useMutation({
-    mutationFn: (id: string) => client.send(`/admin/plugins/${id}/disable`, { method: "POST", body: {} }),
+    mutationFn: (id: string) => client.admin.plugins.disable(id),
     onSuccess: () => {
       toast.success(t("plugins.pluginDisabled"));
       queryClient.invalidateQueries({ queryKey: ["plugins"] });
@@ -124,7 +124,7 @@ export default function PluginsPage() {
   });
 
   const reloadMutation = useMutation({
-    mutationFn: (id: string) => client.send(`/admin/plugins/${id}/reload`, { method: "POST", body: {} }),
+    mutationFn: (id: string) => client.admin.plugins.reload(id),
     onSuccess: () => {
       toast.success(t("plugins.pluginReloaded"));
       queryClient.invalidateQueries({ queryKey: ["plugins"] });
@@ -135,7 +135,7 @@ export default function PluginsPage() {
   });
 
   const removeMutation = useMutation({
-    mutationFn: (id: string) => client.send(`/admin/plugins/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) => client.admin.plugins.unload(id),
     onSuccess: () => {
       toast.success(t("plugins.pluginRemoved"));
       queryClient.invalidateQueries({ queryKey: ["plugins"] });

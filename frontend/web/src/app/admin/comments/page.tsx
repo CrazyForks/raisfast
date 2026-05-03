@@ -87,16 +87,13 @@ export default function CommentsPage() {
 
   const commentsQuery = useQuery({
     queryKey: ["admin-comments", page],
-    queryFn: () =>
-      client.send<PaginatedData<AdminComment>>(
-        `/comments?page=${page}&page_size=${pageSize}`,
-      ),
+    queryFn: () => client.comments.listAll(page, pageSize),
     enabled: isAdmin(),
   });
 
   const statusMutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) =>
-      client.send(`/comments/${id}/status`, { method: "PUT", body: { status } }),
+      client.comments.updateStatus(id, status),
     onSuccess: () => {
       toast.success(t("comments.commentStatusUpdated"));
       queryClient.invalidateQueries({ queryKey: ["admin-comments"] });
@@ -111,7 +108,7 @@ export default function CommentsPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => client.send(`/comments/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) => client.comments.delete(id),
     onSuccess: () => {
       toast.success(t("comments.commentDeleted"));
       queryClient.invalidateQueries({ queryKey: ["admin-comments"] });
@@ -128,9 +125,7 @@ export default function CommentsPage() {
 
   const bulkStatusMutation = useMutation({
     mutationFn: ({ ids, status }: { ids: string[]; status: string }) =>
-      Promise.all(
-        ids.map((id) => client.send(`/comments/${id}/status`, { method: "PUT", body: { status } })),
-      ),
+      Promise.all(ids.map((id) => client.comments.updateStatus(id, status))),
     onSuccess: (_data, vars) => {
       toast.success(t("comments.bulkActionDone", { count: vars.ids.length, status: vars.status }));
       queryClient.invalidateQueries({ queryKey: ["admin-comments"] });
@@ -147,7 +142,7 @@ export default function CommentsPage() {
 
   const bulkDeleteMutation = useMutation({
     mutationFn: (ids: string[]) =>
-      Promise.all(ids.map((id) => client.send(`/comments/${id}`, { method: "DELETE" }))),
+      Promise.all(ids.map((id) => client.comments.delete(id))),
     onSuccess: (_data, ids) => {
       toast.success(t("comments.bulkDeleted", { count: ids.length }));
       queryClient.invalidateQueries({ queryKey: ["admin-comments"] });

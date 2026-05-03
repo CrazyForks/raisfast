@@ -21,7 +21,10 @@ use crate::constants::*;
 use crate::errors::app_error::AppError;
 use crate::middleware::auth::AuthUser;
 
-fn make_base_ctx_from_auth(auth: &AuthUser, pool: &crate::db::pool::Pool) -> crate::aspects::BaseContext {
+fn make_base_ctx_from_auth(
+    auth: &AuthUser,
+    pool: &crate::db::pool::Pool,
+) -> crate::aspects::BaseContext {
     crate::aspects::BaseContext::new(
         auth.user_id().map(|s| s.to_string()),
         auth.tenant_id().unwrap_or(DEFAULT_TENANT).to_string(),
@@ -765,7 +768,11 @@ pub async fn do_delete(
 
     let record: crate::aspects::Record = match value.as_object() {
         Some(map) => map.clone(),
-        None => return Err(AppError::Internal(anyhow::anyhow!("record is not an object"))),
+        None => {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "record is not an object"
+            )));
+        }
     };
 
     if let Some(rules) = ct.cached_rules.as_ref()
@@ -791,12 +798,17 @@ pub async fn do_delete(
         .map_err(crate::errors::app_error::AppError::Internal)?;
 
     if before_ctx.soft_delete {
-        let deleted_at = before_ctx.record.get(COL_DELETED_AT)
+        let deleted_at = before_ctx
+            .record
+            .get(COL_DELETED_AT)
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let deleted_by = before_ctx.record.get(COL_DELETED_BY)
+        let deleted_by = before_ctx
+            .record
+            .get(COL_DELETED_BY)
             .and_then(|v| v.as_str());
-        repo.soft_delete(ct, id, deleted_at, deleted_by, auth.tenant_id()).await?;
+        repo.soft_delete(ct, id, deleted_at, deleted_by, auth.tenant_id())
+            .await?;
     } else {
         repo.delete(ct, id, auth.tenant_id()).await?;
     }
@@ -1175,7 +1187,12 @@ pub async fn create_schema(
     let protocol_names: Vec<&str> = state.protocol_registry.names();
     state
         .content_type_registry
-        .register(schema.clone(), &state.config.rule_engine, &reserved, &protocol_names)
+        .register(
+            schema.clone(),
+            &state.config.rule_engine,
+            &reserved,
+            &protocol_names,
+        )
         .map_err(|e| AppError::Conflict(e.to_string()))?;
 
     tracing::info!(
@@ -1275,7 +1292,12 @@ pub async fn update_schema(
     let protocol_names: Vec<&str> = state.protocol_registry.names();
     state
         .content_type_registry
-        .register(updated.clone(), &state.config.rule_engine, &reserved, &protocol_names)
+        .register(
+            updated.clone(),
+            &state.config.rule_engine,
+            &reserved,
+            &protocol_names,
+        )
         .map_err(|e| AppError::Conflict(e.to_string()))?;
 
     tracing::info!(

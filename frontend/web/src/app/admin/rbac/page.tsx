@@ -179,7 +179,7 @@ export default function RbacPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => client.send(`/admin/rbac/roles/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) => client.admin.rbac.deleteRole(id),
     onSuccess: () => {
       toast.success(t("rbac.roleDeleted"));
       queryClient.invalidateQueries({ queryKey: ["rbac-roles"] });

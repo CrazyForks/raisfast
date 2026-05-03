@@ -78,7 +78,7 @@ export default function NewCmsItemPage({
 
   const createMutation = useMutation({
     mutationFn: (data: Record<string, unknown>) =>
-      client.send(`/cms/${schema!.plural}`, { method: "POST", body: data }),
+      client.collection(schema!.plural).create(data),
     onSuccess: () => {
       toast.success(t("common.created", { name: schema!.name }));
       router.push(`/admin/content-types/${singular}`);

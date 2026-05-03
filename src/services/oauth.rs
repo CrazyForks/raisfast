@@ -6,6 +6,7 @@
 //! - 绑定/解绑 OAuth 账号
 
 use chrono::Utc;
+use ts_rs::TS;
 
 use crate::commands::CreateUserCmd;
 use crate::errors::app_error::{AppError, AppResult};
@@ -229,7 +230,7 @@ pub async fn list_bindings(
 }
 
 /// 绑定信息
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, TS)]
 pub struct OAuthBindingInfo {
     pub provider: String,
     pub display_name: Option<String>,

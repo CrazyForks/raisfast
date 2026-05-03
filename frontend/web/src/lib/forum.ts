@@ -172,8 +172,8 @@ export const forum = {
     client.send<ForumTopic>(`/cms/forum_topics/${id}`, { method: "PUT", body: data }),
 
   deleteTopic: (id: string) =>
-    client.send(`/cms/forum_topics/${id}`, { method: "DELETE" }),
+    client.collection("forum_topics").delete(id),
 
   deleteReply: (id: string) =>
-    client.send(`/cms/forum_replies/${id}`, { method: "DELETE" }),
+    client.collection("forum_replies").delete(id),
 };

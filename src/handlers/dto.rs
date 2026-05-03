@@ -4,6 +4,7 @@
 //! 与数据库模型（`models::*`）解耦。
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
@@ -118,7 +119,7 @@ pub struct BindPhoneRequest {
 }
 
 /// 认证配置响应
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema, TS)]
 pub struct AuthConfigResponse {
     pub registration_email_enabled: bool,
     pub registration_sms_enabled: bool,
@@ -141,7 +142,7 @@ pub struct ResendVerificationRequest {
 }
 
 /// 用户公开信息响应
-#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema, TS)]
 #[non_exhaustive]
 pub struct UserResponse {
     pub id: String,
@@ -174,7 +175,7 @@ impl From<User> for UserResponse {
 }
 
 /// 登录成功响应
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema, TS)]
 #[non_exhaustive]
 pub struct LoginResponse {
     pub access_token: String,
@@ -219,7 +220,7 @@ pub struct UpdatePostRequest {
 }
 
 /// 文章 API 响应
-#[derive(Debug, Serialize, Clone, ToSchema)]
+#[derive(Debug, Serialize, Clone, ToSchema, TS)]
 #[non_exhaustive]
 pub struct PostResponse {
     pub id: String,
@@ -303,7 +304,7 @@ pub struct UpdateCommentStatusRequest {
 // ── Media ─────────────────────────────────────────────────────
 
 /// 媒体文件 API 响应
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema, TS)]
 pub struct MediaResponse {
     pub id: String,
     pub user_id: String,
@@ -349,7 +350,7 @@ pub fn media_to_response_with_url(media: &Media, url: &str) -> MediaResponse {
 }
 
 /// 存储 statistics API 响应
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema, TS)]
 pub struct MediaStatsResponse {
     pub total_files: i64,
     pub total_size: i64,
@@ -357,7 +358,7 @@ pub struct MediaStatsResponse {
 }
 
 /// 按 MIME 类型分组的统计
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema, TS)]
 pub struct MediaTypeInfoResponse {
     pub mimetype: String,
     pub count: i64,

@@ -9,6 +9,7 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use ts_rs::TS;
 
 use crate::db::tenant::{resolve_tenant, tenant_filter, tenant_filter_aliased};
 use crate::errors::app_error::{AppError, AppResult};
@@ -41,7 +42,7 @@ pub struct Post {
 /// 标签摘要
 ///
 /// 用于文章响应中展示标签的简要信息，包含 ID、名称和 slug。
-#[derive(Debug, Serialize, Deserialize, Clone, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone, utoipa::ToSchema, TS)]
 pub struct TagBrief {
     pub id: String,
     pub name: String,

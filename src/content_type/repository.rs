@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use serde_json::{Value, json};
 
 use super::schema::{AutoFillSource, ContentTypeSchema, FieldType, RelationType};
-use crate::db::Pool;
 use crate::constants::*;
+use crate::db::Pool;
 use crate::errors::app_error::AppError;
 use crate::middleware::auth::AuthUser;
 use sqlx::Row;
@@ -124,8 +124,8 @@ impl ContentRepository {
         let mut params: Vec<Value> = Vec::new();
         let mut param_idx = 1;
 
-        let has_soft_delete = ct.soft_delete
-            || ct.implements.contains(&"soft_deletable".to_string());
+        let has_soft_delete =
+            ct.soft_delete || ct.implements.contains(&"soft_deletable".to_string());
         if has_soft_delete {
             where_clauses.push(format!("{} IS NULL", COL_DELETED_AT));
         }
@@ -360,8 +360,8 @@ impl ContentRepository {
         let mut where_parts = vec![format!("slug = {}", placeholder(1))];
         let mut idx = 2;
 
-        let has_soft_delete = ct.soft_delete
-            || ct.implements.contains(&"soft_deletable".to_string());
+        let has_soft_delete =
+            ct.soft_delete || ct.implements.contains(&"soft_deletable".to_string());
         if has_soft_delete {
             where_parts.push(format!("{} IS NULL", COL_DELETED_AT));
         }

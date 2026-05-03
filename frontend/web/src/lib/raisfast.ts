@@ -19,10 +19,14 @@ class ZustandAuthStore extends BaseAuthStore {
           ? {
               id: auth.user.id,
               email: auth.user.email,
-              nickname: auth.user.username,
+              username: auth.user.username,
               role: auth.user.role,
+              phone: null,
               avatar: auth.user.avatar,
-              tenant_id: "default",
+              bio: auth.user.bio ?? null,
+              website: null,
+              created_at: "",
+              updated_at: "",
             }
           : null;
       }
@@ -32,19 +36,20 @@ class ZustandAuthStore extends BaseAuthStore {
   save(auth: {
     access_token: string;
     refresh_token: string;
-    user: { id: string; email: string; nickname: string; role: string; avatar: string | null; tenant_id: string };
+    expires_in?: number;
+    user: { id: string; email: string; username: string; role: string; phone: string | null; avatar: string | null; bio: string | null; website: string | null; created_at: string; updated_at: string };
   }): void {
-    super.save(auth);
+    super.save({ ...auth, expires_in: auth.expires_in ?? 0 } as never);
     const store = useAuthStore.getState();
     store.setTokens(auth.access_token, auth.refresh_token);
     if (auth.user) {
       store.setUser({
         id: auth.user.id,
         email: auth.user.email,
-        username: auth.user.nickname,
+        username: auth.user.username,
         role: auth.user.role,
         avatar: auth.user.avatar,
-        bio: null,
+        bio: auth.user.bio,
       });
     }
   }

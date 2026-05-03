@@ -95,16 +95,13 @@ export default function NewPostPage() {
 
   const createMutation = useMutation({
     mutationFn: (values: PostForm) =>
-      client.send("/posts", {
-        method: "POST",
-        body: {
-          title: values.title,
-          content: values.content,
-          excerpt: values.excerpt || undefined,
-          status: values.status,
-          category_id: values.category_id || undefined,
-          tag_ids: selectedTags.length > 0 ? selectedTags : undefined,
-        },
+      client.posts.create({
+        title: values.title,
+        content: values.content,
+        excerpt: values.excerpt || undefined,
+        status: values.status,
+        category_id: values.category_id || undefined,
+        tag_ids: selectedTags.length > 0 ? selectedTags : undefined,
       }),
     onSuccess: () => {
       toast.success(t("posts.postCreated"));

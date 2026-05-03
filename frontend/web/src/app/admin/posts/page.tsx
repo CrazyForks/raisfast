@@ -51,13 +51,15 @@ export default function PostsPage() {
   const postsQuery = useQuery({
     queryKey: ["admin-posts", page, statusFilter],
     queryFn: () =>
-      client.send<PaginatedData<Post>>(
-        `/admin/posts?page=${page}&page_size=${pageSize}${statusFilter ? `&status=${statusFilter}` : ""}`,
-      ),
+      client.posts.adminList({
+        page,
+        page_size: pageSize,
+        status: statusFilter || undefined,
+      }),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (slug: string) => client.send(`/posts/${slug}`, { method: "DELETE" }),
+    mutationFn: (slug: string) => client.posts.delete(slug),
     onSuccess: () => {
       toast.success(t("posts.postDeleted"));
       queryClient.invalidateQueries({ queryKey: ["admin-posts"] });

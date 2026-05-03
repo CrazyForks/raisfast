@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use ts_rs::TS;
 
 use crate::errors::app_error::AppResult;
 
@@ -23,7 +24,7 @@ pub struct ApiToken {
 }
 
 /// API Token 列表项（脱敏，不含 token_hash）
-#[derive(Debug, FromRow, Serialize, Deserialize)]
+#[derive(Debug, FromRow, Serialize, Deserialize, TS)]
 pub struct ApiTokenListItem {
     pub id: String,
     pub name: String,

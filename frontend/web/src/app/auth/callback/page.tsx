@@ -35,17 +35,22 @@ export default function OAuthCallbackPage() {
         client.authStore.save({
           access_token: accessToken,
           refresh_token: refreshToken || "",
+          expires_in: 0,
           user: {
             id: user.id,
             email: user.email,
-            nickname: user.nickname,
+            username: user.username,
             role: user.role,
+            phone: user.phone ?? null,
             avatar: user.avatar,
-            tenant_id: user.tenant_id,
+            bio: user.bio ?? null,
+            website: user.website ?? null,
+            created_at: user.created_at ?? "",
+            updated_at: user.updated_at ?? "",
           },
         });
         login(
-          { id: user.id, email: user.email, username: user.nickname, role: user.role, avatar: user.avatar, bio: null },
+          { id: user.id, email: user.email, username: user.username, role: user.role, avatar: user.avatar, bio: user.bio ?? null },
           accessToken,
           refreshToken || "",
         );

@@ -121,7 +121,7 @@ export default function ApiTokensPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => client.send(`/tokens/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) => client.admin.tokens.delete(id),
     onSuccess: () => {
       toast.success(t("tokens.tokenRevoked"));
       queryClient.invalidateQueries({ queryKey: ["api-tokens"] });

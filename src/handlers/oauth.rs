@@ -5,6 +5,7 @@
 use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Redirect};
 use serde::Deserialize;
+use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
@@ -140,7 +141,7 @@ pub async fn unbind(
 }
 
 /// Provider 信息
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, TS)]
 pub struct ProviderInfo {
     pub name: String,
     pub configured: bool,

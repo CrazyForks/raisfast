@@ -8,8 +8,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::aspects::{
-    Advice, Aspect, AspectResult, ColumnDef, DataAfterUpdateContext,
-    Layer, Operation, Pointcut, SqlType, TargetMatcher, When,
+    Advice, Aspect, AspectResult, ColumnDef, DataAfterUpdateContext, Layer, Operation, Pointcut,
+    SqlType, TargetMatcher, When,
 };
 use crate::constants::*;
 use crate::protocols::Protocol;
@@ -37,7 +37,7 @@ impl Aspect for VersionableAspect {
 
     fn columns(&self) -> Vec<ColumnDef> {
         vec![ColumnDef {
-                name: COL_VERSION.into(),
+            name: COL_VERSION.into(),
             sql_type: SqlType::Integer,
             default: Some("1".into()),
         }]

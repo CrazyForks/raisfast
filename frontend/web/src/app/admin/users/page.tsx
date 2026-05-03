@@ -105,7 +105,7 @@ export default function UsersPage() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, role }: { id: string; role: string }) =>
-      client.send(`/users/${id}/role`, { method: "PUT", body: { role } }),
+      client.users.updateUserRole(id, role),
     onSuccess: () => {
       toast.success(t("users.userRoleUpdated"));
       queryClient.invalidateQueries({ queryKey: ["users"] });
@@ -127,7 +127,7 @@ export default function UsersPage() {
 
   const createMutation = useMutation({
     mutationFn: (data: { email: string; username: string; password: string }) =>
-      client.send("/auth/register", { method: "POST", body: data }),
+      client.auth.register({ email: data.email, password: data.password, nickname: data.username }),
     onSuccess: () => {
       toast.success(t("users.userCreated"));
       queryClient.invalidateQueries({ queryKey: ["users"] });

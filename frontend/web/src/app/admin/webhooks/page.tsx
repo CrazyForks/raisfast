@@ -32,26 +32,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { client } from "@/lib/raisfast";
-import { SDKError } from "@raisfast/sdk";
+import { SDKError, type PaginatedData, type WebhookSubscription } from "@raisfast/sdk";
 import { useT } from "@/lib/i18n";
-
-interface WebhookSubscription {
-  id: string;
-  url: string;
-  secret: string;
-  events: string;
-  enabled: boolean;
-  description: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-interface PaginatedData<T> {
-  items: T[];
-  total: number;
-  page: number;
-  page_size: number;
-}
 
 const webhookSchema = z.object({
   url: z.string().url("Must be a valid URL"),
@@ -94,13 +76,10 @@ export default function WebhooksPage() {
 
   const createMutation = useMutation({
     mutationFn: (data: WebhookForm) =>
-      client.send("/admin/webhooks", {
-        method: "POST",
-        body: {
-          url: data.url,
-          events: data.events.split(",").map((e) => e.trim()).filter(Boolean),
-          description: data.description || null,
-        },
+      client.admin.webhooks.create({
+        url: data.url,
+        events: data.events.split(",").map((e) => e.trim()).filter(Boolean),
+        ...(data.description ? { secret: data.description } : {}),
       }),
     onSuccess: () => {
       toast.success(t("webhooks.webhookCreated"));
@@ -129,7 +108,7 @@ export default function WebhooksPage() {
         description?: string;
         enabled?: boolean;
       };
-    }) => client.send(`/admin/webhooks/${id}`, { method: "PUT", body: data }),
+    }) => client.admin.webhooks.update(id, data as unknown as Partial<WebhookSubscription>),
     onSuccess: () => {
       toast.success(t("webhooks.webhookUpdated"));
       queryClient.invalidateQueries({ queryKey: ["webhooks"] });
@@ -145,7 +124,7 @@ export default function WebhooksPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => client.send(`/admin/webhooks/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) => client.admin.webhooks.delete(id),
     onSuccess: () => {
       toast.success(t("webhooks.webhookDeleted"));
       queryClient.invalidateQueries({ queryKey: ["webhooks"] });

@@ -49,6 +49,7 @@ use notify::Watcher;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::RwLock;
+use ts_rs::TS;
 
 #[cfg(feature = "plugin-wasm")]
 use engine::WasmInstancePool;
@@ -122,7 +123,7 @@ enum LoadedPluginInstance {
 }
 
 /// 插件健康状态与性能指标
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Default, TS)]
 pub struct PluginHealth {
     pub error_count: u32,
     pub last_error: Option<String>,
@@ -131,7 +132,7 @@ pub struct PluginHealth {
 }
 
 /// 插件 Hook 执行性能指标
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, TS)]
 pub struct PluginMetrics {
     pub total_calls: u64,
     pub total_errors: u64,
@@ -167,7 +168,7 @@ pub struct PluginManager {
 }
 
 /// 插件系统内部事件
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[non_exhaustive]
 pub enum PluginEvent {
     PluginLoaded {
@@ -192,7 +193,7 @@ pub enum PluginEvent {
 }
 
 /// 插件列表响应项（管理 API 使用）
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 pub struct PluginInfoResponse {
     pub id: String,
     pub name: String,

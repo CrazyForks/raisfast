@@ -3,13 +3,15 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::config::app::RuleEngineConfig;
 use crate::errors::app_error::AppError;
 
 /// 内容类型种类
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(rename_all = "lowercase")]
 pub enum ContentKind {
     /// 集合类型（默认）：多条记录，完整 CRUD
     #[default]
@@ -19,7 +21,7 @@ pub enum ContentKind {
 }
 
 /// 内容类型定义
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ContentTypeSchema {
     /// 显示名称（如 "Post"）
     pub name: String,
@@ -92,8 +94,9 @@ pub struct CachedRules {
 ///
 /// 声明字段值从请求上下文自动注入，而非由客户端提供。
 /// 在 TOML 中使用 `auto_fill = "user_id"` 语法。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
 pub enum AutoFillSource {
     /// 当前认证用户的 ID
     UserId,
@@ -104,7 +107,7 @@ pub enum AutoFillSource {
 }
 
 /// 字段定义
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct FieldSchema {
     /// 字段名
     pub name: String,
@@ -118,6 +121,7 @@ pub struct FieldSchema {
     pub unique: bool,
     /// 默认值
     #[serde(default)]
+    #[ts(type = "unknown")]
     pub default: Option<serde_json::Value>,
     /// 自动填充来源（从请求上下文注入，优先级高于 default 和客户端传值）
     #[serde(default)]
@@ -149,8 +153,9 @@ pub struct FieldSchema {
 }
 
 /// 字段类型枚举
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
 pub enum FieldType {
     Text,
     RichText,
@@ -172,8 +177,9 @@ pub enum FieldType {
 }
 
 /// 关系类型
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
 pub enum RelationType {
     OneToOne,
     OneToMany,
@@ -184,7 +190,7 @@ pub enum RelationType {
 }
 
 /// 关系配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct RelationConfig {
     pub relation_type: RelationType,
     /// 目标 content type 名称
@@ -196,7 +202,7 @@ pub struct RelationConfig {
 }
 
 /// 媒体字段配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct MediaConfig {
     /// 接受的 MIME 类型
     #[serde(default)]
@@ -211,7 +217,7 @@ fn default_media_max_count() -> usize {
 }
 
 /// 索引定义
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct IndexDef {
     /// 索引包含的字段
     pub fields: Vec<String>,
@@ -221,7 +227,7 @@ pub struct IndexDef {
 }
 
 /// 列表视图配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ListViewConfig {
     /// 默认排序（如 "`created_at:desc`"）
     #[serde(default = "default_sort")]
@@ -236,8 +242,9 @@ fn default_sort() -> String {
 }
 
 /// API 访问级别
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(rename_all = "lowercase")]
 pub enum ApiAccess {
     /// 完全禁止
     None,
@@ -260,7 +267,7 @@ pub enum ApiAccess {
 /// filter_auth = 'status = "published" || author_id = @request.auth.id'
 /// cache = true
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ApiEndpointConfig {
     /// 访问级别：none / public / member / admin
     #[serde(default)]
@@ -291,7 +298,7 @@ impl Default for ApiEndpointConfig {
 }
 
 /// API 端点访问配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ApiConfig {
     /// 列表查询（GET /cms/{plural}）
     #[serde(default)]
@@ -1295,7 +1302,13 @@ type = "text"
             dir.path(),
             &crate::config::app::RuleEngineConfig::default(),
             &reserved,
-            &["ownable", "timestampable", "soft_deletable", "versionable", "cacheable"],
+            &[
+                "ownable",
+                "timestampable",
+                "soft_deletable",
+                "versionable",
+                "cacheable",
+            ],
         )
         .unwrap();
         assert_eq!(reg.len(), 2);

@@ -118,16 +118,13 @@ export default function EditPostPage() {
 
   const updateMutation = useMutation({
     mutationFn: (values: PostForm) =>
-      client.send(`/posts/${slug}`, {
-        method: "PUT",
-        body: {
-          title: values.title,
-          content: values.content,
-          excerpt: values.excerpt || undefined,
-          status: values.status,
-          category_id: values.category_id || undefined,
-          tag_ids: selectedTags.length > 0 ? selectedTags : undefined,
-        },
+      client.posts.update(slug, {
+        title: values.title,
+        content: values.content,
+        excerpt: values.excerpt || undefined,
+        status: values.status,
+        category_id: values.category_id || undefined,
+        tag_ids: selectedTags.length > 0 ? selectedTags : undefined,
       }),
     onSuccess: () => {
       toast.success(t("posts.postUpdated"));

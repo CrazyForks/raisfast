@@ -285,8 +285,7 @@ pub fn generate_alter_table(ct: &ContentTypeSchema, existing_columns: &[String])
         ));
     }
 
-    let has_soft_delete = ct.soft_delete
-        || ct.implements.contains(&"soft_deletable".to_string());
+    let has_soft_delete = ct.soft_delete || ct.implements.contains(&"soft_deletable".to_string());
     if has_soft_delete && !existing.contains(COL_DELETED_AT) {
         stmts.push(format!(
             "ALTER TABLE {} ADD COLUMN {} TEXT",

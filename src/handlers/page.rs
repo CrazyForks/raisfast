@@ -5,6 +5,7 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 use validator::Validate;
 
 use crate::commands::{CreatePageCmd, UpdatePageCmd};
@@ -102,7 +103,7 @@ pub struct UpdateReusableRequest {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 pub struct SitemapEntry {
     pub slug: String,
     pub updated_at: Option<String>,

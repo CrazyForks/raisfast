@@ -4,11 +4,12 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
 
 /// roles 表行模型
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone, TS)]
 pub struct Role {
     pub id: String,
     pub name: String,
@@ -19,7 +20,7 @@ pub struct Role {
 }
 
 /// permissions 表行模型
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone, TS)]
 pub struct Permission {
     pub id: String,
     pub role_id: String,

@@ -75,7 +75,7 @@ export default function MediaPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => client.send(`/media/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) => client.media.delete(id),
     onSuccess: () => {
       toast.success(t("media.fileDeleted"));
       setSelectedFile(null);

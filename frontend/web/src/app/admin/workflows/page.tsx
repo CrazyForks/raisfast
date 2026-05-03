@@ -97,14 +97,9 @@ export default function WorkflowsPage() {
   const createMutation = useMutation({
     mutationFn: (data: CreateForm) => {
       const steps = JSON.parse(data.steps_json);
-      return client.send("/admin/workflows", {
-        method: "POST",
-        body: {
-          id: data.id,
-          name: data.name,
-          description: data.description || null,
-          steps,
-        },
+      return client.admin.workflows.create({
+        name: data.name,
+        steps,
       });
     },
     onSuccess: () => {
@@ -120,7 +115,7 @@ export default function WorkflowsPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => client.send(`/admin/workflows/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) => client.admin.workflows.delete(id),
     onSuccess: () => {
       toast.success(t("workflows.workflowDeleted"));
       queryClient.invalidateQueries({ queryKey: ["workflows"] });

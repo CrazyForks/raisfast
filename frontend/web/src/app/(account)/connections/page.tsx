@@ -43,7 +43,7 @@ export default function ConnectionsPage() {
   async function handleUnbind(id: string, provider: string) {
     setUnlinking(id);
     try {
-      await client.send(`/auth/oauth/unbind/${provider}`, { method: "DELETE" });
+      await client.auth.unbindOAuth(provider);
       setBindings((prev) => prev.filter((b) => b.id !== id));
       toast.success(`${provider} account unlinked`);
     } catch (err) {

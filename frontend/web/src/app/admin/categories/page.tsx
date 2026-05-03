@@ -90,13 +90,10 @@ export default function CategoriesPage() {
 
   const createMutation = useMutation({
     mutationFn: (data: CategoryForm) =>
-      client.send("/categories", {
-        method: "POST",
-        body: {
-          name: data.name,
-          description: data.description || undefined,
-          sort_order: data.sort_order,
-        },
+      client.categories.create({
+        name: data.name,
+        description: data.description || undefined,
+        sort_order: data.sort_order,
       }),
     onSuccess: () => {
       toast.success(t("categories.categoryCreated"));
@@ -120,7 +117,7 @@ export default function CategoriesPage() {
     }: {
       id: string;
       data: { name?: string; description?: string; sort_order?: number };
-    }) => client.send(`/categories/${id}`, { method: "PUT", body: data }),
+    }) => client.categories.update(id, data),
     onSuccess: () => {
       toast.success(t("categories.categoryUpdated"));
       queryClient.invalidateQueries({ queryKey: ["categories"] });
@@ -136,7 +133,7 @@ export default function CategoriesPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => client.send(`/categories/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) => client.categories.delete(id),
     onSuccess: () => {
       toast.success(t("categories.categoryDeleted"));
       queryClient.invalidateQueries({ queryKey: ["categories"] });

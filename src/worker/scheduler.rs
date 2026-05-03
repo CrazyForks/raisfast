@@ -33,6 +33,7 @@
 
 use chrono::{DateTime, Utc};
 use cron::Schedule;
+use ts_rs::TS;
 
 use crate::db::Pool;
 use crate::errors::app_error::{AppError, AppResult};
@@ -77,7 +78,7 @@ macro_rules! exec_log_row_to_struct {
 }
 
 /// Cron 调度行
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, TS)]
 pub struct CronSchedule {
     /// 主键
     pub id: String,
@@ -483,7 +484,7 @@ pub async fn seed_defaults(
 }
 
 /// Cron 执行历史记录
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, TS)]
 pub struct CronExecutionLog {
     /// 主键
     pub id: String,

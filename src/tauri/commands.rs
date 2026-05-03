@@ -432,7 +432,12 @@ pub async fn schema_create(
     state
         .0
         .content_type_registry
-        .register(schema.clone(), &state.0.config.rule_engine, &reserved, &protocol_names)
+        .register(
+            schema.clone(),
+            &state.0.config.rule_engine,
+            &reserved,
+            &protocol_names,
+        )
         .map_err(|e| e.to_string())?;
 
     Ok(serde_json::to_value(&schema).unwrap_or_default())

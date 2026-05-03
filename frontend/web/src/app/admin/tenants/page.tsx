@@ -89,12 +89,9 @@ export default function TenantsPage() {
 
   const createMutation = useMutation({
     mutationFn: (data: TenantForm) =>
-      client.send("/admin/tenants", {
-        method: "POST",
-        body: {
-          name: data.name,
-          domain: data.domain || null,
-        },
+      client.admin.tenants.create({
+        name: data.name,
+        slug: data.domain || data.name,
       }),
     onSuccess: () => {
       toast.success(t("tenants.tenantCreated"));
@@ -118,7 +115,7 @@ export default function TenantsPage() {
     }: {
       id: string;
       data: { name?: string; domain?: string; status?: string };
-    }) => client.send(`/admin/tenants/${id}`, { method: "PUT", body: data }),
+    }) => client.admin.tenants.update(id, data),
     onSuccess: () => {
       toast.success(t("tenants.tenantUpdated"));
       queryClient.invalidateQueries({ queryKey: ["tenants"] });
@@ -134,7 +131,7 @@ export default function TenantsPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => client.send(`/admin/tenants/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) => client.admin.tenants.delete(id),
     onSuccess: () => {
       toast.success(t("tenants.tenantDeleted"));
       queryClient.invalidateQueries({ queryKey: ["tenants"] });
