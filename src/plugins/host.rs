@@ -60,31 +60,31 @@ impl Host for Arc<HostContext> {
         (**self).db_rollback()
     }
 
-    fn fs_read(&mut self, path: String) -> Option<String> {
-        (**self).fs_read(&path).ok()
+    fn vfs_read(&mut self, path: String) -> Option<String> {
+        (**self).vfs_read(&path).ok()
     }
 
-    fn fs_write(&mut self, path: String, content: String) -> bool {
-        (**self).fs_write(&path, &content).is_ok()
+    fn vfs_write(&mut self, path: String, content: String) -> bool {
+        (**self).vfs_write(&path, &content).is_ok()
     }
 
-    fn fs_delete(&mut self, path: String) -> bool {
-        (**self).fs_delete(&path).is_ok()
+    fn vfs_delete(&mut self, path: String) -> bool {
+        (**self).vfs_delete(&path).is_ok()
     }
 
-    fn fs_exists(&mut self, path: String) -> bool {
-        (**self).fs_exists(&path).unwrap_or(false)
+    fn vfs_exists(&mut self, path: String) -> bool {
+        (**self).vfs_exists(&path).unwrap_or(false)
     }
 
-    fn fs_list(&mut self, path: String) -> Option<String> {
+    fn vfs_list(&mut self, path: String) -> Option<String> {
         (**self)
-            .fs_list(&path)
+            .vfs_list(&path)
             .ok()
             .map(|entries| serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string()))
     }
 
-    fn fs_stat(&mut self, path: String) -> Option<String> {
-        (**self).fs_stat(&path).ok()
+    fn vfs_stat(&mut self, path: String) -> Option<String> {
+        (**self).vfs_stat(&path).ok()
     }
 
     fn emit_event(&mut self, event_type: String, data: String) -> String {

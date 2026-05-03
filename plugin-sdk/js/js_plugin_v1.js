@@ -59,23 +59,23 @@ export function storeSet(key, value) {
     return RaisFastHost.setData(key, value);
 }
 export function vfsRead(path) {
-    return RaisFastHost.fsRead(path);
+    return RaisFastHost.vfsRead(path);
 }
 export function vfsWrite(path, content) {
-    return RaisFastHost.fsWrite(path, content);
+    return RaisFastHost.vfsWrite(path, content);
 }
 export function vfsDelete(path) {
-    return RaisFastHost.fsDelete(path);
+    return RaisFastHost.vfsDelete(path);
 }
 export function vfsExists(path) {
-    return RaisFastHost.fsExists(path) ?? false;
+    return RaisFastHost.vfsExists(path) ?? false;
 }
 export function vfsList(path) {
-    const result = RaisFastHost.fsList(path);
+    const result = RaisFastHost.vfsList(path);
     return result ? result.split(",") : null;
 }
 export function vfsStat(path) {
-    const result = RaisFastHost.fsStat(path);
+    const result = RaisFastHost.vfsStat(path);
     return result ? JSON.parse(result) : null;
 }
 export function getPost(slug) {

@@ -104,40 +104,40 @@ pub fn register_host_functions(
     host.set("dbRollback", db_rollback_fn)?;
 
     let hc = host_ctx.clone();
-    let fs_read_fn = Function::new(ctx.clone(), move |path: String| -> Option<String> {
-        hc.fs_read(&path).ok()
+    let vfs_read_fn = Function::new(ctx.clone(), move |path: String| -> Option<String> {
+        hc.vfs_read(&path).ok()
     })?;
-    host.set("fsRead", fs_read_fn)?;
+    host.set("vfsRead", vfs_read_fn)?;
 
     let hc = host_ctx.clone();
-    let fs_write_fn = Function::new(ctx.clone(), move |path: String, content: String| -> bool {
-        hc.fs_write(&path, &content).is_ok()
+    let vfs_write_fn = Function::new(ctx.clone(), move |path: String, content: String| -> bool {
+        hc.vfs_write(&path, &content).is_ok()
     })?;
-    host.set("fsWrite", fs_write_fn)?;
+    host.set("vfsWrite", vfs_write_fn)?;
 
     let hc = host_ctx.clone();
-    let fs_delete_fn = Function::new(ctx.clone(), move |path: String| -> bool {
-        hc.fs_delete(&path).is_ok()
+    let vfs_delete_fn = Function::new(ctx.clone(), move |path: String| -> bool {
+        hc.vfs_delete(&path).is_ok()
     })?;
-    host.set("fsDelete", fs_delete_fn)?;
+    host.set("vfsDelete", vfs_delete_fn)?;
 
     let hc = host_ctx.clone();
-    let fs_exists_fn = Function::new(ctx.clone(), move |path: String| -> Option<bool> {
-        hc.fs_exists(&path).ok()
+    let vfs_exists_fn = Function::new(ctx.clone(), move |path: String| -> Option<bool> {
+        hc.vfs_exists(&path).ok()
     })?;
-    host.set("fsExists", fs_exists_fn)?;
+    host.set("vfsExists", vfs_exists_fn)?;
 
     let hc = host_ctx.clone();
-    let fs_list_fn = Function::new(ctx.clone(), move |path: String| -> Option<String> {
-        hc.fs_list(&path).ok().map(|entries| entries.join(","))
+    let vfs_list_fn = Function::new(ctx.clone(), move |path: String| -> Option<String> {
+        hc.vfs_list(&path).ok().map(|entries| entries.join(","))
     })?;
-    host.set("fsList", fs_list_fn)?;
+    host.set("vfsList", vfs_list_fn)?;
 
     let hc = host_ctx.clone();
-    let fs_stat_fn = Function::new(ctx.clone(), move |path: String| -> Option<String> {
-        hc.fs_stat(&path).ok()
+    let vfs_stat_fn = Function::new(ctx.clone(), move |path: String| -> Option<String> {
+        hc.vfs_stat(&path).ok()
     })?;
-    host.set("fsStat", fs_stat_fn)?;
+    host.set("vfsStat", vfs_stat_fn)?;
 
     let hc = host_ctx.clone();
     let new_id_fn = Function::new(ctx.clone(), move || -> String { hc.new_uuid() })?;
@@ -388,12 +388,12 @@ mod tests {
                 "dbBegin",
                 "dbCommit",
                 "dbRollback",
-                "fsRead",
-                "fsWrite",
-                "fsDelete",
-                "fsExists",
-                "fsList",
-                "fsStat",
+                "vfsRead",
+                "vfsWrite",
+                "vfsDelete",
+                "vfsExists",
+                "vfsList",
+                "vfsStat",
             ] {
                 let _: Function = host.get(name).unwrap();
             }

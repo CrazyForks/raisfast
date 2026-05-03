@@ -60,18 +60,32 @@ function M.configGet(key) return RaisFastHost.getConfig(key) end
 function M.storeGet(key) return RaisFastHost.getData(key) end
 function M.storeSet(key, value) return RaisFastHost.setData(key, value) end
 
-function M.vfsRead(path) return RaisFastHost.fsRead(path) end
-function M.vfsWrite(path, content) return RaisFastHost.fsWrite(path, content) end
-function M.vfsDelete(path) return RaisFastHost.fsDelete(path) end
-function M.vfsExists(path) return RaisFastHost.fsExists(path) end
+function M.vfsRead(path) return RaisFastHost.vfsRead(path) end
+function M.vfsWrite(path, content) return RaisFastHost.vfsWrite(path, content) end
+function M.vfsDelete(path) return RaisFastHost.vfsDelete(path) end
+function M.vfsExists(path) return RaisFastHost.vfsExists(path) end
 function M.vfsList(path)
-    local result = RaisFastHost.fsList(path)
+    local result = RaisFastHost.vfsList(path)
     if not result then return nil end
     local list = {}
     for part in result:gmatch("[^,]+") do
         table.insert(list, part)
     end
     return list
+end
+
+function M.vfsStat(path)
+    local result = RaisFastHost.vfsStat(path)
+    if not result then return nil end
+    local ok, decoded = pcall(RaisFastHost.jsonDecode, result)
+    return ok and decoded or nil
+end
+
+function M.getPost(slug)
+    local result = RaisFastHost.getPost(slug)
+    if not result then return nil end
+    local ok, decoded = pcall(RaisFastHost.jsonDecode, result)
+    return ok and decoded or nil
 end
 
 function M.ok(data)

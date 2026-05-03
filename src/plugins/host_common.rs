@@ -441,37 +441,37 @@ impl HostContext {
     }
 
     /// 读取虚拟文件系统中的文件
-    pub fn fs_read(&self, path: &str) -> Result<String, String> {
+    pub fn vfs_read(&self, path: &str) -> Result<String, String> {
         let vfs = VirtualFs::new(&self.config, &self.plugin_id, &self.permissions);
         vfs.read_file(path).map_err(|e| e.to_string())
     }
 
     /// 写入虚拟文件系统中的文件
-    pub fn fs_write(&self, path: &str, content: &str) -> Result<(), String> {
+    pub fn vfs_write(&self, path: &str, content: &str) -> Result<(), String> {
         let vfs = VirtualFs::new(&self.config, &self.plugin_id, &self.permissions);
         vfs.write_file(path, content).map_err(|e| e.to_string())
     }
 
     /// 删除虚拟文件系统中的文件
-    pub fn fs_delete(&self, path: &str) -> Result<(), String> {
+    pub fn vfs_delete(&self, path: &str) -> Result<(), String> {
         let vfs = VirtualFs::new(&self.config, &self.plugin_id, &self.permissions);
         vfs.delete_file(path).map_err(|e| e.to_string())
     }
 
     /// 检查虚拟文件系统中的文件是否存在
-    pub fn fs_exists(&self, path: &str) -> Result<bool, String> {
+    pub fn vfs_exists(&self, path: &str) -> Result<bool, String> {
         let vfs = VirtualFs::new(&self.config, &self.plugin_id, &self.permissions);
         vfs.exists(path).map_err(|e| e.to_string())
     }
 
     /// 列出虚拟文件系统目录内容
-    pub fn fs_list(&self, path: &str) -> Result<Vec<String>, String> {
+    pub fn vfs_list(&self, path: &str) -> Result<Vec<String>, String> {
         let vfs = VirtualFs::new(&self.config, &self.plugin_id, &self.permissions);
         vfs.list_dir(path).map_err(|e| e.to_string())
     }
 
     /// 获取虚拟文件系统文件元信息（JSON）
-    pub fn fs_stat(&self, path: &str) -> Result<String, String> {
+    pub fn vfs_stat(&self, path: &str) -> Result<String, String> {
         let vfs = VirtualFs::new(&self.config, &self.plugin_id, &self.permissions);
         let info = vfs.stat(path).map_err(|e| e.to_string())?;
         serde_json::to_string(&info).map_err(|e| format!("error: {e}"))

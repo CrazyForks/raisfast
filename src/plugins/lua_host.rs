@@ -115,34 +115,34 @@ pub fn register_host_functions(
     host.set("dbRollback", db_rollback_fn)?;
 
     let hc = host_ctx.clone();
-    let fs_read_fn = lua.create_function(move |lua, path: String| match hc.fs_read(&path) {
+    let vfs_read_fn = lua.create_function(move |lua, path: String| match hc.vfs_read(&path) {
         Ok(content) => Ok(mlua::Value::String(lua.create_string(&content)?)),
         Err(_) => Ok(mlua::Value::Nil),
     })?;
-    host.set("fsRead", fs_read_fn)?;
+    host.set("vfsRead", vfs_read_fn)?;
 
     let hc = host_ctx.clone();
-    let fs_write_fn = lua.create_function(move |_, (path, content): (String, String)| {
-        Ok(hc.fs_write(&path, &content).is_ok())
+    let vfs_write_fn = lua.create_function(move |_, (path, content): (String, String)| {
+        Ok(hc.vfs_write(&path, &content).is_ok())
     })?;
-    host.set("fsWrite", fs_write_fn)?;
+    host.set("vfsWrite", vfs_write_fn)?;
 
     let hc = host_ctx.clone();
-    let fs_delete_fn =
-        lua.create_function(move |_, path: String| Ok(hc.fs_delete(&path).is_ok()))?;
-    host.set("fsDelete", fs_delete_fn)?;
+    let vfs_delete_fn =
+        lua.create_function(move |_, path: String| Ok(hc.vfs_delete(&path).is_ok()))?;
+    host.set("vfsDelete", vfs_delete_fn)?;
 
     let hc = host_ctx.clone();
-    let fs_exists_fn =
-        lua.create_function(move |_lua, path: String| match hc.fs_exists(&path) {
+    let vfs_exists_fn =
+        lua.create_function(move |_lua, path: String| match hc.vfs_exists(&path) {
             Ok(true) => Ok(mlua::Value::Boolean(true)),
             Ok(false) => Ok(mlua::Value::Boolean(false)),
             Err(_) => Ok(mlua::Value::Nil),
         })?;
-    host.set("fsExists", fs_exists_fn)?;
+    host.set("vfsExists", vfs_exists_fn)?;
 
     let hc = host_ctx.clone();
-    let fs_list_fn = lua.create_function(move |lua, path: String| match hc.fs_list(&path) {
+    let vfs_list_fn = lua.create_function(move |lua, path: String| match hc.vfs_list(&path) {
         Ok(entries) => {
             let tbl = lua.create_table()?;
             for (i, entry) in entries.into_iter().enumerate() {
@@ -152,14 +152,14 @@ pub fn register_host_functions(
         }
         Err(_) => Ok(mlua::Value::Nil),
     })?;
-    host.set("fsList", fs_list_fn)?;
+    host.set("vfsList", vfs_list_fn)?;
 
     let hc = host_ctx.clone();
-    let fs_stat_fn = lua.create_function(move |lua, path: String| match hc.fs_stat(&path) {
+    let vfs_stat_fn = lua.create_function(move |lua, path: String| match hc.vfs_stat(&path) {
         Ok(json) => Ok(mlua::Value::String(lua.create_string(&json)?)),
         Err(_) => Ok(mlua::Value::Nil),
     })?;
-    host.set("fsStat", fs_stat_fn)?;
+    host.set("vfsStat", vfs_stat_fn)?;
 
     let hc = host_ctx.clone();
     let emit_event_fn = lua.create_function(move |lua, (event_type, data): (String, String)| {
@@ -379,12 +379,12 @@ mod tests {
             "dbBegin",
             "dbCommit",
             "dbRollback",
-            "fsRead",
-            "fsWrite",
-            "fsDelete",
-            "fsExists",
-            "fsList",
-            "fsStat",
+            "vfsRead",
+            "vfsWrite",
+            "vfsDelete",
+            "vfsExists",
+            "vfsList",
+            "vfsStat",
         ] {
             let _: mlua::Function = host.get(name).unwrap();
         }

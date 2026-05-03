@@ -2412,11 +2412,11 @@ Plugin = {
     on_post_creating = function(input)
         local slug = input.slug or ""
         if slug ~= "" then
-            local exists = RaisFastHost.fsExists("cache/" .. slug .. ".txt")
+            local exists = RaisFastHost.vfsExists("cache/" .. slug .. ".txt")
             if exists then
                 input.cache_hit = true
             end
-            local stat = RaisFastHost.fsRead("stats.json")
+            local stat = RaisFastHost.vfsRead("stats.json")
             if stat then
                 input.stats = stat
             end
@@ -2428,15 +2428,15 @@ Plugin = {
         local slug = input.slug or ""
         local title = input.title or ""
         if slug ~= "" then
-            RaisFastHost.fsWrite("cache/" .. slug .. ".txt", title .. "|" .. (input.content or ""))
-            RaisFastHost.fsWrite("stats.json", '{"writes":1}')
+            RaisFastHost.vfsWrite("cache/" .. slug .. ".txt", title .. "|" .. (input.content or ""))
+            RaisFastHost.vfsWrite("stats.json", '{"writes":1}')
 
-            local info = RaisFastHost.fsStat("cache/" .. slug .. ".txt")
+            local info = RaisFastHost.vfsStat("cache/" .. slug .. ".txt")
             if info then
                 input.file_stat = info
             end
 
-            local entries = RaisFastHost.fsList("cache")
+            local entries = RaisFastHost.vfsList("cache")
             if entries then
                 input.cache_files = table.concat(entries, ",")
             end
@@ -2447,8 +2447,8 @@ Plugin = {
     on_post_deleted = function(input)
         local slug = input.slug or ""
         if slug ~= "" then
-            RaisFastHost.fsDelete("cache/" .. slug .. ".txt")
-            local entries = RaisFastHost.fsList("cache")
+            RaisFastHost.vfsDelete("cache/" .. slug .. ".txt")
+            local entries = RaisFastHost.vfsList("cache")
             if entries then
                 input.remaining = table.concat(entries, ",")
             end

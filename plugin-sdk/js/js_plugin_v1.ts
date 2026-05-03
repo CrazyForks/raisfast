@@ -17,12 +17,12 @@ declare const RaisFastHost: {
   dbBegin(): string;
   dbCommit(): string;
   dbRollback(): string;
-  fsRead(path: string): string | null;
-  fsWrite(path: string, content: string): boolean;
-  fsDelete(path: string): boolean;
-  fsExists(path: string): boolean | null;
-  fsList(path: string): string | null;
-  fsStat(path: string): string | null;
+  vfsRead(path: string): string | null;
+  vfsWrite(path: string, content: string): boolean;
+  vfsDelete(path: string): boolean;
+  vfsExists(path: string): boolean | null;
+  vfsList(path: string): string | null;
+  vfsStat(path: string): string | null;
   newId(): string;
   emitEvent(eventType: string, data: string): string;
 };
@@ -103,28 +103,28 @@ export function storeSet(key: string, value: string): boolean {
 }
 
 export function vfsRead(path: string): string | null {
-  return RaisFastHost.fsRead(path);
+  return RaisFastHost.vfsRead(path);
 }
 
 export function vfsWrite(path: string, content: string): boolean {
-  return RaisFastHost.fsWrite(path, content);
+  return RaisFastHost.vfsWrite(path, content);
 }
 
 export function vfsDelete(path: string): boolean {
-  return RaisFastHost.fsDelete(path);
+  return RaisFastHost.vfsDelete(path);
 }
 
 export function vfsExists(path: string): boolean {
-  return RaisFastHost.fsExists(path) ?? false;
+  return RaisFastHost.vfsExists(path) ?? false;
 }
 
 export function vfsList(path: string): string[] | null {
-  const result = RaisFastHost.fsList(path);
+  const result = RaisFastHost.vfsList(path);
   return result ? result.split(",") : null;
 }
 
 export function vfsStat(path: string): Record<string, unknown> | null {
-  const result = RaisFastHost.fsStat(path);
+  const result = RaisFastHost.vfsStat(path);
   return result ? JSON.parse(result) : null;
 }
 
