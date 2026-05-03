@@ -31,6 +31,8 @@ export declare function vfsWrite(path: string, content: string): boolean;
 export declare function vfsDelete(path: string): boolean;
 export declare function vfsExists(path: string): boolean;
 export declare function vfsList(path: string): string[] | null;
+export declare function vfsStat(path: string): Record<string, unknown> | null;
+export declare function getPost(slug: string): Record<string, unknown> | null;
 export declare function ok(data: unknown): any;
 export declare function fail(status: number, msg: string): PluginError;
 export declare function extractJson(input: any, field?: string): any;

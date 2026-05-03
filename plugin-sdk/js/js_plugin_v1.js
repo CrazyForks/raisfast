@@ -74,6 +74,14 @@ export function vfsList(path) {
     const result = RaisFastHost.fsList(path);
     return result ? result.split(",") : null;
 }
+export function vfsStat(path) {
+    const result = RaisFastHost.fsStat(path);
+    return result ? JSON.parse(result) : null;
+}
+export function getPost(slug) {
+    const result = RaisFastHost.getPost(slug);
+    return result ? JSON.parse(result) : null;
+}
 export function ok(data) {
     return data;
 }

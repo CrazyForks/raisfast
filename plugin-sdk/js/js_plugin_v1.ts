@@ -123,6 +123,16 @@ export function vfsList(path: string): string[] | null {
   return result ? result.split(",") : null;
 }
 
+export function vfsStat(path: string): Record<string, unknown> | null {
+  const result = RaisFastHost.fsStat(path);
+  return result ? JSON.parse(result) : null;
+}
+
+export function getPost(slug: string): Record<string, unknown> | null {
+  const result = RaisFastHost.getPost(slug);
+  return result ? JSON.parse(result) : null;
+}
+
 export function ok(data: unknown): any {
   return data;
 }
