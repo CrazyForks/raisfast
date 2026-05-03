@@ -2102,7 +2102,7 @@ priority = 10
             r#"
 Plugin = {
     on_post_created = function(data)
-        Host.log("info", "post created")
+        RaisFastHost.log("info", "post created")
     end
 }
 "#,
@@ -2187,7 +2187,7 @@ priority = 10
             r#"
 Plugin = {
     on_post_creating = function(input)
-        local env = Host.getConfig("app.env")
+        local env = RaisFastHost.getConfig("app.env")
         if env then
             input.env = env
         end
@@ -2412,11 +2412,11 @@ Plugin = {
     on_post_creating = function(input)
         local slug = input.slug or ""
         if slug ~= "" then
-            local exists = Host.fsExists("cache/" .. slug .. ".txt")
+            local exists = RaisFastHost.fsExists("cache/" .. slug .. ".txt")
             if exists then
                 input.cache_hit = true
             end
-            local stat = Host.fsRead("stats.json")
+            local stat = RaisFastHost.fsRead("stats.json")
             if stat then
                 input.stats = stat
             end
@@ -2428,15 +2428,15 @@ Plugin = {
         local slug = input.slug or ""
         local title = input.title or ""
         if slug ~= "" then
-            Host.fsWrite("cache/" .. slug .. ".txt", title .. "|" .. (input.content or ""))
-            Host.fsWrite("stats.json", '{"writes":1}')
+            RaisFastHost.fsWrite("cache/" .. slug .. ".txt", title .. "|" .. (input.content or ""))
+            RaisFastHost.fsWrite("stats.json", '{"writes":1}')
 
-            local info = Host.fsStat("cache/" .. slug .. ".txt")
+            local info = RaisFastHost.fsStat("cache/" .. slug .. ".txt")
             if info then
                 input.file_stat = info
             end
 
-            local entries = Host.fsList("cache")
+            local entries = RaisFastHost.fsList("cache")
             if entries then
                 input.cache_files = table.concat(entries, ",")
             end
@@ -2447,8 +2447,8 @@ Plugin = {
     on_post_deleted = function(input)
         local slug = input.slug or ""
         if slug ~= "" then
-            Host.fsDelete("cache/" .. slug .. ".txt")
-            local entries = Host.fsList("cache")
+            RaisFastHost.fsDelete("cache/" .. slug .. ".txt")
+            local entries = RaisFastHost.fsList("cache")
             if entries then
                 input.remaining = table.concat(entries, ",")
             end
@@ -2559,7 +2559,7 @@ Plugin.ping = function(input)
 end
 
 Plugin.count = function(input)
-    local result = Host.dbQuery("SELECT COUNT(*) as total FROM posts")
+    local result = RaisFastHost.dbQuery("SELECT COUNT(*) as total FROM posts")
     if result and result:sub(1, 6) ~= "error:" then
         return {
             status = 200,
@@ -2646,7 +2646,7 @@ end
         );
         std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
 
-        let lua_code = "Plugin = { on_cron_tick = function(data) Host.setData(\"last_job\", data.job_type or \"\") end }";
+        let lua_code = "Plugin = { on_cron_tick = function(data) RaisFastHost.setData(\"last_job\", data.job_type or \"\") end }";
         std::fs::write(plugin_dir.join("init.lua"), lua_code).unwrap();
 
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();

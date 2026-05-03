@@ -1,16 +1,17 @@
 //! Lua 宿主函数 — 引擎绑定层
 //!
 //! 仅负责将 [`HostContext`](super::host_common::HostContext) 的公共业务逻辑
-//! 绑定到 Lua 全局 table 的 `Host` 属性上。
+//! 绑定到 Lua 全局 table 的 `PLUGIN_HOST_GLOBAL` 属性上。
 
 use std::sync::Arc;
 
 use mlua::{Lua, LuaSerdeExt};
 
 use crate::config::app::AppConfig;
+use crate::constants::PLUGIN_HOST_GLOBAL;
 use crate::db::Pool;
-use crate::plugins::Permissions;
 use crate::plugins::host_common::HostContext;
+use crate::plugins::Permissions;
 
 /// 注册宿主函数到 Lua 全局作用域。
 pub fn register_host_functions(
@@ -189,7 +190,7 @@ pub fn register_host_functions(
         })?;
     host.set("jsonDecode", json_decode_fn)?;
 
-    globals.set("Host", host)?;
+    globals.set(PLUGIN_HOST_GLOBAL, host)?;
     Ok(())
 }
 
@@ -217,7 +218,7 @@ mod tests {
         register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
-        let host: mlua::Table = globals.get("Host").unwrap();
+        let host: mlua::Table = globals.get(PLUGIN_HOST_GLOBAL).unwrap();
 
         let log_fn: mlua::Function = host.get("log").unwrap();
         let _: () = log_fn.call(("info", "test")).unwrap();
@@ -238,7 +239,7 @@ mod tests {
         register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
-        let host: mlua::Table = globals.get("Host").unwrap();
+        let host: mlua::Table = globals.get(PLUGIN_HOST_GLOBAL).unwrap();
         let get_cfg_fn: mlua::Function = host.get("getConfig").unwrap();
 
         let env: String = get_cfg_fn.call(("app.env",)).unwrap();
@@ -259,7 +260,7 @@ mod tests {
         register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
-        let host: mlua::Table = globals.get("Host").unwrap();
+        let host: mlua::Table = globals.get(PLUGIN_HOST_GLOBAL).unwrap();
         let http_fn: mlua::Function = host.get("httpGet").unwrap();
 
         let result: String = http_fn.call(("https://evil.com",)).unwrap();
@@ -274,7 +275,7 @@ mod tests {
         register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
-        let host: mlua::Table = globals.get("Host").unwrap();
+        let host: mlua::Table = globals.get(PLUGIN_HOST_GLOBAL).unwrap();
         let http_fn: mlua::Function = host.get("httpPost").unwrap();
 
         let result: String = http_fn.call(("https://evil.com", "{}")).unwrap();
@@ -289,7 +290,7 @@ mod tests {
         register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
-        let host: mlua::Table = globals.get("Host").unwrap();
+        let host: mlua::Table = globals.get(PLUGIN_HOST_GLOBAL).unwrap();
         let get_data_fn: mlua::Function = host.get("getData").unwrap();
 
         let result: mlua::Value = get_data_fn.call(("some.key",)).unwrap();
@@ -304,7 +305,7 @@ mod tests {
         register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
-        let host: mlua::Table = globals.get("Host").unwrap();
+        let host: mlua::Table = globals.get(PLUGIN_HOST_GLOBAL).unwrap();
         let set_data_fn: mlua::Function = host.get("setData").unwrap();
 
         let result: bool = set_data_fn.call(("key", "val")).unwrap();
@@ -319,7 +320,7 @@ mod tests {
         register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
-        let host: mlua::Table = globals.get("Host").unwrap();
+        let host: mlua::Table = globals.get(PLUGIN_HOST_GLOBAL).unwrap();
         let get_post_fn: mlua::Function = host.get("getPost").unwrap();
 
         let result: mlua::Value = get_post_fn.call(("some-slug",)).unwrap();
@@ -334,7 +335,7 @@ mod tests {
         register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
-        let host: mlua::Table = globals.get("Host").unwrap();
+        let host: mlua::Table = globals.get(PLUGIN_HOST_GLOBAL).unwrap();
         let db_fn: mlua::Function = host.get("dbQuery").unwrap();
 
         let result: String = db_fn.call(("SELECT 1",)).unwrap();
@@ -349,7 +350,7 @@ mod tests {
         register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
-        let host: mlua::Table = globals.get("Host").unwrap();
+        let host: mlua::Table = globals.get(PLUGIN_HOST_GLOBAL).unwrap();
         let db_fn: mlua::Function = host.get("dbQuery").unwrap();
 
         let result: String = db_fn.call(("DELETE FROM posts",)).unwrap();
@@ -364,7 +365,7 @@ mod tests {
         register_host_functions(&lua, config, "test-plugin".into(), perms, None, None).unwrap();
 
         let globals = lua.globals();
-        let host: mlua::Table = globals.get("Host").unwrap();
+        let host: mlua::Table = globals.get(PLUGIN_HOST_GLOBAL).unwrap();
         for name in [
             "log",
             "getConfig",

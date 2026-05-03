@@ -1,13 +1,14 @@
 //! JS 宿主函数 — 引擎绑定层
 //!
 //! 仅负责将 [`HostContext`](super::host_common::HostContext) 的公共业务逻辑
-//! 绑定到 `QuickJS` 全局对象的 `Host` 属性上。
+//! 绑定到 `QuickJS` 全局对象的 `PLUGIN_HOST_GLOBAL` 属性上。
 
 use std::sync::Arc;
 
 use rquickjs::{Function, Object};
 
 use crate::config::app::AppConfig;
+use crate::constants::PLUGIN_HOST_GLOBAL;
 use crate::db::Pool;
 use crate::plugins::Permissions;
 use crate::plugins::host_common::HostContext;
@@ -148,7 +149,7 @@ pub fn register_host_functions(
     })?;
     host.set("emitEvent", emit_event_fn)?;
 
-    global.set("Host", host)?;
+    global.set(PLUGIN_HOST_GLOBAL, host)?;
     Ok(())
 }
 
@@ -173,7 +174,7 @@ mod tests {
                 .unwrap();
 
             let global = ctx.globals();
-            let host: Object = global.get("Host").unwrap();
+            let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
 
             let log_fn: Function = host.get("log").unwrap();
             let _: () = log_fn.call(("info", "test")).unwrap();
@@ -200,7 +201,7 @@ mod tests {
                 .unwrap();
 
             let global = ctx.globals();
-            let host: Object = global.get("Host").unwrap();
+            let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
             let get_cfg_fn: Function = host.get("getConfig").unwrap();
 
             let env: Option<String> = get_cfg_fn.call(("app.env",)).unwrap();
@@ -224,7 +225,7 @@ mod tests {
                 .unwrap();
 
             let global = ctx.globals();
-            let host: Object = global.get("Host").unwrap();
+            let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
             let http_fn: Function = host.get("httpGet").unwrap();
 
             let result: String = http_fn.call(("https://evil.com",)).unwrap();
@@ -245,7 +246,7 @@ mod tests {
                 .unwrap();
 
             let global = ctx.globals();
-            let host: Object = global.get("Host").unwrap();
+            let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
             let http_fn: Function = host.get("httpPost").unwrap();
 
             let result: String = http_fn.call(("https://evil.com", "{}")).unwrap();
@@ -266,7 +267,7 @@ mod tests {
                 .unwrap();
 
             let global = ctx.globals();
-            let host: Object = global.get("Host").unwrap();
+            let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
             let get_data_fn: Function = host.get("getData").unwrap();
 
             let result: Option<String> = get_data_fn.call(("some.key",)).unwrap();
@@ -287,7 +288,7 @@ mod tests {
                 .unwrap();
 
             let global = ctx.globals();
-            let host: Object = global.get("Host").unwrap();
+            let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
             let set_data_fn: Function = host.get("setData").unwrap();
 
             let result: bool = set_data_fn.call(("key", "val")).unwrap();
@@ -308,7 +309,7 @@ mod tests {
                 .unwrap();
 
             let global = ctx.globals();
-            let host: Object = global.get("Host").unwrap();
+            let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
             let get_post_fn: Function = host.get("getPost").unwrap();
 
             let result: Option<String> = get_post_fn.call(("some-slug",)).unwrap();
@@ -329,7 +330,7 @@ mod tests {
                 .unwrap();
 
             let global = ctx.globals();
-            let host: Object = global.get("Host").unwrap();
+            let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
             let db_fn: Function = host.get("dbQuery").unwrap();
 
             let result: String = db_fn.call(("SELECT 1", rquickjs::Undefined)).unwrap();
@@ -350,7 +351,7 @@ mod tests {
                 .unwrap();
 
             let global = ctx.globals();
-            let host: Object = global.get("Host").unwrap();
+            let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
             let db_fn: Function = host.get("dbQuery").unwrap();
 
             let result: String = db_fn
@@ -373,7 +374,7 @@ mod tests {
                 .unwrap();
 
             let global = ctx.globals();
-            let host: Object = global.get("Host").unwrap();
+            let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
             for name in [
                 "log",
                 "getConfig",

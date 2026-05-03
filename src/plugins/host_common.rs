@@ -4,6 +4,8 @@
 //! 各引擎的 `register_host_functions` 只负责引擎特定的参数绑定，
 //! 所有权限校验、HTTP 请求、DB 查询均委托给 `HostContext` 方法。
 
+use crate::constants::PLUGIN_HOST_GLOBAL;
+
 use std::sync::Arc;
 
 use crate::config::app::AppConfig;
@@ -148,7 +150,7 @@ impl HostContext {
     pub fn get_data(&self, key: &str) -> Option<String> {
         let Some(pool) = &self.pool else {
             tracing::debug!(
-                "[plugin:{}] Host.getData called by {} but no DB pool",
+                "[plugin:{}] {PLUGIN_HOST_GLOBAL}.getData called by {} but no DB pool",
                 self.runtime_label,
                 self.plugin_id
             );
@@ -171,7 +173,7 @@ impl HostContext {
     pub fn set_data(&self, key: &str, value: &str) -> bool {
         let Some(pool) = &self.pool else {
             tracing::debug!(
-                "[plugin:{}] Host.setData called by {} but no DB pool",
+                "[plugin:{}] {PLUGIN_HOST_GLOBAL}.setData called by {} but no DB pool",
                 self.runtime_label,
                 self.plugin_id
             );
@@ -196,7 +198,7 @@ impl HostContext {
     pub fn get_post(&self, slug: &str) -> Option<String> {
         let Some(pool) = &self.pool else {
             tracing::debug!(
-                "[plugin:{}] Host.getPost called by {} but no DB pool",
+                "[plugin:{}] {PLUGIN_HOST_GLOBAL}.getPost called by {} but no DB pool",
                 self.runtime_label,
                 self.plugin_id
             );

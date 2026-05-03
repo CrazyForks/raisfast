@@ -50,3 +50,6 @@ pub const CMS_ADMIN_PREFIX: &str = "/api/v1/admin/cms";
 pub const CMS_ROUTE: &str = "/cms";
 /// Content Type 管理路由段（相对 API_PREFIX）
 pub const CMS_ADMIN_ROUTE: &str = "/admin/cms";
+
+/// 插件宿主函数全局对象名（JS/Lua）
+pub const PLUGIN_HOST_GLOBAL: &str = "RaisFastHost";

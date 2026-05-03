@@ -400,7 +400,7 @@ Plugin = {
         let code = r#"
 Plugin = {
     on_post_created = function(data)
-        Host.log("info", "post created: " .. tostring(data.id))
+        RaisFastHost.log("info", "post created: " .. tostring(data.id))
     end
 }
 "#;
@@ -546,11 +546,11 @@ Plugin = {
         let code = r#"
 Plugin = {
     on_post_created = function(data)
-        local env = Host.getConfig("app.env")
+        local env = RaisFastHost.getConfig("app.env")
         if env ~= "test" then
             error("expected test, got: " .. tostring(env))
         end
-        local unknown = Host.getConfig("nonexistent.key")
+        local unknown = RaisFastHost.getConfig("nonexistent.key")
         if unknown ~= nil then
             error("expected nil for unknown key")
         end
