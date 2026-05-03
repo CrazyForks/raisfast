@@ -100,7 +100,7 @@ pub struct AppState {
 }
 
 /// 构建 AppState（HTTP 服务器和 Tauri 共享）
-pub async fn build_app_state(config: &AppConfig) -> anyhow::Result<AppState> {
+pub async fn build_app_state(config: &AppConfig, shutdown_rx: tokio::sync::watch::Receiver<bool>) -> anyhow::Result<AppState> {
     let pool = crate::db::connection::init_pool(&config.database_url, config.db_pool_size).await?;
     let eventbus = EventBus::new(256);
 
@@ -218,13 +218,14 @@ pub async fn build_app_state(config: &AppConfig) -> anyhow::Result<AppState> {
         route_registry: Arc::new(Vec::new()),
     };
 
-    crate::server::spawn_event_subscriber(eventbus.clone(), state.plugins.clone());
+    crate::server::spawn_event_subscriber(eventbus.clone(), state.plugins.clone(), shutdown_rx.clone());
     crate::server::spawn_audit_subscriber(
         eventbus.clone(),
         state.audit.clone(),
         state.tenant.clone(),
+        shutdown_rx.clone(),
     );
-    crate::server::spawn_webhook_subscriber(eventbus.clone(), state.webhook.clone());
+    crate::server::spawn_webhook_subscriber(eventbus.clone(), state.webhook.clone(), shutdown_rx);
 
     Ok(state)
 }

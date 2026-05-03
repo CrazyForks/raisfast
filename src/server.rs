@@ -86,14 +86,14 @@ macro_rules! reg_route {
     };
 }
 
-async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Result<axum::Router> {
+async fn build_app(config: &AppConfig, limiters: RateLimiterSet, shutdown_rx: tokio::sync::watch::Receiver<bool>) -> anyhow::Result<axum::Router> {
     let upload_dir = config.upload_dir.clone();
     let static_dir = config.static_dir.clone();
     let max_upload = config.max_upload_size;
 
     let mut registry = RouteRegistry::default();
 
-    let mut state = crate::build_app_state(config).await?;
+    let mut state = crate::build_app_state(config, shutdown_rx).await?;
     let pool = state.pool.clone();
     let eventbus = state.eventbus.clone();
     let worker_pool = pool.clone();
@@ -1118,6 +1118,9 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
                 ),
         )
         .layer(cors)
+        .layer(from_fn(
+            crate::middleware::security_headers::security_headers,
+        ))
         .layer(from_fn_with_state(
             state.clone(),
             crate::middleware::aop_http::aop_http_layer,
@@ -1147,21 +1150,30 @@ pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
     crate::utils::tz::set_site_tz(tz);
     let addr = format!("{}:{}", config.host, config.port);
     let limiters = RateLimiterSet::from_config(config);
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
     let cleanup_limiters = limiters.clone();
+    let mut cleanup_shutdown = shutdown_rx.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
         loop {
-            interval.tick().await;
-            cleanup_limiters.global.cleanup_expired().await;
-            cleanup_limiters.register.cleanup_expired().await;
-            cleanup_limiters.login.cleanup_expired().await;
-            cleanup_limiters.comment.cleanup_expired().await;
-            cleanup_limiters.api_token.cleanup_expired().await;
+            tokio::select! {
+                _ = interval.tick() => {
+                    cleanup_limiters.global.cleanup_expired().await;
+                    cleanup_limiters.register.cleanup_expired().await;
+                    cleanup_limiters.login.cleanup_expired().await;
+                    cleanup_limiters.comment.cleanup_expired().await;
+                    cleanup_limiters.api_token.cleanup_expired().await;
+                }
+                _ = cleanup_shutdown.changed() => {
+                    tracing::info!("rate limiter cleanup task shutting down");
+                    break;
+                }
+            }
         }
     });
 
-    let app = build_app(config, limiters).await?;
+    let app = build_app(config, limiters, shutdown_rx).await?;
 
     match (&config.tls_cert_path, &config.tls_key_path) {
         (Some(_cert), Some(_key)) => {
@@ -1195,7 +1207,7 @@ pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
                     "server ready to accept connections"
                 );
                 axum::serve(listener, app.into_make_service())
-                    .with_graceful_shutdown(shutdown_signal())
+                    .with_graceful_shutdown(shutdown_signal(shutdown_tx.clone()))
                     .await?;
 
                 tracing::info!("server shutdown complete");
@@ -1206,7 +1218,7 @@ pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
             println!("server listening on http://{}", addr);
             let listener = TcpListener::bind(&addr).await?;
             axum::serve(listener, app.into_make_service())
-                .with_graceful_shutdown(shutdown_signal())
+                .with_graceful_shutdown(shutdown_signal(shutdown_tx))
                 .await?;
         }
     }
@@ -1215,7 +1227,9 @@ pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
 }
 
 /// 监听 ctrl+c (SIGINT) 和 SIGTERM 实现优雅关闭。
-async fn shutdown_signal() {
+///
+/// 收到信号后通知 `shutdown_tx`，让后台任务有机会清理。
+async fn shutdown_signal(shutdown_tx: tokio::sync::watch::Sender<bool>) {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
@@ -1241,6 +1255,8 @@ async fn shutdown_signal() {
             tracing::info!("received SIGTERM, starting graceful shutdown");
         },
     }
+
+    let _ = shutdown_tx.send(true);
 }
 
 /// 插件路由 fallback。
@@ -1308,6 +1324,7 @@ async fn handle_plugin_route(
 pub fn spawn_event_subscriber(
     eventbus: crate::eventbus::EventBus,
     plugins: Arc<crate::plugins::PluginManager>,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
     use crate::eventbus::Event;
     use crate::plugins::HookPoint;
@@ -1315,32 +1332,40 @@ pub fn spawn_event_subscriber(
     let mut rx = eventbus.subscribe();
     tokio::spawn(async move {
         loop {
-            match rx.recv().await {
-                Ok(event) => match event.as_ref() {
-                    Event::PostCreated { .. } => {
-                        let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
-                        plugins.dispatch_action(HookPoint::PostCreated, &json).await;
+            tokio::select! {
+                result = rx.recv() => {
+                    match result {
+                        Ok(event) => match event.as_ref() {
+                            Event::PostCreated { .. } => {
+                                let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
+                                plugins.dispatch_action(HookPoint::PostCreated, &json).await;
+                            }
+                            Event::PostUpdated { .. } => {
+                                let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
+                                plugins.dispatch_action(HookPoint::PostUpdated, &json).await;
+                            }
+                            Event::PostDeleted { .. } => {
+                                let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
+                                plugins.dispatch_action(HookPoint::PostDeleted, &json).await;
+                            }
+                            Event::CommentCreated { .. } => {
+                                let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
+                                plugins
+                                    .dispatch_action(HookPoint::CommentCreated, &json)
+                                    .await;
+                            }
+                            _ => {}
+                        },
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!("eventbus subscriber lagged, skipped {n} events");
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            break;
+                        }
                     }
-                    Event::PostUpdated { .. } => {
-                        let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
-                        plugins.dispatch_action(HookPoint::PostUpdated, &json).await;
-                    }
-                    Event::PostDeleted { .. } => {
-                        let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
-                        plugins.dispatch_action(HookPoint::PostDeleted, &json).await;
-                    }
-                    Event::CommentCreated { .. } => {
-                        let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
-                        plugins
-                            .dispatch_action(HookPoint::CommentCreated, &json)
-                            .await;
-                    }
-                    _ => {}
-                },
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!("eventbus subscriber lagged, skipped {n} events");
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                _ = shutdown_rx.changed() => {
+                    tracing::info!("event subscriber shutting down");
                     break;
                 }
             }
@@ -1353,6 +1378,7 @@ pub fn spawn_audit_subscriber(
     eventbus: crate::eventbus::EventBus,
     audit: Arc<crate::audit::AuditService>,
     tenant_service: Arc<crate::services::tenant::TenantService>,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
     use crate::eventbus::Event;
 
@@ -1361,8 +1387,10 @@ pub fn spawn_audit_subscriber(
         let default_tenant: &str = DEFAULT_TENANT;
         let _ = tenant_service;
         loop {
-            match rx.recv().await {
-                Ok(event) => {
+            tokio::select! {
+                result = rx.recv() => {
+                    match result {
+                        Ok(event) => {
                     let (action, subject, subject_id, actor_id, detail): (
                         &str,
                         &str,
@@ -1484,6 +1512,12 @@ pub fn spawn_audit_subscriber(
                     break;
                 }
             }
+                }
+                _ = shutdown_rx.changed() => {
+                    tracing::info!("audit subscriber shutting down");
+                    break;
+                }
+            }
         }
     });
 }
@@ -1492,6 +1526,7 @@ pub fn spawn_audit_subscriber(
 pub fn spawn_webhook_subscriber(
     eventbus: crate::eventbus::EventBus,
     webhook_service: Arc<crate::webhook::WebhookService>,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
     use crate::eventbus::Event;
 
@@ -1506,11 +1541,13 @@ pub fn spawn_webhook_subscriber(
     let mut rx = eventbus.subscribe();
     tokio::spawn(async move {
         loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    let event_type = match event.as_ref() {
-                        Event::PostCreated { .. } => "post.created",
-                        Event::PostUpdated { .. } => "post.updated",
+            tokio::select! {
+                result = rx.recv() => {
+                    match result {
+                        Ok(event) => {
+                            let event_type = match event.as_ref() {
+                                Event::PostCreated { .. } => "post.created",
+                                Event::PostUpdated { .. } => "post.updated",
                         Event::PostDeleted { .. } => "post.deleted",
                         Event::CommentCreated { .. } => "comment.created",
                         Event::CommentDeleted { .. } => "comment.deleted",
@@ -1605,6 +1642,12 @@ pub fn spawn_webhook_subscriber(
                     tracing::warn!("webhook subscriber lagged, skipped {n} events");
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+                }
+                _ = shutdown_rx.changed() => {
+                    tracing::info!("webhook subscriber shutting down");
                     break;
                 }
             }

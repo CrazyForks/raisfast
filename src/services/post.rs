@@ -356,7 +356,7 @@ pub async fn update_post(
 
     crate::utils::auth::require_owner_or_admin(
         auth.role(),
-        auth.user_id().unwrap(),
+        auth.user_id().ok_or(AppError::Unauthorized)?,
         &existing.created_by,
     )?;
 
@@ -386,7 +386,7 @@ pub async fn delete_post(
 
     crate::utils::auth::require_owner_or_admin(
         auth.role(),
-        auth.user_id().unwrap(),
+        auth.user_id().ok_or(AppError::Unauthorized)?,
         &existing.created_by,
     )?;
 

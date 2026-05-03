@@ -26,7 +26,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY --from=builder /app/target/release/rust-blog /app/rust-blog
-COPY .env .env
 COPY migrations/ migrations/
 COPY extensions/ extensions/
 

@@ -738,7 +738,8 @@ async fn tauri_build_app_state_succeeds() {
     config.plugin_dir = None;
     std::fs::create_dir_all(&config.content_type_dir).unwrap();
 
-    let result = rust_blog::build_app_state(&config).await;
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let result = rust_blog::build_app_state(&config, shutdown_rx).await;
     assert!(
         result.is_ok(),
         "build_app_state should succeed: {:?}",

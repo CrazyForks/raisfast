@@ -316,9 +316,13 @@ async fn fetch_column_names(pool: &sqlx::SqlitePool, table: &str) -> Vec<String>
         }
     }
 
+    if !is_safe_table_name(table) {
+        tracing::warn!(table, "rejected unsafe table name in fetch_column_names");
+        return vec!["id".into()];
+    }
+
     let cols: Vec<String> = sqlx::query_as::<_, (String,)>(&format!(
-        "SELECT name FROM pragma_table_info('{}') ORDER BY cid",
-        table
+        "SELECT name FROM pragma_table_info('{table}') ORDER BY cid"
     ))
     .fetch_all(pool)
     .await
@@ -331,6 +335,14 @@ async fn fetch_column_names(pool: &sqlx::SqlitePool, table: &str) -> Vec<String>
     }
 
     cols
+}
+
+/// 校验表名只含安全字符（字母、数字、下划线），防止 SQL 注入。
+fn is_safe_table_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 #[cfg(test)]

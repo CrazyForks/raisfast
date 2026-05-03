@@ -30,6 +30,8 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: fmt
         run: cargo fmt --check
+      - name: audit
+        run: cargo install cargo-audit --locked && cargo audit
       - name: clippy
         run: cargo clippy --features "db-sqlite plugin-all search-tantivy" -- -D warnings
       - name: test
@@ -53,7 +55,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Lint
-        run: pnpm exec eslint . || true
+        run: pnpm exec eslint .
       - name: Build
         run: pnpm build
       - name: Test

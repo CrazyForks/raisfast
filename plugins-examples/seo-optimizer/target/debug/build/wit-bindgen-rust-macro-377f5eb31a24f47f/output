@@ -1,2 +1,0 @@
-cargo:rerun-if-changed=build.rs
-cargo:rustc-env=DEBUG_OUTPUT_DIR=/Users/chriszhong/work/www/Rust/rust-blog/plugins-examples/seo-optimizer/target/debug/build/wit-bindgen-rust-macro-377f5eb31a24f47f/out

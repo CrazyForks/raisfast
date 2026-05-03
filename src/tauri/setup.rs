@@ -43,6 +43,7 @@ pub fn register_commands() -> impl Fn(tauri::ipc::Invoke) -> bool {
 
 /// 构建 AppState 并包装为 Tauri managed state
 pub async fn build_state(config: &AppConfig) -> anyhow::Result<AppManagedState> {
-    let state = crate::build_app_state(config).await?;
+    let (_tx, rx) = tokio::sync::watch::channel(false);
+    let state = crate::build_app_state(config, rx).await?;
     Ok(AppManagedState(state))
 }

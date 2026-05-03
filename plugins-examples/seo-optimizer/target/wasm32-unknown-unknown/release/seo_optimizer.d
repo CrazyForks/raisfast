@@ -1,1 +1,0 @@
-/Users/chriszhong/work/www/Rust/rust-blog/plugins-examples/seo-optimizer/target/wasm32-unknown-unknown/release/seo_optimizer.wasm: /Users/chriszhong/work/www/Rust/rust-blog/plugins-examples/seo-optimizer/src/lib.rs /Users/chriszhong/work/www/Rust/rust-blog/plugins-sdk/src/lib.rs
