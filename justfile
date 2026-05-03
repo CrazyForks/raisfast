@@ -1,4 +1,4 @@
-# rust-blog 常用命令
+# raisfast 常用命令
 #
 # 用法: just <recipe>
 # 帮助: just --list

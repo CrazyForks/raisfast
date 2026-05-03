@@ -2,7 +2,7 @@
 
 ## 概述
 
-Plugin 系统是 rust-blog 的运行时扩展机制，支持三种语言运行时，可独立于 Content Type 运行。Plugin 可以注册钩子、定时任务、自定义路由，并通过 Host API 访问数据库、HTTP、配置等受控资源。
+Plugin 系统是 raisfast 的运行时扩展机制，支持三种语言运行时，可独立于 Content Type 运行。Plugin 可以注册钩子、定时任务、自定义路由，并通过 Host API 访问数据库、HTTP、配置等受控资源。
 
 ## 架构
 
@@ -504,13 +504,13 @@ end
 
 ```bash
 # 创建新插件
-rust-blog plugin new my-plugin --runtime js    # JavaScript
-rust-blog plugin new my-plugin --runtime lua   # Lua
-rust-blog plugin new my-plugin --runtime wasm  # WASM
+raisfast plugin new my-plugin --runtime js    # JavaScript
+raisfast plugin new my-plugin --runtime lua   # Lua
+raisfast plugin new my-plugin --runtime wasm  # WASM
 
 # 校验插件
-rust-blog plugin check                      # 校验默认目录
-rust-blog plugin check ./plugins/my-plugin  # 校验指定目录
+raisfast plugin check                      # 校验默认目录
+raisfast plugin check ./plugins/my-plugin  # 校验指定目录
 ```
 
 ## 环境变量
@@ -537,7 +537,7 @@ plugins/crm/
 
 ```toml
 [plugin]
-id = "com.rust-blog.crm"
+id = "com.raisfast.crm"
 name = "CRM API"
 version = "0.1.0"
 description = "CRM 销售漏斗、Pipeline 管理、联系人时间线"

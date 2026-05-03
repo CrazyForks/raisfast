@@ -1,7 +1,7 @@
 //! 日志初始化：同时输出到终端和滚动文件。
 //!
 //! 终端使用人类可读格式（带颜色），文件使用 JSON 格式（便于日志分析工具解析）。
-//! 文件按天滚动（格式 `rust-blog_YYYY-MM-DD.log`），通过后台任务定期清理过期文件。
+//! 文件按天滚动（格式 `raisfast_YYYY-MM-DD.log`），通过后台任务定期清理过期文件。
 //!
 //! # 环境变量
 //!
@@ -9,16 +9,16 @@
 //! |------|--------|------|
 //! | `LOG_DIR` | `./logs` | 日志文件目录 |
 //! | `LOG_MAX_FILES` | `7` | 保留的日志文件数量 |
-//! | `RUST_LOG` | `rust_blog=info,tower_http=info` | 日志级别过滤 |
+//! | `RUST_LOG` | `raisfast=info,tower_http=info` | 日志级别过滤 |
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 
 /// 自定义按天滚动的日志文件写入器。
 ///
@@ -84,13 +84,13 @@ impl Write for DailyRollingWriter {
 /// 初始化日志系统。
 ///
 /// - 终端：彩色、人类可读格式
-/// - 文件：JSON 格式、按天滚动（`rust-blog_YYYY-MM-DD.log`）
+/// - 文件：JSON 格式、按天滚动（`raisfast_YYYY-MM-DD.log`）
 ///
 /// 返回文件 appender 的 guard，**调用者必须持有它直到程序退出**，
 /// 否则文件日志会提前停止写入。
 pub fn init(log_dir: &str) -> Option<tracing_appender::non_blocking::WorkerGuard> {
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("rust_blog=info,tower_http=info"));
+        .unwrap_or_else(|_| EnvFilter::new("raisfast=info,tower_http=info"));
 
     let stdout_layer = tracing_subscriber::fmt::layer()
         .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
@@ -108,7 +108,7 @@ pub fn init(log_dir: &str) -> Option<tracing_appender::non_blocking::WorkerGuard
         return None;
     }
 
-    let writer = DailyRollingWriter::new(log_dir, "rust-blog");
+    let writer = DailyRollingWriter::new(log_dir, "raisfast");
     let (non_blocking, guard) = tracing_appender::non_blocking(writer);
 
     let file_layer = tracing_subscriber::fmt::layer()
@@ -132,7 +132,7 @@ pub fn init(log_dir: &str) -> Option<tracing_appender::non_blocking::WorkerGuard
 
 /// 清理过期的日志文件，只保留最新的 `max_files` 个。
 ///
-/// 按文件名排序（格式 `rust-blog_YYYY-MM-DD.log`），
+/// 按文件名排序（格式 `raisfast_YYYY-MM-DD.log`），
 /// 删除最旧的文件。启动时调用一次，之后可周期性调用。
 pub fn cleanup_old_logs(log_dir: &str, max_files: usize) {
     let Ok(entries) = std::fs::read_dir(log_dir) else {
@@ -143,7 +143,7 @@ pub fn cleanup_old_logs(log_dir: &str, max_files: usize) {
         .filter_map(|e| {
             let entry = e.ok()?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with("rust-blog_") && name.ends_with(".log") {
+            if name.starts_with("raisfast_") && name.ends_with(".log") {
                 Some(name)
             } else {
                 None

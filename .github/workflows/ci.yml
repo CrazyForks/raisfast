@@ -68,6 +68,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build backend image
-        run: docker build -t rust-blog-backend .
+        run: docker build -t raisfast-backend .
       - name: Build frontend image
-        run: docker build -t rust-blog-frontend ./web
+        run: docker build -t raisfast-frontend ./web

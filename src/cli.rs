@@ -7,7 +7,7 @@ mod db_cmd;
 mod plugin_cmd;
 mod server_cmd;
 
-use rust_blog::config::app::AppConfig;
+use raisfast::config::app::AppConfig;
 
 use clap::{Parser, Subcommand};
 

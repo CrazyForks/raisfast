@@ -31,7 +31,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        宿主 (rust-blog)                          │
+│                        宿主 (raisfast)                          │
 │                                                                   │
 │  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐   │
 │  │ handlers/ │  │ services/ │  │ models/   │  │ middleware/│   │
@@ -81,7 +81,7 @@
 放在 `wit/plugin.wit`，作为宿主和插件之间的契约：
 
 ```wit
-package rust-blog:plugin;
+package raisfast:plugin;
 
 /// 插件元数据，由插件导出。
 interface metadata {
@@ -311,7 +311,7 @@ handle-route = { match = "/api/v1/plugins/seo/*" }
 ## 6. 目录结构
 
 ```
-rust-blog/
+raisfast/
 ├── plugins/                          # 插件根目录
 │   ├── seo-optimizer/                # 插件目录 = 插件 ID (kebab-case)
 │   │   ├── plugin.toml              # 清单文件
@@ -550,7 +550,7 @@ let api_v1 = axum::Router::new()
 ```rust
 // plugins-examples/seo-optimizer/src/lib.rs
 
-use rust_blog_plugin_sdk::*;
+use raisfast_plugin_sdk::*;
 
 guest_bindgen!();  // wit-bindgen 生成宏
 
@@ -819,7 +819,7 @@ pub struct AppConfig {
 ## 14. 总结
 
 ```
-宿主 (rust-blog)                插件 (.wasm)
+宿主 (raisfast)                插件 (.wasm)
 ┌─────────────────────┐        ┌─────────────────────┐
 │                     │        │                     │
 │  Handler → Service  │ Hook   │  自定义逻辑         │

@@ -14,26 +14,26 @@ use axum::http::{Request, StatusCode, header};
 use axum::middleware::from_fn;
 use axum::routing::{delete, get, post as http_post, put};
 use http_body_util::BodyExt;
-use rust_blog::AppState;
-use rust_blog::cache::MemoryCache;
-use rust_blog::config::app::AppConfig;
-use rust_blog::handlers::{
+use raisfast::AppState;
+use raisfast::cache::MemoryCache;
+use raisfast::config::app::AppConfig;
+use raisfast::handlers::{
     api_token as h_token, auth as h_auth, category as h_cat, comment as h_cmt, cron as h_cron,
     health as h_health, media as h_media, options as h_options, plugin as h_plugin, post as h_post,
     rbac as h_rbac, rss as h_rss, sse as h_sse, stats as h_stats, tag as h_tag, tenant as h_tenant,
     user as h_user,
 };
-use rust_blog::middleware::locale::locale_middleware;
-use rust_blog::middleware::rate_limit::{
+use raisfast::middleware::locale::locale_middleware;
+use raisfast::middleware::rate_limit::{
     RateLimiterSet, comment_rate_limit, global_rate_limit, login_rate_limit, register_rate_limit,
 };
-use rust_blog::plugins::PluginManager;
-use rust_blog::repositories::{
+use raisfast::plugins::PluginManager;
+use raisfast::repositories::{
     CachedPostRepository, SqlxCategoryRepository, SqlxCommentRepository, SqlxMediaRepository,
     SqlxOptionsRepository, SqlxPostRepository, SqlxRbacRepository, SqlxRefreshTokenRepository,
     SqlxTagRepository, SqlxTenantRepository, SqlxUserRepository,
 };
-use rust_blog::search::NoopSearchEngine;
+use raisfast::search::NoopSearchEngine;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -51,7 +51,7 @@ pub(crate) fn test_config() -> AppConfig {
     cfg
 }
 
-pub(crate) async fn test_pool() -> rust_blog::db::Pool {
+pub(crate) async fn test_pool() -> raisfast::db::Pool {
     #[cfg(feature = "db-sqlite")]
     {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -159,7 +159,7 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
         config: config.clone(),
         jwt_decoding_key: jsonwebtoken::DecodingKey::from_secret(config.jwt_secret.as_bytes()),
         plugins: PluginManager::new(config.clone()).await,
-        eventbus: rust_blog::eventbus::EventBus::new(256),
+        eventbus: raisfast::eventbus::EventBus::new(256),
         post_repo: Arc::new(CachedPostRepository::new(
             SqlxPostRepository::new(pool.clone()),
             Arc::new(MemoryCache::new()),
@@ -172,44 +172,44 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
         media_repo: Arc::new(SqlxMediaRepository::new(pool.clone())),
         refresh_token_repo: Arc::new(SqlxRefreshTokenRepository::new(pool.clone())),
         search: Arc::new(NoopSearchEngine),
-        content_type_registry: Arc::new(rust_blog::content_type::ContentTypeRegistry::new()),
+        content_type_registry: Arc::new(raisfast::content_type::ContentTypeRegistry::new()),
         aspect_engine: {
-            let engine = rust_blog::aspects::engine::AspectEngine::new();
-            let mut reg = rust_blog::protocols::ProtocolRegistry::new();
-            reg.register(rust_blog::protocols::ownable::OwnableProtocol);
-            reg.register(rust_blog::protocols::timestampable::TimestampableProtocol);
+            let engine = raisfast::aspects::engine::AspectEngine::new();
+            let mut reg = raisfast::protocols::ProtocolRegistry::new();
+            reg.register(raisfast::protocols::ownable::OwnableProtocol);
+            reg.register(raisfast::protocols::timestampable::TimestampableProtocol);
             let reg = Arc::new(reg);
             reg.register_aspects_into(&engine);
             Arc::new(engine)
         },
         protocol_registry: Arc::new({
-            let mut reg = rust_blog::protocols::ProtocolRegistry::new();
-            reg.register(rust_blog::protocols::ownable::OwnableProtocol);
-            reg.register(rust_blog::protocols::timestampable::TimestampableProtocol);
+            let mut reg = raisfast::protocols::ProtocolRegistry::new();
+            reg.register(raisfast::protocols::ownable::OwnableProtocol);
+            reg.register(raisfast::protocols::timestampable::TimestampableProtocol);
             reg
         }),
         options: Arc::new(
-            rust_blog::services::options::OptionsService::new(Arc::new(
+            raisfast::services::options::OptionsService::new(Arc::new(
                 SqlxOptionsRepository::new(pool.clone()),
             ))
             .await,
         ),
-        rbac: Arc::new(rust_blog::services::rbac::RbacService::new(Arc::new(
+        rbac: Arc::new(raisfast::services::rbac::RbacService::new(Arc::new(
             SqlxRbacRepository::new(pool.clone()),
         ))),
-        tenant: Arc::new(rust_blog::services::tenant::TenantService::new(Arc::new(
+        tenant: Arc::new(raisfast::services::tenant::TenantService::new(Arc::new(
             SqlxTenantRepository::new(pool.clone()),
         ))),
-        audit: Arc::new(rust_blog::audit::AuditService::new(pool.clone())),
-        webhook: Arc::new(rust_blog::webhook::WebhookService::new(pool.clone())),
-        workflow: Arc::new(rust_blog::services::workflow::WorkflowService::new(
+        audit: Arc::new(raisfast::audit::AuditService::new(pool.clone())),
+        webhook: Arc::new(raisfast::webhook::WebhookService::new(pool.clone())),
+        workflow: Arc::new(raisfast::services::workflow::WorkflowService::new(
             pool.clone(),
         )),
-        storage: rust_blog::storage::create_storage(&config).expect("failed to create storage"),
+        storage: raisfast::storage::create_storage(&config).expect("failed to create storage"),
         cms_cache: Arc::new(dashmap::DashMap::new()),
-        oauth_registry: Arc::new(rust_blog::oauth::OAuthProviderRegistry::default()),
-        email_sender: rust_blog::notifier::build_email_sender(&config),
-        sms_sender: rust_blog::notifier::build_sms_sender(&config),
+        oauth_registry: Arc::new(raisfast::oauth::OAuthProviderRegistry::default()),
+        email_sender: raisfast::notifier::build_email_sender(&config),
+        sms_sender: raisfast::notifier::build_sms_sender(&config),
         route_registry: Arc::new(Vec::new()),
     };
     let max_upload = state.config.max_upload_size;
@@ -309,49 +309,49 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
                 .put(h_tenant::update_tenant)
                 .delete(h_tenant::delete_tenant),
         )
-        .route("/admin/audit", get(rust_blog::audit::handler::list))
-        .route("/admin/audit/{id}", get(rust_blog::audit::handler::get))
+        .route("/admin/audit", get(raisfast::audit::handler::list))
+        .route("/admin/audit/{id}", get(raisfast::audit::handler::get))
         .route(
             "/admin/webhooks",
-            get(rust_blog::webhook::handler::list).post(rust_blog::webhook::handler::create),
+            get(raisfast::webhook::handler::list).post(raisfast::webhook::handler::create),
         )
         .route(
             "/admin/webhooks/{id}",
-            get(rust_blog::webhook::handler::get)
-                .put(rust_blog::webhook::handler::update)
-                .delete(rust_blog::webhook::handler::delete),
+            get(raisfast::webhook::handler::get)
+                .put(raisfast::webhook::handler::update)
+                .delete(raisfast::webhook::handler::delete),
         )
         .route(
             "/admin/workflows",
-            get(rust_blog::handlers::workflow::list).post(rust_blog::handlers::workflow::create),
+            get(raisfast::handlers::workflow::list).post(raisfast::handlers::workflow::create),
         )
         .route(
             "/admin/workflows/{id}",
-            get(rust_blog::handlers::workflow::get).delete(rust_blog::handlers::workflow::delete),
+            get(raisfast::handlers::workflow::get).delete(raisfast::handlers::workflow::delete),
         )
         .route(
             "/admin/workflows/{id}/start",
-            http_post(rust_blog::handlers::workflow::start),
+            http_post(raisfast::handlers::workflow::start),
         )
         .route(
             "/admin/workflows/instances",
-            get(rust_blog::handlers::workflow::list_instances),
+            get(raisfast::handlers::workflow::list_instances),
         )
         .route(
             "/admin/workflows/instances/{id}",
-            get(rust_blog::handlers::workflow::get_instance),
+            get(raisfast::handlers::workflow::get_instance),
         )
         .route(
             "/admin/workflows/instances/{id}/execute",
-            http_post(rust_blog::handlers::workflow::execute_step),
+            http_post(raisfast::handlers::workflow::execute_step),
         )
         .route(
             "/admin/workflows/instances/{id}/cancel",
-            http_post(rust_blog::handlers::workflow::cancel_instance),
+            http_post(raisfast::handlers::workflow::cancel_instance),
         )
         .route(
             "/admin/workflows/instances/{id}/logs",
-            get(rust_blog::handlers::workflow::get_step_logs),
+            get(raisfast::handlers::workflow::get_step_logs),
         )
         .layer(from_fn(global_rate_limit))
         .layer(axum::Extension(RateLimiterSet::new_default()));
@@ -439,7 +439,7 @@ pub(crate) fn delete_auth(path: &str, token: &str) -> Request<Body> {
 }
 
 pub(crate) fn make_token(user_id: &str, role: &str) -> String {
-    rust_blog::services::auth::generate_access_token_for_test(user_id, role)
+    raisfast::services::auth::generate_access_token_for_test(user_id, role)
 }
 
 pub(crate) async fn register_and_login(
@@ -474,10 +474,10 @@ pub(crate) async fn register_and_login(
     )
 }
 
-pub(crate) async fn create_admin(pool: &rust_blog::db::Pool) -> String {
-    let hash = rust_blog::services::auth::hash_password("AdminPass123!").unwrap();
+pub(crate) async fn create_admin(pool: &raisfast::db::Pool) -> String {
+    let hash = raisfast::services::auth::hash_password("AdminPass123!").unwrap();
     let id = uuid::Uuid::now_v7().to_string();
-    let sql = rust_blog::db::dialect::translate(
+    let sql = raisfast::db::dialect::translate(
         "INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, 'admin')",
     );
     sqlx::query(&sql)
@@ -491,10 +491,10 @@ pub(crate) async fn create_admin(pool: &rust_blog::db::Pool) -> String {
     id
 }
 
-pub(crate) async fn create_author(pool: &rust_blog::db::Pool) -> String {
-    let hash = rust_blog::services::auth::hash_password("AuthorPass123!").unwrap();
+pub(crate) async fn create_author(pool: &raisfast::db::Pool) -> String {
+    let hash = raisfast::services::auth::hash_password("AuthorPass123!").unwrap();
     let id = uuid::Uuid::now_v7().to_string();
-    let sql = rust_blog::db::dialect::translate(
+    let sql = raisfast::db::dialect::translate(
         "INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, 'author')",
     );
     sqlx::query(&sql)

@@ -1613,7 +1613,7 @@ mod tests {
     #[tokio::test]
     async fn manager_no_plugins_when_dir_not_exists() {
         let mut config = (*test_config()).clone();
-        config.plugin_dir = Some("/tmp/rust-blog-plugin-test-nonexistent".into());
+        config.plugin_dir = Some("/tmp/raisfast-plugin-test-nonexistent".into());
         let mgr = PluginManager::new(Arc::new(config)).await;
         assert_eq!(mgr.plugin_count().await, 0);
     }

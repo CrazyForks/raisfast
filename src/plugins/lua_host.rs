@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(env, "test");
 
         let port: String = get_cfg_fn.call(("app.port",)).unwrap();
-        assert_eq!(port, "3000");
+        assert_eq!(port, "9898");
 
         let unknown: mlua::Value = get_cfg_fn.call(("nonexistent.key",)).unwrap();
         assert!(unknown.is_nil());

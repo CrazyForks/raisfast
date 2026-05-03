@@ -1,6 +1,6 @@
 # 桌面应用功能清单
 
-> rust-blog Desktop — **All in One，开箱即用**
+> raisfast Desktop — **All in One，开箱即用**
 >
 > 参考产品：VS Code（编辑器）、TablePlus（数据库管理）、Postman（API 调试）、
 > Strapi Admin（CMS 管理）、Figma（协作）、PocketBase Admin（BaaS 管理）、
@@ -55,7 +55,7 @@
 | 导出为 HTTP 服务器 | 生成独立二进制文件，可直接部署到 Linux/Mac/Windows | P0 |
 | 导出为 Docker 镜像 | 生成 Dockerfile + 构建镜像 | P1 |
 | 导出为静态站点 | 如果项目是纯 CMS，可导出为静态 HTML | P2 |
-| 导入 Strapi 项目 | 解析 Strapi schema，转换为 rust-blog Content Type | P2 |
+| 导入 Strapi 项目 | 解析 Strapi schema，转换为 raisfast Content Type | P2 |
 | 导入 PocketBase 数据 | 导入 PocketBase 的 SQLite 数据 | P2 |
 | 项目备份/恢复 | 导出完整项目快照（数据库 + 配置 + 插件） | P1 |
 
@@ -334,7 +334,7 @@
 |---|---|---|---|
 | 内置终端 | 桌面应用内嵌终端，直接运行 CLI 命令 | VS Code Terminal | P0 |
 | CLI 命令面板 | 可视化选择并执行 CLI 命令 | VS Code Command Palette | P1 |
-| 独立 CLI | 提供 `rust-blog` 命令行工具（serve/migrate/ext/backup） | PocketBase CLI | P0 |
+| 独立 CLI | 提供 `raisfast` 命令行工具（serve/migrate/ext/backup） | PocketBase CLI | P0 |
 | Shell 补全 | 生成 bash/zsh/fish 补全脚本 | — | P2 |
 
 ---
@@ -441,7 +441,7 @@
 
 ## 与竞品功能对比
 
-| 功能 | rust-blog Desktop | PocketBase Admin | Strapi Admin | Directus | TablePlus | Postman |
+| 功能 | raisfast Desktop | PocketBase Admin | Strapi Admin | Directus | TablePlus | Postman |
 |---|---|---|---|---|---|---|
 | 桌面应用 | ✅ Tauri | ❌ Web only | ❌ Web only | ❌ Web only | ✅ 原生 | ✅ Electron |
 | Content-Type Builder | ✅ 可视化 | ❌ | ✅ | ✅ | — | — |

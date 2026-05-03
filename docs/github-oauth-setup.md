@@ -14,7 +14,7 @@
 
 | 字段 | 本地开发值 | 生产环境值 |
 |------|-----------|-----------|
-| Application name | `rust-blog-dev` | `你的产品名` |
+| Application name | `raisfast-dev` | `你的产品名` |
 | Homepage URL | `http://localhost:3000` | `https://yourdomain.com` |
 | Authorization callback URL | `http://localhost:9000/api/v1/auth/oauth/github/callback` | `https://api.yourdomain.com/api/v1/auth/oauth/github/callback` |
 | Application description | (可选) | (可选) |

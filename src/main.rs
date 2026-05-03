@@ -16,7 +16,7 @@
 rust_i18n::i18n!("locales", fallback = "en");
 
 use clap::Parser;
-use rust_blog::config::app::AppConfig;
+use raisfast::config::app::AppConfig;
 
 mod cli;
 mod logging;

@@ -7,7 +7,7 @@ import { client } from "@/lib/raisfast";
 import type { OAuthProvider } from "@raisfast/sdk";
 
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:9000/api/v1";
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:9898/api/v1";
 
 const providerLabels: Record<string, { label: string; icon: ReactNode }> = {
   github: {

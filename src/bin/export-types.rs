@@ -1,4 +1,4 @@
-use rust_blog::*;
+use raisfast::*;
 use ts_rs::TS;
 
 macro_rules! collect {

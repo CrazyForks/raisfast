@@ -2,9 +2,9 @@
 //!
 //! 用法（在 src-tauri/ 项目中）：
 //! ```ignore
-//! use rust_blog::tauri::setup;
+//! use raisfast::tauri::setup;
 //!
-//! let config = rust_blog::config::app::AppConfig::init();
+//! let config = raisfast::config::app::AppConfig::init();
 //! let state = setup::build_state(&config).await?;
 //!
 //! tauri::Builder::default()
@@ -19,7 +19,7 @@
 #![deny(unsafe_code)]
 
 fn main() {
-    println!("rust-blog Tauri adapter — compile-time check only.");
+    println!("raisfast Tauri adapter — compile-time check only.");
     println!("Use this crate as a library from your Tauri project's src-tauri/.");
     println!("See src/tauri/setup.rs for integration instructions.");
 }

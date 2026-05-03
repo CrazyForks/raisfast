@@ -305,8 +305,8 @@ ManyToMany: 收集所有 item 的 id → WHERE junction.source_id IN (...) JOIN 
 | 系统 | 语言 | 列表 RPS | 详情 RPS |
 |------|------|----------|----------|
 | PocketBase | Go | 2,000-5,000 | 3,000-6,000 |
-| rust-blog (当前 dev) | Rust | 531-1,046 | 1,043 |
-| rust-blog (预估 release 全优化) | Rust | 3,000-8,000 | 8,000-15,000 |
+| raisfast (当前 dev) | Rust | 531-1,046 | 1,043 |
+| raisfast (预估 release 全优化) | Rust | 3,000-8,000 | 8,000-15,000 |
 | Strapi | Node.js | 100-300 | 200-400 |
 | Ghost | Node.js | 200-500 | 300-600 |
 | Directus | Node.js | 80-200 | 150-300 |

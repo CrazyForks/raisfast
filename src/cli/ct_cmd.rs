@@ -4,8 +4,8 @@
 
 use std::path::PathBuf;
 
-use rust_blog::config::app::AppConfig;
-use rust_blog::content_type::schema::{ContentTypeSchema, FieldType};
+use raisfast::config::app::AppConfig;
+use raisfast::content_type::schema::{ContentTypeSchema, FieldType};
 
 pub fn create_new(config: &AppConfig, name: &str) -> anyhow::Result<()> {
     let ct_dir = PathBuf::from(&config.content_type_dir);
@@ -290,7 +290,7 @@ fn schema_to_ts(ct: &ContentTypeSchema) -> String {
     lines.join("\n")
 }
 
-fn field_type_to_ts(field: &rust_blog::content_type::schema::FieldSchema) -> String {
+fn field_type_to_ts(field: &raisfast::content_type::schema::FieldSchema) -> String {
     match &field.field_type {
         FieldType::Text | FieldType::RichText | FieldType::Uid => "string".into(),
         FieldType::Email => "string".into(),

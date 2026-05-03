@@ -220,7 +220,7 @@ access = "none"
 
 ### 4.4 未实现（对标 PocketBase）
 
-| 功能 | PocketBase 语法 | rust-blog 语法 | 用途 | 优先级 |
+| 功能 | PocketBase 语法 | raisfast 语法 | 用途 | 优先级 |
 |------|----------------|---------------|------|--------|
 | 字段变更检查 | `title:changed` | `title:changed` | update 时判断字段是否修改 | P2 |
 | 数组遍历 | `tags:each = "rust"` | `tags:each = "rust"` | 检查数组元素 | P2 |
@@ -243,7 +243,7 @@ src/content_type/
 ├── repository.rs       # ContentQuery.rule_where/rule_params + find() 注入
 └── ...
 
-plugins-protocol/wit/plugin.wit   # WIT 接口（含 filter/filter_auth 类型）
+plugin-wit/plugin.wit   # WIT 接口（含 filter/filter_auth 类型）
 ```
 
 ### 5.2 rule_engine.rs 内部结构
@@ -438,7 +438,7 @@ struct ContentQuery {
 
 ## 九、与 PocketBase 对比
 
-| 维度 | PocketBase | rust-blog（当前） | rust-blog（计划） |
+| 维度 | PocketBase | raisfast（当前） | raisfast（计划） |
 |------|-----------|------------------|------------------|
 | 配置格式 | listRule/viewRule/... 字符串 | `[api.list] access + filter + filter_auth` | 同 |
 | 表达式解析 | `fexpr`（自研） | 自研 Lexer + Parser | 同 |

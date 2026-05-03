@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-rust-blog CMS 动态路由 vs 原生路由 压力测试
+raisfast CMS 动态路由 vs 原生路由 压力测试
 
 用法:
     python3 scripts/benchmark.py                     # 默认参数
@@ -173,14 +173,14 @@ async def fetch_first_id(client: httpx.AsyncClient, token: str, url: str) -> str
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="rust-blog 压力测试")
+    parser = argparse.ArgumentParser(description="raisfast 压力测试")
     parser.add_argument("--concurrency", "-c", type=int, default=20, help="并发数")
     parser.add_argument("--duration", "-d", type=float, default=5, help="持续时间（秒）")
     parser.add_argument("--prepare", "-p", type=int, default=0, help="先插入 N 条测试数据")
     parser.add_argument("--url", type=str, default=None, help="自定义测试 URL")
     args = parser.parse_args()
 
-    print(f"rust-blog 压力测试  |  并发={args.concurrency}  持续={args.duration}s")
+    print(f"raisfast 压力测试  |  并发={args.concurrency}  持续={args.duration}s")
     print(f"目标: {BASE_URL}")
 
     async with httpx.AsyncClient(timeout=30) as client:

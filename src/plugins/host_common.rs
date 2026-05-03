@@ -620,7 +620,7 @@ mod tests {
             get_config_value(&config, "app.host"),
             Some("127.0.0.1".into())
         );
-        assert_eq!(get_config_value(&config, "app.port"), Some("3000".into()));
+        assert_eq!(get_config_value(&config, "app.port"), Some("9898".into()));
         assert_eq!(get_config_value(&config, "app.env"), Some("test".into()));
         assert_eq!(
             get_config_value(&config, "app.base_url"),

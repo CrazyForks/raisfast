@@ -1,4 +1,4 @@
-package rust-blog:plugin-protocol;
+package raisfast:plugin-protocol;
 
 /// 共享数据类型
 interface types {

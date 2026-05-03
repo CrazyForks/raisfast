@@ -314,11 +314,11 @@ fn register_host_functions(ctx: &rquickjs::Ctx) -> anyhow::Result<()> {
 ```toml
 # plugins/seo-optimizer/plugin.toml
 [plugin]
-id = "com.rust-blog.seo-optimizer"
+id = "com.raisfast.seo-optimizer"
 name = "SEO Optimizer"
 version = "1.0.0"
 description = "自动优化文章 SEO"
-author = "rust-blog"
+author = "raisfast"
 license = "MIT"
 runtime = "js"          # "wasm" (默认) 或 "js"
 language = "typescript"  # 信息字段
@@ -469,7 +469,7 @@ declare var Plugin: PluginHooks;
 ```toml
 # plugins/welcome-email/plugin.toml
 [plugin]
-id = "com.rust-blog.welcome-email"
+id = "com.raisfast.welcome-email"
 name = "Welcome Email"
 version = "1.0.0"
 description = "用户注册后发送欢迎邮件"
@@ -497,7 +497,7 @@ var Plugin = {
 ```toml
 # plugins/seo-optimizer-js/plugin.toml
 [plugin]
-id = "com.rust-blog.seo-optimizer-js"
+id = "com.raisfast.seo-optimizer-js"
 name = "SEO Optimizer (JS)"
 version = "1.0.0"
 description = "自动优化文章 SEO"

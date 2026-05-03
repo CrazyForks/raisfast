@@ -1,8 +1,8 @@
 [package]
-name = "rust-blog"
+name = "raisfast"
 version = "0.1.0"
 edition = "2024"
-default-run = "rust-blog"
+default-run = "raisfast"
 
 [features]
 default = ["db-sqlite", "search-tantivy", "plugin-js", "plugin-lua", "openapi"]

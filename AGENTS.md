@@ -4,7 +4,7 @@
 
 Blog system built with Rust + Axum + SQLite. Early stage — scaffold only, no implementation yet.
 
-- **Crate name:** `rust-blog`
+- **Crate name:** `raisfast`
 - **Rust edition:** 2024
 - **Product & architecture spec:** `docs/guide.md`
 

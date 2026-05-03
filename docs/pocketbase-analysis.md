@@ -1,11 +1,11 @@
 # PocketBase 底层技术架构深度分析
 
-> 对标项目：PocketBase v0.37.1（Go） vs rust-blog（Rust）
+> 对标项目：PocketBase v0.37.1（Go） vs raisfast（Rust）
 > 目的：分析 PocketBase 的核心架构设计，识别值得借鉴的特性，制定实施优先级。
 
 ## 一、架构概览
 
-| 维度 | PocketBase (Go) | rust-blog (Rust) |
+| 维度 | PocketBase (Go) | raisfast (Rust) |
 |------|----------------|-----------------|
 | 语言 | Go 1.25 | Rust 2024 |
 | 数据库 | 嵌入式 SQLite（modernc.org/sqlite，纯 Go 无 CGO） | 嵌入式 SQLite（sqlx + libsqlite3-sys） |
@@ -33,13 +33,13 @@ PocketBase 使用两个 SQLite 文件：
 
 ### 3. Collection-Driven Schema
 
-PocketBase 的核心抽象是 **Collection**（等价于 rust-blog 的 ContentType）。每个 Collection 有：
+PocketBase 的核心抽象是 **Collection**（等价于 raisfast 的 ContentType）。每个 Collection 有：
 
 - 字段定义（schema）
 - 5 条 API Rule（list/view/create/update/delete）
 - 自动的 CRUD REST API
 
-这与 rust-blog 的 TOML schema 驱动方式高度一致。
+这与 raisfast 的 TOML schema 驱动方式高度一致。
 
 ## 三、值得借鉴的 6 个关键设计
 
@@ -70,7 +70,7 @@ status = "published" && author = @request.auth.id
 - `geoDistance()` 地理距离函数
 - `strftime()` 时间格式化
 
-**rust-blog 现状**：`check_api_access()` 只是简单的枚举（public/authenticated/admin/none），没有表达式级别的过滤。
+**raisfast 现状**：`check_api_access()` 只是简单的枚举（public/authenticated/admin/none），没有表达式级别的过滤。
 
 **建议**：实现一个 `RuleEngine`，将 API Rule 解析为 SQL WHERE 子句。可以先支持基础子集：
 
@@ -91,7 +91,7 @@ POST /api/realtime         → 设置订阅主题
 - 自动权限检查：订阅 Collection 用 listRule，订阅 Record 用 viewRule
 - 5 分钟无消息自动断开（防泄漏连接）
 
-**rust-blog 现状**：没有实时推送能力。
+**raisfast 现状**：没有实时推送能力。
 
 **建议**：基于 Axum 的 `tokio-stream` + SSE 实现。架构：
 
@@ -106,7 +106,7 @@ PocketBase 的列表 API 支持 `?skipTotal=true` 参数，跳过 `COUNT(*)` 查
 
 **为什么重要**：SQLite 的 `COUNT(*)` 在大数据集上会全表扫描。当用户只是翻页浏览时，第二页开始不需要总数。
 
-**rust-blog 现状**：每次列表查询都执行 `SELECT COUNT(*)`。
+**raisfast 现状**：每次列表查询都执行 `SELECT COUNT(*)`。
 
 **建议**：在 `ContentQuery` 加 `skip_total: bool` 字段，`ListParams` 加 `skip_total` 参数，条件跳过 count 查询。
 
@@ -127,7 +127,7 @@ PocketBase 支持 `POST /api/batch`，在一个事务中批量执行多个 creat
 - 整个 batch 在单个事务中执行，失败全部回滚
 - 减少 HTTP 往返次数
 
-**rust-blog 现状**：没有批量操作 API。
+**raisfast 现状**：没有批量操作 API。
 
 **建议**：新增 `POST /api/v1/batch` endpoint，接收请求数组，在单个 SQLite 事务中执行。
 
@@ -140,9 +140,9 @@ PocketBase **不存储任何 JWT token**：
 - "登出" = 客户端删除 token
 - `authRefresh` 接口不废止旧 token，只是返回新 token
 
-**rust-blog 现状**：有完整的 refresh token 机制（存 DB），更安全但也更慢。
+**raisfast 现状**：有完整的 refresh token 机制（存 DB），更安全但也更慢。
 
-**建议**：这是架构取舍，不需要改。rust-blog 的双 token 方案更适合需要强安全控制的场景（企业 CMS），这是差异化优势。
+**建议**：这是架构取舍，不需要改。raisfast 的双 token 方案更适合需要强安全控制的场景（企业 CMS），这是差异化优势。
 
 ### 借鉴 6：内置 Admin Dashboard UI（高优先级，差异化机会）
 
@@ -155,7 +155,7 @@ PocketBase 的杀手级特性是开箱即用的 Admin UI（`/_/`），功能包�
 - 日志查看
 - 系统设置
 
-**rust-blog 现状**：前端 `web/` 是博客前台，不是管理后台。
+**raisfast 现状**：前端 `web/` 是博客前台，不是管理后台。
 
 **建议**：基于现有的 Next.js + shadcn/ui 搭建 Admin Dashboard，核心页面：
 
@@ -166,7 +166,7 @@ PocketBase 的杀手级特性是开箱即用的 Admin UI（`/_/`），功能包�
 
 ## 四、性能优化对照
 
-| 优化项 | PocketBase | rust-blog 现状 |
+| 优化项 | PocketBase | raisfast 现状 |
 |-------|-----------|--------------|
 | SQLite PRAGMA | busy_timeout=10000, WAL, synchronous=NORMAL, cache_size=-32000 | 已优化（Phase 1.1） |
 | JWT 缓存 | 每次解析但 HS256 开销极小 | 已缓存 DecodingKey（Phase 1.2） |

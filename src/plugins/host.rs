@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use crate::plugins::bindings::rust_blog::plugin_protocol::host_api::Host;
-use crate::plugins::bindings::rust_blog::plugin_protocol::types::Host as TypesHost;
+use crate::plugins::bindings::raisfast::plugin_protocol::host_api::Host;
+use crate::plugins::bindings::raisfast::plugin_protocol::types::Host as TypesHost;
 use crate::plugins::host_common::HostContext;
 
 impl TypesHost for Arc<HostContext> {}

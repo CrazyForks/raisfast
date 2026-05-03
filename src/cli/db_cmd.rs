@@ -2,9 +2,9 @@
 
 use std::path::Path;
 
-use rust_blog::config::app::AppConfig;
-use rust_blog::db::connection::init_pool;
-use rust_blog::db::dialect;
+use raisfast::config::app::AppConfig;
+use raisfast::db::connection::init_pool;
+use raisfast::db::dialect;
 
 // ── migrate ──────────────────────────────────────────────────────
 

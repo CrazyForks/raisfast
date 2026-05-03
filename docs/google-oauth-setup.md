@@ -12,7 +12,7 @@
 1. 点击顶部导航栏的项目选择器
 2. 点击 **NEW PROJECT**
 3. 填写：
-   - Project name: `rust-blog`
+   - Project name: `raisfast`
    - Organization: 保持默认
 4. 点击 **CREATE**
 5. 等待项目创建完成，选择该项目
@@ -41,7 +41,7 @@
 
 | 字段 | 值 |
 |------|-----|
-| App name | `rust-blog` |
+| App name | `raisfast` |
 | User support email | 你的邮箱 |
 | App logo | (可选，后续上传) |
 
@@ -117,7 +117,7 @@ Testing 状态下只有测试用户能登录。如需所有人可登录：
 | 字段 | 值 |
 |------|-----|
 | Application type | **Web application** |
-| Name | `rust-blog-web` |
+| Name | `raisfast-web` |
 
 **Authorized JavaScript origins：**
 
@@ -378,7 +378,7 @@ http://localhost:9000/api/v1/auth/oauth/google
 
 1. 选择 Google 账号
 2. 如果是 Testing 模式，会看到 "This app isn't verified" 警告
-3. 点击 **Advanced** → **Go to rust-blog (unsafe)**
+3. 点击 **Advanced** → **Go to raisfast (unsafe)**
 4. 点击 **Continue** 授权
 
 ### 7.3 回调处理
@@ -412,7 +412,7 @@ http://localhost:3000/auth/callback?access_token=...&refresh_token=...&expires_i
 
 **解决（开发阶段）**：
 1. 确保你的邮箱已添加到 Test Users
-2. 点击 **Advanced** → **Go to rust-blog (unsafe)** 即可继续
+2. 点击 **Advanced** → **Go to raisfast (unsafe)** 即可继续
 
 **解决（生产阶段）**：
 1. 在 OAuth consent screen 页面点击 **PUBLISH APP**

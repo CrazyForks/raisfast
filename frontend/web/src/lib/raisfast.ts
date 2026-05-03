@@ -60,7 +60,7 @@ class ZustandAuthStore extends BaseAuthStore {
   }
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:9000/api/v1";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:9898/api/v1";
 
 export const client = new RaisFast(API_BASE, {
   authStore: new ZustandAuthStore(),

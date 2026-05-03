@@ -72,7 +72,7 @@ async fn nested_comment() {
     let pid = b1["data"]["id"].as_str().unwrap();
 
     let approve_sql =
-        rust_blog::db::dialect::translate("UPDATE comments SET status = 'approved' WHERE id = ?");
+        raisfast::db::dialect::translate("UPDATE comments SET status = 'approved' WHERE id = ?");
     sqlx::query(&approve_sql)
         .bind(pid)
         .execute(&state.pool)

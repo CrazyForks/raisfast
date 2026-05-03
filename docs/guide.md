@@ -1,8 +1,8 @@
-# 博客系统 — 产品与技术指导手册
+# raisfast 全栈开发底座 — 产品与技术指导手册
 
 ## 1. 项目概述
 
-基于 Rust + Axum 构建的功能完整、高性能、安全的博客系统。面向个人开发者和小型团队，提供内容创作、发布、管理和互动的全流程支持。
+基于 Rust + Axum 构建的高性能全栈开发底座。面向个人开发者和小型团队，提供内容管理、插件系统、多租户、RBAC 权限、实时事件等全栈能力，支持 Web 服务器和 Tauri 桌面应用双模式部署。
 
 ### 1.1 项目目标
 
@@ -638,7 +638,7 @@ APP_PORT=3000
 APP_ENV=development
 
 # 数据库
-DATABASE_URL=sqlite:./data/blog.db?mode=rwc
+DATABASE_URL=sqlite:./data/raisfast.db?mode=rwc
 
 # JWT
 JWT_SECRET=your-secret-key-at-least-32-characters
@@ -778,7 +778,7 @@ services:
       - "3000:3000"
     env_file: .env
     volumes:
-      - blog-data:/app/data
+      - raisfast-data:/app/data
       - uploads:/app/uploads
 
   db:
@@ -786,14 +786,14 @@ services:
     profiles:
       - "postgres"
     environment:
-      POSTGRES_DB: blog
+      POSTGRES_DB: raisfast
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
     volumes:
       - pgdata:/var/lib/postgresql/data
 
 volumes:
-  blog-data:
+  raisfast-data:
   pgdata:
   uploads:
 ```
@@ -803,7 +803,7 @@ volumes:
 ```nginx
 server {
     listen 80;
-    server_name blog.example.com;
+    server_name raisfast.example.com;
 
     client_max_body_size 5M;
 

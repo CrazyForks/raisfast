@@ -27,7 +27,7 @@ impl GitHubProvider {
         let resp = client
             .get("https://api.github.com/user/emails")
             .header("Authorization", format!("Bearer {access_token}"))
-            .header("User-Agent", "rust-blog")
+            .header("User-Agent", "raisfast")
             .header("Accept", "application/json")
             .send()
             .await
@@ -98,7 +98,7 @@ impl OAuthProvider for GitHubProvider {
         let resp = client
             .get("https://api.github.com/user")
             .header("Authorization", format!("Bearer {access_token}"))
-            .header("User-Agent", "rust-blog")
+            .header("User-Agent", "raisfast")
             .header("Accept", "application/json")
             .send()
             .await

@@ -1,9 +1,9 @@
 [plugin]
-id = "com.rust-blog.forum"
+id = "com.raisfast.forum"
 name = "Forum API"
 version = "0.1.0"
 description = "论坛 API：版块主题列表、投票、采纳、计数维护"
-author = "rust-blog"
+author = "raisfast"
 license = "MIT"
 runtime = "js"
 language = "js"

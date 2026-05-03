@@ -208,7 +208,7 @@ mod tests {
             assert_eq!(env, Some("test".to_string()));
 
             let port: Option<String> = get_cfg_fn.call(("app.port",)).unwrap();
-            assert_eq!(port, Some("3000".to_string()));
+            assert_eq!(port, Some("9898".to_string()));
         })
         .await;
     }

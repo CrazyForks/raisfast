@@ -1,6 +1,6 @@
 //! Tauri 桌面应用适配层
 //!
-//! 将 rust-blog 的 Service 层暴露为 Tauri Commands，
+//! 将 raisfast 的 Service 层暴露为 Tauri Commands，
 //! 前端通过 `invoke("command_name", { args })` 调用。
 //!
 //! # 架构

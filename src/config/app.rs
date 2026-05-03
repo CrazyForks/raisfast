@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 /// | 环境变量 | 类型 | 默认值 | 说明 |
 /// |----------|------|--------|------|
 /// | `APP_HOST` | String | `0.0.0.0` | 监听地址 |
-/// | `APP_PORT` | u16 | `3000` | 监听端口 |
+/// | `APP_PORT` | u16 | `9898` | 监听端口 |
 /// | `APP_ENV` | String | `development` | 运行环境 |
 /// | `DATABASE_URL` | String | (按数据库后端不同) | 数据库连接字符串 |
 /// | `DB_POOL_SIZE` | u32 | `5` | 连接池大小 |
@@ -617,7 +617,7 @@ impl AppConfig {
         let port: u16 = env::var("APP_PORT")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(3000);
+            .unwrap_or(9898);
 
         let base_url = env::var("BASE_URL").unwrap_or_else(|_| format!("http://{host}:{port}"));
 
@@ -632,15 +632,15 @@ impl AppConfig {
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| {
                 #[cfg(feature = "db-sqlite")]
                 {
-                    "sqlite:./data/blog.db?mode=rwc".into()
+                    "sqlite:./data/raisfast.db?mode=rwc".into()
                 }
                 #[cfg(feature = "db-postgres")]
                 {
-                    "postgres://localhost/blog".into()
+                    "postgres://localhost/raisfast".into()
                 }
                 #[cfg(feature = "db-mysql")]
                 {
-                    "mysql://root@localhost/blog".into()
+                    "mysql://root@localhost/raisfast".into()
                 }
             }),
             db_pool_size: env::var("DB_POOL_SIZE")
@@ -906,7 +906,7 @@ impl AppConfig {
     pub fn test_defaults() -> Self {
         Self {
             host: "0.0.0.0".into(),
-            port: 3000,
+            port: 9898,
             env: "test".into(),
             database_url: "sqlite::memory:".into(),
             db_pool_size: 1,

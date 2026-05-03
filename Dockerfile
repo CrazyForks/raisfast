@@ -25,15 +25,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY --from=builder /app/target/release/rust-blog /app/rust-blog
+COPY --from=builder /app/target/release/raisfast /app/raisfast
 COPY migrations/ migrations/
 COPY extensions/ extensions/
 
 RUN mkdir -p /app/data /app/logs /app/uploads /app/plugins-data
 
 ENV APP_HOST=0.0.0.0
-ENV APP_PORT=9000
+ENV APP_PORT=9898
 
-EXPOSE 9000
+EXPOSE 9898
 
-CMD ["./rust-blog"]
+CMD ["./raisfast"]

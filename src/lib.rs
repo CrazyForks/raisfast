@@ -1,6 +1,6 @@
-//! 博客系统核心库 (rust-blog)
+//! raisfast 全栈开发底座核心库 (raisfast)
 //!
-//! 基于 Rust + Axum 构建的功能完整的博客系统，支持 `SQLite` / `PostgreSQL` / `MySQL`。
+//! 基于 Rust + Axum 构建的高性能全栈开发底座，支持 `SQLite` / `PostgreSQL` / `MySQL`。
 //! 架构分层：Handler → Service → Repository → Model → DB。
 //!
 //! 同时支持两种运行模式：

@@ -2,27 +2,27 @@ services:
   backend:
     build: .
     ports:
-      - "9000:9000"
+      - "9898:9898"
     env_file: .env
     environment:
-      DATABASE_URL: sqlite:/app/data/blog.db?mode=rwc
+      DATABASE_URL: sqlite:/app/data/raisfast.db?mode=rwc
       APP_ENV: production
       CORS_ORIGINS: http://localhost:3000
       STORAGE_DRIVER: s3
       S3_ENDPOINT: http://rustfs:9000
       S3_ACCESS_KEY: rustfsadmin
       S3_SECRET_KEY: rustfsadmin
-      S3_BUCKET: blog
+      S3_BUCKET: raisfast
       S3_REGION: us-east-1
     volumes:
-      - blog-data:/app/data
-      - blog-logs:/app/logs
-      - blog-plugins:/app/plugins-data
+      - raisfast-data:/app/data
+      - raisfast-logs:/app/logs
+      - raisfast-plugins:/app/plugins-data
     depends_on:
       rustfs:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/api/v1/healthz"]
+      test: ["CMD", "curl", "-f", "http://localhost:9898/api/v1/healthz"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -34,7 +34,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:9000/api/v1
+      NEXT_PUBLIC_API_URL: http://localhost:9898/api/v1
     depends_on:
       backend:
         condition: service_healthy
@@ -61,8 +61,8 @@ services:
     restart: unless-stopped
 
 volumes:
-  blog-data:
-  blog-logs:
-  blog-plugins:
+  raisfast-data:
+  raisfast-logs:
+  raisfast-plugins:
   rustfs-data:
   rustfs-logs:

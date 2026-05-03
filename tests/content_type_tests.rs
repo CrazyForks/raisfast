@@ -7,10 +7,10 @@ use std::collections::HashMap;
 
 use serde_json::json;
 
-use rust_blog::content_type::ContentTypeRegistry;
-use rust_blog::content_type::repository::{ContentQuery, ContentRepository, SaveContext};
-use rust_blog::content_type::schema::ContentTypeSchema;
-use rust_blog::db::tenant;
+use raisfast::content_type::ContentTypeRegistry;
+use raisfast::content_type::repository::{ContentQuery, ContentRepository, SaveContext};
+use raisfast::content_type::schema::ContentTypeSchema;
+use raisfast::db::tenant;
 
 const PRODUCT_TOML: &str = r#"
 [content_type]
@@ -471,11 +471,11 @@ required = true
 async fn registry_load_and_lookup() {
     let ct = parse_product();
     let registry = ContentTypeRegistry::new();
-    let reserved = rust_blog::config::app::BuiltinsConfig::default().reserved_route_segments();
+    let reserved = raisfast::config::app::BuiltinsConfig::default().reserved_route_segments();
     registry
         .register(
             ct,
-            &rust_blog::config::app::RuleEngineConfig::default(),
+            &raisfast::config::app::RuleEngineConfig::default(),
             &reserved,
             &[],
         )
@@ -911,14 +911,14 @@ async fn versioning_creates_revision_on_update() {
         .await
         .unwrap();
 
-    let revisions = rust_blog::models::content_revision::list_revisions(&pool, "article", id)
+    let revisions = raisfast::models::content_revision::list_revisions(&pool, "article", id)
         .await
         .unwrap();
     assert_eq!(revisions.len(), 1);
     assert_eq!(revisions[0].revision_number, 1);
 
     let rev =
-        rust_blog::models::content_revision::get_revision(&pool, "article", id, &revisions[0].id)
+        raisfast::models::content_revision::get_revision(&pool, "article", id, &revisions[0].id)
             .await
             .unwrap()
             .unwrap();
@@ -974,7 +974,7 @@ async fn versioning_multiple_updates_create_multiple_revisions() {
     .await
     .unwrap();
 
-    let revisions = rust_blog::models::content_revision::list_revisions(&pool, "article", id)
+    let revisions = raisfast::models::content_revision::list_revisions(&pool, "article", id)
         .await
         .unwrap();
     assert_eq!(revisions.len(), 3);
@@ -1012,14 +1012,14 @@ async fn versioning_delete_cleans_up_revisions() {
     .await
     .unwrap();
 
-    let before = rust_blog::models::content_revision::list_revisions(&pool, "article", id)
+    let before = raisfast::models::content_revision::list_revisions(&pool, "article", id)
         .await
         .unwrap();
     assert_eq!(before.len(), 1);
 
     repo.delete(&ct, id, None).await.unwrap();
 
-    let after = rust_blog::models::content_revision::list_revisions(&pool, "article", id)
+    let after = raisfast::models::content_revision::list_revisions(&pool, "article", id)
         .await
         .unwrap();
     assert!(after.is_empty());
@@ -1068,7 +1068,7 @@ required = true
     .await
     .unwrap();
 
-    let revisions = rust_blog::models::content_revision::list_revisions(&pool, "note", id)
+    let revisions = raisfast::models::content_revision::list_revisions(&pool, "note", id)
         .await
         .unwrap();
     assert!(revisions.is_empty());
@@ -1079,7 +1079,7 @@ async fn versioning_diff_computes_correctly() {
     let old = json!({"title": "Old", "content": "Same", "status": "draft"});
     let new = json!({"title": "New", "content": "Same", "status": "published", "extra": 42});
 
-    let diff = rust_blog::models::content_revision::compute_diff(&old, &new);
+    let diff = raisfast::models::content_revision::compute_diff(&old, &new);
 
     let changed = diff["changed"].as_object().unwrap();
     assert!(changed.contains_key("title"));

@@ -1,6 +1,6 @@
 # 云备份服务设计
 
-> rust-blog Cloud Backup — 私有化数据的安全网
+> raisfast Cloud Backup — 私有化数据的安全网
 >
 > 定位：**零配置、端到端加密、增量备份的云端备份服务**
 
@@ -143,7 +143,7 @@ Step 6: 清理
 
 | 组件 | 选型 | 说明 |
 |---|---|---|
-| 备份服务器 | Rust (Axum) | 与 rust-blog 同技术栈，可独立部署 |
+| 备份服务器 | Rust (Axum) | 与 raisfast 同技术栈，可独立部署 |
 | 对象存储 | Cloudflare R2 | 免出站流量，S3 兼容 |
 | 用户认证 | JWT | 简单可靠 |
 | 数据库 | PostgreSQL | 存储用户/元数据 |
@@ -377,16 +377,16 @@ Plugin.on_content_created = function(input) {
 ### 8.2 与主产品的协同
 
 ```
-rust-blog 开源版（免费）
+raisfast 开源版（免费）
   ↓ 用户使用，积累数据
   ↓ 看到备份提示
 rust-backup 云备份（付费）
   ↓ 用户付费备份
   ↓ 建立信任
   ↓ 推荐其他付费服务
-rust-blog 企业插件包（付费）
-rust-blog 行业模板包（付费）
-rust-blog 技术支持（付费）
+raisfast 企业插件包（付费）
+raisfast 行业模板包（付费）
+raisfast 技术支持（付费）
 ```
 
 **备份是整个商业化飞轮的起点。**

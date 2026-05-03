@@ -1,6 +1,6 @@
 //! RSS 订阅源处理器
 //!
-//! 生成博客文章的 RSS XML 订阅源，包含最近 20 篇已发布文章。
+//! 生成文章 RSS XML 订阅源，包含最近 20 篇已发布文章。
 
 use axum::body::Body;
 use axum::extract::State;

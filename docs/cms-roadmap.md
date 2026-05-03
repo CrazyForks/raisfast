@@ -1,6 +1,6 @@
 # CMS 化改造方案
 
-> 将 rust-blog 从博客系统改造为通用 CMS 平台，具备高度可扩展性，
+> 将 raisfast 从博客系统改造为通用 CMS 平台，具备高度可扩展性，
 > 可作为公司官网、新闻站、电商内容管理、SaaS 后端等系统的基础。
 
 ## 1. 设计理念
@@ -1251,7 +1251,7 @@ themes/
 name = "Default"
 version = "1.0.0"
 description = "默认博客主题"
-author = "rust-blog"
+author = "raisfast"
 license = "MIT"
 
 [theme.supports]

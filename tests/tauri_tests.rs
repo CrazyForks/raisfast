@@ -6,12 +6,12 @@
 
 use std::sync::Arc;
 
-use rust_blog::config::app::AppConfig;
-use rust_blog::content_type::repository::{ContentQuery, ContentRepository, SaveContext};
-use rust_blog::content_type::schema::ContentTypeSchema;
-use rust_blog::db::tenant;
-use rust_blog::repositories::*;
-use rust_blog::services::{auth, options, post, stats};
+use raisfast::config::app::AppConfig;
+use raisfast::content_type::repository::{ContentQuery, ContentRepository, SaveContext};
+use raisfast::content_type::schema::ContentTypeSchema;
+use raisfast::db::tenant;
+use raisfast::repositories::*;
+use raisfast::services::{auth, options, post, stats};
 
 fn with_timestamps(data: serde_json::Value) -> serde_json::Value {
     let mut obj = data
@@ -54,9 +54,9 @@ async fn setup_pool() -> sqlx::SqlitePool {
     pool
 }
 async fn create_test_user(pool: &sqlx::SqlitePool, label: &str) -> String {
-    let eventbus = rust_blog::eventbus::EventBus::new(16);
+    let eventbus = raisfast::eventbus::EventBus::new(16);
     let user_repo = SqlxUserRepository::new(pool.clone());
-    let req = rust_blog::handlers::dto::RegisterRequest {
+    let req = raisfast::handlers::dto::RegisterRequest {
         username: format!("user_{label}"),
         email: format!("{label}@test.com"),
         password: "Password123".into(),
@@ -104,9 +104,9 @@ label = "优先级"
 async fn tauri_auth_register_service() {
     let pool = setup_pool().await;
     let user_repo = SqlxUserRepository::new(pool.clone());
-    let eventbus = rust_blog::eventbus::EventBus::new(16);
+    let eventbus = raisfast::eventbus::EventBus::new(16);
 
-    let req = rust_blog::handlers::dto::RegisterRequest {
+    let req = raisfast::handlers::dto::RegisterRequest {
         username: "testuser".into(),
         email: "test@example.com".into(),
         password: "Password123".into(),
@@ -128,9 +128,9 @@ async fn tauri_auth_register_service() {
 async fn tauri_auth_register_duplicate_email() {
     let pool = setup_pool().await;
     let user_repo = SqlxUserRepository::new(pool.clone());
-    let eventbus = rust_blog::eventbus::EventBus::new(16);
+    let eventbus = raisfast::eventbus::EventBus::new(16);
 
-    let req = rust_blog::handlers::dto::RegisterRequest {
+    let req = raisfast::handlers::dto::RegisterRequest {
         username: "user1".into(),
         email: "dup@example.com".into(),
         password: "Password123".into(),
@@ -139,12 +139,12 @@ async fn tauri_auth_register_duplicate_email() {
         .await
         .unwrap();
 
-    let req2 = rust_blog::handlers::dto::RegisterRequest {
+    let req2 = raisfast::handlers::dto::RegisterRequest {
         username: "user2".into(),
         email: "dup@example.com".into(),
         password: "Password456".into(),
     };
-    let eventbus2 = rust_blog::eventbus::EventBus::new(16);
+    let eventbus2 = raisfast::eventbus::EventBus::new(16);
     let result = auth::register(&user_repo, &eventbus2, req2, None, false, &pool).await;
     assert!(result.is_err(), "duplicate email should fail");
 }
@@ -155,10 +155,10 @@ async fn tauri_auth_login_service() {
     let config = test_config();
     let user_repo = SqlxUserRepository::new(pool.clone());
     let refresh_repo = SqlxRefreshTokenRepository::new(pool.clone());
-    let eventbus = rust_blog::eventbus::EventBus::new(16);
-    let plugin_mgr = rust_blog::plugins::PluginManager::new(Arc::new(config.clone())).await;
+    let eventbus = raisfast::eventbus::EventBus::new(16);
+    let plugin_mgr = raisfast::plugins::PluginManager::new(Arc::new(config.clone())).await;
 
-    let reg_req = rust_blog::handlers::dto::RegisterRequest {
+    let reg_req = raisfast::handlers::dto::RegisterRequest {
         username: "loginuser".into(),
         email: "login@example.com".into(),
         password: "Password123".into(),
@@ -167,11 +167,11 @@ async fn tauri_auth_login_service() {
         .await
         .unwrap();
 
-    let login_req = rust_blog::handlers::dto::LoginRequest {
+    let login_req = raisfast::handlers::dto::LoginRequest {
         email: "login@example.com".into(),
         password: "Password123".into(),
     };
-    let eventbus2 = rust_blog::eventbus::EventBus::new(16);
+    let eventbus2 = raisfast::eventbus::EventBus::new(16);
     let result = auth::login(
         &user_repo,
         &refresh_repo,
@@ -198,10 +198,10 @@ async fn tauri_auth_login_wrong_password() {
     let config = test_config();
     let user_repo = SqlxUserRepository::new(pool.clone());
     let refresh_repo = SqlxRefreshTokenRepository::new(pool.clone());
-    let eventbus = rust_blog::eventbus::EventBus::new(16);
-    let plugin_mgr = rust_blog::plugins::PluginManager::new(Arc::new(config.clone())).await;
+    let eventbus = raisfast::eventbus::EventBus::new(16);
+    let plugin_mgr = raisfast::plugins::PluginManager::new(Arc::new(config.clone())).await;
 
-    let reg_req = rust_blog::handlers::dto::RegisterRequest {
+    let reg_req = raisfast::handlers::dto::RegisterRequest {
         username: "wrongpw".into(),
         email: "wrong@example.com".into(),
         password: "Password123".into(),
@@ -210,11 +210,11 @@ async fn tauri_auth_login_wrong_password() {
         .await
         .unwrap();
 
-    let login_req = rust_blog::handlers::dto::LoginRequest {
+    let login_req = raisfast::handlers::dto::LoginRequest {
         email: "wrong@example.com".into(),
         password: "WrongPassword".into(),
     };
-    let eventbus2 = rust_blog::eventbus::EventBus::new(16);
+    let eventbus2 = raisfast::eventbus::EventBus::new(16);
     let result = auth::login(
         &user_repo,
         &refresh_repo,
@@ -236,9 +236,9 @@ async fn tauri_auth_login_wrong_password() {
 async fn tauri_auth_get_me_service() {
     let pool = setup_pool().await;
     let user_repo = SqlxUserRepository::new(pool.clone());
-    let eventbus = rust_blog::eventbus::EventBus::new(16);
+    let eventbus = raisfast::eventbus::EventBus::new(16);
 
-    let reg_req = rust_blog::handlers::dto::RegisterRequest {
+    let reg_req = raisfast::handlers::dto::RegisterRequest {
         username: "getme".into(),
         email: "getme@example.com".into(),
         password: "Password123".into(),
@@ -247,7 +247,7 @@ async fn tauri_auth_get_me_service() {
         .await
         .unwrap();
 
-    let auth = rust_blog::middleware::auth::AuthUser::from_parts(
+    let auth = raisfast::middleware::auth::AuthUser::from_parts(
         Some(user.id.clone()),
         "author".to_string(),
         Some("default".to_string()),
@@ -267,16 +267,16 @@ async fn tauri_post_create_and_list() {
     let author_id = create_test_user(&pool, "author-001").await;
     let sqlx_repo = SqlxPostRepository::new(pool.clone());
     let post_repo: Arc<dyn PostRepository> =
-        Arc::new(rust_blog::repositories::CachedPostRepository::new(
+        Arc::new(raisfast::repositories::CachedPostRepository::new(
             sqlx_repo,
-            Arc::new(rust_blog::cache::MemoryCache::new()),
+            Arc::new(raisfast::cache::MemoryCache::new()),
             None,
         ));
-    let eventbus = rust_blog::eventbus::EventBus::new(16);
+    let eventbus = raisfast::eventbus::EventBus::new(16);
     let config = test_config();
-    let plugin_mgr = rust_blog::plugins::PluginManager::new(Arc::new(config.clone())).await;
+    let plugin_mgr = raisfast::plugins::PluginManager::new(Arc::new(config.clone())).await;
 
-    let req = rust_blog::handlers::dto::CreatePostRequest {
+    let req = raisfast::handlers::dto::CreatePostRequest {
         title: "Test Post".into(),
         content: "Hello world".into(),
         excerpt: None,
@@ -286,7 +286,7 @@ async fn tauri_post_create_and_list() {
         tag_ids: None,
     };
 
-    let auth = rust_blog::middleware::auth::AuthUser::from_parts(
+    let auth = raisfast::middleware::auth::AuthUser::from_parts(
         Some(author_id.clone()),
         "author".to_string(),
         None,
@@ -322,16 +322,16 @@ async fn tauri_post_get_by_slug() {
     let author_id = create_test_user(&pool, "author-002").await;
     let sqlx_repo = SqlxPostRepository::new(pool.clone());
     let post_repo: Arc<dyn PostRepository> =
-        Arc::new(rust_blog::repositories::CachedPostRepository::new(
+        Arc::new(raisfast::repositories::CachedPostRepository::new(
             sqlx_repo,
-            Arc::new(rust_blog::cache::MemoryCache::new()),
+            Arc::new(raisfast::cache::MemoryCache::new()),
             None,
         ));
-    let eventbus = rust_blog::eventbus::EventBus::new(16);
+    let eventbus = raisfast::eventbus::EventBus::new(16);
     let config = test_config();
-    let plugin_mgr = rust_blog::plugins::PluginManager::new(Arc::new(config.clone())).await;
+    let plugin_mgr = raisfast::plugins::PluginManager::new(Arc::new(config.clone())).await;
 
-    let req = rust_blog::handlers::dto::CreatePostRequest {
+    let req = raisfast::handlers::dto::CreatePostRequest {
         title: "Slug Test".into(),
         content: "content".into(),
         excerpt: None,
@@ -341,7 +341,7 @@ async fn tauri_post_get_by_slug() {
         tag_ids: None,
     };
 
-    let auth = rust_blog::middleware::auth::AuthUser::from_parts(
+    let auth = raisfast::middleware::auth::AuthUser::from_parts(
         Some(author_id.clone()),
         "author".to_string(),
         None,
@@ -366,7 +366,7 @@ async fn tauri_post_get_by_slug() {
 async fn tauri_cms_create_and_list() {
     let pool = setup_pool().await;
     let ct = parse_todo_ct();
-    let registry = rust_blog::content_type::ContentTypeRegistry::new();
+    let registry = raisfast::content_type::ContentTypeRegistry::new();
     let config = test_config();
     registry
         .register(
@@ -494,7 +494,7 @@ async fn tauri_cms_enum_field_validation() {
 
 #[tokio::test]
 async fn tauri_registry_register_and_query() {
-    let registry = rust_blog::content_type::ContentTypeRegistry::new();
+    let registry = raisfast::content_type::ContentTypeRegistry::new();
     let config = test_config();
     let ct = parse_todo_ct();
     registry
@@ -515,7 +515,7 @@ async fn tauri_registry_register_and_query() {
 
 #[tokio::test]
 async fn tauri_registry_unregister() {
-    let registry = rust_blog::content_type::ContentTypeRegistry::new();
+    let registry = raisfast::content_type::ContentTypeRegistry::new();
     let config = test_config();
     let ct = parse_todo_ct();
     registry
@@ -536,7 +536,7 @@ async fn tauri_registry_unregister() {
 
 #[tokio::test]
 async fn tauri_registry_list_all() {
-    let registry = rust_blog::content_type::ContentTypeRegistry::new();
+    let registry = raisfast::content_type::ContentTypeRegistry::new();
     let config = test_config();
     let ct1 = parse_todo_ct();
 
@@ -739,7 +739,7 @@ async fn tauri_build_app_state_succeeds() {
     std::fs::create_dir_all(&config.content_type_dir).unwrap();
 
     let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let result = rust_blog::build_app_state(&config, shutdown_rx).await;
+    let result = raisfast::build_app_state(&config, shutdown_rx).await;
     assert!(
         result.is_ok(),
         "build_app_state should succeed: {:?}",

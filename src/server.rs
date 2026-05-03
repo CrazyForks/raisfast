@@ -1143,7 +1143,7 @@ pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         env = %config.env,
-        "starting rust-blog server"
+        "starting raisfast server"
     );
     let tz = crate::utils::tz::parse_tz_or_utc(&config.timezone);
     tracing::info!("site timezone: {}", tz);

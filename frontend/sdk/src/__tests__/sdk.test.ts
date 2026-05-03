@@ -129,7 +129,7 @@ describe("BaseAuthStore", () => {
 describe("HttpClient", () => {
   it("sets and gets tenant ID", () => {
     const store = new BaseAuthStore();
-    const http = new HttpClient("http://localhost:9000/api/v1", store);
+    const http = new HttpClient("http://localhost:9898/api/v1", store);
     expect(http.tenantId).toBeNull();
     http.setTenantId("t1");
     expect(http.tenantId).toBe("t1");
@@ -141,14 +141,14 @@ describe("HttpClient", () => {
 describe("Collection", () => {
   it("uses public prefix by default", () => {
     const store = new BaseAuthStore();
-    const http = new HttpClient("http://localhost:9000/api/v1", store);
+    const http = new HttpClient("http://localhost:9898/api/v1", store);
     const col = new Collection(http, "posts");
     expect(col).toBeDefined();
   });
 
   it("uses admin prefix when admin=true", () => {
     const store = new BaseAuthStore();
-    const http = new HttpClient("http://localhost:9000/api/v1", store);
+    const http = new HttpClient("http://localhost:9898/api/v1", store);
     const col = new Collection(http, "posts", true);
     expect(col).toBeDefined();
   });

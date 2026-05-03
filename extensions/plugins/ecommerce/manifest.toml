@@ -1,9 +1,9 @@
 [plugin]
-id = "com.rust-blog.ecommerce"
+id = "com.raisfast.ecommerce"
 name = "E-Commerce API"
 version = "0.1.0"
 description = "电商 API：商品浏览、购物车、下单结算"
-author = "rust-blog"
+author = "raisfast"
 license = "MIT"
 runtime = "js"
 language = "js"

@@ -474,11 +474,11 @@ let output: PostData = serde_json::from_str(&result_str)?;
 ```toml
 # plugins/seo-optimizer-lua/plugin.toml
 [plugin]
-id = "com.rust-blog.seo-optimizer-lua"
+id = "com.raisfast.seo-optimizer-lua"
 name = "SEO Optimizer (Lua)"
 version = "1.0.0"
 description = "Lua 版 SEO 优化插件"
-author = "rust-blog"
+author = "raisfast"
 license = "MIT"
 runtime = "lua"              # "wasm" | "js" | "lua"
 language = "lua"             # 信息字段
@@ -591,7 +591,7 @@ Plugin = {
 ```toml
 # plugins/excerpt-generator/plugin.toml
 [plugin]
-id = "com.rust-blog.excerpt-generator"
+id = "com.raisfast.excerpt-generator"
 name = "Excerpt Generator"
 version = "1.0.0"
 description = "自动从内容生成文章摘要"
@@ -641,7 +641,7 @@ Plugin = {
 ```toml
 # plugins/og-tags/plugin.toml
 [plugin]
-id = "com.rust-blog.og-tags"
+id = "com.raisfast.og-tags"
 name = "OG Tag Injector"
 version = "1.0.0"
 description = "注入 Open Graph 和 Twitter Card 标签"
@@ -671,7 +671,7 @@ Plugin = {
 ```toml
 # plugins/word-filter-lua/plugin.toml
 [plugin]
-id = "com.rust-blog.word-filter-lua"
+id = "com.raisfast.word-filter-lua"
 name = "Word Filter (Lua)"
 version = "1.0.0"
 description = "过滤评论中的敏感词（Lua 版）"

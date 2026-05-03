@@ -1,6 +1,6 @@
 # 竞争对手分析与平台演进路线
 
-> rust-blog 定位：**Rust 单体嵌入式后端 + 插件系统 + Headless CMS + HTTP/Tauri 双模式部署**
+> raisfast 定位：**Rust 单体嵌入式后端 + 插件系统 + Headless CMS + HTTP/Tauri 双模式部署**
 
 ---
 
@@ -172,7 +172,7 @@
 
 ## 5. 竞争力矩阵
 
-| 能力 | rust-blog | PocketBase | Strapi | Supabase | Appwrite |
+| 能力 | raisfast | PocketBase | Strapi | Supabase | Appwrite |
 |---|---|---|---|---|---|
 | 单二进制部署 | ✅ | ✅ | ❌ | ❌ | ❌ |
 | 嵌入式 SQLite | ✅ | ✅ | ⚠️ | ❌ | ❌ |
@@ -199,7 +199,7 @@
 
 ## 6. 我们的独特定位
 
-综合分析，rust-blog 在全球范围内的独特定位是：
+综合分析，raisfast 在全球范围内的独特定位是：
 
 > **Rust 单体嵌入式后端 + 插件系统 + Headless CMS + 同时支持 HTTP 服务器和 Tauri 桌面应用**
 
@@ -243,7 +243,7 @@
 │              插件生态 (Plugin Marketplace)             │
 │   支付 / 邮件 / OAuth / AI / 搜索 / 通知 / 分析      │
 ├─────────────────────────────────────────────────────┤
-│              核心引擎 (rust-blog)                     │
+│              核心引擎 (raisfast)                     │
 │   Auth / CMS / RBAC / 多租户 / 插件沙箱 / API        │
 ├─────────────────────────────────────────────────────┤
 │              双模式运行时                              │
@@ -466,7 +466,7 @@ Tauri 适配        完整文档 + 教程      模板 CLI 规范         社区�
 - **PocketBase**：性能强，但无插件、无 CMS、无桌面
 - **Strapi**：开发快，但性能差、二进制大、无桌面
 - **Supabase**：功能全，但部署重、无桌面、无嵌入式
-- **rust-blog**：性能最强 + 扩展性最强 + 开发速度最快（补齐 Builder 后） + 部署最灵活
+- **raisfast**：性能最强 + 扩展性最强 + 开发速度最快（补齐 Builder 后） + 部署最灵活
 
 **核心竞争力：用 Rust 的性能和安全性，做到 Node.js 方案的开发体验。**
 

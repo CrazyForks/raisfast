@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use rust_blog::config::app::AppConfig;
+use raisfast::config::app::AppConfig;
 
 pub fn create_new(config: &AppConfig, id: &str, runtime: &str) -> anyhow::Result<()> {
     let plugin_base = config.plugin_dir.as_deref().unwrap_or("./plugins");

@@ -1,6 +1,6 @@
 use super::*;
 
-async fn setup() -> (axum::Router, String, rust_blog::db::Pool) {
+async fn setup() -> (axum::Router, String, raisfast::db::Pool) {
     let (app, state) = test_app().await;
     let admin_id = create_admin(&state.pool).await;
     let tok = make_token(&admin_id, "admin");
@@ -180,9 +180,9 @@ async fn delete_token_non_owner_forbidden() {
     .await;
     let id = create_body["data"]["id"].as_str().unwrap();
 
-    let reader_hash = rust_blog::services::auth::hash_password("ReaderPass123!").unwrap();
+    let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
     let reader_id = uuid::Uuid::now_v7().to_string();
-    let sql = rust_blog::db::dialect::translate(
+    let sql = raisfast::db::dialect::translate(
         "INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, 'reader')",
     );
     sqlx::query(&sql)
@@ -206,9 +206,9 @@ async fn delete_token_non_owner_forbidden() {
 #[tokio::test]
 async fn admin_can_delete_other_users_token() {
     let (mut app, tok, pool) = setup().await;
-    let reader_hash = rust_blog::services::auth::hash_password("ReaderPass123!").unwrap();
+    let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
     let reader_id = uuid::Uuid::now_v7().to_string();
-    let sql = rust_blog::db::dialect::translate(
+    let sql = raisfast::db::dialect::translate(
         "INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, 'reader')",
     );
     sqlx::query(&sql)
@@ -454,9 +454,9 @@ async fn delete_requires_auth() {
 async fn each_user_sees_only_own_tokens() {
     let (mut app, tok, pool) = setup().await;
 
-    let reader_hash = rust_blog::services::auth::hash_password("ReaderPass123!").unwrap();
+    let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
     let reader_id = uuid::Uuid::now_v7().to_string();
-    let sql = rust_blog::db::dialect::translate(
+    let sql = raisfast::db::dialect::translate(
         "INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, 'reader')",
     );
     sqlx::query(&sql)

@@ -1,6 +1,6 @@
 # @raisfast/sdk
 
-Framework-agnostic JavaScript/TypeScript SDK for [RaisFast](https://github.com/anomalyco/rust-blog).
+Framework-agnostic JavaScript/TypeScript SDK for [RaisFast](https://github.com/anomalyco/raisfast).
 
 ## Install
 

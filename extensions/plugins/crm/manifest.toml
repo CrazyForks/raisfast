@@ -1,9 +1,9 @@
 [plugin]
-id = "com.rust-blog.crm"
+id = "com.raisfast.crm"
 name = "CRM API"
 version = "0.1.0"
 description = "CRM 销售漏斗、Pipeline 管理、联系人时间线"
-author = "rust-blog"
+author = "raisfast"
 license = "MIT"
 runtime = "js"
 language = "js"

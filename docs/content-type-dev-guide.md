@@ -2,7 +2,7 @@
 
 ## 概述
 
-Content Type（内容类型）是 rust-blog 的核心 CMS 机制，借鉴了 Strapi v5 Content Type Builder 和 WordPress Custom Post Types 的设计理念。每个 Content Type 由一个 TOML 文件定义，系统启动时自动加载、建表、注册 REST API。
+Content Type（内容类型）是 raisfast 的核心 CMS 机制，借鉴了 Strapi v5 Content Type Builder 和 WordPress Custom Post Types 的设计理念。每个 Content Type 由一个 TOML 文件定义，系统启动时自动加载、建表、注册 REST API。
 
 Content Type 与 Plugin 完全独立，互不依赖。
 
@@ -529,11 +529,11 @@ Handler 在内容生命周期关键点派发 Plugin 钩子：
 
 ```bash
 # 创建新 Content Type TOML
-rust-blog ct new product
+raisfast ct new product
 
 # 校验 TOML 文件
-rust-blog ct check                    # 校验默认目录
-rust-blog ct check ./content_types    # 校验指定目录
+raisfast ct check                    # 校验默认目录
+raisfast ct check ./content_types    # 校验指定目录
 ```
 
 ## 环境变量

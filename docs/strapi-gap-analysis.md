@@ -301,7 +301,7 @@
 
 ### vs Strapi
 
-| 维度 | rust-blog | Strapi |
+| 维度 | raisfast | Strapi |
 |------|-----------|--------|
 | **性能** | 单实例 10x QPS，内存 1/10 | Node.js 需要集群才能到千级 QPS |
 | **部署** | 单二进制 30MB，零依赖 | Node.js 18+ + npm + PostgreSQL，200MB+ |

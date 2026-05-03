@@ -1,6 +1,6 @@
 # CRM 市场分析
 
-> rust-blog CRM 扩展的商业化潜力分析
+> raisfast CRM 扩展的商业化潜力分析
 
 ---
 
@@ -58,11 +58,11 @@
 | Private Connect | 私有网络连接客户数据中心，数据仍在 Salesforce 云 | ❌ 非真正私有化 |
 | On-premise | 早期有，**已停售** | ❌ 已废弃 |
 
-**Salesforce 没有真正的私有化部署方案。** 这为 rust-blog CRM 留下了明确的市场空白。
+**Salesforce 没有真正的私有化部署方案。** 这为 raisfast CRM 留下了明确的市场空白。
 
 ### 3.3 无法使用 Salesforce 的场景
 
-| 场景 | 原因 | rust-blog 方案 |
+| 场景 | 原因 | raisfast 方案 |
 |---|---|---|
 | 政府/军工 | 数据必须在内网，不能出域 | ✅ 单二进制，完全离线 |
 | 金融/医疗 | 合规要求数据不能出境 | ✅ 私有化部署，数据完全自控 |
@@ -72,11 +72,11 @@
 
 ---
 
-## 4. rust-blog CRM 与竞品对比
+## 4. raisfast CRM 与竞品对比
 
 ### 4.1 技术对比
 
-| 维度 | Odoo | SuiteCRM | Twenty | **rust-blog CRM** |
+| 维度 | Odoo | SuiteCRM | Twenty | **raisfast CRM** |
 |---|---|---|---|---|
 | 语言 | Python | PHP | TypeScript | **Rust** |
 | 性能（RPS） | 5k-10k | 3k-8k | 10k-30k | **100k+** |
@@ -91,7 +91,7 @@
 
 ### 4.2 功能对比
 
-| 功能 | Odoo | SuiteCRM | Twenty | **rust-blog CRM** |
+| 功能 | Odoo | SuiteCRM | Twenty | **raisfast CRM** |
 |---|---|---|---|---|
 | 联系人管理 | ✅ | ✅ | ✅ | ✅ |
 | 公司管理 | ✅ | ✅ | ✅ | ✅ |
@@ -170,7 +170,7 @@
 
 ## 6. 竞争优势总结
 
-rust-blog CRM 在私有化 CRM 赛道的核心优势：
+raisfast CRM 在私有化 CRM 赛道的核心优势：
 
 | 优势 | 说明 |
 |---|---|

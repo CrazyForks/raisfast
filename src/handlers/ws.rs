@@ -25,7 +25,7 @@
 //!
 //! ```json
 //! {"type": "pong"}
-//! {"type": "connected", "message": "rust-blog websocket"}
+//! {"type": "connected", "message": "raisfast websocket"}
 //! ```
 
 use axum::extract::{
@@ -90,7 +90,7 @@ async fn handle_socket(socket: WebSocket, state: crate::AppState, initial_filter
     let (mut sender, mut receiver) = socket.split();
 
     let connected = serde_json::to_string(&ServerMessage::Connected {
-        message: "rust-blog websocket".into(),
+        message: "raisfast websocket".into(),
     })
     .unwrap_or_default();
     let _ = sender.send(Message::Text(connected.into())).await;

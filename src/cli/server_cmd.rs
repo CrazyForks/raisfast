@@ -4,9 +4,9 @@
 
 use std::path::PathBuf;
 
-use rust_blog::config::app::AppConfig;
+use raisfast::config::app::AppConfig;
 
-use rust_blog::server as srv;
+use raisfast::server as srv;
 
 fn pid_file_path() -> PathBuf {
     PathBuf::from("./hello-axum.pid")
