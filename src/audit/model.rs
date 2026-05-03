@@ -2,12 +2,14 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+#[cfg(feature = "export-types")]
 use ts_rs::TS;
 
 use crate::errors::app_error::AppResult;
 
 /// 审计日志完整数据库行
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct AuditEntry {
     pub id: String,
     pub tenant_id: String,

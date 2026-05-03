@@ -1,14 +1,16 @@
 //! 工作流数据模型与数据库查询
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "export-types")]
 use ts_rs::TS;
 
 use crate::db::Pool;
 
 /// 步骤类型
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-#[ts(rename_all = "snake_case")]
+#[cfg_attr(feature = "export-types", ts(rename_all = "snake_case"))]
 pub enum StepType {
     /// 自动执行任务
     Task,
@@ -23,25 +25,27 @@ pub enum StepType {
 }
 
 /// 步骤定义
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepDef {
     pub id: String,
     pub name: String,
     #[serde(rename = "type")]
-    #[ts(rename = "type")]
+    #[cfg_attr(feature = "export-types", ts(rename = "type"))]
     pub step_type: StepType,
     #[serde(default)]
-    #[ts(type = "unknown")]
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub config: serde_json::Value,
     #[serde(default)]
-    #[ts(type = "unknown")]
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub next: serde_json::Value,
     #[serde(default)]
     pub timeout_ms: u64,
 }
 
 /// 工作流定义行
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct WorkflowDefinition {
     pub id: String,
     pub name: String,
@@ -62,7 +66,8 @@ impl WorkflowDefinition {
 }
 
 /// 工作流实例行
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct WorkflowInstance {
     pub id: String,
     pub definition_id: String,
@@ -83,7 +88,8 @@ impl WorkflowInstance {
 }
 
 /// 步骤执行日志行
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct StepLog {
     pub id: String,
     pub instance_id: String,

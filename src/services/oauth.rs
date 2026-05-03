@@ -6,6 +6,7 @@
 //! - 绑定/解绑 OAuth 账号
 
 use chrono::Utc;
+#[cfg(feature = "export-types")]
 use ts_rs::TS;
 
 use crate::commands::CreateUserCmd;
@@ -230,7 +231,8 @@ pub async fn list_bindings(
 }
 
 /// 绑定信息
-#[derive(Debug, serde::Serialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, serde::Serialize)]
 pub struct OAuthBindingInfo {
     pub provider: String,
     pub display_name: Option<String>,

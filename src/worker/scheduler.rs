@@ -33,6 +33,7 @@
 
 use chrono::{DateTime, Utc};
 use cron::Schedule;
+#[cfg(feature = "export-types")]
 use ts_rs::TS;
 
 use crate::db::Pool;
@@ -78,7 +79,8 @@ macro_rules! exec_log_row_to_struct {
 }
 
 /// Cron 调度行
-#[derive(Debug, Clone, serde::Serialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct CronSchedule {
     /// 主键
     pub id: String,
@@ -484,7 +486,8 @@ pub async fn seed_defaults(
 }
 
 /// Cron 执行历史记录
-#[derive(Debug, Clone, serde::Serialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct CronExecutionLog {
     /// 主键
     pub id: String,

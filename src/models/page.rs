@@ -3,6 +3,7 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+#[cfg(feature = "export-types")]
 use ts_rs::TS;
 
 use crate::constants::DEFAULT_TENANT;
@@ -11,7 +12,8 @@ use crate::errors::app_error::{AppError, AppResult};
 
 // ── 数据库行模型 ──
 
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct Page {
     pub id: String,
     pub tenant_id: String,
@@ -34,7 +36,8 @@ pub struct Page {
     pub updated_at: String,
 }
 
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct ReusableBlock {
     pub id: String,
     pub tenant_id: String,
@@ -50,9 +53,10 @@ pub struct ReusableBlock {
 
 // ── Block 类型系统 ──
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[ts(rename_all = "snake_case")]
+#[cfg_attr(feature = "export-types", ts(rename_all = "snake_case"))]
 pub enum PageBlock {
     Hero {
         title: String,
@@ -193,7 +197,8 @@ pub enum PageBlock {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GalleryImage {
     pub url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -202,7 +207,8 @@ pub struct GalleryImage {
     pub caption: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestimonialItem {
     pub quote: String,
     pub author: String,
@@ -214,7 +220,8 @@ pub struct TestimonialItem {
     pub rating: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FaqItem {
     pub question: String,
     pub answer: String,
@@ -222,7 +229,8 @@ pub struct FaqItem {
     pub is_open: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatItem {
     pub label: String,
     pub value: String,
@@ -234,7 +242,8 @@ pub struct StatItem {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelineItem {
     pub date: String,
     pub title: String,
@@ -246,7 +255,8 @@ pub struct TimelineItem {
     pub color: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamMember {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -259,13 +269,15 @@ pub struct TeamMember {
     pub social_links: Option<Vec<SocialLink>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SocialLink {
     pub platform: String,
     pub url: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PricingPlan {
     pub name: String,
     pub price: String,
@@ -280,7 +292,8 @@ pub struct PricingPlan {
     pub button_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FormFieldDef {
     pub name: String,
     pub label: String,
@@ -293,7 +306,8 @@ pub struct FormFieldDef {
     pub placeholder: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnDef {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub width: Option<String>,

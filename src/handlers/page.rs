@@ -5,6 +5,7 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "export-types")]
 use ts_rs::TS;
 use validator::Validate;
 
@@ -103,7 +104,8 @@ pub struct UpdateReusableRequest {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Serialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Serialize)]
 pub struct SitemapEntry {
     pub slug: String,
     pub updated_at: Option<String>,

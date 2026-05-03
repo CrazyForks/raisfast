@@ -9,6 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+#[cfg(feature = "export-types")]
 use ts_rs::TS;
 
 use crate::db::tenant::{resolve_tenant, tenant_filter, tenant_filter_aliased};
@@ -40,7 +41,8 @@ pub struct Comment {
 ///
 /// 在 [`Comment`] 基础上增加 `depth`（嵌套深度）和 `replies`（子评论列表），
 /// 形成递归的树形结构。
-#[derive(Debug, Serialize, Clone, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Serialize, Clone)]
 #[non_exhaustive]
 pub struct CommentResponse {
     pub id: String,
@@ -190,7 +192,8 @@ pub async fn find_all_by_post(
 }
 
 /// 分页查询全局所有评论（管理员），关联文章标题。
-#[derive(Debug, FromRow, Serialize, Clone, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, FromRow, Serialize, Clone)]
 pub struct AdminCommentRow {
     pub id: String,
     pub post_id: String,

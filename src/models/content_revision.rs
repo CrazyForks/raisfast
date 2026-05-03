@@ -6,12 +6,14 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::FromRow;
+#[cfg(feature = "export-types")]
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
 
 /// 内容版本历史完整数据库行模型
-#[derive(Debug, FromRow, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct ContentRevision {
     pub id: String,
     pub content_type: String,
@@ -23,7 +25,8 @@ pub struct ContentRevision {
 }
 
 /// API 响应用：版本摘要（不含完整 snapshot）
-#[derive(Debug, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RevisionSummary {
     pub id: String,
     pub revision_number: i64,

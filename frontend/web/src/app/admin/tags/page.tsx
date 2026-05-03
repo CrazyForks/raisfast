@@ -32,21 +32,8 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { client } from "@/lib/raisfast";
 import { SDKError } from "@raisfast/sdk";
+import type { Tag, PaginatedData } from "@raisfast/sdk";
 import { useT } from "@/lib/i18n";
-
-interface Tag {
-  id: string;
-  name: string;
-  slug: string;
-  created_at: string;
-}
-
-interface PaginatedData<T> {
-  items: T[];
-  total: number;
-  page: number;
-  page_size: number;
-}
 
 const tagSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -65,8 +52,7 @@ export default function TagsPage() {
 
   const tagsQuery = useQuery({
     queryKey: ["tags", page],
-    queryFn: () =>
-      client.send<PaginatedData<Tag>>(`/tags?page=${page}&page_size=${pageSize}`),
+    queryFn: () => client.tags.list(page, pageSize),
   });
 
   type FormValues = z.infer<typeof tagSchema>;
@@ -100,7 +86,7 @@ export default function TagsPage() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: { name: string } }) =>
-      client.send(`/tags/${id}`, { method: "PUT", body: data }),
+      client.tags.update(id, data),
     onSuccess: () => {
       toast.success(t("tags.tagUpdated"));
       queryClient.invalidateQueries({ queryKey: ["tags"] });

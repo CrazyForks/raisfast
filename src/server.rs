@@ -21,7 +21,7 @@ use crate::middleware::rate_limit::{
 use axum::Extension;
 use axum::extract::State;
 use axum::http::HeaderValue;
-use axum::middleware::from_fn;
+use axum::middleware::{from_fn, from_fn_with_state};
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post as http_post, put};
 use tokio::net::TcpListener;
@@ -374,10 +374,10 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
             api_v1,
             registry,
             "/tags/{id}",
-            delete(tag::delete),
+            put(tag::update).delete(tag::delete),
             "system",
             "tags",
-            ["DELETE"]
+            ["PUT", "DELETE"]
         );
         reg_route!(
             api_v1,
@@ -1118,6 +1118,10 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet) -> anyhow::Resu
                 ),
         )
         .layer(cors)
+        .layer(from_fn_with_state(
+            state.clone(),
+            crate::middleware::aop_http::aop_http_layer,
+        ))
         .with_state(state);
 
     let app = app.route("/api/docs/openapi.json", get(openapi::serve_openapi_json));

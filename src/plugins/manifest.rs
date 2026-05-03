@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+#[cfg(feature = "export-types")]
 use ts_rs::TS;
 
 /// 插件清单顶层结构
@@ -176,7 +177,8 @@ fn default_sdk_version() -> String {
 }
 
 /// 插件权限声明
-#[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Permissions {
     #[serde(default)]
     pub http: Vec<String>,

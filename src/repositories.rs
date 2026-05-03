@@ -248,6 +248,15 @@ pub trait TagRepository: Send + Sync {
 
     /// 删除标签
     async fn delete(&self, id: &str, tenant_id: Option<&str>) -> AppResult<()>;
+
+    /// 更新标签
+    async fn update(
+        &self,
+        id: &str,
+        name: &str,
+        slug: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<Tag>;
 }
 
 /// 评论 Repository 接口

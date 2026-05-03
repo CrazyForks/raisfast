@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use tokio::sync::RwLock;
+#[cfg(feature = "export-types")]
 use ts_rs::TS;
 
 use crate::constants::DEFAULT_TENANT;
@@ -22,7 +23,8 @@ fn parse_value(value_str: &str) -> Value {
 }
 
 /// 分组信息
-#[derive(Debug, Clone, serde::Serialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct OptionGroup {
     pub key: String,
     pub label: String,
@@ -30,17 +32,18 @@ pub struct OptionGroup {
 }
 
 /// 单条配置（值 + 元数据）
-#[derive(Debug, Clone, serde::Serialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct OptionEntry {
     pub key: String,
-    #[ts(type = "unknown")]
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub value: Value,
     #[serde(rename = "type")]
-    #[ts(rename = "type")]
+    #[cfg_attr(feature = "export-types", ts(rename = "type"))]
     pub type_: String,
     pub label: String,
     pub description: Option<String>,
-    #[ts(type = "unknown")]
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub validation: Option<Value>,
     pub is_public: bool,
 }

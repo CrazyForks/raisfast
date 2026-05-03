@@ -6,7 +6,7 @@ use axum::extract::{Path, Query, State};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
-use crate::handlers::dto::CreateTagRequest;
+use crate::handlers::dto::{CreateTagRequest, UpdateTagRequest};
 use crate::middleware::auth::AuthUser;
 use crate::services::post;
 use crate::utils::pagination::PaginationParams;
@@ -62,4 +62,23 @@ pub async fn delete(
     auth.ensure_author()?;
     post::delete_tag(state.tag_repo.as_ref(), &id, &auth).await?;
     Ok(ApiResponse::success(()))
+}
+
+/// 更新标签
+#[utoipa::path(put, path = "/tags/{id}", tag = "tags",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "标签 ID")),
+    request_body = UpdateTagRequest,
+    responses((status = 200, description = "标签已更新"))
+)]
+pub async fn update(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateTagRequest>,
+) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
+    auth.ensure_author()?;
+    validation::validate(&req)?;
+    let tag = post::update_tag(state.tag_repo.as_ref(), &id, &auth, req.name).await?;
+    Ok(ApiResponse::success(tag))
 }

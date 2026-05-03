@@ -140,13 +140,14 @@ export class Auth {
 
   async sendSmsCode(
     phone: string,
+    purpose: string,
     options?: RequestOptions,
   ): Promise<void> {
-    await this.http.post("/auth/sms/send", { phone }, options);
+    await this.http.post("/auth/sms/send", { phone, purpose }, options);
   }
 
   async verifySms(
-    data: { phone: string; code: string },
+    data: { phone: string; code: string; purpose: string },
     options?: RequestOptions,
   ): Promise<AuthResult> {
     const result = await this.http.post<AuthResult>(

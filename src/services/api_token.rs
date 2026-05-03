@@ -6,6 +6,7 @@
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::api_token;
+#[cfg(feature = "export-types")]
 use ts_rs::TS;
 
 /// API Token 前缀
@@ -52,7 +53,8 @@ pub fn is_api_token(token: &str) -> bool {
 }
 
 /// 创建 API Token 返回结果
-#[derive(Debug, serde::Serialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, serde::Serialize)]
 pub struct CreateTokenResult {
     pub id: String,
     pub name: String,

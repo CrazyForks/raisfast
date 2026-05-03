@@ -5,6 +5,7 @@
 use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Redirect};
 use serde::Deserialize;
+#[cfg(feature = "export-types")]
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
@@ -141,7 +142,8 @@ pub async fn unbind(
 }
 
 /// Provider 信息
-#[derive(Debug, serde::Serialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, serde::Serialize)]
 pub struct ProviderInfo {
     pub name: String,
     pub configured: bool,

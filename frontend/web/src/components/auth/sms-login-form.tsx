@@ -44,7 +44,7 @@ export function SmsLoginForm() {
     }
     setSendingCode(true);
     try {
-      await client.send("/auth/sms/send", { method: "POST", body: { phone, purpose: "login" } });
+      await client.auth.sendSmsCode(phone, "login");
       start();
       toast.success("Verification code sent");
     } catch (err) {
@@ -61,17 +61,10 @@ export function SmsLoginForm() {
   async function onSubmit(values: SmsForm) {
     setLoading(true);
     try {
-      const data = await client.send<{
-        user: { id: string; email: string; username: string; role: string; avatar: string | null; bio: string | null };
-        access_token: string;
-        refresh_token: string;
-      }>("/auth/sms/verify", {
-        method: "POST",
-        body: {
-          phone: values.phone,
-          code: values.code,
-          purpose: "login",
-        },
+      const data = await client.auth.verifySms({
+        phone: values.phone,
+        code: values.code,
+        purpose: "login",
       });
       const u = data.user;
       store.login(

@@ -57,12 +57,12 @@ interface host-api {
     db-begin: func() -> string;
     db-commit: func() -> string;
     db-rollback: func() -> string;
-    fs-read: func(path: string) -> option<string>;
-    fs-write: func(path: string, content: string) -> bool;
-    fs-delete: func(path: string) -> bool;
-    fs-exists: func(path: string) -> bool;
-    fs-list: func(path: string) -> option<string>;
-    fs-stat: func(path: string) -> option<string>;
+    vfs-read: func(path: string) -> option<string>;
+    vfs-write: func(path: string, content: string) -> bool;
+    vfs-delete: func(path: string) -> bool;
+    vfs-exists: func(path: string) -> bool;
+    vfs-list: func(path: string) -> option<string>;
+    vfs-stat: func(path: string) -> option<string>;
     emit-event: func(event-type: string, data: string) -> string;
 }
 

@@ -4,12 +4,14 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+#[cfg(feature = "export-types")]
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
 
 /// roles 表行模型
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct Role {
     pub id: String,
     pub name: String,
@@ -20,7 +22,8 @@ pub struct Role {
 }
 
 /// permissions 表行模型
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct Permission {
     pub id: String,
     pub role_id: String,

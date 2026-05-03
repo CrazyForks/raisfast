@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+#[cfg(feature = "export-types")]
 use ts_rs::TS;
 
 use crate::db::tenant::{resolve_tenant, tenant_filter};
@@ -13,7 +14,8 @@ use crate::errors::app_error::{AppError, AppResult};
 /// 标签完整数据库行模型
 ///
 /// 直接映射 `tags` 表的所有字段。
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct Tag {
     pub id: String,
     pub tenant_id: String,
@@ -141,4 +143,27 @@ pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -
     let result = q.execute(pool).await?;
 
     AppError::expect_affected(&result, "tag")
+}
+
+/// 更新标签名称
+pub async fn update(
+    pool: &crate::db::Pool,
+    id: &str,
+    name: &str,
+    slug: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Tag> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let sql = format!(
+        "UPDATE tags SET name = ?, slug = ?, updated_at = ? WHERE id = ?{}",
+        tenant_filter(tenant_id)
+    );
+    let sql = crate::db::dialect::translate(&sql);
+    let mut q = sqlx::query(&sql).bind(name).bind(slug).bind(&now).bind(id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let result = q.execute(pool).await?;
+    AppError::expect_affected(&result, "tag")?;
+    find_by_id(pool, id, tenant_id).await
 }

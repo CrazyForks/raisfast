@@ -4,12 +4,14 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+#[cfg(feature = "export-types")]
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
 
 /// tenants 表行模型
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct Tenant {
     pub id: String,
     pub name: String,

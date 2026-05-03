@@ -2,12 +2,14 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+#[cfg(feature = "export-types")]
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
 
 /// Webhook 订阅完整数据库行
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct WebhookSubscription {
     pub id: String,
     pub tenant_id: String,
@@ -39,10 +41,11 @@ pub struct UpdateWebhookRequest {
 }
 
 /// 投递到 webhook 的 payload
-#[derive(Debug, Serialize, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Serialize)]
 pub struct WebhookPayload {
     pub event: String,
-    #[ts(type = "unknown")]
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub data: serde_json::Value,
     pub timestamp: String,
 }

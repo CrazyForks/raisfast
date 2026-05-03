@@ -104,6 +104,14 @@ pub struct Extensions {
     map: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
+impl Clone for Extensions {
+    fn clone(&self) -> Self {
+        Self {
+            map: HashMap::new(),
+        }
+    }
+}
+
 impl Extensions {
     pub fn new() -> Self {
         Self {
@@ -137,6 +145,7 @@ impl Default for Extensions {
 
 // ─── BaseContext ───
 
+#[derive(Clone)]
 pub struct BaseContext {
     pub user_id: Option<String>,
     pub user_role: Option<String>,

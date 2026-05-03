@@ -33,4 +33,12 @@ export class Tags {
   async delete(id: string, options?: RequestOptions): Promise<void> {
     await this.http.del(`/tags/${id}`, options);
   }
+
+  async update(
+    id: string,
+    body: { name: string },
+    options?: RequestOptions,
+  ): Promise<Tag> {
+    return this.http.put<Tag>(`/tags/${id}`, body, options);
+  }
 }

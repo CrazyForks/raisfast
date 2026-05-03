@@ -36,4 +36,14 @@ impl TagRepository for SqlxTagRepository {
     async fn delete(&self, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
         tag::delete(&self.pool, id, tenant_id).await
     }
+
+    async fn update(
+        &self,
+        id: &str,
+        name: &str,
+        slug: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<Tag> {
+        tag::update(&self.pool, id, name, slug, tenant_id).await
+    }
 }

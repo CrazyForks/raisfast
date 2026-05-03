@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+#[cfg(feature = "export-types")]
 use ts_rs::TS;
 
 use crate::db::tenant::{resolve_tenant, tenant_filter};
@@ -14,7 +15,8 @@ use crate::errors::app_error::{AppError, AppResult};
 ///
 /// 直接映射 `categories` 表的所有字段。
 /// `parent_id` 用于构建层级分类，`sort_order` 控制显示顺序。
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct Category {
     pub id: String,
     pub tenant_id: String,

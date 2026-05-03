@@ -168,6 +168,17 @@ pub async fn delete_tag(tag_repo: &dyn TagRepository, id: &str, auth: &AuthUser)
     Ok(())
 }
 
+/// 更新标签。
+pub async fn update_tag(
+    tag_repo: &dyn TagRepository,
+    id: &str,
+    auth: &AuthUser,
+    name: String,
+) -> AppResult<crate::models::tag::Tag> {
+    let slug = slugify(&name);
+    tag_repo.update(id, &name, &slug, auth.tenant_id()).await
+}
+
 /// 获取所有标签列表。
 pub async fn list_tags(
     tag_repo: &dyn TagRepository,
