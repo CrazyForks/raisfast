@@ -1,18 +1,20 @@
-//! Lua 引擎封装
+//! Lua 引擎封装（per-request 模式）
 //!
 //! 基于 mlua 的 Lua 5.4 运行时，支持 Send+Sync（send feature），
 //! 原生 serde 集成（Rust struct ↔ Lua table 零序列化映射）。
-//! 每个插件拥有独立的 Lua 状态（隔离的全局作用域）。
+//!
+//! 采用方案 D（per-request）：每次调用创建全新 Lua VM，用完销毁。
+//! Lua context 创建成本约 0.1ms，零竞争、无限并发、完美隔离。
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::AtomicI64;
+use std::sync::atomic::Ordering;
 
+use dashmap::DashMap;
 use mlua::{Error as LuaError, HookTriggers, Lua, LuaOptions, LuaSerdeExt, StdLib, VmState};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use tokio::sync::Mutex;
 
 use crate::config::app::AppConfig;
 use crate::db::Pool;
@@ -20,39 +22,20 @@ use crate::plugins::Permissions;
 
 const DEFAULT_TIMEOUT_INSTRUCTIONS: i64 = 5_000_000;
 
-/// Lua 实例池
-///
-/// 为单个 Lua 插件维护多个独立 VM 实例，支持并发执行。
-struct LuaInstancePool {
-    instances: Vec<Mutex<Lua>>,
-    next: AtomicUsize,
+struct LuaPluginEntry {
+    code: String,
+    permissions: Permissions,
+    plugin_dir: PathBuf,
+    sdk_source: &'static str,
 }
 
-impl LuaInstancePool {
-    fn new(instances: Vec<Lua>) -> Self {
-        Self {
-            instances: instances.into_iter().map(Mutex::new).collect(),
-            next: AtomicUsize::new(0),
-        }
-    }
-
-    async fn acquire(&self) -> tokio::sync::MutexGuard<'_, Lua> {
-        let len = self.instances.len();
-        let idx = self.next.fetch_add(1, Ordering::Relaxed) % len;
-        self.instances[idx].lock().await
-    }
-}
-
-/// Lua 插件引擎
+/// Lua 插件引擎（per-request 模式）
 ///
-/// 管理所有 Lua 插件的独立 Lua 状态。
-/// 每个插件拥有独立的实例池，不同插件可并发执行。
+/// 存储所有 Lua 插件的源码和元数据，每次调用时创建全新 context。
 pub struct LuaEngine {
-    pools: Mutex<HashMap<String, Arc<LuaInstancePool>>>,
-    permissions_map: Mutex<HashMap<String, Permissions>>,
+    plugins: DashMap<String, LuaPluginEntry>,
     config: Arc<AppConfig>,
     pool: Option<Pool>,
-    pool_size: usize,
     event_bus: Option<crate::eventbus::EventBus>,
 }
 
@@ -62,13 +45,10 @@ impl LuaEngine {
         pool: Option<Pool>,
         event_bus: Option<crate::eventbus::EventBus>,
     ) -> anyhow::Result<Self> {
-        let pool_size = config.plugin_lua_pool_size.max(1) as usize;
         Ok(Self {
-            pools: Mutex::new(HashMap::new()),
-            permissions_map: Mutex::new(HashMap::new()),
+            plugins: DashMap::new(),
             config: Arc::new(config.clone()),
             pool,
-            pool_size,
             event_bus,
         })
     }
@@ -84,24 +64,21 @@ impl LuaEngine {
 
     fn create_instance(
         &self,
-        code: &str,
+        entry: &LuaPluginEntry,
         plugin_id: &str,
-        permissions: &Permissions,
-        memory_limit: usize,
-        plugin_dir: &Path,
-        sdk_source: &'static str,
     ) -> anyhow::Result<Lua> {
+        let memory_limit = (self.config.plugin_max_memory_mb as usize) * 1024 * 1024;
         let lua = Self::create_sandboxed_lua(memory_limit)?;
         super::lua_host::register_host_functions(
             &lua,
             self.config.clone(),
             plugin_id.to_string(),
-            permissions.clone(),
+            entry.permissions.clone(),
             self.pool.clone(),
             self.event_bus.clone(),
         )?;
-        Self::register_require(&lua, plugin_dir, sdk_source)?;
-        lua.load(code).set_name("init.lua").exec()?;
+        Self::register_require(&lua, &entry.plugin_dir, entry.sdk_source)?;
+        lua.load(&entry.code).set_name("init.lua").exec()?;
         Ok(lua)
     }
 
@@ -158,26 +135,28 @@ impl LuaEngine {
         sdk_source: &'static str,
     ) -> anyhow::Result<()> {
         let memory_limit = (self.config.plugin_max_memory_mb as usize) * 1024 * 1024;
-        let mut instances = Vec::with_capacity(self.pool_size);
-        for _ in 0..self.pool_size {
-            instances.push(self.create_instance(
-                code,
-                id,
-                &permissions,
-                memory_limit,
-                plugin_dir,
-                sdk_source,
-            )?);
-        }
+        let lua = Self::create_sandboxed_lua(memory_limit)?;
+        super::lua_host::register_host_functions(
+            &lua,
+            self.config.clone(),
+            id.to_string(),
+            permissions.clone(),
+            self.pool.clone(),
+            self.event_bus.clone(),
+        )?;
+        Self::register_require(&lua, plugin_dir, sdk_source)?;
+        lua.load(code).set_name("init.lua").exec()?;
+        drop(lua);
 
-        self.permissions_map
-            .lock()
-            .await
-            .insert(id.to_string(), permissions);
-        self.pools
-            .lock()
-            .await
-            .insert(id.to_string(), Arc::new(LuaInstancePool::new(instances)));
+        self.plugins.insert(
+            id.to_string(),
+            LuaPluginEntry {
+                code: code.to_string(),
+                permissions,
+                plugin_dir: plugin_dir.to_path_buf(),
+                sdk_source,
+            },
+        );
         Ok(())
     }
 
@@ -194,7 +173,7 @@ impl LuaEngine {
     }
 
     pub async fn unload_plugin(&self, id: &str) {
-        self.pools.lock().await.remove(id);
+        self.plugins.remove(id);
     }
 
     pub async fn call_filter<T: Serialize + DeserializeOwned + Send>(
@@ -203,15 +182,11 @@ impl LuaEngine {
         func_name: &str,
         input: &T,
     ) -> anyhow::Result<Option<T>> {
-        let pool = {
-            let pools = self.pools.lock().await;
-            match pools.get(plugin_id) {
-                Some(p) => Arc::clone(p),
-                None => return Ok(None),
-            }
+        let Some(entry) = self.plugins.get(plugin_id) else {
+            return Ok(None);
         };
 
-        let lua = pool.acquire().await;
+        let lua = self.create_instance(&entry, plugin_id)?;
         exec_with_timeout(&lua, || {
             let globals = lua.globals();
             let plugin_table: mlua::Table = match globals.get("Plugin") {
@@ -236,15 +211,11 @@ impl LuaEngine {
         func_name: &str,
         data: &T,
     ) -> anyhow::Result<()> {
-        let pool = {
-            let pools = self.pools.lock().await;
-            match pools.get(plugin_id) {
-                Some(p) => Arc::clone(p),
-                None => return Ok(()),
-            }
+        let Some(entry) = self.plugins.get(plugin_id) else {
+            return Ok(());
         };
 
-        let lua = pool.acquire().await;
+        let lua = self.create_instance(&entry, plugin_id)?;
         exec_with_timeout(&lua, || {
             let globals = lua.globals();
             let plugin_table: mlua::Table = match globals.get("Plugin") {
@@ -268,15 +239,11 @@ impl LuaEngine {
         func_name: &str,
         input: &str,
     ) -> anyhow::Result<Option<String>> {
-        let pool = {
-            let pools = self.pools.lock().await;
-            match pools.get(plugin_id) {
-                Some(p) => Arc::clone(p),
-                None => return Ok(None),
-            }
+        let Some(entry) = self.plugins.get(plugin_id) else {
+            return Ok(None);
         };
 
-        let lua = pool.acquire().await;
+        let lua = self.create_instance(&entry, plugin_id)?;
         exec_with_timeout(&lua, || {
             let globals = lua.globals();
             let plugin_table: mlua::Table = match globals.get("Plugin") {
@@ -295,7 +262,7 @@ impl LuaEngine {
 
     #[allow(dead_code)]
     pub async fn plugin_count(&self) -> usize {
-        self.pools.lock().await.len()
+        self.plugins.len()
     }
 }
 
@@ -607,5 +574,109 @@ Plugin = {}
 "#;
         let result = engine.load_plugin_default("test-memlimit", code).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn lua_per_request_state_isolation() {
+        let engine = LuaEngine::new(&test_config(), None, None).unwrap();
+
+        let code = r#"
+counter = 0
+Plugin = {
+    on_post_creating = function(input)
+        counter = counter + 1
+        input.counter = counter
+        return input
+    end
+}
+"#;
+        engine
+            .load_plugin_default("test-isolation", code)
+            .await
+            .unwrap();
+
+        let r1: Option<serde_json::Value> = engine
+            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(r1.as_ref().unwrap()["counter"], 1);
+
+        let r2: Option<serde_json::Value> = engine
+            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            r2.as_ref().unwrap()["counter"], 1,
+            "per-request: counter should reset to 1 on each call (isolated VM)"
+        );
+    }
+
+    #[tokio::test]
+    async fn lua_concurrent_calls_succeed() {
+        let engine = Arc::new(LuaEngine::new(&test_config(), None, None).unwrap());
+
+        let code = r#"
+Plugin = {
+    on_post_creating = function(input)
+        input.processed = true
+        return input
+    end
+}
+"#;
+        engine
+            .load_plugin_default("test-concurrent", code)
+            .await
+            .unwrap();
+
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let eng = Arc::clone(&engine);
+            handles.push(tokio::spawn(async move {
+                let input = serde_json::json!({"idx": i});
+                eng.call_filter::<serde_json::Value>(
+                    "test-concurrent",
+                    "on_post_creating",
+                    &input,
+                )
+                .await
+            }));
+        }
+
+        let mut success = 0;
+        for h in handles {
+            let r = h.await.unwrap().unwrap();
+            if r.is_some() && r.as_ref().unwrap()["processed"] == true {
+                success += 1;
+            }
+        }
+        assert_eq!(success, 10, "all 10 concurrent calls should succeed");
+    }
+
+    #[tokio::test]
+    async fn lua_call_after_unload_returns_none() {
+        let engine = LuaEngine::new(&test_config(), None, None).unwrap();
+        engine
+            .load_plugin_default("test-gone", "Plugin = { on_post_creating = function(i) return i end }")
+            .await
+            .unwrap();
+
+        engine.unload_plugin("test-gone").await;
+
+        let result: Option<serde_json::Value> = engine
+            .call_filter("test-gone", "on_post_creating", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(result.is_none(), "call after unload should return None");
+
+        let result = engine
+            .call_action("test-gone", "on_post_creating", &serde_json::json!({}))
+            .await;
+        assert!(result.is_ok(), "call_action after unload should return Ok(())");
+
+        let result = engine
+            .call_string_filter("test-gone", "on_post_creating", "hello")
+            .await
+            .unwrap();
+        assert!(result.is_none(), "call_string_filter after unload should return None");
     }
 }

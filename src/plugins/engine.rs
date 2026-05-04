@@ -1,16 +1,17 @@
-//! WASM Component Model 引擎封装
+//! WASM Component Model 引擎封装（方案 B+C：Semaphore + Mutex）
 //!
 //! 基于 wasmtime Component Model，通过 `bindgen!` 生成的类型化绑定
 //! 直接调用插件导出函数，消除手动内存管理。
 //!
-//! 数据传递使用 canonical ABI 自动编解码，插件侧零 unsafe 代码。
+//! 实例池使用 Semaphore 控制总并发 + per-instance Mutex 获取实例，
+//! Semaphore 异步等待不阻塞 tokio worker。
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 
 use crate::plugins::bindings::PluginWorld;
 use crate::plugins::bindings::exports::raisfast::plugin_protocol::plugin_hooks::CommentInput;
@@ -21,12 +22,6 @@ use crate::plugins::host_common::HostContext;
 
 const DEFAULT_FUEL: u64 = 10_000_000;
 
-/// WASM Component 实例池
-pub struct WasmInstancePool {
-    instances: Vec<Mutex<WasmComponentInstance>>,
-    next: AtomicUsize,
-}
-
 /// 单个 WASM Component 实例
 pub struct WasmComponentInstance {
     store: wasmtime::Store<Arc<HostContext>>,
@@ -35,6 +30,21 @@ pub struct WasmComponentInstance {
     fuel_limit: u64,
     #[allow(dead_code)]
     plugin_id: String,
+}
+
+/// 带 Mutex 和忙标记的 WASM 实例
+struct PooledInstance {
+    instance: Mutex<WasmComponentInstance>,
+    busy: AtomicBool,
+}
+
+/// WASM Component 实例池（Semaphore + Mutex）
+///
+/// 用 Semaphore 控制最大并发数（异步等待，不阻塞线程），
+/// AtomicBool 快速定位空闲实例，Mutex 提供 &mut 访问。
+pub struct WasmInstancePool {
+    instances: Vec<PooledInstance>,
+    semaphore: Semaphore,
 }
 
 impl WasmInstancePool {
@@ -62,25 +72,79 @@ impl WasmInstancePool {
 
             let bindings = PluginWorld::instantiate(&mut store, &component, &linker)?;
 
-            instances.push(Mutex::new(WasmComponentInstance {
-                store,
-                bindings,
-                timeout_ms,
-                fuel_limit: DEFAULT_FUEL,
-                plugin_id: host_ctx.plugin_id().to_string(),
-            }));
+            instances.push(PooledInstance {
+                instance: Mutex::new(WasmComponentInstance {
+                    store,
+                    bindings,
+                    timeout_ms,
+                    fuel_limit: DEFAULT_FUEL,
+                    plugin_id: host_ctx.plugin_id().to_string(),
+                }),
+                busy: AtomicBool::new(false),
+            });
         }
         Ok(Self {
             instances,
-            next: AtomicUsize::new(0),
+            semaphore: Semaphore::new(pool_size),
         })
     }
 
-    /// 获取下一个可用实例（round-robin）
-    pub async fn acquire(&self) -> tokio::sync::MutexGuard<'_, WasmComponentInstance> {
-        let len = self.instances.len();
-        let idx = self.next.fetch_add(1, Ordering::Relaxed) % len;
-        self.instances[idx].lock().await
+    /// 获取一个空闲实例
+    ///
+    /// Semaphore.acquire() 异步等待可用 permit（不阻塞线程），
+    /// 然后遍历 AtomicBool 找到第一个空闲实例并锁定。
+    /// 返回的 MutexGuard 在 Drop 时通过 WasmInstanceGuard 自动释放 busy 标记。
+    pub async fn acquire(&self) -> WasmInstanceGuard<'_> {
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .expect("semaphore closed unexpectedly");
+        for (i, pooled) in self.instances.iter().enumerate() {
+            if pooled
+                .busy
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                let guard = pooled.instance.lock().await;
+                return WasmInstanceGuard {
+                    _permit,
+                    guard,
+                    index: i,
+                    pool: self,
+                };
+            }
+        }
+        unreachable!("semaphore guaranteed a free instance but none found");
+    }
+}
+
+/// RAII 守卫：持有 MutexGuard + SemaphorePermit，Drop 时自动释放
+pub struct WasmInstanceGuard<'a> {
+    _permit: tokio::sync::SemaphorePermit<'a>,
+    guard: tokio::sync::MutexGuard<'a, WasmComponentInstance>,
+    index: usize,
+    pool: &'a WasmInstancePool,
+}
+
+impl<'a> Drop for WasmInstanceGuard<'a> {
+    fn drop(&mut self) {
+        self.pool.instances[self.index]
+            .busy
+            .store(false, Ordering::Release);
+    }
+}
+
+impl<'a> std::ops::Deref for WasmInstanceGuard<'a> {
+    type Target = WasmComponentInstance;
+    fn deref(&self) -> &Self::Target {
+        &self.guard
+    }
+}
+
+impl<'a> std::ops::DerefMut for WasmInstanceGuard<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.guard
     }
 }
 
@@ -338,5 +402,126 @@ mod tests {
         let back = content_event_to_json(&wit);
         assert_eq!(back["content_type"], "articles");
         assert_eq!(back["id"], "abc-123");
+    }
+
+    #[tokio::test]
+    async fn wasm_pool_acquire_and_release() {
+        let Some(pool) = try_create_test_pool(2).await else {
+            return;
+        };
+        let g1 = pool.acquire().await;
+        assert_eq!(g1.timeout_ms(), 5000);
+        drop(g1);
+    }
+
+    #[tokio::test]
+    async fn wasm_pool_concurrent_within_pool_size() {
+        let Some(pool) = try_create_test_pool(3).await else {
+            return;
+        };
+        let g1 = pool.acquire().await;
+        let g2 = pool.acquire().await;
+        let g3 = pool.acquire().await;
+
+        assert_eq!(g1.timeout_ms(), 5000);
+        assert_eq!(g2.timeout_ms(), 5000);
+        assert_eq!(g3.timeout_ms(), 5000);
+
+        drop(g1);
+        drop(g2);
+        drop(g3);
+    }
+
+    #[tokio::test]
+    async fn wasm_pool_excess_waits_for_release() {
+        let Some(pool) = try_create_test_pool(2).await else {
+            return;
+        };
+        let pool = Arc::new(pool);
+        let g1 = pool.acquire().await;
+        let g2 = pool.acquire().await;
+
+        let pool_clone = Arc::clone(&pool);
+        let acquire_task = tokio::spawn(async move {
+            let _g = pool_clone.acquire().await;
+            true
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(
+            !acquire_task.is_finished(),
+            "3rd acquire should be waiting (pool_size=2)"
+        );
+
+        drop(g1);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), acquire_task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(result, "3rd acquire should succeed after g1 dropped");
+
+        drop(g2);
+    }
+
+    #[tokio::test]
+    async fn wasm_pool_guard_drop_releases_permit() {
+        let Some(pool) = try_create_test_pool(1).await else {
+            return;
+        };
+        let pool = Arc::new(pool);
+        {
+            let _g = pool.acquire().await;
+        }
+
+        let pool_clone = Arc::clone(&pool);
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            async move {
+                let _g = pool_clone.acquire().await;
+                true
+            },
+        )
+        .await
+        .unwrap();
+        assert!(result, "should acquire after guard dropped");
+    }
+
+    async fn try_create_test_pool(pool_size: usize) -> Option<WasmInstancePool> {
+        let mut engine_config = wasmtime::Config::new();
+        engine_config.consume_fuel(true);
+        engine_config.wasm_component_model(true);
+        let engine = wasmtime::Engine::new(&engine_config).ok()?;
+
+        let wasm_bytes = find_wasm_fixture(&engine)?;
+
+        let host_ctx = Arc::new(HostContext::new(
+            "wasm",
+            Arc::new(crate::config::app::AppConfig::test_defaults()),
+            "test-plugin".to_string(),
+            crate::plugins::Permissions::default(),
+            None,
+        ));
+
+        WasmInstancePool::create_pool(&engine, &wasm_bytes, host_ctx, 5000, pool_size).ok()
+    }
+
+    fn find_wasm_fixture(engine: &wasmtime::Engine) -> Option<Vec<u8>> {
+        let candidates = [
+            "plugin-wit/test_plugin.wasm",
+            "tests/fixtures/test_plugin.wasm",
+            "plugins/seo-optimizer/seo_optimizer.wasm",
+            "plugins/content-filter/content_filter.wasm",
+        ];
+        for path in &candidates {
+            if let Ok(bytes) = std::fs::read(path) {
+                if wasmtime::component::Component::from_binary(engine, &bytes).is_ok() {
+                    return Some(bytes);
+                }
+            }
+        }
+        tracing::warn!(
+            "skipping WASM pool tests: no valid WASM Component fixture found (build with `just plugins-build`)"
+        );
+        None
     }
 }

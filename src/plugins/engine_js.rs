@@ -1,51 +1,33 @@
-//! QuickJS 引擎封装
+//! QuickJS 引擎封装（per-request 模式）
 //!
 //! 基于 rquickjs 的 `AsyncRuntime` / `AsyncContext`，
 //! 支持 JavaScript 插件在 tokio 异步环境中运行。
-//! 每个插件拥有独立的 AsyncRuntime + AsyncContext（完全隔离的内存空间）。
+//!
+//! 采用方案 D（per-request）：每次调用创建全新 QuickJS context，用完销毁。
+//! JS context 创建成本约 1ms，零竞争、无限并发、完美隔离。
 //!
 //! ESM 模式：插件使用 `import/export` 语法，
 //! 框架从 module namespace 收集 export 函数注册到 Plugin 对象。
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
+use dashmap::DashMap;
 use rquickjs::loader::Resolver;
 use rquickjs::{AsyncContext, AsyncRuntime, Ctx, Function, Module, Object, Value};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use tokio::sync::Mutex;
 
 use crate::config::app::AppConfig;
 use crate::db::Pool;
 use crate::plugins::Permissions;
 
-struct PluginSlot {
-    runtime: AsyncRuntime,
-    context: AsyncContext,
-}
-
-struct JsInstancePool {
-    instances: Vec<Mutex<PluginSlot>>,
-    next: AtomicUsize,
-}
-
-impl JsInstancePool {
-    fn new(instances: Vec<PluginSlot>) -> Self {
-        Self {
-            instances: instances.into_iter().map(Mutex::new).collect(),
-            next: AtomicUsize::new(0),
-        }
-    }
-
-    async fn acquire(&self) -> tokio::sync::MutexGuard<'_, PluginSlot> {
-        let len = self.instances.len();
-        let idx = self.next.fetch_add(1, Ordering::Relaxed) % len;
-        self.instances[idx].lock().await
-    }
+struct JsPluginEntry {
+    code: String,
+    permissions: Permissions,
+    plugin_dir: PathBuf,
+    sdk_source: &'static str,
 }
 
 // ── ESM Module Loader ────────────────────────────────────────────
@@ -110,14 +92,15 @@ impl rquickjs::loader::Loader for PluginLoader {
 
 // ── JS Engine ────────────────────────────────────────────────────
 
+/// QuickJS 插件引擎（per-request 模式）
+///
+/// 存储所有 JS 插件的源码和元数据，每次调用时创建全新 context。
 pub struct JsEngine {
-    pools: Mutex<HashMap<String, Arc<JsInstancePool>>>,
-    permissions_map: Mutex<HashMap<String, Permissions>>,
+    plugins: DashMap<String, JsPluginEntry>,
     default_memory_limit_bytes: usize,
     timeout_ms: u64,
     config: Arc<AppConfig>,
     pool: Option<Pool>,
-    pool_size: usize,
     event_bus: Option<crate::eventbus::EventBus>,
 }
 
@@ -128,29 +111,24 @@ impl JsEngine {
         event_bus: Option<crate::eventbus::EventBus>,
     ) -> anyhow::Result<Self> {
         let default_memory_limit_bytes = (config.plugin_max_memory_mb as usize) * 1024 * 1024;
-        let pool_size = config.plugin_js_pool_size.max(1) as usize;
 
         Ok(Self {
-            pools: Mutex::new(HashMap::new()),
-            permissions_map: Mutex::new(HashMap::new()),
+            plugins: DashMap::new(),
             default_memory_limit_bytes,
             timeout_ms: config.plugin_default_timeout_ms,
             config: Arc::new(config.clone()),
             pool,
-            pool_size,
             event_bus,
         })
     }
 
     async fn create_instance(
         &self,
-        code: &str,
+        entry: &JsPluginEntry,
         plugin_id: &str,
-        permissions: &Permissions,
-        plugin_dir: &Path,
-        sdk_source: &'static str,
-    ) -> anyhow::Result<PluginSlot> {
-        let memory_limit = permissions
+    ) -> anyhow::Result<(AsyncRuntime, AsyncContext)> {
+        let memory_limit = entry
+            .permissions
             .max_memory_mb
             .map_or(self.default_memory_limit_bytes, |mb| {
                 mb as usize * 1024 * 1024
@@ -163,14 +141,14 @@ impl JsEngine {
         runtime
             .set_loader(
                 PluginResolver,
-                PluginLoader::new(plugin_dir.to_path_buf(), sdk_source),
+                PluginLoader::new(entry.plugin_dir.clone(), entry.sdk_source),
             )
             .await;
 
         let ctx = AsyncContext::full(&runtime).await?;
         let config = self.config.clone();
         let plugin_id_owned = plugin_id.to_string();
-        let perms = permissions.clone();
+        let perms = entry.permissions.clone();
         ctx.with(|ctx| {
             super::js_host::register_host_functions(
                 ctx.clone(),
@@ -181,7 +159,7 @@ impl JsEngine {
                 self.event_bus.clone(),
             )?;
 
-            let module = Module::declare(ctx.clone(), "index.js", code)?;
+            let module = Module::declare(ctx.clone(), "index.js", entry.code.clone())?;
             let (evaled, _promise) = module.eval()?;
             _promise.finish::<()>()?;
 
@@ -203,10 +181,7 @@ impl JsEngine {
         })
         .await?;
 
-        Ok(PluginSlot {
-            runtime,
-            context: ctx,
-        })
+        Ok((runtime, ctx))
     }
 
     pub async fn load_plugin(
@@ -217,22 +192,18 @@ impl JsEngine {
         plugin_dir: &Path,
         sdk_source: &'static str,
     ) -> anyhow::Result<()> {
-        let mut instances = Vec::with_capacity(self.pool_size);
-        for _ in 0..self.pool_size {
-            instances.push(
-                self.create_instance(code, id, &permissions, plugin_dir, sdk_source)
-                    .await?,
-            );
-        }
+        let entry = JsPluginEntry {
+            code: code.to_string(),
+            permissions: permissions.clone(),
+            plugin_dir: plugin_dir.to_path_buf(),
+            sdk_source,
+        };
 
-        self.permissions_map
-            .lock()
-            .await
-            .insert(id.to_string(), permissions);
-        self.pools
-            .lock()
-            .await
-            .insert(id.to_string(), Arc::new(JsInstancePool::new(instances)));
+        let (runtime, ctx) = self.create_instance(&entry, id).await?;
+        drop(ctx);
+        drop(runtime);
+
+        self.plugins.insert(id.to_string(), entry);
         Ok(())
     }
 
@@ -249,7 +220,7 @@ impl JsEngine {
     }
 
     pub async fn unload_plugin(&self, id: &str) {
-        self.pools.lock().await.remove(id);
+        self.plugins.remove(id);
     }
 
     pub async fn call_filter<T: Serialize + DeserializeOwned + Send>(
@@ -258,27 +229,22 @@ impl JsEngine {
         func_name: &str,
         input: &T,
     ) -> anyhow::Result<Option<T>> {
-        let pool = {
-            let pools = self.pools.lock().await;
-            match pools.get(plugin_id) {
-                Some(p) => Arc::clone(p),
-                None => return Ok(None),
-            }
+        let Some(entry) = self.plugins.get(plugin_id) else {
+            return Ok(None);
         };
 
-        let slot = pool.acquire().await;
+        let (runtime, ctx) = self.create_instance(&entry, plugin_id).await?;
         let input_json = serde_json::to_string(input)?;
         let timeout = self.timeout_ms;
         let start = Instant::now();
-        slot.runtime
+        runtime
             .set_interrupt_handler(Some(Box::new(move || {
                 start.elapsed().as_millis() > u128::from(timeout)
             })))
             .await;
 
         let func_name_owned = func_name.to_string();
-        let result: anyhow::Result<Option<T>> = slot
-            .context
+        let result: anyhow::Result<Option<T>> = ctx
             .with(|ctx| {
                 let global = ctx.globals();
                 let plugin_obj: Object = match global.get("Plugin") {
@@ -299,7 +265,7 @@ impl JsEngine {
             })
             .await;
 
-        slot.runtime.set_interrupt_handler(None).await;
+        runtime.set_interrupt_handler(None).await;
         result
     }
 
@@ -309,27 +275,22 @@ impl JsEngine {
         func_name: &str,
         data: &T,
     ) -> anyhow::Result<()> {
-        let pool = {
-            let pools = self.pools.lock().await;
-            match pools.get(plugin_id) {
-                Some(p) => Arc::clone(p),
-                None => return Ok(()),
-            }
+        let Some(entry) = self.plugins.get(plugin_id) else {
+            return Ok(());
         };
 
-        let slot = pool.acquire().await;
+        let (runtime, ctx) = self.create_instance(&entry, plugin_id).await?;
         let data_json = serde_json::to_string(data)?;
         let timeout = self.timeout_ms;
         let start = Instant::now();
-        slot.runtime
+        runtime
             .set_interrupt_handler(Some(Box::new(move || {
                 start.elapsed().as_millis() > u128::from(timeout)
             })))
             .await;
 
         let func_name_owned = func_name.to_string();
-        let result: anyhow::Result<()> = slot
-            .context
+        let result: anyhow::Result<()> = ctx
             .with(|ctx| {
                 let global = ctx.globals();
                 let plugin_obj: Object = match global.get("Plugin") {
@@ -345,7 +306,7 @@ impl JsEngine {
             })
             .await;
 
-        slot.runtime.set_interrupt_handler(None).await;
+        runtime.set_interrupt_handler(None).await;
         result
     }
 
@@ -355,18 +316,14 @@ impl JsEngine {
         func_name: &str,
         input: &str,
     ) -> anyhow::Result<Option<String>> {
-        let pool = {
-            let pools = self.pools.lock().await;
-            match pools.get(plugin_id) {
-                Some(p) => Arc::clone(p),
-                None => return Ok(None),
-            }
+        let Some(entry) = self.plugins.get(plugin_id) else {
+            return Ok(None);
         };
 
-        let slot = pool.acquire().await;
+        let (runtime, ctx) = self.create_instance(&entry, plugin_id).await?;
         let timeout = self.timeout_ms;
         let start = Instant::now();
-        slot.runtime
+        runtime
             .set_interrupt_handler(Some(Box::new(move || {
                 start.elapsed().as_millis() > u128::from(timeout)
             })))
@@ -374,8 +331,7 @@ impl JsEngine {
 
         let func_name_owned = func_name.to_string();
         let input_owned = input.to_string();
-        let result: anyhow::Result<Option<String>> = slot
-            .context
+        let result: anyhow::Result<Option<String>> = ctx
             .with(|ctx| {
                 let global = ctx.globals();
                 let plugin_obj: Object = match global.get("Plugin") {
@@ -392,13 +348,13 @@ impl JsEngine {
             })
             .await;
 
-        slot.runtime.set_interrupt_handler(None).await;
+        runtime.set_interrupt_handler(None).await;
         result
     }
 
     #[allow(dead_code)]
     pub async fn plugin_count(&self) -> usize {
-        self.pools.lock().await.len()
+        self.plugins.len()
     }
 }
 
@@ -822,5 +778,107 @@ export function on_post_created(dataJson) {
         let r = eval_js_str("String(2 ** 10)").await;
         assert!(r.is_ok(), "exponentiation should work: {:?}", r.err());
         assert_eq!(r.unwrap(), "1024");
+    }
+
+    #[tokio::test]
+    async fn js_per_request_state_isolation() {
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
+
+        let code = r#"
+var counter = 0;
+export function on_post_creating(inputJson) {
+    counter++;
+    var input = JSON.parse(inputJson);
+    input.counter = counter;
+    return input;
+}
+"#;
+        engine
+            .load_plugin_default("test-isolation", code)
+            .await
+            .unwrap();
+
+        let r1: Option<serde_json::Value> = engine
+            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(r1.as_ref().unwrap()["counter"], 1);
+
+        let r2: Option<serde_json::Value> = engine
+            .call_filter("test-isolation", "on_post_creating", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            r2.as_ref().unwrap()["counter"], 1,
+            "per-request: counter should reset to 1 on each call (isolated context)"
+        );
+    }
+
+    #[tokio::test]
+    async fn js_concurrent_calls_succeed() {
+        let engine = Arc::new(JsEngine::new(&test_config(), None, None).await.unwrap());
+
+        let code = r#"
+export function on_post_creating(inputJson) {
+    var input = JSON.parse(inputJson);
+    input.processed = true;
+    return input;
+}
+"#;
+        engine
+            .load_plugin_default("test-concurrent", code)
+            .await
+            .unwrap();
+
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let eng = Arc::clone(&engine);
+            handles.push(tokio::spawn(async move {
+                let input = serde_json::json!({"idx": i});
+                eng.call_filter::<serde_json::Value>(
+                    "test-concurrent",
+                    "on_post_creating",
+                    &input,
+                )
+                .await
+            }));
+        }
+
+        let mut success = 0;
+        for h in handles {
+            let r = h.await.unwrap().unwrap();
+            if r.is_some() && r.as_ref().unwrap()["processed"] == true {
+                success += 1;
+            }
+        }
+        assert_eq!(success, 10, "all 10 concurrent calls should succeed");
+    }
+
+    #[tokio::test]
+    async fn js_call_after_unload_returns_none() {
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
+        engine
+            .load_plugin_default("test-gone", "export function on_post_creating(j) { return j; }")
+            .await
+            .unwrap();
+
+        engine.unload_plugin("test-gone").await;
+
+        let result: Option<serde_json::Value> = engine
+            .call_filter("test-gone", "on_post_creating", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(result.is_none(), "call after unload should return None");
+
+        let result = engine
+            .call_action("test-gone", "on_post_creating", &serde_json::json!({}))
+            .await;
+        assert!(result.is_ok(), "call_action after unload should return Ok(())");
+
+        let result = engine
+            .call_string_filter("test-gone", "on_post_creating", "hello")
+            .await
+            .unwrap();
+        assert!(result.is_none(), "call_string_filter after unload should return None");
     }
 }
