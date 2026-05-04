@@ -50,14 +50,7 @@ pub async fn list(
     State(state): State<crate::AppState>,
     Query(query): Query<PostListQuery>,
 ) -> AppResult<ApiResponse<PaginatedData<PostResponse>>> {
-    let mut pagination = PaginationParams::default();
-    if let Some(page) = query.page {
-        pagination.page = page.max(1);
-    }
-    if let Some(page_size) = query.page_size {
-        pagination.page_size = page_size.clamp(1, 100);
-    }
-    pagination.sanitize();
+    let pagination = PaginationParams::from_options(query.page, query.page_size);
 
     let (posts, total) = post_service::list_posts(
         state.post_repo.as_ref(),
@@ -214,14 +207,7 @@ pub async fn admin_list(
     Query(query): Query<AdminPostListQuery>,
 ) -> AppResult<ApiResponse<PaginatedData<PostResponse>>> {
     auth.ensure_author()?;
-    let mut pagination = PaginationParams::default();
-    if let Some(page) = query.page {
-        pagination.page = page.max(1);
-    }
-    if let Some(page_size) = query.page_size {
-        pagination.page_size = page_size.clamp(1, 100);
-    }
-    pagination.sanitize();
+    let pagination = PaginationParams::from_options(query.page, query.page_size);
 
     let (posts, total) = post_service::list_all_posts(
         state.post_repo.as_ref(),

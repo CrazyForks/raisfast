@@ -6,6 +6,7 @@
 //! - **markdown** — Markdown 转 HTML 的渲染管线（含 XSS 防护）
 
 pub mod auth;
+pub mod crypto;
 pub mod id;
 pub mod markdown;
 pub mod pagination;

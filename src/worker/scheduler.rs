@@ -335,7 +335,13 @@ impl CronScheduler {
         for row in rows {
             let schedule = cron_row_to_schedule!(row);
 
-            if let Err(_e) = self.dispatch(&schedule).await {}
+            if let Err(e) = self.dispatch(&schedule).await {
+                tracing::error!(
+                    schedule = %schedule.label,
+                    error = %e,
+                    "cron dispatch failed"
+                );
+            }
         }
 
         Ok(())

@@ -6,7 +6,7 @@
 //! 代码块（` ``` `）保留语言标识 CSS class，由前端 JS 高亮库（如 highlight.js）渲染。
 
 use ammonia::clean;
-use comrak::{ComrakOptions, markdown_to_html};
+use comrak::{markdown_to_html, ComrakOptions};
 
 /// 将 Markdown 文本渲染为经过安全过滤的 HTML。
 ///

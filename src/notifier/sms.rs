@@ -184,16 +184,7 @@ fn percent_encode(input: &str) -> String {
 }
 
 fn hmac_sha1_sign(key: &str, data: &str) -> String {
-    use hmac::{Hmac, Mac};
-    use sha1::Sha1;
-    type HmacSha1 = Hmac<Sha1>;
-
-    let key_with_suffix = format!("{key}&");
-    let mut mac = HmacSha1::new_from_slice(key_with_suffix.as_bytes())
-        .expect("HMAC can take key of any size");
-    mac.update(data.as_bytes());
-    let result = mac.finalize().into_bytes();
-    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, result)
+    crate::utils::crypto::hmac_sha1_sign(key, data)
 }
 
 #[cfg(test)]

@@ -118,14 +118,7 @@ pub async fn list(
     State(state): State<crate::AppState>,
     Query(query): Query<PageListQuery>,
 ) -> AppResult<ApiResponse<PaginatedData<crate::models::page::Page>>> {
-    let mut pagination = PaginationParams::default();
-    if let Some(page) = query.page {
-        pagination.page = page.max(1);
-    }
-    if let Some(page_size) = query.page_size {
-        pagination.page_size = page_size.clamp(1, 100);
-    }
-    pagination.sanitize();
+    let pagination = PaginationParams::from_options(query.page, query.page_size);
 
     let (items, total) =
         page_service::list_published(&state.pool, pagination.page, pagination.page_size, &auth)
@@ -163,14 +156,7 @@ pub async fn admin_list(
     Query(query): Query<AdminPageListQuery>,
 ) -> AppResult<ApiResponse<PaginatedData<crate::models::page::Page>>> {
     auth.ensure_author()?;
-    let mut pagination = PaginationParams::default();
-    if let Some(page) = query.page {
-        pagination.page = page.max(1);
-    }
-    if let Some(page_size) = query.page_size {
-        pagination.page_size = page_size.clamp(1, 100);
-    }
-    pagination.sanitize();
+    let pagination = PaginationParams::from_options(query.page, query.page_size);
 
     let (items, total) = page_service::list_all(
         &state.pool,

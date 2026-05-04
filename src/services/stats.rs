@@ -103,10 +103,9 @@ impl StatsService {
             for (status, count) in status_sql {
                 by_status.insert(status, json!(count));
             }
-            result
-                .as_object_mut()
-                .unwrap()
-                .insert("by_status".into(), json!(by_status));
+            if let Some(obj) = result.as_object_mut() {
+                obj.insert("by_status".into(), json!(by_status));
+            }
         }
 
         Ok(result)

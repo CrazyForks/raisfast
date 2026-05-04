@@ -220,7 +220,7 @@ async fn make_unique_slug(
 ///
 /// 取前 `max_len` 个字符作为摘要，超出部分以 `"..."` 结尾。
 fn extract_excerpt(content: &str, max_len: usize) -> String {
-    let plain = content.chars().take(max_len * 2).collect::<String>();
+    let plain = content.chars().take(max_len.saturating_mul(2)).collect::<String>();
     if plain.len() > max_len {
         format!("{}...", &plain[..plain.ceil_char_boundary(max_len)])
     } else {

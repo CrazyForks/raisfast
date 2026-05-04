@@ -20,14 +20,7 @@ pub async fn list(
     auth.ensure_admin()?;
     params.sanitize();
     let all = state.plugins.list_plugins_detail().await;
-    let total = all.len() as i64;
-    let offset = params.offset() as usize;
-    let items: Vec<_> = all
-        .into_iter()
-        .skip(offset)
-        .take(params.page_size as usize)
-        .collect();
-    Ok(params.paginate(items, total))
+    Ok(params.paginate_in_memory(all))
 }
 
 /// GET /api/v1/admin/plugins/:id — 插件详情

@@ -45,7 +45,9 @@ pub async fn aop_http_layer(
                 .status(200)
                 .header("content-type", "application/json")
                 .body(Body::from(body))
-                .unwrap();
+                .unwrap_or_else(|_| {
+                    Response::new(Body::from(r#"{"code":0,"data":null}"#))
+                });
         }
         Ok(None) => {}
         Err(e) => {

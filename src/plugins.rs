@@ -735,7 +735,7 @@ impl PluginManager {
             Arc::new(std::sync::Mutex::new(None));
 
         let tx = self.reload_tx.clone();
-        let mut watcher = notify::RecommendedWatcher::new(
+        let mut watcher = match notify::RecommendedWatcher::new(
             move |res: Result<notify::Event, notify::Error>| {
                 let event = match res {
                     Ok(e) => e,
@@ -764,12 +764,18 @@ impl PluginManager {
                 }
             },
             notify::Config::default().with_poll_interval(std::time::Duration::from_secs(2)),
-        )
-        .expect("failed to create file watcher");
+        ) {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::warn!("failed to create file watcher, hot-reload disabled: {e}");
+                return;
+            }
+        };
 
-        watcher
-            .watch(&path, notify::RecursiveMode::Recursive)
-            .expect("failed to start watching plugin directory");
+        if let Err(e) = watcher.watch(&path, notify::RecursiveMode::Recursive) {
+            tracing::warn!("failed to start watching plugin directory: {e}");
+            return;
+        }
 
         let mut w = self.watcher.write().await;
         *w = Some(watcher);

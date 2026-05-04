@@ -254,11 +254,14 @@ impl HostContext {
         if let Err(e) = &parsed_params {
             return format!(r#"{{"error":"invalid params: {e}"}}"#);
         }
+        let Ok(params) = parsed_params else {
+            return r#"{"error":"invalid params"}"#.to_string();
+        };
         let handle = tokio::runtime::Handle::current();
         let sql = crate::db::dialect::translate(sql).into_owned();
         tokio::task::block_in_place(|| {
             match handle.block_on(async {
-                let rows = match parsed_params.unwrap() {
+                let rows = match params {
                     Some(params) => {
                         let mut args = sqlx::sqlite::SqliteArguments::default();
                         for p in &params {
@@ -308,12 +311,14 @@ impl HostContext {
 
         let tx_guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
         if tx_guard.is_some() {
+            drop(tx_guard);
             let sql = crate::db::dialect::translate(sql).into_owned();
             let handle = tokio::runtime::Handle::current();
-            drop(tx_guard);
-            let mut tx_guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
-            let tx_state = tx_guard.as_mut().unwrap();
             return tokio::task::block_in_place(|| {
+                let mut tx_guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(tx_state) = tx_guard.as_mut() else {
+                    return r#"{"error":"transaction lost"}"#.to_string();
+                };
                 let result: Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> =
                     build_and_exec(&mut tx_state.conn, &sql, &parsed_params, &handle);
                 match result {

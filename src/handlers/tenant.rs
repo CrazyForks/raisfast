@@ -17,14 +17,7 @@ pub async fn list_tenants(
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<Tenant>>> {
     params.sanitize();
     let all = state.tenant.list().await?;
-    let total = all.len() as i64;
-    let offset = params.offset() as usize;
-    let items: Vec<_> = all
-        .into_iter()
-        .skip(offset)
-        .take(params.page_size as usize)
-        .collect();
-    Ok(params.paginate(items, total))
+    Ok(params.paginate_in_memory(all))
 }
 
 /// GET /admin/tenants/:id — 获取租户详情

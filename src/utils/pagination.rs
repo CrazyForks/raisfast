@@ -49,12 +49,42 @@ impl PaginationParams {
         })
     }
 
+    /// 从可选的 page / page_size 构建分页参数。
+    ///
+    /// 自动执行校验，适合 handler 中从 `Option<i64>` 查询参数构建。
+    pub fn from_options(page: Option<i64>, page_size: Option<i64>) -> Self {
+        let mut params = Self::default();
+        if let Some(p) = page {
+            params.page = p.max(1);
+        }
+        if let Some(ps) = page_size {
+            params.page_size = ps.clamp(1, Self::MAX_PAGE_SIZE);
+        }
+        params.sanitize();
+        params
+    }
+
+    /// 对内存中的 Vec 进行分页切片。
+    pub fn paginate_in_memory<T>(self, all: Vec<T>) -> ApiResponse<PaginatedData<T>>
+    where
+        T: serde::Serialize,
+    {
+        let total = all.len() as i64;
+        let offset = self.offset() as usize;
+        let items: Vec<_> = all
+            .into_iter()
+            .skip(offset)
+            .take(self.page_size as usize)
+            .collect();
+        self.paginate(items, total)
+    }
+
     /// 计算 SQL `OFFSET` 值。
     ///
     /// 公式：`(page - 1) * page_size`。
     #[must_use]
     pub fn offset(&self) -> i64 {
-        (self.page - 1) * self.page_size
+        (self.page - 1).saturating_mul(self.page_size)
     }
 
     /// 校验并修正分页参数。

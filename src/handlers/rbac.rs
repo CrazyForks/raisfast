@@ -19,14 +19,7 @@ pub async fn list_roles(
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<Role>>> {
     params.sanitize();
     let all = state.rbac.list_roles().await?;
-    let total = all.len() as i64;
-    let offset = params.offset() as usize;
-    let items: Vec<_> = all
-        .into_iter()
-        .skip(offset)
-        .take(params.page_size as usize)
-        .collect();
-    Ok(params.paginate(items, total))
+    Ok(params.paginate_in_memory(all))
 }
 
 /// POST /admin/rbac/roles — 创建角色

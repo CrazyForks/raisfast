@@ -310,7 +310,7 @@ async fn fetch_column_names(pool: &sqlx::SqlitePool, table: &str) -> Vec<String>
         LazyLock::new(|| RwLock::new(std::collections::HashMap::new()));
 
     {
-        let cache = CACHE.read().unwrap();
+        let cache = CACHE.read().unwrap_or_else(|e| e.into_inner());
         if let Some(cached) = cache.get(table) {
             return cached.clone();
         }
@@ -330,7 +330,7 @@ async fn fetch_column_names(pool: &sqlx::SqlitePool, table: &str) -> Vec<String>
     .unwrap_or_else(|_| vec!["id".into()]);
 
     {
-        let mut cache = CACHE.write().unwrap();
+        let mut cache = CACHE.write().unwrap_or_else(|e| e.into_inner());
         cache.insert(table.to_string(), cols.clone());
     }
 

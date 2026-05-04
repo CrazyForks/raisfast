@@ -3,7 +3,7 @@
 //! 注册时预计算 dispatch table（JoinPointId → 有序 Aspect 列表），
 //! 运行时 O(1) 查找 + 按 priority 顺序执行。
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, PoisonError, RwLock};
 
 use dashmap::DashMap;
 
@@ -29,9 +29,7 @@ pub struct AspectEngine {
 impl std::fmt::Debug for AspectEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let names: Vec<String> = self
-            .registry
-            .read()
-            .unwrap()
+            .read_registry()
             .iter()
             .map(|e| e.aspect.name().to_string())
             .collect();
@@ -55,6 +53,14 @@ impl AspectEngine {
         self.register_from_arc(arc);
     }
 
+    fn read_registry(&self) -> std::sync::RwLockReadGuard<'_, Vec<AspectEntry>> {
+        self.registry.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn write_registry(&self) -> std::sync::RwLockWriteGuard<'_, Vec<AspectEntry>> {
+        self.registry.write().unwrap_or_else(PoisonError::into_inner)
+    }
+
     pub fn register_from_arc(&self, arc: Arc<dyn Aspect>) {
         let pointcuts = arc.pointcuts();
 
@@ -65,7 +71,7 @@ impl AspectEngine {
             list.sort_by_key(|a| a.priority());
         }
 
-        self.registry.write().unwrap().push(AspectEntry {
+        self.write_registry().push(AspectEntry {
             aspect: arc,
             pointcuts,
             enabled: true,
@@ -73,7 +79,7 @@ impl AspectEngine {
     }
 
     pub fn enable(&self, name: &str) -> bool {
-        let mut registry = self.registry.write().unwrap();
+        let mut registry = self.write_registry();
         for entry in registry.iter_mut() {
             if entry.aspect.name() == name {
                 entry.enabled = true;
@@ -84,7 +90,7 @@ impl AspectEngine {
     }
 
     pub fn disable(&self, name: &str) -> bool {
-        let mut registry = self.registry.write().unwrap();
+        let mut registry = self.write_registry();
         for entry in registry.iter_mut() {
             if entry.aspect.name() == name {
                 entry.enabled = false;
@@ -95,9 +101,7 @@ impl AspectEngine {
     }
 
     pub fn aspects(&self) -> Vec<Arc<dyn Aspect>> {
-        self.registry
-            .read()
-            .unwrap()
+        self.read_registry()
             .iter()
             .filter(|e| e.enabled)
             .map(|e| e.aspect.clone())
@@ -107,7 +111,7 @@ impl AspectEngine {
     pub fn columns_for(&self, table: &str) -> Vec<ColumnDef> {
         let mut cols = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        for entry in self.registry.read().unwrap().iter() {
+        for entry in self.read_registry().iter() {
             if entry.enabled && matches_table_any(&entry.pointcuts, table) {
                 for col in entry.aspect.columns() {
                     if seen.insert(col.name.clone()) {
@@ -121,9 +125,7 @@ impl AspectEngine {
 
     fn get_aspects(&self, jp_id: &JoinPointId, table: &str) -> Vec<Arc<dyn Aspect>> {
         let enabled_names: std::collections::HashSet<String> = self
-            .registry
-            .read()
-            .unwrap()
+            .read_registry()
             .iter()
             .filter(|e| e.enabled)
             .map(|e| e.aspect.name().to_string())
