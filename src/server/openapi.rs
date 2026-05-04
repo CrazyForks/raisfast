@@ -19,10 +19,15 @@ use crate::handlers::dto;
 #[openapi(
     paths(
         crate::handlers::health::health,
+        crate::handlers::health::liveness,
+        crate::handlers::health::readiness,
         crate::handlers::auth::register,
         crate::handlers::auth::login,
         crate::handlers::auth::refresh,
         crate::handlers::auth::logout,
+        crate::handlers::auth::forgot_password,
+        crate::handlers::auth::reset_password,
+        crate::handlers::auth::set_password,
         crate::handlers::api_token::create,
         crate::handlers::api_token::list,
         crate::handlers::api_token::delete,
@@ -38,6 +43,7 @@ use crate::handlers::dto;
         crate::handlers::category::delete,
         crate::handlers::tag::list,
         crate::handlers::tag::create,
+        crate::handlers::tag::update,
         crate::handlers::tag::delete,
         crate::handlers::post::list,
         crate::handlers::post::get,
@@ -111,6 +117,6 @@ pub async fn serve_openapi_json() -> Response {
 /// 重定向到在线 Swagger UI（仅在 `openapi` feature 启用时编译）
 #[cfg(feature = "openapi")]
 pub async fn redirect_to_swagger() -> Redirect {
-    let spec_url = "http://localhost:9000/api/docs/openapi.json";
+    let spec_url = "http://localhost:9898/api/docs/openapi.json";
     Redirect::temporary(&format!("https://petstore.swagger.io/?url={spec_url}"))
 }

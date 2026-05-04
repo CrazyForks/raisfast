@@ -679,4 +679,234 @@ Plugin = {
             .unwrap();
         assert!(result.is_none(), "call_string_filter after unload should return None");
     }
+
+    #[tokio::test]
+    async fn lua_engine_filter_returns_nil() {
+        let engine = LuaEngine::new(&test_config(), None, None).unwrap();
+
+        let code = r#"
+Plugin = {
+    on_post_creating = function(input)
+        return nil
+    end
+}
+"#;
+        engine
+            .load_plugin_default("test-nil-return", code)
+            .await
+            .unwrap();
+
+        let result: Option<serde_json::Value> = engine
+            .call_filter("test-nil-return", "on_post_creating", &serde_json::json!({"title": "hello"}))
+            .await
+            .unwrap();
+        match result {
+            None => {}
+            Some(v) if v.is_null() => {}
+            other => panic!("expected None or Null, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn lua_engine_filter_exception_does_not_crash() {
+        let engine = LuaEngine::new(&test_config(), None, None).unwrap();
+
+        let code = r#"
+Plugin = {
+    on_post_creating = function(input)
+        error("filter error")
+    end
+}
+"#;
+        engine
+            .load_plugin_default("test-filter-throw", code)
+            .await
+            .unwrap();
+
+        let result: anyhow::Result<Option<serde_json::Value>> = engine
+            .call_filter("test-filter-throw", "on_post_creating", &serde_json::json!({}))
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn lua_engine_string_filter_exception_does_not_crash() {
+        let engine = LuaEngine::new(&test_config(), None, None).unwrap();
+
+        let code = r#"
+Plugin = {
+    filter_html = function(content)
+        error("string filter error")
+    end
+}
+"#;
+        engine
+            .load_plugin_default("test-strfilter-throw", code)
+            .await
+            .unwrap();
+
+        let result = engine
+            .call_string_filter("test-strfilter-throw", "filter_html", "<html></html>")
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn lua_engine_string_filter_returns_empty_string() {
+        let engine = LuaEngine::new(&test_config(), None, None).unwrap();
+
+        let code = r#"
+Plugin = {
+    filter_html = function(html)
+        return ""
+    end
+}
+"#;
+        engine
+            .load_plugin_default("test-empty-str", code)
+            .await
+            .unwrap();
+
+        let result = engine
+            .call_string_filter("test-empty-str", "filter_html", "<html></html>")
+            .await
+            .unwrap();
+        assert_eq!(result.as_deref(), Some(""));
+    }
+
+    #[tokio::test]
+    async fn lua_engine_filter_modifies_multiple_fields() {
+        let engine = LuaEngine::new(&test_config(), None, None).unwrap();
+
+        let code = r#"
+Plugin = {
+    on_post_creating = function(input)
+        input.title = string.upper(input.title)
+        input.slug = string.lower(input.title):gsub("%s+", "-")
+        input.processed = true
+        input.removable = nil
+        return input
+    end
+}
+"#;
+        engine
+            .load_plugin_default("test-multi-field", code)
+            .await
+            .unwrap();
+
+        let input = serde_json::json!({
+            "title": "Hello World",
+            "slug": "",
+            "processed": false,
+            "removable": "yes"
+        });
+        let result: Option<serde_json::Value> = engine
+            .call_filter("test-multi-field", "on_post_creating", &input)
+            .await
+            .unwrap();
+
+        let r = result.unwrap();
+        assert_eq!(r["title"], "HELLO WORLD");
+        assert_eq!(r["slug"], "hello-world");
+        assert_eq!(r["processed"], true);
+        assert!(r.get("removable").is_none(), "removable field should be nil");
+    }
+
+    #[tokio::test]
+    async fn lua_engine_reload_same_plugin() {
+        let engine = LuaEngine::new(&test_config(), None, None).unwrap();
+
+        let code_v1 = r#"
+Plugin = {
+    on_post_creating = function(input)
+        input.version = 1
+        return input
+    end
+}
+"#;
+        engine
+            .load_plugin_default("test-reload", code_v1)
+            .await
+            .unwrap();
+
+        let r1: Option<serde_json::Value> = engine
+            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(r1.as_ref().unwrap()["version"], 1);
+
+        let code_v2 = r#"
+Plugin = {
+    on_post_creating = function(input)
+        input.version = 2
+        return input
+    end
+}
+"#;
+        engine
+            .load_plugin_default("test-reload", code_v2)
+            .await
+            .unwrap();
+
+        let r2: Option<serde_json::Value> = engine
+            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(r2.as_ref().unwrap()["version"], 2);
+    }
+
+    #[tokio::test]
+    async fn lua_engine_action_timeout_interrupts() {
+        let mut config = (*test_config()).clone();
+        config.plugin_default_timeout_ms = 100;
+        let engine = LuaEngine::new(&Arc::new(config), None, None).unwrap();
+
+        let code = r#"
+Plugin = {
+    on_post_created = function(data)
+        local i = 0
+        while i < 100000000 do i = i + 1 end
+    end
+}
+"#;
+        engine
+            .load_plugin_default("test-action-timeout", code)
+            .await
+            .unwrap();
+
+        let result = engine
+            .call_action(
+                "test-action-timeout",
+                "on_post_created",
+                &serde_json::json!({"id": "1"}),
+            )
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn lua_engine_string_filter_timeout_interrupts() {
+        let mut config = (*test_config()).clone();
+        config.plugin_default_timeout_ms = 100;
+        let engine = LuaEngine::new(&Arc::new(config), None, None).unwrap();
+
+        let code = r#"
+Plugin = {
+    render_markdown = function(content)
+        local i = 0
+        while i < 100000000 do i = i + 1 end
+        return content
+    end
+}
+"#;
+        engine
+            .load_plugin_default("test-strfilter-timeout", code)
+            .await
+            .unwrap();
+
+        let result = engine
+            .call_string_filter("test-strfilter-timeout", "render_markdown", "# hello")
+            .await;
+        assert!(result.is_err());
+    }
 }

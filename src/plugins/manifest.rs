@@ -198,6 +198,9 @@ pub struct HookConfig {
     pub priority: Option<i32>,
     #[serde(rename = "match")]
     pub match_pattern: Option<String>,
+    /// 只接收指定 content_type 的事件（为空或不声明则接收所有）
+    #[serde(default)]
+    pub content_types: Vec<String>,
 }
 
 /// Hook 点枚举
@@ -618,5 +621,57 @@ default = 1
         assert_eq!(r1.input.len(), 2);
         assert!(r1.input[0].required);
         assert_eq!(r1.input[1].default, Some(toml::Value::Integer(1)));
+    }
+
+    #[test]
+    fn parse_manifest_hook_with_content_types() {
+        let toml = r#"
+[plugin]
+id = "com.example.articles"
+name = "Article Plugin"
+version = "1.0.0"
+
+[hooks.on-content-creating]
+priority = 50
+content_types = ["articles", "blog-posts"]
+
+[hooks.on-content-created]
+priority = 30
+
+[hooks.render-markdown]
+priority = 10
+content_types = ["articles"]
+"#;
+        let m: PluginManifest = toml::from_str(toml).unwrap();
+
+        let creating = m.hooks.get("on_content_creating").unwrap();
+        assert_eq!(creating.priority, Some(50));
+        assert_eq!(creating.content_types, vec!["articles", "blog-posts"]);
+
+        let created = m.hooks.get("on_content_created").unwrap();
+        assert_eq!(created.priority, Some(30));
+        assert!(
+            created.content_types.is_empty(),
+            "no content_types = receives all"
+        );
+
+        let render = m.hooks.get("render_markdown").unwrap();
+        assert_eq!(render.content_types, vec!["articles"]);
+    }
+
+    #[test]
+    fn parse_manifest_hook_content_types_default_empty() {
+        let toml = r#"
+[plugin]
+id = "com.example.test"
+name = "Test"
+version = "1.0.0"
+
+[hooks.on-post-creating]
+priority = 10
+"#;
+        let m: PluginManifest = toml::from_str(toml).unwrap();
+        let hook = m.hooks.get("on_post_creating").unwrap();
+        assert!(hook.content_types.is_empty());
     }
 }

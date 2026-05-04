@@ -95,6 +95,8 @@ impl rquickjs::loader::Loader for PluginLoader {
 /// QuickJS 插件引擎（per-request 模式）
 ///
 /// 存储所有 JS 插件的源码和元数据，每次调用时创建全新 context。
+/// 超时由 interrupt_handler 在同步 `ctx.with()` 内实现，
+/// 外层 `plugins.rs` 的 `tokio::time::timeout` 作为兜底。
 pub struct JsEngine {
     plugins: DashMap<String, JsPluginEntry>,
     default_memory_limit_bytes: usize,
@@ -200,6 +202,7 @@ impl JsEngine {
         };
 
         let (runtime, ctx) = self.create_instance(&entry, id).await?;
+        runtime.run_gc().await;
         drop(ctx);
         drop(runtime);
 
@@ -265,7 +268,9 @@ impl JsEngine {
             })
             .await;
 
-        runtime.set_interrupt_handler(None).await;
+        drop(ctx);
+        runtime.run_gc().await;
+        drop(runtime);
         result
     }
 
@@ -306,7 +311,9 @@ impl JsEngine {
             })
             .await;
 
-        runtime.set_interrupt_handler(None).await;
+        drop(ctx);
+        runtime.run_gc().await;
+        drop(runtime);
         result
     }
 
@@ -348,7 +355,9 @@ impl JsEngine {
             })
             .await;
 
-        runtime.set_interrupt_handler(None).await;
+        drop(ctx);
+        runtime.run_gc().await;
+        drop(runtime);
         result
     }
 
@@ -880,5 +889,263 @@ export function on_post_creating(inputJson) {
             .await
             .unwrap();
         assert!(result.is_none(), "call_string_filter after unload should return None");
+    }
+
+    #[tokio::test]
+    async fn js_engine_filter_returns_undefined() {
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
+
+        let code = r#"
+export function on_post_creating(inputJson) {
+    return undefined;
+}
+"#;
+        engine
+            .load_plugin_default("test-undefined", code)
+            .await
+            .unwrap();
+
+        let result = engine
+            .call_filter::<serde_json::Value>(
+                "test-undefined",
+                "on_post_creating",
+                &serde_json::json!({"title": "hello"}),
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "returning undefined should fail (json stringify undefined)"
+        );
+    }
+
+    #[tokio::test]
+    async fn js_engine_filter_exception_does_not_crash() {
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
+
+        let code = r#"
+export function on_post_creating(inputJson) {
+    throw new Error("filter error");
+}
+"#;
+        engine
+            .load_plugin_default("test-filter-throw", code)
+            .await
+            .unwrap();
+
+        let result: anyhow::Result<Option<serde_json::Value>> = engine
+            .call_filter("test-filter-throw", "on_post_creating", &serde_json::json!({}))
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn js_engine_string_filter_exception_does_not_crash() {
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
+
+        let code = r#"
+export function render_markdown(content) {
+    throw new Error("string filter error");
+}
+"#;
+        engine
+            .load_plugin_default("test-strfilter-throw", code)
+            .await
+            .unwrap();
+
+        let result = engine
+            .call_string_filter("test-strfilter-throw", "render_markdown", "# hello")
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn js_engine_string_filter_returns_empty_string() {
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
+
+        let code = r#"
+export function filter_html(html) {
+    return "";
+}
+"#;
+        engine
+            .load_plugin_default("test-empty-str", code)
+            .await
+            .unwrap();
+
+        let result = engine
+            .call_string_filter("test-empty-str", "filter_html", "<html></html>")
+            .await
+            .unwrap();
+        assert_eq!(result.as_deref(), Some(""));
+    }
+
+    #[tokio::test]
+    async fn js_engine_filter_modifies_multiple_fields() {
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
+
+        let code = r#"
+export function on_post_creating(inputJson) {
+    var input = JSON.parse(inputJson);
+    input.title = input.title.toUpperCase();
+    input.slug = input.title.toLowerCase().replace(/\s+/g, '-');
+    input.processed = true;
+    delete input.removable;
+    return input;
+}
+"#;
+        engine
+            .load_plugin_default("test-multi-field", code)
+            .await
+            .unwrap();
+
+        let input = serde_json::json!({
+            "title": "Hello World",
+            "slug": "",
+            "processed": false,
+            "removable": "yes"
+        });
+        let result: Option<serde_json::Value> = engine
+            .call_filter("test-multi-field", "on_post_creating", &input)
+            .await
+            .unwrap();
+
+        let r = result.unwrap();
+        assert_eq!(r["title"], "HELLO WORLD");
+        assert_eq!(r["slug"], "hello-world");
+        assert_eq!(r["processed"], true);
+        assert!(r.get("removable").is_none(), "removable field should be deleted");
+    }
+
+    #[tokio::test]
+    async fn js_engine_memory_limit_enforced() {
+        let mut config = (*test_config()).clone();
+        config.plugin_max_memory_mb = 1;
+        let engine = JsEngine::new(&Arc::new(config), None, None).await.unwrap();
+
+        let code = r#"
+var arr = [];
+for (var i = 0; i < 1000000; i++) {
+    arr.push("x".repeat(100));
+}
+export const noop = 1;
+"#;
+        let result = engine.load_plugin_default("test-memlimit", code).await;
+        assert!(result.is_err(), "memory limit should reject allocation");
+    }
+
+    #[tokio::test]
+    async fn js_engine_reload_same_plugin() {
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
+
+        let code_v1 = r#"
+export function on_post_creating(inputJson) {
+    var input = JSON.parse(inputJson);
+    input.version = 1;
+    return input;
+}
+"#;
+        engine
+            .load_plugin_default("test-reload", code_v1)
+            .await
+            .unwrap();
+
+        let r1: Option<serde_json::Value> = engine
+            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(r1.as_ref().unwrap()["version"], 1);
+
+        let code_v2 = r#"
+export function on_post_creating(inputJson) {
+    var input = JSON.parse(inputJson);
+    input.version = 2;
+    return input;
+}
+"#;
+        engine
+            .load_plugin_default("test-reload", code_v2)
+            .await
+            .unwrap();
+
+        let r2: Option<serde_json::Value> = engine
+            .call_filter("test-reload", "on_post_creating", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(r2.as_ref().unwrap()["version"], 2);
+    }
+
+    #[tokio::test]
+    async fn js_engine_filter_pass_through_when_no_return() {
+        let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
+
+        let code = r#"
+export function on_post_creating(inputJson) {
+    var input = JSON.parse(inputJson);
+    input.side_effect = true;
+}
+"#;
+        engine
+            .load_plugin_default("test-no-return", code)
+            .await
+            .unwrap();
+
+        let result: anyhow::Result<Option<serde_json::Value>> = engine
+            .call_filter("test-no-return", "on_post_creating", &serde_json::json!({"title": "x"}))
+            .await;
+        assert!(
+            result.is_err(),
+            "function without explicit return should fail (returns undefined)"
+        );
+    }
+
+    #[tokio::test]
+    async fn js_engine_action_timeout_interrupts() {
+        let mut config = (*test_config()).clone();
+        config.plugin_default_timeout_ms = 100;
+        let engine = JsEngine::new(&Arc::new(config), None, None).await.unwrap();
+
+        let code = r#"
+export function on_post_created(dataJson) {
+    var start = Date.now();
+    while (Date.now() - start < 10000) {}
+}
+"#;
+        engine
+            .load_plugin_default("test-action-timeout", code)
+            .await
+            .unwrap();
+
+        let result = engine
+            .call_action(
+                "test-action-timeout",
+                "on_post_created",
+                &serde_json::json!({"id": "1"}),
+            )
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn js_engine_string_filter_timeout_interrupts() {
+        let mut config = (*test_config()).clone();
+        config.plugin_default_timeout_ms = 100;
+        let engine = JsEngine::new(&Arc::new(config), None, None).await.unwrap();
+
+        let code = r#"
+export function render_markdown(content) {
+    var start = Date.now();
+    while (Date.now() - start < 10000) {}
+    return content;
+}
+"#;
+        engine
+            .load_plugin_default("test-strfilter-timeout", code)
+            .await
+            .unwrap();
+
+        let result = engine
+            .call_string_filter("test-strfilter-timeout", "render_markdown", "# hello")
+            .await;
+        assert!(result.is_err());
     }
 }

@@ -646,7 +646,12 @@ impl AppConfig {
             db_pool_size: env::var("DB_POOL_SIZE")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(5),
+                .unwrap_or_else(|| {
+                    let cpus = std::thread::available_parallelism()
+                        .map(|n| n.get() as u32)
+                        .unwrap_or(2);
+                    cpus * 2
+                }),
             jwt_secret: env::var("JWT_SECRET").unwrap_or_else(|_| DEFAULT_JWT_SECRET.into()),
             jwt_access_expires: env::var("JWT_ACCESS_EXPIRES")
                 .ok()

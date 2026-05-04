@@ -64,6 +64,18 @@ pub enum DbAction {
         #[arg(short, long, default_value = "./backups")]
         output: String,
     },
+    /// Seed initial data (admin user, default content types)
+    Seed {
+        /// Admin email (default: admin@raisfast.dev)
+        #[arg(long, default_value = "admin@raisfast.dev")]
+        email: String,
+        /// Admin username (default: admin)
+        #[arg(long, default_value = "admin")]
+        username: String,
+        /// Admin password (default: admin123)
+        #[arg(long, default_value = "admin123")]
+        password: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -142,6 +154,12 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
             action: DbAction::Backup { output },
         }) => {
             db_cmd::backup(config, &output)?;
+        }
+
+        Some(Commands::Db {
+            action: DbAction::Seed { email, username, password },
+        }) => {
+            db_cmd::seed(config, &email, &username, &password).await?;
         }
 
         Some(Commands::Ct {

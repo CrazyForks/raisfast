@@ -164,6 +164,7 @@ pub struct PluginManager {
     lua_engine: LuaEngine,
     plugins: RwLock<HashMap<String, LoadedPlugin>>,
     route_index: DashMap<String, Vec<RouteIndexEntry>>,
+    hook_index: DashMap<String, Vec<HookIndexEntry>>,
     config: Arc<AppConfig>,
     pool: Option<Pool>,
     watcher: RwLock<Option<notify::RecommendedWatcher>>,
@@ -181,6 +182,13 @@ struct RouteIndexEntry {
     auth: crate::content_type::schema::ApiAccess,
     segment_count: usize,
     static_segments: Vec<(usize, String)>,
+}
+
+#[derive(Clone)]
+struct HookIndexEntry {
+    plugin_id: String,
+    priority: i32,
+    content_types: Vec<String>,
 }
 
 /// 插件系统内部事件
@@ -307,6 +315,7 @@ impl PluginManager {
             lua_engine,
             plugins: RwLock::new(HashMap::new()),
             route_index: DashMap::new(),
+            hook_index: DashMap::new(),
             config,
             pool: opts.pool,
             watcher: RwLock::new(None),
@@ -535,6 +544,7 @@ impl PluginManager {
             .unwrap_or_default();
         drop(plugins);
         self.rebuild_route_index();
+        self.rebuild_hook_index();
 
         self.sync_crons_for_plugin(&id, &cron_entries).await;
 
@@ -597,6 +607,7 @@ impl PluginManager {
             .unwrap_or_default();
         drop(plugins);
         self.rebuild_route_index();
+        self.rebuild_hook_index();
 
         self.sync_crons_for_plugin(&id, &cron_entries).await;
 
@@ -654,6 +665,7 @@ impl PluginManager {
             .unwrap_or_default();
         drop(plugins);
         self.rebuild_route_index();
+        self.rebuild_hook_index();
 
         self.sync_crons_for_plugin(&id, &cron_entries).await;
 
@@ -700,6 +712,30 @@ impl PluginManager {
         }
     }
 
+    fn rebuild_hook_index(&self) {
+        let plugins = match self.plugins.try_read() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
+        self.hook_index.clear();
+        for (plugin_id, plugin) in plugins.iter() {
+            for (func_name, hook_cfg) in &plugin.manifest.hooks {
+                let entry = HookIndexEntry {
+                    plugin_id: plugin_id.clone(),
+                    priority: hook_cfg.priority.unwrap_or(100),
+                    content_types: hook_cfg.content_types.clone(),
+                };
+                self.hook_index
+                    .entry(func_name.clone())
+                    .or_default()
+                    .push(entry);
+            }
+        }
+        for mut entry in self.hook_index.iter_mut() {
+            entry.value_mut().sort_by_key(|e| e.priority);
+        }
+    }
+
     pub async fn unload_plugin(&self, id: &str) {
         let mut plugins = self.plugins.write().await;
         if let Some(removed) = plugins.remove(id) {
@@ -720,6 +756,8 @@ impl PluginManager {
             tracing::info!("unloaded plugin: {id}");
             drop(plugins);
             self.rebuild_route_index();
+        self.rebuild_hook_index();
+            self.rebuild_hook_index();
             self.remove_crons_for_plugin(id).await;
             self.emit_event(PluginEvent::PluginUnloaded { id: id.to_string() });
         }
@@ -886,32 +924,59 @@ impl PluginManager {
         hook: HookPoint,
         input: T,
     ) -> AppResult<T> {
-        let plugins = self.plugins.read().await;
-        if plugins.is_empty() {
+        let func_name = hook.wasm_func_name();
+        let content_type = self.extract_content_type(&input);
+        self.dispatch_filter_inner(func_name, input, content_type.as_deref())
+            .await
+    }
+
+    /// 调度 Filter 类型 Hook，带显式 content_type
+    pub async fn dispatch_filter_with_content_type<
+        T: Clone + Serialize + DeserializeOwned + Send,
+    >(
+        &self,
+        hook: HookPoint,
+        input: T,
+        content_type: &str,
+    ) -> AppResult<T> {
+        let func_name = hook.wasm_func_name();
+        self.dispatch_filter_inner(func_name, input, Some(content_type))
+            .await
+    }
+
+    async fn dispatch_filter_inner<T: Clone + Serialize + DeserializeOwned + Send>(
+        &self,
+        func_name: &str,
+        input: T,
+        content_type: Option<&str>,
+    ) -> AppResult<T> {
+        let entries = match self.hook_index.get(func_name) {
+            Some(e) => e,
+            None => return Ok(input),
+        };
+        if entries.is_empty() {
             return Ok(input);
         }
 
-        let func_name = hook.wasm_func_name();
+        let plugins = self.plugins.read().await;
         let mut current = input;
 
-        let mut sorted: Vec<_> = plugins.values().collect();
-        sorted.sort_by_key(|p| {
-            p.manifest
-                .hooks
-                .get(func_name)
-                .and_then(|h| h.priority)
-                .unwrap_or(100)
-        });
-
-        for plugin in sorted {
-            if !plugin.manifest.hooks.contains_key(func_name) {
+        for entry in entries.iter() {
+            if let Some(ct) = content_type
+                && !entry.content_types.is_empty()
+                && !entry.content_types.iter().any(|t| t == ct)
+            {
                 continue;
             }
 
-            let plugin_id = plugin.manifest.plugin.id.clone();
-            if !self.is_plugin_enabled(&plugin_id).await {
+            let plugin_id = &entry.plugin_id;
+            if !self.is_plugin_enabled(plugin_id).await {
                 continue;
             }
+
+            let Some(plugin) = plugins.get(plugin_id) else {
+                continue;
+            };
 
             let start = std::time::Instant::now();
             let result = match &plugin.instance {
@@ -953,20 +1018,20 @@ impl PluginManager {
             match result {
                 Ok(Some(result)) => {
                     current = result;
-                    self.reset_error_count(&plugin_id).await;
+                    self.reset_error_count(plugin_id).await;
                 }
                 Ok(None) => {
-                    self.reset_error_count(&plugin_id).await;
+                    self.reset_error_count(plugin_id).await;
                 }
                 Err(e) => {
                     let err_msg = format!("{e}");
                     tracing::warn!("plugin {} hook {} failed: {err_msg}", plugin_id, func_name,);
-                    self.record_hook_error(&plugin_id, func_name, &err_msg)
+                    self.record_hook_error(plugin_id, func_name, &err_msg)
                         .await;
                 }
             }
 
-            self.record_hook_metrics(&plugin_id, func_name, elapsed, is_error)
+            self.record_hook_metrics(plugin_id, func_name, elapsed, is_error)
                 .await;
         }
 
@@ -975,31 +1040,56 @@ impl PluginManager {
 
     /// 调度 Action 类型 Hook（顺序执行，忽略返回值）
     pub async fn dispatch_action<T: Serialize>(&self, hook: HookPoint, data: &T) {
-        let plugins = self.plugins.read().await;
-        if plugins.is_empty() {
+        let func_name = hook.wasm_func_name();
+        let content_type = self.extract_content_type(data);
+        self.dispatch_action_inner(func_name, data, content_type.as_deref())
+            .await
+    }
+
+    /// 调度 Action 类型 Hook，带显式 content_type
+    pub async fn dispatch_action_with_content_type<T: Serialize>(
+        &self,
+        hook: HookPoint,
+        data: &T,
+        content_type: &str,
+    ) {
+        let func_name = hook.wasm_func_name();
+        self.dispatch_action_inner(func_name, data, Some(content_type))
+            .await
+    }
+
+    async fn dispatch_action_inner<T: Serialize>(
+        &self,
+        func_name: &str,
+        data: &T,
+        content_type: Option<&str>,
+    ) {
+        let entries = match self.hook_index.get(func_name) {
+            Some(e) => e,
+            None => return,
+        };
+        if entries.is_empty() {
             return;
         }
 
-        let func_name = hook.wasm_func_name();
+        let plugins = self.plugins.read().await;
 
-        let mut sorted: Vec<_> = plugins.values().collect();
-        sorted.sort_by_key(|p| {
-            p.manifest
-                .hooks
-                .get(func_name)
-                .and_then(|h| h.priority)
-                .unwrap_or(100)
-        });
-
-        for plugin in sorted {
-            if !plugin.manifest.hooks.contains_key(func_name) {
+        for entry in entries.iter() {
+            if let Some(ct) = content_type
+                && !entry.content_types.is_empty()
+                && !entry.content_types.iter().any(|t| t == ct)
+            {
                 continue;
             }
 
-            let plugin_id = plugin.manifest.plugin.id.clone();
-            if !self.is_plugin_enabled(&plugin_id).await {
+            let plugin_id = &entry.plugin_id;
+            if !self.is_plugin_enabled(plugin_id).await {
                 continue;
             }
+
+            let Some(plugin) = plugins.get(plugin_id) else {
+                continue;
+            };
 
             let start = std::time::Instant::now();
             let result = match &plugin.instance {
@@ -1043,44 +1133,36 @@ impl PluginManager {
                     plugin_id,
                     func_name,
                 );
-                self.record_hook_error(&plugin_id, func_name, &err_msg)
+                self.record_hook_error(plugin_id, func_name, &err_msg)
                     .await;
             } else {
-                self.reset_error_count(&plugin_id).await;
+                self.reset_error_count(plugin_id).await;
             }
 
-            self.record_hook_metrics(&plugin_id, func_name, elapsed, is_error)
+            self.record_hook_metrics(plugin_id, func_name, elapsed, is_error)
                 .await;
         }
     }
 
     /// 调度 `render_markdown` Hook（第一个返回 Some 的插件胜出）
     pub async fn dispatch_render_override(&self, content: &str) -> Option<String> {
-        let plugins = self.plugins.read().await;
-        if plugins.is_empty() {
+        let func_name = "render_markdown";
+        let entries = self.hook_index.get(func_name)?;
+        if entries.is_empty() {
             return None;
         }
 
-        let func_name = "render_markdown";
+        let plugins = self.plugins.read().await;
 
-        let mut sorted: Vec<_> = plugins.values().collect();
-        sorted.sort_by_key(|p| {
-            p.manifest
-                .hooks
-                .get(func_name)
-                .and_then(|h| h.priority)
-                .unwrap_or(100)
-        });
-
-        for plugin in sorted {
-            if !plugin.manifest.hooks.contains_key(func_name) {
+        for entry in entries.iter() {
+            let plugin_id = &entry.plugin_id;
+            if !self.is_plugin_enabled(plugin_id).await {
                 continue;
             }
 
-            let plugin_id = plugin.manifest.plugin.id.clone();
-            if !self.is_plugin_enabled(&plugin_id).await {
+            let Some(plugin) = plugins.get(plugin_id) else {
                 continue;
-            }
+            };
 
             let start = std::time::Instant::now();
             let result = match &plugin.instance {
@@ -1122,23 +1204,23 @@ impl PluginManager {
 
             match result {
                 Ok(Some(r)) => {
-                    self.reset_error_count(&plugin_id).await;
-                    self.record_hook_metrics(&plugin_id, func_name, elapsed, false)
+                    self.reset_error_count(plugin_id).await;
+                    self.record_hook_metrics(plugin_id, func_name, elapsed, false)
                         .await;
                     return Some(r);
                 }
                 Ok(None) => {
-                    self.reset_error_count(&plugin_id).await;
-                    self.record_hook_metrics(&plugin_id, func_name, elapsed, false)
+                    self.reset_error_count(plugin_id).await;
+                    self.record_hook_metrics(plugin_id, func_name, elapsed, false)
                         .await;
                     continue;
                 }
                 Err(e) => {
                     let err_msg = format!("{e}");
                     tracing::warn!("plugin {} render_markdown failed: {err_msg}", plugin_id);
-                    self.record_hook_error(&plugin_id, func_name, &err_msg)
+                    self.record_hook_error(plugin_id, func_name, &err_msg)
                         .await;
-                    self.record_hook_metrics(&plugin_id, func_name, elapsed, is_error)
+                    self.record_hook_metrics(plugin_id, func_name, elapsed, is_error)
                         .await;
                 }
             }
@@ -1306,6 +1388,13 @@ impl PluginManager {
     }
 
     /// 检查插件是否被自动禁用
+    fn extract_content_type<T: Serialize>(&self, data: &T) -> Option<String> {
+        let val = serde_json::to_value(data).ok()?;
+        val.get("content_type")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    }
+
     async fn is_plugin_enabled(&self, plugin_id: &str) -> bool {
         let plugins = self.plugins.read().await;
         let Some(plugin) = plugins.get(plugin_id) else {

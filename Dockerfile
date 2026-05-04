@@ -21,7 +21,11 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid 1000 app \
+    && useradd --uid 1000 --gid app --shell /bin/bash --create-home app
 
 WORKDIR /app
 
@@ -29,11 +33,17 @@ COPY --from=builder /app/target/release/raisfast /app/raisfast
 COPY migrations/ migrations/
 COPY extensions/ extensions/
 
-RUN mkdir -p /app/data /app/logs /app/uploads /app/plugins-data
+RUN mkdir -p /app/data /app/logs /app/uploads /app/plugins-data \
+    && chown -R app:app /app/data /app/logs /app/uploads /app/plugins-data
+
+USER app
 
 ENV APP_HOST=0.0.0.0
 ENV APP_PORT=9898
 
 EXPOSE 9898
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:9898/healthz || exit 1
 
 CMD ["./raisfast"]
