@@ -45,6 +45,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::response::IntoResponse;
+use dashmap::DashMap;
 use notify::Watcher;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -162,12 +163,24 @@ pub struct PluginManager {
     #[cfg(feature = "plugin-lua")]
     lua_engine: LuaEngine,
     plugins: RwLock<HashMap<String, LoadedPlugin>>,
+    route_index: DashMap<String, Vec<RouteIndexEntry>>,
     config: Arc<AppConfig>,
     pool: Option<Pool>,
     watcher: RwLock<Option<notify::RecommendedWatcher>>,
     reload_tx: tokio::sync::mpsc::Sender<PathBuf>,
     reload_rx: tokio::sync::Mutex<Option<tokio::sync::mpsc::Receiver<PathBuf>>>,
     event_bus: tokio::sync::broadcast::Sender<Arc<PluginEvent>>,
+}
+
+#[derive(Clone)]
+struct RouteIndexEntry {
+    plugin_id: String,
+    method: String,
+    pattern: String,
+    handler: String,
+    auth: crate::content_type::schema::ApiAccess,
+    segment_count: usize,
+    static_segments: Vec<(usize, String)>,
 }
 
 /// 插件系统内部事件
@@ -293,6 +306,7 @@ impl PluginManager {
             #[cfg(feature = "plugin-lua")]
             lua_engine,
             plugins: RwLock::new(HashMap::new()),
+            route_index: DashMap::new(),
             config,
             pool: opts.pool,
             watcher: RwLock::new(None),
@@ -520,6 +534,7 @@ impl PluginManager {
             .map(|p| p.manifest.cron.clone())
             .unwrap_or_default();
         drop(plugins);
+        self.rebuild_route_index();
 
         self.sync_crons_for_plugin(&id, &cron_entries).await;
 
@@ -581,6 +596,7 @@ impl PluginManager {
             .map(|p| p.manifest.cron.clone())
             .unwrap_or_default();
         drop(plugins);
+        self.rebuild_route_index();
 
         self.sync_crons_for_plugin(&id, &cron_entries).await;
 
@@ -637,6 +653,7 @@ impl PluginManager {
             .map(|p| p.manifest.cron.clone())
             .unwrap_or_default();
         drop(plugins);
+        self.rebuild_route_index();
 
         self.sync_crons_for_plugin(&id, &cron_entries).await;
 
@@ -648,6 +665,41 @@ impl PluginManager {
     }
 
     /// 卸载指定插件
+    /// 从所有已加载插件重建路由索引。
+    fn rebuild_route_index(&self) {
+        let plugins = match self.plugins.try_read() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
+        self.route_index.clear();
+        for (plugin_id, plugin) in plugins.iter() {
+            for route in &plugin.manifest.routes {
+                let key = route_index_key(&route.path);
+                let pattern_parts: Vec<&str> =
+                    route.path.trim_end_matches('/').split('/').collect();
+                let static_segments: Vec<(usize, String)> = pattern_parts
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| !s.starts_with(':'))
+                    .map(|(i, s)| (i, s.to_string()))
+                    .collect();
+                let entry = RouteIndexEntry {
+                    plugin_id: plugin_id.clone(),
+                    method: route.method.to_uppercase(),
+                    pattern: route.path.clone(),
+                    handler: route.handler.clone(),
+                    auth: route.auth,
+                    segment_count: pattern_parts.len(),
+                    static_segments,
+                };
+                self.route_index
+                    .entry(key)
+                    .or_default()
+                    .push(entry);
+            }
+        }
+    }
+
     pub async fn unload_plugin(&self, id: &str) {
         let mut plugins = self.plugins.write().await;
         if let Some(removed) = plugins.remove(id) {
@@ -667,6 +719,7 @@ impl PluginManager {
             }
             tracing::info!("unloaded plugin: {id}");
             drop(plugins);
+            self.rebuild_route_index();
             self.remove_crons_for_plugin(id).await;
             self.emit_event(PluginEvent::PluginUnloaded { id: id.to_string() });
         }
@@ -1290,74 +1343,94 @@ impl PluginManager {
         headers: Option<&serde_json::Value>,
         auth: &crate::middleware::auth::AuthUser,
     ) -> Option<axum::response::Response> {
-        let plugins = self.plugins.read().await;
-        if plugins.is_empty() {
+        if self.route_index.is_empty() {
             return None;
         }
 
-        for plugin in plugins.values() {
-            let plugin_id = plugin.manifest.plugin.id.clone();
+        let path_parts: Vec<&str> = path.trim_end_matches('/').split('/').collect();
+        let path_key: String = path_parts.iter().take(3).copied().collect::<Vec<_>>().join("/");
+        let candidates = self.route_index.get(&path_key)?;
+        let matched = candidates
+            .iter()
+            .filter(|e| e.method == method && e.segment_count == path_parts.len())
+            .filter(|e| {
+                e.static_segments
+                    .iter()
+                    .all(|(i, s)| path_parts.get(*i).is_some_and(|p| p == s))
+            })
+            .collect::<Vec<_>>();
+
+        if matched.is_empty() {
+            return None;
+        }
+
+        let plugins = self.plugins.read().await;
+        for entry in &matched {
+            let Some(plugin) = plugins.get(&entry.plugin_id) else {
+                continue;
+            };
+            let plugin_id = entry.plugin_id.clone();
             if !self.is_plugin_enabled(&plugin_id).await {
                 continue;
             }
 
-            if let Some(route) = Self::match_route(&plugin.manifest.routes, method, path) {
-                if let Err(resp) = crate::content_type::schema::check_api_access(route.auth, auth) {
-                    let status = match &resp {
-                        crate::errors::app_error::AppError::Unauthorized => {
-                            axum::http::StatusCode::UNAUTHORIZED
-                        }
-                        crate::errors::app_error::AppError::Forbidden => {
-                            axum::http::StatusCode::FORBIDDEN
-                        }
-                        _ => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    };
-                    let code = status.as_u16() as i32 * 100;
-                    return Some(
-                        (
-                            status,
-                            [(axum::http::header::CONTENT_TYPE, "application/json")],
-                            format!(r#"{{"code":{code},"message":"{resp}","data":null}}"#),
-                        )
-                            .into_response(),
-                    );
+            if let Err(resp) =
+                crate::content_type::schema::check_api_access(entry.auth, auth)
+            {
+                let status = match &resp {
+                    crate::errors::app_error::AppError::Unauthorized => {
+                        axum::http::StatusCode::UNAUTHORIZED
+                    }
+                    crate::errors::app_error::AppError::Forbidden => {
+                        axum::http::StatusCode::FORBIDDEN
+                    }
+                    _ => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                };
+                let code = status.as_u16() as i32 * 100;
+                return Some(
+                    (
+                        status,
+                        [(axum::http::header::CONTENT_TYPE, "application/json")],
+                        format!(r#"{{"code":{code},"message":"{resp}","data":null}}"#),
+                    )
+                        .into_response(),
+                );
+            }
+            let params = extract_route_params(path, &entry.pattern);
+            let input = serde_json::json!({
+                "path": path,
+                "method": method,
+                "body": body.unwrap_or(""),
+                "headers": headers.unwrap_or(&serde_json::Value::Null),
+                "params": params,
+            });
+
+            let handler = &entry.handler;
+            let start = std::time::Instant::now();
+            let result = self.call_plugin_json(plugin, handler, &input).await;
+            let elapsed = start.elapsed().as_micros() as u64;
+
+            match result {
+                Ok(Some(resp)) => {
+                    self.reset_error_count(&plugin_id).await;
+                    self.record_hook_metrics(&plugin_id, handler, elapsed, false)
+                        .await;
+                    return Some(resp);
                 }
-                let params = extract_route_params(path, &route.path);
-                let input = serde_json::json!({
-                    "path": path,
-                    "method": method,
-                    "body": body.unwrap_or(""),
-                    "headers": headers.unwrap_or(&serde_json::Value::Null),
-                    "params": params,
-                });
-
-                let handler = &route.handler;
-                let start = std::time::Instant::now();
-                let result = self.call_plugin_json(plugin, handler, &input).await;
-                let elapsed = start.elapsed().as_micros() as u64;
-
-                match result {
-                    Ok(Some(resp)) => {
-                        self.reset_error_count(&plugin_id).await;
-                        self.record_hook_metrics(&plugin_id, handler, elapsed, false)
-                            .await;
-                        return Some(resp);
-                    }
-                    Ok(None) => {
-                        self.reset_error_count(&plugin_id).await;
-                        self.record_hook_metrics(&plugin_id, handler, elapsed, false)
-                            .await;
-                        continue;
-                    }
-                    Err(e) => {
-                        let err_msg = format!("{e}");
-                        tracing::warn!(
-                            "plugin {plugin_id} route handler {handler} failed: {err_msg}"
-                        );
-                        self.record_hook_error(&plugin_id, handler, &err_msg).await;
-                        self.record_hook_metrics(&plugin_id, handler, elapsed, true)
-                            .await;
-                    }
+                Ok(None) => {
+                    self.reset_error_count(&plugin_id).await;
+                    self.record_hook_metrics(&plugin_id, handler, elapsed, false)
+                        .await;
+                    continue;
+                }
+                Err(e) => {
+                    let err_msg = format!("{e}");
+                    tracing::warn!(
+                        "plugin {plugin_id} route handler {handler} failed: {err_msg}"
+                    );
+                    self.record_hook_error(&plugin_id, handler, &err_msg).await;
+                    self.record_hook_metrics(&plugin_id, handler, elapsed, true)
+                        .await;
                 }
             }
         }
@@ -1366,6 +1439,7 @@ impl PluginManager {
     }
 
     /// 在 routes 列表中按 method + path 精确匹配，返回命中的 RouteDef
+    #[allow(dead_code)]
     fn match_route<'a>(routes: &'a [RouteDef], method: &str, path: &str) -> Option<&'a RouteDef> {
         routes
             .iter()
@@ -1460,6 +1534,13 @@ impl PluginManager {
 }
 
 /// 路由路径匹配（支持 `:param` 占位段）
+/// 计算路由索引键：取前两段固定段作为前缀。
+fn route_index_key(pattern: &str) -> String {
+    let parts: Vec<&str> = pattern.trim_end_matches('/').split('/').take(3).collect();
+    parts.join("/")
+}
+
+#[allow(dead_code)]
 fn path_matches_route(path: &str, pattern: &str) -> bool {
     let path_parts: Vec<&str> = path.trim_end_matches('/').split('/').collect();
     let pattern_parts: Vec<&str> = pattern.trim_end_matches('/').split('/').collect();

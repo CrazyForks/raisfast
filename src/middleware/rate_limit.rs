@@ -239,7 +239,7 @@ impl RateLimiterSet {
     }
 }
 
-fn extract_client_ip(req: &Request) -> String {
+pub fn extract_client_ip(req: &Request) -> String {
     req.headers()
         .get("x-forwarded-for")
         .or_else(|| req.headers().get("x-real-ip"))
@@ -253,7 +253,7 @@ fn extract_client_ip(req: &Request) -> String {
         .unwrap_or_default()
 }
 
-fn rate_limited_response() -> Response {
+pub fn rate_limited_response() -> Response {
     crate::errors::app_error::AppError::TooManyRequests.into_response()
 }
 
@@ -277,7 +277,7 @@ pub async fn global_rate_limit(
     next.run(req).await
 }
 
-fn extract_api_token_prefix(req: &Request) -> Option<String> {
+pub fn extract_api_token_prefix(req: &Request) -> Option<String> {
     let auth = req.headers().get("authorization")?.to_str().ok()?;
     let token = auth.strip_prefix("Bearer ")?;
     if token.starts_with("rblog_") {

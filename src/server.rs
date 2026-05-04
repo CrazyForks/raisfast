@@ -965,7 +965,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet, shutdown_rx: to
 
     api_v1 = api_v1
         .layer(from_fn(global_rate_limit))
-        .layer(Extension(limiters))
+        .layer(Extension(limiters.clone()))
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024));
 
     api_v1 =
@@ -1073,6 +1073,7 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet, shutdown_rx: to
         .nest_service("/uploads", ServeDir::new(&upload_dir))
         .nest_service("/static", ServeDir::new(&static_dir))
         .fallback(handle_plugin_route)
+        .layer(Extension(limiters))
         .layer(from_fn(locale_middleware))
         .layer(from_fn(metrics::track_metrics))
         .layer(from_fn(crate::middleware::request_id::inject_request_id))
@@ -1264,11 +1265,44 @@ async fn shutdown_signal(shutdown_tx: tokio::sync::watch::Sender<bool>) {
 /// 当 axum 路由未匹配时，尝试分发给插件的 `manifest.routes` 声明式路由。
 /// 若所有插件均未处理，返回 404。
 async fn handle_plugin_route(
+    Extension(limiters): Extension<crate::middleware::rate_limit::RateLimiterSet>,
     auth: crate::middleware::auth::AuthUser,
     State(state): State<AppState>,
     req: axum::extract::Request,
 ) -> axum::response::Response {
     use serde_json::json;
+
+    let ip = crate::middleware::rate_limit::extract_client_ip(&req);
+    if !limiters.global.check(&ip).await {
+        return crate::middleware::rate_limit::rate_limited_response();
+    }
+    if let Some(prefix) = crate::middleware::rate_limit::extract_api_token_prefix(&req)
+        && !limiters
+            .api_token
+            .check(&format!("token:{prefix}"))
+            .await
+    {
+        return crate::middleware::rate_limit::rate_limited_response();
+    }
+
+    let content_length = req
+        .headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<usize>().ok());
+    if let Some(len) = content_length
+        && len > 2 * 1024 * 1024
+    {
+        return (
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            axum::Json(json!({
+                "code": 41300,
+                "message": "request body too large",
+                "data": null
+            })),
+        )
+            .into_response();
+    }
 
     let path = {
         let mut s = req.uri().path().to_string();
@@ -1290,10 +1324,14 @@ async fn handle_plugin_route(
         serde_json::Value::Object(map)
     };
 
-    let body_bytes = axum::body::to_bytes(req.into_body(), 1024 * 1024).await;
-    let body_str = body_bytes
-        .ok()
-        .and_then(|b| String::from_utf8(b.to_vec()).ok());
+    let body_str = if method == "GET" || method == "HEAD" {
+        None
+    } else {
+        axum::body::to_bytes(req.into_body(), 1024 * 1024)
+            .await
+            .ok()
+            .and_then(|b| String::from_utf8(b.to_vec()).ok())
+    };
 
     let result = state
         .plugins
