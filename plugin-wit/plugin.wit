@@ -1,6 +1,5 @@
-package raisfast:plugin-protocol;
+package raisfast:plugin-wit;
 
-/// 共享数据类型
 interface types {
     record post-input {
         title: string,
@@ -20,7 +19,8 @@ interface types {
         content: string,
         excerpt: option<string>,
         status: string,
-        author-id: string,
+        created-by: string,
+        updated-by: option<string>,
         category-id: option<string>,
         view-count: s64,
         created-at: string,

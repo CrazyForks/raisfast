@@ -5,11 +5,12 @@ macro_rules! collect {
     ($($ty:ty),* $(,)?) => {{
         let mut seen = std::collections::HashSet::new();
         let mut decls: Vec<(String, String)> = Vec::new();
+        let cfg = ts_rs::Config::default();
         $(
-            let name = <$ty>::name();
+            let name = <$ty>::name(&cfg);
             if !seen.contains(&name) {
                 seen.insert(name.clone());
-                let decl = <$ty>::decl();
+                let decl = <$ty>::decl(&cfg);
                 decls.push((name, decl));
             }
         )*

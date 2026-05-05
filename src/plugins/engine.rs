@@ -14,10 +14,10 @@ use serde::de::DeserializeOwned;
 use tokio::sync::{Mutex, Semaphore};
 
 use crate::plugins::bindings::PluginWorld;
-use crate::plugins::bindings::exports::raisfast::plugin_protocol::plugin_hooks::CommentInput;
-use crate::plugins::bindings::exports::raisfast::plugin_protocol::plugin_hooks::ContentEvent;
-use crate::plugins::bindings::exports::raisfast::plugin_protocol::plugin_hooks::PostInput;
-use crate::plugins::bindings::exports::raisfast::plugin_protocol::plugin_hooks::PostOutput;
+use crate::plugins::bindings::exports::raisfast::plugin_wit::plugin_hooks::CommentInput;
+use crate::plugins::bindings::exports::raisfast::plugin_wit::plugin_hooks::ContentEvent;
+use crate::plugins::bindings::exports::raisfast::plugin_wit::plugin_hooks::PostInput;
+use crate::plugins::bindings::exports::raisfast::plugin_wit::plugin_hooks::PostOutput;
 use crate::plugins::host_common::HostContext;
 
 const DEFAULT_FUEL: u64 = 10_000_000;
@@ -170,7 +170,7 @@ impl WasmComponentInstance {
         match func_name {
             "on_post_creating" | "on_post_updating" => {
                 let wit = json_to_post_input(&input_val)?;
-                let hooks = self.bindings.raisfast_plugin_protocol_plugin_hooks();
+                let hooks = self.bindings.raisfast_plugin_wit_plugin_hooks();
                 let result = match func_name {
                     "on_post_creating" => hooks.call_on_post_creating(&mut self.store, &wit)?,
                     "on_post_updating" => hooks.call_on_post_updating(&mut self.store, &wit)?,
@@ -182,7 +182,7 @@ impl WasmComponentInstance {
             }
             "on_comment_creating" => {
                 let wit = json_to_comment_input(&input_val)?;
-                let hooks = self.bindings.raisfast_plugin_protocol_plugin_hooks();
+                let hooks = self.bindings.raisfast_plugin_wit_plugin_hooks();
                 let result = hooks.call_on_comment_creating(&mut self.store, &wit)?;
                 Ok(result
                     .map(|r| comment_input_to_json(&r))
@@ -190,7 +190,7 @@ impl WasmComponentInstance {
             }
             "on_content_creating" | "on_content_updating" => {
                 let wit = json_to_content_event(&input_val)?;
-                let hooks = self.bindings.raisfast_plugin_protocol_plugin_hooks();
+                let hooks = self.bindings.raisfast_plugin_wit_plugin_hooks();
                 let result = match func_name {
                     "on_content_creating" => {
                         hooks.call_on_content_creating(&mut self.store, &wit)?
@@ -206,7 +206,7 @@ impl WasmComponentInstance {
             }
             "render_markdown" | "filter_html" => {
                 let s = input_val.as_str().unwrap_or("");
-                let hooks = self.bindings.raisfast_plugin_protocol_plugin_hooks();
+                let hooks = self.bindings.raisfast_plugin_wit_plugin_hooks();
                 let result = match func_name {
                     "render_markdown" => hooks.call_render_markdown(&mut self.store, s)?,
                     "filter_html" => hooks.call_filter_html(&mut self.store, s)?,
@@ -226,7 +226,7 @@ impl WasmComponentInstance {
     ) -> anyhow::Result<()> {
         self.store.set_fuel(self.fuel_limit)?;
         let input_val = serde_json::to_value(input)?;
-        let hooks = self.bindings.raisfast_plugin_protocol_plugin_hooks();
+        let hooks = self.bindings.raisfast_plugin_wit_plugin_hooks();
 
         match func_name {
             "on_post_created" | "on_post_updated" => {
@@ -317,7 +317,8 @@ fn json_to_post_output(v: &serde_json::Value) -> anyhow::Result<PostOutput> {
         content: v["content"].as_str().unwrap_or("").to_string(),
         excerpt: v["excerpt"].as_str().map(|s| s.to_string()),
         status: v["status"].as_str().unwrap_or("").to_string(),
-        author_id: v["author_id"].as_str().unwrap_or("").to_string(),
+        created_by: v["created_by"].as_str().unwrap_or("").to_string(),
+        updated_by: v["updated_by"].as_str().map(|s| s.to_string()),
         category_id: v["category_id"].as_str().map(|s| s.to_string()),
         view_count: v["view_count"].as_i64().unwrap_or(0),
         created_at: v["created_at"].as_str().unwrap_or("").to_string(),
