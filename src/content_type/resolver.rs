@@ -339,10 +339,7 @@ async fn fetch_column_names(pool: &sqlx::SqlitePool, table: &str) -> Vec<String>
 
 /// 校验表名只含安全字符（字母、数字、下划线），防止 SQL 注入。
 fn is_safe_table_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 #[cfg(test)]

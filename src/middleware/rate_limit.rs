@@ -76,10 +76,6 @@ impl RateLimitStore for MemoryStore {
     async fn check(&self, key: &str, config: &RateLimitConfig) -> bool {
         let now = Instant::now();
 
-        self.entries.retain(|_, entry| {
-            now.duration_since(entry.window_start).as_secs() < config.window_secs * 2
-        });
-
         let mut entry_ref = self.entries.entry(key.to_string()).or_insert(Entry {
             count: 0,
             window_start: now,
@@ -146,6 +142,7 @@ impl<S: RateLimitStore> RateLimiter<S> {
 /// 共享同一个存储后端实例。
 #[derive(Debug, Clone)]
 pub struct RateLimiterSet {
+    pub enabled: bool,
     pub global: RateLimiter<MemoryStore>,
     pub register: RateLimiter<MemoryStore>,
     pub login: RateLimiter<MemoryStore>,
@@ -158,6 +155,7 @@ impl RateLimiterSet {
     #[must_use]
     pub fn from_config(config: &AppConfig) -> Self {
         Self {
+            enabled: config.rate_limit_enabled,
             global: RateLimiter::new(
                 Arc::new(MemoryStore::new()),
                 RateLimitConfig {
@@ -200,6 +198,7 @@ impl RateLimiterSet {
     #[must_use]
     pub fn new_default() -> Self {
         Self {
+            enabled: true,
             global: RateLimiter::new(
                 Arc::new(MemoryStore::new()),
                 RateLimitConfig {
@@ -262,6 +261,10 @@ pub async fn global_rate_limit(
     req: Request,
     next: Next,
 ) -> Response {
+    if !limiters.enabled {
+        return next.run(req).await;
+    }
+
     let ip = extract_client_ip(&req);
 
     if !limiters.global.check(&ip).await {
@@ -294,6 +297,10 @@ macro_rules! rate_limit_fn {
             req: Request,
             next: Next,
         ) -> Response {
+            if !limiters.enabled {
+                return next.run(req).await;
+            }
+
             let ip = extract_client_ip(&req);
 
             if !limiters.global.check(&ip).await || !limiters.$specific.check(&ip).await {

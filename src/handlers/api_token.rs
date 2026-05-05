@@ -75,7 +75,7 @@ pub async fn delete(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<impl IntoResponse> {
-    api_token::delete_token(&state.pool, &id, &auth).await?;
+    api_token::delete_token(&state.pool, &*state.cache, &id, &auth).await?;
     Ok(Json(ApiResponse::success(
         serde_json::json!({"deleted": true}),
     )))

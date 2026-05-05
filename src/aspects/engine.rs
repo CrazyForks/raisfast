@@ -3,8 +3,9 @@
 //! 注册时预计算 dispatch table（JoinPointId → 有序 Aspect 列表），
 //! 运行时 O(1) 查找 + 按 priority 顺序执行。
 
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use dashmap::DashMap;
 
 use super::{
@@ -15,6 +16,7 @@ use super::{
     When,
 };
 
+#[derive(Clone)]
 pub struct AspectEntry {
     pub aspect: Arc<dyn Aspect>,
     pub pointcuts: Vec<Pointcut>,
@@ -23,13 +25,14 @@ pub struct AspectEntry {
 
 pub struct AspectEngine {
     dispatch_table: DashMap<JoinPointId, Vec<Arc<dyn Aspect>>>,
-    registry: RwLock<Vec<AspectEntry>>,
+    registry: ArcSwap<Vec<AspectEntry>>,
 }
 
 impl std::fmt::Debug for AspectEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let names: Vec<String> = self
-            .read_registry()
+            .registry
+            .load()
             .iter()
             .map(|e| e.aspect.name().to_string())
             .collect();
@@ -44,7 +47,7 @@ impl AspectEngine {
     pub fn new() -> Self {
         Self {
             dispatch_table: DashMap::new(),
-            registry: RwLock::new(Vec::new()),
+            registry: ArcSwap::from_pointee(Vec::new()),
         }
     }
 
@@ -53,16 +56,10 @@ impl AspectEngine {
         self.register_from_arc(arc);
     }
 
-    fn read_registry(&self) -> std::sync::RwLockReadGuard<'_, Vec<AspectEntry>> {
-        self.registry.read().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn write_registry(&self) -> std::sync::RwLockWriteGuard<'_, Vec<AspectEntry>> {
-        self.registry.write().unwrap_or_else(PoisonError::into_inner)
-    }
-
     pub fn register_from_arc(&self, arc: Arc<dyn Aspect>) {
         let pointcuts = arc.pointcuts();
+        let pointcuts_clone = pointcuts.clone();
+        let arc_clone = arc.clone();
 
         for pc in &pointcuts {
             let jp_id = pc.join_point_id();
@@ -71,37 +68,52 @@ impl AspectEngine {
             list.sort_by_key(|a| a.priority());
         }
 
-        self.write_registry().push(AspectEntry {
-            aspect: arc,
-            pointcuts,
-            enabled: true,
+        self.registry.rcu(|old| {
+            let mut v = (**old).clone();
+            v.push(AspectEntry {
+                aspect: arc_clone.clone(),
+                pointcuts: pointcuts_clone.clone(),
+                enabled: true,
+            });
+            v
         });
     }
 
     pub fn enable(&self, name: &str) -> bool {
-        let mut registry = self.write_registry();
-        for entry in registry.iter_mut() {
-            if entry.aspect.name() == name {
-                entry.enabled = true;
-                return true;
+        let mut found = false;
+        self.registry.rcu(|old| {
+            let mut v = (**old).clone();
+            for entry in &mut v {
+                if entry.aspect.name() == name {
+                    entry.enabled = true;
+                    found = true;
+                    break;
+                }
             }
-        }
-        false
+            v
+        });
+        found
     }
 
     pub fn disable(&self, name: &str) -> bool {
-        let mut registry = self.write_registry();
-        for entry in registry.iter_mut() {
-            if entry.aspect.name() == name {
-                entry.enabled = false;
-                return true;
+        let mut found = false;
+        self.registry.rcu(|old| {
+            let mut v = (**old).clone();
+            for entry in &mut v {
+                if entry.aspect.name() == name {
+                    entry.enabled = false;
+                    found = true;
+                    break;
+                }
             }
-        }
-        false
+            v
+        });
+        found
     }
 
     pub fn aspects(&self) -> Vec<Arc<dyn Aspect>> {
-        self.read_registry()
+        self.registry
+            .load()
             .iter()
             .filter(|e| e.enabled)
             .map(|e| e.aspect.clone())
@@ -111,7 +123,7 @@ impl AspectEngine {
     pub fn columns_for(&self, table: &str) -> Vec<ColumnDef> {
         let mut cols = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        for entry in self.read_registry().iter() {
+        for entry in self.registry.load().iter() {
             if entry.enabled && matches_table_any(&entry.pointcuts, table) {
                 for col in entry.aspect.columns() {
                     if seen.insert(col.name.clone()) {
@@ -124,11 +136,11 @@ impl AspectEngine {
     }
 
     fn get_aspects(&self, jp_id: &JoinPointId, table: &str) -> Vec<Arc<dyn Aspect>> {
-        let enabled_names: std::collections::HashSet<String> = self
-            .read_registry()
+        let registry = self.registry.load();
+        let enabled_names: std::collections::HashSet<&str> = registry
             .iter()
             .filter(|e| e.enabled)
-            .map(|e| e.aspect.name().to_string())
+            .map(|e| e.aspect.name())
             .collect();
 
         let Some(aspects) = self.dispatch_table.get(jp_id) else {
@@ -1397,8 +1409,7 @@ mod tests {
                 }]
             }
             async fn on_access_filter(&self, ctx: &mut AccessFilterContext) -> AspectResult {
-                ctx.conditions
-                    .push("tenant_id = ?".into());
+                ctx.conditions.push("tenant_id = ?".into());
                 ctx.params.push(ctx.base.tenant_id.clone());
                 Ok(Advice::Continue)
             }
@@ -1452,11 +1463,14 @@ mod tests {
             table: Some("posts".into()),
             action: "read".into(),
         };
-        let result = engine
-            .dispatch_access_check("posts", &mut ctx)
-            .await;
+        let result = engine.dispatch_access_check("posts", &mut ctx).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("rbac lookup failed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rbac lookup failed")
+        );
     }
 
     // ─── HTTP Layer tests ───
@@ -1531,8 +1545,7 @@ mod tests {
                 }]
             }
             async fn on_http_before(&self, ctx: &mut HttpBeforeContext) -> AspectResult {
-                ctx.headers
-                    .insert("x-aspect-ran".into(), "true".into());
+                ctx.headers.insert("x-aspect-ran".into(), "true".into());
                 Ok(Advice::Continue)
             }
         }
@@ -1648,12 +1661,8 @@ mod tests {
         }
 
         let engine = AspectEngine::new();
-        engine.register(LateAspect {
-            log: log.clone(),
-        });
-        engine.register(EarlyAspect {
-            log: log.clone(),
-        });
+        engine.register(LateAspect { log: log.clone() });
+        engine.register(EarlyAspect { log: log.clone() });
 
         let mut ctx = EventContext {
             base: BaseContext::new(None, "default".into(), "now".into()),

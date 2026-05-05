@@ -213,9 +213,13 @@ pub fn generate_alter_table(ct: &ContentTypeSchema, existing_columns: &[String])
                         .as_ref()
                         .map_or("users", |r| r.target.as_str());
                     if !existing.contains(fk.as_str()) {
-                        let not_null = if field.required { " NOT NULL" } else { "" };
+                        let not_null_default = if field.required {
+                            " NOT NULL DEFAULT ''"
+                        } else {
+                            ""
+                        };
                         stmts.push(format!(
-                            "ALTER TABLE {} ADD COLUMN {fk} TEXT{not_null} REFERENCES {target_table}(id)",
+                            "ALTER TABLE {} ADD COLUMN {fk} TEXT{not_null_default} REFERENCES {target_table}(id)",
                             ct.table
                         ));
                     }
@@ -234,7 +238,7 @@ pub fn generate_alter_table(ct: &ContentTypeSchema, existing_columns: &[String])
             );
 
             if field.required && field.default.is_none() && field.field_type != FieldType::Boolean {
-                sql.push_str(" NOT NULL");
+                sql.push_str(" NOT NULL DEFAULT ''");
             }
 
             if let Some(ref default) = field.default {
@@ -262,13 +266,13 @@ pub fn generate_alter_table(ct: &ContentTypeSchema, existing_columns: &[String])
 
     if !existing.contains(COL_CREATED_AT) {
         stmts.push(format!(
-            "ALTER TABLE {} ADD COLUMN {} TEXT NOT NULL",
+            "ALTER TABLE {} ADD COLUMN {} TEXT NOT NULL DEFAULT ''",
             ct.table, COL_CREATED_AT
         ));
     }
     if !existing.contains(COL_UPDATED_AT) {
         stmts.push(format!(
-            "ALTER TABLE {} ADD COLUMN {} TEXT NOT NULL",
+            "ALTER TABLE {} ADD COLUMN {} TEXT NOT NULL DEFAULT ''",
             ct.table, COL_UPDATED_AT
         ));
     }
@@ -616,8 +620,16 @@ required = true
                 .any(|s| s.contains("status TEXT NOT NULL DEFAULT 'draft'"))
         );
         assert!(stmts.iter().any(|s| s.contains("published_at TEXT")));
-        assert!(stmts.iter().any(|s| s.contains("created_at TEXT NOT NULL")));
-        assert!(stmts.iter().any(|s| s.contains("updated_at TEXT NOT NULL")));
+        assert!(
+            stmts
+                .iter()
+                .any(|s| s.contains("created_at TEXT NOT NULL DEFAULT ''"))
+        );
+        assert!(
+            stmts
+                .iter()
+                .any(|s| s.contains("updated_at TEXT NOT NULL DEFAULT ''"))
+        );
         assert!(stmts.iter().any(|s| s.contains("deleted_at TEXT")));
     }
 

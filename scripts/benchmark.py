@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-BASE_URL = "http://localhost:9000/api/v1"
+BASE_URL = "http://localhost:9898/api/v1"
 AUTH = {"email": "admin@test.com", "password": "Admin1234"}
 
 
@@ -78,12 +78,40 @@ async def get_token(client: httpx.AsyncClient) -> str:
     return data["data"]["access_token"]
 
 
-async def prepare_data(client: httpx.AsyncClient, token: str, count: int):
-    """插入测试数据（原生 posts + CMS articles）"""
+async def fetch_content_types(client: httpx.AsyncClient, token: str) -> list[dict]:
+    """从 /admin/content-types 获取已注册的 CMS content type 列表"""
+    headers = make_headers(token)
+    resp = await client.get(f"{BASE_URL}/admin/content-types", headers=headers)
+    data = resp.json()
+    items = data.get("data", [])
+    return [ct for ct in items if ct.get("plural")]
+
+
+async def pick_cms_plural(
+    client: httpx.AsyncClient, token: str, prefer: str | None = None
+) -> str | None:
+    """选一个可用的 CMS plural 名称，优先匹配 prefer"""
+    content_types = await fetch_content_types(client, token)
+    if not content_types:
+        return None
+    if prefer:
+        for ct in content_types:
+            if ct["plural"] == prefer:
+                return ct["plural"]
+    return content_types[0]["plural"]
+
+
+async def prepare_data(
+    client: httpx.AsyncClient, token: str, count: int, cms_plural: str | None
+):
+    """插入测试数据（原生 posts + CMS）"""
     headers = {"Authorization": f"Bearer {token}"}
     suffix = "".join(random.choices(string.ascii_lowercase, k=6))
 
-    print(f"\n准备测试数据: {count} 条 posts + {count} 条 articles ...")
+    print(f"\n准备测试数据: {count} 条 posts", end="")
+    if cms_plural:
+        print(f" + {count} 条 {cms_plural}", end="")
+    print(" ...")
 
     async def create_post(i: int):
         payload = {
@@ -96,19 +124,23 @@ async def prepare_data(client: httpx.AsyncClient, token: str, count: int):
         resp = await client.post(f"{BASE_URL}/posts", json=payload, headers=headers)
         return resp
 
-    async def create_article(i: int):
+    async def create_cms(i: int):
         payload = {
-            "title": f"Bench Article {suffix} {i}",
-            "content": f"Benchmark article #{i}. " + "y" * 200,
+            "title": f"Bench {cms_plural} {suffix} {i}",
+            "content": f"Benchmark #{i}. " + "y" * 200,
             "status": "published",
         }
-        resp = await client.post(f"{BASE_URL}/cms/articles", json=payload, headers=headers)
+        resp = await client.post(
+            f"{BASE_URL}/cms/{cms_plural}", json=payload, headers=headers
+        )
         return resp
 
     tasks = []
     for i in range(count):
         tasks.append(create_post(i))
-        tasks.append(create_article(i))
+    if cms_plural:
+        for i in range(count):
+            tasks.append(create_cms(i))
     responses = await asyncio.gather(*tasks)
     ok = sum(1 for r in responses if r.status_code < 300)
     print(f"  插入完成: {ok}/{len(responses)} 成功")
@@ -183,15 +215,25 @@ async def main():
     print(f"raisfast 压力测试  |  并发={args.concurrency}  持续={args.duration}s")
     print(f"目标: {BASE_URL}")
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(
+        timeout=30,
+        limits=httpx.Limits(max_connections=1000, max_keepalive_connections=500),
+    ) as client:
         # 获取 token
         print("\n获取认证 token ...")
         token = await get_token(client)
         print(f"  Token: {token[:20]}...")
 
+        # 探测已注册的 CMS content type
+        cms_plural = await pick_cms_plural(client, token, prefer="articles")
+        if cms_plural:
+            print(f"  CMS content type: {cms_plural}")
+        else:
+            print("  CMS: 无已注册 content type，跳过 CMS 场景")
+
         # 准备数据
         if args.prepare > 0:
-            await prepare_data(client, token, args.prepare)
+            await prepare_data(client, token, args.prepare, cms_plural)
 
         # 自定义 URL 模式
         if args.url:
@@ -212,32 +254,34 @@ async def main():
         print(f"  完成: {s1.total} 请求, {s1.errors} 错误")
         await asyncio.sleep(5)
 
-        print(f"[2/6] CMS    GET /cms/articles (列表)")
-        s2 = await run_scenario(
-            client, token, f"{BASE_URL}/cms/articles",
-            args.concurrency, args.duration,
-            params={"page": "1", "page_size": "20"},
-        )
-        results.append(s2)
-        print(f"  完成: {s2.total} 请求, {s2.errors} 错误")
+        if cms_plural:
+            print(f"[2/6] CMS    GET /cms/{cms_plural} (列表)")
+            s2 = await run_scenario(
+                client, token, f"{BASE_URL}/cms/{cms_plural}",
+                args.concurrency, args.duration,
+                params={"page": "1", "page_size": "20"},
+            )
+            results.append(s2)
+            print(f"  完成: {s2.total} 请求, {s2.errors} 错误")
+        else:
+            print("[2/6] CMS    跳过（无 content type）")
+            results.append(Stats(name=f"GET /cms/?"))
         await asyncio.sleep(5)
 
         # ── 场景 2: 原生详情 vs CMS 详情 ──────────────────────────────
-        # 获取 ID 和 slug 用于详情查询
         resp = await client.get(f"{BASE_URL}/posts?page=1&page_size=1", headers=make_headers(token))
         post_data = resp.json().get("data")
         if not post_data or not post_data.get("items"):
             print("  跳过: 原生 /posts 无数据，跳过详情和创建场景")
-            for label in ["原生 GET /posts/{slug}", "CMS GET /cms/articles/{id}",
-                          "原生 POST /posts", "CMS POST /cms/articles"]:
+            for label in ["原生 GET /posts/{slug}", f"CMS GET /cms/{cms_plural}/{{id}}" if cms_plural else "CMS skip",
+                          "原生 POST /posts", f"CMS POST /cms/{cms_plural}" if cms_plural else "CMS skip"]:
                 results.append(Stats(name=label))
-            print_report(results)
+            for s in results:
+                print(s.report())
             return
         post_item = post_data["items"][0]
         post_id = post_item["id"]
         post_slug = post_item.get("slug", post_id)
-
-        article_id = await fetch_first_id(client, token, f"{BASE_URL}/cms/articles?page=1&page_size=1")
 
         print(f"[3/6] 原生 GET /posts/{{slug}} (详情)")
         results.append(
@@ -248,19 +292,51 @@ async def main():
         )
         await asyncio.sleep(5)
 
-        print(f"[4/6] CMS    GET /cms/articles/{{id}} (详情)")
-        s4 = await run_scenario(
-            client, token, f"{BASE_URL}/cms/articles/{article_id}",
-            args.concurrency, args.duration,
-        )
-        results.append(s4)
-        print(f"  完成: {s4.total} 请求, {s4.errors} 错误")
+        if cms_plural:
+            article_id = await fetch_first_id(client, token, f"{BASE_URL}/cms/{cms_plural}?page=1&page_size=1")
+            print(f"[4/6] CMS    GET /cms/{cms_plural}/{{id}} (详情)")
+            s4 = await run_scenario(
+                client, token, f"{BASE_URL}/cms/{cms_plural}/{article_id}",
+                args.concurrency, args.duration,
+            )
+            results.append(s4)
+            print(f"  完成: {s4.total} 请求, {s4.errors} 错误")
+        else:
+            print("[4/6] CMS    跳过（无 content type）")
+            results.append(Stats(name=f"GET /cms/?"))
         await asyncio.sleep(5)
 
-        # ── 场景 3: 写入性能 ─────────────────────────────────────────
+        # ── 场景 3: API Token 认证 vs JWT 认证（读取列表）────────────
+        print("[5/8] JWT    GET /posts (列表, JWT auth)")
+        s5_jwt = await run_scenario(
+            client, token, f"{BASE_URL}/posts",
+            args.concurrency, args.duration,
+            params={"page": "1", "page_size": "20"},
+        )
+        results.append(s5_jwt)
+        print(f"  完成: {s5_jwt.total} 请求, {s5_jwt.errors} 错误")
+        await asyncio.sleep(5)
+
+        api_tok_resp = await client.post(
+            f"{BASE_URL}/tokens",
+            json={"name": "bench-token", "scopes": ["read"]},
+            headers=make_headers(token),
+        )
+        api_tok = api_tok_resp.json()["data"]["token"]
+        print(f"[6/8] Token  GET /posts (列表, API Token auth)")
+        s5_at = await run_scenario(
+            client, api_tok, f"{BASE_URL}/posts",
+            args.concurrency, args.duration,
+            params={"page": "1", "page_size": "20"},
+        )
+        results.append(s5_at)
+        print(f"  完成: {s5_at.total} 请求, {s5_at.errors} 错误")
+        await asyncio.sleep(5)
+
+        # ── 场景 4: 写入性能 ─────────────────────────────────────────
         suffix = "".join(random.choices(string.ascii_lowercase, k=6))
 
-        print(f"[5/6] 原生 POST /posts (创建)")
+        print(f"[7/10] 原生 POST /posts (创建)")
         results.append(
             await run_scenario(
                 client, token, f"{BASE_URL}/posts",
@@ -277,19 +353,43 @@ async def main():
         )
         await asyncio.sleep(5)
 
-        print(f"[6/6] CMS    POST /cms/articles (创建)")
-        results.append(
-            await run_scenario(
-                client, token, f"{BASE_URL}/cms/articles",
-                args.concurrency, args.duration,
-                method="POST",
-                payload_fn=lambda i: {
-                    "title": f"Bench Article {suffix} {i} {time.monotonic_ns()}",
-                    "content": "Benchmark article content. " + "z" * 200,
-                    "status": "draft",
-                },
+        if cms_plural:
+            print(f"[8/10] CMS    POST /cms/{cms_plural} (创建)")
+            captured_plural = cms_plural
+            results.append(
+                await run_scenario(
+                    client, token, f"{BASE_URL}/cms/{captured_plural}",
+                    args.concurrency, args.duration,
+                    method="POST",
+                    payload_fn=lambda i: {
+                        "title": f"Bench {captured_plural} {suffix} {i} {time.monotonic_ns()}",
+                        "content": "Benchmark content. " + "z" * 200,
+                        "status": "draft",
+                    },
+                )
             )
+        else:
+            print("[8/10] CMS    跳过（无 content type）")
+            results.append(Stats(name=f"POST /cms/?"))
+
+        # ── 场景 5: healthz (无认证, 纯 HTTP 开销) ──────────────────
+        print("[9/10] GET /healthz (无认证)")
+        s9 = await run_scenario(
+            client, None, f"{BASE_URL.replace('/api/v1', '')}/healthz",
+            args.concurrency, args.duration,
         )
+        results.append(s9)
+        print(f"  完成: {s9.total} 请求, {s9.errors} 错误")
+        await asyncio.sleep(3)
+
+        # ── 场景 6: API Token 连续请求 (测缓存热路径) ───────────────
+        print("[10/10] Token GET /users/me (API Token 热路径)")
+        s10 = await run_scenario(
+            client, api_tok, f"{BASE_URL}/users/me",
+            args.concurrency, args.duration,
+        )
+        results.append(s10)
+        print(f"  完成: {s10.total} 请求, {s10.errors} 错误")
 
     # ── 输出报告 ──────────────────────────────────────────────────────
     print("\n")
@@ -298,7 +398,7 @@ async def main():
         print()
 
     # ── 对比汇总 ──────────────────────────────────────────────────────
-    if len(results) >= 4:
+    if len(results) >= 10 and cms_plural:
         print("=" * 60)
         print("  对比汇总")
         print("=" * 60)
@@ -306,12 +406,15 @@ async def main():
         pairs = [
             (results[0], results[1], "列表读取"),
             (results[2], results[3], "详情读取"),
-            (results[4], results[5], "记录创建"),
+            (results[4], results[5], "JWT vs Token 认证"),
+            (results[6], results[7], "记录创建"),
         ]
 
         for native, cms, label in pairs:
-            n_avg = sum(native.latencies) / len(native.latencies) * 1000 if native.latencies else 0
-            c_avg = sum(cms.latencies) / len(cms.latencies) * 1000 if cms.latencies else 0
+            if not native.latencies or not cms.latencies:
+                continue
+            n_avg = sum(native.latencies) / len(native.latencies) * 1000
+            c_avg = sum(cms.latencies) / len(cms.latencies) * 1000
             ratio = c_avg / n_avg if n_avg > 0 else 0
             print(f"  {label:8s}  原生={n_avg:7.2f}ms  CMS={c_avg:7.2f}ms  比值={ratio:.2f}x")
 

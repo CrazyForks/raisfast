@@ -475,13 +475,10 @@ mod tests {
         }
 
         let pool_clone = Arc::clone(&pool);
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            async move {
-                let _g = pool_clone.acquire().await;
-                true
-            },
-        )
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), async move {
+            let _g = pool_clone.acquire().await;
+            true
+        })
         .await
         .unwrap();
         assert!(result, "should acquire after guard dropped");

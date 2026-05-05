@@ -61,6 +61,8 @@ use std::sync::Arc;
 use storage::Storage;
 use webhook::WebhookService;
 
+pub use cache::CacheStore;
+
 rust_i18n::i18n!("locales", fallback = "en");
 
 /// 应用全局共享状态
@@ -92,6 +94,7 @@ pub struct AppState {
     pub webhook: Arc<WebhookService>,
     pub workflow: Arc<WorkflowService>,
     pub storage: Arc<dyn Storage>,
+    pub cache: Arc<dyn CacheStore>,
     pub cms_cache: Arc<dashmap::DashMap<String, (serde_json::Value, std::time::Instant)>>,
     pub oauth_registry: Arc<OAuthProviderRegistry>,
     pub email_sender: Arc<dyn EmailSender>,
@@ -100,14 +103,17 @@ pub struct AppState {
 }
 
 /// 构建 AppState（HTTP 服务器和 Tauri 共享）
-pub async fn build_app_state(config: &AppConfig, shutdown_rx: tokio::sync::watch::Receiver<bool>) -> anyhow::Result<AppState> {
+pub async fn build_app_state(
+    config: &AppConfig,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> anyhow::Result<AppState> {
     let pool = crate::db::connection::init_pool(&config.database_url, config.db_pool_size).await?;
     let eventbus = EventBus::new(256);
 
     let sqlx_repo = crate::repositories::SqlxPostRepository::new(pool.clone());
     let cache: Arc<dyn crate::cache::CacheStore> = Arc::new(crate::cache::MemoryCache::new());
     let post_repo: Arc<dyn PostRepository> = Arc::new(
-        crate::repositories::CachedPostRepository::new(sqlx_repo, cache, None),
+        crate::repositories::CachedPostRepository::new(sqlx_repo, cache.clone(), None),
     );
 
     let user_repo: Arc<dyn UserRepository> =
@@ -211,6 +217,7 @@ pub async fn build_app_state(config: &AppConfig, shutdown_rx: tokio::sync::watch
         webhook: webhook_service.clone(),
         workflow: Arc::new(WorkflowService::new(pool.clone())),
         storage,
+        cache: cache.clone(),
         cms_cache: Arc::new(dashmap::DashMap::new()),
         oauth_registry: Arc::new(build_oauth_registry(config)),
         email_sender: crate::notifier::build_email_sender(config),
@@ -218,7 +225,11 @@ pub async fn build_app_state(config: &AppConfig, shutdown_rx: tokio::sync::watch
         route_registry: Arc::new(Vec::new()),
     };
 
-    crate::server::spawn_event_subscriber(eventbus.clone(), state.plugins.clone(), shutdown_rx.clone());
+    crate::server::spawn_event_subscriber(
+        eventbus.clone(),
+        state.plugins.clone(),
+        shutdown_rx.clone(),
+    );
     crate::server::spawn_audit_subscriber(
         eventbus.clone(),
         state.audit.clone(),

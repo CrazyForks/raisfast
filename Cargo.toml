@@ -139,6 +139,7 @@ lettre = { version = "0.11", default-features = false, features = ["smtp-transpo
 tauri = { version = "2", features = ["devtools"], optional = true }
 
 dashmap = "6"
+moka = { version = "0.12", features = ["sync"] }
 arc-swap = "1"
 
 # OpenAPI

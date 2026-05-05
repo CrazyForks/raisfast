@@ -578,17 +578,17 @@ impl<'a> SqlContext<'a> {
             Operand::StringLit(s) => {
                 let idx = self.next_param();
                 self.params.push(s.clone());
-                format!("?{idx}")
+                crate::db::dialect::translate_placeholder(idx)
             }
             Operand::NumberLit(n) => {
                 let idx = self.next_param();
                 self.params.push(n.to_string());
-                format!("?{idx}")
+                crate::db::dialect::translate_placeholder(idx)
             }
             Operand::BoolLit(b) => {
                 let idx = self.next_param();
                 self.params.push(if *b { "1" } else { "0" }.to_string());
-                format!("?{idx}")
+                crate::db::dialect::translate_placeholder(idx)
             }
             Operand::Null => "NULL".to_string(),
             Operand::Length(inner) => {
@@ -1037,7 +1037,7 @@ mod tests {
         let cfg = default_config();
         let rule = Rule::parse(r#"status = "published""#, &cfg).unwrap();
         let (sql, params) = rule.to_sql(0, &cfg);
-        assert_eq!(sql, r#""status" = ?1"#);
+        assert_eq!(sql, r#""status" = ?"#);
         assert_eq!(params, vec!["published"]);
     }
 
@@ -1046,7 +1046,7 @@ mod tests {
         let cfg = default_config();
         let rule = Rule::parse(r#"status = "published""#, &cfg).unwrap();
         let (sql, params) = rule.to_sql(2, &cfg);
-        assert_eq!(sql, r#""status" = ?3"#);
+        assert_eq!(sql, r#""status" = ?"#);
         assert_eq!(params, vec!["published"]);
     }
 

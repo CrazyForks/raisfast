@@ -117,6 +117,29 @@ pub enum PluginAction {
     },
 }
 
+pub fn print_banner(config: &AppConfig) {
+    let c = "\x1b[1;36m";
+    let y = "\x1b[1;33m";
+    let d = "\x1b[2;37m";
+    let r = "\x1b[0m";
+
+    println!();
+    println!("{y}     ▄▄▄▄▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄▄▄▄▄       {c}▄▄▄▄▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄▄▄▄▄{r}");
+    println!("{y}    ▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌     {c}▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌{r}");
+    println!("{y}    ▐░█▀▀▀▀▀▀▀█░▌▐░█▀▀▀▀▀▀▀█░▌ ▀▀▀▀█░█▀▀▀▀ ▐░█▀▀▀▀▀▀▀▀▀      {c}▐░█▀▀▀▀▀▀▀▀▀ ▐░█▀▀▀▀▀▀▀█░▌▐░█▀▀▀▀▀▀▀▀▀  ▀▀▀▀█░█▀▀▀▀{r}");
+    println!("{y}    ▐░▌       ▐░▌▐░▌       ▐░▌     ▐░▌     ▐░▌               {c}▐░▌          ▐░▌       ▐░▌▐░▌               ▐░▌{r}");
+    println!("{y}    ▐░█▄▄▄▄▄▄▄█░▌▐░█▄▄▄▄▄▄▄█░▌     ▐░▌     ▐░█▄▄▄▄▄▄▄▄▄      {c}▐░█▄▄▄▄▄▄▄▄▄ ▐░█▄▄▄▄▄▄▄█░▌▐░█▄▄▄▄▄▄▄▄▄      ▐░▌{r}");
+    println!("{y}    ▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌     ▐░▌     ▐░░░░░░░░░░░▌     {c}▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌     ▐░▌{r}");
+    println!("{y}    ▐░█▀▀▀▀█░█▀▀ ▐░█▀▀▀▀▀▀▀█░▌     ▐░▌      ▀▀▀▀▀▀▀▀▀█░▌     {c}▐░█▀▀▀▀▀▀▀▀▀ ▐░█▀▀▀▀▀▀▀█░▌ ▀▀▀▀▀▀▀▀▀█░▌     ▐░▌{r}");
+    println!("{y}    ▐░▌     ▐░▌  ▐░▌       ▐░▌     ▐░▌               ▐░▌     {c}▐░▌          ▐░▌       ▐░▌          ▐░▌     ▐░▌{r}");
+    println!("{y}    ▐░▌      ▐░▌ ▐░▌       ▐░▌ ▄▄▄▄█░█▄▄▄▄  ▄▄▄▄▄▄▄▄▄█░▌     {c}▐░▌          ▐░▌       ▐░▌ ▄▄▄▄▄▄▄▄▄█░▌     ▐░▌{r}");
+    println!("{y}    ▐░▌       ▐░▌▐░▌       ▐░▌▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌     {c}▐░▌          ▐░▌       ▐░▌▐░░░░░░░░░░░▌     ▐░▌{r}");
+    println!("{y}     ▀         ▀  ▀         ▀  ▀▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀▀▀▀       {c}▀            ▀         ▀  ▀▀▀▀▀▀▀▀▀▀▀       ▀{r}");
+    println!();
+    println!("{d}    raisfast v{}  ·  http://{}:{}{r}", env!("CARGO_PKG_VERSION"), config.host, config.port);
+    println!();
+}
+
 pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
     match cli.command {
         None
@@ -157,7 +180,12 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
         }
 
         Some(Commands::Db {
-            action: DbAction::Seed { email, username, password },
+            action:
+                DbAction::Seed {
+                    email,
+                    username,
+                    password,
+                },
         }) => {
             db_cmd::seed(config, &email, &username, &password).await?;
         }

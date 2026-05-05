@@ -704,10 +704,7 @@ impl PluginManager {
                     segment_count: pattern_parts.len(),
                     static_segments,
                 };
-                self.route_index
-                    .entry(key)
-                    .or_default()
-                    .push(entry);
+                self.route_index.entry(key).or_default().push(entry);
             }
         }
     }
@@ -756,7 +753,7 @@ impl PluginManager {
             tracing::info!("unloaded plugin: {id}");
             drop(plugins);
             self.rebuild_route_index();
-        self.rebuild_hook_index();
+            self.rebuild_hook_index();
             self.rebuild_hook_index();
             self.remove_crons_for_plugin(id).await;
             self.emit_event(PluginEvent::PluginUnloaded { id: id.to_string() });
@@ -1026,8 +1023,7 @@ impl PluginManager {
                 Err(e) => {
                     let err_msg = format!("{e}");
                     tracing::warn!("plugin {} hook {} failed: {err_msg}", plugin_id, func_name,);
-                    self.record_hook_error(plugin_id, func_name, &err_msg)
-                        .await;
+                    self.record_hook_error(plugin_id, func_name, &err_msg).await;
                 }
             }
 
@@ -1133,8 +1129,7 @@ impl PluginManager {
                     plugin_id,
                     func_name,
                 );
-                self.record_hook_error(plugin_id, func_name, &err_msg)
-                    .await;
+                self.record_hook_error(plugin_id, func_name, &err_msg).await;
             } else {
                 self.reset_error_count(plugin_id).await;
             }
@@ -1218,8 +1213,7 @@ impl PluginManager {
                 Err(e) => {
                     let err_msg = format!("{e}");
                     tracing::warn!("plugin {} render_markdown failed: {err_msg}", plugin_id);
-                    self.record_hook_error(plugin_id, func_name, &err_msg)
-                        .await;
+                    self.record_hook_error(plugin_id, func_name, &err_msg).await;
                     self.record_hook_metrics(plugin_id, func_name, elapsed, is_error)
                         .await;
                 }
@@ -1437,7 +1431,12 @@ impl PluginManager {
         }
 
         let path_parts: Vec<&str> = path.trim_end_matches('/').split('/').collect();
-        let path_key: String = path_parts.iter().take(3).copied().collect::<Vec<_>>().join("/");
+        let path_key: String = path_parts
+            .iter()
+            .take(3)
+            .copied()
+            .collect::<Vec<_>>()
+            .join("/");
         let candidates = self.route_index.get(&path_key)?;
         let matched = candidates
             .iter()
@@ -1463,9 +1462,7 @@ impl PluginManager {
                 continue;
             }
 
-            if let Err(resp) =
-                crate::content_type::schema::check_api_access(entry.auth, auth)
-            {
+            if let Err(resp) = crate::content_type::schema::check_api_access(entry.auth, auth) {
                 let status = match &resp {
                     crate::errors::app_error::AppError::Unauthorized => {
                         axum::http::StatusCode::UNAUTHORIZED
@@ -1514,9 +1511,7 @@ impl PluginManager {
                 }
                 Err(e) => {
                     let err_msg = format!("{e}");
-                    tracing::warn!(
-                        "plugin {plugin_id} route handler {handler} failed: {err_msg}"
-                    );
+                    tracing::warn!("plugin {plugin_id} route handler {handler} failed: {err_msg}");
                     self.record_hook_error(&plugin_id, handler, &err_msg).await;
                     self.record_hook_metrics(&plugin_id, handler, elapsed, true)
                         .await;

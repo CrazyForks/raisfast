@@ -818,7 +818,8 @@ export function on_post_creating(inputJson) {
             .await
             .unwrap();
         assert_eq!(
-            r2.as_ref().unwrap()["counter"], 1,
+            r2.as_ref().unwrap()["counter"],
+            1,
             "per-request: counter should reset to 1 on each call (isolated context)"
         );
     }
@@ -844,12 +845,8 @@ export function on_post_creating(inputJson) {
             let eng = Arc::clone(&engine);
             handles.push(tokio::spawn(async move {
                 let input = serde_json::json!({"idx": i});
-                eng.call_filter::<serde_json::Value>(
-                    "test-concurrent",
-                    "on_post_creating",
-                    &input,
-                )
-                .await
+                eng.call_filter::<serde_json::Value>("test-concurrent", "on_post_creating", &input)
+                    .await
             }));
         }
 
@@ -867,7 +864,10 @@ export function on_post_creating(inputJson) {
     async fn js_call_after_unload_returns_none() {
         let engine = JsEngine::new(&test_config(), None, None).await.unwrap();
         engine
-            .load_plugin_default("test-gone", "export function on_post_creating(j) { return j; }")
+            .load_plugin_default(
+                "test-gone",
+                "export function on_post_creating(j) { return j; }",
+            )
             .await
             .unwrap();
 
@@ -882,13 +882,19 @@ export function on_post_creating(inputJson) {
         let result = engine
             .call_action("test-gone", "on_post_creating", &serde_json::json!({}))
             .await;
-        assert!(result.is_ok(), "call_action after unload should return Ok(())");
+        assert!(
+            result.is_ok(),
+            "call_action after unload should return Ok(())"
+        );
 
         let result = engine
             .call_string_filter("test-gone", "on_post_creating", "hello")
             .await
             .unwrap();
-        assert!(result.is_none(), "call_string_filter after unload should return None");
+        assert!(
+            result.is_none(),
+            "call_string_filter after unload should return None"
+        );
     }
 
     #[tokio::test]
@@ -933,7 +939,11 @@ export function on_post_creating(inputJson) {
             .unwrap();
 
         let result: anyhow::Result<Option<serde_json::Value>> = engine
-            .call_filter("test-filter-throw", "on_post_creating", &serde_json::json!({}))
+            .call_filter(
+                "test-filter-throw",
+                "on_post_creating",
+                &serde_json::json!({}),
+            )
             .await;
         assert!(result.is_err());
     }
@@ -1013,7 +1023,10 @@ export function on_post_creating(inputJson) {
         assert_eq!(r["title"], "HELLO WORLD");
         assert_eq!(r["slug"], "hello-world");
         assert_eq!(r["processed"], true);
-        assert!(r.get("removable").is_none(), "removable field should be deleted");
+        assert!(
+            r.get("removable").is_none(),
+            "removable field should be deleted"
+        );
     }
 
     #[tokio::test]
@@ -1090,7 +1103,11 @@ export function on_post_creating(inputJson) {
             .unwrap();
 
         let result: anyhow::Result<Option<serde_json::Value>> = engine
-            .call_filter("test-no-return", "on_post_creating", &serde_json::json!({"title": "x"}))
+            .call_filter(
+                "test-no-return",
+                "on_post_creating",
+                &serde_json::json!({"title": "x"}),
+            )
             .await;
         assert!(
             result.is_err(),

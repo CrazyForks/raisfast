@@ -109,6 +109,8 @@ pub async fn create(
 }
 
 /// 在已有事务中创建新文章
+///
+/// 直接从命令数据构造 Post 对象，不回读数据库。
 pub async fn create_tx(
     tx: &mut crate::db::Transaction<'_>,
     cmd: &crate::commands::CreatePostCmd,
@@ -143,20 +145,24 @@ pub async fn create_tx(
         .execute(&mut **tx)
         .await?;
 
-    let sql = format!(
-        "SELECT * FROM posts WHERE id = ?{}",
-        tenant_filter(tenant_id)
-    );
-    let sql = crate::db::dialect::translate(&sql);
-    let mut q = sqlx::query_as::<_, Post>(&sql).bind(&id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let post = q
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("failed to fetch created post")))?;
-    Ok(post)
+    Ok(Post {
+        id,
+        tenant_id: tid.to_string(),
+        title: cmd.title.clone(),
+        slug: cmd.slug.clone(),
+        content: cmd.content.clone(),
+        excerpt: cmd.excerpt.clone(),
+        cover_image: cmd.cover_image.clone(),
+        status: cmd.status.clone(),
+        created_by: cmd.created_by.clone(),
+        updated_by: cmd.updated_by.clone().unwrap_or_default(),
+        category_id: cmd.category_id.clone(),
+        view_count: 0,
+        is_pinned: false,
+        created_at: now.clone(),
+        updated_at: now,
+        published_at,
+    })
 }
 
 /// 更新文章
@@ -175,6 +181,8 @@ pub async fn update(
 }
 
 /// 在已有事务中更新文章
+///
+/// 直接从合并数据构造 Post 对象，不回读数据库。
 pub async fn update_tx(
     tx: &mut crate::db::Transaction<'_>,
     cmd: &crate::commands::UpdatePostCmd,
@@ -199,7 +207,7 @@ pub async fn update_tx(
     let published_at = if new_status == "published" && existing.published_at.is_none() {
         Some(now.clone())
     } else {
-        existing.published_at
+        existing.published_at.clone()
     };
 
     let title = cmd.title.as_deref().unwrap_or(&existing.title);
@@ -220,6 +228,10 @@ pub async fn update_tx(
         .map(std::string::ToString::to_string)
         .or(existing.category_id);
     let slug = cmd.slug.as_deref().unwrap_or(&existing.slug);
+    let updated_by = cmd
+        .updated_by
+        .clone()
+        .unwrap_or(existing.updated_by.clone());
 
     let sql = format!(
         "UPDATE posts SET title = ?, slug = ?, content = ?, excerpt = ?, cover_image = ?, status = ?, category_id = ?, published_at = ?, updated_by = ?, updated_at = ? WHERE id = ?{}",
@@ -230,31 +242,37 @@ pub async fn update_tx(
         .bind(title)
         .bind(slug)
         .bind(content)
-        .bind(excerpt)
-        .bind(cover_image)
+        .bind(&excerpt)
+        .bind(&cover_image)
         .bind(new_status)
-        .bind(category_id)
-        .bind(published_at)
-        .bind(&cmd.updated_by)
-        .bind(now)
+        .bind(&category_id)
+        .bind(&published_at)
+        .bind(&updated_by)
+        .bind(&now)
         .bind(&cmd.id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
     q.execute(&mut **tx).await?;
 
-    let sql = format!(
-        "SELECT * FROM posts WHERE id = ?{}",
-        tenant_filter(tenant_id)
-    );
-    let sql = crate::db::dialect::translate(&sql);
-    let mut q = sqlx::query_as::<_, Post>(&sql).bind(&cmd.id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_one(&mut **tx)
-        .await
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("failed to fetch updated post")))
+    Ok(Post {
+        id: existing.id,
+        tenant_id: existing.tenant_id,
+        title: title.to_string(),
+        slug: slug.to_string(),
+        content: content.to_string(),
+        excerpt,
+        cover_image,
+        status: new_status.to_string(),
+        created_by: existing.created_by,
+        updated_by,
+        category_id,
+        view_count: existing.view_count,
+        is_pinned: existing.is_pinned,
+        created_at: existing.created_at,
+        updated_at: now,
+        published_at,
+    })
 }
 
 /// 删除文章

@@ -24,6 +24,10 @@ impl SqlxPostRepository {
 
 #[async_trait::async_trait]
 impl PostRepository for SqlxPostRepository {
+    fn pool(&self) -> &Pool {
+        &self.pool
+    }
+
     async fn find_by_slug(&self, slug: &str, tenant_id: Option<&str>) -> AppResult<Option<Post>> {
         post::find_by_slug(&self.pool, slug, tenant_id).await
     }

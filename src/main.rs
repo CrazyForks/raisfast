@@ -23,9 +23,10 @@ mod logging;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cli = cli::Cli::parse();
-
     let config = AppConfig::init();
+    cli::print_banner(&config);
+
+    let cli = cli::Cli::parse();
 
     let _log_guard = logging::init(&config.log_dir);
 

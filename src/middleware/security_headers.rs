@@ -9,18 +9,17 @@
 //! - `Permissions-Policy` — 禁用不必要的浏览器 API
 //! - HSTS（仅 HTTPS）— 强制 HTTPS 连接
 
+use axum::extract::Request;
 use axum::http::{HeaderName, HeaderValue};
 use axum::middleware::Next;
 use axum::response::Response;
-use axum::extract::Request;
 
 static X_CONTENT_TYPE_OPTIONS: HeaderName = HeaderName::from_static("x-content-type-options");
 static X_FRAME_OPTIONS: HeaderName = HeaderName::from_static("x-frame-options");
 static X_XSS_PROTECTION: HeaderName = HeaderName::from_static("x-xss-protection");
 static REFERRER_POLICY: HeaderName = HeaderName::from_static("referrer-policy");
 static PERMISSIONS_POLICY: HeaderName = HeaderName::from_static("permissions-policy");
-static STRICT_TRANSPORT_SECURITY: HeaderName =
-    HeaderName::from_static("strict-transport-security");
+static STRICT_TRANSPORT_SECURITY: HeaderName = HeaderName::from_static("strict-transport-security");
 
 /// 安全响应头中间件。
 pub async fn security_headers(request: Request, next: Next) -> Response {

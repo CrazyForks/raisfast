@@ -154,12 +154,13 @@ pub async fn seed(
 ) -> anyhow::Result<()> {
     let pool = init_pool(&config.database_url, 1).await?;
 
-    let existing: i64 =
-        sqlx::query_scalar(&dialect::translate("SELECT COUNT(*) FROM users WHERE email = ?"))
-            .bind(email)
-            .fetch_one(&pool)
-            .await
-            .unwrap_or(0);
+    let existing: i64 = sqlx::query_scalar(&dialect::translate(
+        "SELECT COUNT(*) FROM users WHERE email = ?",
+    ))
+    .bind(email)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or(0);
 
     if existing > 0 {
         println!("seed: admin user already exists ({email}), skipping");

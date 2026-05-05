@@ -11,16 +11,26 @@ use axum::http::{Request, Response};
 use axum::middleware::Next;
 use axum::response::IntoResponse;
 
-use crate::aspects::{BaseContext, HttpAfterContext, HttpBeforeContext};
 use crate::AppState;
+use crate::aspects::{BaseContext, HttpAfterContext, HttpBeforeContext};
 
 pub async fn aop_http_layer(
     State(state): State<AppState>,
     req: Request<Body>,
     next: Next,
 ) -> impl IntoResponse {
+    let path = req.uri().path();
+
+    let skip = matches!(
+        path,
+        "/health" | "/healthz" | "/readyz" | "/metrics" | "/feed.xml"
+    );
+    if skip {
+        return next.run(req).await;
+    }
+
     let method = req.method().to_string();
-    let path = req.uri().path().to_string();
+    let path_owned = path.to_string();
     let headers: HashMap<String, String> = req
         .headers()
         .iter()
@@ -30,13 +40,13 @@ pub async fn aop_http_layer(
     let mut ctx = HttpBeforeContext {
         base: BaseContext::new(None, "default".to_string(), chrono::Utc::now().to_rfc3339()),
         method,
-        path: path.clone(),
+        path: path_owned.clone(),
         headers,
     };
 
     match state
         .aspect_engine
-        .dispatch_http_before(&path, &mut ctx)
+        .dispatch_http_before(&path_owned, &mut ctx)
         .await
     {
         Ok(Some(val)) => {
@@ -45,9 +55,7 @@ pub async fn aop_http_layer(
                 .status(200)
                 .header("content-type", "application/json")
                 .body(Body::from(body))
-                .unwrap_or_else(|_| {
-                    Response::new(Body::from(r#"{"code":0,"data":null}"#))
-                });
+                .unwrap_or_else(|_| Response::new(Body::from(r#"{"code":0,"data":null}"#)));
         }
         Ok(None) => {}
         Err(e) => {
@@ -66,7 +74,7 @@ pub async fn aop_http_layer(
 
     if let Err(e) = state
         .aspect_engine
-        .dispatch_http_after(&path, &mut after_ctx)
+        .dispatch_http_after(&path_owned, &mut after_ctx)
         .await
     {
         tracing::warn!("aop http after dispatch error: {e}");

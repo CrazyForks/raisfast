@@ -85,7 +85,11 @@ impl<P: PostRepository> CachedPostRepository<P> {
 }
 
 #[async_trait::async_trait]
-impl<P: PostRepository + 'static> PostRepository for CachedPostRepository<P> {
+impl<P: PostRepository> PostRepository for CachedPostRepository<P> {
+    fn pool(&self) -> &crate::db::Pool {
+        self.inner.pool()
+    }
+
     async fn find_by_slug(&self, slug: &str, tenant_id: Option<&str>) -> AppResult<Option<Post>> {
         let key = cache_key_slug(tenant_id, slug);
         if let Some(cached) = self.cache.get(&key).await

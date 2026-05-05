@@ -584,18 +584,20 @@ impl ContentTypeSchema {
         ));
     }
 
-/// 校验表名只含安全字符，防止 SQL 注入。
-fn validate_table_name(name: &str) -> Result<String, AppError> {
-    if name.is_empty() {
-        return Err(AppError::Internal(anyhow::anyhow!("table name must not be empty")));
+    /// 校验表名只含安全字符，防止 SQL 注入。
+    fn validate_table_name(name: &str) -> Result<String, AppError> {
+        if name.is_empty() {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "table name must not be empty"
+            )));
+        }
+        if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "table name '{name}' contains invalid characters (only alphanumeric and underscore allowed)"
+            )));
+        }
+        Ok(name.to_string())
     }
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Err(AppError::Internal(anyhow::anyhow!(
-            "table name '{name}' contains invalid characters (only alphanumeric and underscore allowed)"
-        )));
-    }
-    Ok(name.to_string())
-}
 
     /// 预解析 API Rule 表达式，schema 注册时调用一次
     pub fn cache_rules(&mut self, config: &RuleEngineConfig) {

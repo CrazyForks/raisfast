@@ -62,11 +62,7 @@ impl LuaEngine {
         Ok(lua)
     }
 
-    fn create_instance(
-        &self,
-        entry: &LuaPluginEntry,
-        plugin_id: &str,
-    ) -> anyhow::Result<Lua> {
+    fn create_instance(&self, entry: &LuaPluginEntry, plugin_id: &str) -> anyhow::Result<Lua> {
         let memory_limit = (self.config.plugin_max_memory_mb as usize) * 1024 * 1024;
         let lua = Self::create_sandboxed_lua(memory_limit)?;
         super::lua_host::register_host_functions(
@@ -606,7 +602,8 @@ Plugin = {
             .await
             .unwrap();
         assert_eq!(
-            r2.as_ref().unwrap()["counter"], 1,
+            r2.as_ref().unwrap()["counter"],
+            1,
             "per-request: counter should reset to 1 on each call (isolated VM)"
         );
     }
@@ -633,12 +630,8 @@ Plugin = {
             let eng = Arc::clone(&engine);
             handles.push(tokio::spawn(async move {
                 let input = serde_json::json!({"idx": i});
-                eng.call_filter::<serde_json::Value>(
-                    "test-concurrent",
-                    "on_post_creating",
-                    &input,
-                )
-                .await
+                eng.call_filter::<serde_json::Value>("test-concurrent", "on_post_creating", &input)
+                    .await
             }));
         }
 
@@ -656,7 +649,10 @@ Plugin = {
     async fn lua_call_after_unload_returns_none() {
         let engine = LuaEngine::new(&test_config(), None, None).unwrap();
         engine
-            .load_plugin_default("test-gone", "Plugin = { on_post_creating = function(i) return i end }")
+            .load_plugin_default(
+                "test-gone",
+                "Plugin = { on_post_creating = function(i) return i end }",
+            )
             .await
             .unwrap();
 
@@ -671,13 +667,19 @@ Plugin = {
         let result = engine
             .call_action("test-gone", "on_post_creating", &serde_json::json!({}))
             .await;
-        assert!(result.is_ok(), "call_action after unload should return Ok(())");
+        assert!(
+            result.is_ok(),
+            "call_action after unload should return Ok(())"
+        );
 
         let result = engine
             .call_string_filter("test-gone", "on_post_creating", "hello")
             .await
             .unwrap();
-        assert!(result.is_none(), "call_string_filter after unload should return None");
+        assert!(
+            result.is_none(),
+            "call_string_filter after unload should return None"
+        );
     }
 
     #[tokio::test]
@@ -697,7 +699,11 @@ Plugin = {
             .unwrap();
 
         let result: Option<serde_json::Value> = engine
-            .call_filter("test-nil-return", "on_post_creating", &serde_json::json!({"title": "hello"}))
+            .call_filter(
+                "test-nil-return",
+                "on_post_creating",
+                &serde_json::json!({"title": "hello"}),
+            )
             .await
             .unwrap();
         match result {
@@ -724,7 +730,11 @@ Plugin = {
             .unwrap();
 
         let result: anyhow::Result<Option<serde_json::Value>> = engine
-            .call_filter("test-filter-throw", "on_post_creating", &serde_json::json!({}))
+            .call_filter(
+                "test-filter-throw",
+                "on_post_creating",
+                &serde_json::json!({}),
+            )
             .await;
         assert!(result.is_err());
     }
@@ -809,7 +819,10 @@ Plugin = {
         assert_eq!(r["title"], "HELLO WORLD");
         assert_eq!(r["slug"], "hello-world");
         assert_eq!(r["processed"], true);
-        assert!(r.get("removable").is_none(), "removable field should be nil");
+        assert!(
+            r.get("removable").is_none(),
+            "removable field should be nil"
+        );
     }
 
     #[tokio::test]

@@ -189,9 +189,9 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
             reg
         }),
         options: Arc::new(
-            raisfast::services::options::OptionsService::new(Arc::new(
-                SqlxOptionsRepository::new(pool.clone()),
-            ))
+            raisfast::services::options::OptionsService::new(Arc::new(SqlxOptionsRepository::new(
+                pool.clone(),
+            )))
             .await,
         ),
         rbac: Arc::new(raisfast::services::rbac::RbacService::new(Arc::new(
@@ -206,6 +206,7 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
             pool.clone(),
         )),
         storage: raisfast::storage::create_storage(&config).expect("failed to create storage"),
+        cache: Arc::new(raisfast::cache::MemoryCache::new()),
         cms_cache: Arc::new(dashmap::DashMap::new()),
         oauth_registry: Arc::new(raisfast::oauth::OAuthProviderRegistry::default()),
         email_sender: raisfast::notifier::build_email_sender(&config),

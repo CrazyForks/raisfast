@@ -1,13 +1,11 @@
 //! 缓存抽象层。
 //!
-//! 提供 [`CacheStore`] trait 和基于 `HashMap` 的内存实现 [`MemoryCache`]。
+//! 提供 [`CacheStore`] trait 和基于 moka 的无锁并发实现 [`MemoryCache`]。
 //! 生产环境可替换为 Redis 实现。
 
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
-
-use tokio::sync::RwLock;
 
 use crate::errors::app_error::AppResult;
 
@@ -29,23 +27,32 @@ pub trait CacheStore: Send + Sync {
     async fn delete_prefix(&self, prefix: &str) -> AppResult<u64>;
 }
 
-type CacheMap = std::collections::HashMap<String, (String, Option<tokio::time::Instant>)>;
+#[derive(Clone)]
+struct CacheEntry {
+    value: String,
+    deadline: Option<std::time::Instant>,
+}
 
-/// 基于 `HashMap` 的内存缓存实现
+impl CacheEntry {
+    fn is_expired(&self) -> bool {
+        self.deadline
+            .is_some_and(|dl| std::time::Instant::now() > dl)
+    }
+}
+
+/// 基于 moka 的无锁并发缓存实现
 ///
-/// 使用 `tokio::sync::RwLock` 保证并发安全，惰性清理过期条目。
-/// 适用于开发环境和单实例部署。
+/// 使用 TinyLFU + LRU 淘汰策略，高并发下无锁竞争。
 #[derive(Clone)]
 pub struct MemoryCache {
-    inner: Arc<RwLock<CacheMap>>,
+    inner: moka::sync::Cache<String, CacheEntry>,
 }
 
 impl MemoryCache {
-    /// 创建新的内存缓存
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            inner: moka::sync::Cache::builder().max_capacity(10_000).build(),
         }
     }
 }
@@ -59,40 +66,41 @@ impl Default for MemoryCache {
 #[async_trait::async_trait]
 impl CacheStore for MemoryCache {
     async fn get(&self, key: &str) -> Option<String> {
-        let map = self.inner.read().await;
-        let (value, deadline) = map.get(key)?;
-        if let Some(dl) = deadline
-            && tokio::time::Instant::now() > *dl
-        {
+        let entry = self.inner.get(key)?;
+        if entry.is_expired() {
+            self.inner.invalidate(key);
             return None;
         }
-        Some(value.clone())
+        Some(entry.value.clone())
     }
 
     async fn set(&self, key: &str, value: &str, ttl: Option<Duration>) -> AppResult<()> {
-        let deadline = ttl.map(|d| tokio::time::Instant::now() + d);
-        self.inner
-            .write()
-            .await
-            .insert(key.to_string(), (value.to_string(), deadline));
+        let deadline = ttl.map(|d| std::time::Instant::now() + d);
+        self.inner.insert(
+            key.to_string(),
+            CacheEntry {
+                value: value.to_string(),
+                deadline,
+            },
+        );
         Ok(())
     }
 
     async fn delete(&self, key: &str) -> AppResult<()> {
-        self.inner.write().await.remove(key);
+        self.inner.invalidate(key);
         Ok(())
     }
 
     async fn delete_prefix(&self, prefix: &str) -> AppResult<u64> {
-        let mut map = self.inner.write().await;
-        let keys: Vec<String> = map
-            .keys()
-            .filter(|k| k.starts_with(prefix))
-            .cloned()
+        let keys: Vec<Arc<String>> = self
+            .inner
+            .iter()
+            .filter(|(k, _)| k.starts_with(prefix))
+            .map(|(k, _)| k)
             .collect();
         let count = keys.len() as u64;
         for key in keys {
-            map.remove(&key);
+            self.inner.invalidate(&*key);
         }
         Ok(count)
     }

@@ -75,6 +75,8 @@ pub struct AppConfig {
     pub log_dir: String,
     #[serde(default = "default_log_max_files")]
     pub log_max_files: usize,
+    #[serde(default = "default_rate_limit_enabled")]
+    pub rate_limit_enabled: bool,
     #[serde(default = "default_rate_limit_global_max")]
     pub rate_limit_global_max: u32,
     #[serde(default = "default_rate_limit_global_window")]
@@ -487,6 +489,10 @@ fn default_log_max_files() -> usize {
     7
 }
 
+fn default_rate_limit_enabled() -> bool {
+    true
+}
+
 fn default_rate_limit_global_max() -> u32 {
     60
 }
@@ -705,6 +711,10 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default_log_max_files()),
+            rate_limit_enabled: env::var("RATE_LIMIT_ENABLED")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_rate_limit_enabled()),
             rate_limit_global_max: env::var("RATE_LIMIT_GLOBAL_MAX")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -938,6 +948,7 @@ impl AppConfig {
             plugin_vfs_max_total_size: default_plugin_vfs_max_total_size(),
             log_dir: "./test-logs".into(),
             log_max_files: 1,
+            rate_limit_enabled: default_rate_limit_enabled(),
             rate_limit_global_max: default_rate_limit_global_max(),
             rate_limit_global_window: default_rate_limit_global_window(),
             rate_limit_register_max: default_rate_limit_register_max(),

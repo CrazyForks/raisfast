@@ -3,6 +3,7 @@
 //! 提供创建、列表、删除、验证 API Token 的服务。
 //! Token 格式为 `rblog_` + 64 字符 hex，创建时只返回一次明文。
 
+use crate::cache::CacheStore;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::api_token;
@@ -11,6 +12,12 @@ use ts_rs::TS;
 
 /// API Token 前缀
 const TOKEN_PREFIX: &str = "rblog_";
+
+/// 缓存 key 前缀
+const CACHE_PREFIX: &str = "api_token:";
+
+/// 缓存 TTL（秒）
+const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// scope → 角色映射
 fn scope_to_role(scopes: &[String]) -> String {
@@ -21,6 +28,15 @@ fn scope_to_role(scopes: &[String]) -> String {
     } else {
         "reader".to_string()
     }
+}
+
+/// 缓存的 Token 认证结果
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CachedTokenAuth {
+    user_id: String,
+    role: String,
+    tenant_id: String,
+    expires_at: Option<String>,
 }
 
 /// 生成明文 token 和 SHA-256 hash
@@ -125,6 +141,7 @@ pub async fn list_tokens(
 /// 删除 API Token（仅本人或管理员）
 pub async fn delete_token(
     pool: &crate::db::Pool,
+    cache: &dyn CacheStore,
     token_id: &str,
     auth: &AuthUser,
 ) -> AppResult<()> {
@@ -136,15 +153,37 @@ pub async fn delete_token(
     if !is_admin && token.user_id != user_id {
         return Err(AppError::Forbidden);
     }
+    let _ = cache
+        .delete(&format!("{CACHE_PREFIX}{}", token.token_hash))
+        .await;
     api_token::delete_by_id(pool, token_id).await
 }
 
 /// 验证 API Token 并返回 (user_id, role, tenant_id)
+///
+/// 使用 cache-aside 模式：缓存命中时跳过全部 3 次 DB 操作。
+/// 缓存 key 为 `api_token:{sha256_hash}`，TTL 300s。
 pub async fn verify_api_token(
     pool: &crate::db::Pool,
+    cache: &dyn CacheStore,
     plain: &str,
 ) -> AppResult<(String, String, String)> {
     let hash = hash_token(plain);
+    let cache_key = format!("{CACHE_PREFIX}{hash}");
+
+    if let Some(cached) = cache.get(&cache_key).await
+        && let Ok(auth) = serde_json::from_str::<CachedTokenAuth>(&cached)
+    {
+        if let Some(ref exp) = auth.expires_at
+            && let Ok(exp_time) = chrono::DateTime::parse_from_rfc3339(exp)
+            && exp_time < chrono::Utc::now()
+        {
+            let _ = cache.delete(&cache_key).await;
+            return Err(AppError::Unauthorized);
+        }
+        return Ok((auth.user_id, auth.role, auth.tenant_id));
+    }
+
     let token = api_token::find_by_hash(pool, &hash)
         .await?
         .ok_or(AppError::Unauthorized)?;
@@ -154,6 +193,7 @@ pub async fn verify_api_token(
         && exp_time < chrono::Utc::now()
     {
         let _ = api_token::delete_by_id(pool, &token.id).await;
+        let _ = cache.delete(&cache_key).await;
         return Err(AppError::Unauthorized);
     }
 
@@ -165,6 +205,16 @@ pub async fn verify_api_token(
     let role = scope_to_role(&scopes);
 
     let _ = api_token::touch_last_used(pool, &token.id).await;
+
+    let cached_auth = CachedTokenAuth {
+        user_id: user.id.clone(),
+        role: role.clone(),
+        tenant_id: user.tenant_id.clone(),
+        expires_at: token.expires_at,
+    };
+    if let Ok(json) = serde_json::to_string(&cached_auth) {
+        let _ = cache.set(&cache_key, &json, Some(CACHE_TTL)).await;
+    }
 
     Ok((user.id, role, user.tenant_id))
 }
@@ -208,6 +258,10 @@ mod tests {
             .await
             .unwrap();
         pool
+    }
+
+    fn test_cache() -> std::sync::Arc<dyn crate::cache::CacheStore> {
+        std::sync::Arc::new(crate::cache::MemoryCache::new())
     }
 
     async fn insert_user(pool: &crate::db::Pool, id: &str, role: &str) {
@@ -388,7 +442,8 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(verify_api_token(&pool, plain).await.is_err());
+        let cache = test_cache();
+        assert!(verify_api_token(&pool, &*cache, plain).await.is_err());
         assert!(
             crate::models::api_token::find_by_hash(&pool, &token_hash)
                 .await
@@ -415,7 +470,8 @@ mod tests {
         )
         .await
         .unwrap();
-        let (user_id, role, tenant_id) = verify_api_token(&pool, plain).await.unwrap();
+        let cache = test_cache();
+        let (user_id, role, tenant_id) = verify_api_token(&pool, &*cache, plain).await.unwrap();
         assert_eq!(user_id, "u-fut");
         assert_eq!(role, "admin");
         assert!(!tenant_id.is_empty());
@@ -446,7 +502,8 @@ mod tests {
                 .last_used_at
                 .is_none()
         );
-        verify_api_token(&pool, plain).await.unwrap();
+        let cache = test_cache();
+        verify_api_token(&pool, &*cache, plain).await.unwrap();
         assert!(
             crate::models::api_token::find_by_hash(&pool, &token_hash)
                 .await
@@ -473,7 +530,8 @@ mod tests {
         .await
         .unwrap();
         let auth = crate::middleware::auth::AuthUser::new_test("u-del", "reader", "default");
-        delete_token(&pool, &row.id, &auth).await.unwrap();
+        let cache = test_cache();
+        delete_token(&pool, &*cache, &row.id, &auth).await.unwrap();
         assert!(
             crate::models::api_token::find_by_id(&pool, &row.id)
                 .await
@@ -498,7 +556,8 @@ mod tests {
         .await
         .unwrap();
         let auth = crate::middleware::auth::AuthUser::new_test("admin-user", "admin", "default");
-        delete_token(&pool, &row.id, &auth).await.unwrap();
+        let cache = test_cache();
+        delete_token(&pool, &*cache, &row.id, &auth).await.unwrap();
     }
 
     #[tokio::test]
@@ -517,13 +576,96 @@ mod tests {
         .await
         .unwrap();
         let auth = crate::middleware::auth::AuthUser::new_test("other-user", "reader", "default");
-        assert!(delete_token(&pool, &row.id, &auth).await.is_err());
+        let cache = test_cache();
+        assert!(delete_token(&pool, &*cache, &row.id, &auth).await.is_err());
     }
 
     #[tokio::test]
     async fn delete_token_nonexistent_not_found() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         let auth = crate::middleware::auth::AuthUser::new_test("user", "reader", "default");
-        assert!(delete_token(&pool, "no-such-id", &auth).await.is_err());
+        let cache = test_cache();
+        assert!(
+            delete_token(&pool, &*cache, "no-such-id", &auth)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_api_token_cache_hit_skips_db() {
+        let pool = setup_pool().await;
+        insert_user(&pool, "u-cache", "reader").await;
+        let plain = "rblog_cache_hit_test_token";
+        let token_hash = hash_token(plain);
+        crate::models::api_token::create(
+            &pool,
+            "u-cache",
+            "Cached",
+            &token_hash,
+            &plain[..8],
+            "[\"read\"]",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let cache = test_cache();
+        let (uid1, _, _) = verify_api_token(&pool, &*cache, plain).await.unwrap();
+        assert_eq!(uid1, "u-cache");
+
+        let cache_key = format!("{CACHE_PREFIX}{token_hash}");
+        assert!(cache.get(&cache_key).await.is_some());
+
+        crate::models::api_token::delete_by_id(
+            &pool,
+            &crate::models::api_token::find_by_hash(&pool, &token_hash)
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+        )
+        .await
+        .unwrap();
+
+        let (uid2, _, _) = verify_api_token(&pool, &*cache, plain).await.unwrap();
+        assert_eq!(uid2, "u-cache");
+    }
+
+    #[tokio::test]
+    async fn verify_api_token_expired_cache_clears() {
+        let pool = setup_pool().await;
+        insert_user(&pool, "u-cexp", "reader").await;
+        let plain = "rblog_cache_expired_test";
+        let token_hash = hash_token(plain);
+        let past = "2000-01-01T00:00:00+00:00";
+        crate::models::api_token::create(
+            &pool,
+            "u-cexp",
+            "CacheExp",
+            &token_hash,
+            &plain[..8],
+            "[\"read\"]",
+            Some(past),
+        )
+        .await
+        .unwrap();
+
+        let cache = test_cache();
+        let cache_key = format!("{CACHE_PREFIX}{token_hash}");
+        let cached = serde_json::to_string(&CachedTokenAuth {
+            user_id: "u-cexp".into(),
+            role: "reader".into(),
+            tenant_id: "default".into(),
+            expires_at: Some(past.into()),
+        })
+        .unwrap();
+        cache
+            .set(&cache_key, &cached, Some(CACHE_TTL))
+            .await
+            .unwrap();
+
+        assert!(verify_api_token(&pool, &*cache, plain).await.is_err());
+        assert!(cache.get(&cache_key).await.is_none());
     }
 }

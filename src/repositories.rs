@@ -74,6 +74,9 @@ pub(crate) use define_sqlx_repo;
 /// 文章 Repository 接口
 #[async_trait::async_trait]
 pub trait PostRepository: Send + Sync {
+    /// 获取内部连接池引用
+    fn pool(&self) -> &crate::db::Pool;
+
     /// 根据 slug 查找文章
     async fn find_by_slug(&self, slug: &str, tenant_id: Option<&str>) -> AppResult<Option<Post>>;
 

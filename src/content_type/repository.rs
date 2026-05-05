@@ -505,10 +505,22 @@ impl ContentRepository {
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("commit failed: {e}")))?;
 
-        self.find_by_id(ct, &id, tenant_id, true)
+        let columns = ct.column_names(None, true);
+        let select_cols = columns.join(", ");
+        let sql = format!(
+            "SELECT {select_cols} FROM {} WHERE id = {}",
+            ct.table,
+            placeholder(1)
+        );
+        let sql = crate::db::dialect::translate(&sql);
+        let row = sqlx::query(&sql)
+            .bind(&id)
+            .fetch_optional(&self.pool)
             .await
-            .transpose()
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created record not found")))?
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+
+        row.map(|r| row_to_value(&r, &columns))
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created record not found")))
     }
 
     /// 更新（含字段校验，事务保护）

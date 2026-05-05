@@ -52,6 +52,37 @@ async fn joined_row_to_response(
     }
 }
 
+/// 从内存中的 Post 对象构建响应（创建/更新时使用，避免 2 次额外 DB 查询）
+async fn build_response_from_post(
+    post: &crate::models::post::Post,
+    author_name: Option<String>,
+    category_name: Option<String>,
+    tags: Vec<crate::models::post::TagBrief>,
+) -> PostResponse {
+    PostResponse {
+        id: post.id.clone(),
+        title: post.title.clone(),
+        slug: post.slug.clone(),
+        content: post.content.clone(),
+        excerpt: post.excerpt.clone(),
+        cover_image: post.cover_image.clone(),
+        status: post.status.clone(),
+        created_by: post.created_by.clone(),
+        author_name,
+        category_id: post.category_id.clone(),
+        category_name,
+        tags,
+        view_count: post.view_count,
+        is_pinned: post.is_pinned,
+        created_at: post.created_at.clone(),
+        updated_at: post.updated_at.clone(),
+        published_at: post.published_at.clone(),
+        title_highlight: None,
+        excerpt_highlight: None,
+    }
+}
+
+/// 从仓库查询关联数据构建响应（读取详情时使用）
 async fn build_post_response_from_repo(
     repo: &dyn PostRepository,
     id: &str,
@@ -201,26 +232,20 @@ pub async fn list_tags_paginated(
 
 /// 生成唯一的 slug。
 ///
-/// 若基础 slug 已被占用，则追加递增后缀（`-2`、`-3`、...）直到唯一。
-async fn make_unique_slug(
-    base_slug: &str,
-    repo: &dyn PostRepository,
-    auth: &AuthUser,
-) -> AppResult<String> {
-    let mut slug = base_slug.to_string();
-    let mut counter = 1;
-    while repo.find_by_slug(&slug, auth.tenant_id()).await?.is_some() {
-        slug = format!("{base_slug}-{counter}");
-        counter += 1;
-    }
-    Ok(slug)
+/// 直接追加 4 位随机 hex 后缀，避免循环查 DB 去重。
+fn make_unique_slug(base_slug: &str) -> String {
+    let suffix = crate::utils::id::random_hex(2);
+    format!("{base_slug}-{suffix}")
 }
 
 /// 从文章内容中提取摘要。
 ///
 /// 取前 `max_len` 个字符作为摘要，超出部分以 `"..."` 结尾。
 fn extract_excerpt(content: &str, max_len: usize) -> String {
-    let plain = content.chars().take(max_len.saturating_mul(2)).collect::<String>();
+    let plain = content
+        .chars()
+        .take(max_len.saturating_mul(2))
+        .collect::<String>();
     if plain.len() > max_len {
         format!("{}...", &plain[..plain.ceil_char_boundary(max_len)])
     } else {
@@ -248,7 +273,7 @@ pub async fn create_post(
         .dispatch_filter(HookPoint::PostCreating, req)
         .await?;
     let base_slug = slugify(&req.title);
-    let slug = make_unique_slug(&base_slug, repo, auth).await?;
+    let slug = make_unique_slug(&base_slug);
     let status = req.status.as_deref().unwrap_or("draft");
     let excerpt = req.excerpt.as_deref().map_or_else(
         || extract_excerpt(&req.content, 200),
@@ -269,7 +294,24 @@ pub async fn create_post(
     };
     let p = repo.create(cmd, auth.tenant_id()).await?;
 
-    let resp = build_post_response_from_repo(repo, &p.id, plugins, auth).await?;
+    let author_name =
+        crate::models::post::get_author_name(repo.pool(), &p.created_by, auth.tenant_id())
+            .await
+            .ok()
+            .flatten();
+
+    let category_name = if let Some(ref cat_id) = p.category_id {
+        crate::models::post::get_category_name(repo.pool(), cat_id, auth.tenant_id())
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+
+    let tags = repo.get_post_tags(&p.id, auth.tenant_id()).await.unwrap_or_default();
+
+    let resp = build_response_from_post(&p, author_name, category_name, tags).await;
     tracing::Span::current().record("slug", &resp.slug);
     eventbus.emit(Event::PostCreated {
         id: p.id.clone(),
@@ -302,10 +344,7 @@ async fn update_post_inner(
         .map(slugify)
         .filter(|s| s != &existing.slug);
 
-    let slug: Option<String> = match new_slug.as_deref() {
-        Some(s) => Some(make_unique_slug(s, repo, auth).await?),
-        None => None,
-    };
+    let slug: Option<String> = new_slug.as_deref().map(make_unique_slug);
     let content = req.content.as_deref().unwrap_or(&existing.content);
     let excerpt = req
         .excerpt

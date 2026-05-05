@@ -228,18 +228,14 @@ fn event_table(event: &Event) -> Option<String> {
         | Event::PostCreated { .. }
         | Event::PostUpdated { .. }
         | Event::PostDeleted { .. } => Some("posts".to_string()),
-        Event::CommentCreated { .. } | Event::CommentDeleted { .. } => {
-            Some("comments".to_string())
-        }
+        Event::CommentCreated { .. } | Event::CommentDeleted { .. } => Some("comments".to_string()),
         Event::ContentCreating { content_type, .. }
         | Event::ContentCreated { content_type, .. }
         | Event::ContentUpdating { content_type, .. }
         | Event::ContentUpdated { content_type, .. }
         | Event::ContentDeleted { content_type, .. } => Some(content_type.clone()),
         Event::MediaUploaded { .. } | Event::MediaDeleted { .. } => Some("media".to_string()),
-        Event::UserRegistered { .. } | Event::UserLoggedIn { .. } => {
-            Some("users".to_string())
-        }
+        Event::UserRegistered { .. } | Event::UserLoggedIn { .. } => Some("users".to_string()),
         _ => None,
     }
 }
@@ -341,7 +337,9 @@ mod tests {
 
     #[tokio::test]
     async fn emit_with_aspects_blocked_by_aspect() {
-        use crate::aspects::{Advice, Aspect, AspectResult, Layer, Operation, Pointcut, TargetMatcher, When};
+        use crate::aspects::{
+            Advice, Aspect, AspectResult, Layer, Operation, Pointcut, TargetMatcher, When,
+        };
 
         struct BlockAllEvents;
         #[async_trait::async_trait]
@@ -384,8 +382,10 @@ mod tests {
 
     #[tokio::test]
     async fn emit_with_aspects_runs_after_dispatch() {
+        use crate::aspects::{
+            Advice, Aspect, AspectResult, Layer, Operation, Pointcut, TargetMatcher, When,
+        };
         use std::sync::{Arc, Mutex};
-        use crate::aspects::{Advice, Aspect, AspectResult, Layer, Operation, Pointcut, TargetMatcher, When};
 
         let flag: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
         struct AfterAspect {

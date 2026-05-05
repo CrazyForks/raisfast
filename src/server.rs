@@ -86,7 +86,11 @@ macro_rules! reg_route {
     };
 }
 
-async fn build_app(config: &AppConfig, limiters: RateLimiterSet, shutdown_rx: tokio::sync::watch::Receiver<bool>) -> anyhow::Result<axum::Router> {
+async fn build_app(
+    config: &AppConfig,
+    limiters: RateLimiterSet,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> anyhow::Result<axum::Router> {
     let upload_dir = config.upload_dir.clone();
     let static_dir = config.static_dir.clone();
     let max_upload = config.max_upload_size;
@@ -1082,38 +1086,23 @@ async fn build_app(config: &AppConfig, limiters: RateLimiterSet, shutdown_rx: to
                 .make_span_with(|request: &axum::extract::Request| {
                     let method = request.method().as_str();
                     let uri = request.uri().path();
-                    let version = match request.version() {
-                        axum::http::Version::HTTP_09 => "0.9",
-                        axum::http::Version::HTTP_10 => "1.0",
-                        axum::http::Version::HTTP_11 => "1.1",
-                        axum::http::Version::HTTP_2 => "2.0",
-                        axum::http::Version::HTTP_3 => "3.0",
-                        _ => "unknown",
-                    };
                     tracing::span!(
-                        Level::INFO,
+                        Level::DEBUG,
                         "request",
                         method,
                         uri,
-                        version,
                         request_id = tracing::field::Empty
                     )
                 })
-                .on_request(|request: &axum::extract::Request, _span: &tracing::Span| {
-                    tracing::info!(
-                        method = %request.method(),
-                        path = %request.uri().path(),
-                        "--> request start"
-                    );
-                })
+                .on_request(|_request: &axum::extract::Request, _span: &tracing::Span| {})
                 .on_response(
                     |response: &axum::response::Response,
                      latency: Duration,
                      _span: &tracing::Span| {
-                        tracing::info!(
+                        tracing::debug!(
                             status = %response.status().as_u16(),
                             latency_ms = latency.as_millis() as u64,
-                            "<-- request done"
+                            "request completed"
                         );
                     },
                 ),
@@ -1277,10 +1266,7 @@ async fn handle_plugin_route(
         return crate::middleware::rate_limit::rate_limited_response();
     }
     if let Some(prefix) = crate::middleware::rate_limit::extract_api_token_prefix(&req)
-        && !limiters
-            .api_token
-            .check(&format!("token:{prefix}"))
-            .await
+        && !limiters.api_token.check(&format!("token:{prefix}")).await
     {
         return crate::middleware::rate_limit::rate_limited_response();
     }

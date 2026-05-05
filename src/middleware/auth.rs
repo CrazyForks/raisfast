@@ -162,7 +162,7 @@ async fn extract_claims(parts: &Parts, state: &AppState) -> Option<Claims> {
 
     if crate::services::api_token::is_api_token(token) {
         let (user_id, role, tenant_id) =
-            crate::services::api_token::verify_api_token(&state.pool, token)
+            crate::services::api_token::verify_api_token(&state.pool, &*state.cache, token)
                 .await
                 .ok()?;
         Some(Claims {
