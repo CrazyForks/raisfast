@@ -1,7 +1,7 @@
 //! versionable Protocol — 更新时自动保存旧版本快照
 //!
-//! 包含 1 个 Aspect：VersionableAspect（priority = 500）。
-//! after_update 时将 old_record 存入 content_revisions 表。
+//! 声明 `snapshot_before_update` 和 `revision_routes`，
+//! repository.update() 根据 declaration 主动创建快照。
 
 use std::sync::Arc;
 
@@ -43,39 +43,7 @@ impl Aspect for VersionableAspect {
         }]
     }
 
-    async fn on_data_after_update(&self, ctx: &mut DataAfterUpdateContext) -> AspectResult {
-        let Some(pool) = &ctx.base.pool else {
-            return Ok(Advice::Continue);
-        };
-
-        let id = ctx
-            .old_record
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-
-        if id.is_empty() {
-            return Ok(Advice::Continue);
-        }
-
-        let snapshot = serde_json::Value::Object(ctx.old_record.clone());
-        let user_id = ctx.base.user_id.clone();
-
-        let pool = pool.clone();
-        let table_name = ctx.table.clone();
-        let id = id.to_string();
-
-        tokio::spawn(async move {
-            let _ = crate::models::content_revision::create_revision(
-                &pool,
-                &table_name,
-                &id,
-                &snapshot,
-                user_id.as_deref(),
-            )
-            .await;
-        });
-
+    async fn on_data_after_update(&self, _ctx: &mut DataAfterUpdateContext) -> AspectResult {
         Ok(Advice::Continue)
     }
 }
@@ -123,6 +91,31 @@ impl Protocol for VersionableProtocol {
         })
     }
 
+    fn register_routes(
+        &self,
+        router: axum::Router<crate::AppState>,
+        plural: &str,
+        admin_prefix: &str,
+    ) -> axum::Router<crate::AppState> {
+        router
+            .route(
+                &format!("{admin_prefix}/{plural}/{{id}}/revisions"),
+                axum::routing::get(crate::handlers::content_revision::list_revisions),
+            )
+            .route(
+                &format!("{admin_prefix}/{plural}/{{id}}/revisions/{{revision_id}}"),
+                axum::routing::get(crate::handlers::content_revision::get_revision),
+            )
+            .route(
+                &format!("{admin_prefix}/{plural}/{{id}}/revisions/{{revision_id}}/restore"),
+                axum::routing::post(crate::handlers::content_revision::restore_revision),
+            )
+            .route(
+                &format!("{admin_prefix}/{plural}/{{id}}/revisions/{{rev_a}}/diff/{{rev_b}}"),
+                axum::routing::get(crate::handlers::content_revision::diff_revisions),
+            )
+    }
+
     fn built_in(&self) -> bool {
         true
     }
@@ -138,7 +131,7 @@ mod tests {
     async fn provides_version_column() {
         let cols = VersionableAspect.columns();
         assert_eq!(cols.len(), 1);
-        assert_eq!(cols[0].name, "version");
+        assert_eq!(cols[0].name, COL_VERSION);
         assert_eq!(cols[0].sql_type, SqlType::Integer);
     }
 

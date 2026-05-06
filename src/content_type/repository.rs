@@ -384,7 +384,8 @@ impl ContentRepository {
 
         if !ct.builtin && !ct.implements.is_empty() {
             let mut meta = serde_json::Map::new();
-            meta.insert("protocols".into(), json!(ct.implements));
+            let protocol_names: Vec<&str> = ct.implements.iter().map(|p| p.name()).collect();
+            meta.insert("protocols".into(), json!(protocol_names));
             obj.insert(COL_META.into(), json!(meta));
         }
 
@@ -479,7 +480,7 @@ impl ContentRepository {
         tenant_id: Option<&str>,
         _save_ctx: &SaveContext,
     ) -> Result<Value, AppError> {
-        if ct.needs_pre_update_snapshot()
+        if ct.declaration().snapshot_before_update
             && let Some(current) = self.find_by_id(ct, id, tenant_id, true).await?
         {
             let _ = crate::models::content_revision::create_revision(
@@ -611,10 +612,6 @@ impl ContentRepository {
         tenant_id: Option<&str>,
         protocol_registry: &crate::protocols::ProtocolRegistry,
     ) -> Result<(), AppError> {
-        let _ = protocol_registry
-            .dispatch_after_delete(&ct.implements, &self.pool, &ct.singular, id)
-            .await;
-
         let tid = self.resolve_tenant(&ct.table, tenant_id).await;
 
         let mut idx = 1;
@@ -628,32 +625,52 @@ impl ContentRepository {
             values.push(tid.clone());
         }
 
-        let sql = if ct.is_soft_delete() {
+        if ct.is_soft_delete() {
+            let decl = ct.declaration();
+            let col = match &decl.delete_strategy {
+                crate::protocols::DeleteStrategy::Soft { column } => column.clone(),
+                _ => unreachable!(),
+            };
             let now = crate::utils::tz::now_str();
-            format!(
-                "UPDATE {} SET deleted_at = '{}' WHERE {}",
+            let sql = format!(
+                "UPDATE {} SET {} = {} WHERE {}",
                 ct.table,
-                now,
+                col,
+                placeholder(idx),
                 where_parts.join(" AND ")
-            )
+            );
+            let sql = crate::db::dialect::translate(&sql);
+            let mut query = sqlx::query(&sql);
+            query = query.bind(now);
+            for v in &values {
+                query = query.bind(v);
+            }
+            query
+                .execute(&self.pool)
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("delete failed: {e}")))?;
         } else {
-            format!(
+            let sql = format!(
                 "DELETE FROM {} WHERE {}",
                 ct.table,
                 where_parts.join(" AND ")
-            )
-        };
-        let sql = crate::db::dialect::translate(&sql);
-
-        let mut query = sqlx::query(&sql);
-        for v in &values {
-            query = query.bind(v);
+            );
+            let sql = crate::db::dialect::translate(&sql);
+            let mut query = sqlx::query(&sql);
+            for v in &values {
+                query = query.bind(v);
+            }
+            query
+                .execute(&self.pool)
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("delete failed: {e}")))?;
         }
 
-        query
-            .execute(&self.pool)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("delete failed: {e}")))?;
+        let protocol_names: Vec<String> =
+            ct.implements.iter().map(|p| p.name().to_string()).collect();
+        let _ = protocol_registry
+            .dispatch_after_delete(&protocol_names, &self.pool, &ct.singular, id)
+            .await;
 
         Ok(())
     }
@@ -668,19 +685,23 @@ impl ContentRepository {
     ) -> Result<(), AppError> {
         let tid = self.resolve_tenant(&ct.table, tenant_id).await;
 
-        let mut set_parts = vec![format!("{} = ?", COL_DELETED_AT)];
+        let mut idx = 1;
+        let mut set_parts = vec![format!("{} = {}", COL_DELETED_AT, placeholder(idx))];
         let mut values: Vec<String> = vec![deleted_at.to_string()];
+        idx += 1;
 
         if let Some(by) = deleted_by {
-            set_parts.push(format!("{} = ?", COL_DELETED_BY));
+            set_parts.push(format!("{} = {}", COL_DELETED_BY, placeholder(idx)));
             values.push(by.to_string());
+            idx += 1;
         }
 
-        let mut where_parts = vec!["id = ?".to_string()];
+        let mut where_parts = vec![format!("id = {}", placeholder(idx))];
         values.push(id.to_string());
+        idx += 1;
 
         if let Some(ref tid) = tid {
-            where_parts.push("tenant_id = ?".to_string());
+            where_parts.push(format!("tenant_id = {}", placeholder(idx)));
             values.push(tid.clone());
         }
 
@@ -715,7 +736,8 @@ impl ContentRepository {
         ct: &ContentTypeSchema,
         protocol_registry: &ProtocolRegistry,
     ) -> Result<(), AppError> {
-        let protocol_columns = protocol_registry.columns_for(&ct.implements);
+        let names: Vec<String> = ct.implements.iter().map(|p| p.name().to_string()).collect();
+        let protocol_columns = protocol_registry.columns_for(&names);
         let existing_columns = self.fetch_columns(&ct.table).await?;
 
         if existing_columns.is_empty() {
@@ -882,19 +904,20 @@ fn cell_to_json(row: &sqlx::sqlite::SqliteRow, col: &str) -> Value {
 }
 
 fn build_order_by(sort: Option<&str>, ct: &ContentTypeSchema) -> String {
-    let default = if let Some(ref lv) = ct.list_view {
-        lv.default_sort.clone()
-    } else if let Some((col, dir)) = &ct.declaration().default_sort {
+    let default = if let Some((col, dir)) = &ct.declaration().default_sort {
         let d = match dir {
             crate::protocols::SortDir::Asc => "asc",
             crate::protocols::SortDir::Desc => "desc",
         };
         format!("{col}:{d}")
     } else {
-        "created_at:desc".into()
+        String::new()
     };
 
-    let sort_str = sort.unwrap_or(&default);
+    let sort_str = match sort {
+        Some(s) if !s.is_empty() => s,
+        _ => &default,
+    };
     let mut parts = Vec::new();
 
     for segment in sort_str.split(',') {
@@ -1029,25 +1052,24 @@ unique = true
 
     #[test]
     fn build_order_by_default() {
-        let ct = ContentTypeSchema::parse_from_str(
+        let mut ct = ContentTypeSchema::parse_from_str(
             r#"
 [content_type]
 name = "Post"
 singular = "post"
 plural = "posts"
 table = "posts"
+implements = ["sortable"]
 
 [fields.title]
 type = "text"
-
-[list_view]
-default_sort = "is_pinned:desc,created_at:desc"
 "#,
         )
         .unwrap();
+        ct.cache_protocol_columns(&test_protocol_registry());
 
         let order = build_order_by(None, &ct);
-        assert_eq!(order, " ORDER BY is_pinned DESC, created_at DESC");
+        assert_eq!(order, " ORDER BY created_by DESC");
     }
 
     #[test]

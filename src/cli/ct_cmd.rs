@@ -247,19 +247,19 @@ fn schema_to_ts(ct: &ContentTypeSchema) -> String {
     let has_timestamps = ct
         .implements
         .iter()
-        .any(|p| p == "timestampable" || p == "ownable");
+        .any(|p| p.name() == "timestampable" || p.name() == "ownable");
     if has_timestamps || !ct.builtin {
         lines.push("  created_at: string;".into());
         lines.push("  updated_at: string;".into());
     }
 
-    if ct.implements.iter().any(|p| p == "ownable")
+    if ct.implements.iter().any(|p| p.name() == "ownable")
         && !ct.fields.iter().any(|f| f.name == "created_by")
     {
         lines.push("  created_by: string | null;".into());
     }
 
-    if ct.implements.iter().any(|p| p == "ownable")
+    if ct.implements.iter().any(|p| p.name() == "ownable")
         && !ct.fields.iter().any(|f| f.name == "updated_by")
     {
         lines.push("  updated_by: string | null;".into());
@@ -268,8 +268,22 @@ fn schema_to_ts(ct: &ContentTypeSchema) -> String {
         lines.push("  deleted_at: string | null;".into());
     }
 
-    if ct.has_revision_routes() && !ct.fields.iter().any(|f| f.name == "version") {
+    if ct.has_revision_routes()
+        && !ct
+            .fields
+            .iter()
+            .any(|f| f.name == raisfast::constants::COL_VERSION)
+    {
         lines.push("  version: number;".into());
+    }
+
+    if ct.implements_protocol("lockable")
+        && !ct
+            .fields
+            .iter()
+            .any(|f| f.name == raisfast::constants::COL_LOCK_VERSION)
+    {
+        lines.push("  lock_version: number;".into());
     }
 
     lines.push("}".into());

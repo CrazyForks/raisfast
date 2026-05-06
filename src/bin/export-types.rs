@@ -80,7 +80,6 @@ fn main() {
         content_type::schema::RelationConfig,
         content_type::schema::MediaConfig,
         content_type::schema::IndexDef,
-        content_type::schema::ListViewConfig,
         content_type::schema::ApiAccess,
         content_type::schema::ApiEndpointConfig,
         content_type::schema::ApiConfig,

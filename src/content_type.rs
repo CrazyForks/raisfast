@@ -214,7 +214,7 @@ impl ContentTypeRegistry {
         let unknown: Vec<&str> = schema
             .implements
             .iter()
-            .map(|s| s.as_str())
+            .map(|s| s.name())
             .filter(|name| !valid_protocols.contains(name))
             .collect();
         if !unknown.is_empty() {

@@ -1,6 +1,6 @@
 //! sortable Protocol — 显式排序列
 //!
-//! 提供排序键列 `sort_key`，列表查询默认按 sort_key ASC 排序。
+//! 提供排序键列 `sort_key`，列表查询默认按 sort_key Desc 排序。
 //! Aspect 在 create 时注入 sort_key = 0。
 
 use std::sync::Arc;
@@ -12,6 +12,7 @@ use crate::aspects::{
     Advice, Aspect, AspectResult, ColumnDef, DataBeforeCreateContext, Layer, Operation, Pointcut,
     SqlType, TargetMatcher, When,
 };
+use crate::constants::COL_SORT_KEY;
 use crate::protocols::{Protocol, ProtocolDeclaration, SortDir};
 
 pub struct SortableAspect;
@@ -37,15 +38,19 @@ impl Aspect for SortableAspect {
 
     fn columns(&self) -> Vec<ColumnDef> {
         vec![ColumnDef {
-            name: "sort_key".into(),
+            name: COL_SORT_KEY.into(),
             sql_type: SqlType::Integer,
             default: Some("0".into()),
         }]
     }
 
     async fn on_data_before_create(&self, ctx: &mut DataBeforeCreateContext) -> AspectResult {
-        if !ctx.record.contains_key("sort_key") {
-            ctx.record.insert("sort_key".into(), json!(0));
+        let should_inject = ctx
+            .schema
+            .as_ref()
+            .is_none_or(|s| s.is_protocol_column(COL_SORT_KEY));
+        if should_inject && !ctx.record.contains_key(COL_SORT_KEY) {
+            ctx.record.insert(COL_SORT_KEY.into(), json!(0));
         }
         Ok(Advice::Continue)
     }
@@ -72,8 +77,31 @@ impl Protocol for SortableProtocol {
 
     fn declaration(&self) -> ProtocolDeclaration {
         ProtocolDeclaration {
-            default_sort: Some(("sort_key".into(), SortDir::Asc)),
+            default_sort: Some((COL_SORT_KEY.into(), SortDir::Desc)),
             ..Default::default()
+        }
+    }
+
+    fn apply_config(
+        &self,
+        config: &std::collections::HashMap<String, String>,
+        decl: &mut ProtocolDeclaration,
+        all_columns: &[&str],
+    ) {
+        if let Some(field) = config.get("field") {
+            if !all_columns.contains(&field.as_str()) {
+                tracing::warn!("sortable: field '{field}' not found, skipping default_sort");
+                decl.default_sort = None;
+                return;
+            }
+            let dir = config
+                .get("direction")
+                .map(|d| match d.to_lowercase().as_str() {
+                    "desc" => SortDir::Desc,
+                    _ => SortDir::Asc,
+                })
+                .unwrap_or(SortDir::Asc);
+            decl.default_sort = Some((field.clone(), dir));
         }
     }
 
@@ -105,7 +133,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(ctx.record.get("sort_key").unwrap(), &json!(0));
+        assert_eq!(ctx.record.get(COL_SORT_KEY).unwrap(), &json!(0));
     }
 
     #[tokio::test]
@@ -114,7 +142,7 @@ mod tests {
         engine.register(SortableAspect);
 
         let mut record = Record::new();
-        record.insert("sort_key".into(), json!(42));
+        record.insert(COL_SORT_KEY.into(), json!(42));
 
         let mut ctx = DataBeforeCreateContext {
             base: BaseContext::new(None, "default".into(), "now".into()),
@@ -128,14 +156,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(ctx.record.get("sort_key").unwrap(), &json!(42));
+        assert_eq!(ctx.record.get(COL_SORT_KEY).unwrap(), &json!(42));
     }
 
     #[tokio::test]
     async fn provides_sort_key_column() {
         let cols = SortableAspect.columns();
         assert_eq!(cols.len(), 1);
-        assert_eq!(cols[0].name, "sort_key");
+        assert_eq!(cols[0].name, COL_SORT_KEY);
     }
 
     #[test]
@@ -143,8 +171,8 @@ mod tests {
         let decl = SortableProtocol.declaration();
         assert!(decl.default_sort.is_some());
         let (col, dir) = decl.default_sort.clone().unwrap();
-        assert_eq!(col, "sort_key");
-        assert_eq!(dir, SortDir::Asc);
+        assert_eq!(col, COL_SORT_KEY);
+        assert_eq!(dir, SortDir::Desc);
         assert!(decl.is_sortable());
     }
 }

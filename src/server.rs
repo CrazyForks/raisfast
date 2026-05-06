@@ -972,8 +972,11 @@ async fn build_app(
         .layer(Extension(limiters.clone()))
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024));
 
-    api_v1 =
-        crate::content_type::handler::register_content_routes(api_v1, &state.content_type_registry);
+    api_v1 = crate::content_type::handler::register_content_routes(
+        api_v1,
+        &state.content_type_registry,
+        &state.protocol_registry,
+    );
 
     for ct in state.content_type_registry.all() {
         let plural = &ct.plural;

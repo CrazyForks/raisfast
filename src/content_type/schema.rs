@@ -1,6 +1,8 @@
 //! 内容类型 Schema 数据结构与 TOML 解析
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
@@ -8,6 +10,48 @@ use ts_rs::TS;
 
 use crate::config::app::RuleEngineConfig;
 use crate::errors::app_error::AppError;
+
+/// 协议引用：简单字符串或带配置的对象
+///
+/// ```toml
+/// implements = ["sortable"]
+/// implements = [{ name = "sortable", field = "priority", direction = "desc" }]
+/// ```
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum ProtocolRef {
+    Simple(String),
+    WithConfig {
+        name: String,
+        #[serde(flatten)]
+        config: HashMap<String, String>,
+    },
+}
+
+impl ProtocolRef {
+    pub fn name(&self) -> &str {
+        match self {
+            ProtocolRef::Simple(s) => s,
+            ProtocolRef::WithConfig { name, .. } => name,
+        }
+    }
+
+    pub fn config(&self) -> &HashMap<String, String> {
+        match self {
+            ProtocolRef::Simple(_) => &EMPTY_MAP,
+            ProtocolRef::WithConfig { config, .. } => config,
+        }
+    }
+}
+
+static EMPTY_MAP: LazyLock<HashMap<String, String>> = LazyLock::new(HashMap::new);
+
+impl std::fmt::Display for ProtocolRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
 
 /// 内容类型种类
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -49,13 +93,10 @@ pub struct ContentTypeSchema {
     pub builtin: bool,
     /// 声明实现的 Protocol 列表（如 ["versionable", "cacheable"]）
     #[serde(default)]
-    pub implements: Vec<String>,
+    pub implements: Vec<ProtocolRef>,
     /// 索引定义
     #[serde(default)]
     pub indexes: Vec<IndexDef>,
-    /// 列表视图配置
-    #[serde(default)]
-    pub list_view: Option<ListViewConfig>,
     /// API 访问控制配置
     #[serde(default)]
     pub api: ApiConfig,
@@ -216,22 +257,6 @@ pub struct IndexDef {
     pub unique: bool,
 }
 
-/// 列表视图配置
-#[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ListViewConfig {
-    /// 默认排序（如 "`created_at:desc`"）
-    #[serde(default = "default_sort")]
-    pub default_sort: String,
-    /// 列表显示的列
-    #[serde(default)]
-    pub columns: Vec<String>,
-}
-
-fn default_sort() -> String {
-    "created_at:desc".into()
-}
-
 /// API 访问级别
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -375,7 +400,6 @@ pub fn check_api_access(
 struct ContentTypeToml {
     content_type: ContentTypeHeader,
     fields: toml::Table,
-    list_view: Option<ListViewConfig>,
     indexes: Option<Vec<IndexDef>>,
     api: Option<ApiConfig>,
 }
@@ -394,7 +418,7 @@ struct ContentTypeHeader {
     #[serde(default)]
     builtin: bool,
     #[serde(default)]
-    implements: Vec<String>,
+    implements: Vec<ProtocolRef>,
 }
 
 impl ContentTypeSchema {
@@ -530,7 +554,6 @@ impl ContentTypeSchema {
             builtin: toml.content_type.builtin,
             implements: toml.content_type.implements,
             indexes: toml.indexes.unwrap_or_default(),
-            list_view: toml.list_view,
             api: toml.api.unwrap_or_default(),
             cached_column_names: None,
             cached_protocol_column_names: None,
@@ -542,17 +565,37 @@ impl ContentTypeSchema {
 
     /// 缓存协议提供的列名、行为能力、声明（需在 cache_select_columns 之前调用）
     pub fn cache_protocol_columns(&mut self, registry: &crate::protocols::ProtocolRegistry) {
-        let columns = registry.columns_for(&self.implements);
+        let names: Vec<String> = self
+            .implements
+            .iter()
+            .map(|p| p.name().to_string())
+            .collect();
+        let mut columns = registry.columns_for(&names);
+        let field_names: Vec<&str> = self.fields.iter().map(|f| f.name.as_str()).collect();
+        columns.retain(|c| !field_names.contains(&c.name.as_str()));
         self.cached_protocol_column_names = Some(columns.iter().map(|c| c.name.clone()).collect());
         let behaviors: Vec<String> = self
             .implements
             .iter()
-            .filter_map(|name| registry.get(name))
-            .flat_map(|p| p.behaviors())
+            .filter_map(|p| registry.get(p.name()))
+            .flat_map(|proto| proto.behaviors())
             .map(|b| b.to_string())
             .collect();
         self.cached_behaviors = Some(behaviors);
-        self.cached_declaration = Some(registry.declaration_for(&self.implements));
+        let mut decl = registry.declaration_for(&names);
+        let protocol_cols: Vec<String> = self
+            .cached_protocol_column_names
+            .clone()
+            .unwrap_or_default();
+        let all_columns: Vec<&str> = self
+            .fields
+            .iter()
+            .map(|f| f.name.as_str())
+            .chain(protocol_cols.iter().map(|s| s.as_str()))
+            .chain(["id", "tenant_id", crate::constants::COL_META])
+            .collect();
+        registry.apply_config_for(&self.implements, &mut decl, &all_columns);
+        self.cached_declaration = Some(decl);
     }
 
     /// 预计算并缓存 SELECT 列名列表（需在 cache_protocol_columns 之后调用）
@@ -588,11 +631,6 @@ impl ContentTypeSchema {
     /// 是否启用软删除
     pub fn is_soft_delete(&self) -> bool {
         self.declaration().is_soft_delete()
-    }
-
-    /// 更新前是否需要获取当前记录快照
-    pub fn needs_pre_update_snapshot(&self) -> bool {
-        self.declaration().snapshot_before_update
     }
 
     /// 是否提供版本历史路由
@@ -693,7 +731,7 @@ impl ContentTypeSchema {
     /// 是否实现了指定 Protocol
     #[must_use]
     pub fn implements_protocol(&self, name: &str) -> bool {
-        self.implements.iter().any(|p| p == name)
+        self.implements.iter().any(|p| p.name() == name)
     }
 
     /// 获取 UID 字段（用于 slug）
@@ -730,7 +768,17 @@ impl ContentTypeSchema {
                 toml::Value::Array(
                     self.implements
                         .iter()
-                        .map(|p| toml::Value::String(p.clone()))
+                        .map(|p| match p {
+                            ProtocolRef::Simple(s) => toml::Value::String(s.clone()),
+                            ProtocolRef::WithConfig { name, config } => {
+                                let mut table = toml::Table::new();
+                                table.insert("name".into(), toml::Value::String(name.clone()));
+                                for (k, v) in config {
+                                    table.insert(k.clone(), toml::Value::String(v.clone()));
+                                }
+                                toml::Value::Table(table)
+                            }
+                        })
                         .collect(),
                 ),
             );
@@ -770,24 +818,6 @@ impl ContentTypeSchema {
                 })
                 .collect();
             root.insert("indexes".into(), toml::Value::Array(indexes));
-        }
-
-        if let Some(ref lv) = self.list_view {
-            let mut lv_table = toml::Table::new();
-            lv_table.insert(
-                "default_sort".into(),
-                toml::Value::String(lv.default_sort.clone()),
-            );
-            lv_table.insert(
-                "columns".into(),
-                toml::Value::Array(
-                    lv.columns
-                        .iter()
-                        .map(|c| toml::Value::String(c.clone()))
-                        .collect(),
-                ),
-            );
-            root.insert("list_view".into(), toml::Value::Table(lv_table));
         }
 
         toml::to_string_pretty(&root)
@@ -1021,7 +1051,7 @@ pub struct CreateContentTypeRequest {
     #[serde(default)]
     pub builtin: bool,
     #[serde(default)]
-    pub implements: Vec<String>,
+    pub implements: Vec<ProtocolRef>,
     #[serde(default)]
     pub fields: Vec<FieldSchema>,
 }
@@ -1039,13 +1069,11 @@ pub struct UpdateContentTypeRequest {
     #[serde(default)]
     pub slug_field: Option<Option<String>>,
     #[serde(default)]
-    pub implements: Option<Vec<String>>,
+    pub implements: Option<Vec<ProtocolRef>>,
     #[serde(default)]
     pub fields: Option<Vec<FieldSchema>>,
     #[serde(default)]
     pub indexes: Option<Vec<IndexDef>>,
-    #[serde(default)]
-    pub list_view: Option<Option<ListViewConfig>>,
 }
 
 #[cfg(test)]
@@ -1135,17 +1163,12 @@ default = false
 [[indexes]]
 fields = ["slug"]
 unique = true
-
-[list_view]
-default_sort = "is_pinned:desc,created_at:desc"
-columns = ["title", "status", "created_at"]
 "#;
         let ct = ContentTypeSchema::parse_from_str(toml).unwrap();
         assert_eq!(ct.name, "Post");
         assert_eq!(ct.slug_field, Some("title".into()));
         assert_eq!(ct.fields.len(), 8);
         assert_eq!(ct.indexes.len(), 1);
-        assert_eq!(ct.list_view.as_ref().unwrap().columns.len(), 3);
 
         let slug = ct.uid_field().unwrap();
         assert_eq!(slug.name, "slug");

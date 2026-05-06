@@ -13,6 +13,7 @@ use crate::aspects::{
     Advice, Aspect, AspectResult, ColumnDef, DataBeforeCreateContext, Layer, Operation, Pointcut,
     SqlType, TargetMatcher, When,
 };
+use crate::constants::COL_LOCK_VERSION;
 use crate::protocols::{Protocol, ProtocolDeclaration};
 
 pub struct LockableAspect;
@@ -38,14 +39,20 @@ impl Aspect for LockableAspect {
 
     fn columns(&self) -> Vec<ColumnDef> {
         vec![ColumnDef {
-            name: "version".into(),
+            name: COL_LOCK_VERSION.into(),
             sql_type: SqlType::Integer,
             default: Some("1".into()),
         }]
     }
 
     async fn on_data_before_create(&self, ctx: &mut DataBeforeCreateContext) -> AspectResult {
-        ctx.record.insert("version".into(), json!(1));
+        let should_inject = ctx
+            .schema
+            .as_ref()
+            .is_none_or(|s| s.is_protocol_column(COL_LOCK_VERSION));
+        if should_inject {
+            ctx.record.insert(COL_LOCK_VERSION.into(), json!(1));
+        }
         Ok(Advice::Continue)
     }
 }
@@ -71,7 +78,7 @@ impl Protocol for LockableProtocol {
 
     fn declaration(&self) -> ProtocolDeclaration {
         ProtocolDeclaration {
-            lock_column: Some("version".into()),
+            lock_column: Some(COL_LOCK_VERSION.into()),
             ..Default::default()
         }
     }
@@ -104,20 +111,20 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(ctx.record.get("version").unwrap(), &json!(1));
+        assert_eq!(ctx.record.get(COL_LOCK_VERSION).unwrap(), &json!(1));
     }
 
     #[tokio::test]
     async fn provides_version_column() {
         let cols = LockableAspect.columns();
         assert_eq!(cols.len(), 1);
-        assert_eq!(cols[0].name, "version");
+        assert_eq!(cols[0].name, COL_LOCK_VERSION);
     }
 
     #[test]
     fn declaration_has_lock_column() {
         let decl = LockableProtocol.declaration();
-        assert_eq!(decl.lock_column.as_deref(), Some("version"));
+        assert_eq!(decl.lock_column.as_deref(), Some(COL_LOCK_VERSION));
         assert!(decl.is_lockable());
     }
 }

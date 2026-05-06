@@ -61,14 +61,24 @@ impl Aspect for OwnableAspect {
 
     async fn on_data_before_create(&self, ctx: &mut DataBeforeCreateContext) -> AspectResult {
         if let Some(user_id) = &ctx.base.user_id {
-            ctx.record.insert(COL_CREATED_BY.into(), json!(user_id));
-            ctx.record.insert(COL_UPDATED_BY.into(), json!(user_id));
+            let schema = ctx.schema.as_ref();
+            if schema.is_none_or(|s| s.is_protocol_column(COL_CREATED_BY)) {
+                ctx.record.insert(COL_CREATED_BY.into(), json!(user_id));
+            }
+            if schema.is_none_or(|s| s.is_protocol_column(COL_UPDATED_BY)) {
+                ctx.record.insert(COL_UPDATED_BY.into(), json!(user_id));
+            }
         }
         Ok(Advice::Continue)
     }
 
     async fn on_data_before_update(&self, ctx: &mut DataBeforeUpdateContext) -> AspectResult {
-        if let Some(user_id) = &ctx.base.user_id {
+        if let Some(user_id) = &ctx.base.user_id
+            && ctx
+                .schema
+                .as_ref()
+                .is_none_or(|s| s.is_protocol_column(COL_UPDATED_BY))
+        {
             ctx.new_record.insert(COL_UPDATED_BY.into(), json!(user_id));
         }
         Ok(Advice::Continue)

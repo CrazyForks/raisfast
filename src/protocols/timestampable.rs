@@ -60,16 +60,27 @@ impl Aspect for TimestampableAspect {
     }
 
     async fn on_data_before_create(&self, ctx: &mut DataBeforeCreateContext) -> AspectResult {
-        ctx.record
-            .insert(COL_CREATED_AT.into(), json!(ctx.base.now));
-        ctx.record
-            .insert(COL_UPDATED_AT.into(), json!(ctx.base.now));
+        let schema = ctx.schema.as_ref();
+        if schema.is_none_or(|s| s.is_protocol_column(COL_CREATED_AT)) {
+            ctx.record
+                .insert(COL_CREATED_AT.into(), json!(ctx.base.now));
+        }
+        if schema.is_none_or(|s| s.is_protocol_column(COL_UPDATED_AT)) {
+            ctx.record
+                .insert(COL_UPDATED_AT.into(), json!(ctx.base.now));
+        }
         Ok(Advice::Continue)
     }
 
     async fn on_data_before_update(&self, ctx: &mut DataBeforeUpdateContext) -> AspectResult {
-        ctx.new_record
-            .insert(COL_UPDATED_AT.into(), json!(ctx.base.now));
+        if ctx
+            .schema
+            .as_ref()
+            .is_none_or(|s| s.is_protocol_column(COL_UPDATED_AT))
+        {
+            ctx.new_record
+                .insert(COL_UPDATED_AT.into(), json!(ctx.base.now));
+        }
         Ok(Advice::Continue)
     }
 }

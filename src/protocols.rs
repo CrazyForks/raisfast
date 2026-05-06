@@ -81,7 +81,7 @@ pub struct ProtocolDeclaration {
 }
 
 impl ProtocolDeclaration {
-    /// 合并另一个协议声明（Soft 优先于 Hard，bool 取 OR，lock/sort 先到先得）
+    /// 合并另一个协议声明（Soft 优先于 Hard，bool 取 OR，lock/sort 后覆盖前）
     pub fn merge(&mut self, other: &ProtocolDeclaration) {
         self.query_filters
             .extend(other.query_filters.iter().cloned());
@@ -94,10 +94,22 @@ impl ProtocolDeclaration {
         if other.revision_routes {
             self.revision_routes = true;
         }
-        if self.lock_column.is_none() && other.lock_column.is_some() {
+        if other.lock_column.is_some() {
+            if self.lock_column.is_some() {
+                tracing::warn!(
+                    "conflict: lock_column already set, overwriting with {:?}",
+                    other.lock_column
+                );
+            }
             self.lock_column = other.lock_column.clone();
         }
-        if self.default_sort.is_none() && other.default_sort.is_some() {
+        if other.default_sort.is_some() {
+            if self.default_sort.is_some() {
+                tracing::warn!(
+                    "conflict: default_sort already set, overwriting with {:?}",
+                    other.default_sort
+                );
+            }
             self.default_sort = other.default_sort.clone();
         }
     }
@@ -153,6 +165,29 @@ pub trait Protocol: Send + Sync + 'static {
     /// 协议声明式效果（纯数据）
     fn declaration(&self) -> ProtocolDeclaration {
         ProtocolDeclaration::default()
+    }
+
+    /// 将用户配置应用到声明（如 sortable 的 field/direction）
+    ///
+    /// 默认空实现。需要配置的协议覆写此方法。
+    fn apply_config(
+        &self,
+        _config: &HashMap<String, String>,
+        _decl: &mut ProtocolDeclaration,
+        _all_columns: &[&str],
+    ) {
+    }
+
+    /// 注册协议所需的额外 API 路由
+    ///
+    /// 默认空实现。需要路由的协议覆写此方法。
+    fn register_routes(
+        &self,
+        _router: axum::Router<crate::AppState>,
+        _plural: &str,
+        _admin_prefix: &str,
+    ) -> axum::Router<crate::AppState> {
+        _router
     }
 
     /// 删除记录后的异步回调（如清理关联表）
@@ -229,6 +264,37 @@ impl ProtocolRegistry {
     /// 聚合多个协议的声明
     pub fn declaration_for(&self, names: &[String]) -> ProtocolDeclaration {
         ProtocolDeclaration::aggregated(names, self)
+    }
+
+    /// 对聚合后的声明应用用户配置
+    pub fn apply_config_for(
+        &self,
+        impl_refs: &[crate::content_type::schema::ProtocolRef],
+        decl: &mut ProtocolDeclaration,
+        all_columns: &[&str],
+    ) {
+        for pref in impl_refs {
+            if let Some(protocol) = self.protocols.get(pref.name()) {
+                protocol.apply_config(pref.config(), decl, all_columns);
+            }
+        }
+    }
+
+    /// 注册所有协议的额外路由
+    pub fn register_routes_for(
+        &self,
+        names: &[String],
+        router: axum::Router<crate::AppState>,
+        plural: &str,
+        admin_prefix: &str,
+    ) -> axum::Router<crate::AppState> {
+        let mut router = router;
+        for name in names {
+            if let Some(protocol) = self.protocols.get(name.as_str()) {
+                router = protocol.register_routes(router, plural, admin_prefix);
+            }
+        }
+        router
     }
 
     /// 删除后回调

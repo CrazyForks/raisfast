@@ -22,8 +22,12 @@ pub const COL_UPDATED_AT: &str = "updated_at";
 pub const COL_DELETED_AT: &str = "deleted_at";
 /// 软删除 — 删除者
 pub const COL_DELETED_BY: &str = "deleted_by";
-/// 版本控制 — 版本号
+/// 版本控制 — 内容修订版本号
 pub const COL_VERSION: &str = "version";
+/// 乐观锁 — 锁版本号
+pub const COL_LOCK_VERSION: &str = "lock_version";
+/// 排序 — 排序键
+pub const COL_SORT_KEY: &str = "created_by";
 /// 元数据 JSON 列
 pub const COL_META: &str = "__meta";
 /// 租户 ID 列

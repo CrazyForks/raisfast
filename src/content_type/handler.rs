@@ -104,6 +104,7 @@ pub struct ListParams {
 pub fn register_content_routes(
     router: axum::Router<AppState>,
     registry: &crate::content_type::ContentTypeRegistry,
+    protocol_registry: &crate::protocols::ProtocolRegistry,
 ) -> axum::Router<AppState> {
     let mut api = router;
     let cms = crate::constants::CMS_ROUTE;
@@ -183,26 +184,9 @@ pub fn register_content_routes(
                 );
         }
 
-        if ct.has_revision_routes() {
-            let p = plural.clone();
-            api = api
-                .route(
-                    &format!("{admin_cms}/{p}/{{id}}/revisions"),
-                    axum::routing::get(crate::handlers::content_revision::list_revisions),
-                )
-                .route(
-                    &format!("{admin_cms}/{p}/{{id}}/revisions/{{revision_id}}"),
-                    axum::routing::get(crate::handlers::content_revision::get_revision),
-                )
-                .route(
-                    &format!("{admin_cms}/{p}/{{id}}/revisions/{{revision_id}}/restore"),
-                    axum::routing::post(crate::handlers::content_revision::restore_revision),
-                )
-                .route(
-                    &format!("{admin_cms}/{p}/{{id}}/revisions/{{rev_a}}/diff/{{rev_b}}"),
-                    axum::routing::get(crate::handlers::content_revision::diff_revisions),
-                );
-        }
+        let protocol_names: Vec<String> =
+            ct.implements.iter().map(|p| p.name().to_string()).collect();
+        api = protocol_registry.register_routes_for(&protocol_names, api, &plural, admin_cms);
 
         tracing::debug!("registered CMS routes for content type: {}", ct.singular);
     }
@@ -1143,7 +1127,6 @@ pub async fn create_schema(
         implements: req.implements,
         fields: req.fields,
         indexes: vec![],
-        list_view: None,
         api: super::schema::ApiConfig::default(),
         cached_column_names: None,
         cached_protocol_column_names: None,
@@ -1261,9 +1244,6 @@ pub async fn update_schema(
     }
     if let Some(indexes) = req.indexes {
         updated.indexes = indexes;
-    }
-    if let Some(list_view) = req.list_view {
-        updated.list_view = list_view;
     }
 
     let dir = std::path::Path::new(&state.config.content_type_dir);
