@@ -166,3 +166,8 @@ mod tests {
         assert_eq!(cols[1].name, "deleted_by");
     }
 }
+
+crate::register_protocol!(
+    crate::protocols::soft_deletable::SoftDeletableProtocol,
+    crate::protocols::soft_deletable::SoftDeletableProtocol
+);

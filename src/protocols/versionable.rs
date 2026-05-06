@@ -183,3 +183,8 @@ mod tests {
         assert!(result.is_ok());
     }
 }
+
+crate::register_protocol!(
+    crate::protocols::versionable::VersionableProtocol,
+    crate::protocols::versionable::VersionableProtocol
+);

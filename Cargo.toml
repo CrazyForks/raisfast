@@ -148,6 +148,7 @@ utoipa-swagger-ui = { version = "9", features = ["axum"], optional = true }
 
 # TypeScript type generation
 ts-rs = { version = "12", optional = true }
+inventory = "0.3.24"
 
 [dev-dependencies]
 http-body-util = "0.1.3"

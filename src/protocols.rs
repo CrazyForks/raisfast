@@ -22,8 +22,9 @@
 //! **场景 B（罕见）：引入全新系统集成点** → 扩展 ProtocolDeclaration struct，
 //! 编译器会报错提醒所有需要适配的位置。
 
-pub mod cacheable;
+pub mod expirable;
 pub mod lockable;
+pub mod nestable;
 pub mod ownable;
 pub mod soft_deletable;
 pub mod sortable;
@@ -205,6 +206,26 @@ pub trait Protocol: Send + Sync + 'static {
     }
 }
 
+// ─── ProtocolEntry (inventory) ───
+
+pub struct ProtocolEntry {
+    pub factory: fn() -> Arc<dyn Protocol>,
+}
+
+inventory::collect!(ProtocolEntry);
+
+/// 在协议文件内自注册的宏
+#[macro_export]
+macro_rules! register_protocol {
+    ($protocol_type:ty, $instance:expr) => {
+        ::inventory::submit! {
+            $crate::protocols::ProtocolEntry {
+                factory: || std::sync::Arc::new($instance),
+            }
+        }
+    };
+}
+
 // ─── ProtocolRegistry ───
 
 pub struct ProtocolRegistry {
@@ -223,6 +244,13 @@ impl ProtocolRegistry {
         self.protocols.insert(name, Arc::new(protocol));
     }
 
+    pub fn register_from_inventory(&mut self) {
+        for entry in inventory::iter::<ProtocolEntry> {
+            let name = (entry.factory)().name().to_string();
+            self.protocols.insert(name, (entry.factory)());
+        }
+    }
+
     pub fn get(&self, name: &str) -> Option<&Arc<dyn Protocol>> {
         self.protocols.get(name)
     }
@@ -233,13 +261,25 @@ impl ProtocolRegistry {
 
     pub fn columns_for(&self, names: &[String]) -> Vec<ColumnDef> {
         let mut cols = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        let mut seen: HashMap<String, (String, ColumnDef)> = HashMap::new();
         for name in names {
             if let Some(protocol) = self.protocols.get(name.as_str()) {
                 for col in protocol.columns() {
-                    if seen.insert(col.name.clone()) {
-                        cols.push(col);
+                    if let Some((prev_proto, prev_col)) = seen.get(&col.name) {
+                        if prev_col.sql_type != col.sql_type || prev_col.default != col.default {
+                            tracing::warn!(
+                                "column '{}' declared by '{}' ({:?}) and '{}' ({:?}): first wins",
+                                col.name,
+                                prev_proto,
+                                prev_col.sql_type,
+                                name,
+                                col.sql_type,
+                            );
+                        }
+                        continue;
                     }
+                    seen.insert(col.name.clone(), (name.clone(), col.clone()));
+                    cols.push(col);
                 }
             }
         }
@@ -408,5 +448,35 @@ mod tests {
         assert!(both.snapshot_before_update);
         assert!(both.revision_routes);
         assert_eq!(both.query_filters.len(), 1);
+    }
+
+    /// 防护测试：确保 merge() 覆盖 ProtocolDeclaration 的所有字段。
+    /// 新增字段时如果忘记更新 merge()，此测试会失败。
+    #[test]
+    fn merge_covers_all_declaration_fields() {
+        let full = ProtocolDeclaration {
+            query_filters: vec![("col_a".into(), "IS NULL".into())],
+            delete_strategy: DeleteStrategy::Soft {
+                column: "archived_at".into(),
+            },
+            snapshot_before_update: true,
+            revision_routes: true,
+            lock_column: Some("lock_version".into()),
+            default_sort: Some(("priority".into(), SortDir::Desc)),
+        };
+
+        let mut empty = ProtocolDeclaration::default();
+        empty.merge(&full);
+
+        assert_eq!(empty.query_filters.len(), 1);
+        assert_eq!(empty.query_filters[0].0, "col_a");
+        assert!(matches!(empty.delete_strategy, DeleteStrategy::Soft { .. }));
+        assert!(empty.snapshot_before_update);
+        assert!(empty.revision_routes);
+        assert_eq!(empty.lock_column.as_deref(), Some("lock_version"));
+        assert_eq!(
+            empty.default_sort.as_ref().map(|(c, d)| (c.as_str(), *d)),
+            Some(("priority", SortDir::Desc))
+        );
     }
 }

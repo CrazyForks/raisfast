@@ -135,13 +135,7 @@ pub async fn build_app_state(
     let search: Arc<dyn SearchEngine> = build_search_engine(config);
 
     let mut protocol_registry = crate::protocols::ProtocolRegistry::new();
-    protocol_registry.register(crate::protocols::ownable::OwnableProtocol);
-    protocol_registry.register(crate::protocols::timestampable::TimestampableProtocol);
-    protocol_registry.register(crate::protocols::soft_deletable::SoftDeletableProtocol);
-    protocol_registry.register(crate::protocols::versionable::VersionableProtocol);
-    protocol_registry.register(crate::protocols::cacheable::CacheableProtocol);
-    protocol_registry.register(crate::protocols::lockable::LockableProtocol);
-    protocol_registry.register(crate::protocols::sortable::SortableProtocol);
+    protocol_registry.register_from_inventory();
     let protocol_registry = Arc::new(protocol_registry);
 
     let aspect_engine = Arc::new(crate::aspects::engine::AspectEngine::new());

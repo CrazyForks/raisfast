@@ -100,9 +100,10 @@ fn test_protocol_registry() -> raisfast::protocols::ProtocolRegistry {
     reg.register(raisfast::protocols::timestampable::TimestampableProtocol);
     reg.register(raisfast::protocols::soft_deletable::SoftDeletableProtocol);
     reg.register(raisfast::protocols::versionable::VersionableProtocol);
-    reg.register(raisfast::protocols::cacheable::CacheableProtocol);
     reg.register(raisfast::protocols::lockable::LockableProtocol);
     reg.register(raisfast::protocols::sortable::SortableProtocol);
+    reg.register(raisfast::protocols::expirable::ExpirableProtocol);
+    reg.register(raisfast::protocols::nestable::NestableProtocol);
     reg
 }
 

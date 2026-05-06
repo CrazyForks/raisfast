@@ -404,7 +404,7 @@ impl SqlType {
 
 // ─── ColumnDef ───
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnDef {
     pub name: String,
     pub sql_type: SqlType,

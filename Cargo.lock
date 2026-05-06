@@ -5942,6 +5942,7 @@ dependencies = [
  "hmac",
  "http-body-util",
  "image",
+ "inventory",
  "jsonwebtoken",
  "lettre",
  "metrics",

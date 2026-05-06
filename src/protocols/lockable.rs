@@ -128,3 +128,8 @@ mod tests {
         assert!(decl.is_lockable());
     }
 }
+
+crate::register_protocol!(
+    crate::protocols::lockable::LockableProtocol,
+    crate::protocols::lockable::LockableProtocol
+);

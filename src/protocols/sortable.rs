@@ -176,3 +176,8 @@ mod tests {
         assert!(decl.is_sortable());
     }
 }
+
+crate::register_protocol!(
+    crate::protocols::sortable::SortableProtocol,
+    crate::protocols::sortable::SortableProtocol
+);

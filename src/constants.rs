@@ -27,7 +27,15 @@ pub const COL_VERSION: &str = "version";
 /// 乐观锁 — 锁版本号
 pub const COL_LOCK_VERSION: &str = "lock_version";
 /// 排序 — 排序键
-pub const COL_SORT_KEY: &str = "created_by";
+pub const COL_SORT_KEY: &str = "created_at";
+/// 过期 — 过期时间
+pub const COL_EXPIRES_AT: &str = "expires_at";
+/// 嵌套 — 父级 ID
+pub const COL_PARENT_ID: &str = "parent_id";
+/// 嵌套 — 层级深度
+pub const COL_DEPTH: &str = "depth";
+/// 嵌套 — 同级位置
+pub const COL_POSITION: &str = "position";
 /// 元数据 JSON 列
 pub const COL_META: &str = "__meta";
 /// 租户 ID 列

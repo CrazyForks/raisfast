@@ -316,3 +316,8 @@ mod tests {
         assert_eq!(pcs[1].operation, Operation::Update);
     }
 }
+
+crate::register_protocol!(
+    crate::protocols::ownable::OwnableProtocol,
+    crate::protocols::ownable::OwnableProtocol
+);

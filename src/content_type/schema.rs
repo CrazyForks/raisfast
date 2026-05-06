@@ -91,7 +91,7 @@ pub struct ContentTypeSchema {
     /// 是否为内置 content type（内置 CT 不注入默认字段，字段全部显式定义）
     #[serde(default)]
     pub builtin: bool,
-    /// 声明实现的 Protocol 列表（如 ["versionable", "cacheable"]）
+    /// 声明实现的 Protocol 列表（如 ["versionable", "soft_deletable"]）
     #[serde(default)]
     pub implements: Vec<ProtocolRef>,
     /// 索引定义
@@ -1334,18 +1334,11 @@ type = "text"
         test_reg.register(crate::protocols::timestampable::TimestampableProtocol);
         test_reg.register(crate::protocols::soft_deletable::SoftDeletableProtocol);
         test_reg.register(crate::protocols::versionable::VersionableProtocol);
-        test_reg.register(crate::protocols::cacheable::CacheableProtocol);
         let reg = ContentTypeRegistry::load_from_dir(
             dir.path(),
             &crate::config::app::RuleEngineConfig::default(),
             &reserved,
-            &[
-                "ownable",
-                "timestampable",
-                "soft_deletable",
-                "versionable",
-                "cacheable",
-            ],
+            &["ownable", "timestampable", "soft_deletable", "versionable"],
             &test_reg,
         )
         .unwrap();

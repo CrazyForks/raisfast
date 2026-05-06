@@ -443,7 +443,10 @@ immutable = true
         reg.register(crate::protocols::timestampable::TimestampableProtocol);
         reg.register(crate::protocols::soft_deletable::SoftDeletableProtocol);
         reg.register(crate::protocols::versionable::VersionableProtocol);
-        reg.register(crate::protocols::cacheable::CacheableProtocol);
+        reg.register(crate::protocols::lockable::LockableProtocol);
+        reg.register(crate::protocols::sortable::SortableProtocol);
+        reg.register(crate::protocols::expirable::ExpirableProtocol);
+        reg.register(crate::protocols::nestable::NestableProtocol);
         reg
     }
 

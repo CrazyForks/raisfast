@@ -288,3 +288,8 @@ mod tests {
         assert_eq!(TimestampableAspect.priority(), -400);
     }
 }
+
+crate::register_protocol!(
+    crate::protocols::timestampable::TimestampableProtocol,
+    crate::protocols::timestampable::TimestampableProtocol
+);

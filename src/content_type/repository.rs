@@ -1013,9 +1013,10 @@ mod tests {
         reg.register(crate::protocols::timestampable::TimestampableProtocol);
         reg.register(crate::protocols::soft_deletable::SoftDeletableProtocol);
         reg.register(crate::protocols::versionable::VersionableProtocol);
-        reg.register(crate::protocols::cacheable::CacheableProtocol);
         reg.register(crate::protocols::lockable::LockableProtocol);
         reg.register(crate::protocols::sortable::SortableProtocol);
+        reg.register(crate::protocols::expirable::ExpirableProtocol);
+        reg.register(crate::protocols::nestable::NestableProtocol);
         reg
     }
 
@@ -1069,7 +1070,7 @@ type = "text"
         ct.cache_protocol_columns(&test_protocol_registry());
 
         let order = build_order_by(None, &ct);
-        assert_eq!(order, " ORDER BY created_by DESC");
+        assert_eq!(order, " ORDER BY created_at DESC");
     }
 
     #[test]
