@@ -4,9 +4,7 @@ singular = "cart_item"
 plural = "cart_items"
 table = "cart_items"
 description = "购物车项"
-draft_publish = false
-timestamps = true
-soft_delete = false
+implements = ["ownable", "timestampable"]
 
 [fields.user_id]
 type = "text"

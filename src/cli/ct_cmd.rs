@@ -41,9 +41,7 @@ singular = "{singular}"
 plural = "{plural}"
 table = "{table}"
 description = ""
-draft_publish = false
-timestamps = true
-soft_delete = false
+implements = ["ownable", "timestampable"]
 
 [fields.name]
 type = "text"
@@ -246,13 +244,6 @@ fn schema_to_ts(ct: &ContentTypeSchema) -> String {
         lines.push(format!("  {}: {}{nullable};", field.name, ts_type));
     }
 
-    if ct.draft_publish {
-        lines.push("  status: string;".into());
-        if !ct.fields.iter().any(|f| f.name == "status") {
-            lines.push("  published_at: string | null;".into());
-        }
-    }
-
     let has_timestamps = ct
         .implements
         .iter()
@@ -273,16 +264,11 @@ fn schema_to_ts(ct: &ContentTypeSchema) -> String {
     {
         lines.push("  updated_by: string | null;".into());
     }
-
-    if (ct.soft_delete || ct.implements.iter().any(|p| p == "soft_deletable"))
-        && !ct.fields.iter().any(|f| f.name == "deleted_at")
-    {
+    if ct.is_soft_delete() && !ct.fields.iter().any(|f| f.name == "deleted_at") {
         lines.push("  deleted_at: string | null;".into());
     }
 
-    if (ct.implements.iter().any(|p| p == "versionable") || ct.versioning)
-        && !ct.fields.iter().any(|f| f.name == "version")
-    {
+    if ct.has_revision_routes() && !ct.fields.iter().any(|f| f.name == "version") {
         lines.push("  version: number;".into());
     }
 

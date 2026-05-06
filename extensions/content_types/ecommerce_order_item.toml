@@ -4,9 +4,7 @@ singular = "order_item"
 plural = "order_items"
 table = "order_items"
 description = "订单项"
-draft_publish = false
-timestamps = false
-soft_delete = false
+implements = ["ownable", "timestampable"]
 
 [fields.order_id]
 type = "relation"

@@ -355,7 +355,6 @@ name = "Post"
 singular = "post"
 plural = "posts"
 table = "ct_resolve_posts"
-timestamps = true
 
 [fields.title]
 type = "text"

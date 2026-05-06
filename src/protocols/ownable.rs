@@ -90,6 +90,10 @@ impl Protocol for OwnableProtocol {
         vec![Arc::new(OwnableAspect)]
     }
 
+    fn behaviors(&self) -> Vec<&'static str> {
+        vec!["track_owner"]
+    }
+
     fn built_in(&self) -> bool {
         true
     }

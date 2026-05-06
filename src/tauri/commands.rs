@@ -385,16 +385,15 @@ pub async fn schema_create(
         plural: req.plural,
         table: req.table.clone(),
         description: req.description,
-        draft_publish: req.draft_publish,
         slug_field: req.slug_field,
-        timestamps: req.timestamps,
-        soft_delete: req.soft_delete,
-        versioning: req.versioning,
         fields: req.fields,
         indexes: vec![],
         list_view: None,
         api: crate::content_type::schema::ApiConfig::default(),
         cached_column_names: None,
+        cached_protocol_column_names: None,
+        cached_behaviors: None,
+        cached_declaration: None,
         cached_rules: None,
     };
 
@@ -423,7 +422,7 @@ pub async fn schema_create(
         .map_err(|e| format!("save failed: {e}"))?;
 
     let repo = crate::content_type::repository::ContentRepository::new(state.0.pool.clone());
-    repo.migrate(&schema)
+    repo.migrate(&schema, &state.0.protocol_registry)
         .await
         .map_err(|e| format!("migration failed: {e}"))?;
 
@@ -437,6 +436,7 @@ pub async fn schema_create(
             &state.0.config.rule_engine,
             &reserved,
             &protocol_names,
+            &state.0.protocol_registry,
         )
         .map_err(|e| e.to_string())?;
 

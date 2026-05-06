@@ -4,9 +4,7 @@ singular = "forum_vote"
 plural = "forum_votes"
 table = "forum_votes"
 description = "论坛投票记录"
-draft_publish = false
-timestamps = true
-soft_delete = false
+implements = ["ownable", "timestampable"]
 
 [fields.target_type]
 type = "text"
@@ -24,7 +22,6 @@ label = "目标ID"
 [fields.user_id]
 type = "text"
 required = true
-auto_fill = "user_id"
 immutable = true
 label = "投票用户"
 

@@ -89,6 +89,10 @@ impl Protocol for TimestampableProtocol {
         vec![Arc::new(TimestampableAspect)]
     }
 
+    fn behaviors(&self) -> Vec<&'static str> {
+        vec!["track_timestamps"]
+    }
+
     fn built_in(&self) -> bool {
         true
     }

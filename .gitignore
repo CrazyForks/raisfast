@@ -9,3 +9,4 @@ plugins-data/
 uploads/
 
 node_modules
+*.pid

@@ -4,10 +4,8 @@ singular = "forum_topic"
 plural = "forum_topics"
 table = "forum_topics"
 description = "论坛主题"
-draft_publish = false
+implements = ["ownable", "timestampable"]
 slug_field = "title"
-timestamps = true
-soft_delete = false
 
 [fields.title]
 type = "text"
@@ -37,7 +35,6 @@ label = "所属版块"
 [fields.author_id]
 type = "text"
 required = true
-auto_fill = "user_id"
 label = "发帖人"
 
 [fields.reply_count]

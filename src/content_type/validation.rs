@@ -392,7 +392,7 @@ name = "Product"
 singular = "product"
 plural = "products"
 table = "ct_validation_test"
-timestamps = true
+implements = ["ownable", "timestampable"]
 
 [fields.name]
 type = "text"
@@ -437,6 +437,16 @@ immutable = true
         assert!(check_type(&FieldType::Integer, &json!("42")).is_err());
     }
 
+    fn test_protocol_registry() -> crate::protocols::ProtocolRegistry {
+        let mut reg = crate::protocols::ProtocolRegistry::new();
+        reg.register(crate::protocols::ownable::OwnableProtocol);
+        reg.register(crate::protocols::timestampable::TimestampableProtocol);
+        reg.register(crate::protocols::soft_deletable::SoftDeletableProtocol);
+        reg.register(crate::protocols::versionable::VersionableProtocol);
+        reg.register(crate::protocols::cacheable::CacheableProtocol);
+        reg
+    }
+
     #[test]
     fn check_type_boolean_expects_bool() {
         assert!(check_type(&FieldType::Boolean, &json!(true)).is_ok());
@@ -448,7 +458,7 @@ immutable = true
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
-        repo.migrate(&ct).await.unwrap();
+        repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
         let data = json!({"price": 9.99});
         let result = validate_create(&pool, &ct, &data).await;
@@ -462,7 +472,7 @@ immutable = true
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
-        repo.migrate(&ct).await.unwrap();
+        repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
         let data = json!({"name": "Test", "status": "unknown"});
         let result = validate_create(&pool, &ct, &data).await;
@@ -476,7 +486,7 @@ immutable = true
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
-        repo.migrate(&ct).await.unwrap();
+        repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
         let data = json!({"name": "x".repeat(51)});
         let result = validate_create(&pool, &ct, &data).await;
@@ -493,7 +503,7 @@ immutable = true
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
-        repo.migrate(&ct).await.unwrap();
+        repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
         let data = json!({"name": "Test", "price": -5.0});
         let result = validate_create(&pool, &ct, &data).await;
@@ -507,7 +517,7 @@ immutable = true
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
-        repo.migrate(&ct).await.unwrap();
+        repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
         let now = crate::utils::tz::now_str();
         repo.create(
@@ -534,7 +544,7 @@ immutable = true
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
-        repo.migrate(&ct).await.unwrap();
+        repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
         let now = crate::utils::tz::now_str();
         let created = repo
@@ -562,7 +572,7 @@ immutable = true
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
-        repo.migrate(&ct).await.unwrap();
+        repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
         let now = crate::utils::tz::now_str();
         let created = repo

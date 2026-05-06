@@ -4,8 +4,7 @@ singular = "note"
 plural = "notes"
 table = "crm_notes"
 description = "备注/跟进记录"
-draft_publish = false
-timestamps = true
+implements = ["ownable", "timestampable"]
 
 [fields.content]
 type = "richtext"
@@ -35,7 +34,6 @@ label = "关联商机"
 
 [fields.owner_id]
 type = "text"
-auto_fill = "user_id"
 label = "创建者"
 
 [fields.pinned]

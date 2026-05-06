@@ -33,7 +33,7 @@ SQLite / PostgreSQL
 | Repository | `src/content_type/repository.rs` | 动态 SQL CRUD |
 | Rule Engine | `src/content_type/rule_engine.rs` | 表达式解析 → SQL 编译 + 运行时求值 |
 | Migration | `src/content_type/migration.rs` | 自动建表 / ALTER TABLE |
-| Validation | `src/content_type/validation.ts` | 字段类型/必填/唯一/枚举/范围/正则校验 |
+| Validation | `src/content_type/validation.rs` | 字段类型/必填/唯一/枚举/范围/正则校验 |
 | Resolver | `src/content_type/resolver.rs` | 批量关联字段填充（populate） |
 | CLI | `src/cli/ct_cmd.rs` | `ct new` / `ct check` |
 
@@ -49,8 +49,7 @@ plural = "products"
 table = "products"
 description = "商品"
 draft_publish = false
-timestamps = true
-soft_delete = false
+implements = ["ownable", "timestampable"]
 
 [fields.name]
 type = "text"
@@ -85,9 +84,10 @@ access = "admin"
 | `description` | string | `""` | 描述 |
 | `draft_publish` | bool | `false` | 启用 draft/published/archived 状态流 |
 | `slug_field` | string | — | 从哪个字段自动生成 slug |
-| `timestamps` | bool | `true` | 自动管理 created_at / updated_at |
-| `soft_delete` | bool | `false` | 软删除（设 deleted_at 而非 DELETE） |
-| `versioning` | bool | `false` | 内容修订历史 |
+| `implements` | string[] | `[]` | 声明实现的 Protocol 列表（见 Protocols 章节） |
+| `indexes` | IndexDef[] | `[]` | 索引定义（见下方） |
+| `list_view` | object | — | 管理列表配置 |
+| `api` | object | — | API 访问控制配置 |
 
 ### 字段类型（17 种）
 
@@ -119,7 +119,6 @@ access = "admin"
 | `required` | bool | 必填且非空 |
 | `unique` | bool | 唯一约束 |
 | `default` | any | 默认值 |
-| `auto_fill` | string | 自动注入：`user_id` / `user_role` / `current_tenant_id` / `current_timestamp` |
 | `private` | bool | 私有字段，公开 API (`/cms/`) 隐藏，admin API (`/admin/cms/`) 可见 |
 | `immutable` | bool | 创建后不可修改 |
 | `label` | string | Admin UI 显示标签 |
@@ -454,7 +453,7 @@ RULE_SQL_LENGTH_FN=LENGTH             # PostgreSQL: CHAR_LENGTH
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/v1/admin/cms/{plural}` | 管理列表（所有状态） |
-| GET | `/api/v1/admin/cms/{plural}/{id}` | 管理详情 |
+| GET | `/api/v1/admin/cms/{plural}/{id_or_slug}` | 管理详情 |
 
 ### Schema 管理 API
 
@@ -479,7 +478,7 @@ RULE_SQL_LENGTH_FN=LENGTH             # PostgreSQL: CHAR_LENGTH
 | `skip_total` | bool | false | 跳过 COUNT(*)，返回 total=-1 |
 | 其他 | — | — | 任意字段名作为等值过滤 |
 
-### 版本管理 API（仅 `versioning = true`）
+### 版本管理 API（仅 `implements = ["versionable"]`）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -497,13 +496,101 @@ RULE_SQL_LENGTH_FN=LENGTH             # PostgreSQL: CHAR_LENGTH
    - `tenant_id TEXT NOT NULL DEFAULT 'default'`
    - 所有非关联字段的对应 SQL 类型
    - ManyToOne / OneToOne 关联的外键列
-   - 系统列：`status`/`published_at`（draft_publish）、`created_at`/`updated_at`（timestamps）、`deleted_at`（soft_delete）
+   - 系统列：`status`/`published_at`（draft_publish）、`created_at`/`updated_at`（timestampable protocol）、`deleted_at`（soft_deletable protocol）
 
 2. **有表缺列** → `ALTER TABLE ADD COLUMN`（仅添加，**永不删列或改类型**）
 
 3. **ManyToMany** → 自动创建中间表（带复合主键 + CASCADE）
 
 4. **索引** → `CREATE UNIQUE INDEX`（unique 字段 + `[[indexes]]` 定义）
+
+## Protocols（协议系统）
+
+Protocol 是 Content Type 的可组合能力声明，通过 `[content_type]` 的 `implements` 字段启用：
+
+```toml
+[content_type]
+name = "Article"
+singular = "article"
+plural = "articles"
+table = "articles"
+implements = ["ownable", "timestampable", "soft_deletable", "versionable"]
+```
+
+### 内置协议（5 种）
+
+| Protocol | 自动注入列 | 行为 |
+|----------|-----------|------|
+| `ownable` | `created_by` TEXT, `updated_by` TEXT | 创建时注入 `created_by` + `updated_by`，更新时注入 `updated_by` |
+| `timestampable` | `created_at` TEXT, `updated_at` TEXT | 创建时注入 `created_at` + `updated_at`，更新时注入 `updated_at` |
+| `soft_deletable` | `deleted_at` TEXT, `deleted_by` TEXT | 删除时 UPDATE 而非 DELETE，查询自动过滤 `deleted_at IS NULL` |
+| `versionable` | `version` INTEGER | 更新时自动保存历史修订到 `content_revisions` 表 |
+| `cacheable` | 无 | 预留：读写时触发缓存失效事件（当前为占位符） |
+
+### `implements` 的实际效果
+
+| 效果 | 说明 |
+|------|------|
+| **Migration** | `soft_deletable` 触发建表时添加 `deleted_at`/`deleted_by` 列 |
+| **查询过滤** | `soft_deletable` 自动在 SELECT/UPDATE/DELETE 中追加 `WHERE deleted_at IS NULL` |
+| **数据注入** | Aspect 引擎在 `before_create`/`before_update` 时自动注入系统列 |
+| **修订历史** | `versionable` 在 `after_update` 时异步保存快照 |
+| **TypeScript 生成** | `ct types` 命令根据 `implements` 生成对应的接口字段 |
+| **元数据存储** | `__meta` 列记录 `{"protocols": ["ownable", ...]}` |
+
+### 注意事项
+
+- `ownable` 和 `timestampable` 的 Aspect 对**所有** Content Type 生效（`TargetMatcher::All`），无论是否声明 `implements`
+- `soft_deletable` 的**建列和查询过滤**仅对声明了 `implements = ["soft_deletable"]` 的 Content Type 生效
+- `versionable` 通过 `implements = ["versionable"]` 启用
+
+### 示例：带软删除和版本管理的文章
+
+```toml
+[content_type]
+name = "Article"
+singular = "article"
+plural = "articles"
+table = "articles"
+draft_publish = true
+slug_field = "title"
+implements = ["ownable", "timestampable", "soft_deletable", "versionable"]
+
+[fields.title]
+type = "text"
+required = true
+max_length = 200
+
+[fields.content]
+type = "richtext"
+required = true
+
+[fields.author]
+type = "relation"
+relation_type = "many_to_one"
+target = "users"
+foreign_key = "author_id"
+
+[api.list]
+access = "public"
+cache = true
+filter = 'status = "published"'
+
+[api.get]
+access = "public"
+cache = true
+filter = 'status = "published"'
+
+[api.create]
+access = "member"
+
+[api.update]
+access = "member"
+filter = 'created_by = @request.auth.id'
+
+[api.delete]
+access = "admin"
+```
 
 ## 缓存
 
@@ -555,8 +642,7 @@ table = "products"
 description = "商品"
 draft_publish = true
 slug_field = "name"
-timestamps = true
-soft_delete = false
+implements = ["ownable", "timestampable"]
 
 [fields.name]
 type = "text"

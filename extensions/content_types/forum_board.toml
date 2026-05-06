@@ -4,10 +4,8 @@ singular = "forum_board"
 plural = "forum_boards"
 table = "forum_boards"
 description = "论坛版块"
-draft_publish = false
+implements = ["ownable", "timestampable"]
 slug_field = "name"
-timestamps = true
-soft_delete = false
 
 [fields.name]
 type = "text"

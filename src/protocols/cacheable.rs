@@ -91,6 +91,10 @@ impl Protocol for CacheableProtocol {
         vec![Arc::new(CacheableAspect)]
     }
 
+    fn behaviors(&self) -> Vec<&'static str> {
+        vec!["cacheable"]
+    }
+
     fn built_in(&self) -> bool {
         true
     }
@@ -99,7 +103,6 @@ impl Protocol for CacheableProtocol {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aspects::engine::AspectEngine;
 
     #[tokio::test]
     async fn pointcuts_cover_read_and_writes() {

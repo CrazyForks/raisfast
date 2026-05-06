@@ -4,9 +4,7 @@ singular = "forum_reply"
 plural = "forum_replies"
 table = "forum_replies"
 description = "论坛回复"
-draft_publish = false
-timestamps = true
-soft_delete = false
+implements = ["ownable", "timestampable"]
 
 [fields.content]
 type = "richtext"
@@ -25,7 +23,6 @@ label = "所属主题"
 [fields.author_id]
 type = "text"
 required = true
-auto_fill = "user_id"
 immutable = true
 label = "回复人"
 

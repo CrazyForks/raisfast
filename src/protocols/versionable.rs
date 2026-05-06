@@ -95,6 +95,34 @@ impl Protocol for VersionableProtocol {
         vec![Arc::new(VersionableAspect)]
     }
 
+    fn behaviors(&self) -> Vec<&'static str> {
+        vec!["versioning"]
+    }
+
+    fn declaration(&self) -> crate::protocols::ProtocolDeclaration {
+        crate::protocols::ProtocolDeclaration {
+            snapshot_before_update: true,
+            revision_routes: true,
+            ..Default::default()
+        }
+    }
+
+    fn on_after_delete(
+        &self,
+        pool: &crate::db::pool::Pool,
+        content_type_singular: &str,
+        record_id: &str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send + '_>>
+    {
+        let pool = pool.clone();
+        let singular = content_type_singular.to_string();
+        let id = record_id.to_string();
+        Box::pin(async move {
+            let _ = crate::models::content_revision::delete_revisions(&pool, &singular, &id).await;
+            Ok(())
+        })
+    }
+
     fn built_in(&self) -> bool {
         true
     }

@@ -4,8 +4,7 @@ singular = "company"
 plural = "companies"
 table = "crm_companies"
 description = "公司/组织"
-draft_publish = false
-timestamps = true
+implements = ["ownable", "timestampable"]
 
 [fields.name]
 type = "text"
@@ -52,7 +51,6 @@ label = "公司简介"
 
 [fields.owner_id]
 type = "text"
-auto_fill = "user_id"
 label = "负责人"
 
 [[indexes]]

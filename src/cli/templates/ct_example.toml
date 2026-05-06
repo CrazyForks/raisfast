@@ -4,7 +4,6 @@ singular = "example"
 plural = "examples"
 table = "examples"
 description = "示例内容类型"
-draft_publish = false
 timestamps = true
 soft_delete = false
 

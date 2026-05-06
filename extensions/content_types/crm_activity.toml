@@ -4,8 +4,7 @@ singular = "activity"
 plural = "activities"
 table = "crm_activities"
 description = "活动/互动记录"
-draft_publish = false
-timestamps = true
+implements = ["ownable", "timestampable"]
 
 [fields.type]
 type = "enum"
@@ -47,7 +46,6 @@ label = "关联商机"
 
 [fields.owner_id]
 type = "text"
-auto_fill = "user_id"
 label = "负责人"
 
 [fields.activity_date]

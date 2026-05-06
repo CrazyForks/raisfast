@@ -42,17 +42,8 @@ pub struct ContentTypeSchema {
     pub description: String,
     /// 字段列表
     pub fields: Vec<FieldSchema>,
-    /// 是否支持 draft/published/archived 状态
-    #[serde(default)]
-    pub draft_publish: bool,
     /// 自动从哪个字段生成 slug
     pub slug_field: Option<String>,
-    /// 是否软删除
-    #[serde(default)]
-    pub soft_delete: bool,
-    /// 是否启用内容版本历史
-    #[serde(default)]
-    pub versioning: bool,
     /// 是否为内置 content type（内置 CT 不注入默认字段，字段全部显式定义）
     #[serde(default)]
     pub builtin: bool,
@@ -71,6 +62,15 @@ pub struct ContentTypeSchema {
     /// 预计算 SELECT 列名列表（注册时填充，不序列化）
     #[serde(skip)]
     pub cached_column_names: Option<Vec<String>>,
+    /// 协议提供的列名列表（注册时填充，不序列化）
+    #[serde(skip)]
+    pub cached_protocol_column_names: Option<Vec<String>>,
+    /// 协议提供的行为能力列表（注册时填充，不序列化）
+    #[serde(skip)]
+    pub cached_behaviors: Option<Vec<String>>,
+    /// 协议聚合声明（注册时填充，不序列化）
+    #[serde(skip)]
+    pub cached_declaration: Option<crate::protocols::ProtocolDeclaration>,
     /// 预解析的 API Rule（注册时填充，不序列化）
     #[serde(skip)]
     pub cached_rules: Option<CachedRules>,
@@ -93,23 +93,6 @@ pub struct CachedRules {
     pub delete: CachedEndpointRules,
 }
 
-/// 自动填充来源
-///
-/// 声明字段值从请求上下文自动注入，而非由客户端提供。
-/// 在 TOML 中使用 `auto_fill = "user_id"` 语法。
-#[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-#[cfg_attr(feature = "export-types", ts(rename_all = "snake_case"))]
-pub enum AutoFillSource {
-    /// 当前认证用户的 ID
-    UserId,
-    /// 当前认证用户的角色
-    UserRole,
-    /// 当前租户 ID
-    CurrentTenantId,
-}
-
 /// 字段定义
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,9 +111,6 @@ pub struct FieldSchema {
     #[serde(default)]
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub default: Option<serde_json::Value>,
-    /// 自动填充来源（从请求上下文注入，优先级高于 default 和客户端传值）
-    #[serde(default)]
-    pub auto_fill: Option<AutoFillSource>,
     /// 私有字段，公开 API 响应中隐藏（仅 admin API 返回）
     #[serde(default)]
     pub private: bool,
@@ -408,13 +388,7 @@ struct ContentTypeHeader {
     table: String,
     #[serde(default)]
     description: String,
-    #[serde(default)]
-    draft_publish: bool,
     slug_field: Option<String>,
-    #[serde(default)]
-    soft_delete: bool,
-    #[serde(default)]
-    versioning: bool,
     #[serde(default)]
     kind: ContentKind,
     #[serde(default)]
@@ -489,16 +463,6 @@ impl ContentTypeSchema {
 
             let default = field_toml.get("default").map(toml_value_to_json);
 
-            let auto_fill = field_toml
-                .get("auto_fill")
-                .and_then(|v| v.as_str())
-                .and_then(|s| match s {
-                    "user_id" => Some(AutoFillSource::UserId),
-                    "user_role" => Some(AutoFillSource::UserRole),
-                    "current_tenant_id" => Some(AutoFillSource::CurrentTenantId),
-                    _ => None,
-                });
-
             fields.push(FieldSchema {
                 name: name.clone(),
                 field_type,
@@ -511,7 +475,6 @@ impl ContentTypeSchema {
                     .and_then(toml::Value::as_bool)
                     .unwrap_or(false),
                 default,
-                auto_fill,
                 private: field_toml
                     .get("private")
                     .and_then(toml::Value::as_bool)
@@ -563,25 +526,78 @@ impl ContentTypeSchema {
             description: toml.content_type.description,
             kind: toml.content_type.kind,
             fields,
-            draft_publish: toml.content_type.draft_publish,
             slug_field: toml.content_type.slug_field,
-            soft_delete: toml.content_type.soft_delete,
-            versioning: toml.content_type.versioning,
             builtin: toml.content_type.builtin,
             implements: toml.content_type.implements,
             indexes: toml.indexes.unwrap_or_default(),
             list_view: toml.list_view,
             api: toml.api.unwrap_or_default(),
             cached_column_names: None,
+            cached_protocol_column_names: None,
+            cached_behaviors: None,
+            cached_declaration: None,
             cached_rules: None,
         })
     }
 
-    /// 预计算并缓存 SELECT 列名列表
+    /// 缓存协议提供的列名、行为能力、声明（需在 cache_select_columns 之前调用）
+    pub fn cache_protocol_columns(&mut self, registry: &crate::protocols::ProtocolRegistry) {
+        let columns = registry.columns_for(&self.implements);
+        self.cached_protocol_column_names = Some(columns.iter().map(|c| c.name.clone()).collect());
+        let behaviors: Vec<String> = self
+            .implements
+            .iter()
+            .filter_map(|name| registry.get(name))
+            .flat_map(|p| p.behaviors())
+            .map(|b| b.to_string())
+            .collect();
+        self.cached_behaviors = Some(behaviors);
+        self.cached_declaration = Some(registry.declaration_for(&self.implements));
+    }
+
+    /// 预计算并缓存 SELECT 列名列表（需在 cache_protocol_columns 之后调用）
     pub fn cache_select_columns(&mut self) {
         self.cached_column_names = Some(crate::content_type::repository::build_column_names(
             self, None, true,
         ));
+    }
+
+    /// 获取协议提供的列名（必须先调用 `cache_protocol_columns`）
+    pub fn protocol_column_names(&self) -> Vec<&str> {
+        self.cached_protocol_column_names
+            .as_ref()
+            .map(|names| names.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_default()
+    }
+
+    /// 检查某个列名是否由协议提供
+    pub fn is_protocol_column(&self, name: &str) -> bool {
+        self.protocol_column_names().contains(&name)
+    }
+
+    /// 获取聚合后的协议声明（必须先调用 `cache_protocol_columns`）
+    pub fn declaration(&self) -> crate::protocols::ProtocolDeclaration {
+        self.cached_declaration.clone().unwrap_or_default()
+    }
+
+    /// 获取协议声明的查询过滤条件
+    pub fn query_filters(&self) -> Vec<(String, String)> {
+        self.declaration().query_filters
+    }
+
+    /// 是否启用软删除
+    pub fn is_soft_delete(&self) -> bool {
+        self.declaration().is_soft_delete()
+    }
+
+    /// 更新前是否需要获取当前记录快照
+    pub fn needs_pre_update_snapshot(&self) -> bool {
+        self.declaration().snapshot_before_update
+    }
+
+    /// 是否提供版本历史路由
+    pub fn has_revision_routes(&self) -> bool {
+        self.declaration().revision_routes
     }
 
     /// 校验表名只含安全字符，防止 SQL 注入。
@@ -656,15 +672,6 @@ impl ContentTypeSchema {
             .collect()
     }
 
-    /// 获取带 auto_fill 声明的字段（用于 create 时注入上下文值）
-    #[must_use]
-    pub fn auto_fill_fields(&self) -> Vec<&FieldSchema> {
-        self.fields
-            .iter()
-            .filter(|f| f.auto_fill.is_some())
-            .collect()
-    }
-
     /// 根据 field name 查找字段定义
     #[must_use]
     pub fn get_field(&self, name: &str) -> Option<&FieldSchema> {
@@ -681,6 +688,12 @@ impl ContentTypeSchema {
     #[must_use]
     pub fn is_collection(&self) -> bool {
         self.kind == ContentKind::Collection
+    }
+
+    /// 是否实现了指定 Protocol
+    #[must_use]
+    pub fn implements_protocol(&self, name: &str) -> bool {
+        self.implements.iter().any(|p| p == name)
     }
 
     /// 获取 UID 字段（用于 slug）
@@ -705,17 +718,8 @@ impl ContentTypeSchema {
                 toml::Value::String(self.description.clone()),
             );
         }
-        if self.draft_publish {
-            header.insert("draft_publish".into(), toml::Value::Boolean(true));
-        }
         if let Some(ref sf) = self.slug_field {
             header.insert("slug_field".into(), toml::Value::String(sf.clone()));
-        }
-        if self.soft_delete {
-            header.insert("soft_delete".into(), toml::Value::Boolean(true));
-        }
-        if self.versioning {
-            header.insert("versioning".into(), toml::Value::Boolean(true));
         }
         if self.builtin {
             header.insert("builtin".into(), toml::Value::Boolean(true));
@@ -842,14 +846,6 @@ fn field_to_toml(field: &FieldSchema) -> toml::Value {
     }
     if field.immutable {
         t.insert("immutable".into(), toml::Value::Boolean(true));
-    }
-    if let Some(ref auto_fill) = field.auto_fill {
-        let val = match auto_fill {
-            AutoFillSource::UserId => "user_id",
-            AutoFillSource::UserRole => "user_role",
-            AutoFillSource::CurrentTenantId => "current_tenant_id",
-        };
-        t.insert("auto_fill".into(), toml::Value::String(val.into()));
     }
     if let Some(ref vals) = field.enum_values {
         t.insert(
@@ -1021,13 +1017,7 @@ pub struct CreateContentTypeRequest {
     pub description: String,
     #[serde(default)]
     pub kind: ContentKind,
-    #[serde(default)]
-    pub draft_publish: bool,
     pub slug_field: Option<String>,
-    #[serde(default)]
-    pub soft_delete: bool,
-    #[serde(default)]
-    pub versioning: bool,
     #[serde(default)]
     pub builtin: bool,
     #[serde(default)]
@@ -1047,13 +1037,7 @@ pub struct UpdateContentTypeRequest {
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
-    pub draft_publish: Option<bool>,
-    #[serde(default)]
     pub slug_field: Option<Option<String>>,
-    #[serde(default)]
-    pub soft_delete: Option<bool>,
-    #[serde(default)]
-    pub versioning: Option<bool>,
     #[serde(default)]
     pub implements: Option<Vec<String>>,
     #[serde(default)]
@@ -1090,7 +1074,6 @@ max_length = 200
         assert_eq!(ct.singular, "page");
         assert_eq!(ct.plural, "pages");
         assert_eq!(ct.table, "pages");
-        assert!(!ct.draft_publish);
         assert_eq!(ct.fields.len(), 1);
         assert_eq!(ct.fields[0].name, "title");
         assert_eq!(ct.fields[0].field_type, FieldType::Text);
@@ -1107,10 +1090,7 @@ singular = "post"
 plural = "posts"
 table = "posts"
 description = "博客文章"
-draft_publish = true
 slug_field = "title"
-timestamps = true
-soft_delete = false
 
 [fields.title]
 type = "text"
@@ -1162,7 +1142,6 @@ columns = ["title", "status", "created_at"]
 "#;
         let ct = ContentTypeSchema::parse_from_str(toml).unwrap();
         assert_eq!(ct.name, "Post");
-        assert!(ct.draft_publish);
         assert_eq!(ct.slug_field, Some("title".into()));
         assert_eq!(ct.fields.len(), 8);
         assert_eq!(ct.indexes.len(), 1);
@@ -1327,6 +1306,12 @@ type = "text"
         .unwrap();
 
         let reserved = crate::config::app::BuiltinsConfig::default().reserved_route_segments();
+        let mut test_reg = crate::protocols::ProtocolRegistry::new();
+        test_reg.register(crate::protocols::ownable::OwnableProtocol);
+        test_reg.register(crate::protocols::timestampable::TimestampableProtocol);
+        test_reg.register(crate::protocols::soft_deletable::SoftDeletableProtocol);
+        test_reg.register(crate::protocols::versionable::VersionableProtocol);
+        test_reg.register(crate::protocols::cacheable::CacheableProtocol);
         let reg = ContentTypeRegistry::load_from_dir(
             dir.path(),
             &crate::config::app::RuleEngineConfig::default(),
@@ -1338,6 +1323,7 @@ type = "text"
                 "versionable",
                 "cacheable",
             ],
+            &test_reg,
         )
         .unwrap();
         assert_eq!(reg.len(), 2);

@@ -19,8 +19,7 @@ singular = "product"
 plural = "products"
 table = "ct_products"
 description = "商品"
-draft_publish = true
-soft_delete = false
+implements = ["ownable", "timestampable"]
 
 [fields.title]
 type = "text"
@@ -68,7 +67,9 @@ async fn setup_pool() -> sqlx::SqlitePool {
 }
 
 fn parse_product() -> ContentTypeSchema {
-    ContentTypeSchema::parse_from_str(PRODUCT_TOML).unwrap()
+    let mut ct = ContentTypeSchema::parse_from_str(PRODUCT_TOML).unwrap();
+    cache_ct(&mut ct);
+    ct
 }
 
 fn now_str() -> String {
@@ -93,6 +94,22 @@ fn parse_article() -> ContentTypeSchema {
     .unwrap()
 }
 
+fn test_protocol_registry() -> raisfast::protocols::ProtocolRegistry {
+    let mut reg = raisfast::protocols::ProtocolRegistry::new();
+    reg.register(raisfast::protocols::ownable::OwnableProtocol);
+    reg.register(raisfast::protocols::timestampable::TimestampableProtocol);
+    reg.register(raisfast::protocols::soft_deletable::SoftDeletableProtocol);
+    reg.register(raisfast::protocols::versionable::VersionableProtocol);
+    reg.register(raisfast::protocols::cacheable::CacheableProtocol);
+    reg.register(raisfast::protocols::lockable::LockableProtocol);
+    reg.register(raisfast::protocols::sortable::SortableProtocol);
+    reg
+}
+
+fn cache_ct(ct: &mut ContentTypeSchema) {
+    ct.cache_protocol_columns(&test_protocol_registry());
+}
+
 #[tokio::test]
 async fn schema_parse_product() {
     let ct = parse_product();
@@ -100,8 +117,7 @@ async fn schema_parse_product() {
     assert_eq!(ct.singular, "product");
     assert_eq!(ct.plural, "products");
     assert_eq!(ct.table, "ct_products");
-    assert!(ct.draft_publish);
-    assert!(!ct.soft_delete);
+    assert!(!ct.implements_protocol("soft_deletable"));
     assert!(ct.fields.iter().any(|f| f.name == "title" && f.required));
     assert!(ct.fields.iter().any(|f| f.name == "price"));
 }
@@ -121,7 +137,7 @@ async fn migrate_creates_table() {
     let ct = parse_product();
     let repo = ContentRepository::new(pool.clone());
 
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let rows: Vec<(i32, String, String, i32, Option<String>, i32)> =
         sqlx::query_as("PRAGMA table_info(ct_products)")
@@ -139,7 +155,6 @@ async fn migrate_creates_table() {
     assert!(col_names.contains(&"price"));
     assert!(col_names.contains(&"description"));
     assert!(col_names.contains(&"in_stock"));
-    assert!(col_names.contains(&"status"));
     assert!(col_names.contains(&"created_at"));
     assert!(col_names.contains(&"updated_at"));
 }
@@ -150,9 +165,9 @@ async fn migrate_idempotent() {
     let ct = parse_product();
     let repo = ContentRepository::new(pool.clone());
 
-    repo.migrate(&ct).await.unwrap();
-    repo.migrate(&ct).await.unwrap();
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM ct_products")
         .fetch_one(&pool)
@@ -166,7 +181,7 @@ async fn create_and_find_by_id() {
     let pool = setup_pool().await;
     let ct = parse_product();
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let created = repo
         .create(
@@ -186,7 +201,6 @@ async fn create_and_find_by_id() {
 
     assert_eq!(created["title"], "Test Product");
     assert_eq!(created["price"], 99);
-    assert_eq!(created["status"], "draft");
 
     let found = repo
         .find_by_id(&ct, created["id"].as_str().unwrap(), None, true)
@@ -202,7 +216,7 @@ async fn create_sets_defaults() {
     let pool = setup_pool().await;
     let ct = parse_product();
     let repo = ContentRepository::new(pool);
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let created = repo
         .create(
@@ -218,7 +232,6 @@ async fn create_sets_defaults() {
         .await
         .unwrap();
 
-    assert_eq!(created["status"], "draft");
     assert!(created["in_stock"].is_boolean() || created["in_stock"].is_i64());
     assert!(created.get("created_at").is_some());
     assert!(created.get("updated_at").is_some());
@@ -229,7 +242,7 @@ async fn find_by_slug() {
     let pool = setup_pool().await;
     let ct = parse_product();
     let repo = ContentRepository::new(pool);
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     repo.create(
         &ct,
@@ -253,7 +266,7 @@ async fn find_paginated() {
     let pool = setup_pool().await;
     let ct = parse_product();
     let repo = ContentRepository::new(pool);
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     for i in 1..=15 {
         repo.create(
@@ -310,60 +323,11 @@ async fn find_paginated() {
 }
 
 #[tokio::test]
-async fn find_with_status_filter() {
-    let pool = setup_pool().await;
-    let ct = parse_product();
-    let repo = ContentRepository::new(pool);
-    repo.migrate(&ct).await.unwrap();
-
-    let _draft = repo
-        .create(
-            &ct,
-            with_timestamps(
-                json!({"title": "Draft", "slug": "draft", "price": 1, "status": "draft"}),
-            ),
-            None,
-            &SaveContext::default(),
-        )
-        .await
-        .unwrap();
-    let _published = repo
-        .create(
-            &ct,
-            with_timestamps(json!({"title": "Published", "slug": "published", "price": 2, "status": "published"})),
-            None,
-            &SaveContext::default(),
-        )
-        .await
-        .unwrap();
-
-    let query = ContentQuery {
-        page: 1,
-        page_size: 20,
-        sort: None,
-        filters: HashMap::new(),
-        status: Some("published".into()),
-        search: None,
-        fields: None,
-        tenant_id: None,
-        include: None,
-        skip_total: false,
-        rule_where: None,
-        rule_params: Vec::new(),
-        max_page_size: 100,
-        include_private: false,
-    };
-    let (items, total) = repo.find(&ct, query).await.unwrap();
-    assert_eq!(total, 1);
-    assert_eq!(items[0]["title"], "Published");
-}
-
-#[tokio::test]
 async fn update_changes_fields() {
     let pool = setup_pool().await;
     let ct = parse_product();
     let repo = ContentRepository::new(pool);
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let created = repo
         .create(
@@ -397,7 +361,7 @@ async fn delete_removes_record() {
     let pool = setup_pool().await;
     let ct = parse_product();
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let created = repo
         .create(
@@ -410,7 +374,9 @@ async fn delete_removes_record() {
         .unwrap();
     let id = created["id"].as_str().unwrap().to_string();
 
-    repo.delete(&ct, &id, None).await.unwrap();
+    repo.delete(&ct, &id, None, &test_protocol_registry())
+        .await
+        .unwrap();
 
     let found = repo.find_by_id(&ct, &id, None, true).await.unwrap();
     assert!(found.is_none());
@@ -424,14 +390,14 @@ async fn delete_removes_record() {
 
 #[tokio::test]
 async fn soft_delete_marks_record() {
-    let ct = ContentTypeSchema::parse_from_str(
+    let mut ct = ContentTypeSchema::parse_from_str(
         r#"
 [content_type]
 name = "Note"
 singular = "note"
 plural = "notes"
 table = "ct_notes"
-soft_delete = true
+implements = ["ownable", "timestampable", "soft_deletable"]
 
 [fields.title]
 type = "text"
@@ -439,10 +405,11 @@ required = true
 "#,
     )
     .unwrap();
+    cache_ct(&mut ct);
 
     let pool = setup_pool().await;
     let repo = ContentRepository::new(pool);
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let created = repo
         .create(
@@ -455,7 +422,9 @@ required = true
         .unwrap();
     let id = created["id"].as_str().unwrap().to_string();
 
-    repo.delete(&ct, &id, None).await.unwrap();
+    repo.delete(&ct, &id, None, &test_protocol_registry())
+        .await
+        .unwrap();
 
     let row: Option<(String,)> = sqlx::query_as("SELECT deleted_at FROM ct_notes WHERE id = ?")
         .bind(&id)
@@ -472,12 +441,15 @@ async fn registry_load_and_lookup() {
     let ct = parse_product();
     let registry = ContentTypeRegistry::new();
     let reserved = raisfast::config::app::BuiltinsConfig::default().reserved_route_segments();
+    let protocol_reg = test_protocol_registry();
+    let protocol_names: Vec<&str> = protocol_reg.names();
     registry
         .register(
             ct,
             &raisfast::config::app::RuleEngineConfig::default(),
             &reserved,
-            &[],
+            &protocol_names,
+            &protocol_reg,
         )
         .unwrap();
 
@@ -493,7 +465,7 @@ async fn tenant_isolation() {
     let pool = setup_pool().await;
     let ct = parse_product();
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let a = repo
         .create(
@@ -565,7 +537,7 @@ async fn delete_respects_tenant() {
     let pool = setup_pool().await;
     let ct = parse_product();
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let a = repo
         .create(
@@ -578,7 +550,9 @@ async fn delete_respects_tenant() {
         .unwrap();
     let id_a = a["id"].as_str().unwrap();
 
-    repo.delete(&ct, id_a, Some("tenant_b")).await.unwrap();
+    repo.delete(&ct, id_a, Some("tenant_b"), &test_protocol_registry())
+        .await
+        .unwrap();
 
     assert!(
         repo.find_by_id(&ct, id_a, Some("tenant_a"), true)
@@ -588,7 +562,9 @@ async fn delete_respects_tenant() {
         "tenant_b should not be able to delete tenant_a's data"
     );
 
-    repo.delete(&ct, id_a, Some("tenant_a")).await.unwrap();
+    repo.delete(&ct, id_a, Some("tenant_a"), &test_protocol_registry())
+        .await
+        .unwrap();
     assert!(
         repo.find_by_id(&ct, id_a, Some("tenant_a"), true)
             .await
@@ -603,7 +579,7 @@ async fn find_with_custom_sort() {
     let pool = setup_pool().await;
     let ct = parse_product();
     let repo = ContentRepository::new(pool);
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     for (title, price) in [("Alpha", 30), ("Beta", 10), ("Gamma", 20)] {
         repo.create(
@@ -643,7 +619,7 @@ async fn find_with_field_filter() {
     let pool = setup_pool().await;
     let ct = parse_product();
     let repo = ContentRepository::new(pool);
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     repo.create(
         &ct,
@@ -691,7 +667,7 @@ async fn partial_field_selection() {
     let pool = setup_pool().await;
     let ct = parse_product();
     let repo = ContentRepository::new(pool);
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     repo.create(
         &ct,
@@ -730,7 +706,7 @@ async fn create_auto_generates_id_and_timestamps() {
     let pool = setup_pool().await;
     let ct = parse_product();
     let repo = ContentRepository::new(pool);
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let result = repo
         .create(
@@ -753,7 +729,7 @@ async fn create_without_body_object_returns_error() {
     let pool = setup_pool().await;
     let ct = parse_product();
     let repo = ContentRepository::new(pool);
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let result = repo
         .create(&ct, json!("not an object"), None, &SaveContext::default())
@@ -766,7 +742,7 @@ async fn update_with_no_fields_returns_error() {
     let pool = setup_pool().await;
     let ct = parse_product();
     let repo = ContentRepository::new(pool);
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let created = repo
         .create(
@@ -796,13 +772,14 @@ async fn migrate_adds_columns_incrementally() {
     let pool = setup_pool().await;
     let repo = ContentRepository::new(pool.clone());
 
-    let ct_v1 = ContentTypeSchema::parse_from_str(
+    let mut ct_v1 = ContentTypeSchema::parse_from_str(
         r#"
 [content_type]
 name = "Note"
 singular = "note"
 plural = "notes"
 table = "ct_notes_v2"
+implements = ["ownable", "timestampable"]
 
 [fields.title]
 type = "text"
@@ -810,15 +787,19 @@ required = true
 "#,
     )
     .unwrap();
-    repo.migrate(&ct_v1).await.unwrap();
+    cache_ct(&mut ct_v1);
+    repo.migrate(&ct_v1, &test_protocol_registry())
+        .await
+        .unwrap();
 
-    let ct_v2 = ContentTypeSchema::parse_from_str(
+    let mut ct_v2 = ContentTypeSchema::parse_from_str(
         r#"
 [content_type]
 name = "Note"
 singular = "note"
 plural = "notes"
 table = "ct_notes_v2"
+implements = ["ownable", "timestampable"]
 
 [fields.title]
 type = "text"
@@ -833,7 +814,10 @@ default = 0
 "#,
     )
     .unwrap();
-    repo.migrate(&ct_v2).await.unwrap();
+    cache_ct(&mut ct_v2);
+    repo.migrate(&ct_v2, &test_protocol_registry())
+        .await
+        .unwrap();
 
     let created = repo
         .create(
@@ -856,7 +840,7 @@ name = "Article"
 singular = "article"
 plural = "articles"
 table = "ct_versioned_articles"
-versioning = true
+implements = ["ownable", "timestampable", "versionable"]
 
 [fields.title]
 type = "text"
@@ -871,13 +855,15 @@ default = "draft"
 "#;
 
 fn parse_versioned() -> ContentTypeSchema {
-    ContentTypeSchema::parse_from_str(VERSIONED_TOML).unwrap()
+    let mut ct = ContentTypeSchema::parse_from_str(VERSIONED_TOML).unwrap();
+    cache_ct(&mut ct);
+    ct
 }
 
 #[tokio::test]
 async fn versioning_flag_parsed() {
     let ct = parse_versioned();
-    assert!(ct.versioning);
+    assert!(ct.implements_protocol("versionable"));
     assert_eq!(ct.singular, "article");
 }
 
@@ -887,7 +873,7 @@ async fn versioning_creates_revision_on_update() {
     let ct = parse_versioned();
     let repo = ContentRepository::new(pool.clone());
 
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let created = repo
         .create(
@@ -933,7 +919,7 @@ async fn versioning_multiple_updates_create_multiple_revisions() {
     let ct = parse_versioned();
     let repo = ContentRepository::new(pool.clone());
 
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let created = repo
         .create(
@@ -989,7 +975,7 @@ async fn versioning_delete_cleans_up_revisions() {
     let ct = parse_versioned();
     let repo = ContentRepository::new(pool.clone());
 
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let created = repo
         .create(
@@ -1017,7 +1003,9 @@ async fn versioning_delete_cleans_up_revisions() {
         .unwrap();
     assert_eq!(before.len(), 1);
 
-    repo.delete(&ct, id, None).await.unwrap();
+    repo.delete(&ct, id, None, &test_protocol_registry())
+        .await
+        .unwrap();
 
     let after = raisfast::models::content_revision::list_revisions(&pool, "article", id)
         .await
@@ -1028,13 +1016,14 @@ async fn versioning_delete_cleans_up_revisions() {
 #[tokio::test]
 async fn versioning_no_revision_when_disabled() {
     let pool = setup_pool().await;
-    let ct = ContentTypeSchema::parse_from_str(
+    let mut ct = ContentTypeSchema::parse_from_str(
         r#"
 [content_type]
 name = "Note"
 singular = "note"
 plural = "notes"
 table = "ct_no_versioning"
+implements = ["ownable", "timestampable"]
 
 [fields.title]
 type = "text"
@@ -1042,10 +1031,11 @@ required = true
 "#,
     )
     .unwrap();
-    assert!(!ct.versioning);
+    cache_ct(&mut ct);
+    assert!(!ct.implements_protocol("versionable"));
 
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let created = repo
         .create(
@@ -1097,14 +1087,14 @@ async fn versioning_diff_computes_correctly() {
 #[tokio::test]
 async fn soft_delete_filtered_from_list() {
     let pool = setup_pool().await;
-    let ct = ContentTypeSchema::parse_from_str(
+    let mut ct = ContentTypeSchema::parse_from_str(
         r#"
 [content_type]
 name = "Note"
 singular = "note"
 plural = "notes"
 table = "ct_soft_filter_list"
-soft_delete = true
+implements = ["ownable", "timestampable", "soft_deletable"]
 
 [fields.title]
 type = "text"
@@ -1116,9 +1106,10 @@ target_field = "title"
 "#,
     )
     .unwrap();
+    cache_ct(&mut ct);
 
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     repo.create(
         &ct,
@@ -1169,14 +1160,14 @@ target_field = "title"
 #[tokio::test]
 async fn soft_delete_filtered_from_find_by_slug() {
     let pool = setup_pool().await;
-    let ct = ContentTypeSchema::parse_from_str(
+    let mut ct = ContentTypeSchema::parse_from_str(
         r#"
 [content_type]
 name = "Note"
 singular = "note"
 plural = "notes"
 table = "ct_soft_filter_slug"
-soft_delete = true
+implements = ["ownable", "timestampable", "soft_deletable"]
 
 [fields.title]
 type = "text"
@@ -1188,9 +1179,10 @@ target_field = "title"
 "#,
     )
     .unwrap();
+    cache_ct(&mut ct);
 
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let created = repo
         .create(
@@ -1216,14 +1208,14 @@ target_field = "title"
 #[tokio::test]
 async fn soft_delete_still_accessible_by_id() {
     let pool = setup_pool().await;
-    let ct = ContentTypeSchema::parse_from_str(
+    let mut ct = ContentTypeSchema::parse_from_str(
         r#"
 [content_type]
 name = "Note"
 singular = "note"
 plural = "notes"
 table = "ct_soft_find_by_id"
-soft_delete = true
+implements = ["ownable", "timestampable", "soft_deletable"]
 
 [fields.title]
 type = "text"
@@ -1231,9 +1223,10 @@ required = true
 "#,
     )
     .unwrap();
+    cache_ct(&mut ct);
 
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let created = repo
         .create(
@@ -1257,14 +1250,14 @@ required = true
 #[tokio::test]
 async fn soft_delete_with_deleted_by() {
     let pool = setup_pool().await;
-    let ct = ContentTypeSchema::parse_from_str(
+    let mut ct = ContentTypeSchema::parse_from_str(
         r#"
 [content_type]
 name = "Note"
 singular = "note"
 plural = "notes"
 table = "ct_soft_deleted_by"
-soft_delete = true
+implements = ["ownable", "timestampable", "soft_deletable"]
 
 [fields.title]
 type = "text"
@@ -1272,9 +1265,10 @@ required = true
 "#,
     )
     .unwrap();
+    cache_ct(&mut ct);
 
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let created = repo
         .create(
@@ -1305,7 +1299,7 @@ required = true
 #[tokio::test]
 async fn soft_delete_implements_trait_equivalent() {
     let pool = setup_pool().await;
-    let ct = ContentTypeSchema::parse_from_str(
+    let mut ct = ContentTypeSchema::parse_from_str(
         r#"
 [content_type]
 name = "Note"
@@ -1313,7 +1307,7 @@ singular = "note"
 plural = "notes"
 table = "ct_soft_via_implements"
 
-implements = ["soft_deletable"]
+implements = ["ownable", "timestampable", "soft_deletable"]
 
 [fields.title]
 type = "text"
@@ -1321,11 +1315,12 @@ required = true
 "#,
     )
     .unwrap();
+    cache_ct(&mut ct);
 
-    assert!(ct.soft_delete || ct.implements.contains(&"soft_deletable".to_string()));
+    assert!(ct.implements_protocol("soft_deletable"));
 
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let created = repo
         .create(

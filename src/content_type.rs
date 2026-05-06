@@ -72,6 +72,7 @@ impl ContentTypeRegistry {
         rule_config: &crate::config::app::RuleEngineConfig,
         reserved_segments: &[&str],
         valid_protocols: &[&str],
+        protocol_registry: &crate::protocols::ProtocolRegistry,
     ) -> Result<Self, AppError> {
         let registry = Self::new();
         let entries = std::fs::read_dir(dir).map_err(|e| {
@@ -97,9 +98,13 @@ impl ContentTypeRegistry {
                     schema.name,
                     schema.table
                 );
-                if let Err(e) =
-                    registry.register(schema, rule_config, reserved_segments, valid_protocols)
-                {
+                if let Err(e) = registry.register(
+                    schema,
+                    rule_config,
+                    reserved_segments,
+                    valid_protocols,
+                    protocol_registry,
+                ) {
                     tracing::warn!("skipping {file_name}: register error: {e}");
                 }
             }
@@ -122,6 +127,7 @@ impl ContentTypeRegistry {
         rule_config: &crate::config::app::RuleEngineConfig,
         reserved_segments: &[&str],
         valid_protocols: &[&str],
+        protocol_registry: &crate::protocols::ProtocolRegistry,
     ) -> Result<(), AppError> {
         let mut conflicts = Vec::new();
 
@@ -220,6 +226,7 @@ impl ContentTypeRegistry {
         }
 
         let mut schema = schema;
+        schema.cache_protocol_columns(protocol_registry);
         schema.cache_select_columns();
         schema.cache_rules(rule_config);
         let plural = schema.plural.clone();

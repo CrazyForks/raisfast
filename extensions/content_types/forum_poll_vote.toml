@@ -4,9 +4,7 @@ singular = "forum_poll_vote"
 plural = "forum_poll_votes"
 table = "forum_poll_votes"
 description = "投票记录"
-draft_publish = false
-timestamps = true
-soft_delete = false
+implements = ["ownable", "timestampable"]
 
 [fields.poll]
 type = "relation"
@@ -29,7 +27,6 @@ label = "所选选项"
 [fields.user_id]
 type = "text"
 required = true
-auto_fill = "user_id"
 immutable = true
 label = "投票用户"
 

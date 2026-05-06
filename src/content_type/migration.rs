@@ -5,11 +5,15 @@
 
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
 
+use crate::aspects::ColumnDef;
 use crate::constants::*;
 
 /// 根据内容类型定义生成 CREATE TABLE SQL
+///
+/// `protocol_columns` 从 `ProtocolRegistry::columns_for()` 获取，
+/// 包含所有 implements 协议声明的列（如 ownable、timestampable、soft_deletable）。
 #[must_use]
-pub fn generate_create_table(ct: &ContentTypeSchema) -> String {
+pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnDef]) -> String {
     let mut cols = Vec::new();
 
     cols.push("    id TEXT PRIMARY KEY".to_string());
@@ -55,11 +59,6 @@ pub fn generate_create_table(ct: &ContentTypeSchema) -> String {
         cols.push(col_def);
     }
 
-    if ct.draft_publish {
-        cols.push("    status TEXT NOT NULL DEFAULT 'draft'".to_string());
-        cols.push("    published_at TEXT".to_string());
-    }
-
     let user_col_names: std::collections::HashSet<&str> = ct
         .fields
         .iter()
@@ -77,22 +76,14 @@ pub fn generate_create_table(ct: &ContentTypeSchema) -> String {
         )
         .collect();
 
-    if !user_col_names.contains(COL_CREATED_AT) {
-        cols.push(format!("    {} TEXT NOT NULL", COL_CREATED_AT));
-    }
-    if !user_col_names.contains(COL_UPDATED_AT) {
-        cols.push(format!("    {} TEXT NOT NULL", COL_UPDATED_AT));
-    }
-    if !user_col_names.contains(COL_CREATED_BY) {
-        cols.push(format!("    {} TEXT", COL_CREATED_BY));
-    }
-    if !user_col_names.contains(COL_UPDATED_BY) {
-        cols.push(format!("    {} TEXT", COL_UPDATED_BY));
-    }
-
-    if ct.soft_delete || ct.implements.contains(&"soft_deletable".to_string()) {
-        cols.push(format!("    {} TEXT", COL_DELETED_AT));
-        cols.push(format!("    {} TEXT", COL_DELETED_BY));
+    for col in protocol_columns {
+        if !user_col_names.contains(col.name.as_str()) {
+            let mut sql = format!("    {} {}", col.name, col.sql_type.as_str());
+            if let Some(ref default) = col.default {
+                sql.push_str(&format!(" NOT NULL DEFAULT {}", default));
+            }
+            cols.push(sql);
+        }
     }
 
     if !ct.builtin {
@@ -174,14 +165,6 @@ pub fn generate_indexes(ct: &ContentTypeSchema) -> Vec<String> {
         }
     }
 
-    if ct.draft_publish {
-        let idx_name = format!("idx_{}_status_created", ct.table);
-        indexes.push(format!(
-            "CREATE INDEX IF NOT EXISTS {idx_name} ON {}(status, created_at)",
-            ct.table
-        ));
-    }
-
     indexes
 }
 
@@ -190,7 +173,11 @@ pub fn generate_indexes(ct: &ContentTypeSchema) -> Vec<String> {
 /// 对比 schema 期望的列与数据库中已有的列，只为缺失的列生成 DDL。
 /// 不删除列、不修改列类型——只做增量添加（与 Strapi `forceMigration` 策略一致）。
 #[must_use]
-pub fn generate_alter_table(ct: &ContentTypeSchema, existing_columns: &[String]) -> Vec<String> {
+pub fn generate_alter_table(
+    ct: &ContentTypeSchema,
+    existing_columns: &[String],
+    protocol_columns: &[ColumnDef],
+) -> Vec<String> {
     let existing: std::collections::HashSet<&str> = existing_columns
         .iter()
         .map(std::string::String::as_str)
@@ -249,58 +236,19 @@ pub fn generate_alter_table(ct: &ContentTypeSchema, existing_columns: &[String])
         }
     }
 
-    if ct.draft_publish {
-        if !existing.contains("status") {
-            stmts.push(format!(
-                "ALTER TABLE {} ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'",
-                ct.table
-            ));
+    for col in protocol_columns {
+        if !existing.contains(col.name.as_str()) {
+            let mut sql = format!(
+                "ALTER TABLE {} ADD COLUMN {} {}",
+                ct.table,
+                col.name,
+                col.sql_type.as_str()
+            );
+            if let Some(ref default) = col.default {
+                sql.push_str(&format!(" NOT NULL DEFAULT {}", default));
+            }
+            stmts.push(sql);
         }
-        if !existing.contains("published_at") {
-            stmts.push(format!(
-                "ALTER TABLE {} ADD COLUMN published_at TEXT",
-                ct.table
-            ));
-        }
-    }
-
-    if !existing.contains(COL_CREATED_AT) {
-        stmts.push(format!(
-            "ALTER TABLE {} ADD COLUMN {} TEXT NOT NULL DEFAULT ''",
-            ct.table, COL_CREATED_AT
-        ));
-    }
-    if !existing.contains(COL_UPDATED_AT) {
-        stmts.push(format!(
-            "ALTER TABLE {} ADD COLUMN {} TEXT NOT NULL DEFAULT ''",
-            ct.table, COL_UPDATED_AT
-        ));
-    }
-    if !existing.contains(COL_CREATED_BY) {
-        stmts.push(format!(
-            "ALTER TABLE {} ADD COLUMN {} TEXT",
-            ct.table, COL_CREATED_BY
-        ));
-    }
-    if !existing.contains(COL_UPDATED_BY) {
-        stmts.push(format!(
-            "ALTER TABLE {} ADD COLUMN {} TEXT",
-            ct.table, COL_UPDATED_BY
-        ));
-    }
-
-    let has_soft_delete = ct.soft_delete || ct.implements.contains(&"soft_deletable".to_string());
-    if has_soft_delete && !existing.contains(COL_DELETED_AT) {
-        stmts.push(format!(
-            "ALTER TABLE {} ADD COLUMN {} TEXT",
-            ct.table, COL_DELETED_AT
-        ));
-    }
-    if has_soft_delete && !existing.contains(COL_DELETED_BY) {
-        stmts.push(format!(
-            "ALTER TABLE {} ADD COLUMN {} TEXT",
-            ct.table, COL_DELETED_BY
-        ));
     }
 
     if !ct.builtin && !existing.contains(COL_META) {
@@ -315,7 +263,7 @@ pub fn generate_alter_table(ct: &ContentTypeSchema, existing_columns: &[String])
 
 /// 获取 content type schema 期望的所有列名（用于与 DB 对比）
 #[must_use]
-pub fn expected_columns(ct: &ContentTypeSchema) -> Vec<String> {
+pub fn expected_columns(ct: &ContentTypeSchema, protocol_columns: &[ColumnDef]) -> Vec<String> {
     let mut cols = vec!["id".to_string()];
 
     for field in &ct.fields {
@@ -335,17 +283,8 @@ pub fn expected_columns(ct: &ContentTypeSchema) -> Vec<String> {
         cols.push(field.name.clone());
     }
 
-    if ct.draft_publish {
-        cols.push("status".into());
-        cols.push("published_at".into());
-    }
-    cols.push(COL_CREATED_AT.into());
-    cols.push(COL_UPDATED_AT.into());
-    cols.push(COL_CREATED_BY.into());
-    cols.push(COL_UPDATED_BY.into());
-    if ct.soft_delete || ct.implements.contains(&"soft_deletable".to_string()) {
-        cols.push(COL_DELETED_AT.into());
-        cols.push(COL_DELETED_BY.into());
+    for col in protocol_columns {
+        cols.push(col.name.clone());
     }
     if !ct.builtin {
         cols.push(COL_META.into());
@@ -387,58 +326,46 @@ fn json_to_sql_literal(v: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aspects::SqlType;
 
-    fn make_post_ct() -> ContentTypeSchema {
-        ContentTypeSchema::parse_from_str(
-            r#"
-[content_type]
-name = "Post"
-singular = "post"
-plural = "posts"
-table = "posts"
-draft_publish = true
-slug_field = "title"
+    fn default_protocol_columns() -> Vec<ColumnDef> {
+        vec![
+            ColumnDef {
+                name: COL_CREATED_AT.into(),
+                sql_type: SqlType::Text,
+                default: None,
+            },
+            ColumnDef {
+                name: COL_UPDATED_AT.into(),
+                sql_type: SqlType::Text,
+                default: None,
+            },
+            ColumnDef {
+                name: COL_CREATED_BY.into(),
+                sql_type: SqlType::Text,
+                default: None,
+            },
+            ColumnDef {
+                name: COL_UPDATED_BY.into(),
+                sql_type: SqlType::Text,
+                default: None,
+            },
+        ]
+    }
 
-[fields.title]
-type = "text"
-required = true
-max_length = 200
-
-[fields.slug]
-type = "uid"
-unique = true
-
-[fields.content]
-type = "richtext"
-required = true
-
-[fields.status]
-type = "enum"
-enum_values = ["draft", "published", "archived"]
-default = "draft"
-
-[fields.author]
-type = "relation"
-relation_type = "many_to_one"
-target = "users"
-
-[fields.tags]
-type = "relation"
-relation_type = "many_to_many"
-target = "tags"
-through = "posts_tags"
-
-[fields.view_count]
-type = "integer"
-default = 0
-private = true
-
-[fields.is_pinned]
-type = "boolean"
-default = false
-"#,
-        )
-        .unwrap()
+    fn soft_delete_protocol_columns() -> Vec<ColumnDef> {
+        let mut cols = default_protocol_columns();
+        cols.push(ColumnDef {
+            name: COL_DELETED_AT.into(),
+            sql_type: SqlType::Text,
+            default: None,
+        });
+        cols.push(ColumnDef {
+            name: COL_DELETED_BY.into(),
+            sql_type: SqlType::Text,
+            default: None,
+        });
+        cols
     }
 
     #[test]
@@ -462,10 +389,10 @@ unique = true
         )
         .unwrap();
 
-        let sql = generate_create_table(&ct);
+        let sql = generate_create_table(&ct, &default_protocol_columns());
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS tags"));
         assert!(sql.contains("name TEXT NOT NULL"));
-        assert!(sql.contains("created_at TEXT NOT NULL"));
+        assert!(sql.contains("created_at TEXT"));
         assert!(!sql.contains("status"));
     }
 
@@ -478,7 +405,7 @@ name = "Product"
 singular = "product"
 plural = "products"
 table = "products"
-soft_delete = true
+implements = ["soft_deletable"]
 
 [fields.name]
 type = "text"
@@ -487,7 +414,7 @@ required = true
         )
         .unwrap();
 
-        let sql = generate_create_table(&ct);
+        let sql = generate_create_table(&ct, &soft_delete_protocol_columns());
         assert!(sql.contains("deleted_at TEXT"));
     }
 
@@ -500,7 +427,6 @@ name = "Post"
 singular = "post"
 plural = "posts"
 table = "posts"
-draft_publish = true
 
 [fields.title]
 type = "text"
@@ -526,14 +452,11 @@ default = false
         )
         .unwrap();
 
-        // 模拟 DB 已有 id, title, slug, content, status, published_at, created_at, updated_at, created_by, updated_by, __meta
         let existing = vec![
             "id".into(),
             "title".into(),
             "slug".into(),
             "content".into(),
-            "status".into(),
-            "published_at".into(),
             "created_at".into(),
             "updated_at".into(),
             "created_by".into(),
@@ -541,7 +464,7 @@ default = false
             "__meta".into(),
         ];
 
-        let stmts = generate_alter_table(&ct, &existing);
+        let stmts = generate_alter_table(&ct, &existing, &default_protocol_columns());
         assert_eq!(stmts.len(), 2);
         assert!(
             stmts
@@ -587,7 +510,7 @@ unique = true
             "__meta".into(),
         ];
 
-        let stmts = generate_alter_table(&ct, &existing);
+        let stmts = generate_alter_table(&ct, &existing, &default_protocol_columns());
         assert!(stmts.is_empty());
     }
 
@@ -600,8 +523,7 @@ name = "Post"
 singular = "post"
 plural = "posts"
 table = "posts"
-draft_publish = true
-soft_delete = true
+implements = ["soft_deletable"]
 
 [fields.title]
 type = "text"
@@ -610,26 +532,11 @@ required = true
         )
         .unwrap();
 
-        // 只有 id 和 title（缺少所有系统列）
         let existing = vec!["id".into(), "title".into()];
 
-        let stmts = generate_alter_table(&ct, &existing);
-        assert!(
-            stmts
-                .iter()
-                .any(|s| s.contains("status TEXT NOT NULL DEFAULT 'draft'"))
-        );
-        assert!(stmts.iter().any(|s| s.contains("published_at TEXT")));
-        assert!(
-            stmts
-                .iter()
-                .any(|s| s.contains("created_at TEXT NOT NULL DEFAULT ''"))
-        );
-        assert!(
-            stmts
-                .iter()
-                .any(|s| s.contains("updated_at TEXT NOT NULL DEFAULT ''"))
-        );
+        let stmts = generate_alter_table(&ct, &existing, &soft_delete_protocol_columns());
+        assert!(stmts.iter().any(|s| s.contains("created_at TEXT")));
+        assert!(stmts.iter().any(|s| s.contains("updated_at TEXT")));
         assert!(stmts.iter().any(|s| s.contains("deleted_at TEXT")));
     }
 
@@ -642,7 +549,6 @@ name = "Post"
 singular = "post"
 plural = "posts"
 table = "posts"
-draft_publish = true
 
 [fields.title]
 type = "text"
@@ -656,13 +562,12 @@ foreign_key = "author_id"
         )
         .unwrap();
 
-        let cols = expected_columns(&ct);
+        let cols = expected_columns(&ct, &default_protocol_columns());
         assert!(cols.contains(&"id".to_string()));
         assert!(cols.contains(&"title".to_string()));
         assert!(cols.contains(&"author_id".to_string()));
         assert!(cols.contains(&"created_by".to_string()));
         assert!(cols.contains(&"updated_by".to_string()));
-        assert!(cols.contains(&"status".to_string()));
         assert!(cols.contains(&"created_at".to_string()));
     }
 }

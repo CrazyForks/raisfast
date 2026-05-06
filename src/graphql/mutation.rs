@@ -3,7 +3,7 @@
 use super::types::{ContentItem, DeleteResult, JsonScalar, MutationRoot};
 use crate::content_type::handler::cms_detail_cache_key;
 use crate::content_type::repository::{ContentRepository, SaveContext};
-use crate::content_type::schema::{AutoFillSource, check_api_access};
+use crate::content_type::schema::check_api_access;
 use crate::middleware::auth::AuthUser;
 use async_graphql::*;
 use std::sync::Arc;
@@ -45,39 +45,10 @@ impl MutationRoot {
             |e: crate::errors::app_error::AppError| async_graphql::Error::new(e.to_string()),
         )?;
 
-        let mut obj = match data.0 {
+        let obj = match data.0 {
             serde_json::Value::Object(map) => map,
             _ => return Err(async_graphql::Error::new("data must be a JSON object")),
         };
-
-        for field in &ct.fields {
-            if let Some(auto) = &field.auto_fill {
-                match auto {
-                    AutoFillSource::UserId => {
-                        if let Some(uid) = auth.user_id() {
-                            obj.insert(
-                                field.name.clone(),
-                                serde_json::Value::String(uid.to_string()),
-                            );
-                        }
-                    }
-                    AutoFillSource::UserRole => {
-                        obj.insert(
-                            field.name.clone(),
-                            serde_json::Value::String(auth.role().to_string()),
-                        );
-                    }
-                    AutoFillSource::CurrentTenantId => {
-                        if let Some(tid) = auth.tenant_id() {
-                            obj.insert(
-                                field.name.clone(),
-                                serde_json::Value::String(tid.to_string()),
-                            );
-                        }
-                    }
-                }
-            }
-        }
 
         let save_ctx = SaveContext {
             user_id: auth.user_id().map(|s| s.to_string()),
@@ -191,7 +162,7 @@ impl MutationRoot {
             }
         }
 
-        repo.delete(&ct, id.as_str(), None)
+        repo.delete(&ct, id.as_str(), None, &state.protocol_registry)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 

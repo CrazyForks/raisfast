@@ -30,6 +30,22 @@ fn test_config() -> AppConfig {
     config
 }
 
+fn test_protocol_registry() -> raisfast::protocols::ProtocolRegistry {
+    let mut reg = raisfast::protocols::ProtocolRegistry::new();
+    reg.register(raisfast::protocols::ownable::OwnableProtocol);
+    reg.register(raisfast::protocols::timestampable::TimestampableProtocol);
+    reg.register(raisfast::protocols::soft_deletable::SoftDeletableProtocol);
+    reg.register(raisfast::protocols::versionable::VersionableProtocol);
+    reg.register(raisfast::protocols::cacheable::CacheableProtocol);
+    reg.register(raisfast::protocols::lockable::LockableProtocol);
+    reg.register(raisfast::protocols::sortable::SortableProtocol);
+    reg
+}
+
+fn cache_ct(ct: &mut raisfast::content_type::schema::ContentTypeSchema) {
+    ct.cache_protocol_columns(&test_protocol_registry());
+}
+
 async fn setup_pool() -> sqlx::SqlitePool {
     let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
     for sql in [
@@ -75,7 +91,7 @@ singular = "todo"
 plural = "todos"
 table = "test_todos"
 description = "测试待办"
-    draft_publish = false
+implements = ["ownable", "timestampable"]
 
     [fields.title]
 type = "text"
@@ -93,7 +109,9 @@ enum_values = ["low", "medium", "high"]
 default = "medium"
 label = "优先级"
 "#;
-    ContentTypeSchema::parse_from_str(toml_str).unwrap()
+    let mut ct = ContentTypeSchema::parse_from_str(toml_str).unwrap();
+    cache_ct(&mut ct);
+    ct
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -368,16 +386,19 @@ async fn tauri_cms_create_and_list() {
     let ct = parse_todo_ct();
     let registry = raisfast::content_type::ContentTypeRegistry::new();
     let config = test_config();
+    let protocol_reg = test_protocol_registry();
+    let protocol_names: Vec<&str> = protocol_reg.names();
     registry
         .register(
             ct.clone(),
             &config.rule_engine,
             &config.builtins.reserved_route_segments(),
-            &[],
+            &protocol_names,
+            &protocol_reg,
         )
         .unwrap();
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let save_ctx = SaveContext::default();
     let data = with_timestamps(serde_json::json!({
@@ -406,7 +427,7 @@ async fn tauri_cms_get_by_id() {
     let pool = setup_pool().await;
     let ct = parse_todo_ct();
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let save_ctx = SaveContext::default();
     let data = with_timestamps(serde_json::json!({"title": "Read book", "done": false}));
@@ -422,7 +443,7 @@ async fn tauri_cms_update() {
     let pool = setup_pool().await;
     let ct = parse_todo_ct();
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let save_ctx = SaveContext::default();
     let data = with_timestamps(serde_json::json!({"title": "Original", "done": false}));
@@ -447,14 +468,16 @@ async fn tauri_cms_delete() {
     let pool = setup_pool().await;
     let ct = parse_todo_ct();
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let save_ctx = SaveContext::default();
     let data = with_timestamps(serde_json::json!({"title": "To delete", "done": false}));
     let created = repo.create(&ct, data, None, &save_ctx).await.unwrap();
 
     let id = created["id"].as_str().unwrap().to_string();
-    repo.delete(&ct, &id, None).await.unwrap();
+    repo.delete(&ct, &id, None, &test_protocol_registry())
+        .await
+        .unwrap();
 
     let found = repo.find_by_id(&ct, &id, None, true).await.unwrap();
     assert!(found.is_none(), "deleted item should not exist");
@@ -465,7 +488,7 @@ async fn tauri_cms_boolean_field_stored_as_integer() {
     let pool = setup_pool().await;
     let ct = parse_todo_ct();
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let save_ctx = SaveContext::default();
     let data = with_timestamps(serde_json::json!({"title": "Boolean test", "done": true}));
@@ -479,7 +502,7 @@ async fn tauri_cms_enum_field_validation() {
     let pool = setup_pool().await;
     let ct = parse_todo_ct();
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let save_ctx = SaveContext::default();
     let data = with_timestamps(serde_json::json!({"title": "Enum test", "priority": "low"}));
@@ -497,12 +520,15 @@ async fn tauri_registry_register_and_query() {
     let registry = raisfast::content_type::ContentTypeRegistry::new();
     let config = test_config();
     let ct = parse_todo_ct();
+    let protocol_reg = test_protocol_registry();
+    let protocol_names: Vec<&str> = protocol_reg.names();
     registry
         .register(
             ct,
             &config.rule_engine,
             &config.builtins.reserved_route_segments(),
-            &[],
+            &protocol_names,
+            &protocol_reg,
         )
         .unwrap();
 
@@ -518,12 +544,15 @@ async fn tauri_registry_unregister() {
     let registry = raisfast::content_type::ContentTypeRegistry::new();
     let config = test_config();
     let ct = parse_todo_ct();
+    let protocol_reg = test_protocol_registry();
+    let protocol_names: Vec<&str> = protocol_reg.names();
     registry
         .register(
             ct,
             &config.rule_engine,
             &config.builtins.reserved_route_segments(),
-            &[],
+            &protocol_names,
+            &protocol_reg,
         )
         .unwrap();
 
@@ -546,7 +575,7 @@ name = "Note"
 singular = "note"
 plural = "notes"
 table = "test_notes"
-draft_publish = false
+implements = ["ownable", "timestampable"]
 
 [fields.body]
 type = "text"
@@ -554,12 +583,15 @@ label = "内容"
 "#;
     let ct2 = ContentTypeSchema::parse_from_str(ct2_toml).unwrap();
 
+    let protocol_reg = test_protocol_registry();
+    let protocol_names: Vec<&str> = protocol_reg.names();
     registry
         .register(
             ct1,
             &config.rule_engine,
             &config.builtins.reserved_route_segments(),
-            &[],
+            &protocol_names,
+            &protocol_reg,
         )
         .unwrap();
     registry
@@ -567,7 +599,8 @@ label = "内容"
             ct2,
             &config.rule_engine,
             &config.builtins.reserved_route_segments(),
-            &[],
+            &protocol_names,
+            &protocol_reg,
         )
         .unwrap();
 
@@ -641,7 +674,7 @@ async fn tauri_cms_list_with_pagination() {
     let pool = setup_pool().await;
     let ct = parse_todo_ct();
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let save_ctx = SaveContext::default();
     for i in 0..5 {
@@ -696,7 +729,7 @@ name = "AutoFill"
 singular = "autofill"
 plural = "autofills"
 table = "test_autofills"
-draft_publish = false
+implements = ["ownable", "timestampable"]
 
 [fields.title]
 type = "text"
@@ -704,11 +737,11 @@ required = true
 
 [fields.author_id]
 type = "text"
-auto_fill = "user_id"
 "#;
-    let ct = ContentTypeSchema::parse_from_str(ct_toml).unwrap();
+    let mut ct = ContentTypeSchema::parse_from_str(ct_toml).unwrap();
+    cache_ct(&mut ct);
     let repo = ContentRepository::new(pool.clone());
-    repo.migrate(&ct).await.unwrap();
+    repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
     let save_ctx = SaveContext {
         user_id: Some("user-123".into()),
@@ -716,7 +749,10 @@ auto_fill = "user_id"
         tenant_id: None,
     };
 
-    let data = with_timestamps(serde_json::json!({"title": "Auto fill test"}));
+    let data = with_timestamps(serde_json::json!({
+        "title": "Auto fill test",
+        "author_id": save_ctx.user_id.clone().unwrap()
+    }));
     let created = repo.create(&ct, data, None, &save_ctx).await.unwrap();
 
     assert_eq!(created["author_id"], "user-123");

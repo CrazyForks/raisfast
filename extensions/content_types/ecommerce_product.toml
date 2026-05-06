@@ -4,10 +4,8 @@ singular = "product"
 plural = "products"
 table = "products"
 description = "商品"
-draft_publish = true
+implements = ["ownable", "timestampable"]
 slug_field = "name"
-timestamps = true
-soft_delete = false
 
 [fields.name]
 type = "text"

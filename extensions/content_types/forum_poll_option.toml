@@ -4,9 +4,7 @@ singular = "forum_poll_option"
 plural = "forum_poll_options"
 table = "forum_poll_options"
 description = "投票选项"
-draft_publish = false
-timestamps = false
-soft_delete = false
+implements = ["ownable", "timestampable"]
 
 [fields.poll]
 type = "relation"

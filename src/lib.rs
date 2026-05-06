@@ -140,6 +140,8 @@ pub async fn build_app_state(
     protocol_registry.register(crate::protocols::soft_deletable::SoftDeletableProtocol);
     protocol_registry.register(crate::protocols::versionable::VersionableProtocol);
     protocol_registry.register(crate::protocols::cacheable::CacheableProtocol);
+    protocol_registry.register(crate::protocols::lockable::LockableProtocol);
+    protocol_registry.register(crate::protocols::sortable::SortableProtocol);
     let protocol_registry = Arc::new(protocol_registry);
 
     let aspect_engine = Arc::new(crate::aspects::engine::AspectEngine::new());
@@ -157,13 +159,14 @@ pub async fn build_app_state(
         &config.rule_engine,
         &reserved,
         &protocol_names,
+        &protocol_registry,
     )?);
     ct_registry.set_protected_tables(config.builtins.protected_tables());
 
     {
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         for schema in ct_registry.all() {
-            repo.migrate(&schema).await?;
+            repo.migrate(&schema, &protocol_registry).await?;
         }
     }
 

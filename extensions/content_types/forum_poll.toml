@@ -4,9 +4,7 @@ singular = "forum_poll"
 plural = "forum_polls"
 table = "forum_polls"
 description = "论坛投票"
-draft_publish = false
-timestamps = true
-soft_delete = false
+implements = ["ownable", "timestampable"]
 
 [fields.topic]
 type = "relation"

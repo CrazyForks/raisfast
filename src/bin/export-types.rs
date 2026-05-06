@@ -74,7 +74,6 @@ fn main() {
         services::oauth::OAuthBindingInfo,
         content_type::schema::ContentKind,
         content_type::schema::ContentTypeSchema,
-        content_type::schema::AutoFillSource,
         content_type::schema::FieldSchema,
         content_type::schema::FieldType,
         content_type::schema::RelationType,

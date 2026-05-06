@@ -77,6 +77,23 @@ impl Protocol for SoftDeletableProtocol {
         vec![Arc::new(SoftDeletableAspect)]
     }
 
+    fn behaviors(&self) -> Vec<&'static str> {
+        vec!["soft_delete"]
+    }
+
+    fn declaration(&self) -> crate::protocols::ProtocolDeclaration {
+        crate::protocols::ProtocolDeclaration {
+            query_filters: vec![(
+                crate::constants::COL_DELETED_AT.to_string(),
+                "IS NULL".to_string(),
+            )],
+            delete_strategy: crate::protocols::DeleteStrategy::Soft {
+                column: crate::constants::COL_DELETED_AT.to_string(),
+            },
+            ..Default::default()
+        }
+    }
+
     fn built_in(&self) -> bool {
         true
     }

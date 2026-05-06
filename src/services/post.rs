@@ -309,7 +309,10 @@ pub async fn create_post(
         None
     };
 
-    let tags = repo.get_post_tags(&p.id, auth.tenant_id()).await.unwrap_or_default();
+    let tags = repo
+        .get_post_tags(&p.id, auth.tenant_id())
+        .await
+        .unwrap_or_default();
 
     let resp = build_response_from_post(&p, author_name, category_name, tags).await;
     tracing::Span::current().record("slug", &resp.slug);

@@ -25,7 +25,7 @@ pub async fn list_revisions(
         .get_by_plural(&plural)
         .ok_or_else(|| AppError::not_found(&plural))?;
 
-    if !ct.versioning {
+    if !ct.has_revision_routes() {
         return Err(AppError::BadRequest(
             "versioning is not enabled for this content type".into(),
         ));
@@ -50,7 +50,7 @@ pub async fn get_revision(
         .get_by_plural(&plural)
         .ok_or_else(|| AppError::not_found(&plural))?;
 
-    if !ct.versioning {
+    if !ct.has_revision_routes() {
         return Err(AppError::BadRequest(
             "versioning is not enabled for this content type".into(),
         ));
@@ -83,7 +83,7 @@ pub async fn restore_revision(
         .get_by_plural(&plural)
         .ok_or_else(|| AppError::not_found(&plural))?;
 
-    if !ct.versioning {
+    if !ct.has_revision_routes() {
         return Err(AppError::BadRequest(
             "versioning is not enabled for this content type".into(),
         ));
@@ -121,7 +121,7 @@ pub async fn diff_revisions(
         .get_by_plural(&plural)
         .ok_or_else(|| AppError::not_found(&plural))?;
 
-    if !ct.versioning {
+    if !ct.has_revision_routes() {
         return Err(AppError::BadRequest(
             "versioning is not enabled for this content type".into(),
         ));

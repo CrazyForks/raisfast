@@ -4,8 +4,7 @@ singular = "contact"
 plural = "contacts"
 table = "crm_contacts"
 description = "联系人"
-draft_publish = false
-timestamps = true
+implements = ["ownable", "timestampable"]
 
 [fields.first_name]
 type = "text"
@@ -64,7 +63,6 @@ label = "生命周期阶段"
 
 [fields.owner_id]
 type = "text"
-auto_fill = "user_id"
 label = "负责人"
 
 [fields.notes]

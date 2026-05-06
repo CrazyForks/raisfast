@@ -183,7 +183,7 @@ pub fn register_content_routes(
                 );
         }
 
-        if ct.versioning {
+        if ct.has_revision_routes() {
             let p = plural.clone();
             api = api
                 .route(
@@ -422,11 +422,7 @@ pub async fn do_list(
         page_size: params.page_size.unwrap_or(20),
         sort: params.sort,
         filters,
-        status: if ct.draft_publish {
-            Some(params.status.unwrap_or_else(|| "published".into()))
-        } else {
-            None
-        },
+        status: None,
         search: params.search,
         fields: ct.api.list.fields.clone(),
         tenant_id: None,
@@ -521,14 +517,9 @@ pub async fn do_get(
     }
 
     let repo = ContentRepository::new(state.pool.clone());
-    let status = if ct.draft_publish {
-        Some("published")
-    } else {
-        None
-    };
 
     let item = if id_or_slug.contains('-') && !id_or_slug.contains('/') {
-        repo.find_by_slug(ct, id_or_slug, status, None, false)
+        repo.find_by_slug(ct, id_or_slug, None, None, false)
             .await?
             .or(None)
     } else {
@@ -568,7 +559,7 @@ pub async fn do_get(
             .insert(cache_key, (result.clone(), std::time::Instant::now()));
     }
 
-    let result = filter_fields(result, ct.api.get.fields.as_deref());
+    let result = filter_fields(result, ct.api.get.fields.as_deref(), ct);
     let result = strip_meta(result);
 
     Ok(result)
@@ -810,7 +801,8 @@ pub async fn do_delete(
         repo.soft_delete(ct, id, deleted_at, deleted_by, auth.tenant_id())
             .await?;
     } else {
-        repo.delete(ct, id, auth.tenant_id()).await?;
+        repo.delete(ct, id, auth.tenant_id(), &state.protocol_registry)
+            .await?;
     }
 
     invalidate_cms_cache(state, ct);
@@ -919,7 +911,7 @@ pub async fn do_single_get(
             .insert(cache_key, (result.clone(), std::time::Instant::now()));
     }
 
-    let result = filter_fields(result, ct.api.get.fields.as_deref());
+    let result = filter_fields(result, ct.api.get.fields.as_deref(), ct);
     let result = strip_meta(result);
     Ok(result)
 }
@@ -1146,10 +1138,7 @@ pub async fn create_schema(
         table: req.table.clone(),
         description: req.description,
         kind: req.kind,
-        draft_publish: req.draft_publish,
         slug_field: req.slug_field,
-        soft_delete: req.soft_delete,
-        versioning: req.versioning,
         builtin: req.builtin,
         implements: req.implements,
         fields: req.fields,
@@ -1157,6 +1146,9 @@ pub async fn create_schema(
         list_view: None,
         api: super::schema::ApiConfig::default(),
         cached_column_names: None,
+        cached_protocol_column_names: None,
+        cached_behaviors: None,
+        cached_declaration: None,
         cached_rules: None,
     };
 
@@ -1181,7 +1173,7 @@ pub async fn create_schema(
     schema.save_to_dir(dir)?;
 
     let repo = ContentRepository::new(state.pool.clone());
-    repo.migrate(&schema).await?;
+    repo.migrate(&schema, &state.protocol_registry).await?;
 
     let reserved = state.config.builtins.reserved_route_segments();
     let protocol_names: Vec<&str> = state.protocol_registry.names();
@@ -1192,6 +1184,7 @@ pub async fn create_schema(
             &state.config.rule_engine,
             &reserved,
             &protocol_names,
+            &state.protocol_registry,
         )
         .map_err(|e| AppError::Conflict(e.to_string()))?;
 
@@ -1257,17 +1250,8 @@ pub async fn update_schema(
     if let Some(description) = req.description {
         updated.description = description;
     }
-    if let Some(draft_publish) = req.draft_publish {
-        updated.draft_publish = draft_publish;
-    }
     if let Some(slug_field) = req.slug_field {
         updated.slug_field = slug_field;
-    }
-    if let Some(soft_delete) = req.soft_delete {
-        updated.soft_delete = soft_delete;
-    }
-    if let Some(versioning) = req.versioning {
-        updated.versioning = versioning;
     }
     if let Some(implements) = req.implements {
         updated.implements = implements;
@@ -1286,7 +1270,7 @@ pub async fn update_schema(
     updated.save_to_dir(dir)?;
 
     let repo = ContentRepository::new(state.pool.clone());
-    repo.migrate(&updated).await?;
+    repo.migrate(&updated, &state.protocol_registry).await?;
 
     let reserved = state.config.builtins.reserved_route_segments();
     let protocol_names: Vec<&str> = state.protocol_registry.names();
@@ -1297,6 +1281,7 @@ pub async fn update_schema(
             &state.config.rule_engine,
             &reserved,
             &protocol_names,
+            &state.protocol_registry,
         )
         .map_err(|e| AppError::Conflict(e.to_string()))?;
 
@@ -1313,7 +1298,11 @@ pub async fn update_schema(
 
 /// 过滤 JSON 对象，只保留白名单字段 + 系统字段
 /// 白名单为空时返回原始对象（不过滤）
-fn filter_fields(mut value: serde_json::Value, fields: Option<&[String]>) -> serde_json::Value {
+fn filter_fields(
+    mut value: serde_json::Value,
+    fields: Option<&[String]>,
+    ct: &super::schema::ContentTypeSchema,
+) -> serde_json::Value {
     let Some(allowed) = fields else {
         return value;
     };
@@ -1323,16 +1312,10 @@ fn filter_fields(mut value: serde_json::Value, fields: Option<&[String]>) -> ser
     let Some(obj) = value.as_object_mut() else {
         return value;
     };
+    let protocol_cols: Vec<&str> = ct.protocol_column_names();
     let system_keys: Vec<String> = obj
         .keys()
-        .filter(|k| {
-            *k == "id"
-                || *k == "status"
-                || *k == "published_at"
-                || *k == "created_at"
-                || *k == "updated_at"
-                || *k == "deleted_at"
-        })
+        .filter(|k| *k == "id" || protocol_cols.contains(&k.as_str()))
         .cloned()
         .collect();
     obj.retain(|k, _| allowed.contains(&k.to_string()) || system_keys.contains(k));

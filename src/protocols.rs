@@ -1,34 +1,32 @@
-//! Protocol 层 — AOP 之上的薄声明层
+//! Protocol 层 — 声明式协议定义
 //!
-//! Protocol = 一组 Aspect 的命名别名 + 可选配置 + 列声明。
-//! 一个 Protocol 可以组合多个 Aspect（1:N）。
+//! Protocol = Aspect 组合 + 声明式效果（ProtocolDeclaration）。
 //!
 //! ## 设计
 //!
 //! ```text
-//! ContentTypeSchema.implements = ["auditable"]
-//!                          │
-//!                          ▼
-//! ProtocolRegistry.get("auditable")
-//!   ├─ name: "auditable"
-//!   ├─ description: "审计追踪"
-//!   ├─ aspects: [OwnableAspect, TimestampableAspect]
-//!   ├─ columns: [created_by, updated_by, created_at, updated_at]
-//!   └─ built_in: false
+//! Protocol 实现
+//!   ├─ aspects()        → Aspect 列表（AOP 数据注入）
+//!   ├─ declaration()    → ProtocolDeclaration（纯数据，编译期安全）
+//!   │     ├─ query_filters     — 自动追加 WHERE 条件
+//!   │     ├─ delete_strategy   — Soft / Hard
+//!   │     ├─ snapshot_before_update — 更新前获取旧记录
+//!   │     └─ revision_routes   — 提供版本历史 API
+//!   └─ on_after_delete() → async hook（唯一非纯数据方法）
 //! ```
 //!
-//! ## 内置 Protocol
+//! ## 扩展协议
 //!
-//! - `ownable` — 注入 created_by / updated_by
-//! - `timestampable` — 注入 created_at / updated_at
+//! **场景 A（常见）：新协议只用到已有能力** → 只加 1 个文件
 //!
-//! ## 自定义 Protocol（未来）
-//!
-//! 用户可通过 manifest.toml 定义 Protocol，组合已有 Aspect。
+//! **场景 B（罕见）：引入全新系统集成点** → 扩展 ProtocolDeclaration struct，
+//! 编译器会报错提醒所有需要适配的位置。
 
 pub mod cacheable;
+pub mod lockable;
 pub mod ownable;
 pub mod soft_deletable;
+pub mod sortable;
 pub mod timestampable;
 pub mod versionable;
 
@@ -36,6 +34,98 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::aspects::{Aspect, ColumnDef};
+
+// ─── DeleteStrategy ───
+
+/// 删除策略
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum DeleteStrategy {
+    /// 物理 DELETE（默认）
+    #[default]
+    Hard,
+    /// UPDATE SET column = now WHERE ...
+    Soft { column: String },
+}
+
+// ─── SortDir ───
+
+/// 排序方向
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SortDir {
+    #[default]
+    Asc,
+    Desc,
+}
+
+// ─── ProtocolDeclaration ───
+
+/// 协议对系统的所有声明式效果
+///
+/// 纯数据 struct，新能力加字段。
+/// 消费方直接读字段，编译器保证类型安全。
+/// 扩展此 struct 时，编译器会提醒所有需要适配的位置。
+#[derive(Debug, Clone, Default)]
+pub struct ProtocolDeclaration {
+    /// 查询时自动追加的 WHERE 过滤条件: (column, SQL_condition)
+    pub query_filters: Vec<(String, String)>,
+    /// 删除策略
+    pub delete_strategy: DeleteStrategy,
+    /// 更新前是否获取当前记录快照（用于版本历史）
+    pub snapshot_before_update: bool,
+    /// 是否提供版本历史 API 路由（/revisions）
+    pub revision_routes: bool,
+    /// 乐观锁列名（UPDATE WHERE column = ? + SET column = column + 1）
+    pub lock_column: Option<String>,
+    /// 列表查询的默认排序 (column, direction)
+    pub default_sort: Option<(String, SortDir)>,
+}
+
+impl ProtocolDeclaration {
+    /// 合并另一个协议声明（Soft 优先于 Hard，bool 取 OR，lock/sort 先到先得）
+    pub fn merge(&mut self, other: &ProtocolDeclaration) {
+        self.query_filters
+            .extend(other.query_filters.iter().cloned());
+        if matches!(other.delete_strategy, DeleteStrategy::Soft { .. }) {
+            self.delete_strategy = other.delete_strategy.clone();
+        }
+        if other.snapshot_before_update {
+            self.snapshot_before_update = true;
+        }
+        if other.revision_routes {
+            self.revision_routes = true;
+        }
+        if self.lock_column.is_none() && other.lock_column.is_some() {
+            self.lock_column = other.lock_column.clone();
+        }
+        if self.default_sort.is_none() && other.default_sort.is_some() {
+            self.default_sort = other.default_sort.clone();
+        }
+    }
+
+    /// 聚合多个协议的声明
+    pub fn aggregated(names: &[String], registry: &ProtocolRegistry) -> Self {
+        let mut agg = Self::default();
+        for name in names {
+            if let Some(protocol) = registry.get(name) {
+                agg.merge(&protocol.declaration());
+            }
+        }
+        agg.query_filters.sort_by(|a, b| a.0.cmp(&b.0));
+        agg
+    }
+
+    pub fn is_soft_delete(&self) -> bool {
+        matches!(self.delete_strategy, DeleteStrategy::Soft { .. })
+    }
+
+    pub fn is_lockable(&self) -> bool {
+        self.lock_column.is_some()
+    }
+
+    pub fn is_sortable(&self) -> bool {
+        self.default_sort.is_some()
+    }
+}
 
 // ─── Protocol Trait ───
 
@@ -52,8 +142,31 @@ pub trait Protocol: Send + Sync + 'static {
         self.aspects().iter().flat_map(|a| a.columns()).collect()
     }
 
+    fn behaviors(&self) -> Vec<&'static str> {
+        vec![]
+    }
+
     fn built_in(&self) -> bool {
         false
+    }
+
+    /// 协议声明式效果（纯数据）
+    fn declaration(&self) -> ProtocolDeclaration {
+        ProtocolDeclaration::default()
+    }
+
+    /// 删除记录后的异步回调（如清理关联表）
+    ///
+    /// 这是唯一无法纯数据声明的 hook，因为涉及异步 IO 操作。
+    /// 大多数协议使用默认空实现。
+    fn on_after_delete(
+        &self,
+        _pool: &crate::db::pool::Pool,
+        _content_type_singular: &str,
+        _record_id: &str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send + '_>>
+    {
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -111,6 +224,29 @@ impl ProtocolRegistry {
             }
         }
         aspects
+    }
+
+    /// 聚合多个协议的声明
+    pub fn declaration_for(&self, names: &[String]) -> ProtocolDeclaration {
+        ProtocolDeclaration::aggregated(names, self)
+    }
+
+    /// 删除后回调
+    pub async fn dispatch_after_delete(
+        &self,
+        names: &[String],
+        pool: &crate::db::pool::Pool,
+        content_type_singular: &str,
+        record_id: &str,
+    ) -> Result<(), anyhow::Error> {
+        for name in names {
+            if let Some(protocol) = self.protocols.get(name.as_str()) {
+                protocol
+                    .on_after_delete(pool, content_type_singular, record_id)
+                    .await?;
+            }
+        }
+        Ok(())
     }
 
     pub fn register_aspects_into(&self, engine: &crate::aspects::engine::AspectEngine) {
@@ -182,5 +318,29 @@ mod tests {
         reg.register(timestampable::TimestampableProtocol);
         let aspects = reg.aspects_for(&["ownable".into(), "timestampable".into()]);
         assert_eq!(aspects.len(), 2);
+    }
+
+    #[test]
+    fn declaration_aggregation() {
+        let mut reg = ProtocolRegistry::new();
+        reg.register(soft_deletable::SoftDeletableProtocol);
+        reg.register(versionable::VersionableProtocol);
+
+        let sd = reg.declaration_for(&["soft_deletable".into()]);
+        assert!(sd.is_soft_delete());
+        assert_eq!(sd.query_filters.len(), 1);
+        assert_eq!(sd.query_filters[0].0, "deleted_at");
+        assert_eq!(sd.query_filters[0].1, "IS NULL");
+
+        let ver = reg.declaration_for(&["versionable".into()]);
+        assert!(!ver.is_soft_delete());
+        assert!(ver.snapshot_before_update);
+        assert!(ver.revision_routes);
+
+        let both = reg.declaration_for(&["soft_deletable".into(), "versionable".into()]);
+        assert!(both.is_soft_delete());
+        assert!(both.snapshot_before_update);
+        assert!(both.revision_routes);
+        assert_eq!(both.query_filters.len(), 1);
     }
 }

@@ -10,16 +10,15 @@ use std::collections::HashMap;
 
 use serde_json::{Value, json};
 
-use super::schema::{AutoFillSource, ContentTypeSchema, FieldType, RelationType};
+use super::schema::{ContentTypeSchema, FieldType, RelationType};
 use crate::constants::*;
 use crate::db::Pool;
 use crate::errors::app_error::AppError;
 use crate::middleware::auth::AuthUser;
+use crate::protocols::ProtocolRegistry;
 use sqlx::Row;
 
 /// 保存操作上下文（从 handler 层传递到 repository 层）
-///
-/// 携带当前请求的认证信息，供 auto_fill 机制注入字段值。
 #[derive(Debug, Clone, Default)]
 pub struct SaveContext {
     pub user_id: Option<String>,
@@ -33,37 +32,6 @@ impl SaveContext {
             user_id: auth.user_id().map(|s| s.to_string()),
             user_role: auth.is_authenticated().then(|| auth.role().to_string()),
             tenant_id: auth.tenant_id().map(|s| s.to_string()),
-        }
-    }
-
-    fn resolve_auto_fill(&self, source: &AutoFillSource) -> Option<Value> {
-        match source {
-            AutoFillSource::UserId => self.user_id.as_ref().map(|id| json!(id)),
-            AutoFillSource::UserRole => self.user_role.as_ref().map(|r| json!(r)),
-            AutoFillSource::CurrentTenantId => self.tenant_id.as_ref().map(|t| json!(t)),
-        }
-    }
-
-    fn inject_auto_fill(&self, ct: &ContentTypeSchema, obj: &mut serde_json::Map<String, Value>) {
-        for field in ct.auto_fill_fields() {
-            if let Some(ref source) = field.auto_fill
-                && let Some(value) = self.resolve_auto_fill(source)
-            {
-                match field.field_type {
-                    FieldType::Relation => {
-                        if let Some(ref rel) = field.relation {
-                            let fk = rel
-                                .foreign_key
-                                .clone()
-                                .unwrap_or_else(|| format!("{}_id", field.name));
-                            obj.insert(fk, value);
-                        }
-                    }
-                    _ => {
-                        obj.insert(field.name.clone(), value);
-                    }
-                }
-            }
         }
     }
 }
@@ -124,24 +92,16 @@ impl ContentRepository {
         let mut params: Vec<Value> = Vec::new();
         let mut param_idx = 1;
 
-        let has_soft_delete =
-            ct.soft_delete || ct.implements.contains(&"soft_deletable".to_string());
-        if has_soft_delete {
+        for (column, condition) in ct.query_filters() {
+            where_clauses.push(format!("{} {}", column, condition));
+        }
+        if ct.query_filters().is_empty() && ct.is_soft_delete() {
             where_clauses.push(format!("{} IS NULL", COL_DELETED_AT));
         }
-
         let tid = self.resolve_tenant(table, query.tenant_id.as_deref()).await;
         if let Some(ref tid) = tid {
             where_clauses.push(format!("tenant_id = {}", placeholder(param_idx)));
             params.push(json!(tid));
-            param_idx += 1;
-        }
-
-        if let Some(ref status) = query.status
-            && ct.draft_publish
-        {
-            where_clauses.push(format!("status = {}", placeholder(param_idx)));
-            params.push(json!(status));
             param_idx += 1;
         }
 
@@ -349,7 +309,7 @@ impl ContentRepository {
         &self,
         ct: &ContentTypeSchema,
         slug: &str,
-        status: Option<&str>,
+        _status: Option<&str>,
         tenant_id: Option<&str>,
         include_private: bool,
     ) -> Result<Option<Value>, AppError> {
@@ -358,21 +318,16 @@ impl ContentRepository {
         let tid = self.resolve_tenant(&ct.table, tenant_id).await;
 
         let mut where_parts = vec![format!("slug = {}", placeholder(1))];
-        let mut idx = 2;
 
-        let has_soft_delete =
-            ct.soft_delete || ct.implements.contains(&"soft_deletable".to_string());
-        if has_soft_delete {
+        for (column, condition) in ct.query_filters() {
+            where_parts.push(format!("{} {}", column, condition));
+        }
+        if ct.query_filters().is_empty() && ct.is_soft_delete() {
             where_parts.push(format!("{} IS NULL", COL_DELETED_AT));
         }
 
         if tid.is_some() {
-            where_parts.push(format!("tenant_id = {}", placeholder(idx)));
-            idx += 1;
-        }
-
-        if status.is_some() && ct.draft_publish {
-            where_parts.push(format!("status = {}", placeholder(idx)));
+            where_parts.push(format!("tenant_id = {}", placeholder(2)));
         }
 
         let sql = format!(
@@ -385,11 +340,6 @@ impl ContentRepository {
         let mut q = sqlx::query(&sql).bind(slug);
         if let Some(ref tid) = tid {
             q = q.bind(tid);
-        }
-        if let Some(s) = status
-            && ct.draft_publish
-        {
-            q = q.bind(s);
         }
 
         let row = q
@@ -415,7 +365,7 @@ impl ContentRepository {
         ct: &ContentTypeSchema,
         mut data: Value,
         tenant_id: Option<&str>,
-        save_ctx: &SaveContext,
+        _save_ctx: &SaveContext,
     ) -> Result<Value, AppError> {
         let mut tx = self
             .pool
@@ -431,12 +381,6 @@ impl ContentRepository {
             .ok_or_else(|| AppError::BadRequest("request body must be a JSON object".into()))?;
 
         obj.insert("id".into(), json!(id));
-
-        if ct.draft_publish && obj.get("status").is_none() {
-            obj.insert("status".to_string(), json!("draft"));
-        }
-
-        save_ctx.inject_auto_fill(ct, obj);
 
         if !ct.builtin && !ct.implements.is_empty() {
             let mut meta = serde_json::Map::new();
@@ -533,9 +477,9 @@ impl ContentRepository {
         id: &str,
         mut data: Value,
         tenant_id: Option<&str>,
-        save_ctx: &SaveContext,
+        _save_ctx: &SaveContext,
     ) -> Result<Value, AppError> {
-        if ct.versioning
+        if ct.needs_pre_update_snapshot()
             && let Some(current) = self.find_by_id(ct, id, tenant_id, true).await?
         {
             let _ = crate::models::content_revision::create_revision(
@@ -562,8 +506,6 @@ impl ContentRepository {
 
         obj.remove("id");
 
-        save_ctx.inject_auto_fill(ct, obj);
-
         let tid = self.resolve_tenant(&ct.table, tenant_id).await;
 
         let mut set_clauses = Vec::new();
@@ -584,12 +526,10 @@ impl ContentRepository {
             })
             .collect();
 
+        let decl = ct.declaration();
+
         for (key, val) in obj.iter() {
-            if ct.get_field(key).is_some()
-                || key == "status"
-                || key == "published_at"
-                || key == "updated_at"
-            {
+            if ct.get_field(key).is_some() || ct.is_protocol_column(key) {
                 let col = relation_column_map
                     .get(key)
                     .cloned()
@@ -598,6 +538,10 @@ impl ContentRepository {
                 idx += 1;
                 values.push(value_to_string(val));
             }
+        }
+
+        if let Some(ref lock_col) = decl.lock_column {
+            set_clauses.push(format!("{lock_col} = {lock_col} + 1"));
         }
 
         if set_clauses.is_empty() {
@@ -613,6 +557,13 @@ impl ContentRepository {
             values.push(tid.clone());
         }
 
+        if let Some(ref lock_col) = decl.lock_column
+            && let Some(current_version) = data.get(lock_col).and_then(|v| v.as_i64())
+        {
+            where_parts.push(format!("{lock_col} = {}", placeholder(idx)));
+            values.push(current_version.to_string());
+        }
+
         let sql = format!(
             "UPDATE {} SET {} WHERE {}",
             ct.table,
@@ -626,10 +577,18 @@ impl ContentRepository {
             query = query.bind(v);
         }
 
-        query
+        let result = query
             .execute(&mut *tx)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("update failed: {e}")))?;
+
+        if let Some(ref lock_col) = decl.lock_column
+            && result.rows_affected() == 0
+        {
+            return Err(AppError::Conflict(format!(
+                "记录已被他人修改（{lock_col} 冲突），请刷新后重试"
+            )));
+        }
 
         tx.commit()
             .await
@@ -643,17 +602,18 @@ impl ContentRepository {
 
     /// 删除
     ///
-    /// 同时清理该记录在 `content_revisions` 表中的所有版本历史。
+    /// 根据 Protocol 声明的策略执行软删除或硬删除，
+    /// 并通过 ProtocolRegistry dispatch 清理关联数据。
     pub async fn delete(
         &self,
         ct: &ContentTypeSchema,
         id: &str,
         tenant_id: Option<&str>,
+        protocol_registry: &crate::protocols::ProtocolRegistry,
     ) -> Result<(), AppError> {
-        if ct.versioning {
-            let _ = crate::models::content_revision::delete_revisions(&self.pool, &ct.singular, id)
-                .await;
-        }
+        let _ = protocol_registry
+            .dispatch_after_delete(&ct.implements, &self.pool, &ct.singular, id)
+            .await;
 
         let tid = self.resolve_tenant(&ct.table, tenant_id).await;
 
@@ -668,7 +628,7 @@ impl ContentRepository {
             values.push(tid.clone());
         }
 
-        let sql = if ct.soft_delete {
+        let sql = if ct.is_soft_delete() {
             let now = crate::utils::tz::now_str();
             format!(
                 "UPDATE {} SET deleted_at = '{}' WHERE {}",
@@ -750,11 +710,16 @@ impl ContentRepository {
     /// - 表不存在 → `CREATE TABLE`
     /// - 表已存在 → 对比 schema 与现有列，`ALTER TABLE ADD COLUMN` 补齐缺失列
     /// - 不删除列、不修改列类型（与 Strapi `forceMigration` 策略一致）
-    pub async fn migrate(&self, ct: &ContentTypeSchema) -> Result<(), AppError> {
+    pub async fn migrate(
+        &self,
+        ct: &ContentTypeSchema,
+        protocol_registry: &ProtocolRegistry,
+    ) -> Result<(), AppError> {
+        let protocol_columns = protocol_registry.columns_for(&ct.implements);
         let existing_columns = self.fetch_columns(&ct.table).await?;
 
         if existing_columns.is_empty() {
-            let create_sql = super::migration::generate_create_table(ct);
+            let create_sql = super::migration::generate_create_table(ct, &protocol_columns);
             let create_sql = crate::db::dialect::translate(&create_sql);
 
             sqlx::query(&create_sql)
@@ -766,7 +731,8 @@ impl ContentRepository {
 
             tracing::info!("created table: {}", ct.table);
         } else {
-            let alter_stmts = super::migration::generate_alter_table(ct, &existing_columns);
+            let alter_stmts =
+                super::migration::generate_alter_table(ct, &existing_columns, &protocol_columns);
             if alter_stmts.is_empty() {
                 tracing::debug!("table {} schema is up-to-date", ct.table);
             } else {
@@ -867,17 +833,8 @@ pub fn build_column_names(
         cols.push(field.name.clone());
     }
 
-    if ct.draft_publish {
-        cols.push("status".into());
-        cols.push("published_at".into());
-    }
-    cols.push(COL_CREATED_AT.into());
-    cols.push(COL_UPDATED_AT.into());
-    cols.push(COL_CREATED_BY.into());
-    cols.push(COL_UPDATED_BY.into());
-    if ct.soft_delete || ct.implements.contains(&"soft_deletable".to_string()) {
-        cols.push(COL_DELETED_AT.into());
-        cols.push(COL_DELETED_BY.into());
+    for col in ct.protocol_column_names() {
+        cols.push(col.to_string());
     }
     if !ct.builtin {
         cols.push(COL_META.into());
@@ -925,10 +882,17 @@ fn cell_to_json(row: &sqlx::sqlite::SqliteRow, col: &str) -> Value {
 }
 
 fn build_order_by(sort: Option<&str>, ct: &ContentTypeSchema) -> String {
-    let default = ct
-        .list_view
-        .as_ref()
-        .map_or_else(|| "created_at:desc".into(), |lv| lv.default_sort.clone());
+    let default = if let Some(ref lv) = ct.list_view {
+        lv.default_sort.clone()
+    } else if let Some((col, dir)) = &ct.declaration().default_sort {
+        let d = match dir {
+            crate::protocols::SortDir::Asc => "asc",
+            crate::protocols::SortDir::Desc => "desc",
+        };
+        format!("{col}:{d}")
+    } else {
+        "created_at:desc".into()
+    };
 
     let sort_str = sort.unwrap_or(&default);
     let mut parts = Vec::new();
@@ -1020,16 +984,28 @@ fn fetch_columns_sql(table: &str) -> (String, usize) {
 mod tests {
     use super::*;
 
+    fn test_protocol_registry() -> crate::protocols::ProtocolRegistry {
+        let mut reg = crate::protocols::ProtocolRegistry::new();
+        reg.register(crate::protocols::ownable::OwnableProtocol);
+        reg.register(crate::protocols::timestampable::TimestampableProtocol);
+        reg.register(crate::protocols::soft_deletable::SoftDeletableProtocol);
+        reg.register(crate::protocols::versionable::VersionableProtocol);
+        reg.register(crate::protocols::cacheable::CacheableProtocol);
+        reg.register(crate::protocols::lockable::LockableProtocol);
+        reg.register(crate::protocols::sortable::SortableProtocol);
+        reg
+    }
+
     #[test]
     fn build_column_names_basic() {
-        let ct = ContentTypeSchema::parse_from_str(
+        let mut ct = ContentTypeSchema::parse_from_str(
             r#"
 [content_type]
 name = "Tag"
 singular = "tag"
 plural = "tags"
 table = "tags"
-timestamps = true
+implements = ["ownable", "timestampable"]
 
 [fields.name]
 type = "text"
@@ -1041,6 +1017,7 @@ unique = true
 "#,
         )
         .unwrap();
+        ct.cache_protocol_columns(&test_protocol_registry());
 
         let cols = build_column_names(&ct, None, false);
         assert!(cols.contains(&"id".to_string()));

@@ -4,10 +4,8 @@ singular = "article"
 plural = "articles"
 table = "articles"
 description = "文章"
-draft_publish = true
+implements = ["ownable", "timestampable"]
 slug_field = "title"
-timestamps = true
-soft_delete = false
 
 [fields.title]
 type = "text"
@@ -42,7 +40,6 @@ type = "relation"
 relation_type = "many_to_one"
 target = "users"
 foreign_key = "author_id"
-auto_fill = "user_id"
 label = "作者"
 
 [fields.category]

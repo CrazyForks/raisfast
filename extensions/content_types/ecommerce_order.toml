@@ -4,9 +4,7 @@ singular = "order"
 plural = "orders"
 table = "orders"
 description = "订单"
-draft_publish = false
-timestamps = true
-soft_delete = false
+implements = ["ownable", "timestampable"]
 
 [fields.order_no]
 type = "text"
