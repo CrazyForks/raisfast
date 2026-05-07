@@ -74,21 +74,15 @@ pub fn register_host_functions(
     host.set("getPost", get_post_fn)?;
 
     let hc = host_ctx.clone();
-    let db_query_fn = Function::new(
-        ctx.clone(),
-        move |sql: String, params: Option<String>| -> String {
-            hc.db_query(&sql, params.as_deref())
-        },
-    )?;
+    let db_query_fn = Function::new(ctx.clone(), move |sql: String, params: String| -> String {
+        hc.db_query(&sql, &params)
+    })?;
     host.set("dbQuery", db_query_fn)?;
 
     let hc = host_ctx.clone();
-    let db_execute_fn = Function::new(
-        ctx.clone(),
-        move |sql: String, params: Option<String>| -> String {
-            hc.db_execute(&sql, params.as_deref())
-        },
-    )?;
+    let db_execute_fn = Function::new(ctx.clone(), move |sql: String, params: String| -> String {
+        hc.db_execute(&sql, &params)
+    })?;
     host.set("dbExecute", db_execute_fn)?;
 
     let hc = host_ctx.clone();
@@ -142,6 +136,10 @@ pub fn register_host_functions(
     let hc = host_ctx.clone();
     let new_id_fn = Function::new(ctx.clone(), move || -> String { hc.new_uuid() })?;
     host.set("newId", new_id_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_ph_fn = Function::new(ctx.clone(), move |idx: usize| -> String { hc.db_ph(idx) })?;
+    host.set("dbPh", db_ph_fn)?;
 
     let hc = host_ctx;
     let emit_event_fn = Function::new(ctx, move |event_type: String, data: String| -> String {
@@ -333,7 +331,7 @@ mod tests {
             let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
             let db_fn: Function = host.get("dbQuery").unwrap();
 
-            let result: String = db_fn.call(("SELECT 1", rquickjs::Undefined)).unwrap();
+            let result: String = db_fn.call(("SELECT 1", "[]")).unwrap();
             assert!(result.contains("no database access"));
         })
         .await;
@@ -354,9 +352,7 @@ mod tests {
             let host: Object = global.get(PLUGIN_HOST_GLOBAL).unwrap();
             let db_fn: Function = host.get("dbQuery").unwrap();
 
-            let result: String = db_fn
-                .call(("DELETE FROM posts", rquickjs::Undefined))
-                .unwrap();
+            let result: String = db_fn.call(("DELETE FROM posts", "[]")).unwrap();
             assert!(result.contains("only SELECT"));
         })
         .await;
@@ -388,6 +384,7 @@ mod tests {
                 "dbBegin",
                 "dbCommit",
                 "dbRollback",
+                "dbPh",
                 "vfsRead",
                 "vfsWrite",
                 "vfsDelete",

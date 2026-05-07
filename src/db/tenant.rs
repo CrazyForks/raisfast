@@ -65,6 +65,10 @@ pub async fn invalidate_cache() {
 }
 
 async fn check_column_exists(pool: &Pool, table: &str) -> bool {
+    assert!(
+        super::dialect::is_safe_identifier(table),
+        "unsafe table name: {table}"
+    );
     #[cfg(feature = "db-sqlite")]
     {
         let sql = format!("PRAGMA table_info({table})");
@@ -98,13 +102,42 @@ async fn check_column_exists(pool: &Pool, table: &str) -> bool {
 // SQL 改写
 // ---------------------------------------------------------------------------
 
-fn inject_where(sql: &str) -> String {
+fn count_params(sql: &str) -> usize {
+    #[cfg(feature = "db-postgres")]
+    {
+        let mut max_n = 0;
+        let bytes = sql.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
+                let start = i + 1;
+                let mut j = start;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if let Ok(n) = sql[start..j].parse::<usize>() {
+                    max_n = max_n.max(n);
+                }
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
+        max_n
+    }
+    #[cfg(not(feature = "db-postgres"))]
+    {
+        sql.matches('?').count()
+    }
+}
+
+fn inject_where(sql: &str, idx: usize) -> String {
     let connector = if sql.to_lowercase().contains("where") {
         " AND "
     } else {
         " WHERE "
     };
-    format!("{sql}{connector}tenant_id = ?")
+    format!("{sql}{connector}tenant_id = {}", super::dialect::ph(idx))
 }
 
 /// 解析 `Option<&str>` 为有效的租户 ID。
@@ -119,19 +152,19 @@ fn sql_has_tenant(sql: &str) -> bool {
     sql.to_lowercase().contains("tenant_id")
 }
 
-/// 返回 `AND tenant_id = ?` 或空串，用于静态表的条件 SQL 拼接。
+/// 返回 `AND tenant_id = {ph(idx)}` 或空串，用于条件 SQL 拼接。
 ///
 /// ```ignore
-/// let sql = format!("SELECT * FROM users WHERE id = ?{}", tenant_filter(tenant_id));
+/// let sql = format!("SELECT * FROM users WHERE id = {}{}", ph(1), tenant_filter_ph(tenant_id, 2));
 /// ```
-pub fn tenant_filter(tenant_id: Option<&str>) -> &'static str {
+pub fn tenant_filter_ph(tenant_id: Option<&str>, idx: usize) -> String {
     match tenant_id {
-        Some(_) => " AND tenant_id = ?",
-        None => "",
+        Some(_) => format!(" AND tenant_id = {}", super::dialect::ph(idx)),
+        None => String::new(),
     }
 }
 
-/// 返回 ` AND p.tenant_id = ?` 或空串，用于 JOIN 查询中带表别名的条件拼接。
+/// 返回 ` And p.tenant_id = ?` 或空串，用于 JOIN 查询中带表别名的条件拼接。
 pub fn tenant_filter_aliased(alias: &str, tenant_id: Option<&str>) -> String {
     match tenant_id {
         Some(_) => format!(" AND {alias}.tenant_id = ?"),
@@ -139,24 +172,11 @@ pub fn tenant_filter_aliased(alias: &str, tenant_id: Option<&str>) -> String {
     }
 }
 
-/// 为 SQL 追加 `AND tenant_id = ?`（当 `tenant_id` 不为 `None` 时）。
-///
-/// 若 `tenant_id` 为 `None`（超管看所有），返回原始 SQL（需 `Cow`）。
-/// 若 SQL 已包含 `tenant_id`，不重复追加。
-pub fn append_tenant_filter<'a>(
-    sql: &'a str,
-    tenant_id: Option<&str>,
-) -> std::borrow::Cow<'a, str> {
+/// [`tenant_filter_aliased`] 的占位符安全版本。
+pub fn tenant_filter_aliased_ph(alias: &str, tenant_id: Option<&str>, idx: usize) -> String {
     match tenant_id {
-        Some(_) if !sql_has_tenant(sql) => {
-            let connector = if sql.to_lowercase().contains("where") {
-                " AND tenant_id = ?"
-            } else {
-                " WHERE tenant_id = ?"
-            };
-            std::borrow::Cow::Owned(format!("{sql}{connector}"))
-        }
-        _ => std::borrow::Cow::Borrowed(sql),
+        Some(_) => format!(" AND {alias}.tenant_id = {}", super::dialect::ph(idx)),
+        None => String::new(),
     }
 }
 
@@ -201,10 +221,9 @@ impl TenantPool {
         let has = has_tenant_id(&self.pool, table).await;
         let inject = has && !sql_has_tenant(sql);
         let final_sql = if inject {
-            let rewritten = inject_where(sql);
-            super::dialect::translate(&rewritten).into_owned()
+            inject_where(sql, count_params(sql) + 1)
         } else {
-            super::dialect::translate(sql).into_owned()
+            sql.to_string()
         };
         (final_sql, inject)
     }
@@ -223,15 +242,16 @@ impl TenantPool {
     ) -> (String, bool) {
         let has = has_tenant_id(&self.pool, table).await;
         let (cols, placeholders) = if has {
-            let mut ph: Vec<&str> = (0..user_param_count).map(|_| "?").collect();
-            ph.push("?");
-            (format!("{user_cols}, tenant_id"), ph.join(", "))
+            let placeholders: Vec<String> =
+                (1..=user_param_count + 1).map(super::dialect::ph).collect();
+            (format!("{user_cols}, tenant_id"), placeholders.join(", "))
         } else {
-            let ph: Vec<&str> = (0..user_param_count).map(|_| "?").collect();
-            (user_cols.to_string(), ph.join(", "))
+            let placeholders: Vec<String> =
+                (1..=user_param_count).map(super::dialect::ph).collect();
+            (user_cols.to_string(), placeholders.join(", "))
         };
         let sql = format!("INSERT INTO {table} ({cols}) VALUES ({placeholders})");
-        (super::dialect::translate(&sql).into_owned(), has)
+        (sql, has)
     }
 
     /// **UPDATE/DELETE 预处理**：检测表，改写 SQL（追加 `AND tenant_id = ?`）。
@@ -241,10 +261,9 @@ impl TenantPool {
         let has = has_tenant_id(&self.pool, table).await;
         let inject = has && !sql_has_tenant(sql);
         let final_sql = if inject {
-            let rewritten = inject_where(sql);
-            super::dialect::translate(&rewritten).into_owned()
+            inject_where(sql, count_params(sql) + 1)
         } else {
-            super::dialect::translate(sql).into_owned()
+            sql.to_string()
         };
         (final_sql, inject)
     }
@@ -261,7 +280,7 @@ mod tests {
     #[test]
     fn inject_where_with_existing() {
         assert_eq!(
-            inject_where("SELECT * FROM posts WHERE id = ?"),
+            inject_where("SELECT * FROM posts WHERE id = ?", 2),
             "SELECT * FROM posts WHERE id = ? AND tenant_id = ?"
         );
     }
@@ -269,7 +288,7 @@ mod tests {
     #[test]
     fn inject_where_without_existing() {
         assert_eq!(
-            inject_where("SELECT * FROM posts"),
+            inject_where("SELECT * FROM posts", 1),
             "SELECT * FROM posts WHERE tenant_id = ?"
         );
     }

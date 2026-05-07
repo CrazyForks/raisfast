@@ -46,8 +46,14 @@ pub async fn create_state(
     expires_at: &str,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_str();
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO oauth_states (id, provider, code_verifier, user_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+    let sql = format!(
+        "INSERT INTO oauth_states (id, provider, code_verifier, user_id, created_at, expires_at) VALUES ({}, {}, {}, {}, {}, {})",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3),
+        crate::db::dialect::ph(4),
+        crate::db::dialect::ph(5),
+        crate::db::dialect::ph(6)
     );
     let mut q = sqlx::query(&sql)
         .bind(id)
@@ -64,18 +70,21 @@ pub async fn create_state(
 
 /// 根据 state ID 查找并删除（一次性）
 pub async fn consume_state(pool: &crate::db::Pool, id: &str) -> AppResult<Option<OAuthState>> {
-    let sql_raw = format!(
-        "SELECT * FROM oauth_states WHERE id = ? AND expires_at > {}",
+    let sql = format!(
+        "SELECT * FROM oauth_states WHERE id = {} AND expires_at > {}",
+        crate::db::dialect::ph(1),
         crate::db::dialect::now_fn(),
     );
-    let sql = crate::db::dialect::translate(&sql_raw);
     let state = sqlx::query_as::<_, OAuthState>(&sql)
         .bind(id)
         .fetch_optional(pool)
         .await?;
 
     if state.is_some() {
-        let del_sql = crate::db::dialect::translate("DELETE FROM oauth_states WHERE id = ?");
+        let del_sql = format!(
+            "DELETE FROM oauth_states WHERE id = {}",
+            crate::db::dialect::ph(1)
+        );
         sqlx::query(&del_sql).bind(id).execute(pool).await?;
     }
 
@@ -84,11 +93,10 @@ pub async fn consume_state(pool: &crate::db::Pool, id: &str) -> AppResult<Option
 
 /// 清理过期的 OAuth state 记录
 pub async fn cleanup_expired_states(pool: &crate::db::Pool) -> AppResult<u64> {
-    let sql_raw = format!(
+    let sql = format!(
         "DELETE FROM oauth_states WHERE expires_at <= {}",
         crate::db::dialect::now_fn(),
     );
-    let sql = crate::db::dialect::translate(&sql_raw);
     let result = sqlx::query(&sql).execute(pool).await?;
     Ok(result.rows_affected())
 }
@@ -99,8 +107,10 @@ pub async fn find_by_provider_user(
     provider: &str,
     provider_user_id: &str,
 ) -> AppResult<Option<OAuthAccount>> {
-    let sql = crate::db::dialect::translate(
-        "SELECT * FROM oauth_accounts WHERE provider = ? AND provider_user_id = ?",
+    let sql = format!(
+        "SELECT * FROM oauth_accounts WHERE provider = {} AND provider_user_id = {}",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2)
     );
     let account = sqlx::query_as::<_, OAuthAccount>(&sql)
         .bind(provider)
@@ -115,8 +125,9 @@ pub async fn find_by_user_id(
     pool: &crate::db::Pool,
     user_id: &str,
 ) -> AppResult<Vec<OAuthAccount>> {
-    let sql = crate::db::dialect::translate(
-        "SELECT * FROM oauth_accounts WHERE user_id = ? ORDER BY created_at",
+    let sql = format!(
+        "SELECT * FROM oauth_accounts WHERE user_id = {} ORDER BY created_at",
+        crate::db::dialect::ph(1)
     );
     let accounts = sqlx::query_as::<_, OAuthAccount>(&sql)
         .bind(user_id)
@@ -146,8 +157,21 @@ pub async fn create_account(
 ) -> AppResult<OAuthAccount> {
     let (id, now) = crate::utils::id::new_id_and_timestamp();
 
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO oauth_accounts (id, user_id, provider, provider_user_id, email, display_name, avatar_url, access_token, refresh_token, token_expires_at, profile, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    let sql = format!(
+        "INSERT INTO oauth_accounts (id, user_id, provider, provider_user_id, email, display_name, avatar_url, access_token, refresh_token, token_expires_at, profile, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3),
+        crate::db::dialect::ph(4),
+        crate::db::dialect::ph(5),
+        crate::db::dialect::ph(6),
+        crate::db::dialect::ph(7),
+        crate::db::dialect::ph(8),
+        crate::db::dialect::ph(9),
+        crate::db::dialect::ph(10),
+        crate::db::dialect::ph(11),
+        crate::db::dialect::ph(12),
+        crate::db::dialect::ph(13)
     );
     sqlx::query(&sql)
         .bind(&id)
@@ -166,7 +190,10 @@ pub async fn create_account(
         .execute(pool)
         .await?;
 
-    let sql2 = crate::db::dialect::translate("SELECT * FROM oauth_accounts WHERE id = ?");
+    let sql2 = format!(
+        "SELECT * FROM oauth_accounts WHERE id = {}",
+        crate::db::dialect::ph(1)
+    );
     let account = sqlx::query_as::<_, OAuthAccount>(&sql2)
         .bind(&id)
         .fetch_one(pool)
@@ -193,8 +220,17 @@ pub async fn update_account(
     params: UpdateOAuthAccountParams<'_>,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_str();
-    let sql = crate::db::dialect::translate(
-        "UPDATE oauth_accounts SET email = ?, display_name = ?, avatar_url = ?, access_token = ?, refresh_token = ?, token_expires_at = ?, profile = ?, updated_at = ? WHERE id = ?",
+    let sql = format!(
+        "UPDATE oauth_accounts SET email = {}, display_name = {}, avatar_url = {}, access_token = {}, refresh_token = {}, token_expires_at = {}, profile = {}, updated_at = {} WHERE id = {}",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3),
+        crate::db::dialect::ph(4),
+        crate::db::dialect::ph(5),
+        crate::db::dialect::ph(6),
+        crate::db::dialect::ph(7),
+        crate::db::dialect::ph(8),
+        crate::db::dialect::ph(9)
     );
     sqlx::query(&sql)
         .bind(params.email)
@@ -217,8 +253,10 @@ pub async fn delete_account(
     user_id: &str,
     provider: &str,
 ) -> AppResult<bool> {
-    let sql = crate::db::dialect::translate(
-        "DELETE FROM oauth_accounts WHERE user_id = ? AND provider = ?",
+    let sql = format!(
+        "DELETE FROM oauth_accounts WHERE user_id = {} AND provider = {}",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2)
     );
     let result = sqlx::query(&sql)
         .bind(user_id)
@@ -230,8 +268,10 @@ pub async fn delete_account(
 
 /// 统计用户绑定的 OAuth Provider 数量
 pub async fn count_by_user(pool: &crate::db::Pool, user_id: &str) -> AppResult<i64> {
-    let sql =
-        crate::db::dialect::translate("SELECT COUNT(*) FROM oauth_accounts WHERE user_id = ?");
+    let sql = format!(
+        "SELECT COUNT(*) FROM oauth_accounts WHERE user_id = {}",
+        crate::db::dialect::ph(1)
+    );
     let (count,) = sqlx::query_as::<_, (i64,)>(&sql)
         .bind(user_id)
         .fetch_one(pool)

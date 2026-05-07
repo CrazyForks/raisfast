@@ -52,8 +52,14 @@ pub async fn migrate(config: &AppConfig) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let check_sql = dialect::translate("SELECT COUNT(*) FROM _migrations WHERE filename = ?");
-    let insert_sql = dialect::translate("INSERT INTO _migrations (filename) VALUES (?)");
+    let check_sql = format!(
+        "SELECT COUNT(*) FROM _migrations WHERE filename = {}",
+        dialect::ph(1)
+    );
+    let insert_sql = format!(
+        "INSERT INTO _migrations (filename) VALUES ({})",
+        dialect::ph(1)
+    );
 
     let tenantable_file = format!("tenantable.{}.sql", db_name);
     let mut applied = 0u32;
@@ -182,8 +188,9 @@ pub async fn seed(
 ) -> anyhow::Result<()> {
     let pool = init_pool(&config.database_url, 1).await?;
 
-    let existing: i64 = sqlx::query_scalar(&dialect::translate(
-        "SELECT COUNT(*) FROM users WHERE email = ?",
+    let existing: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM users WHERE email = {}",
+        dialect::ph(1)
     ))
     .bind(email)
     .fetch_one(&pool)
@@ -212,8 +219,15 @@ pub async fn seed(
 
     match tid {
         Some(tid) => {
-            sqlx::query(&dialect::translate(
-                "INSERT INTO users (id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'admin', ?, ?)",
+            sqlx::query(&format!(
+                "INSERT INTO users (id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, 'admin', {}, {})",
+                dialect::ph(1),
+                dialect::ph(2),
+                dialect::ph(3),
+                dialect::ph(4),
+                dialect::ph(5),
+                dialect::ph(6),
+                dialect::ph(7),
             ))
             .bind(&id)
             .bind(&tid)
@@ -226,8 +240,14 @@ pub async fn seed(
             .await?;
         }
         None => {
-            sqlx::query(&dialect::translate(
-                "INSERT INTO users (id, email, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, 'admin', ?, ?)",
+            sqlx::query(&format!(
+                "INSERT INTO users (id, email, username, password_hash, role, created_at, updated_at) VALUES ({}, {}, {}, {}, 'admin', {}, {})",
+                dialect::ph(1),
+                dialect::ph(2),
+                dialect::ph(3),
+                dialect::ph(4),
+                dialect::ph(5),
+                dialect::ph(6),
             ))
             .bind(&id)
             .bind(email)

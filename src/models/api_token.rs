@@ -8,6 +8,7 @@ use sqlx::FromRow;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
+use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 
 /// API Token 完整数据库行模型
@@ -48,8 +49,16 @@ pub async fn create(
     expires_at: Option<&str>,
 ) -> AppResult<ApiToken> {
     let (id, now) = crate::utils::id::new_id_and_timestamp();
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO api_tokens (id, user_id, name, token_hash, token_prefix, scopes, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    let sql = format!(
+        "INSERT INTO api_tokens (id, user_id, name, token_hash, token_prefix, scopes, expires_at, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5),
+        ph(6),
+        ph(7),
+        ph(8)
     );
     sqlx::query(&sql)
         .bind(&id)
@@ -62,7 +71,7 @@ pub async fn create(
         .bind(&now)
         .execute(pool)
         .await?;
-    let sql = crate::db::dialect::translate("SELECT * FROM api_tokens WHERE id = ?");
+    let sql = format!("SELECT * FROM api_tokens WHERE id = {}", ph(1));
     let row = sqlx::query_as::<_, ApiToken>(&sql)
         .bind(&id)
         .fetch_one(pool)
@@ -72,7 +81,7 @@ pub async fn create(
 
 /// 根据 token_hash 查找 API Token
 pub async fn find_by_hash(pool: &crate::db::Pool, token_hash: &str) -> AppResult<Option<ApiToken>> {
-    let sql = crate::db::dialect::translate("SELECT * FROM api_tokens WHERE token_hash = ?");
+    let sql = format!("SELECT * FROM api_tokens WHERE token_hash = {}", ph(1));
     let row = sqlx::query_as::<_, ApiToken>(&sql)
         .bind(token_hash)
         .fetch_optional(pool)
@@ -85,8 +94,9 @@ pub async fn list_by_user(
     pool: &crate::db::Pool,
     user_id: &str,
 ) -> AppResult<Vec<ApiTokenListItem>> {
-    let sql = crate::db::dialect::translate(
-        "SELECT id, name, token_prefix, scopes, last_used_at, expires_at, created_at FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC",
+    let sql = format!(
+        "SELECT id, name, token_prefix, scopes, last_used_at, expires_at, created_at FROM api_tokens WHERE user_id = {} ORDER BY created_at DESC",
+        ph(1)
     );
     let rows = sqlx::query_as::<_, ApiTokenListItem>(&sql)
         .bind(user_id)
@@ -97,7 +107,7 @@ pub async fn list_by_user(
 
 /// 根据 ID 查找 API Token
 pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<ApiToken>> {
-    let sql = crate::db::dialect::translate("SELECT * FROM api_tokens WHERE id = ?");
+    let sql = format!("SELECT * FROM api_tokens WHERE id = {}", ph(1));
     let row = sqlx::query_as::<_, ApiToken>(&sql)
         .bind(id)
         .fetch_optional(pool)
@@ -107,7 +117,7 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<Ap
 
 /// 根据 ID 删除 API Token
 pub async fn delete_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
-    let sql = crate::db::dialect::translate("DELETE FROM api_tokens WHERE id = ?");
+    let sql = format!("DELETE FROM api_tokens WHERE id = {}", ph(1));
     sqlx::query(&sql).bind(id).execute(pool).await?;
     Ok(())
 }
@@ -115,7 +125,11 @@ pub async fn delete_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
 /// 更新 last_used_at
 pub async fn touch_last_used(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
     let now = chrono::Utc::now().to_rfc3339();
-    let sql = crate::db::dialect::translate("UPDATE api_tokens SET last_used_at = ? WHERE id = ?");
+    let sql = format!(
+        "UPDATE api_tokens SET last_used_at = {} WHERE id = {}",
+        ph(1),
+        ph(2)
+    );
     sqlx::query(&sql).bind(&now).bind(id).execute(pool).await?;
     Ok(())
 }
@@ -135,8 +149,12 @@ mod tests {
 
     async fn insert_user(pool: &crate::db::Pool, id: &str) {
         let hash = "$argon2id$v=19$m=19456,t=2,p=1$test$test".to_string();
-        let sql = crate::db::dialect::translate(
-            "INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, 'admin')",
+        let sql = format!(
+            "INSERT INTO users (id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'admin')",
+            ph(1),
+            ph(2),
+            ph(3),
+            ph(4)
         );
         sqlx::query(&sql)
             .bind(id)

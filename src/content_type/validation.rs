@@ -270,25 +270,30 @@ async fn check_unique_fields(
         sql_builder.clear();
         if exclude_id.is_some() {
             sql_builder = format!(
-                "SELECT COUNT(*) as cnt FROM {} WHERE {} = ? AND id != ?",
-                ct.table, field.name
+                "SELECT COUNT(*) as cnt FROM {} WHERE {} = {} AND id != {}",
+                ct.table,
+                field.name,
+                crate::db::dialect::ph(1),
+                crate::db::dialect::ph(2)
             );
         } else {
             sql_builder = format!(
-                "SELECT COUNT(*) as cnt FROM {} WHERE {} = ?",
-                ct.table, field.name
+                "SELECT COUNT(*) as cnt FROM {} WHERE {} = {}",
+                ct.table,
+                field.name,
+                crate::db::dialect::ph(1)
             );
         }
-        let sql = crate::db::dialect::translate(&sql_builder);
+        let sql = &sql_builder;
 
         let row = if let Some(id) = exclude_id {
-            sqlx::query(&sql)
+            sqlx::query(sql)
                 .bind(&val_str)
                 .bind(id)
                 .fetch_one(pool)
                 .await
         } else {
-            sqlx::query(&sql).bind(&val_str).fetch_one(pool).await
+            sqlx::query(sql).bind(&val_str).fetch_one(pool).await
         }
         .map_err(|e| AppError::Internal(anyhow::anyhow!("unique check failed: {e}")))?;
 

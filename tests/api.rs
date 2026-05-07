@@ -54,7 +54,9 @@ pub(crate) fn test_config() -> AppConfig {
 pub(crate) async fn test_pool() -> raisfast::db::Pool {
     #[cfg(feature = "db-sqlite")]
     {
-        let pool = raisfast::db::Pool::connect("sqlite::memory:").await.unwrap();
+        let pool = raisfast::db::Pool::connect("sqlite::memory:")
+            .await
+            .unwrap();
         sqlx::query(raisfast::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
@@ -391,8 +393,12 @@ pub(crate) async fn register_and_login(
 pub(crate) async fn create_admin(pool: &raisfast::db::Pool) -> String {
     let hash = raisfast::services::auth::hash_password("AdminPass123!").unwrap();
     let id = uuid::Uuid::now_v7().to_string();
-    let sql = raisfast::db::dialect::translate(
-        "INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, 'admin')",
+    let sql = format!(
+        "INSERT INTO users (id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'admin')",
+        raisfast::db::dialect::ph(1),
+        raisfast::db::dialect::ph(2),
+        raisfast::db::dialect::ph(3),
+        raisfast::db::dialect::ph(4)
     );
     sqlx::query(&sql)
         .bind(&id)
@@ -408,8 +414,12 @@ pub(crate) async fn create_admin(pool: &raisfast::db::Pool) -> String {
 pub(crate) async fn create_author(pool: &raisfast::db::Pool) -> String {
     let hash = raisfast::services::auth::hash_password("AuthorPass123!").unwrap();
     let id = uuid::Uuid::now_v7().to_string();
-    let sql = raisfast::db::dialect::translate(
-        "INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, 'author')",
+    let sql = format!(
+        "INSERT INTO users (id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'author')",
+        raisfast::db::dialect::ph(1),
+        raisfast::db::dialect::ph(2),
+        raisfast::db::dialect::ph(3),
+        raisfast::db::dialect::ph(4)
     );
     sqlx::query(&sql)
         .bind(&id)

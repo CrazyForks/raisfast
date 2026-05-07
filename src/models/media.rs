@@ -7,7 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::db::tenant::tenant_filter;
+use crate::db::dialect::ph;
+use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
 
 /// 媒体文件完整数据库行模型
@@ -46,8 +47,18 @@ pub async fn create(
 
     match tenant_id {
         Some(tid) => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO media (id, tenant_id, user_id, filename, filepath, mimetype, size, width, height, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            let sql = format!(
+                "INSERT INTO media (id, tenant_id, user_id, filename, filepath, mimetype, size, width, height, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10)
             );
             sqlx::query(&sql)
                 .bind(&id)
@@ -64,8 +75,17 @@ pub async fn create(
                 .await?;
         }
         None => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO media (id, user_id, filename, filepath, mimetype, size, width, height, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            let sql = format!(
+                "INSERT INTO media (id, user_id, filename, filepath, mimetype, size, width, height, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})",
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9)
             );
             sqlx::query(&sql)
                 .bind(&id)
@@ -82,11 +102,11 @@ pub async fn create(
         }
     }
 
-    let sql_str = format!(
-        "SELECT * FROM media WHERE id = ?{}",
-        tenant_filter(tenant_id)
+    let sql = format!(
+        "SELECT * FROM media WHERE id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
     );
-    let sql = crate::db::dialect::translate(&sql_str);
     let mut q = sqlx::query_as::<_, Media>(&sql).bind(&id);
     if let Some(t) = tenant_id {
         q = q.bind(t);
@@ -107,11 +127,14 @@ pub async fn find_all(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Media>, i64)> {
     let offset = (page - 1) * page_size;
-    let sql_str = format!(
-        "SELECT * FROM media WHERE user_id = ?{} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        tenant_filter(tenant_id)
+    let base = usize::from(tenant_id.is_some()) + 1;
+    let sql = format!(
+        "SELECT * FROM media WHERE user_id = {}{} ORDER BY created_at DESC LIMIT {} OFFSET {}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2),
+        ph(base + 1),
+        ph(base + 2)
     );
-    let sql = crate::db::dialect::translate(&sql_str);
     let mut q = sqlx::query_as::<_, Media>(&sql).bind(user_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -119,12 +142,12 @@ pub async fn find_all(
     q = q.bind(page_size).bind(offset);
     let items = q.fetch_all(pool).await?;
 
-    let sql_str = format!(
-        "SELECT COUNT(*) FROM media WHERE user_id = ?{}",
-        tenant_filter(tenant_id)
+    let sql2 = format!(
+        "SELECT COUNT(*) FROM media WHERE user_id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
     );
-    let sql = crate::db::dialect::translate(&sql_str);
-    let mut q2 = sqlx::query_as::<_, (i64,)>(&sql).bind(user_id);
+    let mut q2 = sqlx::query_as::<_, (i64,)>(&sql2).bind(user_id);
     if let Some(tid) = tenant_id {
         q2 = q2.bind(tid);
     }
@@ -141,11 +164,11 @@ pub async fn find_by_id(
     id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Media>> {
-    let sql_str = format!(
-        "SELECT * FROM media WHERE id = ?{}",
-        tenant_filter(tenant_id)
+    let sql = format!(
+        "SELECT * FROM media WHERE id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
     );
-    let sql = crate::db::dialect::translate(&sql_str);
     let mut q = sqlx::query_as::<_, Media>(&sql).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -176,11 +199,12 @@ pub async fn stats(
     user_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<MediaStats> {
-    let filter = tenant_filter(tenant_id);
+    let filter = tenant_filter_ph(tenant_id, 2);
 
-    let total_sql =
-        format!("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE user_id = ?{filter}");
-    let total_sql = crate::db::dialect::translate(&total_sql);
+    let total_sql = format!(
+        "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE user_id = {}{filter}",
+        ph(1)
+    );
     let mut q = sqlx::query_as::<_, (i64, i64)>(&total_sql).bind(user_id);
     if let Some(t) = tenant_id {
         q = q.bind(t);
@@ -188,9 +212,9 @@ pub async fn stats(
     let (total_files, total_size) = q.fetch_one(pool).await?;
 
     let by_type_sql = format!(
-        "SELECT mimetype, COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE user_id = ?{filter} GROUP BY mimetype ORDER BY COUNT(*) DESC"
+        "SELECT mimetype, COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE user_id = {}{filter} GROUP BY mimetype ORDER BY COUNT(*) DESC",
+        ph(1)
     );
-    let by_type_sql = crate::db::dialect::translate(&by_type_sql);
     let mut q2 = sqlx::query_as::<_, (String, i64, i64)>(&by_type_sql).bind(user_id);
     if let Some(t) = tenant_id {
         q2 = q2.bind(t);
@@ -218,8 +242,11 @@ pub async fn stats(
 /// 仅删除数据库记录，不删除磁盘文件。
 /// 若记录不存在则返回 [`AppError::NotFound`]。
 pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
-    let sql = format!("DELETE FROM media WHERE id = ?{}", tenant_filter(tenant_id));
-    let sql = crate::db::dialect::translate(&sql);
+    let sql = format!(
+        "DELETE FROM media WHERE id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
+    );
     let mut q = sqlx::query(&sql).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);

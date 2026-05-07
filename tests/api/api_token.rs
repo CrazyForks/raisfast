@@ -182,8 +182,12 @@ async fn delete_token_non_owner_forbidden() {
 
     let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
     let reader_id = uuid::Uuid::now_v7().to_string();
-    let sql = raisfast::db::dialect::translate(
-        "INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, 'reader')",
+    let sql = format!(
+        "INSERT INTO users (id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'reader')",
+        raisfast::db::dialect::ph(1),
+        raisfast::db::dialect::ph(2),
+        raisfast::db::dialect::ph(3),
+        raisfast::db::dialect::ph(4)
     );
     sqlx::query(&sql)
         .bind(&reader_id)
@@ -208,8 +212,12 @@ async fn admin_can_delete_other_users_token() {
     let (mut app, tok, pool) = setup().await;
     let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
     let reader_id = uuid::Uuid::now_v7().to_string();
-    let sql = raisfast::db::dialect::translate(
-        "INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, 'reader')",
+    let sql = format!(
+        "INSERT INTO users (id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'reader')",
+        raisfast::db::dialect::ph(1),
+        raisfast::db::dialect::ph(2),
+        raisfast::db::dialect::ph(3),
+        raisfast::db::dialect::ph(4)
     );
     sqlx::query(&sql)
         .bind(&reader_id)
@@ -456,8 +464,12 @@ async fn each_user_sees_only_own_tokens() {
 
     let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
     let reader_id = uuid::Uuid::now_v7().to_string();
-    let sql = raisfast::db::dialect::translate(
-        "INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, 'reader')",
+    let sql = format!(
+        "INSERT INTO users (id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'reader')",
+        raisfast::db::dialect::ph(1),
+        raisfast::db::dialect::ph(2),
+        raisfast::db::dialect::ph(3),
+        raisfast::db::dialect::ph(4)
     );
     sqlx::query(&sql)
         .bind(&reader_id)

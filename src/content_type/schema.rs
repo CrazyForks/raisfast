@@ -436,6 +436,11 @@ impl ContentTypeSchema {
 
         let mut fields = Vec::new();
         for (name, value) in &toml.fields {
+            if !crate::db::dialect::is_safe_identifier(name) {
+                return Err(AppError::Internal(anyhow::anyhow!(
+                    "field name '{name}' contains invalid characters (only alphanumeric and underscore allowed)"
+                )));
+            }
             let field_toml = value.as_table().ok_or_else(|| {
                 AppError::Internal(anyhow::anyhow!("field '{name}' must be a table"))
             })?;
@@ -553,7 +558,7 @@ impl ContentTypeSchema {
             slug_field: toml.content_type.slug_field,
             builtin: toml.content_type.builtin,
             implements: toml.content_type.implements,
-            indexes: toml.indexes.unwrap_or_default(),
+            indexes: Self::validate_indexes(toml.indexes.unwrap_or_default())?,
             api: toml.api.unwrap_or_default(),
             cached_column_names: None,
             cached_protocol_column_names: None,
@@ -651,6 +656,19 @@ impl ContentTypeSchema {
             )));
         }
         Ok(name.to_string())
+    }
+
+    fn validate_indexes(indexes: Vec<IndexDef>) -> Result<Vec<IndexDef>, AppError> {
+        for idx in &indexes {
+            for field in &idx.fields {
+                if !crate::db::dialect::is_safe_identifier(field) {
+                    return Err(AppError::Internal(anyhow::anyhow!(
+                        "index field '{field}' contains invalid characters"
+                    )));
+                }
+            }
+        }
+        Ok(indexes)
     }
 
     /// 预解析 API Rule 表达式，schema 注册时调用一次
@@ -979,13 +997,30 @@ fn parse_relation_config(table: &toml::Table) -> Result<RelationConfig, AppError
         }
     };
 
+    let target = table.get("target").and_then(|v| v.as_str()).unwrap_or("");
+    if !target.is_empty() && !crate::db::dialect::is_safe_identifier(target) {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "relation target '{target}' contains invalid characters"
+        )));
+    }
+    if let Some(fk) = table.get("foreign_key").and_then(|v| v.as_str())
+        && !crate::db::dialect::is_safe_identifier(fk)
+    {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "relation foreign_key '{fk}' contains invalid characters"
+        )));
+    }
+    if let Some(through) = table.get("through").and_then(|v| v.as_str())
+        && !crate::db::dialect::is_safe_identifier(through)
+    {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "relation through '{through}' contains invalid characters"
+        )));
+    }
+
     Ok(RelationConfig {
         relation_type,
-        target: table
-            .get("target")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .into(),
+        target: target.into(),
         through: table
             .get("through")
             .and_then(|v| v.as_str())

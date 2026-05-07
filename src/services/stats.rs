@@ -25,17 +25,16 @@ impl StatsService {
     ///
     /// 返回各实体总数、content type 分布、近期活动
     pub async fn overview(&self, tenant_id: Option<&str>) -> Result<Value, AppError> {
-        let tf = crate::db::tenant::tenant_filter(tenant_id);
-        let tf_aliased = crate::db::tenant::tenant_filter_aliased("p", tenant_id);
+        let tf = crate::db::tenant::tenant_filter_ph(tenant_id, 1);
+        let tf_aliased = crate::db::tenant::tenant_filter_aliased_ph("p", tenant_id, 1);
 
-        let total_posts = count_table(&self.pool, "posts", tf_aliased.as_str(), tenant_id).await?;
-        let total_comments =
-            count_table(&self.pool, "comments", tf_aliased.as_str(), tenant_id).await?;
-        let total_users = count_table(&self.pool, "users", tf, tenant_id).await?;
-        let total_media = count_table(&self.pool, "media", tf, tenant_id).await?;
+        let total_posts = count_table(&self.pool, "posts", &tf_aliased, tenant_id).await?;
+        let total_comments = count_table(&self.pool, "comments", &tf_aliased, tenant_id).await?;
+        let total_users = count_table(&self.pool, "users", &tf, tenant_id).await?;
+        let total_media = count_table(&self.pool, "media", &tf, tenant_id).await?;
         let total_categories =
-            count_table(&self.pool, "categories", tf_aliased.as_str(), tenant_id).await?;
-        let total_tags = count_table(&self.pool, "tags", tf_aliased.as_str(), tenant_id).await?;
+            count_table(&self.pool, "categories", &tf_aliased, tenant_id).await?;
+        let total_tags = count_table(&self.pool, "tags", &tf_aliased, tenant_id).await?;
 
         let content_by_type = self.count_content_types(tenant_id).await?;
 
@@ -64,12 +63,12 @@ impl StatsService {
         table: &str,
         tenant_id: Option<&str>,
     ) -> Result<Value, AppError> {
-        let tf = crate::db::tenant::tenant_filter(tenant_id);
+        let tf = crate::db::tenant::tenant_filter_ph(tenant_id, 1);
 
         let has_status = has_column(&self.pool, table, "status").await;
         let has_tenant = crate::db::tenant::has_tenant_id(&self.pool, table).await;
 
-        let total = count_table(&self.pool, table, tf, tenant_id).await?;
+        let total = count_table(&self.pool, table, &tf, tenant_id).await?;
 
         let mut result = json!({
             "table": table,
@@ -80,9 +79,9 @@ impl StatsService {
             let status_sql = if has_tenant {
                 let tid = crate::db::tenant::resolve_tenant(tenant_id).to_string();
                 let sql = format!(
-                    "SELECT status, COUNT(*) as cnt FROM {table} WHERE tenant_id = ? GROUP BY status"
+                    "SELECT status, COUNT(*) as cnt FROM {table} WHERE tenant_id = {} GROUP BY status",
+                    crate::db::dialect::ph(1)
                 );
-                let sql = crate::db::dialect::translate(&sql);
                 let rows: Vec<(String, i64)> = sqlx::query_as::<_, (String, i64)>(&sql)
                     .bind(&tid)
                     .fetch_all(&self.pool)
@@ -91,7 +90,6 @@ impl StatsService {
                 rows
             } else {
                 let sql = format!("SELECT status, COUNT(*) as cnt FROM {table} GROUP BY status");
-                let sql = crate::db::dialect::translate(&sql);
                 let rows: Vec<(String, i64)> = sqlx::query_as::<_, (String, i64)>(&sql)
                     .fetch_all(&self.pool)
                     .await
@@ -136,8 +134,9 @@ impl StatsService {
         let sql = if has_tenant {
             format!(
                 "SELECT {date_expr} as d, COUNT(*) as cnt FROM {table} \
-                 WHERE tenant_id = ? AND created_at >= {ago} \
-                 GROUP BY d ORDER BY d"
+                 WHERE tenant_id = {} AND created_at >= {ago} \
+                 GROUP BY d ORDER BY d",
+                crate::db::dialect::ph(1)
             )
         } else {
             format!(
@@ -146,7 +145,6 @@ impl StatsService {
                  GROUP BY d ORDER BY d"
             )
         };
-        let sql = crate::db::dialect::translate(&sql);
 
         let mut q = sqlx::query_as::<_, (String, i64)>(&sql);
         if has_tenant {
@@ -180,8 +178,8 @@ impl StatsService {
         let mut result = serde_json::Map::new();
 
         for table in &tables {
-            let tf = crate::db::tenant::tenant_filter(tenant_id);
-            let count = count_table(&self.pool, table, tf, tenant_id).await?;
+            let tf = crate::db::tenant::tenant_filter_ph(tenant_id, 1);
+            let count = count_table(&self.pool, table, &tf, tenant_id).await?;
             result.insert(table.clone(), json!(count));
         }
 
@@ -204,9 +202,9 @@ impl StatsService {
         let rows = if has_tenant {
             let tid = crate::db::tenant::resolve_tenant(tenant_id).to_string();
             let sql = format!(
-                "SELECT status, COUNT(*) as cnt FROM {table} WHERE tenant_id = ? GROUP BY status"
+                "SELECT status, COUNT(*) as cnt FROM {table} WHERE tenant_id = {} GROUP BY status",
+                crate::db::dialect::ph(1)
             );
-            let sql = crate::db::dialect::translate(&sql);
             sqlx::query_as::<_, (String, i64)>(&sql)
                 .bind(&tid)
                 .fetch_all(&self.pool)
@@ -214,7 +212,6 @@ impl StatsService {
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
         } else {
             let sql = format!("SELECT status, COUNT(*) as cnt FROM {table} GROUP BY status");
-            let sql = crate::db::dialect::translate(&sql);
             sqlx::query_as::<_, (String, i64)>(&sql)
                 .fetch_all(&self.pool)
                 .await
@@ -236,14 +233,13 @@ impl StatsService {
     ) -> Result<Vec<Value>, AppError> {
         let mut activities = Vec::new();
 
-        let tf_aliased = crate::db::tenant::tenant_filter_aliased("p", tenant_id);
+        let tf_aliased = crate::db::tenant::tenant_filter_aliased_ph("p", tenant_id, 1);
         let limit_clause = format!("LIMIT {limit}");
 
         let post_sql = format!(
             "SELECT p.title, p.slug, p.created_at FROM posts p WHERE 1=1{tf_aliased} \
              ORDER BY p.created_at DESC {limit_clause}"
         );
-        let post_sql = crate::db::dialect::translate(&post_sql);
 
         let mut post_q = sqlx::query_as::<_, (Option<String>, String, String)>(&post_sql);
         if let Some(tid) = tenant_id {
@@ -267,7 +263,6 @@ impl StatsService {
             "SELECT c.content, c.created_at FROM comments c WHERE 1=1{tf_aliased} \
              ORDER BY c.created_at DESC {limit_clause}"
         );
-        let comment_sql = crate::db::dialect::translate(&comment_sql);
 
         let mut comment_q = sqlx::query_as::<_, (Option<String>, String)>(&comment_sql);
         if let Some(tid) = tenant_id {
@@ -304,8 +299,11 @@ async fn count_table(
     tenant_filter: &str,
     tenant_id: Option<&str>,
 ) -> Result<i64, AppError> {
+    assert!(
+        crate::db::dialect::is_safe_identifier(table),
+        "unsafe table name: {table}"
+    );
     let sql = format!("SELECT COUNT(*) FROM {table} WHERE 1=1{tenant_filter}");
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query_scalar::<_, i64>(&sql);
     if tenant_id.is_some() {
         q = q.bind(crate::db::tenant::resolve_tenant(tenant_id));

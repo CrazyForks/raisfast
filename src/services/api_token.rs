@@ -238,8 +238,13 @@ mod tests {
 
     async fn insert_user(pool: &crate::db::Pool, id: &str, role: &str) {
         let hash = "$argon2id$v=19$m=19456,t=2,p=1$test$test".to_string();
-        let sql = crate::db::dialect::translate(
-            "INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, ?)",
+        let sql = format!(
+            "INSERT INTO users (id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, {})",
+            crate::db::dialect::ph(1),
+            crate::db::dialect::ph(2),
+            crate::db::dialect::ph(3),
+            crate::db::dialect::ph(4),
+            crate::db::dialect::ph(5)
         );
         sqlx::query(&sql)
             .bind(id)

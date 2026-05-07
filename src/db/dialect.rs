@@ -1,48 +1,16 @@
 //! SQL 方言适配层。
 //!
 //! 提供：
-//! - [`translate`]：将 `?` 占位符翻译为 `PostgreSQL` 的 `$1, $2, ...` 格式
-//! - [`now_fn`]：返回当前数据库的时间函数名（`datetime('now')` / `NOW()`）
-//! - [`ago_expr`]：返回 `N 天前` 的 SQL 表达式
-//! - [`date_trunc_day`]：返回按天截断的 SQL 表达式
-//!
-//! `SQLite` 和 `MySQL` 使用 `?` 占位符，无需翻译；
-//! `PostgreSQL` 使用 `$N` 位置参数，需要运行时转换。
+//! - [`ph`]：生成当前数据库的占位符（`?` 或 `$N`）
+//! - [`is_safe_identifier`]：校验标识符是否只含安全字符
+//! - [`now_fn`] / [`ago_expr`] / [`date_trunc_day`]：数据库方言函数
 
-use std::borrow::Cow;
-
-/// 将 SQL 中的 `?` 占位符翻译为目标数据库格式。
+/// 检查标识符是否只含安全字符（字母、数字、下划线），可用于表名、列名。
 ///
-/// - `SQLite` / MySQL：原样返回
-/// - `PostgreSQL`：`?` → `$1`, `$2`, ...
+/// 拒绝空字符串和含空格/特殊字符的输入，防止 SQL 注入。
 #[must_use]
-pub fn translate(sql: &str) -> Cow<'_, str> {
-    #[cfg(not(feature = "db-postgres"))]
-    {
-        let _ = sql;
-    }
-
-    #[cfg(feature = "db-postgres")]
-    {
-        if !sql.contains('?') {
-            return Cow::Borrowed(sql);
-        }
-        let mut result = String::with_capacity(sql.len() + 16);
-        let mut n: usize = 0;
-        for ch in sql.chars() {
-            if ch == '?' {
-                n += 1;
-                use std::fmt::Write;
-                write!(result, "${n}").unwrap();
-            } else {
-                result.push(ch);
-            }
-        }
-        return Cow::Owned(result);
-    }
-
-    #[cfg(not(feature = "db-postgres"))]
-    Cow::Borrowed(sql)
+pub fn is_safe_identifier(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// 返回当前数据库获取当前时间的 SQL 函数。
@@ -65,8 +33,12 @@ pub fn now_fn() -> &'static str {
 ///
 /// - `SQLite` / MySQL：`?`
 /// - PostgreSQL：`$N`
+///
+/// ```ignore
+/// let sql = format!("SELECT * FROM t WHERE id = {} AND name = {}", ph(1), ph(2));
+/// ```
 #[must_use]
-pub fn translate_placeholder(idx: usize) -> String {
+pub fn ph(idx: usize) -> String {
     #[cfg(feature = "db-postgres")]
     {
         format!("${idx}")
@@ -188,25 +160,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn translate_no_placeholders() {
-        assert_eq!(translate("SELECT 1"), "SELECT 1");
+    fn safe_identifier_accepts_valid() {
+        assert!(is_safe_identifier("users"));
+        assert!(is_safe_identifier("created_at"));
+        assert!(is_safe_identifier("_meta"));
+        assert!(is_safe_identifier("col1"));
     }
 
     #[test]
-    #[cfg(not(feature = "db-postgres"))]
-    fn translate_keeps_question_marks() {
-        assert_eq!(
-            translate("SELECT * FROM users WHERE id = ?"),
-            "SELECT * FROM users WHERE id = ?"
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "db-postgres")]
-    fn translate_converts_to_positional() {
-        assert_eq!(
-            translate("SELECT * FROM users WHERE id = ? AND name = ?"),
-            "SELECT * FROM users WHERE id = $1 AND name = $2"
-        );
+    fn safe_identifier_rejects_invalid() {
+        assert!(!is_safe_identifier(""));
+        assert!(!is_safe_identifier("DROP TABLE"));
+        assert!(!is_safe_identifier("id; DROP TABLE users--"));
+        assert!(!is_safe_identifier("col name"));
+        assert!(!is_safe_identifier("a'b"));
+        assert!(!is_safe_identifier("1;DROP"));
     }
 }

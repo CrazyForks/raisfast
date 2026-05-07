@@ -40,12 +40,12 @@ impl Host for Arc<HostContext> {
         (**self).get_post(&slug)
     }
 
-    fn db_query(&mut self, sql: String, params: Option<String>) -> String {
-        (**self).db_query(&sql, params.as_deref())
+    fn db_query(&mut self, sql: String, params: String) -> String {
+        (**self).db_query(&sql, &params)
     }
 
-    fn db_execute(&mut self, sql: String, params: Option<String>) -> String {
-        (**self).db_execute(&sql, params.as_deref())
+    fn db_execute(&mut self, sql: String, params: String) -> String {
+        (**self).db_execute(&sql, &params)
     }
 
     fn db_begin(&mut self) -> String {

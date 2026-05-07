@@ -2,8 +2,11 @@
 // 由本文件生成 sdk.d.ts，分发到各插件目录
 // Host 函数签名必须与 src/plugins/js_host.rs register_host_functions() 保持一致
 export const SDK_VERSION = "1.0.0";
+export function dbPh(idx) {
+    return RaisFastHost.dbPh(idx);
+}
 export function dbQuery(sql, params) {
-    const result = RaisFastHost.dbQuery(sql, params ? JSON.stringify(params) : null);
+    const result = RaisFastHost.dbQuery(sql, JSON.stringify(params ?? []));
     if (!result)
         throw new Error("query returned no result");
     if (result.startsWith("error:"))
@@ -11,7 +14,7 @@ export function dbQuery(sql, params) {
     return JSON.parse(result);
 }
 export function dbExec(sql, params) {
-    const result = RaisFastHost.dbExecute(sql, params ? JSON.stringify(params) : null);
+    const result = RaisFastHost.dbExecute(sql, JSON.stringify(params ?? []));
     return JSON.parse(result);
 }
 export function dbBegin() {

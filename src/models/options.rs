@@ -92,8 +92,8 @@ impl<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> for OptionRow {
 
 /// 查询所有 autoload 的配置（启动时预加载）
 pub async fn find_autoload(pool: &crate::db::Pool) -> AppResult<Vec<OptionRow>> {
-    let sql = crate::db::dialect::translate("SELECT * FROM options WHERE autoload = 1");
-    let rows = sqlx::query_as::<_, OptionRow>(&sql).fetch_all(pool).await?;
+    let sql = "SELECT * FROM options WHERE autoload = 1";
+    let rows = sqlx::query_as::<_, OptionRow>(sql).fetch_all(pool).await?;
     Ok(rows)
 }
 
@@ -105,8 +105,10 @@ pub async fn find_by_key(
 ) -> AppResult<Option<OptionRow>> {
     match tenant_id {
         Some(tid) => {
-            let sql = crate::db::dialect::translate(
-                "SELECT * FROM options WHERE tenant_id = ? AND key = ?",
+            let sql = format!(
+                "SELECT * FROM options WHERE tenant_id = {} AND key = {}",
+                crate::db::dialect::ph(1),
+                crate::db::dialect::ph(2)
             );
             let row = sqlx::query_as::<_, OptionRow>(&sql)
                 .bind(tid)
@@ -116,7 +118,10 @@ pub async fn find_by_key(
             Ok(row)
         }
         None => {
-            let sql = crate::db::dialect::translate("SELECT * FROM options WHERE key = ?");
+            let sql = format!(
+                "SELECT * FROM options WHERE key = {}",
+                crate::db::dialect::ph(1)
+            );
             let row = sqlx::query_as::<_, OptionRow>(&sql)
                 .bind(key)
                 .fetch_optional(pool)
@@ -133,8 +138,9 @@ pub async fn find_all(
 ) -> AppResult<Vec<OptionRow>> {
     match tenant_id {
         Some(tid) => {
-            let sql = crate::db::dialect::translate(
-                "SELECT * FROM options WHERE tenant_id = ? ORDER BY sort_order, key",
+            let sql = format!(
+                "SELECT * FROM options WHERE tenant_id = {} ORDER BY sort_order, key",
+                crate::db::dialect::ph(1)
             );
             let rows = sqlx::query_as::<_, OptionRow>(&sql)
                 .bind(tid)
@@ -143,9 +149,8 @@ pub async fn find_all(
             Ok(rows)
         }
         None => {
-            let sql =
-                crate::db::dialect::translate("SELECT * FROM options ORDER BY sort_order, key");
-            let rows = sqlx::query_as::<_, OptionRow>(&sql).fetch_all(pool).await?;
+            let sql = "SELECT * FROM options ORDER BY sort_order, key";
+            let rows = sqlx::query_as::<_, OptionRow>(sql).fetch_all(pool).await?;
             Ok(rows)
         }
     }
@@ -161,8 +166,12 @@ pub async fn upsert_value(
 ) -> AppResult<()> {
     match tenant_id {
         Some(tid) => {
-            let sql = crate::db::dialect::translate(
-                "UPDATE options SET value = ?, updated_at = ? WHERE tenant_id = ? AND key = ?",
+            let sql = format!(
+                "UPDATE options SET value = {}, updated_at = {} WHERE tenant_id = {} AND key = {}",
+                crate::db::dialect::ph(1),
+                crate::db::dialect::ph(2),
+                crate::db::dialect::ph(3),
+                crate::db::dialect::ph(4)
             );
             sqlx::query(&sql)
                 .bind(value)
@@ -173,8 +182,11 @@ pub async fn upsert_value(
                 .await?;
         }
         None => {
-            let sql = crate::db::dialect::translate(
-                "UPDATE options SET value = ?, updated_at = ? WHERE key = ?",
+            let sql = format!(
+                "UPDATE options SET value = {}, updated_at = {} WHERE key = {}",
+                crate::db::dialect::ph(1),
+                crate::db::dialect::ph(2),
+                crate::db::dialect::ph(3)
             );
             sqlx::query(&sql)
                 .bind(value)
@@ -195,13 +207,18 @@ pub async fn delete_by_key(
 ) -> AppResult<()> {
     match tenant_id {
         Some(tid) => {
-            let sql = crate::db::dialect::translate(
-                "DELETE FROM options WHERE tenant_id = ? AND key = ?",
+            let sql = format!(
+                "DELETE FROM options WHERE tenant_id = {} AND key = {}",
+                crate::db::dialect::ph(1),
+                crate::db::dialect::ph(2)
             );
             sqlx::query(&sql).bind(tid).bind(key).execute(pool).await?;
         }
         None => {
-            let sql = crate::db::dialect::translate("DELETE FROM options WHERE key = ?");
+            let sql = format!(
+                "DELETE FROM options WHERE key = {}",
+                crate::db::dialect::ph(1)
+            );
             sqlx::query(&sql).bind(key).execute(pool).await?;
         }
     }

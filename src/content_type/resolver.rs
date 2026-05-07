@@ -107,12 +107,13 @@ async fn resolve_many_to_one_batch(
         deduped
     };
 
-    let placeholders: Vec<String> = (1..=deduped_ids.len()).map(|i| format!("?{i}")).collect();
+    let placeholders: Vec<String> = (1..=deduped_ids.len())
+        .map(crate::db::dialect::ph)
+        .collect();
     let sql = format!(
         "SELECT {select_cols} FROM {target_table} WHERE id IN ({})",
         placeholders.join(", ")
     );
-    let sql = crate::db::dialect::translate(&sql);
 
     let mut q = sqlx::query(&sql);
     for id in &deduped_ids {
@@ -188,12 +189,13 @@ async fn resolve_one_to_many_batch(
     let columns = fetch_column_names(pool, target_table).await;
     let select_cols = columns.join(", ");
 
-    let placeholders: Vec<String> = (1..=deduped_ids.len()).map(|i| format!("?{i}")).collect();
+    let placeholders: Vec<String> = (1..=deduped_ids.len())
+        .map(crate::db::dialect::ph)
+        .collect();
     let sql = format!(
         "SELECT {select_cols}, {fk_col} as __fk FROM {target_table} WHERE {fk_col} IN ({})",
         placeholders.join(", ")
     );
-    let sql = crate::db::dialect::translate(&sql);
 
     let mut q = sqlx::query(&sql);
     for id in &deduped_ids {
@@ -265,7 +267,9 @@ async fn resolve_many_to_many_batch(
     let columns = fetch_column_names(pool, target_table).await;
     let select_cols = columns.join(", ");
 
-    let placeholders: Vec<String> = (1..=deduped_ids.len()).map(|i| format!("?{i}")).collect();
+    let placeholders: Vec<String> = (1..=deduped_ids.len())
+        .map(crate::db::dialect::ph)
+        .collect();
     let sql = format!(
         "SELECT {select_cols}, {through}.{source_col} as __source_id \
          FROM {target_table} \
@@ -273,7 +277,6 @@ async fn resolve_many_to_many_batch(
          WHERE {through}.{source_col} IN ({})",
         placeholders.join(", ")
     );
-    let sql = crate::db::dialect::translate(&sql);
 
     let mut q = sqlx::query(&sql);
     for id in &deduped_ids {
@@ -317,7 +320,7 @@ async fn fetch_column_names(pool: &Pool, table: &str) -> Vec<String> {
         }
     }
 
-    if !is_safe_table_name(table) {
+    if !crate::db::dialect::is_safe_identifier(table) {
         tracing::warn!(table, "rejected unsafe table name in fetch_column_names");
         return vec!["id".into()];
     }
@@ -339,11 +342,6 @@ async fn fetch_column_names(pool: &Pool, table: &str) -> Vec<String> {
     }
 
     cols
-}
-
-/// 校验表名只含安全字符（字母、数字、下划线），防止 SQL 注入。
-fn is_safe_table_name(name: &str) -> bool {
-    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 #[cfg(test)]

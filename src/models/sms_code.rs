@@ -50,8 +50,15 @@ pub async fn create(
     let (id, now) = id::new_id_and_timestamp();
     let expires_at = (Utc::now() + chrono::Duration::seconds(expires_in_secs as i64)).to_rfc3339();
 
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO sms_codes (id, phone, code, purpose, expires_at, ip_address, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    let sql = format!(
+        "INSERT INTO sms_codes (id, phone, code, purpose, expires_at, ip_address, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3),
+        crate::db::dialect::ph(4),
+        crate::db::dialect::ph(5),
+        crate::db::dialect::ph(6),
+        crate::db::dialect::ph(7),
     );
     sqlx::query(&sql)
         .bind(&id)
@@ -71,7 +78,10 @@ pub async fn create(
 
 /// 根据 ID 查找验证码
 pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<SmsCode>> {
-    let sql = crate::db::dialect::translate("SELECT * FROM sms_codes WHERE id = ?");
+    let sql = format!(
+        "SELECT * FROM sms_codes WHERE id = {}",
+        crate::db::dialect::ph(1)
+    );
     let row = sqlx::query_as::<_, SmsCode>(&sql)
         .bind(id)
         .fetch_optional(pool)
@@ -85,8 +95,10 @@ pub async fn find_latest_unverified(
     phone: &str,
     purpose: &str,
 ) -> AppResult<Option<SmsCode>> {
-    let sql = crate::db::dialect::translate(
-        "SELECT * FROM sms_codes WHERE phone = ? AND purpose = ? AND verified_at IS NULL ORDER BY created_at DESC LIMIT 1",
+    let sql = format!(
+        "SELECT * FROM sms_codes WHERE phone = {} AND purpose = {} AND verified_at IS NULL ORDER BY created_at DESC LIMIT 1",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
     );
     let row = sqlx::query_as::<_, SmsCode>(&sql)
         .bind(phone)
@@ -104,8 +116,11 @@ pub async fn is_rate_limited(
     within_secs: u64,
 ) -> AppResult<bool> {
     let cutoff = (Utc::now() - chrono::Duration::seconds(within_secs as i64)).to_rfc3339();
-    let sql = crate::db::dialect::translate(
-        "SELECT COUNT(*) as cnt FROM sms_codes WHERE phone = ? AND purpose = ? AND created_at > ?",
+    let sql = format!(
+        "SELECT COUNT(*) as cnt FROM sms_codes WHERE phone = {} AND purpose = {} AND created_at > {}",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3),
     );
     let row: (i64,) = sqlx::query_as(&sql)
         .bind(phone)
@@ -143,15 +158,20 @@ pub async fn verify_code(
     }
 
     if sms.code != input_code {
-        let sql = crate::db::dialect::translate(
-            "UPDATE sms_codes SET attempts = attempts + 1 WHERE id = ?",
+        let sql = format!(
+            "UPDATE sms_codes SET attempts = attempts + 1 WHERE id = {}",
+            crate::db::dialect::ph(1),
         );
         sqlx::query(&sql).bind(id).execute(pool).await?;
         return Ok(VerifyResult::WrongCode);
     }
 
     let now = Utc::now().to_rfc3339();
-    let sql = crate::db::dialect::translate("UPDATE sms_codes SET verified_at = ? WHERE id = ?");
+    let sql = format!(
+        "UPDATE sms_codes SET verified_at = {} WHERE id = {}",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+    );
     sqlx::query(&sql).bind(&now).bind(id).execute(pool).await?;
 
     Ok(VerifyResult::Verified)
@@ -170,7 +190,10 @@ pub enum VerifyResult {
 /// 清理过期的验证码记录
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
     let now = Utc::now().to_rfc3339();
-    let sql = crate::db::dialect::translate("DELETE FROM sms_codes WHERE expires_at < ?");
+    let sql = format!(
+        "DELETE FROM sms_codes WHERE expires_at < {}",
+        crate::db::dialect::ph(1)
+    );
     let result = sqlx::query(&sql).bind(now).execute(pool).await?;
     Ok(result.rows_affected())
 }

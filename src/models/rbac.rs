@@ -46,8 +46,9 @@ pub async fn list_roles(pool: &crate::db::Pool) -> AppResult<Vec<Role>> {
 
 /// 根据 ID 查找角色
 pub async fn find_role_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<Role>> {
-    let sql = crate::db::dialect::translate(
-        "SELECT id, name, description, is_system, created_at, updated_at FROM roles WHERE id = ?",
+    let sql = format!(
+        "SELECT id, name, description, is_system, created_at, updated_at FROM roles WHERE id = {}",
+        crate::db::dialect::ph(1)
     );
     let role = sqlx::query_as::<_, Role>(&sql)
         .bind(id)
@@ -58,7 +59,10 @@ pub async fn find_role_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Opti
 
 /// 根据角色名查找角色 ID
 pub async fn find_role_id_by_name(pool: &crate::db::Pool, name: &str) -> AppResult<Option<String>> {
-    let sql = crate::db::dialect::translate("SELECT id FROM roles WHERE name = ?");
+    let sql = format!(
+        "SELECT id FROM roles WHERE name = {}",
+        crate::db::dialect::ph(1)
+    );
     let row = sqlx::query_as::<_, (String,)>(&sql)
         .bind(name)
         .fetch_optional(pool)
@@ -74,8 +78,13 @@ pub async fn create_role(
     description: Option<&str>,
     created_at: &str,
 ) -> AppResult<Role> {
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO roles (id, name, description, is_system, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)",
+    let sql = format!(
+        "INSERT INTO roles (id, name, description, is_system, created_at, updated_at) VALUES ({}, {}, {}, 0, {}, {})",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3),
+        crate::db::dialect::ph(4),
+        crate::db::dialect::ph(5)
     );
     sqlx::query(&sql)
         .bind(id)
@@ -101,16 +110,23 @@ pub async fn update_role(
     updated_at: &str,
 ) -> AppResult<Role> {
     let mut sets = Vec::new();
+    let mut idx = 1;
     if name.is_some() {
-        sets.push("name = ?");
+        sets.push(format!("name = {}", crate::db::dialect::ph(idx)));
+        idx += 1;
     }
     if description.is_some() {
-        sets.push("description = ?");
+        sets.push(format!("description = {}", crate::db::dialect::ph(idx)));
+        idx += 1;
     }
-    sets.push("updated_at = ?");
+    sets.push(format!("updated_at = {}", crate::db::dialect::ph(idx)));
+    idx += 1;
 
-    let sql = format!("UPDATE roles SET {} WHERE id = ?", sets.join(", "));
-    let sql = crate::db::dialect::translate(&sql);
+    let sql = format!(
+        "UPDATE roles SET {} WHERE id = {}",
+        sets.join(", "),
+        crate::db::dialect::ph(idx)
+    );
     let mut q = sqlx::query(sql.as_ref());
     if let Some(n) = name {
         q = q.bind(n);
@@ -128,7 +144,7 @@ pub async fn update_role(
 
 /// 删除角色
 pub async fn delete_role(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
-    let sql = crate::db::dialect::translate("DELETE FROM roles WHERE id = ?");
+    let sql = format!("DELETE FROM roles WHERE id = {}", crate::db::dialect::ph(1));
     sqlx::query(&sql).bind(id).execute(pool).await?;
     Ok(())
 }
@@ -138,8 +154,9 @@ pub async fn find_permissions_by_role_id(
     pool: &crate::db::Pool,
     role_id: &str,
 ) -> AppResult<Vec<Permission>> {
-    let sql = crate::db::dialect::translate(
-        "SELECT id, role_id, action, subject, fields, conditions, created_at FROM permissions WHERE role_id = ? ORDER BY action",
+    let sql = format!(
+        "SELECT id, role_id, action, subject, fields, conditions, created_at FROM permissions WHERE role_id = {} ORDER BY action",
+        crate::db::dialect::ph(1)
     );
     let perms = sqlx::query_as::<_, Permission>(&sql)
         .bind(role_id)
@@ -150,7 +167,10 @@ pub async fn find_permissions_by_role_id(
 
 /// 删除角色的所有权限
 pub async fn delete_permissions_by_role_id(pool: &crate::db::Pool, role_id: &str) -> AppResult<()> {
-    let sql = crate::db::dialect::translate("DELETE FROM permissions WHERE role_id = ?");
+    let sql = format!(
+        "DELETE FROM permissions WHERE role_id = {}",
+        crate::db::dialect::ph(1)
+    );
     sqlx::query(&sql).bind(role_id).execute(pool).await?;
     Ok(())
 }
@@ -167,8 +187,15 @@ pub async fn insert_permission(
     conditions: Option<&str>,
     created_at: &str,
 ) -> AppResult<()> {
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO permissions (id, role_id, action, subject, fields, conditions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    let sql = format!(
+        "INSERT INTO permissions (id, role_id, action, subject, fields, conditions, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3),
+        crate::db::dialect::ph(4),
+        crate::db::dialect::ph(5),
+        crate::db::dialect::ph(6),
+        crate::db::dialect::ph(7)
     );
     sqlx::query(&sql)
         .bind(id)

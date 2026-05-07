@@ -32,7 +32,10 @@ pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Tenant>> {
 
 /// 根据 ID 查找租户
 pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<Tenant>> {
-    let sql = crate::db::dialect::translate("SELECT * FROM tenants WHERE id = ?");
+    let sql = format!(
+        "SELECT * FROM tenants WHERE id = {}",
+        crate::db::dialect::ph(1)
+    );
     let tenant = sqlx::query_as::<_, Tenant>(&sql)
         .bind(id)
         .fetch_optional(pool)
@@ -42,7 +45,10 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<Te
 
 /// 根据域名查找租户
 pub async fn find_by_domain(pool: &crate::db::Pool, domain: &str) -> AppResult<Option<Tenant>> {
-    let sql = crate::db::dialect::translate("SELECT * FROM tenants WHERE domain = ?");
+    let sql = format!(
+        "SELECT * FROM tenants WHERE domain = {}",
+        crate::db::dialect::ph(1)
+    );
     let tenant = sqlx::query_as::<_, Tenant>(&sql)
         .bind(domain)
         .fetch_optional(pool)
@@ -59,8 +65,14 @@ pub async fn create(
     config: &str,
     created_at: &str,
 ) -> AppResult<Tenant> {
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO tenants (id, name, domain, config, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?)",
+    let sql = format!(
+        "INSERT INTO tenants (id, name, domain, config, status, created_at, updated_at) VALUES ({}, {}, {}, {}, 'active', {}, {})",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3),
+        crate::db::dialect::ph(4),
+        crate::db::dialect::ph(5),
+        crate::db::dialect::ph(6),
     );
     sqlx::query(&sql)
         .bind(id)
@@ -89,23 +101,32 @@ pub async fn update(
     updated_at: &str,
 ) -> AppResult<Tenant> {
     let mut sets = Vec::new();
+    let mut idx = 1usize;
     if name.is_some() {
-        sets.push("name = ?");
+        sets.push(format!("name = {}", crate::db::dialect::ph(idx)));
+        idx += 1;
     }
     if domain.is_some() {
-        sets.push("domain = ?");
+        sets.push(format!("domain = {}", crate::db::dialect::ph(idx)));
+        idx += 1;
     }
     if config.is_some() {
-        sets.push("config = ?");
+        sets.push(format!("config = {}", crate::db::dialect::ph(idx)));
+        idx += 1;
     }
     if status.is_some() {
-        sets.push("status = ?");
+        sets.push(format!("status = {}", crate::db::dialect::ph(idx)));
+        idx += 1;
     }
-    sets.push("updated_at = ?");
+    sets.push(format!("updated_at = {}", crate::db::dialect::ph(idx)));
+    idx += 1;
 
-    let sql = format!("UPDATE tenants SET {} WHERE id = ?", sets.join(", "));
-    let sql = crate::db::dialect::translate(&sql);
-    let mut q = sqlx::query(sql.as_ref());
+    let sql = format!(
+        "UPDATE tenants SET {} WHERE id = {}",
+        sets.join(", "),
+        crate::db::dialect::ph(idx),
+    );
+    let mut q = sqlx::query(&sql);
     if let Some(n) = name {
         q = q.bind(n);
     }
@@ -128,7 +149,10 @@ pub async fn update(
 
 /// 删除租户
 pub async fn delete(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
-    let sql = crate::db::dialect::translate("DELETE FROM tenants WHERE id = ?");
+    let sql = format!(
+        "DELETE FROM tenants WHERE id = {}",
+        crate::db::dialect::ph(1)
+    );
     sqlx::query(&sql).bind(id).execute(pool).await?;
     Ok(())
 }

@@ -38,8 +38,14 @@ pub async fn create(
 
     let expires_at = (Utc::now() + chrono::Duration::seconds(expires_in_secs)).to_rfc3339();
 
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO email_verification_tokens (id, user_id, token, email, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    let sql = format!(
+        "INSERT INTO email_verification_tokens (id, user_id, token, email, expires_at, created_at) VALUES ({}, {}, {}, {}, {}, {})",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3),
+        crate::db::dialect::ph(4),
+        crate::db::dialect::ph(5),
+        crate::db::dialect::ph(6),
     );
     sqlx::query(&sql)
         .bind(&id)
@@ -63,8 +69,9 @@ pub async fn find_by_token(
     pool: &crate::db::Pool,
     token: &str,
 ) -> AppResult<Option<EmailVerificationToken>> {
-    let sql = crate::db::dialect::translate(
-        "SELECT * FROM email_verification_tokens WHERE token = ? AND verified_at IS NULL",
+    let sql = format!(
+        "SELECT * FROM email_verification_tokens WHERE token = {} AND verified_at IS NULL",
+        crate::db::dialect::ph(1),
     );
     let row = sqlx::query_as::<_, EmailVerificationToken>(&sql)
         .bind(token)
@@ -76,8 +83,10 @@ pub async fn find_by_token(
 /// 标记令牌为已验证
 pub async fn mark_verified(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    let sql = crate::db::dialect::translate(
-        "UPDATE email_verification_tokens SET verified_at = ? WHERE id = ?",
+    let sql = format!(
+        "UPDATE email_verification_tokens SET verified_at = {} WHERE id = {}",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
     );
     sqlx::query(&sql).bind(now).bind(id).execute(pool).await?;
     Ok(())
@@ -85,8 +94,9 @@ pub async fn mark_verified(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
 
 /// 删除用户所有未使用的验证令牌
 pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: &str) -> AppResult<()> {
-    let sql = crate::db::dialect::translate(
-        "DELETE FROM email_verification_tokens WHERE user_id = ? AND verified_at IS NULL",
+    let sql = format!(
+        "DELETE FROM email_verification_tokens WHERE user_id = {} AND verified_at IS NULL",
+        crate::db::dialect::ph(1),
     );
     sqlx::query(&sql).bind(user_id).execute(pool).await?;
     Ok(())
@@ -95,8 +105,9 @@ pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: &str) -> App
 /// 清理过期的验证令牌
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
     let now = Utc::now().to_rfc3339();
-    let sql = crate::db::dialect::translate(
-        "DELETE FROM email_verification_tokens WHERE expires_at < ? AND verified_at IS NULL",
+    let sql = format!(
+        "DELETE FROM email_verification_tokens WHERE expires_at < {} AND verified_at IS NULL",
+        crate::db::dialect::ph(1),
     );
     let result = sqlx::query(&sql).bind(now).execute(pool).await?;
     Ok(result.rows_affected())

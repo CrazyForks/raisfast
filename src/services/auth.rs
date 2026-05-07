@@ -330,15 +330,21 @@ pub async fn refresh(
 
     let mut tx = pool.begin().await?;
 
-    sqlx::query(&crate::db::dialect::translate(
-        "DELETE FROM refresh_tokens WHERE token = ?",
+    sqlx::query(&format!(
+        "DELETE FROM refresh_tokens WHERE token = {}",
+        crate::db::dialect::ph(1)
     ))
     .bind(refresh_token_str)
     .execute(&mut *tx)
     .await?;
 
-    sqlx::query(&crate::db::dialect::translate(
-        "INSERT INTO refresh_tokens (id, user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
+    sqlx::query(&format!(
+        "INSERT INTO refresh_tokens (id, user_id, token, expires_at, created_at) VALUES ({}, {}, {}, {}, {})",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3),
+        crate::db::dialect::ph(4),
+        crate::db::dialect::ph(5)
     ))
     .bind(&new_id)
     .bind(&user.id)
@@ -427,8 +433,9 @@ pub async fn change_password(
         .update_password(user_id, &new_hash, tenant_id)
         .await?;
 
-    sqlx::query(&crate::db::dialect::translate(
-        "DELETE FROM refresh_tokens WHERE user_id = ?",
+    sqlx::query(&format!(
+        "DELETE FROM refresh_tokens WHERE user_id = {}",
+        crate::db::dialect::ph(1)
     ))
     .bind(user_id)
     .execute(pool)
@@ -519,8 +526,11 @@ pub async fn reset_password(
 
     let mut tx = pool.begin().await?;
 
-    let sql = crate::db::dialect::translate(
-        "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+    let sql = format!(
+        "UPDATE users SET password_hash = {}, updated_at = {} WHERE id = {}",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3)
     );
     let now = Utc::now().to_rfc3339();
     sqlx::query(&sql)
@@ -530,15 +540,22 @@ pub async fn reset_password(
         .execute(&mut *tx)
         .await?;
 
-    let sql =
-        crate::db::dialect::translate("UPDATE password_reset_tokens SET used_at = ? WHERE id = ?");
+    let sql = format!(
+        "UPDATE password_reset_tokens SET used_at = {} WHERE id = {}",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2)
+    );
     sqlx::query(&sql)
         .bind(&now)
         .bind(&reset_token.id)
         .execute(&mut *tx)
         .await?;
 
-    sqlx::query("DELETE FROM refresh_tokens WHERE user_id = ?")
+    let del_sql = format!(
+        "DELETE FROM refresh_tokens WHERE user_id = {}",
+        crate::db::dialect::ph(1)
+    );
+    sqlx::query(&del_sql)
         .bind(&reset_token.user_id)
         .execute(&mut *tx)
         .await?;
@@ -869,8 +886,10 @@ pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> 
     let mut tx = pool.begin().await?;
 
     let now = Utc::now().to_rfc3339();
-    let sql = crate::db::dialect::translate(
-        "UPDATE email_verification_tokens SET verified_at = ? WHERE id = ?",
+    let sql = format!(
+        "UPDATE email_verification_tokens SET verified_at = {} WHERE id = {}",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2)
     );
     sqlx::query(&sql)
         .bind(&now)
@@ -878,8 +897,10 @@ pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> 
         .execute(&mut *tx)
         .await?;
 
-    let sql = crate::db::dialect::translate(
-        "UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?",
+    let sql = format!(
+        "UPDATE users SET email_verified = 1, updated_at = {} WHERE id = {}",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2)
     );
     sqlx::query(&sql)
         .bind(&now)

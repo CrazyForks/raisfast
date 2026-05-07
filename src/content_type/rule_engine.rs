@@ -578,17 +578,17 @@ impl<'a> SqlContext<'a> {
             Operand::StringLit(s) => {
                 let idx = self.next_param();
                 self.params.push(s.clone());
-                crate::db::dialect::translate_placeholder(idx)
+                crate::db::dialect::ph(idx)
             }
             Operand::NumberLit(n) => {
                 let idx = self.next_param();
                 self.params.push(n.to_string());
-                crate::db::dialect::translate_placeholder(idx)
+                crate::db::dialect::ph(idx)
             }
             Operand::BoolLit(b) => {
                 let idx = self.next_param();
                 self.params.push(if *b { "1" } else { "0" }.to_string());
-                crate::db::dialect::translate_placeholder(idx)
+                crate::db::dialect::ph(idx)
             }
             Operand::Null => "NULL".to_string(),
             Operand::Length(inner) => {
@@ -614,17 +614,18 @@ pub fn compile_rule_sql(
         return None;
     }
 
-    let (mut sql, params) = rule.to_sql(offset, config);
+    let (mut sql, mut params) = rule.to_sql(offset, config);
 
     if auth.is_authenticated() {
         if expr_has_auth_id(&rule.expr) {
-            sql = sql.replace(
-                "__AUTH_ID__",
-                &format!("'{}'", auth.user_id().unwrap_or("")),
-            );
+            let idx = offset + params.len() + 1;
+            params.push(auth.user_id().unwrap_or("").to_string());
+            sql = sql.replace("__AUTH_ID__", &crate::db::dialect::ph(idx));
         }
         if expr_has_auth_role(&rule.expr) {
-            sql = sql.replace("__AUTH_ROLE__", &format!("'{}'", auth.role()));
+            let idx = offset + params.len() + 1;
+            params.push(auth.role().to_string());
+            sql = sql.replace("__AUTH_ROLE__", &crate::db::dialect::ph(idx));
         }
     }
 
@@ -1334,8 +1335,8 @@ mod tests {
         let rule = Rule::parse("author_id = @request.auth.id", &cfg).unwrap();
         let auth = crate::middleware::auth::AuthUser::new_test("user123", "member", "");
         let (sql, params) = compile_rule_sql(&rule, 0, &auth, &cfg).unwrap();
-        assert!(sql.contains("user123"));
-        assert!(params.is_empty());
+        assert!(!sql.contains("__AUTH_ID__"));
+        assert!(params.contains(&"user123".to_string()));
     }
 
     #[test]
@@ -1357,8 +1358,9 @@ mod tests {
         let auth = crate::middleware::auth::AuthUser::new_test("abc", "member", "");
         let (sql, params) = compile_rule_sql(&rule, 0, &auth, &cfg).unwrap();
         assert!(sql.contains("OR"));
-        assert!(sql.contains("abc"));
-        assert_eq!(params, vec!["published"]);
+        assert!(!sql.contains("__AUTH_ID__"));
+        assert!(params.contains(&"published".to_string()));
+        assert!(params.contains(&"abc".to_string()));
     }
 
     // ── 配置化测试 ──────────────────────────────────────────────

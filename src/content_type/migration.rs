@@ -1,7 +1,6 @@
 //! Schema → SQL Migration 生成器
 //!
 //! 根据 `ContentTypeSchema` 定义自动生成 CREATE TABLE / ALTER TABLE SQL。
-//! 使用 `crate::db::dialect::translate()` 支持多数据库方言。
 
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
 

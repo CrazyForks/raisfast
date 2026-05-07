@@ -1,7 +1,7 @@
 //! 泛型内容 Repository — 动态 SQL CRUD
 //!
 //! 为所有 content type 提供统一的 CRUD 操作，动态构建 SQL。
-//! 使用 `crate::db::dialect::translate()` 支持多数据库方言。
+//! 使用 `crate::db::dialect::ph()` 支持多数据库占位符。
 //!
 //! 查询结果通过 `Row::get()` 逐列提取，直接构建 `serde_json::Value`，
 //! 避免了 `json_object()` 双重序列化的性能开销。
@@ -103,7 +103,7 @@ impl ContentRepository {
         }
         let tid = self.resolve_tenant(ct, query.tenant_id.as_deref());
         if let Some(ref tid) = tid {
-            where_clauses.push(format!("tenant_id = {}", placeholder(param_idx)));
+            where_clauses.push(format!("tenant_id = {}", crate::db::dialect::ph(param_idx)));
             params.push(json!(tid));
             param_idx += 1;
         }
@@ -115,8 +115,8 @@ impl ContentRepository {
                     .as_ref()
                     .is_some_and(|r| r.foreign_key.as_deref() == Some(key.as_str()))
             });
-            if matches_field || matches_fk {
-                where_clauses.push(format!("{} = {}", key, placeholder(param_idx)));
+            if (matches_field || matches_fk) && crate::db::dialect::is_safe_identifier(key) {
+                where_clauses.push(format!("{key} = {}", crate::db::dialect::ph(param_idx)));
                 params.push(val.clone());
                 param_idx += 1;
             }
@@ -126,8 +126,8 @@ impl ContentRepository {
             where_clauses.push(format!(
                 "json_extract({}, {}) = {}",
                 COL_META,
-                placeholder(param_idx),
-                placeholder(param_idx + 1)
+                crate::db::dialect::ph(param_idx),
+                crate::db::dialect::ph(param_idx + 1)
             ));
             params.push(json!(format!("$.{path}")));
             params.push(json!(val));
@@ -158,7 +158,6 @@ impl ContentRepository {
             -1
         } else {
             let count_sql = format!("SELECT COUNT(*) as cnt FROM {table}{where_sql}");
-            let count_sql = crate::db::dialect::translate(&count_sql);
 
             let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
             for p in &params {
@@ -179,7 +178,6 @@ impl ContentRepository {
         let data_sql = format!(
             "SELECT {select_cols} FROM {table}{where_sql}{order_sql} LIMIT {page_size} OFFSET {offset}"
         );
-        let data_sql = crate::db::dialect::translate(&data_sql);
 
         let rows = {
             let mut data_q = sqlx::query(&data_sql);
@@ -219,10 +217,10 @@ impl ContentRepository {
         let select_cols = columns.join(", ");
         let tid = self.resolve_tenant(ct, tenant_id);
 
-        let mut where_parts = vec![format!("id = {}", placeholder(1))];
+        let mut where_parts = vec![format!("id = {}", crate::db::dialect::ph(1))];
         let mut idx = 2;
         if tid.is_some() {
-            where_parts.push(format!("tenant_id = {}", placeholder(idx)));
+            where_parts.push(format!("tenant_id = {}", crate::db::dialect::ph(idx)));
             idx += 1;
         }
 
@@ -232,7 +230,6 @@ impl ContentRepository {
             ct.table,
             where_parts.join(" AND ")
         );
-        let sql = crate::db::dialect::translate(&sql);
 
         let mut q = sqlx::query(&sql).bind(id);
         if let Some(ref tid) = tid {
@@ -266,7 +263,7 @@ impl ContentRepository {
 
         let mut where_parts = Vec::new();
         if tid.is_some() {
-            where_parts.push(format!("tenant_id = {}", placeholder(1)));
+            where_parts.push(format!("tenant_id = {}", crate::db::dialect::ph(1)));
         }
 
         let columns = ct.column_names(None, true);
@@ -281,7 +278,6 @@ impl ContentRepository {
                 where_parts.join(" AND ")
             )
         };
-        let sql = crate::db::dialect::translate(&sql);
 
         let mut q = sqlx::query(&sql);
         if let Some(ref tid) = tid {
@@ -332,7 +328,7 @@ impl ContentRepository {
         let select_cols = columns.join(", ");
         let tid = self.resolve_tenant(ct, tenant_id);
 
-        let mut where_parts = vec![format!("slug = {}", placeholder(1))];
+        let mut where_parts = vec![format!("slug = {}", crate::db::dialect::ph(1))];
 
         for (column, condition) in ct.query_filters() {
             where_parts.push(format!("{} {}", column, condition));
@@ -342,7 +338,7 @@ impl ContentRepository {
         }
 
         if tid.is_some() {
-            where_parts.push(format!("tenant_id = {}", placeholder(2)));
+            where_parts.push(format!("tenant_id = {}", crate::db::dialect::ph(2)));
         }
 
         let sql = format!(
@@ -350,7 +346,6 @@ impl ContentRepository {
             ct.table,
             where_parts.join(" AND ")
         );
-        let sql = crate::db::dialect::translate(&sql);
 
         let mut q = sqlx::query(&sql).bind(slug);
         if let Some(ref tid) = tid {
@@ -406,7 +401,7 @@ impl ContentRepository {
 
         if let Some(ref tid) = tid {
             cols.push(COL_TENANT_ID.to_string());
-            placeholders.push(placeholder(idx));
+            placeholders.push(crate::db::dialect::ph(idx));
             idx += 1;
             values.push(tid.clone());
         }
@@ -429,12 +424,15 @@ impl ContentRepository {
             if key == COL_TENANT_ID {
                 continue;
             }
+            if !crate::db::dialect::is_safe_identifier(key) {
+                continue;
+            }
             let col = relation_column_map
                 .get(key)
                 .cloned()
                 .unwrap_or_else(|| key.clone());
             cols.push(col);
-            placeholders.push(placeholder(idx));
+            placeholders.push(crate::db::dialect::ph(idx));
             idx += 1;
             values.push(value_to_string(val));
         }
@@ -445,7 +443,6 @@ impl ContentRepository {
             cols.join(", "),
             placeholders.join(", ")
         );
-        let sql = crate::db::dialect::translate(&sql);
 
         let mut query = sqlx::query(&sql);
         for v in &values {
@@ -466,9 +463,8 @@ impl ContentRepository {
         let sql = format!(
             "SELECT {select_cols} FROM {} WHERE id = {}",
             ct.table,
-            placeholder(1)
+            crate::db::dialect::ph(1)
         );
-        let sql = crate::db::dialect::translate(&sql);
         let row = sqlx::query(&sql)
             .bind(&id)
             .fetch_optional(&self.pool)
@@ -542,11 +538,14 @@ impl ContentRepository {
 
         for (key, val) in obj.iter() {
             if ct.get_field(key).is_some() || ct.is_protocol_column(key) {
+                if !crate::db::dialect::is_safe_identifier(key) {
+                    continue;
+                }
                 let col = relation_column_map
                     .get(key)
                     .cloned()
                     .unwrap_or_else(|| key.clone());
-                set_clauses.push(format!("{col} = {}", placeholder(idx)));
+                set_clauses.push(format!("{col} = {}", crate::db::dialect::ph(idx)));
                 idx += 1;
                 values.push(value_to_string(val));
             }
@@ -560,19 +559,19 @@ impl ContentRepository {
             return Err(AppError::BadRequest("no fields to update".into()));
         }
 
-        let mut where_parts = vec![format!("id = {}", placeholder(idx))];
+        let mut where_parts = vec![format!("id = {}", crate::db::dialect::ph(idx))];
         idx += 1;
         values.push(id.to_string());
 
         if let Some(ref tid) = tid {
-            where_parts.push(format!("tenant_id = {}", placeholder(idx)));
+            where_parts.push(format!("tenant_id = {}", crate::db::dialect::ph(idx)));
             values.push(tid.clone());
         }
 
         if let Some(ref lock_col) = decl.lock_column
             && let Some(current_version) = data.get(lock_col).and_then(|v| v.as_i64())
         {
-            where_parts.push(format!("{lock_col} = {}", placeholder(idx)));
+            where_parts.push(format!("{lock_col} = {}", crate::db::dialect::ph(idx)));
             values.push(current_version.to_string());
         }
 
@@ -582,7 +581,6 @@ impl ContentRepository {
             set_clauses.join(", "),
             where_parts.join(" AND ")
         );
-        let sql = crate::db::dialect::translate(&sql);
 
         let mut query = sqlx::query(&sql);
         for v in &values {
@@ -626,13 +624,13 @@ impl ContentRepository {
         let tid = self.resolve_tenant(ct, tenant_id);
 
         let mut idx = 1;
-        let mut where_parts = vec![format!("id = {}", placeholder(idx))];
+        let mut where_parts = vec![format!("id = {}", crate::db::dialect::ph(idx))];
         idx += 1;
 
         let mut values = vec![id.to_string()];
 
         if let Some(ref tid) = tid {
-            where_parts.push(format!("tenant_id = {}", placeholder(idx)));
+            where_parts.push(format!("tenant_id = {}", crate::db::dialect::ph(idx)));
             values.push(tid.clone());
         }
 
@@ -647,10 +645,9 @@ impl ContentRepository {
                 "UPDATE {} SET {} = {} WHERE {}",
                 ct.table,
                 col,
-                placeholder(idx),
+                crate::db::dialect::ph(idx),
                 where_parts.join(" AND ")
             );
-            let sql = crate::db::dialect::translate(&sql);
             let mut query = sqlx::query(&sql);
             query = query.bind(now);
             for v in &values {
@@ -666,7 +663,6 @@ impl ContentRepository {
                 ct.table,
                 where_parts.join(" AND ")
             );
-            let sql = crate::db::dialect::translate(&sql);
             let mut query = sqlx::query(&sql);
             for v in &values {
                 query = query.bind(v);
@@ -697,32 +693,39 @@ impl ContentRepository {
         let tid = self.resolve_tenant(ct, tenant_id);
 
         let mut idx = 1;
-        let mut set_parts = vec![format!("{} = {}", COL_DELETED_AT, placeholder(idx))];
+        let mut set_parts = vec![format!(
+            "{} = {}",
+            COL_DELETED_AT,
+            crate::db::dialect::ph(idx)
+        )];
         let mut values: Vec<String> = vec![deleted_at.to_string()];
         idx += 1;
 
         if let Some(by) = deleted_by {
-            set_parts.push(format!("{} = {}", COL_DELETED_BY, placeholder(idx)));
+            set_parts.push(format!(
+                "{} = {}",
+                COL_DELETED_BY,
+                crate::db::dialect::ph(idx)
+            ));
             values.push(by.to_string());
             idx += 1;
         }
 
-        let mut where_parts = vec![format!("id = {}", placeholder(idx))];
+        let mut where_parts = vec![format!("id = {}", crate::db::dialect::ph(idx))];
         values.push(id.to_string());
         idx += 1;
 
         if let Some(ref tid) = tid {
-            where_parts.push(format!("tenant_id = {}", placeholder(idx)));
+            where_parts.push(format!("tenant_id = {}", crate::db::dialect::ph(idx)));
             values.push(tid.clone());
         }
 
-        let raw_sql = format!(
+        let sql = format!(
             "UPDATE {} SET {} WHERE {}",
             ct.table,
             set_parts.join(", "),
             where_parts.join(" AND ")
         );
-        let sql = crate::db::dialect::translate(&raw_sql);
 
         let mut query = sqlx::query(&sql);
         for v in &values {
@@ -753,7 +756,6 @@ impl ContentRepository {
 
         if existing_columns.is_empty() {
             let create_sql = super::migration::generate_create_table(ct, &protocol_columns);
-            let create_sql = crate::db::dialect::translate(&create_sql);
 
             sqlx::query(&create_sql)
                 .execute(&self.pool)
@@ -770,9 +772,8 @@ impl ContentRepository {
                 tracing::debug!("table {} schema is up-to-date", ct.table);
             } else {
                 for sql in &alter_stmts {
-                    let sql = crate::db::dialect::translate(sql);
                     tracing::info!("syncing column: {}", sql);
-                    sqlx::query(&sql).execute(&self.pool).await.map_err(|e| {
+                    sqlx::query(sql).execute(&self.pool).await.map_err(|e| {
                         AppError::Internal(anyhow::anyhow!(
                             "ALTER TABLE {} failed: {}",
                             ct.table,
@@ -789,15 +790,16 @@ impl ContentRepository {
         }
 
         for junction_sql in super::migration::generate_junction_tables(ct) {
-            let sql = crate::db::dialect::translate(&junction_sql);
-            sqlx::query(&sql).execute(&self.pool).await.map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("CREATE junction table failed: {e}"))
-            })?;
+            sqlx::query(&junction_sql)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| {
+                    AppError::Internal(anyhow::anyhow!("CREATE junction table failed: {e}"))
+                })?;
         }
 
         for index_sql in super::migration::generate_indexes(ct) {
-            let sql = crate::db::dialect::translate(&index_sql);
-            if let Err(e) = sqlx::query(&sql).execute(&self.pool).await {
+            if let Err(e) = sqlx::query(&index_sql).execute(&self.pool).await {
                 tracing::warn!("index creation skipped: {}", e);
             }
         }
@@ -928,39 +930,37 @@ fn build_order_by(sort: Option<&str>, ct: &ContentTypeSchema) -> String {
     };
     let mut parts = Vec::new();
 
+    let valid_sort_columns = ct.column_names(None, true);
+
     for segment in sort_str.split(',') {
         let segment = segment.trim();
         if segment.is_empty() {
             continue;
         }
-        if let Some((col, dir)) = segment.split_once(':') {
-            let dir = if dir.eq_ignore_ascii_case("asc") {
-                "ASC"
-            } else {
-                "DESC"
-            };
-            parts.push(format!("{col} {dir}"));
+        let (col, dir) = if let Some((c, d)) = segment.split_once(':') {
+            (c.trim(), d.trim())
         } else {
-            parts.push(format!("{segment} DESC"));
+            (segment, "")
+        };
+        if !valid_sort_columns
+            .iter()
+            .any(|v| v.eq_ignore_ascii_case(col))
+            || !crate::db::dialect::is_safe_identifier(col)
+        {
+            continue;
         }
+        let dir = if dir.eq_ignore_ascii_case("asc") {
+            "ASC"
+        } else {
+            "DESC"
+        };
+        parts.push(format!("{col} {dir}"));
     }
 
     if parts.is_empty() {
         String::new()
     } else {
         format!(" ORDER BY {}", parts.join(", "))
-    }
-}
-
-fn placeholder(idx: usize) -> String {
-    #[cfg(feature = "db-postgres")]
-    {
-        format!("${}", idx)
-    }
-    #[cfg(not(feature = "db-postgres"))]
-    {
-        let _ = idx;
-        "?".to_string()
     }
 }
 
@@ -984,7 +984,15 @@ fn value_to_string(v: &Value) -> String {
 ///
 /// - `SQLite` `PRAGMA table_info`: 列名在第 2 列 (index=1)
 /// - PostgreSQL/MySQL `information_schema`: 列名在第 1 列 (index=0)
+///
+/// # Panics
+///
+/// 当表名包含非法字符时 panic（表名来自 schema 定义，应在此之前已校验）。
 pub(crate) fn fetch_columns_sql(table: &str) -> (String, usize) {
+    assert!(
+        crate::db::dialect::is_safe_identifier(table),
+        "invalid table name: {table}"
+    );
     #[cfg(feature = "db-sqlite")]
     {
         (format!("PRAGMA table_info({table})"), 1)

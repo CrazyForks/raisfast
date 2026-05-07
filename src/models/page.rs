@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::db::tenant::tenant_filter;
+use crate::db::dialect::ph;
+use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
 
 // ── 数据库行模型 ──
@@ -329,11 +330,8 @@ pub async fn find_by_slug(
     slug: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Page>> {
-    let sql = format!(
-        "SELECT * FROM pages WHERE slug = ?{}",
-        tenant_filter(tenant_id)
-    );
-    let sql = crate::db::dialect::translate(&sql);
+    let filter = tenant_filter_ph(tenant_id, 2);
+    let sql = format!("SELECT * FROM pages WHERE slug = {}{filter}", ph(1));
     let mut q = sqlx::query_as::<_, Page>(&sql).bind(slug);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -346,11 +344,8 @@ pub async fn find_by_id(
     id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Page>> {
-    let sql = format!(
-        "SELECT * FROM pages WHERE id = ?{}",
-        tenant_filter(tenant_id)
-    );
-    let sql = crate::db::dialect::translate(&sql);
+    let filter = tenant_filter_ph(tenant_id, 2);
+    let sql = format!("SELECT * FROM pages WHERE id = {}{filter}", ph(1));
     let mut q = sqlx::query_as::<_, Page>(&sql).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -365,22 +360,21 @@ pub async fn list_published(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Page>, i64)> {
     let offset = (page - 1) * page_size;
-    let count_sql = format!(
-        "SELECT COUNT(*) FROM pages WHERE status = 'published'{}",
-        tenant_filter(tenant_id)
-    );
-    let count_sql = crate::db::dialect::translate(&count_sql);
+    let count_filter = tenant_filter_ph(tenant_id, 1);
+    let count_sql = format!("SELECT COUNT(*) FROM pages WHERE status = 'published'{count_filter}");
     let mut cq = sqlx::query_scalar::<_, i64>(&count_sql);
     if let Some(tid) = tenant_id {
         cq = cq.bind(tid);
     }
     let total = cq.fetch_one(pool).await?;
 
+    let base = usize::from(tenant_id.is_some());
+    let data_filter = tenant_filter_ph(tenant_id, 1);
     let data_sql = format!(
-        "SELECT * FROM pages WHERE status = 'published'{} ORDER BY sort_order ASC, created_at DESC LIMIT ? OFFSET ?",
-        tenant_filter(tenant_id)
+        "SELECT * FROM pages WHERE status = 'published'{data_filter} ORDER BY sort_order ASC, created_at DESC LIMIT {} OFFSET {}",
+        ph(base + 1),
+        ph(base + 2)
     );
-    let data_sql = crate::db::dialect::translate(&data_sql);
     let mut dq = sqlx::query_as::<_, Page>(&data_sql);
     if let Some(tid) = tenant_id {
         dq = dq.bind(tid);
@@ -398,11 +392,15 @@ pub async fn list_all(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Page>, i64)> {
     let offset = (page - 1) * page_size;
-    let status_clause = status.map(|_| " AND status = ?").unwrap_or("");
+    let has_status = status.is_some();
+    let status_clause = if has_status {
+        format!(" AND status = {}", ph(1))
+    } else {
+        String::new()
+    };
 
-    let tf = tenant_filter(tenant_id);
+    let tf = tenant_filter_ph(tenant_id, has_status as usize + 1);
     let count_sql = format!("SELECT COUNT(*) FROM pages WHERE 1=1{status_clause}{tf}");
-    let count_sql = crate::db::dialect::translate(&count_sql);
     let mut cq = sqlx::query_scalar::<_, i64>(&count_sql);
     if let Some(s) = status {
         cq = cq.bind(s);
@@ -412,10 +410,12 @@ pub async fn list_all(
     }
     let total = cq.fetch_one(pool).await?;
 
+    let base = has_status as usize + usize::from(tenant_id.is_some());
     let data_sql = format!(
-        "SELECT * FROM pages WHERE 1=1{status_clause}{tf} ORDER BY sort_order ASC, created_at DESC LIMIT ? OFFSET ?"
+        "SELECT * FROM pages WHERE 1=1{status_clause}{tf} ORDER BY sort_order ASC, created_at DESC LIMIT {} OFFSET {}",
+        ph(base + 1),
+        ph(base + 2)
     );
-    let data_sql = crate::db::dialect::translate(&data_sql);
     let mut dq = sqlx::query_as::<_, Page>(&data_sql);
     if let Some(s) = status {
         dq = dq.bind(s);
@@ -456,8 +456,9 @@ pub async fn create(
 
     match tenant_id {
         Some(tid) => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO pages (id, tenant_id, title, slug, content, blocks, meta_title, meta_description, og_image, template, parent_id, sort_order, status, created_by, updated_by, cover_image, published_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            let vals = (1..=19).map(ph).collect::<Vec<_>>().join(", ");
+            let sql = format!(
+                "INSERT INTO pages (id, tenant_id, title, slug, content, blocks, meta_title, meta_description, og_image, template, parent_id, sort_order, status, created_by, updated_by, cover_image, published_at, created_at, updated_at) VALUES ({vals})"
             );
             sqlx::query(&sql)
                 .bind(id)
@@ -483,8 +484,9 @@ pub async fn create(
                 .await?;
         }
         None => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO pages (id, title, slug, content, blocks, meta_title, meta_description, og_image, template, parent_id, sort_order, status, created_by, updated_by, cover_image, published_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            let vals = (1..=18).map(ph).collect::<Vec<_>>().join(", ");
+            let sql = format!(
+                "INSERT INTO pages (id, title, slug, content, blocks, meta_title, meta_description, og_image, template, parent_id, sort_order, status, created_by, updated_by, cover_image, published_at, created_at, updated_at) VALUES ({vals})"
             );
             sqlx::query(&sql)
                 .bind(id)
@@ -535,55 +537,76 @@ pub async fn update(
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
     let now = Utc::now().to_rfc3339();
-    let mut sets = vec!["updated_at = ?".to_string()];
+    let mut idx = 1;
+    let mut sets = vec![format!("updated_at = {}", ph(idx))];
 
     if updated_by.is_some() {
-        sets.push("updated_by = ?".to_string());
+        idx += 1;
+        sets.push(format!("updated_by = {}", ph(idx)));
     }
     if title.is_some() {
-        sets.push("title = ?".to_string());
+        idx += 1;
+        sets.push(format!("title = {}", ph(idx)));
     }
     if slug.is_some() {
-        sets.push("slug = ?".to_string());
+        idx += 1;
+        sets.push(format!("slug = {}", ph(idx)));
     }
     if content.is_some() {
-        sets.push("content = ?".to_string());
+        idx += 1;
+        sets.push(format!("content = {}", ph(idx)));
     }
     if blocks.is_some() {
-        sets.push("blocks = ?".to_string());
+        idx += 1;
+        sets.push(format!("blocks = {}", ph(idx)));
     }
     if meta_title.is_some() {
-        sets.push("meta_title = ?".to_string());
+        idx += 1;
+        sets.push(format!("meta_title = {}", ph(idx)));
     }
     if meta_description.is_some() {
-        sets.push("meta_description = ?".to_string());
+        idx += 1;
+        sets.push(format!("meta_description = {}", ph(idx)));
     }
     if og_image.is_some() {
-        sets.push("og_image = ?".to_string());
+        idx += 1;
+        sets.push(format!("og_image = {}", ph(idx)));
     }
     if template.is_some() {
-        sets.push("template = ?".to_string());
+        idx += 1;
+        sets.push(format!("template = {}", ph(idx)));
     }
     if parent_id.is_some() {
-        sets.push("parent_id = ?".to_string());
+        idx += 1;
+        sets.push(format!("parent_id = {}", ph(idx)));
     }
     if sort_order.is_some() {
-        sets.push("sort_order = ?".to_string());
+        idx += 1;
+        sets.push(format!("sort_order = {}", ph(idx)));
     }
     if status.is_some() {
-        sets.push("status = ?".to_string());
-        sets.push(
-            "published_at = COALESCE(published_at, CASE WHEN ? = 'published' THEN ? ELSE NULL END)"
-                .to_string(),
-        );
+        idx += 1;
+        sets.push(format!("status = {}", ph(idx)));
+        idx += 1;
+        let s1 = ph(idx);
+        idx += 1;
+        let s2 = ph(idx);
+        sets.push(format!(
+            "published_at = COALESCE(published_at, CASE WHEN {s1} = 'published' THEN {s2} ELSE NULL END)"
+        ));
     }
     if cover_image.is_some() {
-        sets.push("cover_image = ?".to_string());
+        idx += 1;
+        sets.push(format!("cover_image = {}", ph(idx)));
     }
 
-    let tf = tenant_filter(tenant_id);
-    let sql_str = format!("UPDATE pages SET {} WHERE id = ?{}", sets.join(", "), tf);
-    let sql = crate::db::dialect::translate(&sql_str);
+    idx += 1;
+    let id_ph = ph(idx);
+    let tf = tenant_filter_ph(tenant_id, idx + 1);
+    let sql = format!(
+        "UPDATE pages SET {} WHERE id = {id_ph}{tf}",
+        sets.join(", ")
+    );
 
     let mut q = sqlx::query(&sql).bind(&now);
     if let Some(v) = updated_by {
@@ -641,8 +664,8 @@ pub async fn update(
 }
 
 pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
-    let sql = format!("DELETE FROM pages WHERE id = ?{}", tenant_filter(tenant_id));
-    let sql = crate::db::dialect::translate(&sql);
+    let filter = tenant_filter_ph(tenant_id, 2);
+    let sql = format!("DELETE FROM pages WHERE id = {}{filter}", ph(1));
     let mut q = sqlx::query(&sql).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -659,17 +682,32 @@ pub async fn update_status(
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
     let now = Utc::now().to_rfc3339();
-    let published_at_clause = if status == "published" {
-        "published_at = COALESCE(published_at, ?), ".to_string()
+    let mut idx = 1;
+    let status_ph = ph(idx);
+
+    let updated_by_clause = if updated_by.is_some() {
+        idx += 1;
+        format!("updated_by = {}, ", ph(idx))
     } else {
         String::new()
     };
-    let updated_by_clause = updated_by.map(|_| "updated_by = ?, ").unwrap_or("");
+
+    let published_at_clause = if status == "published" {
+        idx += 1;
+        format!("published_at = COALESCE(published_at, {}), ", ph(idx))
+    } else {
+        String::new()
+    };
+
+    idx += 1;
+    let updated_at_ph = ph(idx);
+    idx += 1;
+    let id_ph = ph(idx);
+    let tf = tenant_filter_ph(tenant_id, idx + 1);
+
     let sql = format!(
-        "UPDATE pages SET status = ?, {updated_by_clause}{published_at_clause}updated_at = ? WHERE id = ?{}",
-        tenant_filter(tenant_id)
+        "UPDATE pages SET status = {status_ph}, {updated_by_clause}{published_at_clause}updated_at = {updated_at_ph} WHERE id = {id_ph}{tf}"
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql).bind(status);
     if let Some(v) = updated_by {
         q = q.bind(v);
@@ -695,9 +733,13 @@ pub async fn reorder(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    let tf = tenant_filter(tenant_id);
-    let sql_str = format!("UPDATE pages SET sort_order = ?, updated_at = ? WHERE id = ?{tf}");
-    let sql = crate::db::dialect::translate(&sql_str);
+    let tf = tenant_filter_ph(tenant_id, 4);
+    let sql = format!(
+        "UPDATE pages SET sort_order = {}, updated_at = {} WHERE id = {}{tf}",
+        ph(1),
+        ph(2),
+        ph(3)
+    );
 
     for (id, sort_order) in items {
         let mut q = sqlx::query(&sql).bind(sort_order).bind(&now).bind(id);
@@ -713,11 +755,10 @@ pub async fn list_sitemap(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<(String, Option<String>)>> {
+    let filter = tenant_filter_ph(tenant_id, 1);
     let sql = format!(
-        "SELECT slug, updated_at FROM pages WHERE status = 'published'{} ORDER BY sort_order ASC",
-        tenant_filter(tenant_id)
+        "SELECT slug, updated_at FROM pages WHERE status = 'published'{filter} ORDER BY sort_order ASC"
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query_as::<_, (String, Option<String>)>(&sql);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -732,11 +773,8 @@ pub async fn find_reusable_by_id(
     id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<ReusableBlock>> {
-    let sql = format!(
-        "SELECT * FROM reusable_blocks WHERE id = ?{}",
-        tenant_filter(tenant_id)
-    );
-    let sql = crate::db::dialect::translate(&sql);
+    let filter = tenant_filter_ph(tenant_id, 2);
+    let sql = format!("SELECT * FROM reusable_blocks WHERE id = {}{filter}", ph(1));
     let mut q = sqlx::query_as::<_, ReusableBlock>(&sql).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -748,11 +786,8 @@ pub async fn list_reusable(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<ReusableBlock>> {
-    let sql = format!(
-        "SELECT * FROM reusable_blocks WHERE 1=1{} ORDER BY name ASC",
-        tenant_filter(tenant_id)
-    );
-    let sql = crate::db::dialect::translate(&sql);
+    let filter = tenant_filter_ph(tenant_id, 1);
+    let sql = format!("SELECT * FROM reusable_blocks WHERE 1=1{filter} ORDER BY name ASC");
     let mut q = sqlx::query_as::<_, ReusableBlock>(&sql);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -774,8 +809,9 @@ pub async fn create_reusable(
     let now = Utc::now().to_rfc3339();
     match tenant_id {
         Some(tid) => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO reusable_blocks (id, tenant_id, name, block_type, content, description, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            let vals = (1..=10).map(ph).collect::<Vec<_>>().join(", ");
+            let sql = format!(
+                "INSERT INTO reusable_blocks (id, tenant_id, name, block_type, content, description, created_by, updated_by, created_at, updated_at) VALUES ({vals})"
             );
             sqlx::query(&sql)
                 .bind(id)
@@ -792,8 +828,9 @@ pub async fn create_reusable(
                 .await?;
         }
         None => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO reusable_blocks (id, name, block_type, content, description, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            let vals = (1..=9).map(ph).collect::<Vec<_>>().join(", ");
+            let sql = format!(
+                "INSERT INTO reusable_blocks (id, name, block_type, content, description, created_by, updated_by, created_at, updated_at) VALUES ({vals})"
             );
             sqlx::query(&sql)
                 .bind(id)
@@ -827,31 +864,37 @@ pub async fn update_reusable(
     tenant_id: Option<&str>,
 ) -> AppResult<ReusableBlock> {
     let now = Utc::now().to_rfc3339();
-    let mut sets = vec!["updated_at = ?".to_string()];
+    let mut idx = 1;
+    let mut sets = vec![format!("updated_at = {}", ph(idx))];
 
     if updated_by.is_some() {
-        sets.push("updated_by = ?".to_string());
+        idx += 1;
+        sets.push(format!("updated_by = {}", ph(idx)));
     }
     if name.is_some() {
-        sets.push("name = ?".to_string());
+        idx += 1;
+        sets.push(format!("name = {}", ph(idx)));
     }
     if block_type.is_some() {
-        sets.push("block_type = ?".to_string());
+        idx += 1;
+        sets.push(format!("block_type = {}", ph(idx)));
     }
     if content.is_some() {
-        sets.push("content = ?".to_string());
+        idx += 1;
+        sets.push(format!("content = {}", ph(idx)));
     }
     if description.is_some() {
-        sets.push("description = ?".to_string());
+        idx += 1;
+        sets.push(format!("description = {}", ph(idx)));
     }
 
-    let tf = tenant_filter(tenant_id);
-    let sql_str = format!(
-        "UPDATE reusable_blocks SET {} WHERE id = ?{}",
-        sets.join(", "),
-        tf
+    idx += 1;
+    let id_ph = ph(idx);
+    let tf = tenant_filter_ph(tenant_id, idx + 1);
+    let sql = format!(
+        "UPDATE reusable_blocks SET {} WHERE id = {id_ph}{tf}",
+        sets.join(", ")
     );
-    let sql = crate::db::dialect::translate(&sql_str);
 
     let mut q = sqlx::query(&sql).bind(&now);
     if let Some(v) = updated_by {
@@ -887,11 +930,8 @@ pub async fn delete_reusable(
     id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let sql = format!(
-        "DELETE FROM reusable_blocks WHERE id = ?{}",
-        tenant_filter(tenant_id)
-    );
-    let sql = crate::db::dialect::translate(&sql);
+    let filter = tenant_filter_ph(tenant_id, 2);
+    let sql = format!("DELETE FROM reusable_blocks WHERE id = {}{filter}", ph(1));
     let mut q = sqlx::query(&sql).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);

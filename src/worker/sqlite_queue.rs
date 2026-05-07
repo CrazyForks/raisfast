@@ -5,6 +5,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use crate::db::Pool;
+use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
 
 use super::{
@@ -32,9 +33,10 @@ impl JobQueue for SqliteJobQueue {
         let max_attempts = new_job.max_attempts.unwrap_or(3);
         let now = Utc::now().to_rfc3339();
 
-        sqlx::query(&crate::db::dialect::translate(
+        sqlx::query(&format!(
             "INSERT INTO jobs (id, job_type, payload, status, max_attempts, run_after, created_at, updated_at)
-             VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)",
+             VALUES ({}, {}, {}, 'pending', {}, {}, {}, {})",
+            ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7)
         ))
         .bind(&id)
         .bind(job_type)
@@ -57,16 +59,18 @@ impl JobQueue for SqliteJobQueue {
         let returning = crate::db::dialect::returning_col(
             "id, job_type, payload, attempts, max_attempts, created_at",
         );
-        let sql_raw = format!(
-            "UPDATE jobs SET status = 'running', attempts = attempts + 1, updated_at = ?
+        let sql = format!(
+            "UPDATE jobs SET status = 'running', attempts = attempts + 1, updated_at = {}
              WHERE id IN (
                SELECT id FROM jobs
-               WHERE status = 'pending' AND (run_after IS NULL OR run_after <= ?)
-               ORDER BY created_at ASC LIMIT ?
+               WHERE status = 'pending' AND (run_after IS NULL OR run_after <= {})
+               ORDER BY created_at ASC LIMIT {}
              )
-             {returning}"
+             {returning}",
+            ph(1),
+            ph(2),
+            ph(3)
         );
-        let sql = crate::db::dialect::translate(&sql_raw);
 
         let rows = sqlx::query(&sql)
             .bind(&now)
@@ -103,8 +107,10 @@ impl JobQueue for SqliteJobQueue {
 
     async fn complete(&self, id: &str) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
-        sqlx::query(&crate::db::dialect::translate(
-            "UPDATE jobs SET status = 'completed', updated_at = ? WHERE id = ?",
+        sqlx::query(&format!(
+            "UPDATE jobs SET status = 'completed', updated_at = {} WHERE id = {}",
+            ph(1),
+            ph(2)
         ))
         .bind(&now)
         .bind(id)
@@ -119,8 +125,9 @@ impl JobQueue for SqliteJobQueue {
 
         let mut tx = self.pool.begin().await?;
 
-        let row = sqlx::query(&crate::db::dialect::translate(
-            "SELECT attempts, max_attempts FROM jobs WHERE id = ?",
+        let row = sqlx::query(&format!(
+            "SELECT attempts, max_attempts FROM jobs WHERE id = {}",
+            ph(1)
         ))
         .bind(id)
         .fetch_optional(&mut *tx)
@@ -134,8 +141,11 @@ impl JobQueue for SqliteJobQueue {
         let max_attempts: i32 = r.get("max_attempts");
 
         if attempts >= max_attempts {
-            sqlx::query(&crate::db::dialect::translate(
-                "UPDATE jobs SET status = 'dead', error = ?, updated_at = ? WHERE id = ?",
+            sqlx::query(&format!(
+                "UPDATE jobs SET status = 'dead', error = {}, updated_at = {} WHERE id = {}",
+                ph(1),
+                ph(2),
+                ph(3)
             ))
             .bind(error)
             .bind(&now)
@@ -151,8 +161,9 @@ impl JobQueue for SqliteJobQueue {
         let run_after =
             (Utc::now() + chrono::Duration::from_std(delay).unwrap_or_default()).to_rfc3339();
 
-        sqlx::query(&crate::db::dialect::translate(
-            "UPDATE jobs SET status = 'pending', error = ?, run_after = ?, updated_at = ? WHERE id = ?",
+        sqlx::query(&format!(
+            "UPDATE jobs SET status = 'pending', error = {}, run_after = {}, updated_at = {} WHERE id = {}",
+            ph(1), ph(2), ph(3), ph(4)
         ))
         .bind(error)
         .bind(&run_after)
@@ -171,8 +182,11 @@ impl JobQueue for SqliteJobQueue {
 
     async fn dead(&self, id: &str, error: &str) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
-        sqlx::query(&crate::db::dialect::translate(
-            "UPDATE jobs SET status = 'dead', error = ?, updated_at = ? WHERE id = ?",
+        sqlx::query(&format!(
+            "UPDATE jobs SET status = 'dead', error = {}, updated_at = {} WHERE id = {}",
+            ph(1),
+            ph(2),
+            ph(3)
         ))
         .bind(error)
         .bind(&now)
@@ -184,7 +198,7 @@ impl JobQueue for SqliteJobQueue {
     }
 
     async fn stats(&self) -> AppResult<JobStats> {
-        let row = sqlx::query(&crate::db::dialect::translate(
+        let row = sqlx::query(
             "SELECT
                 COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END), 0) as pending,
                 COALESCE(SUM(CASE WHEN status='running' THEN 1 ELSE 0 END), 0) as running,
@@ -192,7 +206,7 @@ impl JobQueue for SqliteJobQueue {
                 COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END), 0) as failed,
                 COALESCE(SUM(CASE WHEN status='dead' THEN 1 ELSE 0 END), 0) as dead
              FROM jobs",
-        ))
+        )
         .fetch_one(&self.pool)
         .await?;
 
@@ -214,9 +228,10 @@ impl JobQueue for SqliteJobQueue {
         let offset = (page - 1) * page_size;
 
         let (items, total): (Vec<JobRow>, i64) = if let Some(s) = status {
-            let rows = sqlx::query(&crate::db::dialect::translate(
+            let rows = sqlx::query(&format!(
                 "SELECT id, job_type, payload, status, attempts, max_attempts, run_after, error, created_at, updated_at
-                 FROM jobs WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                 FROM jobs WHERE status = {} ORDER BY created_at DESC LIMIT {} OFFSET {}",
+                ph(1), ph(2), ph(3)
             ))
             .bind(s)
             .bind(page_size)
@@ -224,8 +239,9 @@ impl JobQueue for SqliteJobQueue {
             .fetch_all(&self.pool)
             .await?;
 
-            let total: i64 = sqlx::query_scalar(&crate::db::dialect::translate(
-                "SELECT COUNT(*) FROM jobs WHERE status = ?",
+            let total: i64 = sqlx::query_scalar(&format!(
+                "SELECT COUNT(*) FROM jobs WHERE status = {}",
+                ph(1)
             ))
             .bind(s)
             .fetch_one(&self.pool)
@@ -250,20 +266,20 @@ impl JobQueue for SqliteJobQueue {
 
             (items, total)
         } else {
-            let rows = sqlx::query(&crate::db::dialect::translate(
+            let rows = sqlx::query(&format!(
                 "SELECT id, job_type, payload, status, attempts, max_attempts, run_after, error, created_at, updated_at
-                 FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                 FROM jobs ORDER BY created_at DESC LIMIT {} OFFSET {}",
+                ph(1), ph(2)
             ))
             .bind(page_size)
             .bind(offset)
             .fetch_all(&self.pool)
             .await?;
 
-            let total: i64 =
-                sqlx::query_scalar(&crate::db::dialect::translate("SELECT COUNT(*) FROM jobs"))
-                    .fetch_one(&self.pool)
-                    .await
-                    .unwrap_or(0);
+            let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs")
+                .fetch_one(&self.pool)
+                .await
+                .unwrap_or(0);
 
             let items = rows
                 .into_iter()
@@ -289,9 +305,10 @@ impl JobQueue for SqliteJobQueue {
 
     async fn retry(&self, id: &str) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
-        let result = sqlx::query(&crate::db::dialect::translate(
-            "UPDATE jobs SET status = 'pending', attempts = 0, error = NULL, run_after = NULL, updated_at = ?
-             WHERE id = ? AND status = 'dead'",
+        let result = sqlx::query(&format!(
+            "UPDATE jobs SET status = 'pending', attempts = 0, error = NULL, run_after = NULL, updated_at = {}
+             WHERE id = {} AND status = 'dead'",
+            ph(1), ph(2)
         ))
         .bind(&now)
         .bind(id)
@@ -307,12 +324,10 @@ impl JobQueue for SqliteJobQueue {
     }
 
     async fn remove(&self, id: &str) -> AppResult<()> {
-        let result = sqlx::query(&crate::db::dialect::translate(
-            "DELETE FROM jobs WHERE id = ?",
-        ))
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
+        let result = sqlx::query(&format!("DELETE FROM jobs WHERE id = {}", ph(1)))
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
 
         if result.rows_affected() == 0 {
             return Err(AppError::not_found("job"));
@@ -322,11 +337,10 @@ impl JobQueue for SqliteJobQueue {
     }
 
     async fn cleanup(&self) -> AppResult<u64> {
-        let sql_raw = format!(
+        let sql = format!(
             "DELETE FROM jobs WHERE status IN ('completed', 'dead') AND updated_at < {}",
             crate::db::dialect::ago_expr(7)
         );
-        let sql = crate::db::dialect::translate(&sql_raw);
         let result = sqlx::query(&sql).execute(&self.pool).await?;
 
         let count = result.rows_affected();

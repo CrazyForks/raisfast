@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::db::tenant::tenant_filter;
+use crate::db::dialect::ph;
+use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
 
 /// 分类完整数据库行模型
@@ -39,11 +40,10 @@ crate::impl_from_row_opt_tenant!(Category {
 ///
 /// 按 `sort_order` 和 `name` 排序返回完整分类列表。
 pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppResult<Vec<Category>> {
-    let sql_str = format!(
+    let sql = format!(
         "SELECT * FROM categories WHERE 1=1{} ORDER BY sort_order, name",
-        tenant_filter(tenant_id)
+        tenant_filter_ph(tenant_id, 1)
     );
-    let sql = crate::db::dialect::translate(&sql_str);
     let mut q = sqlx::query_as::<_, Category>(&sql);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -65,20 +65,21 @@ pub async fn find_paginated(
 
     let count_sql = format!(
         "SELECT COUNT(*) FROM categories WHERE 1=1{}",
-        tenant_filter(tenant_id)
+        tenant_filter_ph(tenant_id, 1)
     );
-    let count_sql = crate::db::dialect::translate(&count_sql);
     let mut cq = sqlx::query_scalar::<_, i64>(&count_sql);
     if let Some(tid) = tenant_id {
         cq = cq.bind(tid);
     }
     let total = cq.fetch_one(pool).await?;
 
+    let base = usize::from(tenant_id.is_some()) + 1;
     let data_sql = format!(
-        "SELECT * FROM categories WHERE 1=1{} ORDER BY sort_order, name LIMIT ? OFFSET ?",
-        tenant_filter(tenant_id)
+        "SELECT * FROM categories WHERE 1=1{} ORDER BY sort_order, name LIMIT {} OFFSET {}",
+        tenant_filter_ph(tenant_id, 1),
+        ph(base),
+        ph(base + 1)
     );
-    let data_sql = crate::db::dialect::translate(&data_sql);
     let mut dq = sqlx::query_as::<_, Category>(&data_sql);
     if let Some(tid) = tenant_id {
         dq = dq.bind(tid);
@@ -97,11 +98,11 @@ pub async fn find_by_id(
     id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Category> {
-    let sql_str = format!(
-        "SELECT * FROM categories WHERE id = ?{}",
-        tenant_filter(tenant_id)
+    let sql = format!(
+        "SELECT * FROM categories WHERE id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
     );
-    let sql = crate::db::dialect::translate(&sql_str);
     let mut q = sqlx::query_as::<_, Category>(&sql).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -122,8 +123,18 @@ pub async fn create(
 
     match tenant_id {
         Some(tid) => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO categories (id, tenant_id, name, slug, description, parent_id, sort_order, created_by, updated_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            let sql = format!(
+                "INSERT INTO categories (id, tenant_id, name, slug, description, parent_id, sort_order, created_by, updated_by, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10)
             );
             sqlx::query(&sql)
                 .bind(&id)
@@ -140,8 +151,17 @@ pub async fn create(
                 .await?;
         }
         None => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO categories (id, name, slug, description, parent_id, sort_order, created_by, updated_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            let sql = format!(
+                "INSERT INTO categories (id, name, slug, description, parent_id, sort_order, created_by, updated_by, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})",
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9)
             );
             sqlx::query(&sql)
                 .bind(&id)
@@ -188,10 +208,17 @@ pub async fn update(
     let sort = cmd.sort_order.unwrap_or(existing.sort_order);
 
     let sql = format!(
-        "UPDATE categories SET name = ?, slug = ?, description = ?, parent_id = ?, sort_order = ?, updated_by = ?, updated_at = ? WHERE id = ?{}",
-        tenant_filter(tenant_id)
+        "UPDATE categories SET name = {}, slug = {}, description = {}, parent_id = {}, sort_order = {}, updated_by = {}, updated_at = {} WHERE id = {}{}",
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5),
+        ph(6),
+        ph(7),
+        ph(8),
+        tenant_filter_ph(tenant_id, 9)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql)
         .bind(name)
         .bind(slug)
@@ -214,10 +241,10 @@ pub async fn update(
 /// 若分类不存在则返回 [`AppError::NotFound`]。
 pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
     let sql = format!(
-        "DELETE FROM categories WHERE id = ?{}",
-        tenant_filter(tenant_id)
+        "DELETE FROM categories WHERE id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);

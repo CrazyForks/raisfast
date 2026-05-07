@@ -79,21 +79,19 @@ pub fn register_host_functions(
     host.set("getPost", get_post_fn)?;
 
     let hc = host_ctx.clone();
-    let db_query_fn =
-        lua.create_function(move |lua, (sql, params): (String, Option<String>)| {
-            Ok(mlua::Value::String(
-                lua.create_string(hc.db_query(&sql, params.as_deref()))?,
-            ))
-        })?;
+    let db_query_fn = lua.create_function(move |lua, (sql, params): (String, String)| {
+        Ok(mlua::Value::String(
+            lua.create_string(hc.db_query(&sql, &params))?,
+        ))
+    })?;
     host.set("dbQuery", db_query_fn)?;
 
     let hc = host_ctx.clone();
-    let db_execute_fn =
-        lua.create_function(move |lua, (sql, params): (String, Option<String>)| {
-            Ok(mlua::Value::String(
-                lua.create_string(hc.db_execute(&sql, params.as_deref()))?,
-            ))
-        })?;
+    let db_execute_fn = lua.create_function(move |lua, (sql, params): (String, String)| {
+        Ok(mlua::Value::String(
+            lua.create_string(hc.db_execute(&sql, &params))?,
+        ))
+    })?;
     host.set("dbExecute", db_execute_fn)?;
 
     let hc = host_ctx.clone();
@@ -169,10 +167,17 @@ pub fn register_host_functions(
     })?;
     host.set("emitEvent", emit_event_fn)?;
 
+    let hc = host_ctx.clone();
     let new_id_fn = lua.create_function(move |lua, ()| -> mlua::Result<mlua::String> {
-        lua.create_string(host_ctx.new_uuid())
+        lua.create_string(hc.new_uuid())
     })?;
     host.set("newId", new_id_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_ph_fn = lua.create_function(move |lua, idx: usize| -> mlua::Result<mlua::String> {
+        lua.create_string(hc.db_ph(idx))
+    })?;
+    host.set("dbPh", db_ph_fn)?;
 
     let json_encode_fn =
         lua.create_function(move |lua, val: mlua::Value| -> mlua::Result<String> {
@@ -338,7 +343,7 @@ mod tests {
         let host: mlua::Table = globals.get(PLUGIN_HOST_GLOBAL).unwrap();
         let db_fn: mlua::Function = host.get("dbQuery").unwrap();
 
-        let result: String = db_fn.call(("SELECT 1",)).unwrap();
+        let result: String = db_fn.call(("SELECT 1", "[]")).unwrap();
         assert!(result.contains("no database access"));
     }
 
@@ -353,7 +358,7 @@ mod tests {
         let host: mlua::Table = globals.get(PLUGIN_HOST_GLOBAL).unwrap();
         let db_fn: mlua::Function = host.get("dbQuery").unwrap();
 
-        let result: String = db_fn.call(("DELETE FROM posts",)).unwrap();
+        let result: String = db_fn.call(("DELETE FROM posts", "[]")).unwrap();
         assert!(result.contains("only SELECT"));
     }
 
@@ -379,6 +384,7 @@ mod tests {
             "dbBegin",
             "dbCommit",
             "dbRollback",
+            "dbPh",
             "vfsRead",
             "vfsWrite",
             "vfsDelete",

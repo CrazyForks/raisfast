@@ -37,6 +37,7 @@ use cron::Schedule;
 use ts_rs::TS;
 
 use crate::db::Pool;
+use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::plugins::CronEntry;
 
@@ -186,9 +187,10 @@ pub async fn create_schedule_with_plugin(
     let now_str = now.to_rfc3339();
     let next_str = next.to_rfc3339();
 
-    sqlx::query(&crate::db::dialect::translate(
+    sqlx::query(&format!(
         "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+         VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+        ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
     ))
     .bind(&id)
     .bind(label)
@@ -210,9 +212,10 @@ pub async fn create_schedule_with_plugin(
 
 /// 按 ID 查找
 pub async fn find_by_id(pool: &Pool, id: &str) -> AppResult<Option<CronSchedule>> {
-    let row = sqlx::query_as::<_, CronScheduleRow>(&crate::db::dialect::translate(
+    let row = sqlx::query_as::<_, CronScheduleRow>(&format!(
         "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
-         FROM cron_schedules WHERE id = ?"
+         FROM cron_schedules WHERE id = {}",
+        ph(1)
     ))
     .bind(id)
     .fetch_optional(pool)
@@ -223,10 +226,10 @@ pub async fn find_by_id(pool: &Pool, id: &str) -> AppResult<Option<CronSchedule>
 
 /// 列出所有调度
 pub async fn list_schedules(pool: &Pool) -> AppResult<Vec<CronSchedule>> {
-    let rows = sqlx::query_as::<_, CronScheduleRow>(&crate::db::dialect::translate(
+    let rows = sqlx::query_as::<_, CronScheduleRow>(
         "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
-         FROM cron_schedules ORDER BY created_at ASC"
-    ))
+         FROM cron_schedules ORDER BY created_at ASC",
+    )
     .fetch_all(pool)
     .await?;
 
@@ -236,8 +239,11 @@ pub async fn list_schedules(pool: &Pool) -> AppResult<Vec<CronSchedule>> {
 /// 启用/禁用调度
 pub async fn toggle_schedule(pool: &Pool, id: &str, enabled: bool) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    let result = sqlx::query(&crate::db::dialect::translate(
-        "UPDATE cron_schedules SET enabled = ?, updated_at = ? WHERE id = ?",
+    let result = sqlx::query(&format!(
+        "UPDATE cron_schedules SET enabled = {}, updated_at = {} WHERE id = {}",
+        ph(1),
+        ph(2),
+        ph(3)
     ))
     .bind(enabled)
     .bind(&now)
@@ -287,8 +293,9 @@ pub async fn update_schedule(
     let now_str = Utc::now().to_rfc3339();
     let next_str = next.to_rfc3339();
 
-    sqlx::query(&crate::db::dialect::translate(
-        "UPDATE cron_schedules SET label = ?, job_type = ?, payload = ?, cron_expr = ?, enabled = ?, next_run_at = ?, updated_at = ? WHERE id = ?",
+    sqlx::query(&format!(
+        "UPDATE cron_schedules SET label = {}, job_type = {}, payload = {}, cron_expr = {}, enabled = {}, next_run_at = {}, updated_at = {} WHERE id = {}",
+        ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8)
     ))
     .bind(&schedule.label)
     .bind(&schedule.job_type)
@@ -306,12 +313,10 @@ pub async fn update_schedule(
 
 /// 删除调度
 pub async fn delete_schedule(pool: &Pool, id: &str) -> AppResult<()> {
-    let result = sqlx::query(&crate::db::dialect::translate(
-        "DELETE FROM cron_schedules WHERE id = ?",
-    ))
-    .bind(id)
-    .execute(pool)
-    .await?;
+    let result = sqlx::query(&format!("DELETE FROM cron_schedules WHERE id = {}", ph(1)))
+        .bind(id)
+        .execute(pool)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::not_found("cron_schedule"));
@@ -361,9 +366,10 @@ impl CronScheduler {
     async fn tick(&self) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
 
-        let rows = sqlx::query_as::<_, CronScheduleRow>(&crate::db::dialect::translate(
+        let rows = sqlx::query_as::<_, CronScheduleRow>(&format!(
             "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
-             FROM cron_schedules WHERE enabled = 1 AND next_run_at <= ?"
+             FROM cron_schedules WHERE enabled = 1 AND next_run_at <= {}",
+            ph(1)
         ))
         .bind(&now)
         .fetch_all(&self.pool)
@@ -421,8 +427,9 @@ impl CronScheduler {
         match &dispatch_result {
             Ok(()) => {
                 if let Some(ref lid) = log_id {
-                    sqlx::query(&crate::db::dialect::translate(
-                        "UPDATE cron_execution_log SET status = 'success', duration_ms = ?, finished_at = ? WHERE id = ?"
+                    sqlx::query(&format!(
+                        "UPDATE cron_execution_log SET status = 'success', duration_ms = {}, finished_at = {} WHERE id = {}",
+                        ph(1), ph(2), ph(3)
                     ))
                     .bind(elapsed)
                     .bind(&now_str)
@@ -434,8 +441,9 @@ impl CronScheduler {
             Err(e) => {
                 if let Some(ref lid) = log_id {
                     let err_str = e.to_string();
-                    sqlx::query(&crate::db::dialect::translate(
-                        "UPDATE cron_execution_log SET status = 'failed', duration_ms = ?, error = ?, finished_at = ? WHERE id = ?"
+                    sqlx::query(&format!(
+                        "UPDATE cron_execution_log SET status = 'failed', duration_ms = {}, error = {}, finished_at = {} WHERE id = {}",
+                        ph(1), ph(2), ph(3), ph(4)
                     ))
                     .bind(elapsed)
                     .bind(&err_str)
@@ -449,8 +457,9 @@ impl CronScheduler {
         }
 
         if let Some(next_str) = &next_str {
-            sqlx::query(&crate::db::dialect::translate(
-                "UPDATE cron_schedules SET last_run_at = ?, next_run_at = ?, updated_at = ? WHERE id = ?"
+            sqlx::query(&format!(
+                "UPDATE cron_schedules SET last_run_at = {}, next_run_at = {}, updated_at = {} WHERE id = {}",
+                ph(1), ph(2), ph(3), ph(4)
             ))
             .bind(&now_str)
             .bind(next_str)
@@ -497,11 +506,9 @@ pub async fn seed_defaults(
     pool: &Pool,
     schedules: &[crate::config::app::CronScheduleConfig],
 ) -> AppResult<()> {
-    let count: i64 = sqlx::query_scalar(&crate::db::dialect::translate(
-        "SELECT COUNT(*) FROM cron_schedules",
-    ))
-    .fetch_one(pool)
-    .await?;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cron_schedules")
+        .fetch_one(pool)
+        .await?;
 
     if count > 0 {
         return Ok(());
@@ -564,9 +571,14 @@ pub async fn create_execution_log(
     let id = uuid::Uuid::now_v7().to_string();
     let now = Utc::now().to_rfc3339();
 
-    sqlx::query(&crate::db::dialect::translate(
+    sqlx::query(&format!(
         "INSERT INTO cron_execution_log (id, schedule_id, job_type, label, status, started_at)
-         VALUES (?, ?, ?, ?, 'running', ?)",
+         VALUES ({}, {}, {}, {}, 'running', {})",
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5)
     ))
     .bind(&id)
     .bind(schedule_id)
@@ -582,8 +594,9 @@ pub async fn create_execution_log(
 /// 标记执行日志为成功
 pub async fn complete_execution_log(pool: &Pool, log_id: &str, duration_ms: i64) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    sqlx::query(&crate::db::dialect::translate(
-        "UPDATE cron_execution_log SET status = 'success', duration_ms = ?, finished_at = ? WHERE id = ?"
+    sqlx::query(&format!(
+        "UPDATE cron_execution_log SET status = 'success', duration_ms = {}, finished_at = {} WHERE id = {}",
+        ph(1), ph(2), ph(3)
     ))
     .bind(duration_ms)
     .bind(&now)
@@ -601,8 +614,9 @@ pub async fn fail_execution_log(
     error: &str,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    sqlx::query(&crate::db::dialect::translate(
-        "UPDATE cron_execution_log SET status = 'failed', duration_ms = ?, error = ?, finished_at = ? WHERE id = ?"
+    sqlx::query(&format!(
+        "UPDATE cron_execution_log SET status = 'failed', duration_ms = {}, error = {}, finished_at = {} WHERE id = {}",
+        ph(1), ph(2), ph(3), ph(4)
     ))
     .bind(duration_ms)
     .bind(error)
@@ -619,11 +633,12 @@ pub async fn list_execution_logs(
     schedule_id: &str,
     limit: i64,
 ) -> AppResult<Vec<CronExecutionLog>> {
-    let rows = sqlx::query_as::<_, CronExecLogRow>(&crate::db::dialect::translate(
+    let rows = sqlx::query_as::<_, CronExecLogRow>(&format!(
         "SELECT id, schedule_id, job_type, label, status, duration_ms, error, started_at, finished_at
          FROM cron_execution_log
-         WHERE schedule_id = ?
-         ORDER BY started_at DESC LIMIT ?"
+         WHERE schedule_id = {}
+         ORDER BY started_at DESC LIMIT {}",
+        ph(1), ph(2)
     ))
     .bind(schedule_id)
     .bind(limit)
@@ -638,10 +653,11 @@ pub async fn list_execution_logs(
 
 /// 查询所有 schedule 的最近执行记录
 pub async fn recent_execution_logs(pool: &Pool, limit: i64) -> AppResult<Vec<CronExecutionLog>> {
-    let rows = sqlx::query_as::<_, CronExecLogRow>(&crate::db::dialect::translate(
+    let rows = sqlx::query_as::<_, CronExecLogRow>(&format!(
         "SELECT id, schedule_id, job_type, label, status, duration_ms, error, started_at, finished_at
          FROM cron_execution_log
-         ORDER BY started_at DESC LIMIT ?"
+         ORDER BY started_at DESC LIMIT {}",
+        ph(1)
     ))
     .bind(limit)
     .fetch_all(pool)
@@ -657,8 +673,9 @@ pub async fn recent_execution_logs(pool: &Pool, limit: i64) -> AppResult<Vec<Cro
 pub async fn cleanup_execution_logs(pool: &Pool, retention_days: i64) -> AppResult<u64> {
     let threshold = Utc::now() - chrono::Duration::days(retention_days);
     let threshold_str = threshold.to_rfc3339();
-    let result = sqlx::query(&crate::db::dialect::translate(
-        "DELETE FROM cron_execution_log WHERE started_at < ?",
+    let result = sqlx::query(&format!(
+        "DELETE FROM cron_execution_log WHERE started_at < {}",
+        ph(1)
     ))
     .bind(&threshold_str)
     .execute(pool)
@@ -686,8 +703,9 @@ pub async fn sync_plugin_crons(
     let mut tx = pool.begin().await?;
     let now_str = Utc::now().to_rfc3339();
 
-    let old = sqlx::query_as::<_, PluginCronRow>(&crate::db::dialect::translate(
-        "SELECT id, job_type FROM cron_schedules WHERE plugin_id = ?",
+    let old = sqlx::query_as::<_, PluginCronRow>(&format!(
+        "SELECT id, job_type FROM cron_schedules WHERE plugin_id = {}",
+        ph(1)
     ))
     .bind(plugin_id)
     .fetch_all(&mut *tx)
@@ -697,12 +715,10 @@ pub async fn sync_plugin_crons(
 
     for row in &old {
         if !new_types.contains(&row.job_type.as_str()) {
-            sqlx::query(&crate::db::dialect::translate(
-                "DELETE FROM cron_schedules WHERE id = ?",
-            ))
-            .bind(&row.id)
-            .execute(&mut *tx)
-            .await?;
+            sqlx::query(&format!("DELETE FROM cron_schedules WHERE id = {}", ph(1)))
+                .bind(&row.id)
+                .execute(&mut *tx)
+                .await?;
             tracing::info!(
                 "removed stale cron '{}' for plugin {plugin_id}",
                 row.job_type
@@ -711,8 +727,10 @@ pub async fn sync_plugin_crons(
     }
 
     for entry in entries {
-        let existing: Option<(String,)> = sqlx::query_as(&crate::db::dialect::translate(
-            "SELECT id FROM cron_schedules WHERE plugin_id = ? AND job_type = ?",
+        let existing: Option<(String,)> = sqlx::query_as(&format!(
+            "SELECT id FROM cron_schedules WHERE plugin_id = {} AND job_type = {}",
+            ph(1),
+            ph(2)
         ))
         .bind(plugin_id)
         .bind(&entry.job_type)
@@ -722,8 +740,9 @@ pub async fn sync_plugin_crons(
         if let Some(existing_row) = existing {
             let next = next_run(&entry.cron_expr, Utc::now())?;
             let next_str = next.to_rfc3339();
-            sqlx::query(&crate::db::dialect::translate(
-                "UPDATE cron_schedules SET label = ?, payload = ?, cron_expr = ?, enabled = ?, next_run_at = ?, updated_at = ? WHERE id = ?"
+            sqlx::query(&format!(
+                "UPDATE cron_schedules SET label = {}, payload = {}, cron_expr = {}, enabled = {}, next_run_at = {}, updated_at = {} WHERE id = {}",
+                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7)
             ))
             .bind(&entry.label)
             .bind(&entry.payload)
@@ -741,9 +760,10 @@ pub async fn sync_plugin_crons(
             let next = next_run(&entry.cron_expr, Utc::now())?;
             let next_str = next.to_rfc3339();
             let now = Utc::now().to_rfc3339();
-            sqlx::query(&crate::db::dialect::translate(
+            sqlx::query(&format!(
                 "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                 VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
             ))
             .bind(&id)
             .bind(&entry.label)
@@ -770,8 +790,9 @@ pub async fn sync_plugin_crons(
 ///
 /// 插件卸载时调用。
 pub async fn remove_plugin_crons(pool: &Pool, plugin_id: &str) -> AppResult<()> {
-    let result = sqlx::query(&crate::db::dialect::translate(
-        "DELETE FROM cron_schedules WHERE plugin_id = ?",
+    let result = sqlx::query(&format!(
+        "DELETE FROM cron_schedules WHERE plugin_id = {}",
+        ph(1)
     ))
     .bind(plugin_id)
     .execute(pool)
@@ -928,7 +949,7 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 1, ?, NULL, ?, ?)"
+             VALUES (?, ?, ?, ?, ?, 1, ?, NULL, ?, ?)",
         )
         .bind("sched-1")
         .bind("Test Sitemap")
@@ -977,7 +998,7 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 1, ?, NULL, ?, ?)"
+             VALUES (?, ?, ?, ?, ?, 1, ?, NULL, ?, ?)",
         )
         .bind("sched-future")
         .bind("Future Job")

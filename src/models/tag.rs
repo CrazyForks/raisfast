@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::db::tenant::tenant_filter;
+use crate::db::dialect::ph;
+use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
 
 /// 标签完整数据库行模型
@@ -34,11 +35,10 @@ crate::impl_from_row_opt_tenant!(Tag {
 ///
 /// 按 `name` 字母顺序排列返回完整标签列表。
 pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppResult<Vec<Tag>> {
-    let sql_str = format!(
+    let sql = format!(
         "SELECT * FROM tags WHERE 1=1{} ORDER BY name",
-        tenant_filter(tenant_id)
+        tenant_filter_ph(tenant_id, 1)
     );
-    let sql = crate::db::dialect::translate(&sql_str);
     let mut q = sqlx::query_as::<_, Tag>(&sql);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -60,20 +60,21 @@ pub async fn find_paginated(
 
     let count_sql = format!(
         "SELECT COUNT(*) FROM tags WHERE 1=1{}",
-        tenant_filter(tenant_id)
+        tenant_filter_ph(tenant_id, 1)
     );
-    let count_sql = crate::db::dialect::translate(&count_sql);
     let mut cq = sqlx::query_scalar::<_, i64>(&count_sql);
     if let Some(tid) = tenant_id {
         cq = cq.bind(tid);
     }
     let total = cq.fetch_one(pool).await?;
 
+    let base = usize::from(tenant_id.is_some()) + 1;
     let data_sql = format!(
-        "SELECT * FROM tags WHERE 1=1{} ORDER BY name LIMIT ? OFFSET ?",
-        tenant_filter(tenant_id)
+        "SELECT * FROM tags WHERE 1=1{} ORDER BY name LIMIT {} OFFSET {}",
+        tenant_filter_ph(tenant_id, 1),
+        ph(base),
+        ph(base + 1)
     );
-    let data_sql = crate::db::dialect::translate(&data_sql);
     let mut dq = sqlx::query_as::<_, Tag>(&data_sql);
     if let Some(tid) = tenant_id {
         dq = dq.bind(tid);
@@ -92,11 +93,11 @@ pub async fn find_by_id(
     id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Tag> {
-    let sql_str = format!(
-        "SELECT * FROM tags WHERE id = ?{}",
-        tenant_filter(tenant_id)
+    let sql = format!(
+        "SELECT * FROM tags WHERE id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
     );
-    let sql = crate::db::dialect::translate(&sql_str);
     let mut q = sqlx::query_as::<_, Tag>(&sql).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -118,8 +119,15 @@ pub async fn create(
 
     match tenant_id {
         Some(tid) => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO tags (id, tenant_id, name, slug, created_by, updated_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            let sql = format!(
+                "INSERT INTO tags (id, tenant_id, name, slug, created_by, updated_by, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7)
             );
             sqlx::query(&sql)
                 .bind(&id)
@@ -133,8 +141,14 @@ pub async fn create(
                 .await?;
         }
         None => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO tags (id, name, slug, created_by, updated_by, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            let sql = format!(
+                "INSERT INTO tags (id, name, slug, created_by, updated_by, created_at) VALUES ({}, {}, {}, {}, {}, {})",
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6)
             );
             sqlx::query(&sql)
                 .bind(&id)
@@ -155,8 +169,11 @@ pub async fn create(
 ///
 /// 若标签不存在则返回 [`AppError::NotFound`]。
 pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
-    let sql = format!("DELETE FROM tags WHERE id = ?{}", tenant_filter(tenant_id));
-    let sql = crate::db::dialect::translate(&sql);
+    let sql = format!(
+        "DELETE FROM tags WHERE id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
+    );
     let mut q = sqlx::query(&sql).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -176,10 +193,13 @@ pub async fn update(
 ) -> AppResult<Tag> {
     let now = chrono::Utc::now().to_rfc3339();
     let sql = format!(
-        "UPDATE tags SET name = ?, slug = ?, updated_at = ? WHERE id = ?{}",
-        tenant_filter(tenant_id)
+        "UPDATE tags SET name = {}, slug = {}, updated_at = {} WHERE id = {}{}",
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        tenant_filter_ph(tenant_id, 5)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql).bind(name).bind(slug).bind(&now).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);

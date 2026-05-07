@@ -71,8 +71,10 @@ async fn nested_comment() {
     .await;
     let pid = b1["data"]["id"].as_str().unwrap();
 
-    let approve_sql =
-        raisfast::db::dialect::translate("UPDATE comments SET status = 'approved' WHERE id = ?");
+    let approve_sql = format!(
+        "UPDATE comments SET status = 'approved' WHERE id = {}",
+        raisfast::db::dialect::ph(1)
+    );
     sqlx::query(&approve_sql)
         .bind(pid)
         .execute(&state.pool)

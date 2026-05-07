@@ -306,8 +306,11 @@ async fn auto_register_user(
 
     if let Some(avatar) = &user_info.avatar_url {
         let now = crate::utils::tz::now_str();
-        let sql = crate::db::dialect::translate(
-            "UPDATE users SET avatar = ?, email_verified = 1, updated_at = ? WHERE id = ?",
+        let sql = format!(
+            "UPDATE users SET avatar = {}, email_verified = 1, updated_at = {} WHERE id = {}",
+            crate::db::dialect::ph(1),
+            crate::db::dialect::ph(2),
+            crate::db::dialect::ph(3)
         );
         sqlx::query(&sql)
             .bind(avatar)
@@ -317,8 +320,10 @@ async fn auto_register_user(
             .await?;
     } else {
         let now = crate::utils::tz::now_str();
-        let sql = crate::db::dialect::translate(
-            "UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?",
+        let sql = format!(
+            "UPDATE users SET email_verified = 1, updated_at = {} WHERE id = {}",
+            crate::db::dialect::ph(1),
+            crate::db::dialect::ph(2)
         );
         sqlx::query(&sql)
             .bind(now)

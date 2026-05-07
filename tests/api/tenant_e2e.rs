@@ -44,8 +44,16 @@ async fn create_user_in_tenant(
 ) {
     let hash = raisfast::services::auth::hash_password("TestPass123!").unwrap();
     let now = chrono::Utc::now().to_rfc3339();
-    let sql = raisfast::db::dialect::translate(
-        "INSERT INTO users (id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    let sql = format!(
+        "INSERT INTO users (id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
+        raisfast::db::dialect::ph(1),
+        raisfast::db::dialect::ph(2),
+        raisfast::db::dialect::ph(3),
+        raisfast::db::dialect::ph(4),
+        raisfast::db::dialect::ph(5),
+        raisfast::db::dialect::ph(6),
+        raisfast::db::dialect::ph(7),
+        raisfast::db::dialect::ph(8)
     );
     sqlx::query(&sql)
         .bind(id)
@@ -70,8 +78,15 @@ async fn create_published_post_in_tenant(
     tenant_id: &str,
 ) {
     let now = chrono::Utc::now().to_rfc3339();
-    let sql = raisfast::db::dialect::translate(
-        "INSERT INTO posts (id, tenant_id, title, slug, content, excerpt, status, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, 'content', 'excerpt', 'published', ?, NULL, ?, ?)",
+    let sql = format!(
+        "INSERT INTO posts (id, tenant_id, title, slug, content, excerpt, status, created_by, updated_by, created_at, updated_at) VALUES ({}, {}, {}, {}, 'content', 'excerpt', 'published', {}, NULL, {}, {})",
+        raisfast::db::dialect::ph(1),
+        raisfast::db::dialect::ph(2),
+        raisfast::db::dialect::ph(3),
+        raisfast::db::dialect::ph(4),
+        raisfast::db::dialect::ph(5),
+        raisfast::db::dialect::ph(6),
+        raisfast::db::dialect::ph(7)
     );
     sqlx::query(&sql)
         .bind(id)

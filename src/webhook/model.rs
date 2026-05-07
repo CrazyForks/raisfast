@@ -58,8 +58,17 @@ pub struct WebhookPayload {
 pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppResult<()> {
     match &sub.tenant_id {
         Some(tid) => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO webhook_subscriptions (id, tenant_id, url, secret, events, enabled, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            let sql = format!(
+                "INSERT INTO webhook_subscriptions (id, tenant_id, url, secret, events, enabled, description, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})",
+                crate::db::dialect::ph(1),
+                crate::db::dialect::ph(2),
+                crate::db::dialect::ph(3),
+                crate::db::dialect::ph(4),
+                crate::db::dialect::ph(5),
+                crate::db::dialect::ph(6),
+                crate::db::dialect::ph(7),
+                crate::db::dialect::ph(8),
+                crate::db::dialect::ph(9)
             );
             sqlx::query(&sql)
                 .bind(&sub.id)
@@ -75,8 +84,16 @@ pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
                 .await?;
         }
         None => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO webhook_subscriptions (id, url, secret, events, enabled, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            let sql = format!(
+                "INSERT INTO webhook_subscriptions (id, url, secret, events, enabled, description, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
+                crate::db::dialect::ph(1),
+                crate::db::dialect::ph(2),
+                crate::db::dialect::ph(3),
+                crate::db::dialect::ph(4),
+                crate::db::dialect::ph(5),
+                crate::db::dialect::ph(6),
+                crate::db::dialect::ph(7),
+                crate::db::dialect::ph(8)
             );
             sqlx::query(&sql)
                 .bind(&sub.id)
@@ -103,18 +120,20 @@ pub async fn find_paginated(
 ) -> AppResult<(Vec<WebhookSubscription>, i64)> {
     let offset = (page - 1).max(0) * page_size;
 
+    let mut ph_idx = 1usize;
     let mut where_parts = vec!["1=1".to_string()];
     if tenant_id.is_some() {
-        where_parts.push("tenant_id = ?".to_string());
+        where_parts.push(format!("tenant_id = {}", crate::db::dialect::ph(ph_idx)));
+        ph_idx += 1;
     }
 
     let where_str = where_parts.join(" AND ");
-    let count_sql_raw = format!("SELECT COUNT(*) FROM webhook_subscriptions WHERE {where_str}");
-    let data_sql_raw = format!(
-        "SELECT * FROM webhook_subscriptions WHERE {where_str} ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    let count_sql = format!("SELECT COUNT(*) FROM webhook_subscriptions WHERE {where_str}");
+    let data_sql = format!(
+        "SELECT * FROM webhook_subscriptions WHERE {where_str} ORDER BY created_at DESC LIMIT {} OFFSET {}",
+        crate::db::dialect::ph(ph_idx),
+        crate::db::dialect::ph(ph_idx + 1)
     );
-    let count_sql = crate::db::dialect::translate(&count_sql_raw);
-    let data_sql = crate::db::dialect::translate(&data_sql_raw);
 
     let mut cq = sqlx::query_scalar::<_, i64>(&count_sql);
     let mut dq = sqlx::query_as::<_, WebhookSubscription>(&data_sql);
@@ -133,7 +152,10 @@ pub async fn find_paginated(
 
 /// 根据 ID 查找订阅
 pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<WebhookSubscription> {
-    let sql = crate::db::dialect::translate("SELECT * FROM webhook_subscriptions WHERE id = ?");
+    let sql = format!(
+        "SELECT * FROM webhook_subscriptions WHERE id = {}",
+        crate::db::dialect::ph(1)
+    );
     sqlx::query_as::<_, WebhookSubscription>(&sql)
         .bind(id)
         .fetch_one(pool)
@@ -143,8 +165,15 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<WebhookSu
 
 /// 根据 ID 更新订阅
 pub async fn update(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppResult<()> {
-    let sql = crate::db::dialect::translate(
-        "UPDATE webhook_subscriptions SET url = ?, secret = ?, events = ?, enabled = ?, description = ?, updated_at = ? WHERE id = ?",
+    let sql = format!(
+        "UPDATE webhook_subscriptions SET url = {}, secret = {}, events = {}, enabled = {}, description = {}, updated_at = {} WHERE id = {}",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3),
+        crate::db::dialect::ph(4),
+        crate::db::dialect::ph(5),
+        crate::db::dialect::ph(6),
+        crate::db::dialect::ph(7)
     );
     let result = sqlx::query(&sql)
         .bind(&sub.url)
@@ -162,7 +191,10 @@ pub async fn update(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
 
 /// 根据 ID 删除订阅
 pub async fn delete_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
-    let sql = crate::db::dialect::translate("DELETE FROM webhook_subscriptions WHERE id = ?");
+    let sql = format!(
+        "DELETE FROM webhook_subscriptions WHERE id = {}",
+        crate::db::dialect::ph(1)
+    );
     let result = sqlx::query(&sql).bind(id).execute(pool).await?;
     AppError::expect_affected(&result, "webhook_subscription")?;
     Ok(())
@@ -175,8 +207,9 @@ pub async fn find_enabled_by_tenant(
 ) -> AppResult<Vec<WebhookSubscription>> {
     match tenant_id {
         Some(tid) => {
-            let sql = crate::db::dialect::translate(
-                "SELECT * FROM webhook_subscriptions WHERE tenant_id = ? AND enabled = 1",
+            let sql = format!(
+                "SELECT * FROM webhook_subscriptions WHERE tenant_id = {} AND enabled = 1",
+                crate::db::dialect::ph(1)
             );
             let items = sqlx::query_as::<_, WebhookSubscription>(&sql)
                 .bind(tid)
@@ -185,9 +218,7 @@ pub async fn find_enabled_by_tenant(
             Ok(items)
         }
         None => {
-            let sql = crate::db::dialect::translate(
-                "SELECT * FROM webhook_subscriptions WHERE enabled = 1",
-            );
+            let sql = "SELECT * FROM webhook_subscriptions WHERE enabled = 1".to_string();
             let items = sqlx::query_as::<_, WebhookSubscription>(&sql)
                 .fetch_all(pool)
                 .await?;

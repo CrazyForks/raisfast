@@ -49,7 +49,9 @@ fn cache_ct(ct: &mut raisfast::content_type::schema::ContentTypeSchema) {
 }
 
 async fn setup_pool() -> sqlx::SqlitePool {
-    let pool = raisfast::db::Pool::connect("sqlite::memory:").await.unwrap();
+    let pool = raisfast::db::Pool::connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::query(raisfast::db::schema::SCHEMA_SQL)
         .execute(&pool)
         .await

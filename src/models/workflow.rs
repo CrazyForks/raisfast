@@ -113,8 +113,15 @@ pub async fn create_definition(
     initial_step: &str,
 ) -> anyhow::Result<WorkflowDefinition> {
     let now = crate::utils::tz::now_str();
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO workflow_definitions (id, name, description, steps, initial_step, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    let sql = format!(
+        "INSERT INTO workflow_definitions (id, name, description, steps, initial_step, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3),
+        crate::db::dialect::ph(4),
+        crate::db::dialect::ph(5),
+        crate::db::dialect::ph(6),
+        crate::db::dialect::ph(7)
     );
     sqlx::query(&sql)
         .bind(id)
@@ -141,8 +148,9 @@ pub async fn create_definition(
 
 /// 获取工作流定义
 pub async fn get_definition(pool: &Pool, id: &str) -> anyhow::Result<Option<WorkflowDefinition>> {
-    let sql = crate::db::dialect::translate(
-        "SELECT id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions WHERE id = ?",
+    let sql = format!(
+        "SELECT id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions WHERE id = {}",
+        crate::db::dialect::ph(1)
     );
     let row = sqlx::query_as::<_, WorkflowDefinition>(&sql)
         .bind(id)
@@ -153,10 +161,8 @@ pub async fn get_definition(pool: &Pool, id: &str) -> anyhow::Result<Option<Work
 
 /// 列出所有工作流定义
 pub async fn list_definitions(pool: &Pool) -> anyhow::Result<Vec<WorkflowDefinition>> {
-    let sql = crate::db::dialect::translate(
-        "SELECT id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions ORDER BY created_at DESC",
-    );
-    let rows = sqlx::query_as::<_, WorkflowDefinition>(&sql)
+    let sql = "SELECT id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions ORDER BY created_at DESC";
+    let rows = sqlx::query_as::<_, WorkflowDefinition>(sql)
         .fetch_all(pool)
         .await?;
     Ok(rows)
@@ -164,7 +170,10 @@ pub async fn list_definitions(pool: &Pool) -> anyhow::Result<Vec<WorkflowDefinit
 
 /// 删除工作流定义
 pub async fn delete_definition(pool: &Pool, id: &str) -> anyhow::Result<()> {
-    let sql = crate::db::dialect::translate("DELETE FROM workflow_definitions WHERE id = ?");
+    let sql = format!(
+        "DELETE FROM workflow_definitions WHERE id = {}",
+        crate::db::dialect::ph(1)
+    );
     sqlx::query(&sql).bind(id).execute(pool).await?;
     Ok(())
 }
@@ -179,8 +188,14 @@ pub async fn create_instance(
 ) -> anyhow::Result<WorkflowInstance> {
     let now = crate::utils::tz::now_str();
     let ctx_str = serde_json::to_string(context)?;
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO workflow_instances (id, definition_id, status, context, triggered_by, started_at, updated_at) VALUES (?, ?, 'running', ?, ?, ?, ?)",
+    let sql = format!(
+        "INSERT INTO workflow_instances (id, definition_id, status, context, triggered_by, started_at, updated_at) VALUES ({}, {}, 'running', {}, {}, {}, {})",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3),
+        crate::db::dialect::ph(4),
+        crate::db::dialect::ph(5),
+        crate::db::dialect::ph(6)
     );
     sqlx::query(&sql)
         .bind(id)
@@ -206,8 +221,9 @@ pub async fn create_instance(
 
 /// 获取工作流实例
 pub async fn get_instance(pool: &Pool, id: &str) -> anyhow::Result<Option<WorkflowInstance>> {
-    let sql = crate::db::dialect::translate(
-        "SELECT id, definition_id, status, current_step, context, triggered_by, started_at, completed_at, updated_at FROM workflow_instances WHERE id = ?",
+    let sql = format!(
+        "SELECT id, definition_id, status, current_step, context, triggered_by, started_at, completed_at, updated_at FROM workflow_instances WHERE id = {}",
+        crate::db::dialect::ph(1)
     );
     let row = sqlx::query_as::<_, WorkflowInstance>(&sql)
         .bind(id)
@@ -225,8 +241,14 @@ pub async fn list_instances(
     page_size: i64,
 ) -> anyhow::Result<(Vec<WorkflowInstance>, i64)> {
     let offset = (page - 1) * page_size;
-    let sql = crate::db::dialect::translate(
-        "SELECT id, definition_id, status, current_step, context, triggered_by, started_at, completed_at, updated_at FROM workflow_instances WHERE (? IS NULL OR definition_id = ?) AND (? IS NULL OR status = ?) ORDER BY started_at DESC LIMIT ? OFFSET ?",
+    let sql = format!(
+        "SELECT id, definition_id, status, current_step, context, triggered_by, started_at, completed_at, updated_at FROM workflow_instances WHERE ({} IS NULL OR definition_id = {}) AND ({} IS NULL OR status = {}) ORDER BY started_at DESC LIMIT {} OFFSET {}",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3),
+        crate::db::dialect::ph(4),
+        crate::db::dialect::ph(5),
+        crate::db::dialect::ph(6)
     );
     let rows = sqlx::query_as::<_, WorkflowInstance>(&sql)
         .bind(definition_id)
@@ -238,8 +260,12 @@ pub async fn list_instances(
         .fetch_all(pool)
         .await?;
 
-    let count_sql = crate::db::dialect::translate(
-        "SELECT COUNT(*) as count FROM workflow_instances WHERE (? IS NULL OR definition_id = ?) AND (? IS NULL OR status = ?)",
+    let count_sql = format!(
+        "SELECT COUNT(*) as count FROM workflow_instances WHERE ({} IS NULL OR definition_id = {}) AND ({} IS NULL OR status = {})",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3),
+        crate::db::dialect::ph(4)
     );
     let (count,): (i64,) = sqlx::query_as(&count_sql)
         .bind(definition_id)
@@ -267,8 +293,14 @@ pub async fn update_instance_step(
     } else {
         None
     };
-    let sql = crate::db::dialect::translate(
-        "UPDATE workflow_instances SET status = ?, current_step = ?, context = ?, completed_at = COALESCE(?, completed_at), updated_at = ? WHERE id = ?",
+    let sql = format!(
+        "UPDATE workflow_instances SET status = {}, current_step = {}, context = {}, completed_at = COALESCE({}, completed_at), updated_at = {} WHERE id = {}",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3),
+        crate::db::dialect::ph(4),
+        crate::db::dialect::ph(5),
+        crate::db::dialect::ph(6)
     );
     sqlx::query(&sql)
         .bind(status)
@@ -293,8 +325,14 @@ pub async fn create_step_log(
 ) -> anyhow::Result<StepLog> {
     let now = crate::utils::tz::now_str();
     let input_str = input.map(|v| serde_json::to_string(v).unwrap_or_default());
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO workflow_step_logs (id, instance_id, step_id, step_name, status, input, started_at) VALUES (?, ?, ?, ?, 'running', ?, ?)",
+    let sql = format!(
+        "INSERT INTO workflow_step_logs (id, instance_id, step_id, step_name, status, input, started_at) VALUES ({}, {}, {}, {}, 'running', {}, {})",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3),
+        crate::db::dialect::ph(4),
+        crate::db::dialect::ph(5),
+        crate::db::dialect::ph(6)
     );
     sqlx::query(&sql)
         .bind(id)
@@ -327,8 +365,11 @@ pub async fn complete_step_log(
 ) -> anyhow::Result<()> {
     let now = crate::utils::tz::now_str();
     let output_str = output.map(|v| serde_json::to_string(v).unwrap_or_default());
-    let sql = crate::db::dialect::translate(
-        "UPDATE workflow_step_logs SET status = 'completed', output = ?, completed_at = ? WHERE id = ?",
+    let sql = format!(
+        "UPDATE workflow_step_logs SET status = 'completed', output = {}, completed_at = {} WHERE id = {}",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3)
     );
     sqlx::query(&sql)
         .bind(&output_str)
@@ -342,8 +383,11 @@ pub async fn complete_step_log(
 /// 标记步骤执行失败
 pub async fn fail_step_log(pool: &Pool, id: &str, error: &str) -> anyhow::Result<()> {
     let now = crate::utils::tz::now_str();
-    let sql = crate::db::dialect::translate(
-        "UPDATE workflow_step_logs SET status = 'failed', error = ?, completed_at = ? WHERE id = ?",
+    let sql = format!(
+        "UPDATE workflow_step_logs SET status = 'failed', error = {}, completed_at = {} WHERE id = {}",
+        crate::db::dialect::ph(1),
+        crate::db::dialect::ph(2),
+        crate::db::dialect::ph(3)
     );
     sqlx::query(&sql)
         .bind(error)
@@ -356,8 +400,9 @@ pub async fn fail_step_log(pool: &Pool, id: &str, error: &str) -> anyhow::Result
 
 /// 列出实例的步骤日志
 pub async fn list_step_logs(pool: &Pool, instance_id: &str) -> anyhow::Result<Vec<StepLog>> {
-    let sql = crate::db::dialect::translate(
-        "SELECT id, instance_id, step_id, step_name, status, input, output, error, started_at, completed_at FROM workflow_step_logs WHERE instance_id = ? ORDER BY started_at ASC",
+    let sql = format!(
+        "SELECT id, instance_id, step_id, step_name, status, input, output, error, started_at, completed_at FROM workflow_step_logs WHERE instance_id = {} ORDER BY started_at ASC",
+        crate::db::dialect::ph(1)
     );
     let rows = sqlx::query_as::<_, StepLog>(&sql)
         .bind(instance_id)

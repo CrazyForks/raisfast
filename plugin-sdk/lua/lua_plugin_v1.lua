@@ -1,8 +1,12 @@
 local M = {}
 M.SDK_VERSION = "1.0.0"
 
+function M.dbPh(idx)
+    return RaisFastHost.dbPh(idx)
+end
+
 function M.dbQuery(sql, params)
-    local paramsJson = params and RaisFastHost.jsonEncode(params) or nil
+    local paramsJson = params and RaisFastHost.jsonEncode(params) or "[]"
     local result = RaisFastHost.dbQuery(sql, paramsJson)
     if not result then error("query returned no result") end
     if result:sub(1, 6) == "error:" then error(result:sub(7)) end
@@ -10,7 +14,7 @@ function M.dbQuery(sql, params)
 end
 
 function M.dbExec(sql, params)
-    local paramsJson = params and RaisFastHost.jsonEncode(params) or nil
+    local paramsJson = params and RaisFastHost.jsonEncode(params) or "[]"
     local result = RaisFastHost.dbExecute(sql, paramsJson)
     return RaisFastHost.jsonDecode(result)
 end

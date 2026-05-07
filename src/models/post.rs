@@ -12,7 +12,8 @@ use sqlx::FromRow;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::db::tenant::{tenant_filter, tenant_filter_aliased};
+use crate::db::dialect::ph;
+use crate::db::tenant::{tenant_filter_aliased_ph, tenant_filter_ph};
 use crate::errors::app_error::{AppError, AppResult};
 
 /// 文章完整数据库行模型
@@ -65,10 +66,10 @@ pub async fn find_by_slug(
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Post>> {
     let sql = format!(
-        "SELECT * FROM posts WHERE slug = ?{}",
-        tenant_filter(tenant_id)
+        "SELECT * FROM posts WHERE slug = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query_as::<_, Post>(&sql).bind(slug);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -86,10 +87,10 @@ pub async fn find_by_id(
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Post>> {
     let sql = format!(
-        "SELECT * FROM posts WHERE id = ?{}",
-        tenant_filter(tenant_id)
+        "SELECT * FROM posts WHERE id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query_as::<_, Post>(&sql).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -129,8 +130,22 @@ pub async fn create_tx(
     };
     match tenant_id {
         Some(tid) => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO posts (id, tenant_id, title, slug, content, excerpt, cover_image, status, created_by, updated_by, category_id, published_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            let sql = format!(
+                "INSERT INTO posts (id, tenant_id, title, slug, content, excerpt, cover_image, status, created_by, updated_by, category_id, published_at, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11),
+                ph(12),
+                ph(13),
+                ph(14)
             );
             sqlx::query(&sql)
                 .bind(&id)
@@ -151,8 +166,21 @@ pub async fn create_tx(
                 .await?;
         }
         None => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO posts (id, title, slug, content, excerpt, cover_image, status, created_by, updated_by, category_id, published_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            let sql = format!(
+                "INSERT INTO posts (id, title, slug, content, excerpt, cover_image, status, created_by, updated_by, category_id, published_at, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11),
+                ph(12),
+                ph(13)
             );
             sqlx::query(&sql)
                 .bind(&id)
@@ -217,10 +245,10 @@ pub async fn update_tx(
     tenant_id: Option<&str>,
 ) -> AppResult<Post> {
     let sql = format!(
-        "SELECT * FROM posts WHERE id = ?{}",
-        tenant_filter(tenant_id)
+        "SELECT * FROM posts WHERE id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query_as::<_, Post>(&sql).bind(&cmd.id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -262,10 +290,20 @@ pub async fn update_tx(
         .unwrap_or(existing.updated_by.clone());
 
     let sql = format!(
-        "UPDATE posts SET title = ?, slug = ?, content = ?, excerpt = ?, cover_image = ?, status = ?, category_id = ?, published_at = ?, updated_by = ?, updated_at = ? WHERE id = ?{}",
-        tenant_filter(tenant_id)
+        "UPDATE posts SET title = {}, slug = {}, content = {}, excerpt = {}, cover_image = {}, status = {}, category_id = {}, published_at = {}, updated_by = {}, updated_at = {} WHERE id = {}{}",
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5),
+        ph(6),
+        ph(7),
+        ph(8),
+        ph(9),
+        ph(10),
+        ph(11),
+        tenant_filter_ph(tenant_id, 12)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql)
         .bind(title)
         .bind(slug)
@@ -307,8 +345,11 @@ pub async fn update_tx(
 ///
 /// 若文章不存在则返回 [`AppError::NotFound`]。
 pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
-    let sql = format!("DELETE FROM posts WHERE id = ?{}", tenant_filter(tenant_id));
-    let sql = crate::db::dialect::translate(&sql);
+    let sql = format!(
+        "DELETE FROM posts WHERE id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
+    );
     let mut q = sqlx::query(&sql).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -327,10 +368,10 @@ pub async fn increment_view_count_joined(
     tenant_id: Option<&str>,
 ) -> AppResult<PostJoinedRow> {
     let sql = format!(
-        "UPDATE posts SET view_count = view_count + 1 WHERE slug = ? AND status = 'published'{}",
-        tenant_filter(tenant_id)
+        "UPDATE posts SET view_count = view_count + 1 WHERE slug = {} AND status = 'published'{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql).bind(slug);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -356,19 +397,20 @@ pub async fn sync_tags_tx(
     post_id: &str,
     tag_ids: &[String],
 ) -> AppResult<()> {
-    sqlx::query(&crate::db::dialect::translate("DELETE FROM posts_tags WHERE post_id = ?"))
-        .bind(post_id)
-        .execute(&mut **tx)
-        .await?;
+    let sql = format!("DELETE FROM posts_tags WHERE post_id = {}", ph(1));
+    sqlx::query(&sql).bind(post_id).execute(&mut **tx).await?;
 
     for tag_id in tag_ids {
-        sqlx::query(&crate::db::dialect::translate(
-            "INSERT INTO posts_tags (post_id, tag_id) VALUES (?, ?)",
-        ))
-        .bind(post_id)
-        .bind(tag_id)
-        .execute(&mut **tx)
-        .await?;
+        let sql = format!(
+            "INSERT INTO posts_tags (post_id, tag_id) VALUES ({}, {})",
+            ph(1),
+            ph(2)
+        );
+        sqlx::query(&sql)
+            .bind(post_id)
+            .bind(tag_id)
+            .execute(&mut **tx)
+            .await?;
     }
 
     Ok(())
@@ -393,10 +435,10 @@ pub async fn get_post_tags(
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<TagBrief>> {
     let sql = format!(
-        "SELECT t.id, t.name, t.slug FROM tags t INNER JOIN posts_tags pt ON t.id = pt.tag_id WHERE pt.post_id = ?{}",
-        tenant_filter_aliased("t", tenant_id)
+        "SELECT t.id, t.name, t.slug FROM tags t INNER JOIN posts_tags pt ON t.id = pt.tag_id WHERE pt.post_id = {}{}",
+        ph(1),
+        tenant_filter_aliased_ph("t", tenant_id, 2)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query_as::<_, TagRow>(&sql).bind(post_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -430,10 +472,10 @@ pub async fn get_author_name(
     tenant_id: Option<&str>,
 ) -> AppResult<Option<String>> {
     let sql = format!(
-        "SELECT username FROM users WHERE id = ?{}",
-        tenant_filter(tenant_id)
+        "SELECT username FROM users WHERE id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query_as::<_, AuthorRow>(&sql).bind(created_by);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -459,10 +501,10 @@ pub async fn get_category_name(
     tenant_id: Option<&str>,
 ) -> AppResult<Option<String>> {
     let sql = format!(
-        "SELECT name FROM categories WHERE id = ?{}",
-        tenant_filter(tenant_id)
+        "SELECT name FROM categories WHERE id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query_as::<_, CategoryNameRow>(&sql).bind(category_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -486,24 +528,26 @@ pub async fn find_published(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Post>, i64)> {
     let offset = (page - 1) * page_size;
-    let filter = tenant_filter_aliased("p", tenant_id);
 
     let (posts, total) = if let Some(tag_id) = tag_id {
+        let filter = tenant_filter_aliased_ph("p", tenant_id, 2);
         let sql = format!(
-            "SELECT p.* FROM posts p INNER JOIN posts_tags pt ON p.id = pt.post_id WHERE p.status = 'published' AND pt.tag_id = ?{filter} ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?"
+            "SELECT p.* FROM posts p INNER JOIN posts_tags pt ON p.id = pt.post_id WHERE p.status = 'published' AND pt.tag_id = {}{filter} ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT {} OFFSET {}",
+            ph(1),
+            ph(3),
+            ph(4)
         );
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, Post>(&sql).bind(tag_id);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
         let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
 
-        let filter = tenant_filter_aliased("p", tenant_id);
+        let filter = tenant_filter_aliased_ph("p", tenant_id, 2);
         let sql = format!(
-            "SELECT COUNT(*) FROM posts p INNER JOIN posts_tags pt ON p.id = pt.post_id WHERE p.status = 'published' AND pt.tag_id = ?{filter}"
+            "SELECT COUNT(*) FROM posts p INNER JOIN posts_tags pt ON p.id = pt.post_id WHERE p.status = 'published' AND pt.tag_id = {}{filter}",
+            ph(1)
         );
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(tag_id);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
@@ -513,11 +557,14 @@ pub async fn find_published(
         (posts, total.0)
     } else if let Some(q) = q {
         let pattern = format!("%{q}%");
-        let filter = tenant_filter(tenant_id);
+        let filter = tenant_filter_ph(tenant_id, 1);
         let sql = format!(
-            "SELECT * FROM posts WHERE status = 'published'{filter} AND (title LIKE ? OR content LIKE ?) ORDER BY is_pinned DESC, created_at DESC LIMIT ? OFFSET ?"
+            "SELECT * FROM posts WHERE status = 'published'{filter} AND (title LIKE {} OR content LIKE {}) ORDER BY is_pinned DESC, created_at DESC LIMIT {} OFFSET {}",
+            ph(2),
+            ph(3),
+            ph(4),
+            ph(5)
         );
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, Post>(&sql);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
@@ -531,9 +578,10 @@ pub async fn find_published(
             .await?;
 
         let sql = format!(
-            "SELECT COUNT(*) FROM posts WHERE status = 'published'{filter} AND (title LIKE ? OR content LIKE ?)"
+            "SELECT COUNT(*) FROM posts WHERE status = 'published'{filter} AND (title LIKE {} OR content LIKE {})",
+            ph(2),
+            ph(3)
         );
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
@@ -542,11 +590,13 @@ pub async fn find_published(
 
         (posts, total.0)
     } else if let Some(category_id) = category_id {
-        let filter = tenant_filter(tenant_id);
+        let filter = tenant_filter_ph(tenant_id, 2);
         let sql = format!(
-            "SELECT * FROM posts WHERE status = 'published' AND category_id = ?{filter} ORDER BY is_pinned DESC, created_at DESC LIMIT ? OFFSET ?"
+            "SELECT * FROM posts WHERE status = 'published' AND category_id = {}{filter} ORDER BY is_pinned DESC, created_at DESC LIMIT {} OFFSET {}",
+            ph(1),
+            ph(3),
+            ph(4)
         );
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, Post>(&sql).bind(category_id);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
@@ -554,9 +604,9 @@ pub async fn find_published(
         let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
 
         let sql = format!(
-            "SELECT COUNT(*) FROM posts WHERE status = 'published' AND category_id = ?{filter}"
+            "SELECT COUNT(*) FROM posts WHERE status = 'published' AND category_id = {}{filter}",
+            ph(1)
         );
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(category_id);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
@@ -565,11 +615,12 @@ pub async fn find_published(
 
         (posts, total.0)
     } else {
-        let filter = tenant_filter(tenant_id);
+        let filter = tenant_filter_ph(tenant_id, 1);
         let sql = format!(
-            "SELECT * FROM posts WHERE status = 'published'{filter} ORDER BY is_pinned DESC, created_at DESC LIMIT ? OFFSET ?"
+            "SELECT * FROM posts WHERE status = 'published'{filter} ORDER BY is_pinned DESC, created_at DESC LIMIT {} OFFSET {}",
+            ph(2),
+            ph(3)
         );
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, Post>(&sql);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
@@ -577,7 +628,6 @@ pub async fn find_published(
         let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
 
         let sql = format!("SELECT COUNT(*) FROM posts WHERE status = 'published'{filter}");
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
@@ -604,21 +654,25 @@ pub async fn find_all_joined(
     let offset = (page - 1) * page_size;
 
     let (posts, total) = if let Some(status) = status {
-        let filter = tenant_filter_aliased("p", tenant_id);
+        let filter = tenant_filter_aliased_ph("p", tenant_id, 2);
         let sql = format!(
             "{JOIN_SQL} \
-             WHERE p.status = ?{filter} \
-             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?"
+             WHERE p.status = {}{filter} \
+             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT {} OFFSET {}",
+            ph(1),
+            ph(3),
+            ph(4)
         );
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql).bind(status);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
         let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
-        let filter = tenant_filter(tenant_id);
-        let sql = format!("SELECT COUNT(*) FROM posts WHERE status = ?{filter}");
-        let sql = crate::db::dialect::translate(&sql);
+        let filter = tenant_filter_ph(tenant_id, 2);
+        let sql = format!(
+            "SELECT COUNT(*) FROM posts WHERE status = {}{filter}",
+            ph(1)
+        );
         let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(status);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
@@ -626,23 +680,21 @@ pub async fn find_all_joined(
         let total = query.fetch_one(pool).await?;
         (posts, total.0)
     } else {
-        let filter = tenant_filter_aliased("p", tenant_id);
+        let filter = tenant_filter_aliased_ph("p", tenant_id, 1);
         let sql = format!(
             "{JOIN_SQL} \
              WHERE 1=1{filter} \
-             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?"
+             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT {} OFFSET {}",
+            ph(2),
+            ph(3)
         );
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
         let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
-        let sql = format!(
-            "SELECT COUNT(*) FROM posts WHERE 1=1{}",
-            tenant_filter(tenant_id)
-        );
-        let sql = crate::db::dialect::translate(&sql);
+        let filter = tenant_filter_ph(tenant_id, 1);
+        let sql = format!("SELECT COUNT(*) FROM posts WHERE 1=1{filter}");
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
@@ -903,10 +955,10 @@ pub async fn find_joined_by_id(
     tenant_id: Option<&str>,
 ) -> AppResult<PostJoinedRow> {
     let sql = format!(
-        "{JOIN_SQL} WHERE p.id = ?{}",
-        tenant_filter_aliased("p", tenant_id)
+        "{JOIN_SQL} WHERE p.id = {}{}",
+        ph(1),
+        tenant_filter_aliased_ph("p", tenant_id, 2)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query_as::<_, PostJoinedRow>(&sql).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -921,10 +973,10 @@ pub async fn find_published_joined_by_slug(
     tenant_id: Option<&str>,
 ) -> AppResult<PostJoinedRow> {
     let sql = format!(
-        "{JOIN_SQL} WHERE p.slug = ? AND p.status = 'published'{}",
-        tenant_filter_aliased("p", tenant_id)
+        "{JOIN_SQL} WHERE p.slug = {} AND p.status = 'published'{}",
+        ph(1),
+        tenant_filter_aliased_ph("p", tenant_id, 2)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query_as::<_, PostJoinedRow>(&sql).bind(slug);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -944,14 +996,15 @@ pub async fn get_tags_for_posts(
         return Ok(std::collections::HashMap::new());
     }
 
-    let placeholders: Vec<&str> = post_ids.iter().map(|_| "?").collect();
+    let placeholders: Vec<String> = (1..=post_ids.len()).map(ph).collect();
+    let next_idx = post_ids.len() + 1;
     let sql = format!(
         "SELECT pt.post_id, t.id, t.name, t.slug \
          FROM posts_tags pt \
          JOIN tags t ON pt.tag_id = t.id \
          WHERE pt.post_id IN ({}){}",
         placeholders.join(","),
-        tenant_filter_aliased("t", tenant_id)
+        tenant_filter_aliased_ph("t", tenant_id, next_idx)
     );
 
     #[derive(Debug, FromRow)]
@@ -962,8 +1015,7 @@ pub async fn get_tags_for_posts(
         slug: String,
     }
 
-    let translated = crate::db::dialect::translate(&sql);
-    let mut query = sqlx::query_as::<_, TagWithPostId>(&translated);
+    let mut query = sqlx::query_as::<_, TagWithPostId>(&sql);
     for id in post_ids {
         query = query.bind(id);
     }
@@ -997,18 +1049,18 @@ pub async fn find_joined_by_ids(
         return Ok(Vec::new());
     }
 
-    let placeholders: Vec<&str> = ids.iter().map(|_| "?").collect();
+    let placeholders: Vec<String> = (1..=ids.len()).map(ph).collect();
+    let next_idx = ids.len() + 1;
     let sql = format!(
         "{} \
          WHERE p.id IN ({}) AND p.status = 'published'{} \
          ORDER BY p.is_pinned DESC, p.created_at DESC",
         JOIN_SQL,
         placeholders.join(","),
-        tenant_filter_aliased("p", tenant_id)
+        tenant_filter_aliased_ph("p", tenant_id, next_idx)
     );
 
-    let translated = crate::db::dialect::translate(&sql);
-    let mut query = sqlx::query_as::<_, PostJoinedRow>(&translated);
+    let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql);
     for id in ids {
         query = query.bind(id);
     }
@@ -1031,14 +1083,14 @@ pub async fn count_published_by_ids(
         return Ok(0);
     }
 
-    let placeholders: Vec<&str> = ids.iter().map(|_| "?").collect();
+    let placeholders: Vec<String> = (1..=ids.len()).map(ph).collect();
+    let next_idx = ids.len() + 1;
     let sql = format!(
         "SELECT COUNT(*) FROM posts WHERE id IN ({}) AND status = 'published'{}",
         placeholders.join(","),
-        tenant_filter(tenant_id)
+        tenant_filter_ph(tenant_id, next_idx)
     );
-    let translated = crate::db::dialect::translate(&sql);
-    let mut query = sqlx::query_as::<_, (i64,)>(&translated);
+    let mut query = sqlx::query_as::<_, (i64,)>(&sql);
     for id in ids {
         query = query.bind(id);
     }
@@ -1063,14 +1115,16 @@ pub async fn find_published_joined(
     let offset = (page - 1) * page_size;
 
     let (posts, total) = if let Some(tag_id) = tag_id {
-        let filter = tenant_filter_aliased("p", tenant_id);
+        let filter = tenant_filter_aliased_ph("p", tenant_id, 2);
         let sql = format!(
             "{JOIN_SQL} \
              INNER JOIN posts_tags pt ON p.id = pt.post_id \
-             WHERE p.status = 'published' AND pt.tag_id = ?{filter} \
-             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?"
+             WHERE p.status = 'published' AND pt.tag_id = {}{filter} \
+             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT {} OFFSET {}",
+            ph(1),
+            ph(3),
+            ph(4)
         );
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql).bind(tag_id);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
@@ -1078,9 +1132,9 @@ pub async fn find_published_joined(
         let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
 
         let sql = format!(
-            "SELECT COUNT(*) FROM posts p INNER JOIN posts_tags pt ON p.id = pt.post_id WHERE p.status = 'published' AND pt.tag_id = ?{filter}"
+            "SELECT COUNT(*) FROM posts p INNER JOIN posts_tags pt ON p.id = pt.post_id WHERE p.status = 'published' AND pt.tag_id = {}{filter}",
+            ph(1)
         );
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(tag_id);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
@@ -1090,13 +1144,16 @@ pub async fn find_published_joined(
         (posts, total.0)
     } else if let Some(q) = q {
         let pattern = format!("%{q}%");
-        let filter = tenant_filter_aliased("p", tenant_id);
+        let filter = tenant_filter_aliased_ph("p", tenant_id, 1);
         let sql = format!(
             "{JOIN_SQL} \
-             WHERE p.status = 'published'{filter} AND (p.title LIKE ? OR p.content LIKE ?) \
-             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?"
+             WHERE p.status = 'published'{filter} AND (p.title LIKE {} OR p.content LIKE {}) \
+             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT {} OFFSET {}",
+            ph(2),
+            ph(3),
+            ph(4),
+            ph(5)
         );
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
@@ -1109,11 +1166,12 @@ pub async fn find_published_joined(
             .fetch_all(pool)
             .await?;
 
-        let filter = tenant_filter(tenant_id);
+        let filter = tenant_filter_ph(tenant_id, 1);
         let sql = format!(
-            "SELECT COUNT(*) FROM posts WHERE status = 'published'{filter} AND (title LIKE ? OR content LIKE ?)"
+            "SELECT COUNT(*) FROM posts WHERE status = 'published'{filter} AND (title LIKE {} OR content LIKE {})",
+            ph(2),
+            ph(3)
         );
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
@@ -1122,24 +1180,26 @@ pub async fn find_published_joined(
 
         (posts, total.0)
     } else if let Some(category_id) = category_id {
-        let filter = tenant_filter_aliased("p", tenant_id);
+        let filter = tenant_filter_aliased_ph("p", tenant_id, 2);
         let sql = format!(
             "{JOIN_SQL} \
-             WHERE p.status = 'published' AND p.category_id = ?{filter} \
-             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?"
+             WHERE p.status = 'published' AND p.category_id = {}{filter} \
+             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT {} OFFSET {}",
+            ph(1),
+            ph(3),
+            ph(4)
         );
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql).bind(category_id);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
         let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
 
-        let filter = tenant_filter(tenant_id);
+        let filter = tenant_filter_ph(tenant_id, 2);
         let sql = format!(
-            "SELECT COUNT(*) FROM posts WHERE status = 'published' AND category_id = ?{filter}"
+            "SELECT COUNT(*) FROM posts WHERE status = 'published' AND category_id = {}{filter}",
+            ph(1)
         );
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(category_id);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
@@ -1148,22 +1208,22 @@ pub async fn find_published_joined(
 
         (posts, total.0)
     } else {
-        let filter = tenant_filter_aliased("p", tenant_id);
+        let filter = tenant_filter_aliased_ph("p", tenant_id, 1);
         let sql = format!(
             "{JOIN_SQL} \
              WHERE p.status = 'published'{filter} \
-             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT ? OFFSET ?"
+             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT {} OFFSET {}",
+            ph(2),
+            ph(3)
         );
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
         let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
 
-        let filter = tenant_filter(tenant_id);
+        let filter = tenant_filter_ph(tenant_id, 1);
         let sql = format!("SELECT COUNT(*) FROM posts WHERE status = 'published'{filter}");
-        let sql = crate::db::dialect::translate(&sql);
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);

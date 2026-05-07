@@ -12,8 +12,9 @@ declare const RaisFastHost: {
   getData(key: string): string | null;
   setData(key: string, value: string): boolean;
   getPost(slug: string): string | null;
-  dbQuery(sql: string, params: string | null): string;
-  dbExecute(sql: string, params: string | null): string;
+  dbPh(idx: number): string;
+  dbQuery(sql: string, params: string): string;
+  dbExecute(sql: string, params: string): string;
   dbBegin(): string;
   dbCommit(): string;
   dbRollback(): string;
@@ -40,15 +41,19 @@ export interface PluginError {
 
 export const SDK_VERSION: string = "1.0.0";
 
-export function dbQuery(sql: string, params?: unknown[]): Record<string, unknown>[] {
-  const result = RaisFastHost.dbQuery(sql, params ? JSON.stringify(params) : null);
+export function dbPh(idx: number): string {
+  return RaisFastHost.dbPh(idx);
+}
+
+export function dbQuery(sql: string, params: unknown[] = []): Record<string, unknown>[] {
+  const result = RaisFastHost.dbQuery(sql, JSON.stringify(params));
   if (!result) throw new Error("query returned no result");
   if (result.startsWith("error:")) throw new Error(result.slice(6));
   return JSON.parse(result);
 }
 
-export function dbExec(sql: string, params?: unknown[]): DbExecResult {
-  const result = RaisFastHost.dbExecute(sql, params ? JSON.stringify(params) : null);
+export function dbExec(sql: string, params: unknown[] = []): DbExecResult {
+  const result = RaisFastHost.dbExecute(sql, JSON.stringify(params));
   return JSON.parse(result);
 }
 

@@ -12,7 +12,8 @@ use sqlx::FromRow;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::db::tenant::{tenant_filter, tenant_filter_aliased};
+use crate::db::dialect::ph;
+use crate::db::tenant::{tenant_filter_aliased_ph, tenant_filter_ph};
 use crate::errors::app_error::{AppError, AppResult};
 
 /// 评论完整数据库行模型
@@ -69,11 +70,8 @@ pub async fn find_by_id(
     id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Comment>> {
-    let sql_str = format!(
-        "SELECT * FROM comments WHERE id = ?{}",
-        tenant_filter(tenant_id)
-    );
-    let sql = crate::db::dialect::translate(&sql_str);
+    let filter = tenant_filter_ph(tenant_id, 2);
+    let sql = format!("SELECT * FROM comments WHERE id = {}{filter}", ph(1));
     let mut q = sqlx::query_as::<_, Comment>(&sql).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -95,8 +93,10 @@ pub async fn create(
 
     match tenant_id {
         Some(tid) => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO comments (id, tenant_id, post_id, created_by, updated_by, nickname, email, content, parent_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+            let vals1 = (1..=9).map(ph).collect::<Vec<_>>().join(", ");
+            let vals2 = (10..=11).map(ph).collect::<Vec<_>>().join(", ");
+            let sql = format!(
+                "INSERT INTO comments (id, tenant_id, post_id, created_by, updated_by, nickname, email, content, parent_id, status, created_at, updated_at) VALUES ({vals1}, 'pending', {vals2})"
             );
             sqlx::query(&sql)
                 .bind(&id)
@@ -114,8 +114,10 @@ pub async fn create(
                 .await?;
         }
         None => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO comments (id, post_id, created_by, updated_by, nickname, email, content, parent_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+            let vals1 = (1..=8).map(ph).collect::<Vec<_>>().join(", ");
+            let vals2 = (9..=10).map(ph).collect::<Vec<_>>().join(", ");
+            let sql = format!(
+                "INSERT INTO comments (id, post_id, created_by, updated_by, nickname, email, content, parent_id, status, created_at, updated_at) VALUES ({vals1}, 'pending', {vals2})"
             );
             sqlx::query(&sql)
                 .bind(&id)
@@ -146,11 +148,11 @@ pub async fn find_approved_by_post(
     post_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<Comment>> {
-    let sql_str = format!(
-        "SELECT * FROM comments WHERE post_id = ? AND status = 'approved'{} ORDER BY created_at ASC",
-        tenant_filter(tenant_id)
+    let filter = tenant_filter_ph(tenant_id, 2);
+    let sql = format!(
+        "SELECT * FROM comments WHERE post_id = {} AND status = 'approved'{filter} ORDER BY created_at ASC",
+        ph(1)
     );
-    let sql = crate::db::dialect::translate(&sql_str);
     let mut q = sqlx::query_as::<_, Comment>(&sql).bind(post_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -170,11 +172,14 @@ pub async fn find_approved_by_post_paginated(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Comment>, i64)> {
     let offset = (page - 1) * page_size;
-    let sql_str = format!(
-        "SELECT * FROM comments WHERE post_id = ? AND status = 'approved'{} ORDER BY created_at ASC LIMIT ? OFFSET ?",
-        tenant_filter(tenant_id)
+    let filter = tenant_filter_ph(tenant_id, 2);
+    let base = usize::from(tenant_id.is_some());
+    let sql = format!(
+        "SELECT * FROM comments WHERE post_id = {} AND status = 'approved'{filter} ORDER BY created_at ASC LIMIT {} OFFSET {}",
+        ph(1),
+        ph(base + 2),
+        ph(base + 3)
     );
-    let sql = crate::db::dialect::translate(&sql_str);
     let mut q = sqlx::query_as::<_, Comment>(&sql).bind(post_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -182,12 +187,12 @@ pub async fn find_approved_by_post_paginated(
     q = q.bind(page_size).bind(offset);
     let comments = q.fetch_all(pool).await?;
 
-    let sql_str = format!(
-        "SELECT COUNT(*) FROM comments WHERE post_id = ? AND status = 'approved'{}",
-        tenant_filter(tenant_id)
+    let filter2 = tenant_filter_ph(tenant_id, 2);
+    let sql2 = format!(
+        "SELECT COUNT(*) FROM comments WHERE post_id = {} AND status = 'approved'{filter2}",
+        ph(1)
     );
-    let sql = crate::db::dialect::translate(&sql_str);
-    let mut q2 = sqlx::query_scalar::<_, i64>(&sql).bind(post_id);
+    let mut q2 = sqlx::query_scalar::<_, i64>(&sql2).bind(post_id);
     if let Some(tid) = tenant_id {
         q2 = q2.bind(tid);
     }
@@ -204,11 +209,11 @@ pub async fn find_all_by_post(
     post_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<Comment>> {
-    let sql_str = format!(
-        "SELECT * FROM comments WHERE post_id = ?{} ORDER BY created_at ASC",
-        tenant_filter(tenant_id)
+    let filter = tenant_filter_ph(tenant_id, 2);
+    let sql = format!(
+        "SELECT * FROM comments WHERE post_id = {}{filter} ORDER BY created_at ASC",
+        ph(1)
     );
-    let sql = crate::db::dialect::translate(&sql_str);
     let mut q = sqlx::query_as::<_, Comment>(&sql).bind(post_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -240,11 +245,13 @@ pub async fn find_all_paginated(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<AdminCommentRow>, i64)> {
     let offset = (page - 1) * page_size;
-    let sql_str = format!(
-        "SELECT c.id, c.post_id, p.title AS post_title, c.created_by, c.nickname, c.email, c.content, c.parent_id, c.status, c.created_at FROM comments c JOIN posts p ON c.post_id = p.id WHERE 1=1{} ORDER BY c.created_at DESC LIMIT ? OFFSET ?",
-        tenant_filter_aliased("c", tenant_id)
+    let filter = tenant_filter_aliased_ph("c", tenant_id, 1);
+    let base = usize::from(tenant_id.is_some());
+    let sql = format!(
+        "SELECT c.id, c.post_id, p.title AS post_title, c.created_by, c.nickname, c.email, c.content, c.parent_id, c.status, c.created_at FROM comments c JOIN posts p ON c.post_id = p.id WHERE 1=1{filter} ORDER BY c.created_at DESC LIMIT {} OFFSET {}",
+        ph(base + 1),
+        ph(base + 2)
     );
-    let sql = crate::db::dialect::translate(&sql_str);
     let mut q = sqlx::query_as::<_, AdminCommentRow>(&sql);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -252,11 +259,8 @@ pub async fn find_all_paginated(
     q = q.bind(page_size).bind(offset);
     let rows = q.fetch_all(pool).await?;
 
-    let sql2 = format!(
-        "SELECT COUNT(*) FROM comments WHERE 1=1{}",
-        tenant_filter(tenant_id)
-    );
-    let sql2 = crate::db::dialect::translate(&sql2);
+    let filter2 = tenant_filter_ph(tenant_id, 1);
+    let sql2 = format!("SELECT COUNT(*) FROM comments WHERE 1=1{filter2}");
     let mut q2 = sqlx::query_scalar::<_, i64>(&sql2);
     if let Some(tid) = tenant_id {
         q2 = q2.bind(tid);
@@ -276,11 +280,13 @@ pub async fn update_status(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let (_, now) = crate::utils::id::new_id_and_timestamp();
+    let filter = tenant_filter_ph(tenant_id, 4);
     let sql = format!(
-        "UPDATE comments SET status = ?, updated_at = ? WHERE id = ?{}",
-        tenant_filter(tenant_id)
+        "UPDATE comments SET status = {}, updated_at = {} WHERE id = {}{filter}",
+        ph(1),
+        ph(2),
+        ph(3)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql).bind(status).bind(&now).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -294,11 +300,8 @@ pub async fn update_status(
 ///
 /// 若评论不存在则返回 [`AppError::NotFound`]。
 pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
-    let sql = format!(
-        "DELETE FROM comments WHERE id = ?{}",
-        tenant_filter(tenant_id)
-    );
-    let sql = crate::db::dialect::translate(&sql);
+    let filter = tenant_filter_ph(tenant_id, 2);
+    let sql = format!("DELETE FROM comments WHERE id = {}{filter}", ph(1));
     let mut q = sqlx::query(&sql).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);

@@ -125,15 +125,14 @@ pub async fn ensure_schema(pool: &Pool) -> anyhow::Result<()> {
         "schema.mysql.sql"
     };
 
-    sqlx::query(&crate::db::dialect::translate(
-        "CREATE TABLE IF NOT EXISTS _migrations (filename TEXT PRIMARY KEY)",
-    ))
-    .execute(pool)
-    .await
-    .map_err(|e| anyhow::anyhow!("create _migrations table failed: {e}"))?;
+    sqlx::query("CREATE TABLE IF NOT EXISTS _migrations (filename TEXT PRIMARY KEY)")
+        .execute(pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("create _migrations table failed: {e}"))?;
 
-    sqlx::query(&crate::db::dialect::translate(
-        "INSERT INTO _migrations (filename) VALUES (?)",
+    sqlx::query(&format!(
+        "INSERT INTO _migrations (filename) VALUES ({})",
+        crate::db::dialect::ph(1)
     ))
     .bind(schema_label)
     .execute(pool)

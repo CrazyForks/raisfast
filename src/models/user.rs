@@ -7,7 +7,8 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use crate::db::tenant::tenant_filter;
+use crate::db::dialect::ph;
+use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
 
 /// 用户完整数据库行模型
@@ -46,11 +47,8 @@ pub async fn find_by_email(
     email: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<User>> {
-    let sql_str = format!(
-        "SELECT * FROM users WHERE email = ?{}",
-        tenant_filter(tenant_id)
-    );
-    let sql = crate::db::dialect::translate(&sql_str);
+    let filter = tenant_filter_ph(tenant_id, 2);
+    let sql = format!("SELECT * FROM users WHERE email = {}{filter}", ph(1));
     let mut q = sqlx::query_as::<_, User>(&sql).bind(email);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -61,7 +59,7 @@ pub async fn find_by_email(
 
 /// 根据用户名查找用户
 pub async fn find_by_username(pool: &crate::db::Pool, username: &str) -> AppResult<Option<User>> {
-    let sql = crate::db::dialect::translate("SELECT * FROM users WHERE username = ?");
+    let sql = format!("SELECT * FROM users WHERE username = {}", ph(1));
     let user = sqlx::query_as::<_, User>(&sql)
         .bind(username)
         .fetch_optional(pool)
@@ -71,7 +69,7 @@ pub async fn find_by_username(pool: &crate::db::Pool, username: &str) -> AppResu
 
 /// 根据手机号查找用户
 pub async fn find_by_phone(pool: &crate::db::Pool, phone: &str) -> AppResult<Option<User>> {
-    let sql = crate::db::dialect::translate("SELECT * FROM users WHERE phone = ?");
+    let sql = format!("SELECT * FROM users WHERE phone = {}", ph(1));
     let user = sqlx::query_as::<_, User>(&sql)
         .bind(phone)
         .fetch_optional(pool)
@@ -87,11 +85,8 @@ pub async fn find_by_id(
     id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<User>> {
-    let sql_str = format!(
-        "SELECT * FROM users WHERE id = ?{}",
-        tenant_filter(tenant_id)
-    );
-    let sql = crate::db::dialect::translate(&sql_str);
+    let filter = tenant_filter_ph(tenant_id, 2);
+    let sql = format!("SELECT * FROM users WHERE id = {}{filter}", ph(1));
     let mut q = sqlx::query_as::<_, User>(&sql).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -113,8 +108,10 @@ pub async fn create(
 
     match tenant_id {
         Some(tid) => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO users (id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'reader', ?, ?)",
+            let vals1 = (1..=5).map(ph).collect::<Vec<_>>().join(", ");
+            let vals2 = (6..=7).map(ph).collect::<Vec<_>>().join(", ");
+            let sql = format!(
+                "INSERT INTO users (id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES ({vals1}, 'reader', {vals2})"
             );
             sqlx::query(&sql)
                 .bind(&id)
@@ -128,8 +125,10 @@ pub async fn create(
                 .await?;
         }
         None => {
-            let sql = crate::db::dialect::translate(
-                "INSERT INTO users (id, email, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, 'reader', ?, ?)",
+            let vals1 = (1..=4).map(ph).collect::<Vec<_>>().join(", ");
+            let vals2 = (5..=6).map(ph).collect::<Vec<_>>().join(", ");
+            let sql = format!(
+                "INSERT INTO users (id, email, username, password_hash, role, created_at, updated_at) VALUES ({vals1}, 'reader', {vals2})"
             );
             sqlx::query(&sql)
                 .bind(&id)
@@ -180,11 +179,16 @@ pub async fn update_profile(
         .map(std::string::ToString::to_string)
         .or(user.avatar);
 
+    let filter = tenant_filter_ph(tenant_id, 7);
     let sql = format!(
-        "UPDATE users SET username = ?, bio = ?, website = ?, avatar = ?, updated_at = ? WHERE id = ?{}",
-        tenant_filter(tenant_id)
+        "UPDATE users SET username = {}, bio = {}, website = {}, avatar = {}, updated_at = {} WHERE id = {}{filter}",
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5),
+        ph(6)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql)
         .bind(username)
         .bind(bio)
@@ -212,11 +216,13 @@ pub async fn update_password(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
+    let filter = tenant_filter_ph(tenant_id, 4);
     let sql = format!(
-        "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?{}",
-        tenant_filter(tenant_id)
+        "UPDATE users SET password_hash = {}, updated_at = {} WHERE id = {}{filter}",
+        ph(1),
+        ph(2),
+        ph(3)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql).bind(new_password_hash).bind(now).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -233,11 +239,13 @@ pub async fn update_phone(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
+    let filter = tenant_filter_ph(tenant_id, 4);
     let sql = format!(
-        "UPDATE users SET phone = ?, updated_at = ? WHERE id = ?{}",
-        tenant_filter(tenant_id)
+        "UPDATE users SET phone = {}, updated_at = {} WHERE id = {}{filter}",
+        ph(1),
+        ph(2),
+        ph(3)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql).bind(phone).bind(now).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -256,24 +264,26 @@ pub async fn find_all(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<User>, i64)> {
     let offset = (page - 1) * page_size;
-    let filter = tenant_filter(tenant_id);
+    let filter = tenant_filter_ph(tenant_id, 1);
+    let base = usize::from(tenant_id.is_some());
 
-    let sql_q =
-        format!("SELECT * FROM users WHERE 1=1{filter} ORDER BY created_at DESC LIMIT ? OFFSET ?");
-    let sql = crate::db::dialect::translate(&sql_q);
-    let mut q = sqlx::query_as::<_, User>(&sql);
+    let sql_q = format!(
+        "SELECT * FROM users WHERE 1=1{filter} ORDER BY created_at DESC LIMIT {} OFFSET {}",
+        ph(base + 1),
+        ph(base + 2)
+    );
+    let mut q = sqlx::query_as::<_, User>(&sql_q);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
     let users = q.bind(page_size).bind(offset).fetch_all(pool).await?;
 
     let count_q = format!("SELECT COUNT(*) FROM users WHERE 1=1{filter}");
-    let sql = crate::db::dialect::translate(&count_q);
-    let mut q = sqlx::query_as::<_, (i64,)>(&sql);
+    let mut q2 = sqlx::query_as::<_, (i64,)>(&count_q);
     if let Some(tid) = tenant_id {
-        q = q.bind(tid);
+        q2 = q2.bind(tid);
     }
-    let total = q.fetch_one(pool).await?;
+    let total = q2.fetch_one(pool).await?;
 
     Ok((users, total.0))
 }
@@ -286,11 +296,13 @@ pub async fn update_role(
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
     let now = Utc::now().to_rfc3339();
+    let filter = tenant_filter_ph(tenant_id, 4);
     let sql = format!(
-        "UPDATE users SET role = ?, updated_at = ? WHERE id = ?{}",
-        tenant_filter(tenant_id)
+        "UPDATE users SET role = {}, updated_at = {} WHERE id = {}{filter}",
+        ph(1),
+        ph(2),
+        ph(3)
     );
-    let sql = crate::db::dialect::translate(&sql);
     let mut q = sqlx::query(&sql).bind(role).bind(now).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
