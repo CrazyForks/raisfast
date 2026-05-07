@@ -19,7 +19,7 @@ singular = "product"
 plural = "products"
 table = "ct_products"
 description = "商品"
-implements = ["ownable", "timestampable"]
+implements = ["ownable", "timestampable", "tenantable"]
 
 [fields.title]
 type = "text"
@@ -104,6 +104,7 @@ fn test_protocol_registry() -> raisfast::protocols::ProtocolRegistry {
     reg.register(raisfast::protocols::sortable::SortableProtocol);
     reg.register(raisfast::protocols::expirable::ExpirableProtocol);
     reg.register(raisfast::protocols::nestable::NestableProtocol);
+    reg.register(raisfast::protocols::tenantable::TenantableProtocol);
     reg
 }
 
@@ -297,6 +298,7 @@ async fn find_paginated() {
         rule_params: Vec::new(),
         max_page_size: 100,
         include_private: false,
+        meta_filters: Vec::new(),
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 15);
@@ -317,6 +319,7 @@ async fn find_paginated() {
         rule_params: Vec::new(),
         max_page_size: 100,
         include_private: false,
+        meta_filters: Vec::new(),
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 15);
@@ -527,6 +530,7 @@ async fn tenant_isolation() {
         rule_params: Vec::new(),
         max_page_size: 100,
         include_private: false,
+        meta_filters: Vec::new(),
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 1);
@@ -608,6 +612,7 @@ async fn find_with_custom_sort() {
         rule_params: Vec::new(),
         max_page_size: 100,
         include_private: false,
+        meta_filters: Vec::new(),
     };
     let (items, _) = repo.find(&ct, query).await.unwrap();
     assert_eq!(items[0]["title"], "Beta");
@@ -657,6 +662,7 @@ async fn find_with_field_filter() {
         rule_params: Vec::new(),
         max_page_size: 100,
         include_private: false,
+        meta_filters: Vec::new(),
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 1);
@@ -694,6 +700,7 @@ async fn partial_field_selection() {
         rule_params: Vec::new(),
         max_page_size: 100,
         include_private: false,
+        meta_filters: Vec::new(),
     };
     let (items, _) = repo.find(&ct, query).await.unwrap();
     let obj = items[0].as_object().unwrap();
@@ -1151,6 +1158,7 @@ target_field = "title"
         rule_params: Vec::new(),
         max_page_size: 100,
         include_private: false,
+        meta_filters: Vec::new(),
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 1);
@@ -1352,6 +1360,7 @@ required = true
         rule_params: Vec::new(),
         max_page_size: 100,
         include_private: false,
+        meta_filters: Vec::new(),
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
     assert_eq!(total, 0);

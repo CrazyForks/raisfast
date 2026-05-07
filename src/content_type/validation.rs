@@ -447,6 +447,7 @@ immutable = true
         reg.register(crate::protocols::sortable::SortableProtocol);
         reg.register(crate::protocols::expirable::ExpirableProtocol);
         reg.register(crate::protocols::nestable::NestableProtocol);
+        reg.register(crate::protocols::tenantable::TenantableProtocol);
         reg
     }
 

@@ -387,10 +387,19 @@ pub async fn do_list(
         .map(|(w, p)| (Some(w), p))
         .unwrap_or_default();
 
+    let mut meta_filters: Vec<(String, String)> = Vec::new();
+    let meta_prefix = format!("{COL_META}.");
     let filters: HashMap<String, Value> = params
         .extra
         .iter()
-        .filter(|(key, _)| ct.get_field(key).is_some())
+        .filter(|(key, v)| {
+            if let Some(path) = key.strip_prefix(&meta_prefix) {
+                meta_filters.push((path.to_string(), (*v).clone()));
+                false
+            } else {
+                ct.get_field(key).is_some()
+            }
+        })
         .map(|(k, v)| {
             let col = ct
                 .get_field(k)
@@ -416,6 +425,7 @@ pub async fn do_list(
         rule_params,
         max_page_size: state.config.rule_engine.cms_max_page_size as i64,
         include_private: false,
+        meta_filters,
     };
 
     let cache_key = cms_list_cache_key(ct, &query);
@@ -445,7 +455,7 @@ pub async fn do_list(
     }
 
     let (items, total) = repo.find(ct, query.clone()).await?;
-    let mut items: Vec<Value> = items.into_iter().map(strip_meta).collect();
+    let mut items: Vec<Value> = items;
 
     {
         let records: Vec<crate::aspects::Record> = items
@@ -544,7 +554,6 @@ pub async fn do_get(
     }
 
     let result = filter_fields(result, ct.api.get.fields.as_deref(), ct);
-    let result = strip_meta(result);
 
     Ok(result)
 }
@@ -828,11 +837,35 @@ async fn do_admin_list(
 ) -> Result<serde_json::Value, AppError> {
     let repo = ContentRepository::new(state.pool.clone());
     let include = params.include.as_deref().map(parse_include);
+
+    let mut meta_filters: Vec<(String, String)> = Vec::new();
+    let meta_prefix = format!("{COL_META}.");
+    let filters: HashMap<String, Value> = params
+        .extra
+        .iter()
+        .filter(|(key, v)| {
+            if let Some(path) = key.strip_prefix(&meta_prefix) {
+                meta_filters.push((path.to_string(), (*v).clone()));
+                false
+            } else {
+                ct.get_field(key).is_some()
+            }
+        })
+        .map(|(k, v)| {
+            let col = ct
+                .get_field(k)
+                .and_then(|f| f.relation.as_ref().map(|r| r.foreign_key.clone()))
+                .flatten()
+                .unwrap_or_else(|| k.clone());
+            (col, Value::String(v.clone()))
+        })
+        .collect();
+
     let query = ContentQuery {
         page: params.page.unwrap_or(1),
         page_size: params.page_size.unwrap_or(20),
         sort: params.sort,
-        filters: HashMap::new(),
+        filters,
         status: params.status,
         search: params.search,
         fields: None,
@@ -843,6 +876,7 @@ async fn do_admin_list(
         rule_params: Vec::new(),
         max_page_size: state.config.rule_engine.cms_max_page_size as i64,
         include_private: true,
+        meta_filters,
     };
     let (items, total) = repo.find(ct, query.clone()).await?;
     Ok(json!({
@@ -896,7 +930,6 @@ pub async fn do_single_get(
     }
 
     let result = filter_fields(result, ct.api.get.fields.as_deref(), ct);
-    let result = strip_meta(result);
     Ok(result)
 }
 
@@ -1299,13 +1332,6 @@ fn filter_fields(
         .cloned()
         .collect();
     obj.retain(|k, _| allowed.contains(&k.to_string()) || system_keys.contains(k));
-    value
-}
-
-fn strip_meta(mut value: serde_json::Value) -> serde_json::Value {
-    if let Some(obj) = value.as_object_mut() {
-        obj.remove(COL_META);
-    }
     value
 }
 

@@ -1,7 +1,7 @@
-# AOP 框架设计文档 — v2.0 实现版
+# AOP + Protocol 设计文档 — v2.0 实现版
 
-> 版本：v2.0 | 最后更新：2026-05-01
-> 状态：Phase 1 + Phase 3 已实现，906 tests 全部通过
+> 版本：v2.0 | 最后更新：2026-05-07
+> 状态：Data Layer 已实现，11 个内置协议全部完成
 
 ## 1. 为什么需要 AOP
 
@@ -22,11 +22,11 @@ Handler 层
   ├─ 缓存清除（write 后）       ← handler 内 if cache
   ├─ 字段过滤（response）       ← filter_fields()
   │
+  ├─ Aspect before_create       ← Aspect 引擎 dispatch
+  ├─ Aspect after_create        ← Aspect 引擎 dispatch
+  │
 Repository 层
-  ├─ auto_fill 注入             ← save_ctx
-  ├─ timestamps 注入            ← if ct.timestamps
-  ├─ 软删除处理                 ← if ct.soft_delete
-  ├─ 版本快照                   ← if ct.versioning
+  ├─ 协议声明驱动 SQL           ← ProtocolDeclaration
   ├─ INSERT/UPDATE/DELETE SQL
   │
 EventBus 层
@@ -34,8 +34,6 @@ EventBus 层
   ├─ Webhook 通知               ← subscriber
   └─ 搜索索引                   ← 未实现
 ```
-
-**问题：** 内置表（posts/pages/comments）的横切面逻辑全靠手写，无法复用 Content Type 的任何机制。每新增一个横切面需求，要在多个地方重复实现。
 
 **目标：** 每个 Aspect（横切面）定义一次，所有数据路径自动生效。
 
@@ -51,6 +49,7 @@ EventBus 层
 │  "我做什么"                      (advise)                 │
 ├──────────────────────────────────────────────────────────┤
 │  Protocol    Aspect 的命名别名，1:N 组合多个 Aspect       │
+│  ProtocolDeclaration  协议的声明式效果（纯数据）           │
 │  Layer       Aspect 关心的系统层级                         │
 │  Pointcut    Aspect 关心的拦截点（精确匹配或模式匹配）      │
 │  Advice      Aspect 在拦截点上的具体行为                    │
@@ -59,25 +58,34 @@ EventBus 层
 └──────────────────────────────────────────────────────────┘
 ```
 
+### 两个正交维度
+
+每个协议将行为拆分为：
+
+| 维度 | 实现方式 | 示例 |
+|------|----------|------|
+| **命令式**（注入值） | Aspect + Pointcut | `on_data_before_create` 注入 `created_at` |
+| **声明式**（影响 SQL 行为） | `ProtocolDeclaration` 纯数据 | `query_filters` → WHERE、`default_sort` → ORDER BY |
+
 ## 3. 三层架构
 
 ```
-┌─ aspects/ ─────────────────────────────────────────────┐
+┌─ aspects.rs + aspects/ ──────────────────────────────────┐
 │  纯框架层，不知道 Protocol 存在                          │
 │  Aspect trait + AspectEngine + Context 类型 + Advice    │
 └─────────────────────────────────────────────────────────┘
           ▲
           │ register_from_arc()
-┌─ protocols/ ───────────────────────────────────────────┐
+┌─ protocols.rs + protocols/ ─────────────────────────────┐
 │  业务 Protocol 实现（1:N 组合 Aspect）                   │
-│  Protocol trait + ProtocolRegistry                     │
-│  ownable.rs / timestampable.rs / ...                   │
+│  Protocol trait + ProtocolRegistry + ProtocolDeclaration │
+│  ownable.rs / timestampable.rs / ... (11 个)             │
 └─────────────────────────────────────────────────────────┘
           ▲
-          │ AspectDispatch helper
-┌─ services/aspect_dispatch.rs ──────────────────────────┐
-│  内置表 Service 层的轻量 dispatch helper                 │
-│  减少 Service 层的重复代码                               │
+          │ register_from_inventory()
+┌─ lib.rs ────────────────────────────────────────────────┐
+│  protocol_registry.register_from_inventory() 一行注册    │
+│  protocol_registry.register_aspects_into(&engine)       │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -98,8 +106,8 @@ EventBus 层
 
 ┌─ Data Layer ──────────────────────────────────────────┐
 │  数据 CRUD 操作前后拦截                                 │
-│  适用：字段注入、校验、版本快照、缓存、搜索索引          │
-│  状态：Phase 1 + Phase 3，已实现 ✅                     │
+│  适用：字段注入、校验、版本快照、搜索索引          │
+│  状态：已实现 ✅                                        │
 └───────────────────────────────────────────────────────┘
 
 ┌─ Event Layer ─────────────────────────────────────────┐
@@ -148,9 +156,7 @@ pub struct JoinPointId {
 }
 ```
 
-### 5.3 TargetMatcher（已简化）
-
-v2.0 只保留两种匹配方式：
+### 5.3 TargetMatcher
 
 ```rust
 #[derive(Debug, Clone)]
@@ -162,8 +168,6 @@ pub enum TargetMatcher {
 }
 ```
 
-v1.0 中的 `TablePattern`、`Routes`、`Events`、`Custom`、`TargetInfo` 已删除，因为 Phase 1 只需要 `All` 和 `Tables`。
-
 ### 5.4 Pointcut
 
 ```rust
@@ -173,10 +177,6 @@ pub struct Pointcut {
     pub operation: Operation,
     pub when: When,
     pub target: TargetMatcher,
-}
-
-impl Pointcut {
-    fn join_point_id(&self) -> JoinPointId { ... }
 }
 ```
 
@@ -215,11 +215,15 @@ pub enum SqlType {
 }
 
 impl SqlType {
-    /// 按 cfg feature 返回对应数据库的 SQL 类型字符串
     pub fn as_str(self) -> &'static str {
-        // SQLite:  TEXT / INTEGER / REAL / BOOLEAN / BLOB
-        // PostgreSQL: TEXT / INTEGER / BIGINT / DOUBLE PRECISION / BOOLEAN / BYTEA
-        // MySQL: VARCHAR(255) / INT / BIGINT / DOUBLE / TINYINT(1) / BLOB
+        match self {
+            SqlType::Text => { /* SQLite: TEXT / PostgreSQL: TEXT / MySQL: VARCHAR(255) */ }
+            SqlType::Integer => { /* SQLite: INTEGER / PostgreSQL: INTEGER / MySQL: INT */ }
+            SqlType::BigInt => { /* SQLite: INTEGER / PostgreSQL: BIGINT / MySQL: BIGINT */ }
+            SqlType::Real => { /* SQLite: REAL / PostgreSQL: DOUBLE PRECISION / MySQL: DOUBLE */ }
+            SqlType::Boolean => { /* SQLite: BOOLEAN / PostgreSQL: BOOLEAN / MySQL: TINYINT(1) */ }
+            SqlType::Blob => { /* SQLite: BLOB / PostgreSQL: BYTEA / MySQL: BLOB */ }
+        }
     }
 }
 ```
@@ -227,10 +231,10 @@ impl SqlType {
 ### 5.7 ColumnDef
 
 ```rust
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnDef {
     pub name: String,
-    pub sql_type: SqlType,  // v2.0: 从 String 改为 SqlType 枚举
+    pub sql_type: SqlType,
     pub default: Option<String>,
 }
 ```
@@ -290,7 +294,7 @@ pub struct BaseContext {
     pub now: String,           // ISO 8601
     pub request_id: String,
     pub extensions: Extensions,
-    pub pool: Option<crate::db::pool::Pool>,  // v2.0: 直接持有 Pool
+    pub pool: Option<crate::db::pool::Pool>,
 }
 ```
 
@@ -493,28 +497,12 @@ impl AspectEngine {
 }
 ```
 
-### 8.6 get_aspects 内部实现
-
-```rust
-fn get_aspects(&self, jp_id: &JoinPointId, table: &str) -> Vec<Arc<dyn Aspect>> {
-    // 1. 收集 enabled 名称为 HashSet<String>（拥有所有权，释放 RwLockReadGuard）
-    let enabled_names: HashSet<String> = self.registry.read().unwrap()
-        .iter().filter(|e| e.enabled).map(|e| e.aspect.name().to_string()).collect();
-
-    // 2. 从 dispatch_table 查找匹配的 Aspect
-    let Some(aspects) = self.dispatch_table.get(jp_id) else { return Vec::new() };
-    aspects.iter()
-        .filter(|a| enabled_names.contains(a.name()) && matches_table_any(&a.pointcuts(), table))
-        .cloned().collect()
-}
-```
-
-### 8.7 优先级约定
+### 8.6 优先级约定
 
 ```
 优先级范围        用途                           示例
 ─────────────────────────────────────────────────────────
- -9999 ~ -1000   核心基础设施                   认证、租户隔离
+ -9999 ~ -1000   核心基础设施                   tenantable (-600)
   -999 ~ -500    数据注入                       ownable (-500), timestampable (-400)
   -499 ~    0    默认
      1 ~  499    业务逻辑                       validation, slug 生成
@@ -527,10 +515,10 @@ fn get_aspects(&self, jp_id: &JoinPointId, table: &str) -> Vec<Arc<dyn Aspect>> 
 
 ### 9.1 概念
 
-Protocol = 一组 Aspect 的命名别名（1:N 关系）。是 AOP 之上的薄声明层。
+Protocol = Aspect 组合 + 声明式效果（ProtocolDeclaration）。
 
 ```
-ContentTypeSchema.implements = ["ownable", "timestampable"]
+ContentTypeSchema.implements = ["ownable", "timestampable", "soft_deletable"]
                          │
                          ▼
 ProtocolRegistry.get("ownable")
@@ -538,7 +526,11 @@ ProtocolRegistry.get("ownable")
   ├─ description: "创建和更新时自动注入操作者 ID"
   ├─ aspects: [OwnableAspect]
   ├─ columns: [created_by, updated_by]
-  └─ built_in: true
+  ├─ behaviors: ["track_owner"]
+  ├─ declaration() → ProtocolDeclaration { ... }
+  ├─ apply_config() → 用户配置应用到声明
+  ├─ register_routes() → 协议自注册 API 路由
+  └─ on_after_delete() → 异步清理 hook
 ```
 
 ### 9.2 Protocol trait
@@ -549,14 +541,120 @@ pub trait Protocol: Send + Sync + 'static {
     fn description(&self) -> &str { "" }
     fn aspects(&self) -> Vec<Arc<dyn Aspect>>;
     fn columns(&self) -> Vec<ColumnDef> {
-        // 默认从 aspects 聚合
         self.aspects().iter().flat_map(|a| a.columns()).collect()
     }
+    fn behaviors(&self) -> Vec<&'static str> { vec![] }
     fn built_in(&self) -> bool { false }
+
+    /// 协议声明式效果（纯数据）
+    fn declaration(&self) -> ProtocolDeclaration {
+        ProtocolDeclaration::default()
+    }
+
+    /// 将用户配置应用到声明（如 sortable 的 field/direction）
+    fn apply_config(&self, _config: &HashMap<String, String>, _decl: &mut ProtocolDeclaration, _all_columns: &[&str]) {}
+
+    /// 注册协议所需的额外 API 路由
+    fn register_routes(&self, _router: Router<AppState>, _plural: &str, _admin_prefix: &str) -> Router<AppState> { _router }
+
+    /// 删除记录后的异步回调
+    fn on_after_delete(&self, _pool: &Pool, _singular: &str, _id: &str) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> { Box::pin(async { Ok(()) }) }
 }
 ```
 
-### 9.3 ProtocolRegistry
+### 9.3 ProtocolDeclaration
+
+```rust
+#[derive(Debug, Clone, Default)]
+pub struct ProtocolDeclaration {
+    /// 查询时自动追加的 WHERE 过滤条件: (column, SQL_condition)
+    pub query_filters: Vec<(String, String)>,
+    /// 删除策略
+    pub delete_strategy: DeleteStrategy,
+    /// 更新前是否获取当前记录快照
+    pub snapshot_before_update: bool,
+    /// 是否提供版本历史 API 路由
+    pub revision_routes: bool,
+    /// 乐观锁列名
+    pub lock_column: Option<String>,
+    /// 列表查询的默认排序 (column, direction)
+    pub default_sort: Option<(String, SortDir)>,
+    /// statusable: 允许的状态值列表
+    pub status_values: Option<Vec<String>>,
+    /// statusable: 数字映射 (label → number)
+    pub status_map: Option<Vec<(String, i64)>>,
+    /// statusable: 默认状态值
+    pub status_default: Option<String>,
+    /// statusable: 存储模式
+    pub status_mode: StatusMode,
+}
+```
+
+### 9.4 merge() 策略
+
+多个协议的 `ProtocolDeclaration` 通过 `merge()` 聚合：
+
+| 字段 | 策略 |
+|------|------|
+| `query_filters` | 累积（extend） |
+| `delete_strategy` | Soft 优先 Hard |
+| `snapshot_before_update` / `revision_routes` | OR |
+| `lock_column` / `default_sort` | last-wins + warn on conflict |
+| `status_*` | last-wins |
+
+### 9.5 ProtocolRef
+
+`implements` 字段支持两种语法：
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ProtocolRef {
+    Simple(String),
+    WithConfig {
+        name: String,
+        #[serde(flatten)]
+        config: HashMap<String, String>,
+    },
+}
+```
+
+TOML 中使用：
+
+```toml
+# 简单语法
+implements = ["ownable", "timestampable"]
+
+# 带配置语法
+implements = [
+  { name = "sortable", field = "priority", direction = "desc" },
+  { name = "statusable", values = "draft=1,published=10", default = "1", mode = "numeric" },
+]
+```
+
+### 9.6 协议自注册（inventory）
+
+每个协议文件末尾一行自注册：
+
+```rust
+// src/protocols/sortable.rs 末尾
+crate::register_protocol!(
+    crate::protocols::sortable::SortableProtocol,
+    crate::protocols::sortable::SortableProtocol
+);
+```
+
+`lib.rs` 中一行完成所有注册：
+
+```rust
+protocol_registry.register_from_inventory();
+```
+
+### 9.7 列冲突检测
+
+`columns_for()` 对同名不同类型的列采用 **first-wins + warn**（不阻断启动），因为 sortable 可能用已有列排序。
+
+### 9.8 ProtocolRegistry
 
 ```rust
 pub struct ProtocolRegistry {
@@ -566,123 +664,203 @@ pub struct ProtocolRegistry {
 impl ProtocolRegistry {
     pub fn new() -> Self;
     pub fn register(&mut self, protocol: impl Protocol);
+    pub fn register_from_inventory(&mut self);
     pub fn get(&self, name: &str) -> Option<&Arc<dyn Protocol>>;
     pub fn names(&self) -> Vec<&str>;
 
-    /// 按名称查询列（自动去重）
+    /// 按名称查询列（自动去重，first-wins + warn）
     pub fn columns_for(&self, names: &[String]) -> Vec<ColumnDef>;
 
     /// 按名称查询 Aspect（自动去重）
     pub fn aspects_for(&self, names: &[String]) -> Vec<Arc<dyn Aspect>>;
+
+    /// 聚合多个协议的声明
+    pub fn declaration_for(&self, names: &[String]) -> ProtocolDeclaration;
+
+    /// 对聚合后的声明应用用户配置
+    pub fn apply_config_for(&self, impl_refs: &[ProtocolRef], decl: &mut ProtocolDeclaration, all_columns: &[&str]);
+
+    /// 注册所有协议的额外路由
+    pub fn register_routes_for(&self, names: &[String], router: Router<AppState>, plural: &str, admin_prefix: &str) -> Router<AppState>;
+
+    /// 删除后回调
+    pub async fn dispatch_after_delete(&self, names: &[String], pool: &Pool, singular: &str, id: &str) -> Result<()>;
 
     /// 将所有 Protocol 的 Aspect 注册到 AspectEngine（去重）
     pub fn register_aspects_into(&self, engine: &AspectEngine);
 }
 ```
 
-## 10. 内置 Protocol 实现
+## 10. 内置 Protocol 实现（11 种）
 
 ### 10.1 ownable
 
 **文件：** `src/protocols/ownable.rs`
 
+| 属性 | 值 |
+|------|------|
+| Aspect | `OwnableAspect` (priority: -500) |
+| 注入列 | `created_by` TEXT, `updated_by` TEXT |
+| behaviors | `["track_owner"]` |
+| Pointcuts | Data Create Before + Data Update Before |
+
+Aspect 使用 `is_protocol_column` 守卫：
 ```rust
-pub struct OwnableAspect;
-
-impl Aspect for OwnableAspect {
-    fn name(&self) -> &str { "ownable" }
-    fn priority(&self) -> i32 { -500 }
-
-    fn pointcuts(&self) -> Vec<Pointcut> {
-        vec![
-            // Create: 注入 created_by + updated_by
-            Pointcut { layer: Layer::Data, operation: Operation::Create, when: When::Before, target: TargetMatcher::All },
-            // Update: 注入 updated_by
-            Pointcut { layer: Layer::Data, operation: Operation::Update, when: When::Before, target: TargetMatcher::All },
-        ]
-    }
-
-    fn columns(&self) -> Vec<ColumnDef> {
-        vec![
-            ColumnDef { name: "created_by".into(), sql_type: SqlType::Text, default: None },
-            ColumnDef { name: "updated_by".into(), sql_type: SqlType::Text, default: None },
-        ]
-    }
-
-    async fn on_data_before_create(&self, ctx: &mut DataBeforeCreateContext) -> AspectResult {
-        if let Some(user_id) = &ctx.base.user_id {
-            ctx.record.insert("created_by".into(), json!(user_id));
-            ctx.record.insert("updated_by".into(), json!(user_id));
-        }
-        Ok(Advice::Continue)
-    }
-
-    async fn on_data_before_update(&self, ctx: &mut DataBeforeUpdateContext) -> AspectResult {
-        if let Some(user_id) = &ctx.base.user_id {
-            ctx.new_record.insert("updated_by".into(), json!(user_id));
-        }
-        Ok(Advice::Continue)
-    }
-}
-
-pub struct OwnableProtocol;
-
-impl Protocol for OwnableProtocol {
-    fn name(&self) -> &str { "ownable" }
-    fn description(&self) -> &str { "创建和更新时自动注入操作者 ID" }
-    fn aspects(&self) -> Vec<Arc<dyn Aspect>> { vec![Arc::new(OwnableAspect)] }
-    fn built_in(&self) -> bool { true }
-}
+ctx.schema.as_ref().is_none_or(|s| s.is_protocol_column(COL_CREATED_BY))
 ```
 
 ### 10.2 timestampable
 
 **文件：** `src/protocols/timestampable.rs`
 
-```rust
-pub struct TimestampableAspect;
+| 属性 | 值 |
+|------|------|
+| Aspect | `TimestampableAspect` (priority: -400) |
+| 注入列 | `created_at` TEXT, `updated_at` TEXT |
+| behaviors | `["track_timestamps"]` |
+| Pointcuts | Data Create Before + Data Update Before |
 
-impl Aspect for TimestampableAspect {
-    fn name(&self) -> &str { "timestampable" }
-    fn priority(&self) -> i32 { -400 }
+### 10.3 soft_deletable
 
-    fn pointcuts(&self) -> Vec<Pointcut> {
-        vec![
-            Pointcut { layer: Layer::Data, operation: Operation::Create, when: When::Before, target: TargetMatcher::All },
-            Pointcut { layer: Layer::Data, operation: Operation::Update, when: When::Before, target: TargetMatcher::All },
-        ]
-    }
+**文件：** `src/protocols/soft_deletable.rs`
 
-    fn columns(&self) -> Vec<ColumnDef> {
-        vec![
-            ColumnDef { name: "created_at".into(), sql_type: SqlType::Text, default: None },
-            ColumnDef { name: "updated_at".into(), sql_type: SqlType::Text, default: None },
-        ]
-    }
+| 属性 | 值 |
+|------|------|
+| Aspect | `SoftDeletableAspect` |
+| 注入列 | `deleted_at` TEXT, `deleted_by` TEXT |
+| behaviors | `["soft_delete"]` |
+| Declaration | `query_filters: [("deleted_at", "IS NULL")]`, `delete_strategy: Soft { column: "deleted_at" }` |
 
-    async fn on_data_before_create(&self, ctx: &mut DataBeforeCreateContext) -> AspectResult {
-        ctx.record.insert("created_at".into(), json!(ctx.base.now));
-        ctx.record.insert("updated_at".into(), json!(ctx.base.now));
-        Ok(Advice::Continue)
-    }
+### 10.4 versionable
 
-    async fn on_data_before_update(&self, ctx: &mut DataBeforeUpdateContext) -> AspectResult {
-        ctx.new_record.insert("updated_at".into(), json!(ctx.base.now));
-        Ok(Advice::Continue)
-    }
-}
+**文件：** `src/protocols/versionable.rs`
 
-pub struct TimestampableProtocol;
+| 属性 | 值 |
+|------|------|
+| Aspect | `VersionableAspect` |
+| 注入列 | `version` INTEGER |
+| behaviors | `["versioning"]` |
+| Declaration | `snapshot_before_update: true`, `revision_routes: true` |
+| register_routes | `/revisions`, `/revisions/{rev_id}`, `/revisions/{rev_id}/restore`, `/revisions/{rev_a}/diff/{rev_b}` |
+| on_after_delete | 清理 `content_revisions` 表中关联记录 |
 
-impl Protocol for TimestampableProtocol {
-    fn name(&self) -> &str { "timestampable" }
-    fn description(&self) -> &str { "创建和更新时自动注入时间戳" }
-    fn aspects(&self) -> Vec<Arc<dyn Aspect>> { vec![Arc::new(TimestampableAspect)] }
-    fn built_in(&self) -> bool { true }
-}
+### 10.5 lockable
+
+**文件：** `src/protocols/lockable.rs`
+
+| 属性 | 值 |
+|------|------|
+| 注入列 | `lock_version` INTEGER (DEFAULT 0) |
+| behaviors | `["optimistic_lock"]` |
+| Declaration | `lock_column: Some("lock_version")` |
+| Repository 行为 | UPDATE WHERE lock_version = ? + SET lock_version += 1，冲突返回 409 |
+
+### 10.6 sortable
+
+**文件：** `src/protocols/sortable.rs`
+
+| 属性 | 值 |
+|------|------|
+| 注入列 | 无（使用已有列排序） |
+| behaviors | `["sortable"]` |
+| Declaration | `default_sort: Some(("created_at", Desc))` |
+| apply_config | 支持 `field` / `direction` 配置 |
+
+```toml
+implements = [{ name = "sortable", field = "priority", direction = "desc" }]
 ```
 
-## 11. AspectDispatch helper
+### 10.7 expirable
+
+**文件：** `src/protocols/expirable.rs`
+
+| 属性 | 值 |
+|------|------|
+| Aspect | `ExpirableAspect` (priority: -200) |
+| 注入列 | `expires_at` TEXT |
+| behaviors | `["expirable"]` |
+| Declaration | `query_filters: [("expires_at", "IS NULL OR expires_at > datetime('now')")]` |
+
+### 10.8 nestable
+
+**文件：** `src/protocols/nestable.rs`
+
+| 属性 | 值 |
+|------|------|
+| 注入列 | `parent_id` TEXT, `depth` INTEGER, `position` INTEGER |
+| behaviors | `["nestable"]` |
+
+### 10.9 statusable
+
+**文件：** `src/protocols/statusable.rs`
+
+| 属性 | 值 |
+|------|------|
+| Aspect | `StatusableAspect` (priority: -150) |
+| 注入列 | `status` TEXT |
+| behaviors | `["statusable"]` |
+| apply_config | 支持 `values` / `default` / `mode` 配置 |
+| Aspect 行为 | create 注入默认值 + create/update 校验合法值 |
+| 存储模式 | 字符串模式（默认）或数字映射模式 |
+
+```toml
+implements = [{ name = "statusable", values = "draft=1,published=10,archived=99", default = "1", mode = "numeric" }]
+```
+
+> 查询过滤不由协议处理，由 API rule engine 控制：`[api.list] filter = 'status = "published"'`。
+
+### 10.10 metaable
+
+**文件：** `src/protocols/metaable.rs`
+
+| 属性 | 值 |
+|------|------|
+| Aspect | `MetaableAspect` |
+| 注入列 | `__meta` TEXT (DEFAULT '{}') |
+| behaviors | `["metaable"]` |
+| 查询支持 | `?__meta.views=100` → `json_extract(__meta, '$.views') = '100'` |
+
+> `__meta` 不再硬编码到所有表，由 `implements = ["metaable"]` 控制。
+
+### 10.11 tenantable
+
+**文件：** `src/protocols/tenantable.rs`
+
+| 属性 | 值 |
+|------|------|
+| 注入列 | `tenant_id` TEXT (NOT NULL DEFAULT 'default') |
+| behaviors | `["tenantable"]` |
+| Repository 行为 | `ct.implements_protocol("tenantable")` 判断，自动注入和过滤 |
+| Aspect | 纯列声明（pointcuts 为空），tenant_id 值由 Repository 统一注入 |
+
+> `tenant_id` 不再硬编码到所有表，由 `implements = ["tenantable"]` 控制。不再运行时检测 DB 列，改为 schema 级别判断。
+
+## 11. Aspect `is_protocol_column` 守卫
+
+所有 Aspect 的 `on_data_before_create` / `on_data_before_update` 统一使用：
+
+```rust
+ctx.schema.as_ref().is_none_or(|s| s.is_protocol_column(COL_XXX))
+```
+
+- 有 schema → 只在该协议列真正需要创建时注入
+- 无 schema → 放行（向后兼容单元测试）
+
+## 12. ProtocolDeclaration 消费方
+
+Repository 层直接读取 `ct.declaration()` 获取聚合后的声明：
+
+| 消费方 | 使用的字段 |
+|--------|-----------|
+| `find()` (列表查询) | `query_filters` → WHERE, `default_sort` → ORDER BY |
+| `create()` | `tenant_id` 由 `ct.implements_protocol("tenantable")` 判断 |
+| `update()` | `snapshot_before_update` → 保存快照, `lock_column` → 乐观锁 |
+| `delete()` | `delete_strategy` → Soft/Hard 判断 |
+| `soft_delete()` | `delete_strategy` → 软删除列名 |
+| migration | `columns_for()` → 动态列 |
+| handler | `is_soft_delete()` / `has_revision_routes()` / `declaration()` |
+
+## 13. AspectDispatch helper
 
 **文件：** `src/services/aspect_dispatch.rs`
 
@@ -706,30 +884,12 @@ impl AspectDispatch<'_> {
     pub async fn after_delete(&self);
 }
 
-/// 创建一个 minimal Record 用于 dispatch（只含 id）
 pub fn id_record(id: &str) -> Record;
 ```
 
-**使用示例（Service 层）：**
+## 14. 系统集成
 
-```rust
-use crate::services::aspect_dispatch::{AspectDispatch, id_record};
-
-pub async fn create_post(engine: &AspectEngine, pool: &Pool, user_id: &str, ...) -> AppResult<Post> {
-    let dispatch = AspectDispatch {
-        engine, pool, table: "posts",
-        user_id: Some(user_id), tenant_id: None,
-    };
-    dispatch.before_create(id_record(&id)).await?;
-    // ... repository INSERT ...
-    dispatch.after_create(id_record(&id)).await;
-    Ok(post)
-}
-```
-
-## 12. 系统集成
-
-### 12.1 AppState
+### 14.1 AppState
 
 ```rust
 pub struct AppState {
@@ -741,59 +901,47 @@ pub struct AppState {
 }
 ```
 
-### 12.2 启动流程
+### 14.2 启动流程
 
 ```rust
 pub async fn build_app_state(config: &AppConfig) -> anyhow::Result<AppState> {
-    // 1. 创建 ProtocolRegistry，注册内置 Protocol
+    // 1. 创建 ProtocolRegistry，inventory 自注册所有内置 Protocol
     let mut protocol_registry = ProtocolRegistry::new();
-    protocol_registry.register(OwnableProtocol);
-    protocol_registry.register(TimestampableProtocol);
+    protocol_registry.register_from_inventory();
     let protocol_registry = Arc::new(protocol_registry);
 
     // 2. 创建 AspectEngine，通过 ProtocolRegistry 注册所有 Aspect
     let aspect_engine = Arc::new(AspectEngine::new());
     protocol_registry.register_aspects_into(&aspect_engine);
-
-    // 3. 日志输出
-    tracing::info!(
-        "aspect engine initialized with {} aspect(s), {} protocol(s)",
-        aspect_engine.aspects().len(),
-        protocol_registry.names().len()
-    );
-
-    // ...
 }
 ```
 
-### 12.3 Content Type 表集成
+### 14.3 Content Type Handler 集成
 
-**handler.rs** — `do_create` / `do_update` / `do_delete` / `do_list` 接入 AspectEngine dispatch：
+handler.rs — `do_create` / `do_update` / `do_delete` / `do_list` / `do_get` 接入 AspectEngine dispatch。
 
-```rust
-fn make_base_ctx(user_id: Option<&str>, pool: &Pool) -> BaseContext {
-    BaseContext::new(
-        user_id.map(|s| s.to_string()),
-        "default".into(),
-        crate::utils::tz::now_str(),
-    ).with_pool(pool.clone())
-}
+Aspect 编排放在 Handler 层（不放在 Repository 层）：
 
-fn make_base_ctx_anon(pool: &Pool) -> BaseContext {
-    make_base_ctx(None, pool)
-}
+```
+handler 调 aspect.before → repo (纯数据操作) → aspect.after
 ```
 
-**migration.rs** — 无条件添加系统列：
+Repository 层保持纯粹的数据操作，不包含横切面逻辑。
 
-```rust
-// 无条件添加 created_at / updated_at / created_by / updated_by 列
-// 避免系统列与用户自定义列重复（检查 user_col_names HashSet）
-```
+### 14.4 Content Type Migration 集成
 
-**repository.rs** — `build_column_names` 无条件包含系统列。
+migration.rs — 协议列由 `ProtocolRegistry::columns_for()` 动态获取，不再硬编码任何系统列。
 
-### 12.4 内置表集成
+### 14.5 Content Type Repository 集成
+
+repository.rs — 基于 `ct.declaration()` 驱动 SQL 行为：
+- `resolve_tenant()` — `ct.implements_protocol("tenantable")` 判断（同步，零 IO）
+- `build_order_by()` — `declaration().default_sort`
+- `find()` — `query_filters` + `meta_filters` (json_extract)
+- `update()` — `lock_column` + `snapshot_before_update`
+- `delete()` — `delete_strategy`
+
+### 14.6 内置表集成
 
 已覆盖的内置表：
 
@@ -806,46 +954,21 @@ fn make_base_ctx_anon(pool: &Pool) -> BaseContext {
 | tags | ✅ | — | ✅ | `src/services/post.rs` |
 | reusable_blocks | ✅ | ✅ | ✅ | `src/services/page.rs` |
 
-**调用方传入方式：**
+## 15. 与旧机制的关系
 
-- HTTP handler：`&state.aspect_engine`, `&state.pool`
-- Tauri commands：`&state.0.aspect_engine`, `&state.0.pool`
-
-### 12.5 Aspect 编排位置
-
-**Aspect 编排放在 Handler 层（不放在 Repository 层）：**
-
-```
-handler 调 aspect.before → repo (纯数据操作) → aspect.after
-```
-
-Repository 层保持纯粹的数据操作，不包含横切面逻辑。
-
-## 13. 与旧机制的关系
-
-| 旧机制 | v2.0 替代 |
+| 旧机制 | 当前替代 |
 |---|---|
 | `auto_fill: UserId` | **废弃**，由 OwnableAspect 替代 |
 | `auto_fill: CurrentTimestamp` | **废弃**，由 TimestampableAspect 替代 |
-| `timestamps: true` (ContentTypeSchema) | **废弃**，由 TimestampableAspect 替代 |
-| `author_id` 字段 | **改为** `created_by` + `updated_by` |
-| `Timestamps` 标志 | **完全移除**（schema/migration/repository/handler/tests） |
-| `TargetMatcher::Custom` | **删除**，未实现且无使用场景 |
-| `TargetMatcher::TablePattern` | **删除**，未实现 |
-| `TargetMatcher::Routes` / `Events` | **删除**，未实现 |
-| `TargetInfo` struct | **删除**，未实现 |
+| `timestamps: true` (ContentTypeSchema) | **废弃**，由 timestampable 协议替代 |
+| `draft_publish` 字段 | **废弃**，由 statusable 协议替代 |
+| `list_view` 配置 | **废弃**，由 sortable 协议的 default_sort 替代 |
+| `cacheable` 协议 | **删除**，缓存由 handler 内置 DashMap TTL 处理 |
+| `__meta` 硬编码 | **废弃**，由 metaable 协议控制 |
+| `tenant_id` 硬编码 | **废弃**，由 tenantable 协议控制 |
+| `has_tenant_id()` DB 检测 | **废弃**，改为 `ct.implements_protocol("tenantable")` |
 
-## 14. 已知限制（Phase 3 完善）
-
-**内置表 Aspect 注入的值未回写到 Repository 的 SQL 参数：**
-
-当前 dispatch 生效但 Aspect 注入的值（如 `created_by`）未被 typed Repository 的 `sqlx::query().bind()` 使用。Repository 层仍使用手写的字段绑定。
-
-**解决方向：**
-- 方案 A：Repository 的 SQL 参数从 dispatch 后的 record 中读取
-- 方案 B：保持现状，系统列在 Repository SQL 中硬编码（当前做法）
-
-## 15. 迁移计划
+## 16. 迁移计划
 
 ### Phase 1 — 基础设施 ✅ 已完成
 
@@ -853,11 +976,9 @@ Repository 层保持纯粹的数据操作，不包含横切面逻辑。
 2. `src/aspects/engine.rs` — AspectEngine 注册/调度/匹配 + enable/disable
 3. Content Type 表接入 AspectEngine
 
-### Phase 2 — 扩展 Aspects ⏳ 待做
+### Phase 2 — 扩展 Protocols ✅ 已完成
 
-1. `versionable` Protocol — 版本快照
-2. `cacheable` Protocol — 缓存
-3. `soft_deletable` Protocol — 软删除
+11 个内置协议全部实现：ownable、timestampable、soft_deletable、versionable、lockable、sortable、expirable、nestable、statusable、metaable、tenantable。
 
 ### Phase 3 — 内置表迁移 ✅ 已完成
 
@@ -876,7 +997,7 @@ Repository 层保持纯粹的数据操作，不包含横切面逻辑。
 2. 替换现有 rule_engine 为 Access Aspect
 3. HTTP Layer Aspect（统一 middleware 注册）
 
-## 16. 文件结构
+## 17. 文件结构
 
 ```
 src/
@@ -884,32 +1005,42 @@ src/
   aspects/
     engine.rs                             — AspectEngine 注册/调度/匹配/enable/disable/Debug
 
-  protocols.rs                            — Protocol trait + ProtocolRegistry
+  protocols.rs                            — Protocol trait + ProtocolRegistry + ProtocolDeclaration + DeleteStrategy + SortDir + StatusMode + inventory 自注册
   protocols/
     ownable.rs                            — OwnableAspect + OwnableProtocol
     timestampable.rs                      — TimestampableAspect + TimestampableProtocol
+    soft_deletable.rs                     — SoftDeletableAspect + SoftDeletableProtocol
+    versionable.rs                        — VersionableAspect + VersionableProtocol (register_routes + on_after_delete)
+    lockable.rs                           — LockableProtocol
+    sortable.rs                           — SortableProtocol (apply_config)
+    expirable.rs                          — ExpirableAspect + ExpirableProtocol
+    nestable.rs                           — NestableProtocol
+    statusable.rs                         — StatusableAspect + StatusableProtocol (apply_config)
+    metaable.rs                           — MetaableAspect + MetaableProtocol
+    tenantable.rs                         — TenantableProtocol (纯列声明)
+
+  constants.rs                            — COL_CREATED_BY, COL_UPDATED_BY, COL_CREATED_AT, COL_UPDATED_AT, COL_DELETED_AT, COL_DELETED_BY, COL_VERSION, COL_LOCK_VERSION, COL_SORT_KEY, COL_STATUS, COL_EXPIRES_AT, COL_PARENT_ID, COL_DEPTH, COL_POSITION, COL_META, COL_TENANT_ID, COL_ID
 
   services/
     aspect_dispatch.rs                    — AspectDispatch helper + id_record
-    post.rs                               — create/update/delete_post + category + tag 已接入 Aspect
-    page.rs                               — create/update/delete_page + reusable_blocks 已接入 Aspect
-    comment.rs                            — create/delete/update_status 已接入 Aspect
 
   content_type/
-    handler.rs                            — do_create/do_update/do_delete/do_list 接入 AspectEngine
-    migration.rs                          — 无条件系统列，避免与用户列重复
-    repository.rs                         — build_column_names 无条件包含系统列
-    schema.rs                             — 删除 timestamps 字段，新增 builtin/implements 字段
+    handler.rs                            — do_create/do_update/do_delete/do_list 接入 AspectEngine + DashMap 缓存 + meta_filters
+    migration.rs                          — 协议列动态注入（不硬编码任何系统列）
+    repository.rs                         — ProtocolDeclaration 驱动 SQL + schema 级 tenantable 判断
+    schema.rs                             — ContentTypeSchema + ProtocolRef (Simple/WithConfig) + implements_protocol()
 
-  lib.rs                                  — AppState 含 aspect_engine + protocol_registry, build_app_state 启动流程
+  lib.rs                                  — protocol_registry.register_from_inventory() + register_aspects_into()
 ```
 
-## 17. 设计原则
+## 18. 设计原则
 
 1. **一次定义，全局生效** — 每个 Aspect 定义一次，对所有表自动生效
-2. **声明式** — 通过 Protocol 组合 Aspect，通过 `implements` 或代码注册启用
-3. **优先级驱动** — 明确的执行顺序，避免隐式依赖
-4. **类型安全** — 每个 JoinPoint 有专属 Context 类型
-5. **可扩展** — 未来插件可注册 JS/Lua/WASM Aspect
-6. **事务感知** — Data 层在事务内，Event 层在事务外
-7. **优雅降级** — after hook 失败只记 warn 日志，不阻断主操作
+2. **声明式 + 命令式分离** — ProtocolDeclaration 纯数据驱动 SQL 行为，Aspect 处理命令式副作用
+3. **协议组合** — 多个协议通过 `merge()` 聚合，first-wins/last-wins 策略明确
+4. **优先级驱动** — 明确的执行顺序，避免隐式依赖
+5. **类型安全** — 每个 JoinPoint 有专属 Context 类型
+6. **可扩展** — 新协议只需 1 个文件 + 1 行 `register_protocol!`
+7. **事务感知** — Data 层在事务内，Event 层在事务外
+8. **优雅降级** — after hook 失败只记 warn 日志，不阻断主操作
+9. **数据驱动** — 扩展 ProtocolDeclaration 字段时，`merge_covers_all_declaration_fields` 测试会红灯提醒

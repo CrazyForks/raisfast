@@ -6,7 +6,6 @@
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
 
 use crate::aspects::ColumnDef;
-use crate::constants::*;
 
 /// 根据内容类型定义生成 CREATE TABLE SQL
 ///
@@ -17,7 +16,6 @@ pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnD
     let mut cols = Vec::new();
 
     cols.push("    id TEXT PRIMARY KEY".to_string());
-    cols.push("    tenant_id TEXT NOT NULL DEFAULT 'default'".to_string());
 
     for field in &ct.fields {
         if field.field_type == FieldType::Relation {
@@ -84,10 +82,6 @@ pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnD
             }
             cols.push(sql);
         }
-    }
-
-    if !ct.builtin {
-        cols.push(format!("    {} TEXT DEFAULT '{{}}'", COL_META));
     }
 
     let mut sql = format!("CREATE TABLE IF NOT EXISTS {} (\n", ct.table);
@@ -251,13 +245,6 @@ pub fn generate_alter_table(
         }
     }
 
-    if !ct.builtin && !existing.contains(COL_META) {
-        stmts.push(format!(
-            "ALTER TABLE {} ADD COLUMN {} TEXT DEFAULT '{{}}'",
-            ct.table, COL_META
-        ));
-    }
-
     stmts
 }
 
@@ -285,9 +272,6 @@ pub fn expected_columns(ct: &ContentTypeSchema, protocol_columns: &[ColumnDef]) 
 
     for col in protocol_columns {
         cols.push(col.name.clone());
-    }
-    if !ct.builtin {
-        cols.push(COL_META.into());
     }
 
     cols
@@ -327,6 +311,7 @@ fn json_to_sql_literal(v: &serde_json::Value) -> String {
 mod tests {
     use super::*;
     use crate::aspects::SqlType;
+    use crate::constants::*;
 
     fn default_protocol_columns() -> Vec<ColumnDef> {
         vec![
@@ -461,7 +446,6 @@ default = false
             "updated_at".into(),
             "created_by".into(),
             "updated_by".into(),
-            "__meta".into(),
         ];
 
         let stmts = generate_alter_table(&ct, &existing, &default_protocol_columns());
@@ -507,7 +491,6 @@ unique = true
             "updated_at".into(),
             "created_by".into(),
             "updated_by".into(),
-            "__meta".into(),
         ];
 
         let stmts = generate_alter_table(&ct, &existing, &default_protocol_columns());

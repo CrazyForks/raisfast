@@ -394,7 +394,7 @@ through = "ct_resolve_posts_tags"
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE ct_resolve_posts (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'default', title TEXT, author_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT, updated_by TEXT)",
+            "CREATE TABLE ct_resolve_posts (id TEXT PRIMARY KEY, title TEXT, author_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT, updated_by TEXT)",
         )
         .execute(&pool)
         .await

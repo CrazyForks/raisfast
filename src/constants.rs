@@ -28,6 +28,8 @@ pub const COL_VERSION: &str = "version";
 pub const COL_LOCK_VERSION: &str = "lock_version";
 /// 排序 — 排序键
 pub const COL_SORT_KEY: &str = "created_at";
+/// 状态 — 状态值
+pub const COL_STATUS: &str = "status";
 /// 过期 — 过期时间
 pub const COL_EXPIRES_AT: &str = "expires_at";
 /// 嵌套 — 父级 ID

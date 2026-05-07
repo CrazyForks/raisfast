@@ -14,17 +14,19 @@ plugins/
               ↓ 启动加载
 PluginManager（Arc 共享）
   ├─ 拓扑排序（依赖顺序）
-  ├─ 实例池（round-robin 并发）
+  ├─ JS/Lua: per-request（每次调用新建 VM，用完销毁）
+  ├─ WASM: 实例池（round-robin 并发）
   └─ 热重载（文件系统监听）
               ↓ Hook 派发
-Host API（沙箱权限控制）
-  ├─ Host.dbQuery / dbExecute
-  ├─ Host.dbBegin / dbCommit / dbRollback
-  ├─ Host.httpGet / httpPost
+Host API（沙箱权限控制，全局对象名: RaisFastHost）
+  ├─ Host.dbQuery / Host.dbExecute
+  ├─ Host.dbBegin / Host.dbCommit / Host.dbRollback
+  ├─ Host.httpGet / Host.httpPost
   ├─ Host.getConfig
-  ├─ Host.getData / setData（KV 存储）
-  ├─ Host.fsRead / fsWrite / fsDelete / fsExists / fsList（VFS）
-  ├─ Host.log / emitEvent
+  ├─ Host.getData / Host.setData（KV 存储）
+  ├─ Host.getPost（获取文章）
+  ├─ Host.vfsRead / Host.vfsWrite / Host.vfsDelete / Host.vfsExists / Host.vfsList / Host.vfsStat
+  ├─ Host.log / Host.emitEvent
   └─ Host.newId
 ```
 
@@ -35,30 +37,49 @@ Host API（沙箱权限控制）
 | PluginManager | `src/plugins.rs` | 加载/卸载/hook 派发/热重载/事件总线 |
 | Manifest | `src/plugins/manifest.rs` | TOML 清单解析 |
 | Permissions | `src/plugins/permissions.rs` | 权限校验 + SQL 注入防护 + SSRF 防护 |
-| JS Engine | `src/plugins/engine_js.rs` | QuickJS 运行时 + 实例池 |
+| JS Engine | `src/plugins/engine_js.rs` | QuickJS per-request 运行时 |
 | JS Host | `src/plugins/js_host.rs` | JS → Rust Host API 桥接 |
-| Lua Engine | `src/plugins/engine_lua.rs` | Lua 5.4 运行时 + 实例池 |
+| Lua Engine | `src/plugins/engine_lua.rs` | Lua 5.4 per-request 运行时 |
 | Lua Host | `src/plugins/lua_host.rs` | Lua → Rust Host API 桥接 |
-| WASM Engine | `src/plugins/engine.rs` | wasmtime 运行时 |
+| WASM Engine | `src/plugins/engine.rs` | wasmtime 实例池运行时 |
 | WASM Host | `src/plugins/host.rs` | WASM → Rust Host API 桥接 |
 | Host Common | `src/plugins/host_common.rs` | 共享 Host 逻辑 |
 | VFS | `src/plugins/vfs.rs` | 插件隔离虚拟文件系统 |
 | HTTP Client | `src/plugins/http_client.rs` | 插件 HTTP 请求 |
+| SDK v1 | `src/plugins/sdk_v1.rs` | SDK 版本管理 + include_str! 嵌入 |
 | CLI | `src/cli/plugin_cmd.rs` | `plugin new` / `plugin check` |
+
+### SDK 分发
+
+SDK 编译进 Rust 二进制文件（`include_str!`），不依赖外部文件：
+
+```
+plugin-sdk/
+  js/
+    js_plugin_v1.js     ← JS SDK v1 源码
+    js_plugin_v1.ts     ← TypeScript 源码（编译用）
+  lua/
+    lua_plugin_v1.lua   ← Lua SDK v1 源码
+```
 
 ## 三种运行时
 
-| 运行时 | Cargo Feature | 入口文件 | 引擎 |
-|--------|--------------|----------|------|
-| JavaScript | `plugin-js` | `main.js` | rquickjs (QuickJS) |
-| Lua | `plugin-lua` | `init.lua` | mlua (Lua 5.4) |
-| WASM | `plugin-wasm` | `plugin.wasm` | wasmtime |
+| 运行时 | Cargo Feature | 入口文件 | 引擎 | 并发模型 |
+|--------|--------------|----------|------|---------|
+| JavaScript | `plugin-js` | `main.js` | rquickjs (QuickJS) | per-request |
+| Lua | `plugin-lua` | `init.lua` | mlua (Lua 5.4) | per-request |
+| WASM | `plugin-wasm` | `plugin.wasm` | wasmtime | 实例池 |
 
 三种运行时可同时编译、同时加载。
 
-### 实例池
+### 并发模型差异
 
-每个插件创建多个运行时实例（由 `PLUGIN_JS_POOL_SIZE` / `PLUGIN_LUA_POOL_SIZE` / `PLUGIN_WASM_POOL_SIZE` 控制），以 round-robin 方式分发请求，避免并发瓶颈。
+| 模型 | 适用 | 原理 | 隔离性 |
+|------|------|------|--------|
+| **per-request** | JS、Lua | 每次调用创建全新 VM，用完销毁 | 完美隔离，零状态泄漏 |
+| **实例池** | WASM | N 个预编译实例，round-robin 分发 | 实例间隔离，实例内需注意状态 |
+
+> JS/Lua 的 `PLUGIN_JS_POOL_SIZE` / `PLUGIN_LUA_POOL_SIZE` 配置项保留但当前 per-request 模式不使用。
 
 ## Manifest 文件 (`manifest.toml`)
 
@@ -91,6 +112,7 @@ timeout_ms = 5000
 | `language` | string | 否 | `"rust"` | 语言标识 |
 | `entry` | string | 否 | `"index.js"` | 入口文件名 |
 | `wasm` | string | 否 | `"plugin.wasm"` | WASM 文件路径 |
+| `sdk_version` | string | 否 | `"v1"` | SDK 版本 |
 
 ### `[permissions]` 权限声明
 
@@ -147,6 +169,8 @@ priority = 50
 
 [hooks.on-content-updating]
 priority = 100
+match = "product"           # 仅匹配 content_type
+content_types = ["product"] # 仅匹配指定 content type
 
 [hooks.render-markdown]
 priority = 10
@@ -155,6 +179,8 @@ priority = 10
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
 | `priority` | int | 100 | 优先级，数字越小越先执行 |
+| `match` | string | — | 匹配规则（Content Type 名称） |
+| `content_types` | string[] | `[]` | 仅匹配指定的 Content Type |
 
 钩子名使用连字符（`on-content-created`），系统自动转换为下划线（`on_content_created`）。
 
@@ -182,6 +208,16 @@ priority = 10
 
 **filter 类型**：可修改数据，返回值传递给下一个插件。
 **action 类型**：仅副作用，返回值忽略。
+
+### `[dependencies]` 插件依赖
+
+```toml
+[dependencies]
+"com.raisfast.auth" = ">=1.0.0"
+"com.raisfast.analytics" = ">=2.0.0"
+```
+
+系统启动时按拓扑排序加载，确保依赖先于当前插件初始化。
 
 ### `[[cron]]` 定时任务
 
@@ -216,6 +252,7 @@ method = "GET"
 path = "/api/v1/plugins/crm/contacts/:contactId"
 handler = "getContact"
 auth = "public"
+description = "获取联系人详情"
 ```
 
 | 字段 | 类型 | 必填 | 默认 | 说明 |
@@ -227,20 +264,84 @@ auth = "public"
 | `description` | string | 否 | — | 描述 |
 | `permission` | string | 否 | — | 额外权限要求 |
 
+#### 路由参数定义（`input`）
+
+```toml
+[[routes]]
+method = "POST"
+path = "/api/v1/plugins/crm/deals"
+handler = "createDeal"
+
+[[routes.input]]
+name = "title"
+type = "string"
+in = "body"
+required = true
+description = "交易标题"
+
+[[routes.input]]
+name = "page"
+type = "integer"
+in = "query"
+default = 1
+description = "页码"
+```
+
+#### 路由输出定义（`output`）
+
+```toml
+[routes.output]
+description = "交易列表"
+
+[[routes.output.fields]]
+name = "id"
+type = "string"
+description = "交易 ID"
+
+[[routes.output.fields]]
+name = "title"
+type = "string"
+description = "交易标题"
+```
+
 自定义路由的响应由框架统一包装为 `{ code: 0, message: "success", data: ... }` 格式。
+
+### `[[content_types]]` Content Type 文件引用
+
+```toml
+[[content_types]]
+file = "content_types/contact.toml"
+```
+
+插件可以自带 Content Type TOML 文件，安装时自动加载。
+
+### `[[admin_pages]]` 管理后台页面
+
+```toml
+[[admin_pages]]
+path = "/admin/plugins/crm"
+label = "CRM 管理"
+icon = "users"
+component = "CrmDashboard"
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `path` | string | 是 | 页面路径 |
+| `label` | string | 是 | 显示名称 |
+| `icon` | string | 否 | 图标 |
+| `component` | string | 否 | 前端组件名 |
 
 ## Host API
 
-所有运行时通过统一的 `Host.*` 接口访问宿主功能：
+所有运行时通过统一的 `RaisFastHost` 全局对象访问宿主功能（由 `PLUGIN_HOST_GLOBAL` 常量定义）：
 
 ### 数据库
 
 ```javascript
-// 参数化查询（防注入）
 const rows = JSON.parse(Host.dbQuery("SELECT * FROM products WHERE price > ?", JSON.stringify([100])));
 const affected = Host.dbExecute("UPDATE products SET stock = stock - 1 WHERE id = ?", JSON.stringify([id]));
 
-// 事务
 Host.dbBegin();
 Host.dbExecute("INSERT INTO orders ...", null);
 Host.dbExecute("UPDATE products ...", null);
@@ -264,6 +365,12 @@ const html = Host.httpGet("https://api.example.com/data");
 const result = Host.httpPost("https://api.example.com/webhook", JSON.stringify({event: "test"}));
 ```
 
+### 内容查询
+
+```javascript
+const postJson = Host.getPost("my-post-slug");
+```
+
 ### KV 存储
 
 ```javascript
@@ -281,16 +388,17 @@ const env = Host.getConfig("app.env");
 ```
 
 允许的配置键（需在 `permissions.config` 白名单中）：
-`app.host`, `app.port`, `app.env`, `app.base_url`, `jwt.access_expires`, `jwt.refresh_expires`, `upload.dir`, `upload.max_size`
+`app.host`, `app.port`, `app.env`, `app.base_url`, `jwt.access_expires`, `jwt.refresh_expires`, `upload.dir`, `upload.max_size`, `plugin.max_memory_mb`, `plugin.default_timeout_ms`
 
 ### 文件系统（VFS）
 
 ```javascript
-Host.fsWrite("/reports/daily.json", reportJson);
-const data = Host.fsRead("/reports/daily.json");
-const exists = Host.fsExists("/reports/daily.json");
-const files = Host.fsList("/reports");
-Host.fsDelete("/reports/old.json");
+Host.vfsWrite("/reports/daily.json", reportJson);
+const data = Host.vfsRead("/reports/daily.json");
+const exists = Host.vfsExists("/reports/daily.json");
+const files = Host.vfsList("/reports");
+Host.vfsDelete("/reports/old.json");
+const stat = Host.vfsStat("/reports/daily.json");  // → {"size":1024,"is_dir":false,"modified":1234567890}
 ```
 
 每个插件在 `{VFS_ROOT}/{plugin_id}/` 下有隔离沙箱，路径不能包含 `..`。
@@ -310,6 +418,8 @@ const id = Host.newId();  // UUID v7
 | `Host.log(level, msg)` | 日志输出（level: `info`/`warn`/`error`） |
 | `Host.emitEvent(type, data)` | 发射事件到事件总线 |
 | `Host.newId()` | 生成 UUID v7（时间排序，与系统主键一致） |
+
+> **WASM 运行时注意**：`Host.newId()` 仅在 JS/Lua 运行时可用，WASM 运行时未暴露此函数。
 
 ## 编写 JS 插件（ES Module + SDK）
 
@@ -381,6 +491,8 @@ export function on_cron_tick(input) {
 | `vfsRead(path)` / `vfsWrite(path, content)` | 虚拟文件系统读写 |
 | `vfsDelete(path)` / `vfsExists(path)` | 虚拟文件系统删除/判断存在 |
 | `vfsList(path)` | 列出目录下文件，返回数组 |
+| `vfsStat(path)` | 获取文件信息（size, is_dir, modified） |
+| `getPost(slug)` | 按 slug 获取文章，返回 JSON 对象 |
 
 ### 关键约定
 
@@ -391,6 +503,8 @@ export function on_cron_tick(input) {
 - 支持 ES2024 完整语法（`let`/`const`、箭头函数、`async/await`、可选链等）
 - `dbQuery()` 查询失败时抛异常，可用 `try/catch` 捕获
 - `dbQuery()` 返回的整数列为 `null`，必须用 `CAST(col AS TEXT)` 转为字符串后再 `parseInt`
+- SDK 不可被插件覆盖（Module Loader 优先匹配 `"sdk"`）
+- `Host` 全局对象仍存在（SDK 内部使用），不推荐插件直接调用
 
 ### 相对路径导入
 
@@ -461,6 +575,8 @@ end
 | `sdk.vfsRead(path)` / `sdk.vfsWrite(path, content)` | 虚拟文件系统读写 |
 | `sdk.vfsDelete(path)` / `sdk.vfsExists(path)` | 虚拟文件系统删除/判断存在 |
 | `sdk.vfsList(path)` | 列出目录下文件，返回数组 |
+| `sdk.vfsStat(path)` | 获取文件信息（size, is_dir, modified） |
+| `sdk.getPost(slug)` | 按 slug 获取文章 |
 
 ### 关键约定
 
@@ -472,6 +588,36 @@ end
 - 指令限制：5,000,000 条
 - `sdk.dbQuery()` 查询失败时抛异常，可用 `pcall` 捕获
 - `sdk.dbQuery()` 返回的整数列在 Lua 中可能为 `nil`，建议用 `CAST(col AS TEXT)` 转换
+- Lua SDK 额外提供 `Host.jsonEncode(val)` / `Host.jsonDecode(str)` 用于 JSON 序列化（Lua 沙箱无原生 JSON 支持）
+
+## Host 函数对比（三运行时）
+
+| 函数 | JS | Lua | WASM | 备注 |
+|------|----|-----|------|------|
+| `log` | ✅ | ✅ | ✅ | |
+| `getConfig` / `get_config` | ✅ | ✅ | ✅ | WASM 用 snake_case |
+| `httpGet` / `http_get` | ✅ | ✅ | ✅ | |
+| `httpPost` / `http_post` | ✅ | ✅ | ✅ | |
+| `getData` / `get_data` | ✅ | ✅ | ✅ | |
+| `setData` / `set_data` | ✅ | ✅ | ✅ | |
+| `getPost` / `get_post` | ✅ | ✅ | ✅ | |
+| `dbQuery` / `db_query` | ✅ | ✅ | ✅ | |
+| `dbExecute` / `db_execute` | ✅ | ✅ | ✅ | |
+| `dbBegin` / `db_begin` | ✅ | ✅ | ✅ | |
+| `dbCommit` / `db_commit` | ✅ | ✅ | ✅ | |
+| `dbRollback` / `db_rollback` | ✅ | ✅ | ✅ | |
+| `vfsRead` / `vfs_read` | ✅ | ✅ | ✅ | |
+| `vfsWrite` / `vfs_write` | ✅ | ✅ | ✅ | |
+| `vfsDelete` / `vfs_delete` | ✅ | ✅ | ✅ | |
+| `vfsExists` / `vfs_exists` | ✅ | ✅ | ✅ | |
+| `vfsList` / `vfs_list` | ✅ | ✅ | ✅ | |
+| `vfsStat` / `vfs_stat` | ✅ | ✅ | ✅ | |
+| `newId` / `new_uuid` | ✅ | ✅ | ❌ | WASM 未暴露 |
+| `emitEvent` / `emit_event` | ✅ | ✅ | ✅ | |
+| `jsonEncode` | ❌ | ✅ | ❌ | Lua 专用（无原生 JSON） |
+| `jsonDecode` | ❌ | ✅ | ❌ | Lua 专用（无原生 JSON） |
+
+> JS/Lua 用 camelCase，WASM 用 snake_case。
 
 ## 错误恢复
 
@@ -522,8 +668,8 @@ raisfast plugin check ./plugins/my-plugin  # 校验指定目录
 | `PLUGIN_VFS_MAX_FILE_SIZE` | `1048576` | 单文件最大 1MB |
 | `PLUGIN_VFS_MAX_TOTAL_SIZE` | `10485760` | 总配额 10MB |
 | `PLUGIN_WASM_POOL_SIZE` | `4` | WASM 实例池大小 |
-| `PLUGIN_JS_POOL_SIZE` | `4` | JS 实例池大小 |
-| `PLUGIN_LUA_POOL_SIZE` | `4` | Lua 实例池大小 |
+| `PLUGIN_JS_POOL_SIZE` | `4` | JS 配置（当前 per-request 不使用） |
+| `PLUGIN_LUA_POOL_SIZE` | `4` | Lua 配置（当前 per-request 不使用） |
 
 ## 完整示例：CRM 插件
 

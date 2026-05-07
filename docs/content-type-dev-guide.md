@@ -2,25 +2,47 @@
 
 ## 概述
 
-Content Type（内容类型）是 raisfast 的核心 CMS 机制，借鉴了 Strapi v5 Content Type Builder 和 WordPress Custom Post Types 的设计理念。每个 Content Type 由一个 TOML 文件定义，系统启动时自动加载、建表、注册 REST API。
+Content Type（内容类型）是 raisfast 的核心 CMS 机制，借鉴了 Strapi v5 Content Type Builder 和 PocketBase 的设计理念。每个 Content Type 由一个 TOML 文件定义，系统启动时自动加载、建表、注册 REST API。
 
 Content Type 与 Plugin 完全独立，互不依赖。
 
 ## 架构
 
 ```
-TOML 文件 (content_types/*.toml)
+TOML 文件 (extensions/content_types/*.toml)
        ↓ 启动加载
 ContentTypeRegistry (ArcSwap 无锁热加载)
        ↓ 注册时缓存
-  ├─ cache_select_columns()  — 预计算 SELECT 列
-  └─ cache_rules()           — 预编译 API Rule 为 AST
+  ├─ cache_protocol_columns()  — 协议列名 + 去重
+  ├─ cache_declaration()       — 协议声明聚合 + apply_config
+  ├─ cache_select_columns()    — 预计算 SELECT 列
+  └─ cache_rules()             — 预编译 API Rule 为 AST
        ↓ 请求到来
 Handler (动态路由分发)
-       ↓ Rule SQL 编译
+       ↓ Aspect 注入 + Rule SQL 编译
 Repository (动态 SQL 构建)
        ↓ 参数化查询
 SQLite / PostgreSQL
+```
+
+### 分层架构
+
+```
+Handler（薄层）
+  ├─ 提取参数、构造 SaveContext
+  ├─ 调用 Aspect 引擎注入系统列
+  ├─ 调用 Service / Repository
+  └─ 返回 JSON 响应（code: 0）
+       ↓
+Service / Repository
+  ├─ 动态 SQL 构建（基于 ProtocolDeclaration）
+  ├─ 协议声明驱动：query_filters / delete_strategy / lock_column / default_sort
+  └─ 多租户：ct.implements_protocol("tenantable") 判断
+       ↓
+Protocol 系统
+  ├─ ProtocolDeclaration（纯数据 struct，声明式效果）
+  ├─ Aspect 引擎（AOP，命令式副作用）
+  └─ ProtocolRegistry（inventory 自注册）
 ```
 
 ### 核心模块
@@ -28,14 +50,16 @@ SQLite / PostgreSQL
 | 模块 | 文件 | 职责 |
 |------|------|------|
 | Registry | `src/content_type.rs` | ArcSwap 无锁热加载注册表 |
-| Schema | `src/content_type/schema.rs` | 数据结构 + TOML 解析 |
-| Handler | `src/content_type/handler.rs` | HTTP 处理 + 路由注册 + 缓存 |
-| Repository | `src/content_type/repository.rs` | 动态 SQL CRUD |
+| Schema | `src/content_type/schema.rs` | 数据结构 + TOML 解析 + ProtocolRef |
+| Handler | `src/content_type/handler.rs` | HTTP 处理 + 路由注册 + DashMap 缓存 |
+| Repository | `src/content_type/repository.rs` | 动态 SQL CRUD + meta JSON path 查询 |
 | Rule Engine | `src/content_type/rule_engine.rs` | 表达式解析 → SQL 编译 + 运行时求值 |
-| Migration | `src/content_type/migration.rs` | 自动建表 / ALTER TABLE |
+| Migration | `src/content_type/migration.rs` | 自动建表 / ALTER TABLE（协议列动态注入） |
 | Validation | `src/content_type/validation.rs` | 字段类型/必填/唯一/枚举/范围/正则校验 |
 | Resolver | `src/content_type/resolver.rs` | 批量关联字段填充（populate） |
 | CLI | `src/cli/ct_cmd.rs` | `ct new` / `ct check` |
+| Protocols | `src/protocols.rs` + `src/protocols/*.rs` | 协议定义 + ProtocolDeclaration + inventory 自注册 |
+| Aspects | `src/aspects.rs` | AOP 引擎 + Aspect trait + Pointcut 匹配 |
 
 ## TOML Schema 定义
 
@@ -48,8 +72,7 @@ singular = "product"
 plural = "products"
 table = "products"
 description = "商品"
-draft_publish = false
-implements = ["ownable", "timestampable"]
+implements = ["ownable", "timestampable", "tenantable"]
 
 [fields.name]
 type = "text"
@@ -81,12 +104,12 @@ access = "admin"
 | `singular` | string | 必填 | 单数标识，用于 API 路径和注册 key |
 | `plural` | string | 必填 | 复数标识，用于 API 路径 |
 | `table` | string | 必填 | 数据库表名 |
+| `kind` | string | `"collection"` | `collection`（多条记录）或 `single`（仅一条记录） |
 | `description` | string | `""` | 描述 |
-| `draft_publish` | bool | `false` | 启用 draft/published/archived 状态流 |
 | `slug_field` | string | — | 从哪个字段自动生成 slug |
-| `implements` | string[] | `[]` | 声明实现的 Protocol 列表（见 Protocols 章节） |
+| `builtin` | bool | `false` | 内置 CT（不注入默认字段，字段全部显式定义） |
+| `implements` | string[] / object[] | `[]` | 声明实现的 Protocol 列表（见 Protocols 章节） |
 | `indexes` | IndexDef[] | `[]` | 索引定义（见下方） |
-| `list_view` | object | — | 管理列表配置 |
 | `api` | object | — | API 访问控制配置 |
 
 ### 字段类型（17 种）
@@ -127,6 +150,7 @@ access = "admin"
 | `min` / `max` | float | 数值范围 |
 | `pattern` | string | 正则校验 |
 | `enum_values` | string[] | enum 类型的可选值 |
+| `target_field` | string | uid 类型自动生成 slug 的源字段 |
 | `relation_type` | string | 关联类型（见下） |
 | `target` | string | 关联目标表名 |
 | `through` | string | many_to_many 中间表名 |
@@ -156,14 +180,6 @@ unique = true
 fields = ["status", "created_at"]
 ```
 
-### `[list_view]` 管理列表配置
-
-```toml
-[list_view]
-default_sort = "created_at:desc"
-columns = ["title", "status", "created_at"]
-```
-
 ### `[api.XXX]` API 访问控制
 
 每个端点（list / get / create / update / delete）可独立配置：
@@ -181,12 +197,6 @@ access = "public"
 cache = true
 filter = 'status = "published"'
 fields = ["title", "slug", "content", "status", "created_at"]
-filter_auth = 'author_id = @request.auth.id'
-
-[api.get]
-access = "public"
-cache = true
-filter = 'status = "published"'
 
 [api.create]
 access = "member"
@@ -207,7 +217,7 @@ access = "admin"
 | `cache` | bool | list/get=`false`, create/update/delete=`true` | 是否缓存响应 |
 | `filter` | string | — | 对所有请求生效的行级过滤表达式 |
 | `filter_auth` | string | — | 仅已认证用户的额外过滤（与 filter OR） |
-| `fields` | string[] | — | list/get 端点返回字段白名单（空=全部非 private 字段），系统字段（id/status/created_at 等）始终返回 |
+| `fields` | string[] | — | list/get 端点返回字段白名单（空=全部非 private 字段），系统列（id + 协议列）始终返回 |
 
 | 访问级别 | 说明 |
 |----------|------|
@@ -395,18 +405,6 @@ filter = 'tenant_id = @request.body.tenant_id'
 filter_auth = '@request.auth.role = "admin"'
 ```
 
-#### 场景 6：draft_publish=false 的表（没有 status 列）
-
-```toml
-[content_type]
-draft_publish = false
-# 注意：filter 不能引用 status，因为表中没有 status 列
-
-[api.list]
-access = "public"
-# 不要写 filter = 'status = "published"'，会报错
-```
-
 ### filter + filter_auth 组合逻辑
 
 | 用户状态 | 应用的条件 |
@@ -453,7 +451,10 @@ RULE_SQL_LENGTH_FN=LENGTH             # PostgreSQL: CHAR_LENGTH
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/v1/admin/cms/{plural}` | 管理列表（所有状态） |
+| POST | `/api/v1/admin/cms/{plural}` | 管理创建 |
 | GET | `/api/v1/admin/cms/{plural}/{id_or_slug}` | 管理详情 |
+| PUT | `/api/v1/admin/cms/{plural}/{id_or_slug}` | 管理更新 |
+| DELETE | `/api/v1/admin/cms/{plural}/{id_or_slug}` | 管理删除 |
 
 ### Schema 管理 API
 
@@ -472,13 +473,20 @@ RULE_SQL_LENGTH_FN=LENGTH             # PostgreSQL: CHAR_LENGTH
 | `page` | int | 1 | 页码 |
 | `page_size` | int | 20 | 每页条数（上限由 `CMS_MAX_PAGE_SIZE` 控制） |
 | `sort` | string | CT 默认 | 排序（如 `title:asc,created_at:desc`） |
-| `status` | string | `"published"` | 状态过滤（仅 draft_publish 时） |
+| `status` | string | — | 状态等值过滤（需 implements statusable） |
 | `search` | string | — | 全文搜索 |
 | `include` | string | — | 逗号分隔的关联字段（populate） |
 | `skip_total` | bool | false | 跳过 COUNT(*)，返回 total=-1 |
-| 其他 | — | — | 任意字段名作为等值过滤 |
+| `{field_name}` | string | — | 任意字段名作为等值过滤 |
+| `__meta.{path}` | string | — | meta JSON path 查询（如 `__meta.views=100`） |
+
+> 排序优先级：用户 `?sort=` → 协议声明 `default_sort` → 无排序。
+
+> `__meta.{path}` 查询需要 implements `metaable`，底层使用 `json_extract(__meta, '$.{path}') = '{value}'`。
 
 ### 版本管理 API（仅 `implements = ["versionable"]`）
+
+协议通过 `register_routes()` 自注册以下路由：
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -487,16 +495,26 @@ RULE_SQL_LENGTH_FN=LENGTH             # PostgreSQL: CHAR_LENGTH
 | POST | `/api/v1/admin/cms/{plural}/{id}/revisions/{rev_id}/restore` | 恢复修订 |
 | GET | `/api/v1/admin/cms/{plural}/{id}/revisions/{rev_a}/diff/{rev_b}` | 两个修订对比 |
 
+### JSON 响应格式
+
+所有 handler 的 JSON 响应统一使用 `"code": 0` 表示成功：
+
+```json
+{
+  "code": 0,
+  "data": { ... }
+}
+```
+
 ## 自动 Migration
 
 系统启动时对每个 schema 执行：
 
 1. **无表** → `CREATE TABLE IF NOT EXISTS`，包含：
    - `id TEXT PRIMARY KEY`（UUID v7）
-   - `tenant_id TEXT NOT NULL DEFAULT 'default'`
    - 所有非关联字段的对应 SQL 类型
    - ManyToOne / OneToOne 关联的外键列
-   - 系统列：`status`/`published_at`（draft_publish）、`created_at`/`updated_at`（timestampable protocol）、`deleted_at`（soft_deletable protocol）
+   - 协议列（由 `ProtocolRegistry::columns_for()` 动态获取，如 `created_at`、`tenant_id`、`status`、`__meta` 等）
 
 2. **有表缺列** → `ALTER TABLE ADD COLUMN`（仅添加，**永不删列或改类型**）
 
@@ -504,47 +522,181 @@ RULE_SQL_LENGTH_FN=LENGTH             # PostgreSQL: CHAR_LENGTH
 
 4. **索引** → `CREATE UNIQUE INDEX`（unique 字段 + `[[indexes]]` 定义）
 
+> `tenant_id` 不再硬编码到所有表，改为 `implements = ["tenantable"]` 声明启用。
+
+> `__meta` 不再硬编码到所有表，改为 `implements = ["metaable"]` 声明启用。
+
 ## Protocols（协议系统）
 
 Protocol 是 Content Type 的可组合能力声明，通过 `[content_type]` 的 `implements` 字段启用：
 
 ```toml
-[content_type]
-name = "Article"
-singular = "article"
-plural = "articles"
-table = "articles"
+# 简单语法
 implements = ["ownable", "timestampable", "soft_deletable", "versionable"]
+
+# 带配置语法
+implements = [
+  "ownable",
+  "timestampable",
+  "soft_deletable",
+  { name = "sortable", field = "priority", direction = "desc" },
+  { name = "statusable", values = "draft=1,published=10,archived=99", default = "1", mode = "numeric" },
+]
 ```
 
-### 内置协议（5 种）
+### 协议架构
 
-| Protocol | 自动注入列 | 行为 |
-|----------|-----------|------|
-| `ownable` | `created_by` TEXT, `updated_by` TEXT | 创建时注入 `created_by` + `updated_by`，更新时注入 `updated_by` |
-| `timestampable` | `created_at` TEXT, `updated_at` TEXT | 创建时注入 `created_at` + `updated_at`，更新时注入 `updated_at` |
-| `soft_deletable` | `deleted_at` TEXT, `deleted_by` TEXT | 删除时 UPDATE 而非 DELETE，查询自动过滤 `deleted_at IS NULL` |
-| `versionable` | `version` INTEGER | 更新时自动保存历史修订到 `content_revisions` 表 |
-| `cacheable` | 无 | 预留：读写时触发缓存失效事件（当前为占位符） |
+```
+Protocol trait
+  ├─ name(), description(), aspects(), columns(), behaviors()
+  ├─ declaration() → ProtocolDeclaration（纯数据 struct）
+  ├─ apply_config() → 用户配置应用到声明（如 sortable 的 field/direction）
+  ├─ register_routes() → 协议自注册 API 路由（如 versionable 的 /revisions）
+  └─ on_after_delete() → async hook（唯一非纯数据方法）
+
+ProtocolDeclaration {
+    query_filters: Vec<(String, String)>,   — 自动追加 WHERE 条件
+    delete_strategy: DeleteStrategy,         — Soft / Hard
+    snapshot_before_update: bool,            — 更新前快照
+    revision_routes: bool,                   — 版本历史 API
+    lock_column: Option<String>,             — 乐观锁列
+    default_sort: Option<(String, SortDir)>, — 默认排序
+    status_values / status_map / status_default / status_mode, — 状态配置
+}
+
+ProtocolRef enum (#[serde(untagged)])
+  ├─ Simple(String)                           — "sortable"
+  └─ WithConfig { name, config: HashMap }     — { name = "sortable", field = "priority" }
+```
+
+### 两个正交维度
+
+每个协议将行为拆分为：
+
+| 维度 | 实现方式 | 示例 |
+|------|----------|------|
+| **命令式**（注入值） | Aspect + Pointcut | `on_data_before_create` 注入 `created_at` |
+| **声明式**（影响 SQL 行为） | `ProtocolDeclaration` 纯数据 | `query_filters` → WHERE、`default_sort` → ORDER BY |
+
+### 协议注册
+
+每个协议文件末尾使用 `register_protocol!` 宏自注册：
+
+```rust
+// src/protocols/sortable.rs 末尾
+crate::register_protocol!(
+    crate::protocols::sortable::SortableProtocol,
+    crate::protocols::sortable::SortableProtocol
+);
+```
+
+`lib.rs` 中一行完成所有注册：
+
+```rust
+protocol_registry.register_from_inventory();
+```
+
+### 内置协议（11 种）
+
+| Protocol | 注入列 | behaviors | 说明 |
+|----------|--------|-----------|------|
+| `ownable` | `created_by`, `updated_by` | `track_owner` | 创建/更新时自动注入操作者 ID |
+| `timestampable` | `created_at`, `updated_at` | `track_timestamps` | 创建/更新时自动注入时间戳 |
+| `soft_deletable` | `deleted_at`, `deleted_by` | `soft_delete` | 删除时 UPDATE 而非 DELETE，查询自动过滤 `deleted_at IS NULL` |
+| `versionable` | `version` | `versioning` | 更新时自动保存历史修订到 `content_revisions` 表，注册 `/revisions` 路由 |
+| `lockable` | `lock_version` | `optimistic_lock` | 乐观锁，UPDATE WHERE lock_version = ? + SET lock_version += 1，冲突返回 409 |
+| `sortable` | — | `sortable` | 默认排序（默认按 `created_at DESC`），支持配置 `field` / `direction` |
+| `expirable` | `expires_at` | `expirable` | 过期时间列，列表查询自动过滤 `expires_at IS NULL OR expires_at > now` |
+| `nestable` | `parent_id`, `depth`, `position` | `nestable` | 父子树形结构 |
+| `statusable` | `status` | `statusable` | 可配置状态字段，支持字符串和数字映射两种存储模式 |
+| `metaable` | `__meta` | `metaable` | 动态 JSON 元数据列，支持 `__meta.xxx` 查询参数 |
+| `tenantable` | `tenant_id` | `tenantable` | 多租户隔离，自动按租户 ID 注入和过滤 |
+
+### 协议配置（ProtocolRef WithConfig）
+
+部分协议支持通过配置对象自定义行为：
+
+#### sortable
+
+```toml
+implements = [{ name = "sortable", field = "priority", direction = "desc" }]
+```
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `field` | `"created_at"` | 排序列名 |
+| `direction` | `"desc"` | 排序方向：`asc` / `desc` |
+
+#### statusable
+
+```toml
+# 字符串模式（默认）
+implements = [{ name = "statusable", values = "draft,published,archived", default = "draft" }]
+
+# 数字映射模式
+implements = [{ name = "statusable", values = "draft=1,published=10,archived=99", default = "1", mode = "numeric" }]
+```
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `values` | — | 逗号分隔的状态值（数字模式用 `label=num`） |
+| `default` | `"draft"` | 默认状态值 |
+| `mode` | `"string"` | 存储模式：`string` / `numeric` |
+
+> 数字映射模式下，API 层用字符串交互（`"draft"`），DB 层存数字（`1`）。
+
+> 状态查询过滤不由协议处理（query_filters 是无条件的），由 API rule engine 控制：`[api.list] filter = 'status = "published"'`。
 
 ### `implements` 的实际效果
 
 | 效果 | 说明 |
 |------|------|
-| **Migration** | `soft_deletable` 触发建表时添加 `deleted_at`/`deleted_by` 列 |
-| **查询过滤** | `soft_deletable` 自动在 SELECT/UPDATE/DELETE 中追加 `WHERE deleted_at IS NULL` |
-| **数据注入** | Aspect 引擎在 `before_create`/`before_update` 时自动注入系统列 |
-| **修订历史** | `versionable` 在 `after_update` 时异步保存快照 |
-| **TypeScript 生成** | `ct types` 命令根据 `implements` 生成对应的接口字段 |
-| **元数据存储** | `__meta` 列记录 `{"protocols": ["ownable", ...]}` |
+| **Migration** | 协议声明的列由 `ProtocolRegistry::columns_for()` 动态获取，自动加入 CREATE TABLE / ALTER TABLE |
+| **查询过滤** | `ProtocolDeclaration.query_filters` 自动在 SELECT 中追加 WHERE 条件 |
+| **数据注入** | Aspect 引擎在 `before_create` / `before_update` 时自动注入系统列 |
+| **默认排序** | `ProtocolDeclaration.default_sort` 控制列表查询的 ORDER BY |
+| **删除策略** | `ProtocolDeclaration.delete_strategy` 决定物理删除或软删除 |
+| **乐观锁** | `ProtocolDeclaration.lock_column` 控制 UPDATE 的并发冲突检测 |
+| **版本历史** | `versionable` 通过 `snapshot_before_update` + `revision_routes` 保存快照并注册 API |
+| **修订历史** | `versionable` 在 `after_update` 时异步保存快照，`on_after_delete` 清理关联修订 |
+| **多租户** | `tenantable` 判断改为 schema 级别（`ct.implements_protocol("tenantable")`），不再运行时检测 DB 列 |
+
+### Aspect `is_protocol_column` 守卫
+
+所有 Aspect 的 `on_data_before_create` / `on_data_before_update` 统一使用：
+
+```rust
+ctx.schema.as_ref().is_none_or(|s| s.is_protocol_column(COL_XXX))
+```
+
+- 有 schema → 只在该协议列真正需要创建时注入
+- 无 schema → 放行（向后兼容单元测试）
+
+### merge() 策略
+
+多个协议的 `ProtocolDeclaration` 通过 `merge()` 聚合：
+
+| 字段 | 策略 |
+|------|------|
+| `query_filters` | 累积（extend） |
+| `delete_strategy` | Soft 优先 Hard |
+| `snapshot_before_update` / `revision_routes` | OR |
+| `lock_column` / `default_sort` | last-wins + warn on conflict |
+| `status_*` | last-wins |
+
+### 列冲突检测
+
+`columns_for()` 对同名不同类型的列采用 **first-wins + warn**（不阻断启动），因为 sortable 可能用已有列排序。
 
 ### 注意事项
 
-- `ownable` 和 `timestampable` 的 Aspect 对**所有** Content Type 生效（`TargetMatcher::All`），无论是否声明 `implements`
+- `ownable` 和 `timestampable` 的 Aspect 对**所有** Content Type 生效（`TargetMatcher::All`），但只在 `is_protocol_column` 守卫通过时注入
 - `soft_deletable` 的**建列和查询过滤**仅对声明了 `implements = ["soft_deletable"]` 的 Content Type 生效
-- `versionable` 通过 `implements = ["versionable"]` 启用
+- `versionable` 通过 `implements = ["versionable"]` 启用，额外注册 `/revisions` 路由
+- `tenantable` 不再硬编码到所有表，必须显式声明
+- `__meta` 不再硬编码到所有表，由 `metaable` 协议控制
 
-### 示例：带软删除和版本管理的文章
+### 示例：完整的博客文章
 
 ```toml
 [content_type]
@@ -552,14 +704,27 @@ name = "Article"
 singular = "article"
 plural = "articles"
 table = "articles"
-draft_publish = true
 slug_field = "title"
-implements = ["ownable", "timestampable", "soft_deletable", "versionable"]
+implements = [
+  "ownable",
+  "timestampable",
+  "soft_deletable",
+  "versionable",
+  "lockable",
+  { name = "sortable", field = "created_at", direction = "desc" },
+  { name = "statusable", values = "draft,published,archived", default = "draft" },
+  "tenantable",
+]
 
 [fields.title]
 type = "text"
 required = true
 max_length = 200
+
+[fields.slug]
+type = "uid"
+target_field = "title"
+unique = true
 
 [fields.content]
 type = "richtext"
@@ -570,6 +735,16 @@ type = "relation"
 relation_type = "many_to_one"
 target = "users"
 foreign_key = "author_id"
+
+[fields.tags]
+type = "relation"
+relation_type = "many_to_many"
+target = "tags"
+through = "articles_tags"
+
+[[indexes]]
+fields = ["slug"]
+unique = true
 
 [api.list]
 access = "public"
@@ -592,12 +767,51 @@ filter = 'created_by = @request.auth.id'
 access = "admin"
 ```
 
+此配置将自动创建以下表结构：
+
+```sql
+CREATE TABLE articles (
+    id TEXT PRIMARY KEY,
+    -- 用户字段
+    title TEXT NOT NULL,
+    slug TEXT,
+    content TEXT NOT NULL,
+    author_id TEXT REFERENCES users(id),
+    -- 协议列（自动注入）
+    created_by TEXT,                    -- ownable
+    updated_by TEXT,                    -- ownable
+    created_at TEXT,                    -- timestampable
+    updated_at TEXT,                    -- timestampable
+    deleted_at TEXT,                    -- soft_deletable
+    deleted_by TEXT,                    -- soft_deletable
+    version INTEGER,                    -- versionable
+    lock_version INTEGER,               -- lockable
+    status TEXT,                        -- statusable
+    tenant_id TEXT NOT NULL DEFAULT 'default'  -- tenantable
+);
+
+-- 中间表（many_to_many）
+CREATE TABLE articles_tags (
+    article_id TEXT NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+    tags_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (article_id, tags_id)
+);
+
+-- 版本修订表（versionable 自动使用）
+-- content_revisions 表由系统预建
+
+-- 索引
+CREATE UNIQUE INDEX idx_articles_slug_unique ON articles(slug);
+```
+
 ## 缓存
 
 - 列表和详情响应缓存在内存 `DashMap` 中
-- 缓存 key 由查询参数哈希生成
-- TTL 由 `CMS_CACHE_TTL` 环境变量控制（默认 30 秒）
-- 对该 Content Type 的任何写操作自动清除缓存
+- 缓存 key 由 `plural + 查询参数哈希` 生成
+- TTL 由 `cms_cache_ttl_secs` 配置控制（默认 30 秒）
+- 对该 Content Type 的任何写操作自动清除该 CT 的全部缓存
+
+> 缓存由 handler 内置 DashMap TTL 处理，对应 `api.list.cache` / `api.get.cache` 配置。
 
 ## Plugin Hook 集成
 
@@ -640,9 +854,16 @@ singular = "product"
 plural = "products"
 table = "products"
 description = "商品"
-draft_publish = true
 slug_field = "name"
-implements = ["ownable", "timestampable"]
+implements = [
+  "ownable",
+  "timestampable",
+  "soft_deletable",
+  "tenantable",
+  "metaable",
+  { name = "sortable", field = "created_at", direction = "desc" },
+  { name = "statusable", values = "draft,published,archived", default = "draft" },
+]
 
 [fields.name]
 type = "text"
@@ -704,17 +925,15 @@ unique = true
 [[indexes]]
 fields = ["status", "created_at"]
 
-[list_view]
-default_sort = "created_at:desc"
-columns = ["name", "price", "stock", "status", "featured", "created_at"]
-
 [api.list]
 access = "public"
 cache = true
+filter = 'status = "published"'
 
 [api.get]
 access = "public"
 cache = true
+filter = 'status = "published"'
 
 [api.create]
 access = "admin"

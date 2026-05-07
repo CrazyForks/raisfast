@@ -40,6 +40,7 @@ fn test_protocol_registry() -> raisfast::protocols::ProtocolRegistry {
     reg.register(raisfast::protocols::sortable::SortableProtocol);
     reg.register(raisfast::protocols::expirable::ExpirableProtocol);
     reg.register(raisfast::protocols::nestable::NestableProtocol);
+    reg.register(raisfast::protocols::tenantable::TenantableProtocol);
     reg
 }
 
@@ -416,6 +417,7 @@ async fn tauri_cms_create_and_list() {
         page_size: 20,
         max_page_size: 100,
         include_private: false,
+        meta_filters: Vec::new(),
         ..Default::default()
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
@@ -689,6 +691,7 @@ async fn tauri_cms_list_with_pagination() {
         page_size: 2,
         max_page_size: 100,
         include_private: false,
+        meta_filters: Vec::new(),
         ..Default::default()
     };
     let (items, total) = repo.find(&ct, query).await.unwrap();
@@ -700,6 +703,7 @@ async fn tauri_cms_list_with_pagination() {
         page_size: 2,
         max_page_size: 100,
         include_private: false,
+        meta_filters: Vec::new(),
         ..Default::default()
     };
     let (items2, _) = repo.find(&ct, query2).await.unwrap();
@@ -710,6 +714,7 @@ async fn tauri_cms_list_with_pagination() {
         page_size: 2,
         max_page_size: 100,
         include_private: false,
+        meta_filters: Vec::new(),
         ..Default::default()
     };
     let (items3, _) = repo.find(&ct, query3).await.unwrap();

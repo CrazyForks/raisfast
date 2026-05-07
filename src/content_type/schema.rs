@@ -592,7 +592,7 @@ impl ContentTypeSchema {
             .iter()
             .map(|f| f.name.as_str())
             .chain(protocol_cols.iter().map(|s| s.as_str()))
-            .chain(["id", "tenant_id", crate::constants::COL_META])
+            .chain(["id"])
             .collect();
         registry.apply_config_for(&self.implements, &mut decl, &all_columns);
         self.cached_declaration = Some(decl);

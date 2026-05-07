@@ -24,10 +24,13 @@
 
 pub mod expirable;
 pub mod lockable;
+pub mod metaable;
 pub mod nestable;
 pub mod ownable;
 pub mod soft_deletable;
 pub mod sortable;
+pub mod statusable;
+pub mod tenantable;
 pub mod timestampable;
 pub mod versionable;
 
@@ -60,6 +63,14 @@ pub enum SortDir {
 
 // ─── ProtocolDeclaration ───
 
+/// 状态模式
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum StatusMode {
+    #[default]
+    String,
+    Numeric,
+}
+
 /// 协议对系统的所有声明式效果
 ///
 /// 纯数据 struct，新能力加字段。
@@ -79,6 +90,14 @@ pub struct ProtocolDeclaration {
     pub lock_column: Option<String>,
     /// 列表查询的默认排序 (column, direction)
     pub default_sort: Option<(String, SortDir)>,
+    /// statusable: 允许的状态值列表
+    pub status_values: Option<Vec<String>>,
+    /// statusable: 数字映射 (label → number)
+    pub status_map: Option<Vec<(String, i64)>>,
+    /// statusable: 默认状态值（字符串模式为 label，数字模式为 label）
+    pub status_default: Option<String>,
+    /// statusable: 存储模式
+    pub status_mode: StatusMode,
 }
 
 impl ProtocolDeclaration {
@@ -112,6 +131,18 @@ impl ProtocolDeclaration {
                 );
             }
             self.default_sort = other.default_sort.clone();
+        }
+        if other.status_values.is_some() {
+            self.status_values = other.status_values.clone();
+        }
+        if other.status_map.is_some() {
+            self.status_map = other.status_map.clone();
+        }
+        if other.status_default.is_some() {
+            self.status_default = other.status_default.clone();
+        }
+        if matches!(other.status_mode, StatusMode::Numeric) {
+            self.status_mode = StatusMode::Numeric;
         }
     }
 
@@ -463,6 +494,10 @@ mod tests {
             revision_routes: true,
             lock_column: Some("lock_version".into()),
             default_sort: Some(("priority".into(), SortDir::Desc)),
+            status_values: Some(vec!["draft".into(), "published".into()]),
+            status_map: Some(vec![("draft".into(), 1), ("published".into(), 10)]),
+            status_default: Some("draft".into()),
+            status_mode: StatusMode::Numeric,
         };
 
         let mut empty = ProtocolDeclaration::default();
@@ -478,5 +513,15 @@ mod tests {
             empty.default_sort.as_ref().map(|(c, d)| (c.as_str(), *d)),
             Some(("priority", SortDir::Desc))
         );
+        assert_eq!(
+            empty.status_values,
+            Some(vec!["draft".into(), "published".into()])
+        );
+        assert_eq!(
+            empty.status_map,
+            Some(vec![("draft".into(), 1), ("published".into(), 10)])
+        );
+        assert_eq!(empty.status_default, Some("draft".into()));
+        assert_eq!(empty.status_mode, StatusMode::Numeric);
     }
 }

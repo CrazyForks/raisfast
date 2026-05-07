@@ -57,6 +57,8 @@ pub struct ContentQuery {
     pub max_page_size: i64,
     /// 是否包含 private 字段（admin API 设为 true）
     pub include_private: bool,
+    /// __meta JSON path 查询条件: (json_path, value)
+    pub meta_filters: Vec<(String, String)>,
 }
 
 /// 泛型内容 Repository
@@ -70,8 +72,8 @@ impl ContentRepository {
         Self { pool }
     }
 
-    async fn resolve_tenant(&self, table: &str, tenant_id: Option<&str>) -> Option<String> {
-        if crate::db::tenant::has_tenant_id(&self.pool, table).await {
+    fn resolve_tenant(&self, ct: &ContentTypeSchema, tenant_id: Option<&str>) -> Option<String> {
+        if ct.implements_protocol("tenantable") {
             Some(crate::db::tenant::resolve_tenant(tenant_id).to_string())
         } else {
             None
@@ -98,7 +100,7 @@ impl ContentRepository {
         if ct.query_filters().is_empty() && ct.is_soft_delete() {
             where_clauses.push(format!("{} IS NULL", COL_DELETED_AT));
         }
-        let tid = self.resolve_tenant(table, query.tenant_id.as_deref()).await;
+        let tid = self.resolve_tenant(ct, query.tenant_id.as_deref());
         if let Some(ref tid) = tid {
             where_clauses.push(format!("tenant_id = {}", placeholder(param_idx)));
             params.push(json!(tid));
@@ -117,6 +119,18 @@ impl ContentRepository {
                 params.push(val.clone());
                 param_idx += 1;
             }
+        }
+
+        for (path, val) in &query.meta_filters {
+            where_clauses.push(format!(
+                "json_extract({}, {}) = {}",
+                COL_META,
+                placeholder(param_idx),
+                placeholder(param_idx + 1)
+            ));
+            params.push(json!(format!("$.{path}")));
+            params.push(json!(val));
+            param_idx += 2;
         }
 
         let mut where_sql = if where_clauses.is_empty() {
@@ -202,7 +216,7 @@ impl ContentRepository {
     ) -> Result<Option<Value>, AppError> {
         let columns = ct.column_names(None, include_private);
         let select_cols = columns.join(", ");
-        let tid = self.resolve_tenant(&ct.table, tenant_id).await;
+        let tid = self.resolve_tenant(ct, tenant_id);
 
         let mut where_parts = vec![format!("id = {}", placeholder(1))];
         let mut idx = 2;
@@ -247,7 +261,7 @@ impl ContentRepository {
         ct: &ContentTypeSchema,
         tenant_id: Option<&str>,
     ) -> Result<Value, AppError> {
-        let tid = self.resolve_tenant(&ct.table, tenant_id).await;
+        let tid = self.resolve_tenant(ct, tenant_id);
 
         let mut where_parts = Vec::new();
         if tid.is_some() {
@@ -315,7 +329,7 @@ impl ContentRepository {
     ) -> Result<Option<Value>, AppError> {
         let columns = ct.column_names(None, include_private);
         let select_cols = columns.join(", ");
-        let tid = self.resolve_tenant(&ct.table, tenant_id).await;
+        let tid = self.resolve_tenant(ct, tenant_id);
 
         let mut where_parts = vec![format!("slug = {}", placeholder(1))];
 
@@ -382,14 +396,7 @@ impl ContentRepository {
 
         obj.insert("id".into(), json!(id));
 
-        if !ct.builtin && !ct.implements.is_empty() {
-            let mut meta = serde_json::Map::new();
-            let protocol_names: Vec<&str> = ct.implements.iter().map(|p| p.name()).collect();
-            meta.insert("protocols".into(), json!(protocol_names));
-            obj.insert(COL_META.into(), json!(meta));
-        }
-
-        let tid = self.resolve_tenant(&ct.table, tenant_id).await;
+        let tid = self.resolve_tenant(ct, tenant_id);
 
         let mut cols = Vec::new();
         let mut placeholders = Vec::new();
@@ -418,6 +425,9 @@ impl ContentRepository {
             .collect();
 
         for (key, val) in obj.iter() {
+            if key == COL_TENANT_ID {
+                continue;
+            }
             let col = relation_column_map
                 .get(key)
                 .cloned()
@@ -507,7 +517,7 @@ impl ContentRepository {
 
         obj.remove("id");
 
-        let tid = self.resolve_tenant(&ct.table, tenant_id).await;
+        let tid = self.resolve_tenant(ct, tenant_id);
 
         let mut set_clauses = Vec::new();
         let mut values: Vec<String> = Vec::new();
@@ -612,7 +622,7 @@ impl ContentRepository {
         tenant_id: Option<&str>,
         protocol_registry: &crate::protocols::ProtocolRegistry,
     ) -> Result<(), AppError> {
-        let tid = self.resolve_tenant(&ct.table, tenant_id).await;
+        let tid = self.resolve_tenant(ct, tenant_id);
 
         let mut idx = 1;
         let mut where_parts = vec![format!("id = {}", placeholder(idx))];
@@ -683,7 +693,7 @@ impl ContentRepository {
         deleted_by: Option<&str>,
         tenant_id: Option<&str>,
     ) -> Result<(), AppError> {
-        let tid = self.resolve_tenant(&ct.table, tenant_id).await;
+        let tid = self.resolve_tenant(ct, tenant_id);
 
         let mut idx = 1;
         let mut set_parts = vec![format!("{} = {}", COL_DELETED_AT, placeholder(idx))];
@@ -858,9 +868,6 @@ pub fn build_column_names(
     for col in ct.protocol_column_names() {
         cols.push(col.to_string());
     }
-    if !ct.builtin {
-        cols.push(COL_META.into());
-    }
 
     cols
 }
@@ -1017,6 +1024,7 @@ mod tests {
         reg.register(crate::protocols::sortable::SortableProtocol);
         reg.register(crate::protocols::expirable::ExpirableProtocol);
         reg.register(crate::protocols::nestable::NestableProtocol);
+        reg.register(crate::protocols::tenantable::TenantableProtocol);
         reg
     }
 
