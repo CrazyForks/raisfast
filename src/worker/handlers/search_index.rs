@@ -45,13 +45,7 @@ impl JobHandler for RebuildSearchIndexHandler {
 
         let mut posts = Vec::with_capacity(post_ids.len());
         for id in post_ids {
-            match crate::models::post::find_by_id(
-                &self.pool,
-                id,
-                None,
-            )
-            .await
-            {
+            match crate::models::post::find_by_id(&self.pool, id, None).await {
                 Ok(Some(post)) => posts.push(SearchablePost {
                     id: post.id,
                     title: post.title,
@@ -82,7 +76,7 @@ mod tests {
 
     #[tokio::test]
     async fn noop_engine_skips_indexing() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         let handler = RebuildSearchIndexHandler::new(pool, Arc::new(NoopSearchEngine));
         let job = Job::RebuildSearchIndex {
             post_ids: vec!["p1".into()],
@@ -92,7 +86,7 @@ mod tests {
 
     #[tokio::test]
     async fn ignores_wrong_job_type() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         let handler = RebuildSearchIndexHandler::new(pool, Arc::new(NoopSearchEngine));
         let job = Job::GenerateSitemap;
         assert!(handler.handle(&job).await.is_ok());
@@ -100,37 +94,11 @@ mod tests {
 
     #[cfg(feature = "search-tantivy")]
     async fn setup_pool() -> crate::db::Pool {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../../../migrations/001_init.sql"))
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(include_str!("../../../migrations/002_add_indexes.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../../migrations/009_options.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../../migrations/010_rbac.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../../migrations/011_tenants.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../../migrations/023_create_pages.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!(
-            "../../../migrations/025_unify_system_columns.sql"
-        ))
-        .execute(&pool)
-        .await
-        .unwrap();
         pool
     }
 

@@ -222,7 +222,11 @@ impl FromRequestParts<AppState> for AuthUser {
                 (None, None) => RequestIdentity {
                     user_id: None,
                     role: String::new(),
-                    tenant_id: if no_tenant { None } else { Some(crate::constants::DEFAULT_TENANT.to_string()) },
+                    tenant_id: if no_tenant {
+                        None
+                    } else {
+                        Some(crate::constants::DEFAULT_TENANT.to_string())
+                    },
                     is_super_admin: false,
                 },
             };

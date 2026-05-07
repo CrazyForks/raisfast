@@ -164,7 +164,7 @@ mod tests {
 
     #[tokio::test]
     async fn skips_without_id() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         let engine = AspectEngine::new();
         engine.register(VersionableAspect);
 

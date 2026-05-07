@@ -358,7 +358,10 @@ pub trait OptionsRepository: Send + Sync {
     ) -> AppResult<Option<crate::models::options::OptionRow>>;
 
     /// 查询所有配置（含元数据）
-    async fn find_all(&self, tenant_id: Option<&str>) -> AppResult<Vec<crate::models::options::OptionRow>>;
+    async fn find_all(
+        &self,
+        tenant_id: Option<&str>,
+    ) -> AppResult<Vec<crate::models::options::OptionRow>>;
 
     /// 更新配置值
     async fn upsert_value(

@@ -6,6 +6,9 @@
 pub mod connection;
 pub mod dialect;
 pub mod pool;
+pub mod schema;
 pub mod tenant;
 
-pub use pool::{Pool, Transaction};
+pub use pool::{
+    DbArguments, DbConnection, DbPoolConnection, DbQueryResult, DbRow, Pool, Transaction,
+};

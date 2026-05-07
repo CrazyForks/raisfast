@@ -113,6 +113,7 @@ pub async fn build_app_state(
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> anyhow::Result<AppState> {
     let pool = crate::db::connection::init_pool(&config.database_url, config.db_pool_size).await?;
+    crate::db::connection::ensure_schema(&pool).await?;
     let eventbus = EventBus::new(256);
 
     let sqlx_repo = crate::repositories::SqlxPostRepository::new(pool.clone());
@@ -181,7 +182,8 @@ pub async fn build_app_state(
     let options_repo: Arc<dyn crate::repositories::OptionsRepository> = Arc::new(
         crate::repositories::SqlxOptionsRepository::new(pool.clone()),
     );
-    let options_service = Arc::new(OptionsService::new(options_repo, config.builtin_tenantable).await);
+    let options_service =
+        Arc::new(OptionsService::new(options_repo, config.builtin_tenantable).await);
 
     let rbac_repo: Arc<dyn crate::repositories::RbacRepository> =
         Arc::new(crate::repositories::SqlxRbacRepository::new(pool.clone()));

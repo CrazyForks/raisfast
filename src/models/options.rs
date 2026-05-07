@@ -92,9 +92,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> for OptionRow {
 
 /// 查询所有 autoload 的配置（启动时预加载）
 pub async fn find_autoload(pool: &crate::db::Pool) -> AppResult<Vec<OptionRow>> {
-    let sql = crate::db::dialect::translate(
-        "SELECT * FROM options WHERE autoload = 1",
-    );
+    let sql = crate::db::dialect::translate("SELECT * FROM options WHERE autoload = 1");
     let rows = sqlx::query_as::<_, OptionRow>(&sql).fetch_all(pool).await?;
     Ok(rows)
 }
@@ -118,9 +116,7 @@ pub async fn find_by_key(
             Ok(row)
         }
         None => {
-            let sql = crate::db::dialect::translate(
-                "SELECT * FROM options WHERE key = ?",
-            );
+            let sql = crate::db::dialect::translate("SELECT * FROM options WHERE key = ?");
             let row = sqlx::query_as::<_, OptionRow>(&sql)
                 .bind(key)
                 .fetch_optional(pool)
@@ -131,7 +127,10 @@ pub async fn find_by_key(
 }
 
 /// 查询所有配置
-pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppResult<Vec<OptionRow>> {
+pub async fn find_all(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+) -> AppResult<Vec<OptionRow>> {
     match tenant_id {
         Some(tid) => {
             let sql = crate::db::dialect::translate(
@@ -144,12 +143,9 @@ pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppRes
             Ok(rows)
         }
         None => {
-            let sql = crate::db::dialect::translate(
-                "SELECT * FROM options ORDER BY sort_order, key",
-            );
-            let rows = sqlx::query_as::<_, OptionRow>(&sql)
-                .fetch_all(pool)
-                .await?;
+            let sql =
+                crate::db::dialect::translate("SELECT * FROM options ORDER BY sort_order, key");
+            let rows = sqlx::query_as::<_, OptionRow>(&sql).fetch_all(pool).await?;
             Ok(rows)
         }
     }
@@ -192,22 +188,21 @@ pub async fn upsert_value(
 }
 
 /// 根据 key 删除配置
-pub async fn delete_by_key(pool: &crate::db::Pool, key: &str, tenant_id: Option<&str>) -> AppResult<()> {
+pub async fn delete_by_key(
+    pool: &crate::db::Pool,
+    key: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
     match tenant_id {
         Some(tid) => {
-            let sql = crate::db::dialect::translate("DELETE FROM options WHERE tenant_id = ? AND key = ?");
-            sqlx::query(&sql)
-                .bind(tid)
-                .bind(key)
-                .execute(pool)
-                .await?;
+            let sql = crate::db::dialect::translate(
+                "DELETE FROM options WHERE tenant_id = ? AND key = ?",
+            );
+            sqlx::query(&sql).bind(tid).bind(key).execute(pool).await?;
         }
         None => {
             let sql = crate::db::dialect::translate("DELETE FROM options WHERE key = ?");
-            sqlx::query(&sql)
-                .bind(key)
-                .execute(pool)
-                .await?;
+            sqlx::query(&sql).bind(key).execute(pool).await?;
         }
     }
     Ok(())

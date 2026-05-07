@@ -356,16 +356,17 @@ pub async fn sync_tags_tx(
     post_id: &str,
     tag_ids: &[String],
 ) -> AppResult<()> {
-    sqlx::query!("DELETE FROM posts_tags WHERE post_id = ?", post_id)
+    sqlx::query(&crate::db::dialect::translate("DELETE FROM posts_tags WHERE post_id = ?"))
+        .bind(post_id)
         .execute(&mut **tx)
         .await?;
 
     for tag_id in tag_ids {
-        sqlx::query!(
+        sqlx::query(&crate::db::dialect::translate(
             "INSERT INTO posts_tags (post_id, tag_id) VALUES (?, ?)",
-            post_id,
-            tag_id,
-        )
+        ))
+        .bind(post_id)
+        .bind(tag_id)
         .execute(&mut **tx)
         .await?;
     }
@@ -659,37 +660,11 @@ mod tests {
     use crate::commands::CreatePostCmd;
 
     async fn setup_pool() -> crate::db::Pool {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../../migrations/001_init.sql"))
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(include_str!("../../migrations/002_add_indexes.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../migrations/009_options.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../migrations/010_rbac.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../migrations/011_tenants.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../migrations/023_create_pages.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!(
-            "../../migrations/025_unify_system_columns.sql"
-        ))
-        .execute(&pool)
-        .await
-        .unwrap();
         pool
     }
 
@@ -734,9 +709,7 @@ mod tests {
     #[tokio::test]
     async fn find_joined_by_ids_empty() {
         let pool = setup_pool().await;
-        let result = find_joined_by_ids(&pool, &[], None)
-            .await
-            .unwrap();
+        let result = find_joined_by_ids(&pool, &[], None).await.unwrap();
         assert!(result.is_empty());
     }
 
@@ -745,13 +718,9 @@ mod tests {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
         let p = create_test_post(&pool, &uid, "published", "测试文章").await;
-        let result = find_joined_by_ids(
-            &pool,
-            &[p.id.clone()],
-            None,
-        )
-        .await
-        .unwrap();
+        let result = find_joined_by_ids(&pool, &[p.id.clone()], None)
+            .await
+            .unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, p.id);
         assert_eq!(result[0].title, "测试文章");
@@ -765,13 +734,9 @@ mod tests {
         let p1 = create_test_post(&pool, &uid, "published", "文章A").await;
         let p2 = create_test_post(&pool, &uid, "published", "文章B").await;
         let p3 = create_test_post(&pool, &uid, "published", "文章C").await;
-        let result = find_joined_by_ids(
-            &pool,
-            &[p1.id.clone(), p3.id.clone()],
-            None,
-        )
-        .await
-        .unwrap();
+        let result = find_joined_by_ids(&pool, &[p1.id.clone(), p3.id.clone()], None)
+            .await
+            .unwrap();
         assert_eq!(result.len(), 2);
         let ids: Vec<&str> = result.iter().map(|r| r.id.as_str()).collect();
         assert!(ids.contains(&p1.id.as_str()));
@@ -784,26 +749,18 @@ mod tests {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
         let p = create_test_post(&pool, &uid, "draft", "草稿文章").await;
-        let result = find_joined_by_ids(
-            &pool,
-            &[p.id.clone()],
-            None,
-        )
-        .await
-        .unwrap();
+        let result = find_joined_by_ids(&pool, &[p.id.clone()], None)
+            .await
+            .unwrap();
         assert!(result.is_empty());
     }
 
     #[tokio::test]
     async fn find_joined_by_ids_nonexistent() {
         let pool = setup_pool().await;
-        let result = find_joined_by_ids(
-            &pool,
-            &["nonexistent-id".to_string()],
-            None,
-        )
-        .await
-        .unwrap();
+        let result = find_joined_by_ids(&pool, &["nonexistent-id".to_string()], None)
+            .await
+            .unwrap();
         assert!(result.is_empty());
     }
 
@@ -813,13 +770,9 @@ mod tests {
         let uid = create_user(&pool).await;
         let pub_post = create_test_post(&pool, &uid, "published", "已发布").await;
         let draft_post = create_test_post(&pool, &uid, "draft", "草稿").await;
-        let result = find_joined_by_ids(
-            &pool,
-            &[pub_post.id.clone(), draft_post.id.clone()],
-            None,
-        )
-        .await
-        .unwrap();
+        let result = find_joined_by_ids(&pool, &[pub_post.id.clone(), draft_post.id.clone()], None)
+            .await
+            .unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].title, "已发布");
     }
@@ -852,13 +805,9 @@ mod tests {
         )
         .await
         .unwrap();
-        let result = find_joined_by_ids(
-            &pool,
-            &[p.id.clone()],
-            None,
-        )
-        .await
-        .unwrap();
+        let result = find_joined_by_ids(&pool, &[p.id.clone()], None)
+            .await
+            .unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].category_name.as_deref(), Some("技术"));
     }
@@ -866,9 +815,7 @@ mod tests {
     #[tokio::test]
     async fn count_published_by_ids_empty() {
         let pool = setup_pool().await;
-        let count = count_published_by_ids(&pool, &[], None)
-            .await
-            .unwrap();
+        let count = count_published_by_ids(&pool, &[], None).await.unwrap();
         assert_eq!(count, 0);
     }
 
@@ -877,9 +824,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
         let p = create_test_post(&pool, &uid, "published", "计数文章").await;
-        let count = count_published_by_ids(&pool, &[p.id], None)
-            .await
-            .unwrap();
+        let count = count_published_by_ids(&pool, &[p.id], None).await.unwrap();
         assert_eq!(count, 1);
     }
 
@@ -888,9 +833,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
         let p = create_test_post(&pool, &uid, "draft", "草稿").await;
-        let count = count_published_by_ids(&pool, &[p.id], None)
-            .await
-            .unwrap();
+        let count = count_published_by_ids(&pool, &[p.id], None).await.unwrap();
         assert_eq!(count, 0);
     }
 
@@ -901,26 +844,18 @@ mod tests {
         let p1 = create_test_post(&pool, &uid, "published", "A").await;
         let p2 = create_test_post(&pool, &uid, "draft", "B").await;
         let p3 = create_test_post(&pool, &uid, "published", "C").await;
-        let count = count_published_by_ids(
-            &pool,
-            &[p1.id, p2.id, p3.id],
-            None,
-        )
-        .await
-        .unwrap();
+        let count = count_published_by_ids(&pool, &[p1.id, p2.id, p3.id], None)
+            .await
+            .unwrap();
         assert_eq!(count, 2);
     }
 
     #[tokio::test]
     async fn count_published_by_ids_nonexistent() {
         let pool = setup_pool().await;
-        let count = count_published_by_ids(
-            &pool,
-            &["fake-id".to_string()],
-            None,
-        )
-        .await
-        .unwrap();
+        let count = count_published_by_ids(&pool, &["fake-id".to_string()], None)
+            .await
+            .unwrap();
         assert_eq!(count, 0);
     }
 }

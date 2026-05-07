@@ -276,7 +276,7 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_select_injects_when_has_column() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query("CREATE TABLE posts (id TEXT, title TEXT, tenant_id TEXT)")
             .execute(&pool)
             .await
@@ -293,7 +293,7 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_select_skips_when_no_column() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query("CREATE TABLE logs (id TEXT, msg TEXT)")
             .execute(&pool)
             .await
@@ -310,7 +310,7 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_insert_injects_column() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query("CREATE TABLE items (id TEXT, name TEXT, tenant_id TEXT)")
             .execute(&pool)
             .await
@@ -326,7 +326,7 @@ mod tests {
 
     #[tokio::test]
     async fn end_to_end_select_filters_by_tenant() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
             "CREATE TABLE posts (id TEXT, title TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
         )
@@ -373,7 +373,7 @@ mod tests {
 
     #[tokio::test]
     async fn end_to_end_insert_auto_tenant() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
             "CREATE TABLE items (id TEXT, name TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
         )
@@ -399,7 +399,7 @@ mod tests {
 
     #[tokio::test]
     async fn end_to_end_delete_respects_tenant() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
             "CREATE TABLE items (id TEXT, name TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
         )

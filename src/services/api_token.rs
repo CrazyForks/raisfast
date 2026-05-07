@@ -224,36 +224,8 @@ mod tests {
     use super::*;
 
     async fn setup_pool() -> crate::db::Pool {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../../migrations/001_init.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../migrations/002_add_indexes.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../migrations/009_options.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../migrations/010_rbac.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../migrations/011_tenants.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../migrations/015_api_tokens.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("ALTER TABLE users ADD COLUMN phone TEXT")
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -344,7 +316,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_token_rejects_empty_name() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         let auth = crate::middleware::auth::AuthUser::new_test("u1", "author", "default");
         let msg = create_token(&pool, &auth, "", vec!["read".into()], None)
             .await
@@ -355,7 +327,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_token_rejects_whitespace_name() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         let auth = crate::middleware::auth::AuthUser::new_test("u1", "author", "default");
         let msg = create_token(&pool, &auth, "   ", vec!["read".into()], None)
             .await
@@ -366,7 +338,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_token_rejects_empty_scopes() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         let auth = crate::middleware::auth::AuthUser::new_test("u1", "author", "default");
         let msg = create_token(&pool, &auth, "Test", vec![], None)
             .await
@@ -377,7 +349,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_token_rejects_invalid_scope() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         let auth = crate::middleware::auth::AuthUser::new_test("u1", "author", "default");
         let msg = create_token(&pool, &auth, "Test", vec!["superuser".into()], None)
             .await
@@ -388,7 +360,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_token_rejects_mixed_valid_invalid_scope() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         let auth = crate::middleware::auth::AuthUser::new_test("u1", "author", "default");
         let msg = create_token(
             &pool,
@@ -582,7 +554,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_token_nonexistent_not_found() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         let auth = crate::middleware::auth::AuthUser::new_test("user", "reader", "default");
         let cache = test_cache();
         assert!(

@@ -8,27 +8,42 @@ use raisfast::db::dialect;
 
 // ── migrate ──────────────────────────────────────────────────────
 
-/// `db migrate` — 执行 `migrations/` 目录中尚未应用的 SQL 文件。
+/// `db migrate` — 执行增量结构变更。
 ///
 /// 使用 `_migrations` 表记录已执行的文件名，幂等安全。
 ///
-/// 特殊处理：`026_builtin_tenantable.sql` 仅在 `BUILTIN_TENANTABLE=true` 时执行。
+/// - schema 在首次启动时由 `ensure_schema()` 自动执行，不由此命令处理
+/// - 此命令处理 `migrations/{db}/` 下的增量迁移文件（如 `tenantable.*.sql`）
 pub async fn migrate(config: &AppConfig) -> anyhow::Result<()> {
     println!("running migrations...");
     let pool = init_pool(&config.database_url, 1).await?;
 
-    let create_sql =
-        dialect::translate("CREATE TABLE IF NOT EXISTS _migrations (filename TEXT PRIMARY KEY)");
-    sqlx::query(&create_sql).execute(&pool).await?;
+    raisfast::db::connection::ensure_schema(&pool).await?;
 
-    let migrations_dir = Path::new("./migrations");
+    let db_name = if cfg!(feature = "db-sqlite") {
+        "sqlite"
+    } else if cfg!(feature = "db-postgres") {
+        "postgres"
+    } else if cfg!(feature = "db-mysql") {
+        "mysql"
+    } else {
+        anyhow::bail!("no database feature enabled (db-sqlite / db-postgres / db-mysql)");
+    };
+
+    let migrations_dir = Path::new("./migrations").join(db_name);
     if !migrations_dir.exists() {
-        anyhow::bail!("migrations directory not found: ./migrations");
+        println!("no migrations directory found (skipped)");
+        return Ok(());
     }
 
-    let mut entries: Vec<_> = std::fs::read_dir(migrations_dir)?
+    let schema_label = format!("schema.{}.sql", db_name);
+
+    let mut entries: Vec<_> = std::fs::read_dir(&migrations_dir)?
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().is_some_and(|ext| ext == "sql"))
+        .filter(|e| {
+            e.path().extension().is_some_and(|ext| ext == "sql")
+                && e.file_name().to_string_lossy() != schema_label
+        })
         .collect();
     entries.sort_by_key(|e| e.file_name());
 
@@ -40,22 +55,11 @@ pub async fn migrate(config: &AppConfig) -> anyhow::Result<()> {
     let check_sql = dialect::translate("SELECT COUNT(*) FROM _migrations WHERE filename = ?");
     let insert_sql = dialect::translate("INSERT INTO _migrations (filename) VALUES (?)");
 
-    let tenantable_migration = "026_builtin_tenantable.sql";
-
+    let tenantable_file = format!("tenantable.{}.sql", db_name);
     let mut applied = 0u32;
+
     for entry in &entries {
         let filename = entry.file_name().to_string_lossy().to_string();
-
-        if filename == tenantable_migration && !config.builtin_tenantable {
-            println!("  [skip] {} (BUILTIN_TENANTABLE=false)", filename);
-            sqlx::query(&insert_sql)
-                .bind(&filename)
-                .execute(&pool)
-                .await?;
-            continue;
-        }
-
-        let sql = std::fs::read_to_string(entry.path())?;
 
         let already_applied: bool = sqlx::query_scalar::<_, i64>(&check_sql)
             .bind(&filename)
@@ -69,6 +73,16 @@ pub async fn migrate(config: &AppConfig) -> anyhow::Result<()> {
             continue;
         }
 
+        if filename == tenantable_file && !config.builtin_tenantable {
+            println!("  [skip] {} (BUILTIN_TENANTABLE=false)", filename);
+            sqlx::query(&insert_sql)
+                .bind(&filename)
+                .execute(&pool)
+                .await?;
+            continue;
+        }
+
+        let sql = std::fs::read_to_string(entry.path())?;
         print!("  [apply] {} ... ", filename);
         sqlx::query(&sql).execute(&pool).await?;
         sqlx::query(&insert_sql)

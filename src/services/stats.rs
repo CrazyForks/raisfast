@@ -132,16 +132,17 @@ impl StatsService {
 
         let date_expr = date_trunc_day_expr("created_at");
 
+        let ago = crate::db::dialect::ago_expr(days);
         let sql = if has_tenant {
             format!(
                 "SELECT {date_expr} as d, COUNT(*) as cnt FROM {table} \
-                 WHERE tenant_id = ? AND created_at >= datetime('now', '-{days} days') \
+                 WHERE tenant_id = ? AND created_at >= {ago} \
                  GROUP BY d ORDER BY d"
             )
         } else {
             format!(
                 "SELECT {date_expr} as d, COUNT(*) as cnt FROM {table} \
-                 WHERE created_at >= datetime('now', '-{days} days') \
+                 WHERE created_at >= {ago} \
                  GROUP BY d ORDER BY d"
             )
         };
@@ -325,34 +326,69 @@ async fn has_column(pool: &Pool, table: &str, column: &str) -> bool {
             .unwrap_or_default();
         rows.iter().any(|(_, name, _, _, _, _)| name == column)
     }
-    #[cfg(not(feature = "db-sqlite"))]
+    #[cfg(feature = "db-postgres")]
     {
-        let _ = (pool, table, column);
-        false
+        let sql = "SELECT column_name FROM information_schema.columns WHERE table_name = $1";
+        let rows = sqlx::query_as::<_, (String,)>(sql)
+            .bind(table)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+        rows.iter().any(|(name,)| name == column)
+    }
+    #[cfg(feature = "db-mysql")]
+    {
+        let sql = "SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?";
+        let rows = sqlx::query_as::<_, (String,)>(sql)
+            .bind(table)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+        rows.iter().any(|(name,)| name == column)
     }
 }
 
 /// 获取数据库中所有 content type 相关的表名
 async fn get_content_tables(pool: &Pool) -> Result<Vec<String>, AppError> {
+    let excluded_tables = "'users','refresh_tokens','media','plugin_storage','roles','permissions','options','tenants','pending_jobs','cron_schedules','cron_execution_log'";
     #[cfg(feature = "db-sqlite")]
     {
-        let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('users','refresh_tokens','media','plugin_storage','roles','permissions','options','tenants','pending_jobs','cron_schedules','cron_execution_log')";
-        let rows = sqlx::query_as::<_, (String,)>(sql)
+        let sql = format!(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%%' AND name NOT IN ({excluded_tables})"
+        );
+        let rows = sqlx::query_as::<_, (String,)>(&sql)
             .fetch_all(pool)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
         Ok(rows.into_iter().map(|(n,)| n).collect())
     }
-    #[cfg(not(feature = "db-sqlite"))]
+    #[cfg(feature = "db-postgres")]
     {
-        let _ = pool;
-        Ok(vec![])
+        let sql = format!(
+            "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename NOT IN ({excluded_tables})"
+        );
+        let rows = sqlx::query_as::<_, (String,)>(&sql)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+        Ok(rows.into_iter().map(|(n,)| n).collect())
+    }
+    #[cfg(feature = "db-mysql")]
+    {
+        let sql = format!(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name NOT IN ({excluded_tables})"
+        );
+        let rows = sqlx::query_as::<_, (String,)>(&sql)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+        Ok(rows.into_iter().map(|(n,)| n).collect())
     }
 }
 
-/// SQLite 日期截断表达式（截断到天）
+/// 日期截断表达式（截断到天）
 fn date_trunc_day_expr(col: &str) -> String {
-    format!("DATE({col})")
+    crate::db::dialect::date_trunc_day(col)
 }
 
 #[cfg(test)]

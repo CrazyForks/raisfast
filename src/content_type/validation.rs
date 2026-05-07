@@ -14,11 +14,12 @@ use serde_json::Value;
 use sqlx::Row;
 
 use super::schema::{ContentTypeSchema, FieldType};
+use crate::db::Pool;
 use crate::errors::app_error::AppError;
 
 /// 校验创建数据
 pub async fn validate_create(
-    pool: &sqlx::SqlitePool,
+    pool: &Pool,
     ct: &ContentTypeSchema,
     data: &Value,
 ) -> Result<(), AppError> {
@@ -27,7 +28,7 @@ pub async fn validate_create(
 
 /// 校验创建数据（事务内）
 pub async fn validate_create_tx(
-    pool: &sqlx::SqlitePool,
+    pool: &Pool,
     ct: &ContentTypeSchema,
     data: &Value,
 ) -> Result<(), AppError> {
@@ -35,7 +36,7 @@ pub async fn validate_create_tx(
 }
 
 async fn do_validate_create(
-    pool: &sqlx::SqlitePool,
+    pool: &Pool,
     ct: &ContentTypeSchema,
     data: &Value,
 ) -> Result<(), AppError> {
@@ -131,7 +132,7 @@ async fn do_validate_create(
 
 /// 校验更新数据
 pub async fn validate_update(
-    pool: &sqlx::SqlitePool,
+    pool: &Pool,
     ct: &ContentTypeSchema,
     id: &str,
     data: &Value,
@@ -141,7 +142,7 @@ pub async fn validate_update(
 
 /// 校验更新数据（事务内）
 pub async fn validate_update_tx(
-    pool: &sqlx::SqlitePool,
+    pool: &Pool,
     ct: &ContentTypeSchema,
     id: &str,
     data: &Value,
@@ -150,7 +151,7 @@ pub async fn validate_update_tx(
 }
 
 async fn do_validate_update(
-    pool: &sqlx::SqlitePool,
+    pool: &Pool,
     ct: &ContentTypeSchema,
     id: &str,
     data: &Value,
@@ -247,7 +248,7 @@ async fn do_validate_update(
 }
 
 async fn check_unique_fields(
-    pool: &sqlx::SqlitePool,
+    pool: &Pool,
     ct: &ContentTypeSchema,
     obj: &serde_json::Map<String, Value>,
     exclude_id: Option<&str>,
@@ -459,7 +460,7 @@ immutable = true
 
     #[tokio::test]
     async fn validate_create_missing_required() {
-        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
@@ -473,7 +474,7 @@ immutable = true
 
     #[tokio::test]
     async fn validate_create_bad_enum() {
-        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
@@ -487,7 +488,7 @@ immutable = true
 
     #[tokio::test]
     async fn validate_create_exceeds_max_length() {
-        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
@@ -504,7 +505,7 @@ immutable = true
 
     #[tokio::test]
     async fn validate_create_number_out_of_range() {
-        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
@@ -518,7 +519,7 @@ immutable = true
 
     #[tokio::test]
     async fn validate_create_unique_duplicate() {
-        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
@@ -545,7 +546,7 @@ immutable = true
 
     #[tokio::test]
     async fn validate_update_immutable_field() {
-        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
@@ -573,7 +574,7 @@ immutable = true
 
     #[tokio::test]
     async fn validate_update_unique_excludes_self() {
-        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
         let ct = make_test_ct();
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();

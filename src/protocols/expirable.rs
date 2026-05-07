@@ -79,7 +79,7 @@ impl Protocol for ExpirableProtocol {
         ProtocolDeclaration {
             query_filters: vec![(
                 COL_EXPIRES_AT.to_string(),
-                "IS NULL OR expires_at > datetime('now')".to_string(),
+                format!("IS NULL OR expires_at > {}", crate::db::dialect::now_fn()),
             )],
             ..Default::default()
         }

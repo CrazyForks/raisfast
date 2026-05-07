@@ -330,21 +330,21 @@ pub async fn refresh(
 
     let mut tx = pool.begin().await?;
 
-    sqlx::query!(
+    sqlx::query(&crate::db::dialect::translate(
         "DELETE FROM refresh_tokens WHERE token = ?",
-        refresh_token_str,
-    )
+    ))
+    .bind(refresh_token_str)
     .execute(&mut *tx)
     .await?;
 
-    sqlx::query!(
+    sqlx::query(&crate::db::dialect::translate(
         "INSERT INTO refresh_tokens (id, user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
-        new_id,
-        user.id,
-        new_refresh_token,
-        new_expires_str,
-        now,
-    )
+    ))
+    .bind(&new_id)
+    .bind(&user.id)
+    .bind(&new_refresh_token)
+    .bind(&new_expires_str)
+    .bind(&now)
     .execute(&mut *tx)
     .await?;
 
@@ -427,9 +427,12 @@ pub async fn change_password(
         .update_password(user_id, &new_hash, tenant_id)
         .await?;
 
-    sqlx::query!("DELETE FROM refresh_tokens WHERE user_id = ?", user_id,)
-        .execute(pool)
-        .await?;
+    sqlx::query(&crate::db::dialect::translate(
+        "DELETE FROM refresh_tokens WHERE user_id = ?",
+    ))
+    .bind(user_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 

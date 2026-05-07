@@ -64,9 +64,11 @@ pub async fn create_state(
 
 /// 根据 state ID 查找并删除（一次性）
 pub async fn consume_state(pool: &crate::db::Pool, id: &str) -> AppResult<Option<OAuthState>> {
-    let sql = crate::db::dialect::translate(
-        "SELECT * FROM oauth_states WHERE id = ? AND expires_at > datetime('now')",
+    let sql_raw = format!(
+        "SELECT * FROM oauth_states WHERE id = ? AND expires_at > {}",
+        crate::db::dialect::now_fn(),
     );
+    let sql = crate::db::dialect::translate(&sql_raw);
     let state = sqlx::query_as::<_, OAuthState>(&sql)
         .bind(id)
         .fetch_optional(pool)
@@ -82,9 +84,11 @@ pub async fn consume_state(pool: &crate::db::Pool, id: &str) -> AppResult<Option
 
 /// 清理过期的 OAuth state 记录
 pub async fn cleanup_expired_states(pool: &crate::db::Pool) -> AppResult<u64> {
-    let sql = crate::db::dialect::translate(
-        "DELETE FROM oauth_states WHERE expires_at <= datetime('now')",
+    let sql_raw = format!(
+        "DELETE FROM oauth_states WHERE expires_at <= {}",
+        crate::db::dialect::now_fn(),
     );
+    let sql = crate::db::dialect::translate(&sql_raw);
     let result = sqlx::query(&sql).execute(pool).await?;
     Ok(result.rows_affected())
 }

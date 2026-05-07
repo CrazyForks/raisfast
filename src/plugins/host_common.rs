@@ -9,7 +9,7 @@ use crate::constants::PLUGIN_HOST_GLOBAL;
 use std::sync::Arc;
 
 use crate::config::app::AppConfig;
-use crate::db::Pool;
+use crate::db::{DbArguments, DbConnection, DbPoolConnection, DbQueryResult, Pool};
 use crate::eventbus::{Event, EventBus};
 use crate::plugins::Permissions;
 use crate::plugins::permissions::PermissionChecker;
@@ -19,7 +19,7 @@ use std::sync::Mutex;
 
 /// 事务状态（持有从连接池借出的独占连接）
 struct TxState {
-    conn: sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    conn: DbPoolConnection,
 }
 
 /// 插件宿主上下文
@@ -263,7 +263,7 @@ impl HostContext {
             match handle.block_on(async {
                 let rows = match params {
                     Some(params) => {
-                        let mut args = sqlx::sqlite::SqliteArguments::default();
+                        let mut args = DbArguments::default();
                         for p in &params {
                             Self::add_param(&mut args, p);
                         }
@@ -319,7 +319,7 @@ impl HostContext {
                 let Some(tx_state) = tx_guard.as_mut() else {
                     return r#"{"error":"transaction lost"}"#.to_string();
                 };
-                let result: Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> =
+                let result: Result<DbQueryResult, sqlx::Error> =
                     build_and_exec(&mut tx_state.conn, &sql, &parsed_params, &handle);
                 match result {
                     Ok(r) => format!(r#"{{"rows_affected":{}}}"#, r.rows_affected()),
@@ -335,9 +335,9 @@ impl HostContext {
         let handle = tokio::runtime::Handle::current();
         let sql = crate::db::dialect::translate(sql).into_owned();
         tokio::task::block_in_place(|| {
-            let result: Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> = match parsed_params {
+            let result: Result<DbQueryResult, sqlx::Error> = match parsed_params {
                 Some(params) => {
-                    let mut args = sqlx::sqlite::SqliteArguments::default();
+                    let mut args = DbArguments::default();
                     for p in &params {
                         Self::add_param(&mut args, p);
                     }
@@ -529,7 +529,7 @@ impl HostContext {
     }
 
     /// 将单个 JSON Value 添加到 sqlx 参数列表
-    fn add_param(args: &mut sqlx::sqlite::SqliteArguments, p: &serde_json::Value) {
+    fn add_param(args: &mut DbArguments<'_>, p: &serde_json::Value) {
         match p {
             serde_json::Value::String(s) => {
                 args.add(s.clone()).ok();
@@ -554,14 +554,14 @@ impl HostContext {
 
 /// 在连接上执行参数化或原始写操作
 fn build_and_exec(
-    conn: &mut sqlx::SqliteConnection,
+    conn: &mut DbConnection,
     sql: &str,
     parsed_params: &Option<Vec<serde_json::Value>>,
     handle: &tokio::runtime::Handle,
-) -> Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> {
+) -> Result<DbQueryResult, sqlx::Error> {
     match parsed_params {
         Some(params) => {
-            let mut args = sqlx::sqlite::SqliteArguments::default();
+            let mut args = DbArguments::default();
             for p in params {
                 match p {
                     serde_json::Value::String(s) => {
@@ -794,8 +794,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_get_data_set_data_with_real_db() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../../migrations/003_plugin_storage.sql"))
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -819,8 +819,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_get_data_isolation_between_plugins() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../../migrations/003_plugin_storage.sql"))
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -851,8 +851,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_db_query_with_real_db() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../../migrations/001_init.sql"))
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -871,8 +871,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_db_query_table_not_permitted() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../../migrations/001_init.sql"))
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -890,8 +890,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_db_query_wildcard_permission() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../../migrations/001_init.sql"))
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -961,8 +961,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_db_execute_with_real_db() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../../migrations/001_init.sql"))
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -990,8 +990,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_db_execute_parameterized() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../../migrations/001_init.sql"))
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1073,8 +1073,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_transaction_commit_roundtrip() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../../migrations/001_init.sql"))
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1108,8 +1108,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_transaction_rollback_discards() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../../migrations/001_init.sql"))
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1142,7 +1142,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_transaction_double_begin_error() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
 
         let config = make_test_config();
         let ctx = HostContext::new(
@@ -1164,8 +1164,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_cleanup_tx_rolls_back() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../../migrations/001_init.sql"))
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1197,7 +1197,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn host_context_cleanup_tx_noop_without_active() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         let config = make_test_config();
         let ctx = HostContext::new(
             "test",

@@ -106,9 +106,92 @@ pub(crate) fn rows_to_json(rows: &[sqlx::sqlite::SqliteRow]) -> String {
     serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string())
 }
 
-#[cfg(not(feature = "db-sqlite"))]
-pub(crate) fn rows_to_json(_rows: &Vec<()>) -> String {
-    "[]".to_string()
+#[cfg(feature = "db-postgres")]
+pub(crate) fn rows_to_json(rows: &[sqlx::postgres::PgRow]) -> String {
+    use sqlx::{Column, Row};
+    if rows.is_empty() {
+        return "[]".to_string();
+    }
+    let columns: Vec<String> = rows[0]
+        .columns()
+        .iter()
+        .map(|c| c.name().to_string())
+        .collect();
+    let result: Vec<serde_json::Map<String, serde_json::Value>> = rows
+        .iter()
+        .map(|row| {
+            let mut map = serde_json::Map::new();
+            for (i, col) in columns.iter().enumerate() {
+                if let Ok(v) = row.try_get::<Option<i64>, _>(i) {
+                    map.insert(
+                        col.clone(),
+                        serde_json::Value::Number(v.unwrap_or(0).into()),
+                    );
+                } else if let Ok(v) = row.try_get::<Option<f64>, _>(i) {
+                    map.insert(
+                        col.clone(),
+                        serde_json::Number::from_f64(v.unwrap_or(0.0))
+                            .map_or(serde_json::Value::Null, serde_json::Value::Number),
+                    );
+                } else if let Ok(v) = row.try_get::<Option<bool>, _>(i) {
+                    map.insert(col.clone(), serde_json::Value::Bool(v.unwrap_or(false)));
+                } else if let Ok(v) = row.try_get::<Option<String>, _>(i) {
+                    match v {
+                        Some(s) => map.insert(col.clone(), serde_json::Value::String(s)),
+                        None => map.insert(col.clone(), serde_json::Value::Null),
+                    };
+                } else {
+                    map.insert(col.clone(), serde_json::Value::Null);
+                }
+            }
+            map
+        })
+        .collect();
+    serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string())
+}
+
+#[cfg(feature = "db-mysql")]
+pub(crate) fn rows_to_json(rows: &[sqlx::mysql::MySqlRow]) -> String {
+    use sqlx::{Column, Row};
+    if rows.is_empty() {
+        return "[]".to_string();
+    }
+    let columns: Vec<String> = rows[0]
+        .columns()
+        .iter()
+        .map(|c| c.name().to_string())
+        .collect();
+    let result: Vec<serde_json::Map<String, serde_json::Value>> = rows
+        .iter()
+        .map(|row| {
+            let mut map = serde_json::Map::new();
+            for (i, col) in columns.iter().enumerate() {
+                if let Ok(v) = row.try_get::<Option<i64>, _>(i) {
+                    map.insert(
+                        col.clone(),
+                        serde_json::Value::Number(v.unwrap_or(0).into()),
+                    );
+                } else if let Ok(v) = row.try_get::<Option<f64>, _>(i) {
+                    map.insert(
+                        col.clone(),
+                        serde_json::Number::from_f64(v.unwrap_or(0.0))
+                            .map_or(serde_json::Value::Null, serde_json::Value::Number),
+                    );
+                } else if let Ok(v) = row.try_get::<Option<bool>, _>(i) {
+                    map.insert(col.clone(), serde_json::Value::Bool(v.unwrap_or(false)));
+                } else if let Ok(v) = row.try_get::<Option<String>, _>(i) {
+                    match v {
+                        Some(s) => map.insert(col.clone(), serde_json::Value::String(s)),
+                        None => map.insert(col.clone(), serde_json::Value::Null),
+                    };
+                } else {
+                    map.insert(col.clone(), serde_json::Value::Null);
+                }
+            }
+            map
+        })
+        .collect();
+    serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string())
 }
 
 /// 连续错误达到此阈值后自动禁用插件
@@ -2825,8 +2908,8 @@ end
         let lua_code = "Plugin = { on_cron_tick = function(data) RaisFastHost.setData(\"last_job\", data.job_type or \"\") end }";
         std::fs::write(plugin_dir.join("init.lua"), lua_code).unwrap();
 
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../migrations/007_cron_schedules.sql"))
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();

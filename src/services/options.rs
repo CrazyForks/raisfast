@@ -237,8 +237,11 @@ impl OptionsService {
 
     /// 获取公开配置（含元数据，按分组）
     pub async fn get_public_grouped(&self) -> Vec<OptionGroup> {
-        let rows: Vec<crate::models::options::OptionRow> =
-            self.repo.find_all(self.tenant_arg()).await.unwrap_or_default();
+        let rows: Vec<crate::models::options::OptionRow> = self
+            .repo
+            .find_all(self.tenant_arg())
+            .await
+            .unwrap_or_default();
         let mut group_map: HashMap<String, Vec<OptionEntry>> = HashMap::new();
         let mut group_order: Vec<String> = Vec::new();
 

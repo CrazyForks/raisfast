@@ -109,10 +109,7 @@ impl AppError {
     ///
     /// 用于 model 层的 `delete()` 和 `update_status()` 函数，
     /// 避免每次手动检查 `rows_affected() == 0`。
-    pub fn expect_affected(
-        result: &sqlx::sqlite::SqliteQueryResult,
-        resource: &str,
-    ) -> AppResult<()> {
+    pub fn expect_affected(result: &crate::db::DbQueryResult, resource: &str) -> AppResult<()> {
         if result.rows_affected() == 0 {
             Err(AppError::NotFound(resource.into()))
         } else {

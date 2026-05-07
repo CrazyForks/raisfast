@@ -32,14 +32,14 @@ pub async fn create_token(
     expires_at: &str,
 ) -> AppResult<()> {
     let (id, now) = crate::utils::id::new_id_and_timestamp();
-    sqlx::query!(
+    sqlx::query(&crate::db::dialect::translate(
         "INSERT INTO refresh_tokens (id, user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
-        id,
-        user_id,
-        token,
-        expires_at,
-        now,
-    )
+    ))
+    .bind(id)
+    .bind(user_id)
+    .bind(token)
+    .bind(expires_at)
+    .bind(now)
     .execute(pool)
     .await?;
     Ok(())
@@ -61,9 +61,12 @@ pub async fn find_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<Opt
 ///
 /// 用于登出时吊销指定的刷新令牌。
 pub async fn delete_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<()> {
-    sqlx::query!("DELETE FROM refresh_tokens WHERE token = ?", token)
-        .execute(pool)
-        .await?;
+    sqlx::query(&crate::db::dialect::translate(
+        "DELETE FROM refresh_tokens WHERE token = ?",
+    ))
+    .bind(token)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -71,8 +74,11 @@ pub async fn delete_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<(
 ///
 /// 用于登出所有设备或修改密码后强制重新登录。
 pub async fn delete_by_user(pool: &crate::db::Pool, user_id: &str) -> AppResult<()> {
-    sqlx::query!("DELETE FROM refresh_tokens WHERE user_id = ?", user_id)
-        .execute(pool)
-        .await?;
+    sqlx::query(&crate::db::dialect::translate(
+        "DELETE FROM refresh_tokens WHERE user_id = ?",
+    ))
+    .bind(user_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }

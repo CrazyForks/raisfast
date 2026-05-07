@@ -112,8 +112,8 @@ mod tests {
 
     async fn setup() -> (EventBus, Arc<SqliteJobQueue>) {
         let bus = EventBus::new(16);
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../../migrations/006_jobs.sql"))
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();

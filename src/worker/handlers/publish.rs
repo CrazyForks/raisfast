@@ -27,12 +27,7 @@ impl JobHandler for ScheduledPublishHandler {
             return Ok(());
         };
 
-        let post = crate::models::post::find_by_id(
-            &self.pool,
-            post_id,
-            None,
-        )
-        .await?;
+        let post = crate::models::post::find_by_id(&self.pool, post_id, None).await?;
         let Some(post) = post else {
             tracing::warn!("[publish] post {} not found, skipping", post_id);
             return Ok(());
@@ -73,45 +68,11 @@ mod tests {
     use crate::models::user;
 
     async fn setup() -> Pool {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../../../migrations/001_init.sql"))
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(include_str!("../../../migrations/002_add_indexes.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../../migrations/009_options.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../../migrations/010_rbac.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../../migrations/011_tenants.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("ALTER TABLE users ADD COLUMN phone TEXT")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../../../migrations/023_create_pages.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!(
-            "../../../migrations/025_unify_system_columns.sql"
-        ))
-        .execute(&pool)
-        .await
-        .unwrap();
         pool
     }
 
@@ -127,14 +88,9 @@ mod tests {
         )
         .await
         .unwrap();
-        user::update_role(
-            pool,
-            &u.id,
-            "author",
-            None,
-        )
-        .await
-        .unwrap();
+        user::update_role(pool, &u.id, "author", None)
+            .await
+            .unwrap();
         u.id
     }
 
@@ -168,10 +124,7 @@ mod tests {
         };
         assert!(handler.handle(&job).await.is_ok());
 
-        let updated = post::find_by_id(&pool, &p.id, None)
-            .await
-            .unwrap()
-            .unwrap();
+        let updated = post::find_by_id(&pool, &p.id, None).await.unwrap().unwrap();
         assert_eq!(updated.status, "published");
         assert!(updated.published_at.is_some());
     }

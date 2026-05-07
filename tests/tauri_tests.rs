@@ -49,25 +49,11 @@ fn cache_ct(ct: &mut raisfast::content_type::schema::ContentTypeSchema) {
 }
 
 async fn setup_pool() -> sqlx::SqlitePool {
-    let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-    for sql in [
-        include_str!("../migrations/001_init.sql"),
-        include_str!("../migrations/002_add_indexes.sql"),
-        include_str!("../migrations/009_options.sql"),
-        include_str!("../migrations/010_rbac.sql"),
-        include_str!("../migrations/011_tenants.sql"),
-        include_str!("../migrations/014_extensions.sql"),
-        include_str!("../migrations/015_api_tokens.sql"),
-        include_str!("../migrations/016_content_revisions.sql"),
-        include_str!("../migrations/019_oauth.sql"),
-        include_str!("../migrations/021_phone.sql"),
-        include_str!("../migrations/022_email_verification.sql"),
-        include_str!("../migrations/023_create_pages.sql"),
-        include_str!("../migrations/024_drop_extensions.sql"),
-        include_str!("../migrations/025_unify_system_columns.sql"),
-    ] {
-        sqlx::query(sql).execute(&pool).await.unwrap();
-    }
+    let pool = raisfast::db::Pool::connect("sqlite::memory:").await.unwrap();
+    sqlx::query(raisfast::db::schema::SCHEMA_SQL)
+        .execute(&pool)
+        .await
+        .unwrap();
     tenant::invalidate_cache().await;
     pool
 }

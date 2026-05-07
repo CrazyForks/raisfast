@@ -63,17 +63,24 @@ pub async fn set(
             .to_rfc3339()
     });
 
-    sqlx::query(
+    let now = crate::db::dialect::now_fn();
+    let assignments = format!(
+        "value = {}, expires_at = {}, updated_at = {now}",
+        crate::db::dialect::excluded_col("value"),
+        crate::db::dialect::excluded_col("expires_at"),
+    );
+    let sql = format!(
         "INSERT INTO plugin_storage (plugin_id, key, value, expires_at, updated_at) \
-         VALUES (?, ?, ?, ?, datetime('now')) \
-         ON CONFLICT(plugin_id, key) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at, updated_at = datetime('now')",
-    )
-    .bind(plugin_id)
-    .bind(key)
-    .bind(value)
-    .bind(&expires_at)
-    .execute(pool)
-    .await?;
+         VALUES (?, ?, ?, ?, {now}) {}",
+        crate::db::dialect::upsert_clause("plugin_id, key", &assignments)
+    );
+    sqlx::query(&sql)
+        .bind(plugin_id)
+        .bind(key)
+        .bind(value)
+        .bind(&expires_at)
+        .execute(pool)
+        .await?;
 
     Ok(())
 }

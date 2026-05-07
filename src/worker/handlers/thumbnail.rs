@@ -38,13 +38,9 @@ impl JobHandler for GenerateThumbnailHandler {
             return Ok(());
         };
 
-        let media = crate::models::media::find_by_id(
-            &self.pool,
-            media_id,
-            None,
-        )
-        .await?
-        .ok_or_else(|| crate::errors::app_error::AppError::not_found("media"))?;
+        let media = crate::models::media::find_by_id(&self.pool, media_id, None)
+            .await?
+            .ok_or_else(|| crate::errors::app_error::AppError::not_found("media"))?;
 
         if !media.mimetype.starts_with("image/") {
             tracing::warn!(
@@ -107,7 +103,7 @@ mod tests {
 
     #[tokio::test]
     async fn ignores_wrong_job_type() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         let config = Arc::new(crate::config::app::AppConfig::test_defaults());
         let handler = GenerateThumbnailHandler::new(pool, config);
         let job = Job::GenerateSitemap;

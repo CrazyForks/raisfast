@@ -1704,22 +1704,7 @@ async fn spawn_workers(
     let queue = Arc::new(SqliteJobQueue::new(pool.clone()));
 
     if let Err(e) = async {
-        sqlx::query(include_str!("../migrations/006_jobs.sql"))
-            .execute(&pool)
-            .await?;
-        sqlx::query(include_str!("../migrations/007_cron_schedules.sql"))
-            .execute(&pool)
-            .await?;
-        sqlx::query(include_str!("../migrations/008_cron_execution_log.sql"))
-            .execute(&pool)
-            .await?;
-        sqlx::query(include_str!("../migrations/020_password_reset.sql"))
-            .execute(&pool)
-            .await?;
-        sqlx::query(include_str!("../migrations/021_phone.sql"))
-            .execute(&pool)
-            .await?;
-        sqlx::query(include_str!("../migrations/022_email_verification.sql"))
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await?;
         if config.cron_seed_enabled {

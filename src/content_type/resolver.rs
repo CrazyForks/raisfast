@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use sqlx::Row;
 
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
+use crate::db::Pool;
 use crate::errors::app_error::AppError;
 
 /// 解析 items 中的 relation 字段（批量优化）
@@ -19,7 +20,7 @@ use crate::errors::app_error::AppError;
 /// 按字段维度批量查询：收集所有 items 中同一 relation 字段的 FK ID，
 /// 一次 `WHERE id IN (?)` 查询获取全部目标记录，再按 ID 分发回各 item。
 pub async fn resolve_relations(
-    pool: &sqlx::SqlitePool,
+    pool: &Pool,
     ct: &ContentTypeSchema,
     items: &mut [Value],
     include: Option<&[String]>,
@@ -63,7 +64,7 @@ pub async fn resolve_relations(
 }
 
 async fn resolve_many_to_one_batch(
-    pool: &sqlx::SqlitePool,
+    pool: &Pool,
     _ct: &ContentTypeSchema,
     field: &super::schema::FieldSchema,
     rel: &super::schema::RelationConfig,
@@ -150,7 +151,7 @@ async fn resolve_many_to_one_batch(
 }
 
 async fn resolve_one_to_many_batch(
-    pool: &sqlx::SqlitePool,
+    pool: &Pool,
     ct: &ContentTypeSchema,
     field_name: &str,
     rel: &super::schema::RelationConfig,
@@ -225,7 +226,7 @@ async fn resolve_one_to_many_batch(
 }
 
 async fn resolve_many_to_many_batch(
-    pool: &sqlx::SqlitePool,
+    pool: &Pool,
     ct: &ContentTypeSchema,
     field_name: &str,
     rel: &super::schema::RelationConfig,
@@ -304,7 +305,7 @@ async fn resolve_many_to_many_batch(
     Ok(())
 }
 
-async fn fetch_column_names(pool: &sqlx::SqlitePool, table: &str) -> Vec<String> {
+async fn fetch_column_names(pool: &Pool, table: &str) -> Vec<String> {
     use std::sync::{LazyLock, RwLock};
     static CACHE: LazyLock<RwLock<std::collections::HashMap<String, Vec<String>>>> =
         LazyLock::new(|| RwLock::new(std::collections::HashMap::new()));
@@ -321,13 +322,16 @@ async fn fetch_column_names(pool: &sqlx::SqlitePool, table: &str) -> Vec<String>
         return vec!["id".into()];
     }
 
-    let cols: Vec<String> = sqlx::query_as::<_, (String,)>(&format!(
-        "SELECT name FROM pragma_table_info('{table}') ORDER BY cid"
-    ))
-    .fetch_all(pool)
-    .await
-    .map(|rows| rows.into_iter().map(|(c,)| c).collect())
-    .unwrap_or_else(|_| vec!["id".into()]);
+    let (sql, col_index) = super::repository::fetch_columns_sql(table);
+    let cols: Vec<String> = sqlx::query(&sql)
+        .fetch_all(pool)
+        .await
+        .map(|rows| {
+            rows.iter()
+                .map(|row| row.try_get(col_index).unwrap_or_default())
+                .collect()
+        })
+        .unwrap_or_else(|_| vec!["id".into()]);
 
     {
         let mut cache = CACHE.write().unwrap_or_else(|e| e.into_inner());
@@ -376,8 +380,8 @@ through = "ct_resolve_posts_tags"
         .unwrap()
     }
 
-    async fn setup_test_db() -> sqlx::SqlitePool {
-        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+    async fn setup_test_db() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
 
         sqlx::query(
             "CREATE TABLE ct_resolve_users (id TEXT PRIMARY KEY, name TEXT, slug TEXT, title TEXT)",

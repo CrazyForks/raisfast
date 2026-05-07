@@ -54,96 +54,8 @@ pub(crate) fn test_config() -> AppConfig {
 pub(crate) async fn test_pool() -> raisfast::db::Pool {
     #[cfg(feature = "db-sqlite")]
     {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(include_str!("../migrations/001_init.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/002_add_indexes.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/003_plugin_storage.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/006_jobs.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/007_cron_schedules.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/008_cron_execution_log.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/009_options.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/010_rbac.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/011_tenants.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/012_audit_log.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/013_webhook_subscriptions.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/014_extensions.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/015_api_tokens.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/016_content_revisions.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/017_workflows.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/018_media_dimensions.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/019_oauth.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/020_password_reset.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/021_phone.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/022_email_verification.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/023_create_pages.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/024_drop_extensions.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(include_str!("../migrations/025_unify_system_columns.sql"))
+        let pool = raisfast::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(raisfast::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -189,9 +101,10 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
             reg
         }),
         options: Arc::new(
-            raisfast::services::options::OptionsService::new(Arc::new(SqlxOptionsRepository::new(
-                pool.clone(),
-            )), false)
+            raisfast::services::options::OptionsService::new(
+                Arc::new(SqlxOptionsRepository::new(pool.clone())),
+                false,
+            )
             .await,
         ),
         rbac: Arc::new(raisfast::services::rbac::RbacService::new(Arc::new(

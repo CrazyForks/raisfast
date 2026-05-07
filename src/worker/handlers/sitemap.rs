@@ -62,16 +62,9 @@ impl JobHandler for GenerateSitemapHandler {
             return Ok(());
         };
 
-        let (posts, _) = crate::models::post::find_published(
-            &self.pool,
-            1,
-            50000,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await?;
+        let (posts, _) =
+            crate::models::post::find_published(&self.pool, 1, 50000, None, None, None, None)
+                .await?;
 
         let xml = Self::build_xml(&self.config.base_url, &posts);
         let path = std::path::PathBuf::from(&self.config.static_dir).join("sitemap.xml");
@@ -134,7 +127,7 @@ mod tests {
 
     #[tokio::test]
     async fn ignores_wrong_job_type() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         let config = Arc::new(test_config());
         let handler = GenerateSitemapHandler::new(pool, config);
         let job = Job::SendWelcomeEmail {

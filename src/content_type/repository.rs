@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
 use crate::constants::*;
+use crate::db::DbRow;
 use crate::db::Pool;
 use crate::errors::app_error::AppError;
 use crate::middleware::auth::AuthUser;
@@ -876,7 +877,7 @@ pub fn build_column_names(
 ///
 /// SQLite 将所有值存储为 TEXT，因此优先尝试解析为 bool/int/f64，
 /// 回退到原始字符串。
-pub fn row_to_value(row: &sqlx::sqlite::SqliteRow, columns: &[String]) -> Value {
+pub(crate) fn row_to_value(row: &DbRow, columns: &[String]) -> Value {
     let mut map = serde_json::Map::with_capacity(columns.len());
     for col in columns {
         let val = cell_to_json(row, col.as_str());
@@ -891,7 +892,7 @@ pub fn row_to_value(row: &sqlx::sqlite::SqliteRow, columns: &[String]) -> Value 
 ///
 /// 注意：bool 放在 i64 之后，因为 SQLite 不区分 bool 和 int，
 /// 非 0/1 的整数会被 bool 误判为 true。
-fn cell_to_json(row: &sqlx::sqlite::SqliteRow, col: &str) -> Value {
+fn cell_to_json(row: &DbRow, col: &str) -> Value {
     if let Ok(Some(v)) = row.try_get::<Option<i64>, _>(col) {
         return json!(v);
     }
@@ -983,7 +984,7 @@ fn value_to_string(v: &Value) -> String {
 ///
 /// - `SQLite` `PRAGMA table_info`: 列名在第 2 列 (index=1)
 /// - PostgreSQL/MySQL `information_schema`: 列名在第 1 列 (index=0)
-fn fetch_columns_sql(table: &str) -> (String, usize) {
+pub(crate) fn fetch_columns_sql(table: &str) -> (String, usize) {
     #[cfg(feature = "db-sqlite")]
     {
         (format!("PRAGMA table_info({table})"), 1)
