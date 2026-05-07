@@ -6,13 +6,14 @@
 use sqlx::FromRow;
 
 use crate::db::Pool;
+use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 
 /// 插件存储行
 #[derive(Debug, FromRow)]
 pub struct PluginStorageRow {
     pub plugin_id: String,
-    pub key: String,
+    pub storage_key: String,
     pub value: String,
     pub expires_at: Option<String>,
     pub updated_at: String,
@@ -21,9 +22,9 @@ pub struct PluginStorageRow {
 /// 获取插件的 KV 数据
 pub async fn get(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<Option<String>> {
     let row = sqlx::query_as::<_, PluginStorageRow>(&format!(
-        "SELECT * FROM plugin_storage WHERE plugin_id = {} AND key = {}",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2),
+        "SELECT * FROM plugin_storage WHERE plugin_id = {} AND storage_key = {}",
+        ph(1),
+        ph(2),
     ))
     .bind(plugin_id)
     .bind(key)
@@ -36,9 +37,9 @@ pub async fn get(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<Option<St
                 let now = crate::utils::tz::now_str();
                 if exp < &now {
                     let _ = sqlx::query(&format!(
-                        "DELETE FROM plugin_storage WHERE plugin_id = {} AND key = {}",
-                        crate::db::dialect::ph(1),
-                        crate::db::dialect::ph(2),
+                        "DELETE FROM plugin_storage WHERE plugin_id = {} AND storage_key = {}",
+                        ph(1),
+                        ph(2),
                     ))
                     .bind(plugin_id)
                     .bind(key)
@@ -75,13 +76,13 @@ pub async fn set(
         crate::db::dialect::excluded_col("expires_at"),
     );
     let sql = format!(
-        "INSERT INTO plugin_storage (plugin_id, key, value, expires_at, updated_at) \
+        "INSERT INTO plugin_storage (plugin_id, storage_key, value, expires_at, updated_at) \
          VALUES ({}, {}, {}, {}, {now}) {}",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2),
-        crate::db::dialect::ph(3),
-        crate::db::dialect::ph(4),
-        crate::db::dialect::upsert_clause("plugin_id, key", &assignments)
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        crate::db::dialect::upsert_clause("plugin_id, storage_key", &assignments)
     );
     sqlx::query(&sql)
         .bind(plugin_id)
@@ -97,9 +98,9 @@ pub async fn set(
 /// 删除插件的某个 key
 pub async fn delete(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<()> {
     sqlx::query(&format!(
-        "DELETE FROM plugin_storage WHERE plugin_id = {} AND key = {}",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2),
+        "DELETE FROM plugin_storage WHERE plugin_id = {} AND storage_key = {}",
+        ph(1),
+        ph(2),
     ))
     .bind(plugin_id)
     .bind(key)
@@ -112,7 +113,7 @@ pub async fn delete(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<()> {
 pub async fn delete_all(pool: &Pool, plugin_id: &str) -> AppResult<()> {
     sqlx::query(&format!(
         "DELETE FROM plugin_storage WHERE plugin_id = {}",
-        crate::db::dialect::ph(1),
+        ph(1),
     ))
     .bind(plugin_id)
     .execute(pool)

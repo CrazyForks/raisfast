@@ -51,7 +51,7 @@ CREATE INDEX idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);
 -- 站点配置
 CREATE TABLE IF NOT EXISTS options (
     id VARCHAR(36) PRIMARY KEY,
-    `key` VARCHAR(255) NOT NULL,
+    `option_key` VARCHAR(255) NOT NULL,
     value TEXT NOT NULL,
     `type` VARCHAR(50) NOT NULL DEFAULT 'text',
     group_name VARCHAR(100) NOT NULL DEFAULT 'general',
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS options (
     autoload BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order INT NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL,
-    UNIQUE KEY uq_options_key (`key`)
+    UNIQUE KEY uq_options_option_key (`option_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- RBAC 角色
@@ -153,11 +153,11 @@ CREATE INDEX idx_webhook_subscriptions_enabled ON webhook_subscriptions(enabled)
 -- 插件 KV 存储
 CREATE TABLE IF NOT EXISTS plugin_storage (
     plugin_id VARCHAR(100) NOT NULL,
-    `key` VARCHAR(255) NOT NULL,
+    `storage_key` VARCHAR(255) NOT NULL,
     value TEXT NOT NULL,
     expires_at TEXT,
     updated_at TEXT NOT NULL DEFAULT (NOW()),
-    PRIMARY KEY (plugin_id, `key`)
+    PRIMARY KEY (plugin_id, `storage_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_plugin_storage_plugin ON plugin_storage(plugin_id);
@@ -553,7 +553,7 @@ INSERT IGNORE INTO permissions (id, role_id, action, subject, fields, conditions
     ('perm-reader-comment-create', 'role-reader', 'content-type::comment.create', 'content-type::comment', '["content","nickname","email"]', NULL, NOW());
 
 -- 站点配置
-INSERT IGNORE INTO options (id, `key`, value, `type`, group_name, label, description, validation, is_public, autoload, sort_order, updated_at) VALUES
+INSERT IGNORE INTO options (id, `option_key`, value, `type`, group_name, label, description, validation, is_public, autoload, sort_order, updated_at) VALUES
     ('opt-site-title', 'site_title', '"My Blog"', 'text', 'general', '站点标题', '显示在浏览器标题栏和页面头部', '{"max_length":100}', TRUE, TRUE, 1, NOW()),
     ('opt-site-desc', 'site_description', '""', 'text', 'general', '站点描述', '简短描述站点用途', '{"max_length":500}', TRUE, TRUE, 2, NOW()),
     ('opt-site-url', 'site_url', '""', 'url', 'general', '站点 URL', '如 https://example.com', NULL, TRUE, TRUE, 3, NOW()),

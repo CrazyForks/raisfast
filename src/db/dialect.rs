@@ -13,6 +13,17 @@ pub fn is_safe_identifier(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// trim 后校验标识符。返回 `Some(trimmed)` 通过校验，`None` 不通过。
+#[must_use]
+pub fn sanitize_identifier(name: &str) -> Option<&str> {
+    let trimmed = name.trim();
+    if is_safe_identifier(trimmed) {
+        Some(trimmed)
+    } else {
+        None
+    }
+}
+
 /// 返回当前数据库获取当前时间的 SQL 函数。
 ///
 /// - `SQLite`：`datetime('now')`
@@ -175,5 +186,16 @@ mod tests {
         assert!(!is_safe_identifier("col name"));
         assert!(!is_safe_identifier("a'b"));
         assert!(!is_safe_identifier("1;DROP"));
+        assert!(!is_safe_identifier(" posts "));
+        assert!(!is_safe_identifier("posts "));
+    }
+
+    #[test]
+    fn sanitize_identifier_trims_whitespace() {
+        assert_eq!(sanitize_identifier("  posts  "), Some("posts"));
+        assert_eq!(sanitize_identifier("users"), Some("users"));
+        assert_eq!(sanitize_identifier("\t col1 \n"), Some("col1"));
+        assert_eq!(sanitize_identifier("  "), None);
+        assert_eq!(sanitize_identifier(" drop table "), None);
     }
 }

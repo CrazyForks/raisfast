@@ -26,7 +26,7 @@ fn parse_value(value_str: &str) -> Value {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct OptionGroup {
-    pub key: String,
+    pub option_key: String,
     pub label: String,
     pub options: Vec<OptionEntry>,
 }
@@ -35,7 +35,7 @@ pub struct OptionGroup {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct OptionEntry {
-    pub key: String,
+    pub option_key: String,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub value: Value,
     #[serde(rename = "type")]
@@ -51,7 +51,7 @@ pub struct OptionEntry {
 impl From<&OptionRow> for OptionEntry {
     fn from(row: &OptionRow) -> Self {
         Self {
-            key: row.key.clone(),
+            option_key: row.option_key.clone(),
             value: parse_value(&row.value),
             type_: row.type_.clone(),
             label: row.label.clone(),
@@ -100,7 +100,7 @@ impl OptionsService {
         cache.clear();
         for row in &rows {
             let entry = OptionEntry::from(row);
-            cache.insert(row.key.clone(), entry);
+            cache.insert(row.option_key.clone(), entry);
         }
 
         tracing::info!("loaded {} option(s) into cache", cache.len());
@@ -149,7 +149,7 @@ impl OptionsService {
                 cache.insert(
                     key.to_string(),
                     OptionEntry {
-                        key: key.to_string(),
+                        option_key: key.to_string(),
                         value,
                         type_: "string".to_string(),
                         label: key.to_string(),
@@ -217,7 +217,7 @@ impl OptionsService {
                     .get(&key)
                     .cloned()
                     .unwrap_or_else(|| key.clone()),
-                key: key.clone(),
+                option_key: key.clone(),
                 options: group_map.remove(&key).unwrap_or_default(),
             })
             .collect();
@@ -231,7 +231,7 @@ impl OptionsService {
         cache
             .values()
             .filter(|e| e.is_public)
-            .map(|e| (e.key.clone(), e.value.clone()))
+            .map(|e| (e.option_key.clone(), e.value.clone()))
             .collect()
     }
 
@@ -263,7 +263,7 @@ impl OptionsService {
             .into_iter()
             .map(|key| OptionGroup {
                 label: key.clone(),
-                key: key.clone(),
+                option_key: key.clone(),
                 options: group_map.remove(&key).unwrap_or_default(),
             })
             .collect()

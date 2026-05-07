@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 
 /// options 表行模型（含完整元数据）
@@ -12,7 +13,7 @@ use crate::errors::app_error::AppResult;
 pub struct OptionRow {
     pub id: String,
     pub tenant_id: Option<String>,
-    pub key: String,
+    pub option_key: String,
     pub value: String,
     #[serde(rename = "type")]
     pub type_: String,
@@ -33,7 +34,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for OptionRow {
         Ok(Self {
             tenant_id: row.try_get("tenant_id").ok(),
             id: row.try_get("id")?,
-            key: row.try_get("key")?,
+            option_key: row.try_get("option_key")?,
             value: row.try_get("value")?,
             type_: row.try_get("type")?,
             group_name: row.try_get("group_name")?,
@@ -54,7 +55,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for OptionRow {
         Ok(Self {
             tenant_id: row.try_get("tenant_id").ok(),
             id: row.try_get("id")?,
-            key: row.try_get("key")?,
+            option_key: row.try_get("option_key")?,
             value: row.try_get("value")?,
             type_: row.try_get("type")?,
             group_name: row.try_get("group_name")?,
@@ -75,7 +76,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> for OptionRow {
         Ok(Self {
             tenant_id: row.try_get("tenant_id").ok(),
             id: row.try_get("id")?,
-            key: row.try_get("key")?,
+            option_key: row.try_get("option_key")?,
             value: row.try_get("value")?,
             type_: row.try_get("type")?,
             group_name: row.try_get("group_name")?,
@@ -106,9 +107,9 @@ pub async fn find_by_key(
     match tenant_id {
         Some(tid) => {
             let sql = format!(
-                "SELECT * FROM options WHERE tenant_id = {} AND key = {}",
-                crate::db::dialect::ph(1),
-                crate::db::dialect::ph(2)
+                "SELECT * FROM options WHERE tenant_id = {} AND option_key = {}",
+                ph(1),
+                ph(2)
             );
             let row = sqlx::query_as::<_, OptionRow>(&sql)
                 .bind(tid)
@@ -119,8 +120,8 @@ pub async fn find_by_key(
         }
         None => {
             let sql = format!(
-                "SELECT * FROM options WHERE key = {}",
-                crate::db::dialect::ph(1)
+                "SELECT * FROM options WHERE option_key = {}",
+                ph(1)
             );
             let row = sqlx::query_as::<_, OptionRow>(&sql)
                 .bind(key)
@@ -139,8 +140,8 @@ pub async fn find_all(
     match tenant_id {
         Some(tid) => {
             let sql = format!(
-                "SELECT * FROM options WHERE tenant_id = {} ORDER BY sort_order, key",
-                crate::db::dialect::ph(1)
+                "SELECT * FROM options WHERE tenant_id = {} ORDER BY sort_order, option_key",
+                ph(1)
             );
             let rows = sqlx::query_as::<_, OptionRow>(&sql)
                 .bind(tid)
@@ -149,7 +150,7 @@ pub async fn find_all(
             Ok(rows)
         }
         None => {
-            let sql = "SELECT * FROM options ORDER BY sort_order, key";
+            let sql = "SELECT * FROM options ORDER BY sort_order, option_key";
             let rows = sqlx::query_as::<_, OptionRow>(sql).fetch_all(pool).await?;
             Ok(rows)
         }
@@ -167,11 +168,11 @@ pub async fn upsert_value(
     match tenant_id {
         Some(tid) => {
             let sql = format!(
-                "UPDATE options SET value = {}, updated_at = {} WHERE tenant_id = {} AND key = {}",
-                crate::db::dialect::ph(1),
-                crate::db::dialect::ph(2),
-                crate::db::dialect::ph(3),
-                crate::db::dialect::ph(4)
+                "UPDATE options SET value = {}, updated_at = {} WHERE tenant_id = {} AND option_key = {}",
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4)
             );
             sqlx::query(&sql)
                 .bind(value)
@@ -183,10 +184,10 @@ pub async fn upsert_value(
         }
         None => {
             let sql = format!(
-                "UPDATE options SET value = {}, updated_at = {} WHERE key = {}",
-                crate::db::dialect::ph(1),
-                crate::db::dialect::ph(2),
-                crate::db::dialect::ph(3)
+                "UPDATE options SET value = {}, updated_at = {} WHERE option_key = {}",
+                ph(1),
+                ph(2),
+                ph(3)
             );
             sqlx::query(&sql)
                 .bind(value)
@@ -208,16 +209,16 @@ pub async fn delete_by_key(
     match tenant_id {
         Some(tid) => {
             let sql = format!(
-                "DELETE FROM options WHERE tenant_id = {} AND key = {}",
-                crate::db::dialect::ph(1),
-                crate::db::dialect::ph(2)
+                "DELETE FROM options WHERE tenant_id = {} AND option_key = {}",
+                ph(1),
+                ph(2)
             );
             sqlx::query(&sql).bind(tid).bind(key).execute(pool).await?;
         }
         None => {
             let sql = format!(
-                "DELETE FROM options WHERE key = {}",
-                crate::db::dialect::ph(1)
+                "DELETE FROM options WHERE option_key = {}",
+                ph(1)
             );
             sqlx::query(&sql).bind(key).execute(pool).await?;
         }

@@ -76,7 +76,7 @@ pub async fn set_option(
 ) -> AppResult<ApiResponse<serde_json::Value>> {
     state.options.set(&key, body.value).await?;
     Ok(ApiResponse::success(serde_json::json!({
-        "key": key,
+        "option_key": key,
         "updated": true,
     })))
 }
@@ -88,7 +88,7 @@ pub async fn delete_option(
 ) -> AppResult<ApiResponse<serde_json::Value>> {
     state.options.delete(&key).await?;
     Ok(ApiResponse::success(serde_json::json!({
-        "key": key,
+        "option_key": key,
         "deleted": true,
     })))
 }

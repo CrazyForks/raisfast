@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
+use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 
 /// 刷新令牌完整数据库行模型
@@ -34,11 +35,11 @@ pub async fn create_token(
     let (id, now) = crate::utils::id::new_id_and_timestamp();
     sqlx::query(&format!(
         "INSERT INTO refresh_tokens (id, user_id, token, expires_at, created_at) VALUES ({}, {}, {}, {}, {})",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2),
-        crate::db::dialect::ph(3),
-        crate::db::dialect::ph(4),
-        crate::db::dialect::ph(5),
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5),
     ))
     .bind(id)
     .bind(user_id)
@@ -56,7 +57,7 @@ pub async fn create_token(
 pub async fn find_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<Option<RefreshToken>> {
     let sql = format!(
         "SELECT * FROM refresh_tokens WHERE token = {}",
-        crate::db::dialect::ph(1)
+        ph(1)
     );
     let row = sqlx::query_as::<_, RefreshToken>(&sql)
         .bind(token)
@@ -71,7 +72,7 @@ pub async fn find_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<Opt
 pub async fn delete_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<()> {
     sqlx::query(&format!(
         "DELETE FROM refresh_tokens WHERE token = {}",
-        crate::db::dialect::ph(1),
+        ph(1),
     ))
     .bind(token)
     .execute(pool)
@@ -85,7 +86,7 @@ pub async fn delete_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<(
 pub async fn delete_by_user(pool: &crate::db::Pool, user_id: &str) -> AppResult<()> {
     sqlx::query(&format!(
         "DELETE FROM refresh_tokens WHERE user_id = {}",
-        crate::db::dialect::ph(1),
+        ph(1),
     ))
     .bind(user_id)
     .execute(pool)

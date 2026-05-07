@@ -7,6 +7,7 @@ use sqlx::FromRow;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
+use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
 
 /// roles 表行模型
@@ -48,7 +49,7 @@ pub async fn list_roles(pool: &crate::db::Pool) -> AppResult<Vec<Role>> {
 pub async fn find_role_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<Role>> {
     let sql = format!(
         "SELECT id, name, description, is_system, created_at, updated_at FROM roles WHERE id = {}",
-        crate::db::dialect::ph(1)
+        ph(1)
     );
     let role = sqlx::query_as::<_, Role>(&sql)
         .bind(id)
@@ -61,7 +62,7 @@ pub async fn find_role_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Opti
 pub async fn find_role_id_by_name(pool: &crate::db::Pool, name: &str) -> AppResult<Option<String>> {
     let sql = format!(
         "SELECT id FROM roles WHERE name = {}",
-        crate::db::dialect::ph(1)
+        ph(1)
     );
     let row = sqlx::query_as::<_, (String,)>(&sql)
         .bind(name)
@@ -80,11 +81,11 @@ pub async fn create_role(
 ) -> AppResult<Role> {
     let sql = format!(
         "INSERT INTO roles (id, name, description, is_system, created_at, updated_at) VALUES ({}, {}, {}, 0, {}, {})",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2),
-        crate::db::dialect::ph(3),
-        crate::db::dialect::ph(4),
-        crate::db::dialect::ph(5)
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5)
     );
     sqlx::query(&sql)
         .bind(id)
@@ -112,20 +113,20 @@ pub async fn update_role(
     let mut sets = Vec::new();
     let mut idx = 1;
     if name.is_some() {
-        sets.push(format!("name = {}", crate::db::dialect::ph(idx)));
+        sets.push(format!("name = {}", ph(idx)));
         idx += 1;
     }
     if description.is_some() {
-        sets.push(format!("description = {}", crate::db::dialect::ph(idx)));
+        sets.push(format!("description = {}", ph(idx)));
         idx += 1;
     }
-    sets.push(format!("updated_at = {}", crate::db::dialect::ph(idx)));
+    sets.push(format!("updated_at = {}", ph(idx)));
     idx += 1;
 
     let sql = format!(
         "UPDATE roles SET {} WHERE id = {}",
         sets.join(", "),
-        crate::db::dialect::ph(idx)
+        ph(idx)
     );
     let mut q = sqlx::query(sql.as_ref());
     if let Some(n) = name {
@@ -144,7 +145,7 @@ pub async fn update_role(
 
 /// 删除角色
 pub async fn delete_role(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
-    let sql = format!("DELETE FROM roles WHERE id = {}", crate::db::dialect::ph(1));
+    let sql = format!("DELETE FROM roles WHERE id = {}", ph(1));
     sqlx::query(&sql).bind(id).execute(pool).await?;
     Ok(())
 }
@@ -156,7 +157,7 @@ pub async fn find_permissions_by_role_id(
 ) -> AppResult<Vec<Permission>> {
     let sql = format!(
         "SELECT id, role_id, action, subject, fields, conditions, created_at FROM permissions WHERE role_id = {} ORDER BY action",
-        crate::db::dialect::ph(1)
+        ph(1)
     );
     let perms = sqlx::query_as::<_, Permission>(&sql)
         .bind(role_id)
@@ -169,7 +170,7 @@ pub async fn find_permissions_by_role_id(
 pub async fn delete_permissions_by_role_id(pool: &crate::db::Pool, role_id: &str) -> AppResult<()> {
     let sql = format!(
         "DELETE FROM permissions WHERE role_id = {}",
-        crate::db::dialect::ph(1)
+        ph(1)
     );
     sqlx::query(&sql).bind(role_id).execute(pool).await?;
     Ok(())
@@ -189,13 +190,13 @@ pub async fn insert_permission(
 ) -> AppResult<()> {
     let sql = format!(
         "INSERT INTO permissions (id, role_id, action, subject, fields, conditions, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2),
-        crate::db::dialect::ph(3),
-        crate::db::dialect::ph(4),
-        crate::db::dialect::ph(5),
-        crate::db::dialect::ph(6),
-        crate::db::dialect::ph(7)
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5),
+        ph(6),
+        ph(7)
     );
     sqlx::query(&sql)
         .bind(id)

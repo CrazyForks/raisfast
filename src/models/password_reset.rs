@@ -6,6 +6,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
+use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::id;
 
@@ -43,11 +44,11 @@ pub async fn create(
 
     let sql = format!(
         "INSERT INTO password_reset_tokens (id, user_id, token, expires_at, created_at) VALUES ({}, {}, {}, {}, {})",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2),
-        crate::db::dialect::ph(3),
-        crate::db::dialect::ph(4),
-        crate::db::dialect::ph(5),
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5),
     );
     sqlx::query(&sql)
         .bind(&id)
@@ -72,7 +73,7 @@ pub async fn find_by_token(
 ) -> AppResult<Option<PasswordResetToken>> {
     let sql = format!(
         "SELECT * FROM password_reset_tokens WHERE token = {} AND used_at IS NULL",
-        crate::db::dialect::ph(1),
+        ph(1),
     );
     let row = sqlx::query_as::<_, PasswordResetToken>(&sql)
         .bind(token)
@@ -86,8 +87,8 @@ pub async fn mark_used(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     let sql = format!(
         "UPDATE password_reset_tokens SET used_at = {} WHERE id = {}",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2),
+        ph(1),
+        ph(2),
     );
     sqlx::query(&sql).bind(now).bind(id).execute(pool).await?;
     Ok(())
@@ -97,7 +98,7 @@ pub async fn mark_used(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
 pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: &str) -> AppResult<()> {
     let sql = format!(
         "DELETE FROM password_reset_tokens WHERE user_id = {} AND used_at IS NULL",
-        crate::db::dialect::ph(1),
+        ph(1),
     );
     sqlx::query(&sql).bind(user_id).execute(pool).await?;
     Ok(())
@@ -108,7 +109,7 @@ pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
     let now = Utc::now().to_rfc3339();
     let sql = format!(
         "DELETE FROM password_reset_tokens WHERE expires_at < {} AND used_at IS NULL",
-        crate::db::dialect::ph(1),
+        ph(1),
     );
     let result = sqlx::query(&sql).bind(now).execute(pool).await?;
     Ok(result.rows_affected())

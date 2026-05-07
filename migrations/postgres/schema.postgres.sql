@@ -45,7 +45,7 @@ CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expir
 -- 站点配置
 CREATE TABLE IF NOT EXISTS options (
     id TEXT PRIMARY KEY,
-    key TEXT NOT NULL,
+    option_key TEXT NOT NULL,
     value TEXT NOT NULL,
     type TEXT NOT NULL DEFAULT 'text',
     group_name TEXT NOT NULL DEFAULT 'general',
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS options (
     autoload BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL,
-    UNIQUE(key)
+    UNIQUE(option_key)
 );
 
 -- RBAC 角色
@@ -145,11 +145,11 @@ CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_enabled ON webhook_subscrip
 -- 插件 KV 存储
 CREATE TABLE IF NOT EXISTS plugin_storage (
     plugin_id TEXT NOT NULL,
-    key TEXT NOT NULL,
+    storage_key TEXT NOT NULL,
     value TEXT NOT NULL,
     expires_at TEXT,
     updated_at TEXT NOT NULL DEFAULT (NOW()),
-    PRIMARY KEY (plugin_id, key)
+    PRIMARY KEY (plugin_id, storage_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_plugin_storage_plugin ON plugin_storage(plugin_id);
@@ -535,7 +535,7 @@ INSERT INTO permissions (id, role_id, action, subject, fields, conditions, creat
 ON CONFLICT DO NOTHING;
 
 -- 站点配置
-INSERT INTO options (id, key, value, type, group_name, label, description, validation, is_public, autoload, sort_order, updated_at) VALUES
+INSERT INTO options (id, option_key, value, type, group_name, label, description, validation, is_public, autoload, sort_order, updated_at) VALUES
     ('opt-site-title', 'site_title', '"My Blog"', 'text', 'general', '站点标题', '显示在浏览器标题栏和页面头部', '{"max_length":100}', TRUE, TRUE, 1, NOW()),
     ('opt-site-desc', 'site_description', '""', 'text', 'general', '站点描述', '简短描述站点用途', '{"max_length":500}', TRUE, TRUE, 2, NOW()),
     ('opt-site-url', 'site_url', '""', 'url', 'general', '站点 URL', '如 https://example.com', NULL, TRUE, TRUE, 3, NOW()),

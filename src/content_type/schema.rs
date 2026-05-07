@@ -435,12 +435,12 @@ impl ContentTypeSchema {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("TOML parse error: {e}")))?;
 
         let mut fields = Vec::new();
-        for (name, value) in &toml.fields {
-            if !crate::db::dialect::is_safe_identifier(name) {
-                return Err(AppError::Internal(anyhow::anyhow!(
-                    "field name '{name}' contains invalid characters (only alphanumeric and underscore allowed)"
-                )));
-            }
+        for (raw_name, value) in &toml.fields {
+            let name = crate::db::dialect::sanitize_identifier(raw_name).ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!(
+                    "field name '{raw_name}' contains invalid characters (only alphanumeric and underscore allowed)"
+                ))
+            })?;
             let field_toml = value.as_table().ok_or_else(|| {
                 AppError::Internal(anyhow::anyhow!("field '{name}' must be a table"))
             })?;
@@ -493,7 +493,7 @@ impl ContentTypeSchema {
             let default = field_toml.get("default").map(toml_value_to_json);
 
             fields.push(FieldSchema {
-                name: name.clone(),
+                name: name.to_string(),
                 field_type,
                 required: field_toml
                     .get("required")
@@ -548,9 +548,9 @@ impl ContentTypeSchema {
         }
 
         Ok(ContentTypeSchema {
-            name: toml.content_type.name,
-            singular: toml.content_type.singular,
-            plural: toml.content_type.plural,
+            name: toml.content_type.name.trim().to_string(),
+            singular: toml.content_type.singular.trim().to_string(),
+            plural: toml.content_type.plural.trim().to_string(),
             table: Self::validate_table_name(&toml.content_type.table)?,
             description: toml.content_type.description,
             kind: toml.content_type.kind,
@@ -645,6 +645,7 @@ impl ContentTypeSchema {
 
     /// 校验表名只含安全字符，防止 SQL 注入。
     fn validate_table_name(name: &str) -> Result<String, AppError> {
+        let name = name.trim();
         if name.is_empty() {
             return Err(AppError::Internal(anyhow::anyhow!(
                 "table name must not be empty"
@@ -658,14 +659,16 @@ impl ContentTypeSchema {
         Ok(name.to_string())
     }
 
-    fn validate_indexes(indexes: Vec<IndexDef>) -> Result<Vec<IndexDef>, AppError> {
-        for idx in &indexes {
-            for field in &idx.fields {
-                if !crate::db::dialect::is_safe_identifier(field) {
-                    return Err(AppError::Internal(anyhow::anyhow!(
-                        "index field '{field}' contains invalid characters"
-                    )));
-                }
+    fn validate_indexes(mut indexes: Vec<IndexDef>) -> Result<Vec<IndexDef>, AppError> {
+        for idx in &mut indexes {
+            for field in &mut idx.fields {
+                *field = crate::db::dialect::sanitize_identifier(field)
+                    .ok_or_else(|| {
+                        AppError::Internal(anyhow::anyhow!(
+                            "index field '{field}' contains invalid characters"
+                        ))
+                    })?
+                    .to_string();
             }
         }
         Ok(indexes)
@@ -997,38 +1000,38 @@ fn parse_relation_config(table: &toml::Table) -> Result<RelationConfig, AppError
         }
     };
 
-    let target = table.get("target").and_then(|v| v.as_str()).unwrap_or("");
-    if !target.is_empty() && !crate::db::dialect::is_safe_identifier(target) {
-        return Err(AppError::Internal(anyhow::anyhow!(
-            "relation target '{target}' contains invalid characters"
-        )));
+    let raw_target = table.get("target").and_then(|v| v.as_str()).unwrap_or("");
+    let target = crate::db::dialect::sanitize_identifier(raw_target)
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!(
+            "relation target '{raw_target}' contains invalid characters"
+        )))?;
+    if let Some(raw_fk) = table.get("foreign_key").and_then(|v| v.as_str()) {
+        let fk = crate::db::dialect::sanitize_identifier(raw_fk)
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!(
+                "relation foreign_key '{raw_fk}' contains invalid characters"
+            )))?;
+        // validated — store trimmed
+        let _ = fk;
     }
-    if let Some(fk) = table.get("foreign_key").and_then(|v| v.as_str())
-        && !crate::db::dialect::is_safe_identifier(fk)
-    {
-        return Err(AppError::Internal(anyhow::anyhow!(
-            "relation foreign_key '{fk}' contains invalid characters"
-        )));
-    }
-    if let Some(through) = table.get("through").and_then(|v| v.as_str())
-        && !crate::db::dialect::is_safe_identifier(through)
-    {
-        return Err(AppError::Internal(anyhow::anyhow!(
-            "relation through '{through}' contains invalid characters"
-        )));
+    if let Some(raw_through) = table.get("through").and_then(|v| v.as_str()) {
+        let through = crate::db::dialect::sanitize_identifier(raw_through)
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!(
+                "relation through '{raw_through}' contains invalid characters"
+            )))?;
+        let _ = through;
     }
 
     Ok(RelationConfig {
         relation_type,
-        target: target.into(),
+        target: target.to_string(),
         through: table
             .get("through")
             .and_then(|v| v.as_str())
-            .map(String::from),
+            .map(|s| s.trim().to_string()),
         foreign_key: table
             .get("foreign_key")
             .and_then(|v| v.as_str())
-            .map(String::from),
+            .map(|s| s.trim().to_string()),
     })
 }
 

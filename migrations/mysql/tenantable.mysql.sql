@@ -31,7 +31,7 @@ CREATE INDEX idx_categories_tenant ON categories(tenant_id);
 CREATE INDEX idx_tags_tenant ON tags(tenant_id);
 CREATE INDEX idx_comments_tenant ON comments(tenant_id);
 CREATE INDEX idx_media_tenant ON media(tenant_id);
-CREATE INDEX idx_options_tenant_key ON options(tenant_id, `key`);
+CREATE INDEX idx_options_tenant_option_key ON options(tenant_id, `option_key`);
 CREATE INDEX idx_pages_tenant_slug ON pages(tenant_id, slug);
 CREATE INDEX idx_pages_tenant_status ON pages(tenant_id, status);
 CREATE INDEX idx_reusable_blocks_tenant ON reusable_blocks(tenant_id);

@@ -9,6 +9,7 @@ use sqlx::FromRow;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
+use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
 
 /// 内容版本历史完整数据库行模型
@@ -63,13 +64,13 @@ pub async fn create_revision(
 
     let sql = format!(
         "INSERT INTO content_revisions (id, content_type, record_id, revision_number, snapshot, created_by, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2),
-        crate::db::dialect::ph(3),
-        crate::db::dialect::ph(4),
-        crate::db::dialect::ph(5),
-        crate::db::dialect::ph(6),
-        crate::db::dialect::ph(7),
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5),
+        ph(6),
+        ph(7),
     );
     sqlx::query(&sql)
         .bind(&id)
@@ -84,7 +85,7 @@ pub async fn create_revision(
 
     let sql = format!(
         "SELECT * FROM content_revisions WHERE id = {}",
-        crate::db::dialect::ph(1)
+        ph(1)
     );
     let row = sqlx::query_as::<_, ContentRevision>(&sql)
         .bind(&id)
@@ -101,8 +102,8 @@ async fn next_revision_number(
 ) -> AppResult<i64> {
     let sql = format!(
         "SELECT COALESCE(MAX(revision_number), 0) FROM content_revisions WHERE content_type = {} AND record_id = {}",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2),
+        ph(1),
+        ph(2),
     );
     let max: i64 = sqlx::query_scalar(&sql)
         .bind(content_type)
@@ -121,8 +122,8 @@ pub async fn list_revisions(
 ) -> AppResult<Vec<RevisionSummary>> {
     let sql = format!(
         "SELECT id, revision_number, created_by, created_at FROM content_revisions WHERE content_type = {} AND record_id = {} ORDER BY revision_number DESC",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2),
+        ph(1),
+        ph(2),
     );
     let rows = sqlx::query_as::<_, RevisionSummaryRow>(&sql)
         .bind(content_type)
@@ -150,9 +151,9 @@ pub async fn get_revision(
 ) -> AppResult<Option<ContentRevision>> {
     let sql = format!(
         "SELECT * FROM content_revisions WHERE id = {} AND content_type = {} AND record_id = {}",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2),
-        crate::db::dialect::ph(3),
+        ph(1),
+        ph(2),
+        ph(3),
     );
     let row = sqlx::query_as::<_, ContentRevision>(&sql)
         .bind(revision_id)
@@ -215,8 +216,8 @@ pub async fn delete_revisions(
 ) -> AppResult<u64> {
     let sql = format!(
         "DELETE FROM content_revisions WHERE content_type = {} AND record_id = {}",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2),
+        ph(1),
+        ph(2),
     );
     let result = sqlx::query(&sql)
         .bind(content_type)
