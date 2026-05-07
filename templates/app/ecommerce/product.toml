@@ -1,0 +1,94 @@
+[content_type]
+name = "Product"
+singular = "product"
+plural = "products"
+table = "products"
+description = "商品"
+slug_field = "name"
+implements = [
+  "ownable",
+  "timestampable",
+  "soft_deletable",
+  "metaable",
+  "tenantable",
+  { name = "sortable", field = "created_at", direction = "desc" },
+  { name = "statusable", values = "draft,published,archived", default = "draft" },
+]
+
+[fields.name]
+type = "text"
+required = true
+max_length = 200
+label = "商品名称"
+
+[fields.slug]
+type = "uid"
+target_field = "name"
+unique = true
+
+[fields.description]
+type = "richtext"
+label = "商品描述"
+
+[fields.price]
+type = "decimal"
+required = true
+min = 0
+label = "价格"
+
+[fields.stock]
+type = "integer"
+required = true
+min = 0
+default = 0
+label = "库存"
+
+[fields.sku]
+type = "text"
+unique = true
+max_length = 50
+label = "SKU"
+
+[fields.images]
+type = "media"
+accept = ["image/*"]
+max_count = 10
+label = "商品图片"
+
+[fields.category]
+type = "relation"
+relation_type = "many_to_one"
+target = "product_categories"
+foreign_key = "category_id"
+label = "分类"
+
+[fields.featured]
+type = "boolean"
+default = false
+label = "推荐商品"
+
+[[indexes]]
+fields = ["slug"]
+unique = true
+
+[[indexes]]
+fields = ["status", "created_at"]
+
+[api.list]
+access = "public"
+cache = true
+filter = 'status = "published"'
+
+[api.get]
+access = "public"
+cache = true
+filter = 'status = "published"'
+
+[api.create]
+access = "admin"
+
+[api.update]
+access = "admin"
+
+[api.delete]
+access = "admin"

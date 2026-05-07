@@ -1,0 +1,80 @@
+[content_type]
+name = "Article"
+singular = "article"
+plural = "articles"
+table = "articles"
+description = "博客文章"
+slug_field = "title"
+implements = [
+  "ownable",
+  "timestampable",
+  "soft_deletable",
+  "versionable",
+  "lockable",
+  { name = "sortable", field = "created_at", direction = "desc" },
+  { name = "statusable", values = "draft,published,archived", default = "draft" },
+  "tenantable",
+]
+
+[fields.title]
+type = "text"
+required = true
+max_length = 200
+label = "标题"
+
+[fields.slug]
+type = "uid"
+target_field = "title"
+unique = true
+
+[fields.content]
+type = "richtext"
+required = true
+label = "内容"
+
+[fields.excerpt]
+type = "text"
+max_length = 500
+label = "摘要"
+
+[fields.featured_image]
+type = "media"
+accept = ["image/*"]
+label = "封面图"
+
+[fields.category]
+type = "relation"
+relation_type = "many_to_one"
+target = "categories"
+foreign_key = "category_id"
+label = "分类"
+
+[fields.tags]
+type = "relation"
+relation_type = "many_to_many"
+target = "tags"
+through = "articles_tags"
+
+[[indexes]]
+fields = ["slug"]
+unique = true
+
+[api.list]
+access = "public"
+cache = true
+filter = 'status = "published"'
+
+[api.get]
+access = "public"
+cache = true
+filter = 'status = "published"'
+
+[api.create]
+access = "member"
+
+[api.update]
+access = "member"
+filter = 'created_by = @request.auth.id'
+
+[api.delete]
+access = "admin"

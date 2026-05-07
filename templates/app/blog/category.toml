@@ -1,0 +1,43 @@
+[content_type]
+name = "Category"
+singular = "category"
+plural = "categories"
+table = "categories"
+description = "文章分类"
+implements = ["ownable", "timestampable", "tenantable"]
+
+[fields.name]
+type = "text"
+required = true
+max_length = 100
+unique = true
+label = "分类名称"
+
+[fields.slug]
+type = "uid"
+target_field = "name"
+unique = true
+
+[fields.description]
+type = "text"
+max_length = 500
+label = "描述"
+
+[[indexes]]
+fields = ["slug"]
+unique = true
+
+[api.list]
+access = "public"
+
+[api.get]
+access = "public"
+
+[api.create]
+access = "admin"
+
+[api.update]
+access = "admin"
+
+[api.delete]
+access = "admin"

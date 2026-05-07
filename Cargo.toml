@@ -3,6 +3,9 @@ name = "raisfast"
 version = "0.1.0"
 edition = "2024"
 default-run = "raisfast"
+repository = "https://github.com/snkzhong/raisfast"
+description = "A high-performance Headless CMS and API engine built with Rust + Axum + SQLite"
+homepage = "https://github.com/snkzhong/raisfast"
 
 [features]
 default = ["db-sqlite", "search-tantivy", "plugin-js", "plugin-lua", "openapi"]
@@ -38,6 +41,11 @@ tauri = ["dep:tauri"]
 
 [profile.dev]
 debug = 1  # 默认是 2（最大），设为 1 或 false 可大幅减小体积
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
 
 [dependencies]
 # Web framework
@@ -159,3 +167,8 @@ tempfile = "3"
 name = "export-types"
 path = "src/bin/export-types.rs"
 required-features = ["export-types"]
+
+[[bin]]
+name = "tauri-app"
+path = "src/bin/tauri-app.rs"
+required-features = ["tauri"]

@@ -38,7 +38,7 @@ pub fn create_new(config: &AppConfig, id: &str, runtime: &str) -> anyhow::Result
     let mut tera = tera::Tera::default();
     tera.add_raw_template(
         "plugin_manifest.toml",
-        include_str!("templates/plugin_manifest.toml"),
+        include_str!("../../templates/plugin/plugin_manifest.toml"),
     )?;
 
     let manifest = tera.render("plugin_manifest.toml", &ctx)?;
@@ -46,10 +46,16 @@ pub fn create_new(config: &AppConfig, id: &str, runtime: &str) -> anyhow::Result
 
     match runtime {
         "lua" => {
-            std::fs::write(plugin_dir.join("init.lua"), "Plugin = {}\n")?;
+            std::fs::write(
+                plugin_dir.join("init.lua"),
+                include_str!("../../templates/plugin/plugin_init.lua"),
+            )?;
         }
         "js" => {
-            std::fs::write(plugin_dir.join("main.js"), "var Plugin = {};\n")?;
+            std::fs::write(
+                plugin_dir.join("main.js"),
+                include_str!("../../templates/plugin/plugin_main.js"),
+            )?;
         }
         _ => {}
     }

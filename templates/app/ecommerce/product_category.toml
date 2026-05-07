@@ -1,0 +1,37 @@
+[content_type]
+name = "Product Category"
+singular = "product_category"
+plural = "product_categories"
+table = "product_categories"
+description = "商品分类"
+implements = ["ownable", "timestampable", "nestable", "tenantable"]
+
+[fields.name]
+type = "text"
+required = true
+max_length = 100
+unique = true
+label = "分类名称"
+
+[fields.description]
+type = "text"
+max_length = 500
+
+[fields.icon]
+type = "media"
+accept = ["image/*"]
+
+[api.list]
+access = "public"
+
+[api.get]
+access = "public"
+
+[api.create]
+access = "admin"
+
+[api.update]
+access = "admin"
+
+[api.delete]
+access = "admin"

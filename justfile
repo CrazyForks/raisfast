@@ -6,7 +6,7 @@
 set dotenv-load
 
 db        := "sqlite"
-db_url    := "sqlite:./data/blog.db"
+db_url    := "sqlite:./data/raisfast.db"
 plugin_type := "all"
 
 # ── 默认 ──────────────────────────────────────────────────────────
@@ -80,7 +80,7 @@ db-backup:
 
 # 生成 sqlx 离线查询元数据
 db-prepare:
-    DATABASE_URL={{db_url}} cargo sqlx prepare --features "{{features}}"
+    DATABASE_URL={{db_url}} cargo sqlx prepare -- --features "{{features}}"
 
 # 验证离线编译（不依赖 DATABASE_URL）
 check-offline:

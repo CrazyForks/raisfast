@@ -1,0 +1,51 @@
+[content_type]
+name = "Order"
+singular = "order"
+plural = "orders"
+table = "orders"
+description = "订单"
+implements = [
+  "ownable",
+  "timestampable",
+  "lockable",
+  "tenantable",
+  { name = "statusable", values = "pending=1,paid=10,shipped=20,completed=30,cancelled=99", default = "1", mode = "numeric" },
+]
+
+[fields.product_id]
+type = "relation"
+relation_type = "many_to_one"
+target = "products"
+foreign_key = "product_id"
+required = true
+
+[fields.quantity]
+type = "integer"
+required = true
+min = 1
+default = 1
+
+[fields.total_price]
+type = "decimal"
+required = true
+min = 0
+
+[fields.shipping_address]
+type = "json"
+
+[api.list]
+access = "member"
+filter = 'created_by = @request.auth.id'
+
+[api.get]
+access = "member"
+filter = 'created_by = @request.auth.id'
+
+[api.create]
+access = "member"
+
+[api.update]
+access = "admin"
+
+[api.delete]
+access = "admin"

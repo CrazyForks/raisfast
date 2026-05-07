@@ -1,0 +1,26 @@
+# Database
+data/*.db
+data/*.db-journal
+data/*.db-wal
+
+# Logs
+logs/*.log
+
+# Uploads
+public/uploads/*
+
+# Environment
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Backup
+backups/

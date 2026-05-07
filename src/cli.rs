@@ -2,6 +2,7 @@
 //!
 //! 使用 clap derive 定义命令行结构，将每个子命令分发到对应模块执行。
 
+mod app_cmd;
 mod ct_cmd;
 mod db_cmd;
 mod plugin_cmd;
@@ -20,6 +21,11 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Create a new project from template
+    App {
+        #[command(subcommand)]
+        action: AppAction,
+    },
     /// Server management
     Server {
         #[command(subcommand)]
@@ -39,6 +45,18 @@ enum Commands {
     Plugin {
         #[command(subcommand)]
         action: PluginAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum AppAction {
+    /// Create a new project directory with template files
+    New {
+        /// Project name (used as directory name)
+        name: String,
+        /// Template: blank, blog, ecommerce
+        #[arg(short, long, default_value = "blank")]
+        template: String,
     },
 }
 
@@ -169,6 +187,12 @@ pub fn print_banner(config: &AppConfig) {
 
 pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
     match cli.command {
+        Some(Commands::App {
+            action: AppAction::New { name, template },
+        }) => {
+            app_cmd::create_new(&name, &template)?;
+        }
+
         None
         | Some(Commands::Server {
             action: ServerAction::Start,
