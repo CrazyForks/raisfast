@@ -26,6 +26,12 @@ check *FLAGS:
 build *FLAGS:
     DATABASE_URL={{db_url}} cargo build --release --features "{{features}}" {{FLAGS}}
 
+# 编译发布版本（含 Admin UI）
+build-full *FLAGS:
+    cd frontend && pnpm install --frozen-lockfile
+    cd frontend/admin && pnpm build
+    DATABASE_URL={{db_url}} cargo build --release --features "{{features}}" {{FLAGS}}
+
 # ── 代码质量 ──────────────────────────────────────────────────────
 
 # 格式化

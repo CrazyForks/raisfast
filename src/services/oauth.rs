@@ -252,7 +252,9 @@ async fn create_login_response_for_user(
     let access_token = crate::services::auth::generate_access_token_internal(
         &user.id,
         &user.role,
-        &user.tenant_id,
+        user.tenant_id
+            .as_deref()
+            .unwrap_or(crate::constants::DEFAULT_TENANT),
         jwt_secret,
         jwt_access_expires,
     )?;

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::AppState;
+use crate::admin_spa;
 use crate::cache::MemoryCache;
 use crate::config::app::AppConfig;
 use crate::constants::DEFAULT_TENANT;
@@ -1079,6 +1080,10 @@ async fn build_app(
         .nest(crate::constants::API_PREFIX, api_v1)
         .nest_service("/uploads", ServeDir::new(&upload_dir))
         .nest_service("/static", ServeDir::new(&static_dir))
+        .nest(
+            "/admin",
+            axum::Router::new().fallback(admin_spa::serve_admin),
+        )
         .fallback(handle_plugin_route)
         .layer(Extension(limiters))
         .layer(from_fn(locale_middleware))
@@ -1613,7 +1618,7 @@ pub fn spawn_webhook_subscriber(
                         }
                     };
 
-                    let subs = match webhook_service.find_enabled(DEFAULT_TENANT).await {
+                    let subs = match webhook_service.find_enabled(Some(DEFAULT_TENANT)).await {
                         Ok(s) => s,
                         Err(e) => {
                             tracing::warn!("webhook find_enabled error: {e}");

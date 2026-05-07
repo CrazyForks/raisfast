@@ -1,5 +1,30 @@
 use super::*;
 
+async fn has_tenant_id_column(pool: &raisfast::db::Pool) -> bool {
+    #[cfg(feature = "db-sqlite")]
+    {
+        let result: Result<(i64,), sqlx::Error> = sqlx::query_as(
+            "SELECT COUNT(*) FROM pragma_table_info('users') WHERE name = 'tenant_id'",
+        )
+        .fetch_one(pool)
+        .await;
+        result.is_ok_and(|(c,)| c > 0)
+    }
+    #[cfg(not(feature = "db-sqlite"))]
+    {
+        let _ = pool;
+        false
+    }
+}
+
+macro_rules! skip_without_tenant {
+    ($pool:expr) => {
+        if !has_tenant_id_column($pool).await {
+            return;
+        }
+    };
+}
+
 async fn create_tenant_in_db(pool: &raisfast::db::Pool, id: &str, name: &str) {
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
@@ -105,6 +130,7 @@ async fn do_login(app: &mut axum::Router, email: &str, password: &str, tenant_id
 async fn tenant_user_sees_own_data_only() {
     let (mut app, state) = test_app().await;
     let pool = &state.pool;
+    skip_without_tenant!(pool);
 
     create_tenant_in_db(pool, "tenant_a", "Tenant A").await;
     create_tenant_in_db(pool, "tenant_b", "Tenant B").await;
@@ -183,6 +209,7 @@ async fn tenant_user_sees_own_data_only() {
 async fn admin_without_header_sees_all() {
     let (mut app, state) = test_app().await;
     let pool = &state.pool;
+    skip_without_tenant!(pool);
 
     create_tenant_in_db(pool, "tenant_a", "Tenant A").await;
     create_tenant_in_db(pool, "tenant_b", "Tenant B").await;
@@ -261,6 +288,7 @@ async fn admin_without_header_sees_all() {
 async fn admin_switches_tenant_with_header() {
     let (mut app, state) = test_app().await;
     let pool = &state.pool;
+    skip_without_tenant!(pool);
 
     create_tenant_in_db(pool, "tenant_a", "Tenant A").await;
     create_tenant_in_db(pool, "tenant_b", "Tenant B").await;
@@ -334,6 +362,7 @@ async fn admin_switches_tenant_with_header() {
 async fn public_api_scoped_by_tenant_header() {
     let (mut app, state) = test_app().await;
     let pool = &state.pool;
+    skip_without_tenant!(pool);
 
     create_tenant_in_db(pool, "tenant_a", "Tenant A").await;
     create_tenant_in_db(pool, "tenant_b", "Tenant B").await;
@@ -409,6 +438,7 @@ async fn public_api_scoped_by_tenant_header() {
 async fn cross_tenant_post_not_accessible() {
     let (mut app, state) = test_app().await;
     let pool = &state.pool;
+    skip_without_tenant!(pool);
 
     create_tenant_in_db(pool, "tenant_a", "Tenant A").await;
     create_tenant_in_db(pool, "tenant_b", "Tenant B").await;

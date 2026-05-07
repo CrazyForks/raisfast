@@ -12,18 +12,18 @@ use sqlx::FromRow;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::db::tenant::{resolve_tenant, tenant_filter, tenant_filter_aliased};
+use crate::db::tenant::{tenant_filter, tenant_filter_aliased};
 use crate::errors::app_error::{AppError, AppResult};
 
 /// 文章完整数据库行模型
 ///
 /// 直接映射 `posts` 表的所有字段。
 /// 首次发布时自动填充 `published_at`；`status` 可取 `draft`、`published` 等。
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
 pub struct Post {
     pub id: String,
-    pub tenant_id: String,
+    pub tenant_id: Option<String>,
     pub title: String,
     pub slug: String,
     pub content: String,
@@ -39,6 +39,11 @@ pub struct Post {
     pub updated_at: String,
     pub published_at: Option<String>,
 }
+
+crate::impl_from_row_opt_tenant!(Post {
+    required { id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, created_at, updated_at }
+    optional { excerpt, cover_image, category_id, published_at }
+});
 
 /// 标签摘要
 ///
@@ -122,32 +127,55 @@ pub async fn create_tx(
     } else {
         None
     };
-    let tid = resolve_tenant(tenant_id);
-
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO posts (id, tenant_id, title, slug, content, excerpt, cover_image, status, created_by, updated_by, category_id, published_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    );
-    sqlx::query(&sql)
-        .bind(&id)
-        .bind(tid)
-        .bind(&cmd.title)
-        .bind(&cmd.slug)
-        .bind(&cmd.content)
-        .bind(&cmd.excerpt)
-        .bind(&cmd.cover_image)
-        .bind(&cmd.status)
-        .bind(&cmd.created_by)
-        .bind(&cmd.updated_by)
-        .bind(&cmd.category_id)
-        .bind(&published_at)
-        .bind(&now)
-        .bind(&now)
-        .execute(&mut **tx)
-        .await?;
+    match tenant_id {
+        Some(tid) => {
+            let sql = crate::db::dialect::translate(
+                "INSERT INTO posts (id, tenant_id, title, slug, content, excerpt, cover_image, status, created_by, updated_by, category_id, published_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            );
+            sqlx::query(&sql)
+                .bind(&id)
+                .bind(tid)
+                .bind(&cmd.title)
+                .bind(&cmd.slug)
+                .bind(&cmd.content)
+                .bind(&cmd.excerpt)
+                .bind(&cmd.cover_image)
+                .bind(&cmd.status)
+                .bind(&cmd.created_by)
+                .bind(&cmd.updated_by)
+                .bind(&cmd.category_id)
+                .bind(&published_at)
+                .bind(&now)
+                .bind(&now)
+                .execute(&mut **tx)
+                .await?;
+        }
+        None => {
+            let sql = crate::db::dialect::translate(
+                "INSERT INTO posts (id, title, slug, content, excerpt, cover_image, status, created_by, updated_by, category_id, published_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            );
+            sqlx::query(&sql)
+                .bind(&id)
+                .bind(&cmd.title)
+                .bind(&cmd.slug)
+                .bind(&cmd.content)
+                .bind(&cmd.excerpt)
+                .bind(&cmd.cover_image)
+                .bind(&cmd.status)
+                .bind(&cmd.created_by)
+                .bind(&cmd.updated_by)
+                .bind(&cmd.category_id)
+                .bind(&published_at)
+                .bind(&now)
+                .bind(&now)
+                .execute(&mut **tx)
+                .await?;
+        }
+    }
 
     Ok(Post {
         id,
-        tenant_id: tid.to_string(),
+        tenant_id: tenant_id.map(|t| t.to_string()),
         title: cmd.title.clone(),
         slug: cmd.slug.clone(),
         content: cmd.content.clone(),
@@ -697,7 +725,7 @@ mod tests {
                 category_id: None,
                 tag_ids: None,
             },
-            Some(crate::constants::DEFAULT_TENANT),
+            None,
         )
         .await
         .unwrap()
@@ -706,7 +734,7 @@ mod tests {
     #[tokio::test]
     async fn find_joined_by_ids_empty() {
         let pool = setup_pool().await;
-        let result = find_joined_by_ids(&pool, &[], Some(crate::constants::DEFAULT_TENANT))
+        let result = find_joined_by_ids(&pool, &[], None)
             .await
             .unwrap();
         assert!(result.is_empty());
@@ -720,7 +748,7 @@ mod tests {
         let result = find_joined_by_ids(
             &pool,
             &[p.id.clone()],
-            Some(crate::constants::DEFAULT_TENANT),
+            None,
         )
         .await
         .unwrap();
@@ -740,7 +768,7 @@ mod tests {
         let result = find_joined_by_ids(
             &pool,
             &[p1.id.clone(), p3.id.clone()],
-            Some(crate::constants::DEFAULT_TENANT),
+            None,
         )
         .await
         .unwrap();
@@ -759,7 +787,7 @@ mod tests {
         let result = find_joined_by_ids(
             &pool,
             &[p.id.clone()],
-            Some(crate::constants::DEFAULT_TENANT),
+            None,
         )
         .await
         .unwrap();
@@ -772,7 +800,7 @@ mod tests {
         let result = find_joined_by_ids(
             &pool,
             &["nonexistent-id".to_string()],
-            Some(crate::constants::DEFAULT_TENANT),
+            None,
         )
         .await
         .unwrap();
@@ -788,7 +816,7 @@ mod tests {
         let result = find_joined_by_ids(
             &pool,
             &[pub_post.id.clone(), draft_post.id.clone()],
-            Some(crate::constants::DEFAULT_TENANT),
+            None,
         )
         .await
         .unwrap();
@@ -820,14 +848,14 @@ mod tests {
                 category_id: Some(cat_id),
                 tag_ids: None,
             },
-            Some(crate::constants::DEFAULT_TENANT),
+            None,
         )
         .await
         .unwrap();
         let result = find_joined_by_ids(
             &pool,
             &[p.id.clone()],
-            Some(crate::constants::DEFAULT_TENANT),
+            None,
         )
         .await
         .unwrap();
@@ -838,7 +866,7 @@ mod tests {
     #[tokio::test]
     async fn count_published_by_ids_empty() {
         let pool = setup_pool().await;
-        let count = count_published_by_ids(&pool, &[], Some(crate::constants::DEFAULT_TENANT))
+        let count = count_published_by_ids(&pool, &[], None)
             .await
             .unwrap();
         assert_eq!(count, 0);
@@ -849,7 +877,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
         let p = create_test_post(&pool, &uid, "published", "计数文章").await;
-        let count = count_published_by_ids(&pool, &[p.id], Some(crate::constants::DEFAULT_TENANT))
+        let count = count_published_by_ids(&pool, &[p.id], None)
             .await
             .unwrap();
         assert_eq!(count, 1);
@@ -860,7 +888,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
         let p = create_test_post(&pool, &uid, "draft", "草稿").await;
-        let count = count_published_by_ids(&pool, &[p.id], Some(crate::constants::DEFAULT_TENANT))
+        let count = count_published_by_ids(&pool, &[p.id], None)
             .await
             .unwrap();
         assert_eq!(count, 0);
@@ -876,7 +904,7 @@ mod tests {
         let count = count_published_by_ids(
             &pool,
             &[p1.id, p2.id, p3.id],
-            Some(crate::constants::DEFAULT_TENANT),
+            None,
         )
         .await
         .unwrap();
@@ -889,7 +917,7 @@ mod tests {
         let count = count_published_by_ids(
             &pool,
             &["fake-id".to_string()],
-            Some(crate::constants::DEFAULT_TENANT),
+            None,
         )
         .await
         .unwrap();
@@ -898,10 +926,10 @@ mod tests {
 }
 
 /// JOIN 查询中间行类型（含作者名和分类名）
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PostJoinedRow {
     pub id: String,
-    pub tenant_id: String,
+    pub tenant_id: Option<String>,
     pub title: String,
     pub slug: String,
     pub content: String,
@@ -920,8 +948,13 @@ pub struct PostJoinedRow {
     pub category_name: Option<String>,
 }
 
+crate::impl_from_row_opt_tenant!(PostJoinedRow {
+    required { id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, created_at, updated_at }
+    optional { excerpt, cover_image, category_id, published_at, author_name, category_name }
+});
+
 const JOIN_SQL: &str = "\
-    SELECT p.id, p.tenant_id, p.title, p.slug, p.content, p.excerpt, p.cover_image, p.status, \
+    SELECT p.id, p.title, p.slug, p.content, p.excerpt, p.cover_image, p.status, \
     p.created_by, p.updated_by, p.category_id, p.view_count, p.is_pinned, p.created_at, p.updated_at, \
     p.published_at, u.username AS author_name, c.name AS category_name \
     FROM posts p \

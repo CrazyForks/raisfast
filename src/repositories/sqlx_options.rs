@@ -17,12 +17,12 @@ impl OptionsRepository for SqlxOptionsRepository {
     async fn find_by_key(
         &self,
         key: &str,
-        tenant_id: &str,
+        tenant_id: Option<&str>,
     ) -> AppResult<Option<crate::models::options::OptionRow>> {
         options::find_by_key(&self.pool, key, tenant_id).await
     }
 
-    async fn find_all(&self, tenant_id: &str) -> AppResult<Vec<crate::models::options::OptionRow>> {
+    async fn find_all(&self, tenant_id: Option<&str>) -> AppResult<Vec<crate::models::options::OptionRow>> {
         options::find_all(&self.pool, tenant_id).await
     }
 
@@ -30,13 +30,13 @@ impl OptionsRepository for SqlxOptionsRepository {
         &self,
         key: &str,
         value: &str,
-        tenant_id: &str,
+        tenant_id: Option<&str>,
         updated_at: &str,
     ) -> AppResult<()> {
         options::upsert_value(&self.pool, key, value, tenant_id, updated_at).await
     }
 
-    async fn delete_by_key(&self, key: &str, tenant_id: &str) -> AppResult<()> {
+    async fn delete_by_key(&self, key: &str, tenant_id: Option<&str>) -> AppResult<()> {
         options::delete_by_key(&self.pool, key, tenant_id).await
     }
 }

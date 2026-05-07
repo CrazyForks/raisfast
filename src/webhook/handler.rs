@@ -54,14 +54,11 @@ pub async fn create(
             "events must not be empty".into(),
         ));
     }
-    let tenant_id = auth
-        .tenant_id()
-        .unwrap_or(crate::constants::DEFAULT_TENANT)
-        .to_string();
+    let tenant_id = auth.tenant_id();
     let sub = state
         .webhook
         .create(
-            &tenant_id,
+            tenant_id,
             req.url,
             req.events,
             req.description,

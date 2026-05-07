@@ -354,23 +354,23 @@ pub trait OptionsRepository: Send + Sync {
     async fn find_by_key(
         &self,
         key: &str,
-        tenant_id: &str,
+        tenant_id: Option<&str>,
     ) -> AppResult<Option<crate::models::options::OptionRow>>;
 
     /// 查询所有配置（含元数据）
-    async fn find_all(&self, tenant_id: &str) -> AppResult<Vec<crate::models::options::OptionRow>>;
+    async fn find_all(&self, tenant_id: Option<&str>) -> AppResult<Vec<crate::models::options::OptionRow>>;
 
     /// 更新配置值
     async fn upsert_value(
         &self,
         key: &str,
         value: &str,
-        tenant_id: &str,
+        tenant_id: Option<&str>,
         updated_at: &str,
     ) -> AppResult<()>;
 
     /// 根据 key 删除配置
-    async fn delete_by_key(&self, key: &str, tenant_id: &str) -> AppResult<()>;
+    async fn delete_by_key(&self, key: &str, tenant_id: Option<&str>) -> AppResult<()>;
 }
 
 /// RBAC Repository 接口

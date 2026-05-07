@@ -10,3 +10,8 @@ uploads/
 
 node_modules
 *.pid
+
+# Admin UI 源码不公开，只提交编译产物
+frontend/admin/src/
+frontend/admin/node_modules/
+frontend/admin/.vite/

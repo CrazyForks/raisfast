@@ -4,27 +4,31 @@
 //! 标签通过 `posts_tags` 关联表与文章建立多对多关系。
 
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::db::tenant::{resolve_tenant, tenant_filter};
+use crate::db::tenant::tenant_filter;
 use crate::errors::app_error::{AppError, AppResult};
 
 /// 标签完整数据库行模型
 ///
 /// 直接映射 `tags` 表的所有字段。
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Tag {
     pub id: String,
-    pub tenant_id: String,
+    pub tenant_id: Option<String>,
     pub name: String,
     pub slug: String,
     pub updated_by: Option<String>,
     pub updated_at: Option<String>,
     pub created_at: String,
 }
+
+crate::impl_from_row_opt_tenant!(Tag {
+    required { id, name, slug, created_at }
+    optional { updated_by, updated_at }
+});
 
 /// 查询所有标签
 ///
@@ -111,23 +115,40 @@ pub async fn create(
     created_by: Option<&str>,
 ) -> AppResult<Tag> {
     let (id, now) = crate::utils::id::new_id_and_timestamp();
-    let tid = resolve_tenant(tenant_id);
 
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO tags (id, tenant_id, name, slug, created_by, updated_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    );
-    sqlx::query(&sql)
-        .bind(&id)
-        .bind(tid)
-        .bind(name)
-        .bind(slug)
-        .bind(created_by)
-        .bind(created_by)
-        .bind(&now)
-        .execute(pool)
-        .await?;
+    match tenant_id {
+        Some(tid) => {
+            let sql = crate::db::dialect::translate(
+                "INSERT INTO tags (id, tenant_id, name, slug, created_by, updated_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            );
+            sqlx::query(&sql)
+                .bind(&id)
+                .bind(tid)
+                .bind(name)
+                .bind(slug)
+                .bind(created_by)
+                .bind(created_by)
+                .bind(&now)
+                .execute(pool)
+                .await?;
+        }
+        None => {
+            let sql = crate::db::dialect::translate(
+                "INSERT INTO tags (id, name, slug, created_by, updated_by, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            );
+            sqlx::query(&sql)
+                .bind(&id)
+                .bind(name)
+                .bind(slug)
+                .bind(created_by)
+                .bind(created_by)
+                .bind(&now)
+                .execute(pool)
+                .await?;
+        }
+    }
 
-    find_by_id(pool, &id, Some(tid)).await
+    find_by_id(pool, &id, tenant_id).await
 }
 
 /// 删除标签

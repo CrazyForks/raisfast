@@ -257,7 +257,7 @@ async fn create_token_validation_empty_name() {
 #[tokio::test]
 async fn create_token_validation_empty_scopes() {
     let (mut app, tok, _) = setup().await;
-    let (status, body) = send(
+    let (status, _body) = send(
         &mut app,
         post_json_auth(
             "/api/v1/tokens",

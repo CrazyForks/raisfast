@@ -69,7 +69,7 @@ impl JobHandler for GenerateSitemapHandler {
             None,
             None,
             None,
-            Some(crate::constants::DEFAULT_TENANT),
+            None,
         )
         .await?;
 
@@ -111,7 +111,7 @@ mod tests {
         use crate::models::post::Post;
         let posts = vec![Post {
             id: "p1".into(),
-            tenant_id: crate::constants::DEFAULT_TENANT.into(),
+            tenant_id: Some(crate::constants::DEFAULT_TENANT.to_string()),
             title: "Hello".into(),
             slug: "hello".into(),
             content: "".into(),

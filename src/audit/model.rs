@@ -1,7 +1,6 @@
 //! 审计日志数据模型与数据库查询
 
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
@@ -9,10 +8,10 @@ use crate::errors::app_error::AppResult;
 
 /// 审计日志完整数据库行
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AuditEntry {
     pub id: String,
-    pub tenant_id: String,
+    pub tenant_id: Option<String>,
     pub actor_id: Option<String>,
     pub actor_role: Option<String>,
     pub action: String,
@@ -24,25 +23,52 @@ pub struct AuditEntry {
     pub created_at: String,
 }
 
+crate::impl_from_row_opt_tenant!(AuditEntry {
+    required { id, action, subject, created_at }
+    optional { actor_id, actor_role, subject_id, detail, ip_address, user_agent }
+});
+
 /// 插入一条审计日志
 pub async fn insert(pool: &crate::db::Pool, entry: &AuditEntry) -> AppResult<()> {
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO audit_log (id, tenant_id, actor_id, actor_role, action, subject, subject_id, detail, ip_address, user_agent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    );
-    sqlx::query(&sql)
-        .bind(&entry.id)
-        .bind(&entry.tenant_id)
-        .bind(&entry.actor_id)
-        .bind(&entry.actor_role)
-        .bind(&entry.action)
-        .bind(&entry.subject)
-        .bind(&entry.subject_id)
-        .bind(&entry.detail)
-        .bind(&entry.ip_address)
-        .bind(&entry.user_agent)
-        .bind(&entry.created_at)
-        .execute(pool)
-        .await?;
+    match &entry.tenant_id {
+        Some(tid) => {
+            let sql = crate::db::dialect::translate(
+                "INSERT INTO audit_log (id, tenant_id, actor_id, actor_role, action, subject, subject_id, detail, ip_address, user_agent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            );
+            sqlx::query(&sql)
+                .bind(&entry.id)
+                .bind(tid)
+                .bind(&entry.actor_id)
+                .bind(&entry.actor_role)
+                .bind(&entry.action)
+                .bind(&entry.subject)
+                .bind(&entry.subject_id)
+                .bind(&entry.detail)
+                .bind(&entry.ip_address)
+                .bind(&entry.user_agent)
+                .bind(&entry.created_at)
+                .execute(pool)
+                .await?;
+        }
+        None => {
+            let sql = crate::db::dialect::translate(
+                "INSERT INTO audit_log (id, actor_id, actor_role, action, subject, subject_id, detail, ip_address, user_agent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            );
+            sqlx::query(&sql)
+                .bind(&entry.id)
+                .bind(&entry.actor_id)
+                .bind(&entry.actor_role)
+                .bind(&entry.action)
+                .bind(&entry.subject)
+                .bind(&entry.subject_id)
+                .bind(&entry.detail)
+                .bind(&entry.ip_address)
+                .bind(&entry.user_agent)
+                .bind(&entry.created_at)
+                .execute(pool)
+                .await?;
+        }
+    }
     Ok(())
 }
 

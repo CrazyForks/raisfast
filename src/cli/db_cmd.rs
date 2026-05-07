@@ -11,6 +11,8 @@ use raisfast::db::dialect;
 /// `db migrate` — 执行 `migrations/` 目录中尚未应用的 SQL 文件。
 ///
 /// 使用 `_migrations` 表记录已执行的文件名，幂等安全。
+///
+/// 特殊处理：`026_builtin_tenantable.sql` 仅在 `BUILTIN_TENANTABLE=true` 时执行。
 pub async fn migrate(config: &AppConfig) -> anyhow::Result<()> {
     println!("running migrations...");
     let pool = init_pool(&config.database_url, 1).await?;
@@ -38,9 +40,21 @@ pub async fn migrate(config: &AppConfig) -> anyhow::Result<()> {
     let check_sql = dialect::translate("SELECT COUNT(*) FROM _migrations WHERE filename = ?");
     let insert_sql = dialect::translate("INSERT INTO _migrations (filename) VALUES (?)");
 
+    let tenantable_migration = "026_builtin_tenantable.sql";
+
     let mut applied = 0u32;
     for entry in &entries {
         let filename = entry.file_name().to_string_lossy().to_string();
+
+        if filename == tenantable_migration && !config.builtin_tenantable {
+            println!("  [skip] {} (BUILTIN_TENANTABLE=false)", filename);
+            sqlx::query(&insert_sql)
+                .bind(&filename)
+                .execute(&pool)
+                .await?;
+            continue;
+        }
+
         let sql = std::fs::read_to_string(entry.path())?;
 
         let already_applied: bool = sqlx::query_scalar::<_, i64>(&check_sql)
@@ -182,18 +196,35 @@ pub async fn seed(
         None
     };
 
-    sqlx::query(&dialect::translate(
-        "INSERT INTO users (id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'admin', ?, ?)",
-    ))
-    .bind(&id)
-    .bind(&tid)
-    .bind(email)
-    .bind(username)
-    .bind(&password_hash)
-    .bind(&now)
-    .bind(&now)
-    .execute(&pool)
-    .await?;
+    match tid {
+        Some(tid) => {
+            sqlx::query(&dialect::translate(
+                "INSERT INTO users (id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'admin', ?, ?)",
+            ))
+            .bind(&id)
+            .bind(&tid)
+            .bind(email)
+            .bind(username)
+            .bind(&password_hash)
+            .bind(&now)
+            .bind(&now)
+            .execute(&pool)
+            .await?;
+        }
+        None => {
+            sqlx::query(&dialect::translate(
+                "INSERT INTO users (id, email, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, 'admin', ?, ?)",
+            ))
+            .bind(&id)
+            .bind(email)
+            .bind(username)
+            .bind(&password_hash)
+            .bind(&now)
+            .bind(&now)
+            .execute(&pool)
+            .await?;
+        }
+    }
 
     println!("seed: admin user created");
     println!("  email:    {email}");

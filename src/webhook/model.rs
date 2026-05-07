@@ -1,7 +1,6 @@
 //! Webhook 订阅数据模型与数据库查询
 
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
@@ -9,10 +8,10 @@ use crate::errors::app_error::{AppError, AppResult};
 
 /// Webhook 订阅完整数据库行
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WebhookSubscription {
     pub id: String,
-    pub tenant_id: String,
+    pub tenant_id: Option<String>,
     pub url: String,
     pub secret: String,
     pub events: String,
@@ -21,6 +20,11 @@ pub struct WebhookSubscription {
     pub created_at: String,
     pub updated_at: String,
 }
+
+crate::impl_from_row_opt_tenant!(WebhookSubscription {
+    required { id, url, secret, events, enabled, created_at, updated_at }
+    optional { description }
+});
 
 /// 创建订阅请求体
 #[derive(Debug, Deserialize)]
@@ -52,21 +56,41 @@ pub struct WebhookPayload {
 
 /// 插入一条 webhook 订阅
 pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppResult<()> {
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO webhook_subscriptions (id, tenant_id, url, secret, events, enabled, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    );
-    sqlx::query(&sql)
-        .bind(&sub.id)
-        .bind(&sub.tenant_id)
-        .bind(&sub.url)
-        .bind(&sub.secret)
-        .bind(&sub.events)
-        .bind(sub.enabled)
-        .bind(&sub.description)
-        .bind(&sub.created_at)
-        .bind(&sub.updated_at)
-        .execute(pool)
-        .await?;
+    match &sub.tenant_id {
+        Some(tid) => {
+            let sql = crate::db::dialect::translate(
+                "INSERT INTO webhook_subscriptions (id, tenant_id, url, secret, events, enabled, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            );
+            sqlx::query(&sql)
+                .bind(&sub.id)
+                .bind(tid)
+                .bind(&sub.url)
+                .bind(&sub.secret)
+                .bind(&sub.events)
+                .bind(sub.enabled)
+                .bind(&sub.description)
+                .bind(&sub.created_at)
+                .bind(&sub.updated_at)
+                .execute(pool)
+                .await?;
+        }
+        None => {
+            let sql = crate::db::dialect::translate(
+                "INSERT INTO webhook_subscriptions (id, url, secret, events, enabled, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            );
+            sqlx::query(&sql)
+                .bind(&sub.id)
+                .bind(&sub.url)
+                .bind(&sub.secret)
+                .bind(&sub.events)
+                .bind(sub.enabled)
+                .bind(&sub.description)
+                .bind(&sub.created_at)
+                .bind(&sub.updated_at)
+                .execute(pool)
+                .await?;
+        }
+    }
     Ok(())
 }
 
@@ -147,14 +171,27 @@ pub async fn delete_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
 /// 查找所有启用的订阅（用于事件投递）
 pub async fn find_enabled_by_tenant(
     pool: &crate::db::Pool,
-    tenant_id: &str,
+    tenant_id: Option<&str>,
 ) -> AppResult<Vec<WebhookSubscription>> {
-    let sql = crate::db::dialect::translate(
-        "SELECT * FROM webhook_subscriptions WHERE tenant_id = ? AND enabled = 1",
-    );
-    let items = sqlx::query_as::<_, WebhookSubscription>(&sql)
-        .bind(tenant_id)
-        .fetch_all(pool)
-        .await?;
-    Ok(items)
+    match tenant_id {
+        Some(tid) => {
+            let sql = crate::db::dialect::translate(
+                "SELECT * FROM webhook_subscriptions WHERE tenant_id = ? AND enabled = 1",
+            );
+            let items = sqlx::query_as::<_, WebhookSubscription>(&sql)
+                .bind(tid)
+                .fetch_all(pool)
+                .await?;
+            Ok(items)
+        }
+        None => {
+            let sql = crate::db::dialect::translate(
+                "SELECT * FROM webhook_subscriptions WHERE enabled = 1",
+            );
+            let items = sqlx::query_as::<_, WebhookSubscription>(&sql)
+                .fetch_all(pool)
+                .await?;
+            Ok(items)
+        }
+    }
 }

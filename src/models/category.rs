@@ -4,11 +4,11 @@
 //! 分类支持嵌套（通过 `parent_id`）和自定义排序（通过 `sort_order`）。
 
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
+
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::db::tenant::{resolve_tenant, tenant_filter};
+use crate::db::tenant::tenant_filter;
 use crate::errors::app_error::{AppError, AppResult};
 
 /// 分类完整数据库行模型
@@ -16,10 +16,10 @@ use crate::errors::app_error::{AppError, AppResult};
 /// 直接映射 `categories` 表的所有字段。
 /// `parent_id` 用于构建层级分类，`sort_order` 控制显示顺序。
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Category {
     pub id: String,
-    pub tenant_id: String,
+    pub tenant_id: Option<String>,
     pub name: String,
     pub slug: String,
     pub description: Option<String>,
@@ -29,6 +29,11 @@ pub struct Category {
     pub updated_at: Option<String>,
     pub created_at: String,
 }
+
+crate::impl_from_row_opt_tenant!(Category {
+    required { id, name, slug, sort_order, created_at }
+    optional { description, parent_id, updated_by, updated_at }
+});
 
 /// 查询所有分类
 ///
@@ -114,26 +119,46 @@ pub async fn create(
     created_by: Option<&str>,
 ) -> AppResult<Category> {
     let (id, now) = crate::utils::id::new_id_and_timestamp();
-    let tid = resolve_tenant(tenant_id);
 
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO categories (id, tenant_id, name, slug, description, parent_id, sort_order, created_by, updated_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    );
-    sqlx::query(&sql)
-        .bind(&id)
-        .bind(tid)
-        .bind(&cmd.name)
-        .bind(&cmd.slug)
-        .bind(&cmd.description)
-        .bind(&cmd.parent_id)
-        .bind(cmd.sort_order)
-        .bind(created_by)
-        .bind(created_by)
-        .bind(&now)
-        .execute(pool)
-        .await?;
+    match tenant_id {
+        Some(tid) => {
+            let sql = crate::db::dialect::translate(
+                "INSERT INTO categories (id, tenant_id, name, slug, description, parent_id, sort_order, created_by, updated_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            );
+            sqlx::query(&sql)
+                .bind(&id)
+                .bind(tid)
+                .bind(&cmd.name)
+                .bind(&cmd.slug)
+                .bind(&cmd.description)
+                .bind(&cmd.parent_id)
+                .bind(cmd.sort_order)
+                .bind(created_by)
+                .bind(created_by)
+                .bind(&now)
+                .execute(pool)
+                .await?;
+        }
+        None => {
+            let sql = crate::db::dialect::translate(
+                "INSERT INTO categories (id, name, slug, description, parent_id, sort_order, created_by, updated_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            );
+            sqlx::query(&sql)
+                .bind(&id)
+                .bind(&cmd.name)
+                .bind(&cmd.slug)
+                .bind(&cmd.description)
+                .bind(&cmd.parent_id)
+                .bind(cmd.sort_order)
+                .bind(created_by)
+                .bind(created_by)
+                .bind(&now)
+                .execute(pool)
+                .await?;
+        }
+    }
 
-    find_by_id(pool, &id, Some(tid)).await
+    find_by_id(pool, &id, tenant_id).await
 }
 
 /// 更新分类

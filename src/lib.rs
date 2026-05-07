@@ -10,6 +10,9 @@
 #![deny(unsafe_code)]
 #![allow(clippy::missing_errors_doc)]
 
+#[macro_use]
+mod macros;
+
 pub mod aspects;
 pub mod audit;
 pub mod cache;
@@ -36,6 +39,8 @@ pub mod storage;
 pub mod utils;
 pub mod webhook;
 pub mod worker;
+
+pub mod admin_spa;
 
 #[cfg(feature = "tauri")]
 pub mod tauri;
@@ -176,7 +181,7 @@ pub async fn build_app_state(
     let options_repo: Arc<dyn crate::repositories::OptionsRepository> = Arc::new(
         crate::repositories::SqlxOptionsRepository::new(pool.clone()),
     );
-    let options_service = Arc::new(OptionsService::new(options_repo).await);
+    let options_service = Arc::new(OptionsService::new(options_repo, config.builtin_tenantable).await);
 
     let rbac_repo: Arc<dyn crate::repositories::RbacRepository> =
         Arc::new(crate::repositories::SqlxRbacRepository::new(pool.clone()));

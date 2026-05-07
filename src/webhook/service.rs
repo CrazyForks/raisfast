@@ -19,7 +19,7 @@ impl WebhookService {
     /// 创建 webhook 订阅
     pub async fn create(
         &self,
-        tenant_id: &str,
+        tenant_id: Option<&str>,
         url: String,
         events: Vec<String>,
         description: Option<String>,
@@ -29,7 +29,7 @@ impl WebhookService {
         let secret = Self::generate_secret();
         let sub = model::WebhookSubscription {
             id,
-            tenant_id: tenant_id.to_string(),
+            tenant_id: tenant_id.map(|t| t.to_string()),
             url,
             secret,
             events: serde_json::to_string(&events).unwrap_or_default(),
@@ -94,7 +94,7 @@ impl WebhookService {
     /// 查找启用的订阅（供事件投递使用）
     pub async fn find_enabled(
         &self,
-        tenant_id: &str,
+        tenant_id: Option<&str>,
     ) -> AppResult<Vec<model::WebhookSubscription>> {
         model::find_enabled_by_tenant(&self.pool, tenant_id).await
     }

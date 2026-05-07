@@ -27,7 +27,7 @@ pub async fn feed(State(state): State<crate::AppState>) -> AppResult<Response> {
         None,
         None,
         None,
-        Some(crate::constants::DEFAULT_TENANT),
+        None,
     )
     .await?
     .0;

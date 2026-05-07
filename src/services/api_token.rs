@@ -35,7 +35,7 @@ fn scope_to_role(scopes: &[String]) -> String {
 struct CachedTokenAuth {
     user_id: String,
     role: String,
-    tenant_id: String,
+    tenant_id: Option<String>,
     expires_at: Option<String>,
 }
 
@@ -167,7 +167,7 @@ pub async fn verify_api_token(
     pool: &crate::db::Pool,
     cache: &dyn CacheStore,
     plain: &str,
-) -> AppResult<(String, String, String)> {
+) -> AppResult<(String, String, Option<String>)> {
     let hash = hash_token(plain);
     let cache_key = format!("{CACHE_PREFIX}{hash}");
 
@@ -474,7 +474,7 @@ mod tests {
         let (user_id, role, tenant_id) = verify_api_token(&pool, &*cache, plain).await.unwrap();
         assert_eq!(user_id, "u-fut");
         assert_eq!(role, "admin");
-        assert!(!tenant_id.is_empty());
+        assert!(tenant_id.is_none());
     }
 
     #[tokio::test]
@@ -656,7 +656,7 @@ mod tests {
         let cached = serde_json::to_string(&CachedTokenAuth {
             user_id: "u-cexp".into(),
             role: "reader".into(),
-            tenant_id: "default".into(),
+            tenant_id: Some("default".to_string()),
             expires_at: Some(past.into()),
         })
         .unwrap();

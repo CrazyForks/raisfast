@@ -32,7 +32,7 @@ impl AuditService {
         let (id, now) = crate::utils::id::new_id_and_timestamp();
         let entry = AuditEntry {
             id,
-            tenant_id: tenant_id.to_string(),
+            tenant_id: Some(tenant_id.to_string()),
             actor_id: actor_id.map(|s| s.to_string()),
             actor_role: actor_role.map(|s| s.to_string()),
             action: action.to_string(),

@@ -69,14 +69,15 @@ impl From<&OptionRow> for OptionEntry {
 pub struct OptionsService {
     cache: Arc<RwLock<HashMap<String, OptionEntry>>>,
     repo: Arc<dyn OptionsRepository>,
+    tenant_filter: bool,
 }
 
 impl OptionsService {
-    /// 创建实例并预加载 autoload 配置
-    pub async fn new(repo: Arc<dyn OptionsRepository>) -> Self {
+    pub async fn new(repo: Arc<dyn OptionsRepository>, builtin_tenantable: bool) -> Self {
         let service = Self {
             cache: Arc::new(RwLock::new(HashMap::new())),
             repo,
+            tenant_filter: builtin_tenantable,
         };
         if let Err(e) = service.load_autoload().await {
             tracing::error!("failed to autoload options: {}", e);
@@ -84,7 +85,14 @@ impl OptionsService {
         service
     }
 
-    /// 预加载所有 autoload=true 的配置到内存
+    fn tenant_arg(&self) -> Option<&str> {
+        if self.tenant_filter {
+            Some(DEFAULT_TENANT)
+        } else {
+            None
+        }
+    }
+
     async fn load_autoload(&self) -> Result<(), AppError> {
         let rows = self.repo.find_autoload().await?;
 
@@ -111,7 +119,7 @@ impl OptionsService {
         }
         let row: crate::models::options::OptionRow = self
             .repo
-            .find_by_key(key, DEFAULT_TENANT)
+            .find_by_key(key, self.tenant_arg())
             .await
             .ok()
             .flatten()?;
@@ -130,7 +138,7 @@ impl OptionsService {
         let now = crate::utils::tz::now_str();
 
         self.repo
-            .upsert_value(key, &value_str, DEFAULT_TENANT, &now)
+            .upsert_value(key, &value_str, self.tenant_arg(), &now)
             .await?;
 
         {
@@ -164,7 +172,7 @@ impl OptionsService {
             let value_str = serde_json::to_string(value)
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("json serialize failed: {e}")))?;
             self.repo
-                .upsert_value(key, &value_str, DEFAULT_TENANT, &now)
+                .upsert_value(key, &value_str, self.tenant_arg(), &now)
                 .await?;
         }
 
@@ -178,14 +186,14 @@ impl OptionsService {
 
     /// 删除配置
     pub async fn delete(&self, key: &str) -> Result<(), AppError> {
-        self.repo.delete_by_key(key, DEFAULT_TENANT).await?;
+        self.repo.delete_by_key(key, self.tenant_arg()).await?;
         self.cache.write().await.remove(key);
         Ok(())
     }
 
     /// 获取所有配置（按分组组织）
     pub async fn get_grouped(&self) -> Result<Vec<OptionGroup>, AppError> {
-        let rows = self.repo.find_all(DEFAULT_TENANT).await?;
+        let rows = self.repo.find_all(self.tenant_arg()).await?;
         let mut group_map: HashMap<String, Vec<OptionEntry>> = HashMap::new();
         let mut group_labels: HashMap<String, String> = HashMap::new();
         let mut group_order: Vec<String> = Vec::new();
@@ -230,7 +238,7 @@ impl OptionsService {
     /// 获取公开配置（含元数据，按分组）
     pub async fn get_public_grouped(&self) -> Vec<OptionGroup> {
         let rows: Vec<crate::models::options::OptionRow> =
-            self.repo.find_all(DEFAULT_TENANT).await.unwrap_or_default();
+            self.repo.find_all(self.tenant_arg()).await.unwrap_or_default();
         let mut group_map: HashMap<String, Vec<OptionEntry>> = HashMap::new();
         let mut group_order: Vec<String> = Vec::new();
 

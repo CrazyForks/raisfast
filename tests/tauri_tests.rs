@@ -270,7 +270,7 @@ async fn tauri_auth_get_me_service() {
     let auth = raisfast::middleware::auth::AuthUser::from_parts(
         Some(user.id.clone()),
         "author".to_string(),
-        Some("default".to_string()),
+        None,
     );
     let result = auth::get_me(&user_repo, &auth).await;
     assert!(result.is_ok());
@@ -619,7 +619,7 @@ label = "内容"
 async fn tauri_options_set_and_get() {
     let pool = setup_pool().await;
     let repo: Arc<dyn OptionsRepository> = Arc::new(SqlxOptionsRepository::new(pool));
-    let svc = options::OptionsService::new(repo).await;
+    let svc = options::OptionsService::new(repo, false).await;
 
     svc.set("site.title", serde_json::json!("My Blog"))
         .await
@@ -633,7 +633,7 @@ async fn tauri_options_set_and_get() {
 async fn tauri_options_get_nonexistent() {
     let pool = setup_pool().await;
     let repo: Arc<dyn OptionsRepository> = Arc::new(SqlxOptionsRepository::new(pool));
-    let svc = options::OptionsService::new(repo).await;
+    let svc = options::OptionsService::new(repo, false).await;
 
     let val = svc.get("nonexistent.key").await;
     assert!(val.is_none());
@@ -643,7 +643,7 @@ async fn tauri_options_get_nonexistent() {
 async fn tauri_options_overwrite() {
     let pool = setup_pool().await;
     let repo: Arc<dyn OptionsRepository> = Arc::new(SqlxOptionsRepository::new(pool));
-    let svc = options::OptionsService::new(repo).await;
+    let svc = options::OptionsService::new(repo, false).await;
 
     svc.set("key1", serde_json::json!("value1")).await.unwrap();
     svc.set("key1", serde_json::json!("value2")).await.unwrap();

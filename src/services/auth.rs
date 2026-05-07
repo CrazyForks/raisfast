@@ -247,7 +247,9 @@ pub async fn login(
     let access_token = generate_access_token_internal(
         &user.id,
         &user.role,
-        &user.tenant_id,
+        user.tenant_id
+            .as_deref()
+            .unwrap_or(crate::constants::DEFAULT_TENANT),
         jwt_secret,
         jwt_access_expires,
     )?;
@@ -314,7 +316,9 @@ pub async fn refresh(
     let access_token = generate_access_token_internal(
         &user.id,
         &user.role,
-        &user.tenant_id,
+        user.tenant_id
+            .as_deref()
+            .unwrap_or(crate::constants::DEFAULT_TENANT),
         jwt_secret,
         jwt_access_expires,
     )?;
@@ -638,7 +642,7 @@ mod tests {
         let claims = Claims {
             sub: "user-1".into(),
             role: "admin".into(),
-            tenant_id: "default".into(),
+            tenant_id: "default".to_string(),
             exp: (now - chrono::Duration::seconds(120)).timestamp() as usize,
             iat: (now - chrono::Duration::seconds(180)).timestamp() as usize,
         };
@@ -761,7 +765,9 @@ pub async fn verify_sms_and_auth(
     let access_token = generate_access_token_internal(
         &user.id,
         &user.role,
-        &user.tenant_id,
+        user.tenant_id
+            .as_deref()
+            .unwrap_or(crate::constants::DEFAULT_TENANT),
         jwt_secret,
         jwt_access_expires,
     )?;

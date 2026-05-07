@@ -6,20 +6,19 @@
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 
-use crate::db::tenant::{resolve_tenant, tenant_filter};
+use crate::db::tenant::tenant_filter;
 use crate::errors::app_error::{AppError, AppResult};
 
 /// 用户完整数据库行模型
 ///
 /// 直接映射 `users` 表的所有字段，包含 `password_hash`。
 /// 该结构体仅在内部使用，不应直接返回给前端。
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
 pub struct User {
     pub id: String,
-    pub tenant_id: String,
+    pub tenant_id: Option<String>,
     pub email: String,
     pub username: String,
     pub password_hash: String,
@@ -32,6 +31,11 @@ pub struct User {
     pub created_at: String,
     pub updated_at: String,
 }
+
+crate::impl_from_row_opt_tenant!(User {
+    required { id, email, username, password_hash, role, email_verified, created_at, updated_at }
+    optional { phone, avatar, bio, website }
+});
 
 /// 根据邮箱查找用户
 ///
@@ -106,21 +110,38 @@ pub async fn create(
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
     let (id, now) = crate::utils::id::new_id_and_timestamp();
-    let tid = resolve_tenant(tenant_id);
 
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO users (id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'reader', ?, ?)",
-    );
-    sqlx::query(&sql)
-        .bind(&id)
-        .bind(tid)
-        .bind(&cmd.email)
-        .bind(&cmd.username)
-        .bind(&cmd.password_hash)
-        .bind(&now)
-        .bind(&now)
-        .execute(pool)
-        .await?;
+    match tenant_id {
+        Some(tid) => {
+            let sql = crate::db::dialect::translate(
+                "INSERT INTO users (id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'reader', ?, ?)",
+            );
+            sqlx::query(&sql)
+                .bind(&id)
+                .bind(tid)
+                .bind(&cmd.email)
+                .bind(&cmd.username)
+                .bind(&cmd.password_hash)
+                .bind(&now)
+                .bind(&now)
+                .execute(pool)
+                .await?;
+        }
+        None => {
+            let sql = crate::db::dialect::translate(
+                "INSERT INTO users (id, email, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, 'reader', ?, ?)",
+            );
+            sqlx::query(&sql)
+                .bind(&id)
+                .bind(&cmd.email)
+                .bind(&cmd.username)
+                .bind(&cmd.password_hash)
+                .bind(&now)
+                .bind(&now)
+                .execute(pool)
+                .await?;
+        }
+    }
 
     let user = find_by_id(pool, &id, tenant_id)
         .await?

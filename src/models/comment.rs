@@ -12,7 +12,7 @@ use sqlx::FromRow;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::db::tenant::{resolve_tenant, tenant_filter, tenant_filter_aliased};
+use crate::db::tenant::{tenant_filter, tenant_filter_aliased};
 use crate::errors::app_error::{AppError, AppResult};
 
 /// 评论完整数据库行模型
@@ -20,11 +20,11 @@ use crate::errors::app_error::{AppError, AppResult};
 /// 直接映射 `comments` 表的所有字段。
 /// `created_by` 非空表示已登录用户，`nickname`/`email` 用于访客评论。
 /// `status` 可取 `pending`、`approved`、`rejected`。
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
 pub struct Comment {
     pub id: String,
-    pub tenant_id: String,
+    pub tenant_id: Option<String>,
     pub post_id: String,
     pub created_by: Option<String>,
     pub updated_by: Option<String>,
@@ -36,6 +36,11 @@ pub struct Comment {
     pub created_at: String,
     pub updated_at: Option<String>,
 }
+
+crate::impl_from_row_opt_tenant!(Comment {
+    required { id, post_id, content, status, created_at }
+    optional { created_by, updated_by, nickname, email, parent_id, updated_at }
+});
 
 /// 评论 API 响应模型（树形结构）
 ///
@@ -87,27 +92,48 @@ pub async fn create(
     tenant_id: Option<&str>,
 ) -> AppResult<Comment> {
     let (id, now) = crate::utils::id::new_id_and_timestamp();
-    let tid = resolve_tenant(tenant_id);
 
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO comments (id, tenant_id, post_id, created_by, updated_by, nickname, email, content, parent_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
-    );
-    sqlx::query(&sql)
-        .bind(&id)
-        .bind(tid)
-        .bind(&cmd.post_id)
-        .bind(&cmd.created_by)
-        .bind(&cmd.created_by)
-        .bind(&cmd.nickname)
-        .bind(&cmd.email)
-        .bind(&cmd.content)
-        .bind(&cmd.parent_id)
-        .bind(&now)
-        .bind(&now)
-        .execute(pool)
-        .await?;
+    match tenant_id {
+        Some(tid) => {
+            let sql = crate::db::dialect::translate(
+                "INSERT INTO comments (id, tenant_id, post_id, created_by, updated_by, nickname, email, content, parent_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+            );
+            sqlx::query(&sql)
+                .bind(&id)
+                .bind(tid)
+                .bind(&cmd.post_id)
+                .bind(&cmd.created_by)
+                .bind(&cmd.created_by)
+                .bind(&cmd.nickname)
+                .bind(&cmd.email)
+                .bind(&cmd.content)
+                .bind(&cmd.parent_id)
+                .bind(&now)
+                .bind(&now)
+                .execute(pool)
+                .await?;
+        }
+        None => {
+            let sql = crate::db::dialect::translate(
+                "INSERT INTO comments (id, post_id, created_by, updated_by, nickname, email, content, parent_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+            );
+            sqlx::query(&sql)
+                .bind(&id)
+                .bind(&cmd.post_id)
+                .bind(&cmd.created_by)
+                .bind(&cmd.created_by)
+                .bind(&cmd.nickname)
+                .bind(&cmd.email)
+                .bind(&cmd.content)
+                .bind(&cmd.parent_id)
+                .bind(&now)
+                .bind(&now)
+                .execute(pool)
+                .await?;
+        }
+    }
 
-    find_by_id(pool, &id, Some(tid))
+    find_by_id(pool, &id, tenant_id)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch created comment")))
 }
@@ -378,7 +404,7 @@ mod tests {
     fn make_comment(id: &str, post_id: &str, parent_id: Option<&str>) -> Comment {
         Comment {
             id: id.to_string(),
-            tenant_id: crate::constants::DEFAULT_TENANT.to_string(),
+            tenant_id: Some(crate::constants::DEFAULT_TENANT.to_string()),
             post_id: post_id.to_string(),
             created_by: None,
             updated_by: None,

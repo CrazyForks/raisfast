@@ -1,9 +1,8 @@
 -- 页面表
 CREATE TABLE IF NOT EXISTS pages (
     id               TEXT PRIMARY KEY,
-    tenant_id        TEXT NOT NULL DEFAULT 'default',
     title            TEXT NOT NULL,
-    slug             TEXT NOT NULL,
+    slug             TEXT NOT NULL UNIQUE,
     content          TEXT,
     blocks           TEXT,
     meta_title       TEXT,
@@ -17,19 +16,17 @@ CREATE TABLE IF NOT EXISTS pages (
     cover_image      TEXT,
     published_at     TEXT,
     created_at       TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(tenant_id, slug)
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX idx_pages_slug      ON pages(tenant_id, slug);
-CREATE INDEX idx_pages_status    ON pages(tenant_id, status);
-CREATE INDEX idx_pages_parent    ON pages(tenant_id, parent_id);
+CREATE INDEX idx_pages_slug      ON pages(slug);
+CREATE INDEX idx_pages_status    ON pages(status);
+CREATE INDEX idx_pages_parent    ON pages(parent_id);
 CREATE INDEX idx_pages_author    ON pages(author_id);
 
 -- 可复用块
 CREATE TABLE IF NOT EXISTS reusable_blocks (
     id          TEXT PRIMARY KEY,
-    tenant_id   TEXT NOT NULL DEFAULT 'default',
     name        TEXT NOT NULL,
     block_type  TEXT NOT NULL,
     content     TEXT NOT NULL,
@@ -37,5 +34,3 @@ CREATE TABLE IF NOT EXISTS reusable_blocks (
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
-CREATE INDEX idx_reusable_blocks_tenant ON reusable_blocks(tenant_id);

@@ -168,7 +168,7 @@ async fn extract_claims(parts: &Parts, state: &AppState) -> Option<Claims> {
         Some(Claims {
             user_id,
             role,
-            tenant_id,
+            tenant_id: tenant_id.unwrap_or_else(|| crate::constants::DEFAULT_TENANT.to_string()),
         })
     } else {
         let claims = crate::services::auth::verify_token(token, &state.jwt_decoding_key).ok()?;
@@ -192,12 +192,13 @@ impl FromRequestParts<AppState> for AuthUser {
 
         async move {
             let claims = claims_fut.await;
+            let no_tenant = !state.config.builtin_tenantable;
 
             let identity = match (claims, header_tenant) {
                 (Some(c), Some(ht)) if c.role == "admin" => RequestIdentity {
                     user_id: Some(c.user_id),
                     role: c.role,
-                    tenant_id: Some(ht),
+                    tenant_id: if no_tenant { None } else { Some(ht) },
                     is_super_admin: true,
                 },
                 (Some(c), None) if c.role == "admin" => RequestIdentity {
@@ -209,19 +210,19 @@ impl FromRequestParts<AppState> for AuthUser {
                 (Some(c), _) => RequestIdentity {
                     user_id: Some(c.user_id),
                     role: c.role,
-                    tenant_id: Some(c.tenant_id),
+                    tenant_id: if no_tenant { None } else { Some(c.tenant_id) },
                     is_super_admin: false,
                 },
                 (None, Some(ht)) => RequestIdentity {
                     user_id: None,
                     role: String::new(),
-                    tenant_id: Some(ht),
+                    tenant_id: if no_tenant { None } else { Some(ht) },
                     is_super_admin: false,
                 },
                 (None, None) => RequestIdentity {
                     user_id: None,
                     role: String::new(),
-                    tenant_id: Some(crate::constants::DEFAULT_TENANT.to_string()),
+                    tenant_id: if no_tenant { None } else { Some(crate::constants::DEFAULT_TENANT.to_string()) },
                     is_super_admin: false,
                 },
             };

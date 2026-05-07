@@ -48,7 +48,7 @@ impl JobHandler for RebuildSearchIndexHandler {
             match crate::models::post::find_by_id(
                 &self.pool,
                 id,
-                Some(crate::constants::DEFAULT_TENANT),
+                None,
             )
             .await
             {

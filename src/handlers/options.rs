@@ -11,11 +11,15 @@ use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 
-/// GET /options/public — 公开配置（仅值）
+/// GET /options/public — 公开配置（仅值）+ 系统特性标志
 pub async fn get_public_options(
     State(state): State<AppState>,
 ) -> AppResult<ApiResponse<HashMap<String, Value>>> {
-    let options = state.options.get_public().await;
+    let mut options = state.options.get_public().await;
+    options.insert(
+        "builtin_tenantable".into(),
+        Value::Bool(state.config.builtin_tenantable),
+    );
     Ok(ApiResponse::success(options))
 }
 

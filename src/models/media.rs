@@ -6,19 +6,18 @@
 //! 响应模型中的 URL 由 `to_response()` 方法根据服务器地址动态拼接生成。
 
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
 
-use crate::db::tenant::{resolve_tenant, tenant_filter};
+use crate::db::tenant::tenant_filter;
 use crate::errors::app_error::{AppError, AppResult};
 
 /// 媒体文件完整数据库行模型
 ///
 /// 直接映射 `media` 表的所有字段。
 /// `filepath` 存储相对于上传目录的相对路径。
-#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Media {
     pub id: String,
-    pub tenant_id: String,
+    pub tenant_id: Option<String>,
     pub user_id: String,
     pub filename: String,
     pub filepath: String,
@@ -28,6 +27,11 @@ pub struct Media {
     pub height: Option<i32>,
     pub created_at: String,
 }
+
+crate::impl_from_row_opt_tenant!(Media {
+    required { id, user_id, filename, filepath, mimetype, size, created_at }
+    optional { width, height }
+});
 
 /// 创建媒体文件记录
 ///
@@ -39,24 +43,44 @@ pub async fn create(
     tenant_id: Option<&str>,
 ) -> AppResult<Media> {
     let (id, now) = crate::utils::id::new_id_and_timestamp();
-    let tid = resolve_tenant(tenant_id);
 
-    let sql = crate::db::dialect::translate(
-        "INSERT INTO media (id, tenant_id, user_id, filename, filepath, mimetype, size, width, height, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    );
-    sqlx::query(&sql)
-        .bind(&id)
-        .bind(tid)
-        .bind(&cmd.user_id)
-        .bind(&cmd.filename)
-        .bind(&cmd.filepath)
-        .bind(&cmd.mimetype)
-        .bind(cmd.size)
-        .bind(cmd.width)
-        .bind(cmd.height)
-        .bind(&now)
-        .execute(pool)
-        .await?;
+    match tenant_id {
+        Some(tid) => {
+            let sql = crate::db::dialect::translate(
+                "INSERT INTO media (id, tenant_id, user_id, filename, filepath, mimetype, size, width, height, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            );
+            sqlx::query(&sql)
+                .bind(&id)
+                .bind(tid)
+                .bind(&cmd.user_id)
+                .bind(&cmd.filename)
+                .bind(&cmd.filepath)
+                .bind(&cmd.mimetype)
+                .bind(cmd.size)
+                .bind(cmd.width)
+                .bind(cmd.height)
+                .bind(&now)
+                .execute(pool)
+                .await?;
+        }
+        None => {
+            let sql = crate::db::dialect::translate(
+                "INSERT INTO media (id, user_id, filename, filepath, mimetype, size, width, height, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            );
+            sqlx::query(&sql)
+                .bind(&id)
+                .bind(&cmd.user_id)
+                .bind(&cmd.filename)
+                .bind(&cmd.filepath)
+                .bind(&cmd.mimetype)
+                .bind(cmd.size)
+                .bind(cmd.width)
+                .bind(cmd.height)
+                .bind(&now)
+                .execute(pool)
+                .await?;
+        }
+    }
 
     let sql_str = format!(
         "SELECT * FROM media WHERE id = ?{}",

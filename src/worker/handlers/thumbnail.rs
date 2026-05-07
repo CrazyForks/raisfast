@@ -41,7 +41,7 @@ impl JobHandler for GenerateThumbnailHandler {
         let media = crate::models::media::find_by_id(
             &self.pool,
             media_id,
-            Some(crate::constants::DEFAULT_TENANT),
+            None,
         )
         .await?
         .ok_or_else(|| crate::errors::app_error::AppError::not_found("media"))?;

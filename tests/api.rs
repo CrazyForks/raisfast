@@ -191,7 +191,7 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
         options: Arc::new(
             raisfast::services::options::OptionsService::new(Arc::new(SqlxOptionsRepository::new(
                 pool.clone(),
-            )))
+            )), false)
             .await,
         ),
         rbac: Arc::new(raisfast::services::rbac::RbacService::new(Arc::new(

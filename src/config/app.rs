@@ -155,6 +155,8 @@ pub struct AppConfig {
     pub require_email_verification: bool,
     #[serde(default)]
     pub builtins: BuiltinsConfig,
+    #[serde(default)]
+    pub builtin_tenantable: bool,
     #[serde(default = "default_email_provider")]
     pub email_provider: String,
     pub email_smtp_host: Option<String>,
@@ -851,6 +853,10 @@ impl AppConfig {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(false),
             builtins: BuiltinsConfig::from_env(),
+            builtin_tenantable: env::var("BUILTIN_TENANTABLE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(false),
             email_provider: env::var("EMAIL_PROVIDER")
                 .ok()
                 .filter(|v| !v.is_empty())
@@ -995,6 +1001,7 @@ impl AppConfig {
             sms_rate_limit_secs: default_sms_rate_limit_secs(),
             require_email_verification: false,
             builtins: BuiltinsConfig::default(),
+            builtin_tenantable: false,
             email_provider: default_email_provider(),
             email_smtp_host: None,
             email_smtp_port: default_email_smtp_port(),
