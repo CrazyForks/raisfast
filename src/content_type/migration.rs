@@ -21,7 +21,7 @@ pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnD
     for field in &ct.fields {
         if field.field_type == FieldType::Relation {
             match field.relation.as_ref().map(|r| &r.relation_type) {
-                Some(RelationType::ManyToOne | RelationType::OneToOne) => {
+                Some(RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay) => {
                     let fk = field
                         .relation
                         .as_ref()
@@ -36,7 +36,7 @@ pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnD
                         "    {fk} INTEGER{not_null} REFERENCES {target_table}(id)"
                     ));
                 }
-                Some(RelationType::ManyToMany) => {
+                Some(RelationType::ManyToMany | RelationType::ManyWay) => {
                     // junction table 后续单独生成
                 }
                 _ => {}
@@ -99,7 +99,7 @@ pub fn generate_junction_tables(ct: &ContentTypeSchema) -> Vec<String> {
 
     for field in &ct.fields {
         if let Some(ref rel) = field.relation
-            && rel.relation_type == RelationType::ManyToMany
+            && matches!(rel.relation_type, RelationType::ManyToMany | RelationType::ManyWay)
         {
             let through = rel
                 .through
@@ -184,7 +184,7 @@ pub fn generate_alter_table(
     for field in &ct.fields {
         if field.field_type == FieldType::Relation {
             match field.relation.as_ref().map(|r| &r.relation_type) {
-                Some(RelationType::ManyToOne | RelationType::OneToOne) => {
+                Some(RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay) => {
                     let fk = field
                         .relation
                         .as_ref()
@@ -206,7 +206,7 @@ pub fn generate_alter_table(
                         ));
                     }
                 }
-                Some(RelationType::ManyToMany) => {}
+                Some(RelationType::ManyToMany | RelationType::ManyWay) => {}
                 _ => {}
             }
             continue;
@@ -256,7 +256,7 @@ pub fn expected_columns(ct: &ContentTypeSchema, protocol_columns: &[ColumnDef]) 
 
     for field in &ct.fields {
         if field.field_type == FieldType::Relation {
-            if let Some(RelationType::ManyToOne | RelationType::OneToOne) =
+            if let Some(RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay) =
                 field.relation.as_ref().map(|r| &r.relation_type)
             {
                 let fk = field

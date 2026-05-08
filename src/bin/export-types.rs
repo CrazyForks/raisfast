@@ -37,7 +37,7 @@ fn main() {
         models::content_revision::ContentRevision,
         models::content_revision::RevisionSummary,
         models::page::Page,
-        models::page::ReusableBlock,
+        models::reusable_block::ReusableBlock,
         models::page::PageBlock,
         models::page::GalleryImage,
         models::page::TestimonialItem,

@@ -13,9 +13,9 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::repository::{ContentQuery, ContentRepository, SaveContext};
+use super::repository::{ContentQuery, ContentRepository, SaveContext, resolve_document_id_to_int_id};
 use super::rule_engine::compile_rule_sql;
-use super::schema::{ContentKind, ContentTypeSchema, check_api_access};
+use super::schema::{ContentKind, ContentTypeSchema, FieldType, RelationType, check_api_access};
 use crate::AppState;
 use crate::constants::*;
 use crate::errors::app_error::AppError;
@@ -31,6 +31,7 @@ fn make_base_ctx_from_auth(
         crate::utils::tz::now_str(),
     )
     .with_pool(pool.clone())
+    .with_user_int_id(auth.user_int_id())
 }
 
 fn make_base_ctx(state: &AppState, save_ctx: &SaveContext) -> crate::aspects::BaseContext {
@@ -43,6 +44,7 @@ fn make_base_ctx(state: &AppState, save_ctx: &SaveContext) -> crate::aspects::Ba
         crate::utils::tz::now_str(),
     )
     .with_pool(state.pool.clone())
+    .with_user_int_id(save_ctx.user_int_id)
 }
 
 fn make_base_ctx_anon(state: &AppState) -> crate::aspects::BaseContext {
@@ -389,26 +391,41 @@ pub async fn do_list(
 
     let mut meta_filters: Vec<(String, String)> = Vec::new();
     let meta_prefix = format!("{COL_META}.");
-    let filters: HashMap<String, Value> = params
-        .extra
-        .iter()
-        .filter(|(key, v)| {
-            if let Some(path) = key.strip_prefix(&meta_prefix) {
-                meta_filters.push((path.to_string(), (*v).clone()));
-                false
-            } else {
-                ct.get_field(key).is_some()
+    let mut filters: HashMap<String, Value> = HashMap::new();
+
+    for (key, v) in &params.extra {
+        if let Some(path) = key.strip_prefix(&meta_prefix) {
+            meta_filters.push((path.to_string(), v.clone()));
+            continue;
+        }
+        let Some(field) = ct.get_field(key) else {
+            continue;
+        };
+
+        if field.field_type == FieldType::Relation {
+            if let Some(ref rel) = field.relation {
+                match rel.relation_type {
+                    RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay => {
+                        let fk_col = rel
+                            .foreign_key
+                            .clone()
+                            .unwrap_or_else(|| format!("{}_id", field.name));
+                        let int_id = resolve_document_id_to_int_id(
+                            &state.pool, &rel.target, v,
+                        )
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or(-1);
+                        filters.insert(fk_col, json!(int_id));
+                    }
+                    _ => {}
+                }
             }
-        })
-        .map(|(k, v)| {
-            let col = ct
-                .get_field(k)
-                .and_then(|f| f.relation.as_ref().map(|r| r.foreign_key.clone()))
-                .flatten()
-                .unwrap_or_else(|| k.clone());
-            (col, Value::String(v.clone()))
-        })
-        .collect();
+        } else {
+            filters.insert(key.clone(), Value::String(v.clone()));
+        }
+    }
 
     let query = ContentQuery {
         page: params.page.unwrap_or(1),
@@ -840,26 +857,41 @@ async fn do_admin_list(
 
     let mut meta_filters: Vec<(String, String)> = Vec::new();
     let meta_prefix = format!("{COL_META}.");
-    let filters: HashMap<String, Value> = params
-        .extra
-        .iter()
-        .filter(|(key, v)| {
-            if let Some(path) = key.strip_prefix(&meta_prefix) {
-                meta_filters.push((path.to_string(), (*v).clone()));
-                false
-            } else {
-                ct.get_field(key).is_some()
+    let mut filters: HashMap<String, Value> = HashMap::new();
+
+    for (key, v) in &params.extra {
+        if let Some(path) = key.strip_prefix(&meta_prefix) {
+            meta_filters.push((path.to_string(), v.clone()));
+            continue;
+        }
+        let Some(field) = ct.get_field(key) else {
+            continue;
+        };
+
+        if field.field_type == FieldType::Relation {
+            if let Some(ref rel) = field.relation {
+                match rel.relation_type {
+                    RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay => {
+                        let fk_col = rel
+                            .foreign_key
+                            .clone()
+                            .unwrap_or_else(|| format!("{}_id", field.name));
+                        let int_id = resolve_document_id_to_int_id(
+                            &state.pool, &rel.target, v,
+                        )
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or(-1);
+                        filters.insert(fk_col, json!(int_id));
+                    }
+                    _ => {}
+                }
             }
-        })
-        .map(|(k, v)| {
-            let col = ct
-                .get_field(k)
-                .and_then(|f| f.relation.as_ref().map(|r| r.foreign_key.clone()))
-                .flatten()
-                .unwrap_or_else(|| k.clone());
-            (col, Value::String(v.clone()))
-        })
-        .collect();
+        } else {
+            filters.insert(key.clone(), Value::String(v.clone()));
+        }
+    }
 
     let query = ContentQuery {
         page: params.page.unwrap_or(1),

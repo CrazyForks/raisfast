@@ -44,6 +44,7 @@ crate::impl_from_row_opt_tenant!(Comment {
 #[non_exhaustive]
 pub struct CommentResponse {
     pub id: i64,
+    pub document_id: String,
     pub post_id: i64,
     pub created_by: Option<i64>,
     pub nickname: Option<String>,
@@ -341,6 +342,7 @@ pub fn build_tree(comments: &[Comment]) -> Vec<CommentResponse> {
                         let replies = build(c.id, map, comments);
                         CommentResponse {
                             id: c.id,
+                            document_id: c.document_id.clone(),
                             post_id: c.post_id,
                             created_by: c.created_by,
                             nickname: c.nickname.clone(),

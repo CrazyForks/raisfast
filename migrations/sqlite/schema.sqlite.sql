@@ -168,7 +168,7 @@ CREATE TABLE IF NOT EXISTS content_revisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id TEXT NOT NULL UNIQUE,
     content_type TEXT NOT NULL,
-    record_id INTEGER NOT NULL,
+    record_id TEXT NOT NULL,
     revision_number INTEGER NOT NULL,
     snapshot TEXT NOT NULL,
     created_by INTEGER,

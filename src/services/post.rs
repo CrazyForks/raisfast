@@ -1,8 +1,7 @@
-//! 文章、分类和标签服务。
+//! 文章服务。
 //!
-//! 提供文章（含分类、标签）的完整 CRUD 业务逻辑，包括：
+//! 提供文章的完整 CRUD 业务逻辑，包括：
 //!
-//! - 分类和标签的创建、更新、删除、列表查询
 //! - 文章的创建、更新、删除、发布态查询和详情查询
 //! - Slug 自动生成与去重
 //! - 内容摘要自动提取
@@ -10,19 +9,48 @@
 
 use slug::slugify;
 
-use crate::commands::{
-    CreateCategoryCmd, CreatePostCmd, FindPublishedQuery, UpdateCategoryCmd, UpdatePostCmd,
-};
+use crate::commands::{CreatePostCmd, FindPublishedQuery, UpdatePostCmd};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::eventbus::{Event, EventBus};
-use crate::handlers::dto::CreateTagRequest;
-use crate::handlers::dto::{CreateCategoryRequest, UpdateCategoryRequest};
-use crate::handlers::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
+use crate::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::middleware::auth::AuthUser;
 use crate::models::post::PostJoinedRow;
 use crate::plugins::{HookPoint, PluginManager};
-use crate::repositories::{CategoryRepository, PostRepository, TagRepository};
+use crate::repositories::PostRepository;
 use crate::search::SearchEngine;
+
+pub async fn resolve_doc_id_to_int(
+    pool: &crate::db::Pool,
+    table: &str,
+    doc_id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<i64>> {
+    if doc_id.is_empty() {
+        return Ok(None);
+    }
+    if let Ok(int_id) = doc_id.parse::<i64>() {
+        return Ok(Some(int_id));
+    }
+    if !crate::db::dialect::is_safe_identifier(table) {
+        return Ok(None);
+    }
+    let filter = if tenant_id.is_some() {
+        format!(" AND tenant_id = {}", crate::db::dialect::ph(2))
+    } else {
+        String::new()
+    };
+    let sql = format!(
+        "SELECT id FROM {table} WHERE document_id = {}{filter}",
+        crate::db::dialect::ph(1)
+    );
+    let mut q = sqlx::query_scalar::<_, i64>(&sql).bind(doc_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    q.fetch_optional(pool).await.map_err(|e| {
+        AppError::Internal(anyhow::anyhow!("resolve doc_id in {table} failed: {e}"))
+    })
+}
 
 async fn joined_row_to_response(
     r: PostJoinedRow,
@@ -95,138 +123,6 @@ async fn build_post_response_from_repo(
     Ok(joined_row_to_response(row, tags, plugins).await)
 }
 
-pub async fn create_category(
-    category_repo: &dyn CategoryRepository,
-    auth: &AuthUser,
-    req: CreateCategoryRequest,
-) -> AppResult<crate::models::category::Category> {
-    let slug = slugify(&req.name);
-    category_repo
-        .create(
-            CreateCategoryCmd {
-                name: req.name,
-                slug,
-                description: req.description,
-                parent_id: req.parent_id.and_then(|s| s.parse().ok()),
-                sort_order: req.sort_order.unwrap_or(0),
-            },
-            auth.tenant_id(),
-            auth.user_int_id(),
-        )
-        .await
-}
-
-pub async fn update_category(
-    category_repo: &dyn CategoryRepository,
-    auth: &AuthUser,
-    id: &str,
-    req: UpdateCategoryRequest,
-) -> AppResult<crate::models::category::Category> {
-    let existing = category_repo
-        .find_by_document_id(id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("category"))?;
-    let new_slug = req.name.as_ref().map(slugify).unwrap_or(existing.slug);
-
-    category_repo
-        .update(
-            UpdateCategoryCmd {
-                id: existing.id,
-                name: req.name,
-                slug: Some(new_slug),
-                description: req.description,
-                parent_id: req.parent_id.and_then(|s| s.parse().ok()),
-                sort_order: req.sort_order,
-            },
-            auth.tenant_id(),
-            auth.user_int_id(),
-        )
-        .await
-}
-
-pub async fn delete_category(
-    category_repo: &dyn CategoryRepository,
-    id: &str,
-    auth: &AuthUser,
-) -> AppResult<()> {
-    let existing = category_repo
-        .find_by_document_id(id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("category"))?;
-    category_repo.delete(existing.id, auth.tenant_id()).await?;
-    Ok(())
-}
-
-pub async fn list_categories(
-    category_repo: &dyn CategoryRepository,
-    auth: &AuthUser,
-) -> AppResult<Vec<crate::models::category::Category>> {
-    category_repo.find_all(auth.tenant_id()).await
-}
-
-pub async fn list_categories_paginated(
-    category_repo: &dyn CategoryRepository,
-    auth: &AuthUser,
-    page: i64,
-    page_size: i64,
-) -> AppResult<(Vec<crate::models::category::Category>, i64)> {
-    category_repo
-        .find_paginated(auth.tenant_id(), page, page_size)
-        .await
-}
-
-pub async fn create_tag(
-    tag_repo: &dyn TagRepository,
-    auth: &AuthUser,
-    req: CreateTagRequest,
-) -> AppResult<crate::models::tag::Tag> {
-    let slug = slugify(&req.name);
-    tag_repo
-        .create(&req.name, &slug, auth.tenant_id(), auth.user_int_id())
-        .await
-}
-
-pub async fn delete_tag(tag_repo: &dyn TagRepository, id: &str, auth: &AuthUser) -> AppResult<()> {
-    let id_i64: i64 = id
-        .parse()
-        .map_err(|_| AppError::BadRequest("invalid id".into()))?;
-    tag_repo.delete(id_i64, auth.tenant_id()).await?;
-    Ok(())
-}
-
-pub async fn update_tag(
-    tag_repo: &dyn TagRepository,
-    id: &str,
-    auth: &AuthUser,
-    name: String,
-) -> AppResult<crate::models::tag::Tag> {
-    let slug = slugify(&name);
-    let id_i64: i64 = id
-        .parse()
-        .map_err(|_| AppError::BadRequest("invalid id".into()))?;
-    tag_repo
-        .update(id_i64, &name, &slug, auth.tenant_id())
-        .await
-}
-
-pub async fn list_tags(
-    tag_repo: &dyn TagRepository,
-    auth: &AuthUser,
-) -> AppResult<Vec<crate::models::tag::Tag>> {
-    tag_repo.find_all(auth.tenant_id()).await
-}
-
-pub async fn list_tags_paginated(
-    tag_repo: &dyn TagRepository,
-    auth: &AuthUser,
-    page: i64,
-    page_size: i64,
-) -> AppResult<(Vec<crate::models::tag::Tag>, i64)> {
-    tag_repo
-        .find_paginated(auth.tenant_id(), page, page_size)
-        .await
-}
-
 fn make_unique_slug(base_slug: &str) -> String {
     let suffix = crate::utils::id::random_hex(2);
     format!("{base_slug}-{suffix}")
@@ -266,6 +162,26 @@ pub async fn create_post(
         std::string::ToString::to_string,
     );
 
+    let category_id = if let Some(ref doc_id) = req.category_id {
+        resolve_doc_id_to_int(repo.pool(), "categories", doc_id, auth.tenant_id()).await?
+    } else {
+        None
+    };
+    let tag_ids = match req.tag_ids {
+        Some(ref ids) => {
+            let mut resolved = Vec::new();
+            for doc_id in ids {
+                if let Some(int_id) =
+                    resolve_doc_id_to_int(repo.pool(), "tags", doc_id, auth.tenant_id()).await?
+                {
+                    resolved.push(int_id);
+                }
+            }
+            Some(resolved)
+        }
+        None => None,
+    };
+
     let cmd = CreatePostCmd {
         title: req.title,
         slug,
@@ -275,10 +191,8 @@ pub async fn create_post(
         status: status.to_string(),
         created_by: auth.user_int_id().ok_or(AppError::Unauthorized)?,
         updated_by: auth.user_int_id(),
-        category_id: req.category_id.and_then(|s| s.parse().ok()),
-        tag_ids: req
-            .tag_ids
-            .map(|ids| ids.iter().filter_map(|s| s.parse().ok()).collect()),
+        category_id,
+        tag_ids,
     };
     let p = repo.create(cmd, auth.tenant_id()).await?;
 
@@ -342,6 +256,26 @@ async fn update_post_inner(
         .clone()
         .unwrap_or_else(|| extract_excerpt(content, 200));
 
+    let category_id = if let Some(ref doc_id) = req.category_id {
+        resolve_doc_id_to_int(repo.pool(), "categories", doc_id, auth.tenant_id()).await?
+    } else {
+        None
+    };
+    let tag_ids = match req.tag_ids {
+        Some(ref ids) => {
+            let mut resolved = Vec::new();
+            for doc_id in ids {
+                if let Some(int_id) =
+                    resolve_doc_id_to_int(repo.pool(), "tags", doc_id, auth.tenant_id()).await?
+                {
+                    resolved.push(int_id);
+                }
+            }
+            Some(resolved)
+        }
+        None => None,
+    };
+
     let cmd = UpdatePostCmd {
         id: existing.id,
         title: req.title,
@@ -350,10 +284,8 @@ async fn update_post_inner(
         excerpt: Some(excerpt),
         cover_image: req.cover_image,
         status: req.status,
-        category_id: req.category_id.and_then(|s| s.parse().ok()),
-        tag_ids: req
-            .tag_ids
-            .map(|ids| ids.iter().filter_map(|s| s.parse().ok()).collect()),
+        category_id,
+        tag_ids,
         updated_by: auth.user_int_id(),
     };
     repo.update(cmd, auth.tenant_id()).await?;
@@ -444,8 +376,8 @@ pub async fn list_posts(
     repo: &dyn PostRepository,
     page: i64,
     page_size: i64,
-    category_id: Option<&str>,
-    tag_id: Option<&str>,
+    category_id: Option<i64>,
+    tag_id: Option<i64>,
     q: Option<&str>,
     _plugins: &PluginManager,
     search: Option<&dyn SearchEngine>,
@@ -472,8 +404,8 @@ pub async fn list_posts(
                         FindPublishedQuery {
                             page,
                             page_size,
-                            category_id: category_id.and_then(|s| s.parse().ok()),
-                            tag_id: tag_id.and_then(|s| s.parse().ok()),
+                            category_id,
+                            tag_id,
                             q: if keyword.is_empty() {
                                 None
                             } else {
@@ -509,8 +441,8 @@ pub async fn list_posts(
                     FindPublishedQuery {
                         page,
                         page_size,
-                        category_id: category_id.and_then(|s| s.parse().ok()),
-                        tag_id: tag_id.and_then(|s| s.parse().ok()),
+                        category_id,
+                        tag_id,
                         q: q.map(std::string::ToString::to_string),
                     },
                     auth.tenant_id(),

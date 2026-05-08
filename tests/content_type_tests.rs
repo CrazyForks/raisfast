@@ -889,7 +889,6 @@ async fn versioning_creates_revision_on_update() {
         .await
         .unwrap();
     let id = created["document_id"].as_str().unwrap();
-
     let _updated = repo
         .update(
             &ct,
@@ -935,7 +934,6 @@ async fn versioning_multiple_updates_create_multiple_revisions() {
         .await
         .unwrap();
     let id = created["document_id"].as_str().unwrap();
-
     repo.update(
         &ct,
         id,

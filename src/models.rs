@@ -27,6 +27,7 @@ pub mod oauth;
 pub mod options;
 pub mod page;
 pub mod password_reset;
+pub mod reusable_block;
 pub mod plugin_storage;
 pub mod post;
 pub mod rbac;

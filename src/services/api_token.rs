@@ -54,7 +54,7 @@ fn sha256_hex(data: &[u8]) -> String {
     let hash = <sha2::Sha256 as sha2::Digest>::digest(data);
     let mut hex = String::with_capacity(64);
     for byte in hash {
-        write!(&mut hex, "{byte:02x}").unwrap();
+        let _ = write!(&mut hex, "{byte:02x}");
     }
     hex
 }

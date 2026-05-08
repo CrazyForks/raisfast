@@ -67,6 +67,21 @@ pub async fn create_comment(
         .dispatch_filter(HookPoint::CommentCreating, comment_input)
         .await?;
 
+    let parent_id = if let Some(ref doc_id) = filtered.parent_id {
+        if doc_id.is_empty() {
+            None
+        } else if let Ok(int_id) = doc_id.parse::<i64>() {
+            Some(int_id)
+        } else {
+            comment_repo
+                .find_by_document_id(doc_id, auth.tenant_id())
+                .await?
+                .map(|c| c.id)
+        }
+    } else {
+        None
+    };
+
     let c = comment_repo
         .create(
             CreateCommentCmd {
@@ -75,7 +90,7 @@ pub async fn create_comment(
                 nickname: filtered.nickname,
                 email: filtered.email,
                 content: filtered.content,
-                parent_id: filtered.parent_id.and_then(|s| s.parse().ok()),
+                parent_id,
             },
             auth.tenant_id(),
         )
@@ -89,6 +104,7 @@ pub async fn create_comment(
 
     Ok(CommentResponse {
         id: c.id,
+        document_id: c.document_id.clone(),
         post_id: c.post_id,
         created_by: c.created_by,
         nickname: c.nickname,
@@ -124,11 +140,8 @@ pub async fn delete_comment(
     comment_id: &str,
     auth: &AuthUser,
 ) -> AppResult<()> {
-    let id: i64 = comment_id
-        .parse()
-        .map_err(|_| AppError::BadRequest("invalid comment id".into()))?;
     let c = comment_repo
-        .find_by_id(id, auth.tenant_id())
+        .find_by_document_id(comment_id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("comment"))?;
 
@@ -138,7 +151,7 @@ pub async fn delete_comment(
         c.created_by,
     )?;
 
-    comment_repo.delete(id, auth.tenant_id()).await?;
+    comment_repo.delete(c.id, auth.tenant_id()).await?;
     Ok(())
 }
 
@@ -151,11 +164,12 @@ pub async fn update_comment_status(
     if status != "approved" && status != "spam" && status != "pending" {
         return Err(AppError::BadRequest("invalid_comment_status".into()));
     }
-    let id: i64 = comment_id
-        .parse()
-        .map_err(|_| AppError::BadRequest("invalid comment id".into()))?;
+    let c = comment_repo
+        .find_by_document_id(comment_id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("comment"))?;
     comment_repo
-        .update_status(id, status, auth.tenant_id())
+        .update_status(c.id, status, auth.tenant_id())
         .await?;
 
     Ok(())

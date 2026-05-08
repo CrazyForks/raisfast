@@ -12,7 +12,7 @@ use crate::config::app::AppConfig;
 use crate::constants::DEFAULT_TENANT;
 use crate::handlers::{
     api_token, auth, category, comment, cron, health, media, options, page, plugin, post, rbac,
-    rss, sse, stats, tag, tenant, user, workflow, ws,
+    reusable_block, rss, sse, stats, tag, tenant, user, workflow, ws,
 };
 use crate::middleware::locale::locale_middleware;
 use crate::middleware::metrics;
@@ -624,7 +624,7 @@ async fn build_app(
             api_v1,
             registry,
             "/admin/reusable-blocks",
-            get(page::list_reusable).post(page::create_reusable),
+            get(reusable_block::list_reusable).post(reusable_block::create_reusable),
             "system",
             "admin/pages",
             ["GET", "POST"]
@@ -633,9 +633,9 @@ async fn build_app(
             api_v1,
             registry,
             "/admin/reusable-blocks/{id}",
-            get(page::get_reusable)
-                .put(page::update_reusable)
-                .delete(page::delete_reusable),
+            get(reusable_block::get_reusable)
+                .put(reusable_block::update_reusable)
+                .delete(reusable_block::delete_reusable),
             "system",
             "admin/pages",
             ["GET", "PUT", "DELETE"]

@@ -49,14 +49,13 @@ pub async fn resolve_relations(
         match rel.relation_type {
             RelationType::ManyToOne
             | RelationType::OneToOne
-            | RelationType::OneWay
-            | RelationType::ManyWay => {
+            | RelationType::OneWay => {
                 resolve_many_to_one_batch(pool, ct, field, rel, items).await?;
             }
             RelationType::OneToMany => {
                 resolve_one_to_many_batch(pool, ct, field.name.as_str(), rel, items).await?;
             }
-            RelationType::ManyToMany => {
+            RelationType::ManyToMany | RelationType::ManyWay => {
                 resolve_many_to_many_batch(pool, ct, field.name.as_str(), rel, items).await?;
             }
         }
@@ -75,6 +74,16 @@ async fn resolve_many_to_one_batch(
         .foreign_key
         .clone()
         .unwrap_or_else(|| format!("{}_id", field.name));
+
+    if !crate::db::dialect::is_safe_identifier(&fk)
+        || !crate::db::dialect::is_safe_identifier(&rel.target)
+    {
+        tracing::warn!(
+            "skipping many_to_one resolution with unsafe identifier: fk={fk}, target={}",
+            rel.target
+        );
+        return Ok(());
+    }
 
     let mut fk_ids: Vec<i64> = Vec::new();
     for item in &*items {
@@ -164,6 +173,16 @@ async fn resolve_one_to_many_batch(
         .clone()
         .unwrap_or_else(|| format!("{}_id", ct.singular));
 
+    if !crate::db::dialect::is_safe_identifier(&fk_col)
+        || !crate::db::dialect::is_safe_identifier(&rel.target)
+    {
+        tracing::warn!(
+            "skipping one_to_many resolution with unsafe identifier: fk={fk_col}, target={}",
+            rel.target
+        );
+        return Ok(());
+    }
+
     let item_ids: Vec<i64> = items
         .iter()
         .filter_map(|item| item.get(COL_ID).and_then(|v| v.as_i64()))
@@ -232,6 +251,21 @@ async fn resolve_many_to_many_batch(
         .clone()
         .unwrap_or_else(|| format!("{}_{}", ct.table, rel.target));
 
+    let target_table = &rel.target;
+    let source_col = format!("{}_id", ct.singular);
+    let target_col = format!("{}_id", rel.target);
+
+    if !crate::db::dialect::is_safe_identifier(&through)
+        || !crate::db::dialect::is_safe_identifier(&source_col)
+        || !crate::db::dialect::is_safe_identifier(&target_col)
+        || !crate::db::dialect::is_safe_identifier(target_table)
+    {
+        tracing::warn!(
+            "skipping many_to_many resolution with unsafe identifier: through={through}, source={source_col}, target={target_col}, table={target_table}"
+        );
+        return Ok(());
+    }
+
     let item_ids: Vec<i64> = items
         .iter()
         .filter_map(|item| item.get(COL_ID).and_then(|v| v.as_i64()))
@@ -247,9 +281,6 @@ async fn resolve_many_to_many_batch(
         item_ids.into_iter().filter(|id| seen.insert(*id)).collect()
     };
 
-    let target_table = &rel.target;
-    let source_col = format!("{}_id", ct.singular);
-    let target_col = format!("{}_id", rel.target);
     let columns = fetch_column_names(pool, target_table).await;
     let select_cols = columns.join(", ");
 
@@ -381,7 +412,7 @@ through = "ct_resolve_posts_tags"
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE ct_resolve_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, title TEXT, author_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT, updated_by TEXT)",
+            "CREATE TABLE ct_resolve_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, title TEXT, author_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by INTEGER, updated_by INTEGER)",
         )
         .execute(&pool)
         .await

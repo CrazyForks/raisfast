@@ -21,6 +21,7 @@ pub mod config;
 pub mod constants;
 pub mod content_type;
 pub mod db;
+pub mod dto;
 pub mod errors;
 pub mod eventbus;
 pub mod graphql;

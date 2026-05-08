@@ -102,7 +102,7 @@ impl WorkflowService {
         &self,
         definition_id: &str,
         context: &serde_json::Value,
-        triggered_by: Option<&str>,
+        triggered_by: Option<i64>,
     ) -> AppResult<WorkflowInstance> {
         let def = self.get_workflow(definition_id).await?;
 

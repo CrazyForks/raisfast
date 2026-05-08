@@ -549,8 +549,8 @@ impl ContentTypeSchema {
 
         Ok(ContentTypeSchema {
             name: toml.content_type.name.trim().to_string(),
-            singular: toml.content_type.singular.trim().to_string(),
-            plural: toml.content_type.plural.trim().to_string(),
+            singular: Self::validate_identifier(&toml.content_type.singular, "singular")?,
+            plural: Self::validate_identifier(&toml.content_type.plural, "plural")?,
             table: Self::validate_table_name(&toml.content_type.table)?,
             description: toml.content_type.description,
             kind: toml.content_type.kind,
@@ -641,6 +641,21 @@ impl ContentTypeSchema {
     /// 是否提供版本历史路由
     pub fn has_revision_routes(&self) -> bool {
         self.declaration().revision_routes
+    }
+
+    fn validate_identifier(name: &str, label: &str) -> Result<String, AppError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "{label} must not be empty"
+            )));
+        }
+        if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "{label} '{name}' contains invalid characters (only alphanumeric and underscore allowed)"
+            )));
+        }
+        Ok(name.to_string())
     }
 
     /// 校验表名只含安全字符，防止 SQL 注入。
@@ -909,28 +924,16 @@ fn field_to_toml(field: &FieldSchema) -> toml::Value {
         );
     }
     if let Some(ref rel) = field.relation {
-        let mut rt = toml::Table::new();
-        rt.insert(
+        t.insert(
             "relation_type".into(),
             toml::Value::String(format!("{:?}", rel.relation_type).to_lowercase()),
         );
-        rt.insert("target".into(), toml::Value::String(rel.target.clone()));
+        t.insert("target".into(), toml::Value::String(rel.target.clone()));
         if let Some(ref through) = rel.through {
-            rt.insert("through".into(), toml::Value::String(through.clone()));
+            t.insert("through".into(), toml::Value::String(through.clone()));
         }
         if let Some(ref fk) = rel.foreign_key {
-            rt.insert("foreign_key".into(), toml::Value::String(fk.clone()));
-        }
-        t.insert(
-            "relation_type".into(),
-            rt.get("relation_type").unwrap().clone(),
-        );
-        t.insert("target".into(), rt.get("target").unwrap().clone());
-        if rt.contains_key("through") {
-            t.insert("through".into(), rt.get("through").unwrap().clone());
-        }
-        if rt.contains_key("foreign_key") {
-            t.insert("foreign_key".into(), rt.get("foreign_key").unwrap().clone());
+            t.insert("foreign_key".into(), toml::Value::String(fk.clone()));
         }
     }
     if let Some(ref mc) = field.media_config {

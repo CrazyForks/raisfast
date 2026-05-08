@@ -1,6 +1,6 @@
 //! 页面服务层
 //!
-//! 提供页面和可复用块的完整 CRUD 业务逻辑，包括 slug 生成、状态管理和 block 校验。
+//! 提供页面的完整 CRUD 业务逻辑，包括 slug 生成、状态管理和 block 校验。
 
 use slug::slugify;
 
@@ -162,80 +162,6 @@ pub async fn sitemap(
     auth: &AuthUser,
 ) -> AppResult<Vec<(String, Option<String>)>> {
     page::list_sitemap(pool, auth.tenant_id()).await
-}
-
-// ── 可复用块 ──
-
-pub async fn list_reusable(
-    pool: &crate::db::Pool,
-    auth: &AuthUser,
-) -> AppResult<Vec<page::ReusableBlock>> {
-    page::list_reusable(pool, auth.tenant_id()).await
-}
-
-pub async fn get_reusable(
-    pool: &crate::db::Pool,
-    id: &str,
-    auth: &AuthUser,
-) -> AppResult<Option<page::ReusableBlock>> {
-    page::find_reusable_by_document_id(pool, id, auth.tenant_id()).await
-}
-
-pub async fn create_reusable(
-    pool: &crate::db::Pool,
-    auth: &AuthUser,
-    name: &str,
-    block_type: &str,
-    content: &str,
-    description: Option<&str>,
-) -> AppResult<page::ReusableBlock> {
-    validate_blocks_json(content)?;
-
-    page::create_reusable(
-        pool,
-        name,
-        block_type,
-        content,
-        description,
-        auth.user_id(),
-        auth.tenant_id(),
-    )
-    .await
-}
-
-pub async fn update_reusable(
-    pool: &crate::db::Pool,
-    id: &str,
-    auth: &AuthUser,
-    name: Option<&str>,
-    block_type: Option<&str>,
-    content: Option<&str>,
-    description: Option<&str>,
-) -> AppResult<page::ReusableBlock> {
-    if let Some(c) = content {
-        validate_blocks_json(c)?;
-    }
-    let block = page::find_reusable_by_document_id(pool, id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("reusable_block"))?;
-    page::update_reusable(
-        pool,
-        block.id,
-        name,
-        block_type,
-        content,
-        description,
-        auth.user_id(),
-        auth.tenant_id(),
-    )
-    .await
-}
-
-pub async fn delete_reusable(pool: &crate::db::Pool, id: &str, auth: &AuthUser) -> AppResult<()> {
-    let block = page::find_reusable_by_document_id(pool, id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("reusable_block"))?;
-    page::delete_reusable(pool, block.id, auth.tenant_id()).await
 }
 
 pub fn generate_slug(title: &str) -> String {

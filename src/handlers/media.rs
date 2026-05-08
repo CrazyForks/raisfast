@@ -13,7 +13,7 @@ pub async fn upload(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     mut multipart: Multipart,
-) -> AppResult<ApiResponse<crate::handlers::dto::MediaResponse>> {
+) -> AppResult<ApiResponse<crate::dto::MediaResponse>> {
     let field = multipart
         .next_field()
         .await
@@ -48,7 +48,7 @@ pub async fn upload(
 
     let url = state.storage.url(&media.filepath).await?;
     Ok(ApiResponse::success(
-        crate::handlers::dto::media_to_response_with_url(&media, &url),
+        crate::dto::media_to_response_with_url(&media, &url),
     ))
 }
 
@@ -57,7 +57,7 @@ pub async fn list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Query(mut params): Query<PaginationParams>,
-) -> AppResult<ApiResponse<PaginatedData<crate::handlers::dto::MediaResponse>>> {
+) -> AppResult<ApiResponse<PaginatedData<crate::dto::MediaResponse>>> {
     params.sanitize();
     let (items, total) = media_service::list(
         state.media_repo.as_ref(),
@@ -71,7 +71,7 @@ pub async fn list(
     let storage = state.storage.as_ref();
     let responses = futures::future::join_all(items.iter().map(|m| async {
         let url = storage.url(&m.filepath).await.unwrap_or_default();
-        crate::handlers::dto::media_to_response_with_url(m, &url)
+        crate::dto::media_to_response_with_url(m, &url)
     }))
     .await;
 
@@ -99,9 +99,9 @@ pub async fn delete(
 pub async fn stats(
     auth: AuthUser,
     State(state): State<crate::AppState>,
-) -> AppResult<ApiResponse<crate::handlers::dto::MediaStatsResponse>> {
+) -> AppResult<ApiResponse<crate::dto::MediaStatsResponse>> {
     let s = media_service::stats(state.media_repo.as_ref(), &state.pool, &auth).await?;
     Ok(ApiResponse::success(
-        crate::handlers::dto::stats_to_response(&s),
+        crate::dto::stats_to_response(&s),
     ))
 }

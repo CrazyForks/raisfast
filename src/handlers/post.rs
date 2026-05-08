@@ -10,7 +10,7 @@ use serde::Deserialize;
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
-use crate::handlers::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
+use crate::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::middleware::auth::AuthUser;
 use crate::services::post as post_service;
 use crate::utils::pagination::PaginationParams;
@@ -52,12 +52,23 @@ pub async fn list(
 ) -> AppResult<ApiResponse<PaginatedData<PostResponse>>> {
     let pagination = PaginationParams::from_options(query.page, query.page_size);
 
+    let cat_id = if let Some(ref cid) = query.category_id {
+        post_service::resolve_doc_id_to_int(&state.pool, "categories", cid, None).await?
+    } else {
+        None
+    };
+    let tg_id = if let Some(ref tid) = query.tag_id {
+        post_service::resolve_doc_id_to_int(&state.pool, "tags", tid, None).await?
+    } else {
+        None
+    };
+
     let (posts, total) = post_service::list_posts(
         state.post_repo.as_ref(),
         pagination.page,
         pagination.page_size,
-        query.category_id.as_deref(),
-        query.tag_id.as_deref(),
+        cat_id,
+        tg_id,
         query.q.as_deref(),
         &state.plugins,
         Some(state.search.as_ref()),
@@ -209,12 +220,15 @@ pub async fn admin_list(
     auth.ensure_author()?;
     let pagination = PaginationParams::from_options(query.page, query.page_size);
 
-    let (posts, total) = post_service::list_all_posts(
+    let (posts, total) = post_service::list_posts(
         state.post_repo.as_ref(),
         pagination.page,
         pagination.page_size,
-        query.status.as_deref(),
+        None,
+        None,
+        None,
         &state.plugins,
+        Some(state.search.as_ref()),
         &auth,
     )
     .await?;

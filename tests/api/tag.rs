@@ -49,7 +49,7 @@ async fn delete_success() {
         post_json_auth("/api/v1/tags", json!({"name": "delme"}), &tok),
     )
     .await;
-    let id = b["data"]["id"].as_i64().unwrap().to_string();
+    let id = b["data"]["document_id"].as_str().unwrap().to_string();
     let (status, _): (StatusCode, Value) =
         send(&mut app, delete_auth(&format!("/api/v1/tags/{id}"), &tok)).await;
     assert!(status.is_success());
@@ -58,7 +58,7 @@ async fn delete_success() {
 #[tokio::test]
 async fn delete_not_found() {
     let (mut app, _, tok) = setup().await;
-    let fake = 999999_i64;
+    let fake = "nonexistent-document-id";
     let (status, _): (StatusCode, Value) =
         send(&mut app, delete_auth(&format!("/api/v1/tags/{fake}"), &tok)).await;
     assert_eq!(status, StatusCode::NOT_FOUND);

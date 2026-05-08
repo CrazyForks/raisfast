@@ -11,7 +11,7 @@ use raisfast::content_type::repository::{ContentQuery, ContentRepository, SaveCo
 use raisfast::content_type::schema::ContentTypeSchema;
 use raisfast::db::tenant;
 use raisfast::repositories::*;
-use raisfast::services::{auth, options, post, stats};
+use raisfast::services::{auth, options, post, stats, user};
 
 fn with_timestamps(data: serde_json::Value) -> serde_json::Value {
     let mut obj = data
@@ -62,7 +62,7 @@ async fn setup_pool() -> sqlx::SqlitePool {
 async fn create_test_user(pool: &sqlx::SqlitePool, label: &str) -> (i64, String) {
     let eventbus = raisfast::eventbus::EventBus::new(16);
     let user_repo = SqlxUserRepository::new(pool.clone());
-    let req = raisfast::handlers::dto::RegisterRequest {
+    let req = raisfast::dto::RegisterRequest {
         username: format!("user_{label}"),
         email: format!("{label}@test.com"),
         password: "Password123".into(),
@@ -119,7 +119,7 @@ async fn tauri_auth_register_service() {
     let user_repo = SqlxUserRepository::new(pool.clone());
     let eventbus = raisfast::eventbus::EventBus::new(16);
 
-    let req = raisfast::handlers::dto::RegisterRequest {
+    let req = raisfast::dto::RegisterRequest {
         username: "testuser".into(),
         email: "test@example.com".into(),
         password: "Password123".into(),
@@ -143,7 +143,7 @@ async fn tauri_auth_register_duplicate_email() {
     let user_repo = SqlxUserRepository::new(pool.clone());
     let eventbus = raisfast::eventbus::EventBus::new(16);
 
-    let req = raisfast::handlers::dto::RegisterRequest {
+    let req = raisfast::dto::RegisterRequest {
         username: "user1".into(),
         email: "dup@example.com".into(),
         password: "Password123".into(),
@@ -152,7 +152,7 @@ async fn tauri_auth_register_duplicate_email() {
         .await
         .unwrap();
 
-    let req2 = raisfast::handlers::dto::RegisterRequest {
+    let req2 = raisfast::dto::RegisterRequest {
         username: "user2".into(),
         email: "dup@example.com".into(),
         password: "Password456".into(),
@@ -171,7 +171,7 @@ async fn tauri_auth_login_service() {
     let eventbus = raisfast::eventbus::EventBus::new(16);
     let plugin_mgr = raisfast::plugins::PluginManager::new(Arc::new(config.clone())).await;
 
-    let reg_req = raisfast::handlers::dto::RegisterRequest {
+    let reg_req = raisfast::dto::RegisterRequest {
         username: "loginuser".into(),
         email: "login@example.com".into(),
         password: "Password123".into(),
@@ -180,7 +180,7 @@ async fn tauri_auth_login_service() {
         .await
         .unwrap();
 
-    let login_req = raisfast::handlers::dto::LoginRequest {
+    let login_req = raisfast::dto::LoginRequest {
         email: "login@example.com".into(),
         password: "Password123".into(),
     };
@@ -214,7 +214,7 @@ async fn tauri_auth_login_wrong_password() {
     let eventbus = raisfast::eventbus::EventBus::new(16);
     let plugin_mgr = raisfast::plugins::PluginManager::new(Arc::new(config.clone())).await;
 
-    let reg_req = raisfast::handlers::dto::RegisterRequest {
+    let reg_req = raisfast::dto::RegisterRequest {
         username: "wrongpw".into(),
         email: "wrong@example.com".into(),
         password: "Password123".into(),
@@ -223,7 +223,7 @@ async fn tauri_auth_login_wrong_password() {
         .await
         .unwrap();
 
-    let login_req = raisfast::handlers::dto::LoginRequest {
+    let login_req = raisfast::dto::LoginRequest {
         email: "wrong@example.com".into(),
         password: "WrongPassword".into(),
     };
@@ -251,7 +251,7 @@ async fn tauri_auth_get_me_service() {
     let user_repo = SqlxUserRepository::new(pool.clone());
     let eventbus = raisfast::eventbus::EventBus::new(16);
 
-    let reg_req = raisfast::handlers::dto::RegisterRequest {
+    let reg_req = raisfast::dto::RegisterRequest {
         username: "getme".into(),
         email: "getme@example.com".into(),
         password: "Password123".into(),
@@ -266,7 +266,7 @@ async fn tauri_auth_get_me_service() {
         "author".to_string(),
         None,
     );
-    let result = auth::get_me(&user_repo, &auth).await;
+    let result = user::get_me(&user_repo, &auth).await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap().id, user.id);
 }
@@ -290,7 +290,7 @@ async fn tauri_post_create_and_list() {
     let config = test_config();
     let plugin_mgr = raisfast::plugins::PluginManager::new(Arc::new(config.clone())).await;
 
-    let req = raisfast::handlers::dto::CreatePostRequest {
+    let req = raisfast::dto::CreatePostRequest {
         title: "Test Post".into(),
         content: "Hello world".into(),
         excerpt: None,
@@ -346,7 +346,7 @@ async fn tauri_post_get_by_slug() {
     let config = test_config();
     let plugin_mgr = raisfast::plugins::PluginManager::new(Arc::new(config.clone())).await;
 
-    let req = raisfast::handlers::dto::CreatePostRequest {
+    let req = raisfast::dto::CreatePostRequest {
         title: "Slug Test".into(),
         content: "content".into(),
         excerpt: None,
@@ -747,6 +747,7 @@ type = "text"
 
     let save_ctx = SaveContext {
         user_id: Some("user-123".into()),
+        user_int_id: Some(1),
         user_role: Some("member".into()),
         tenant_id: None,
     };

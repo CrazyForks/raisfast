@@ -176,7 +176,7 @@ CREATE TABLE IF NOT EXISTS content_revisions (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,
     content_type VARCHAR(100) NOT NULL,
-    record_id BIGINT NOT NULL,
+    record_id TEXT NOT NULL,
     revision_number INT NOT NULL,
     snapshot TEXT NOT NULL,
     created_by BIGINT,

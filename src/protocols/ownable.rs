@@ -48,38 +48,38 @@ impl Aspect for OwnableAspect {
         vec![
             ColumnDef {
                 name: COL_CREATED_BY.into(),
-                sql_type: SqlType::Text,
+                sql_type: SqlType::Integer,
                 default: None,
             },
             ColumnDef {
                 name: COL_UPDATED_BY.into(),
-                sql_type: SqlType::Text,
+                sql_type: SqlType::Integer,
                 default: None,
             },
         ]
     }
 
     async fn on_data_before_create(&self, ctx: &mut DataBeforeCreateContext) -> AspectResult {
-        if let Some(user_id) = &ctx.base.user_id {
+        if let Some(user_int_id) = ctx.base.user_int_id {
             let schema = ctx.schema.as_ref();
             if schema.is_none_or(|s| s.is_protocol_column(COL_CREATED_BY)) {
-                ctx.record.insert(COL_CREATED_BY.into(), json!(user_id));
+                ctx.record.insert(COL_CREATED_BY.into(), json!(user_int_id));
             }
             if schema.is_none_or(|s| s.is_protocol_column(COL_UPDATED_BY)) {
-                ctx.record.insert(COL_UPDATED_BY.into(), json!(user_id));
+                ctx.record.insert(COL_UPDATED_BY.into(), json!(user_int_id));
             }
         }
         Ok(Advice::Continue)
     }
 
     async fn on_data_before_update(&self, ctx: &mut DataBeforeUpdateContext) -> AspectResult {
-        if let Some(user_id) = &ctx.base.user_id
+        if let Some(user_int_id) = ctx.base.user_int_id
             && ctx
                 .schema
                 .as_ref()
                 .is_none_or(|s| s.is_protocol_column(COL_UPDATED_BY))
         {
-            ctx.new_record.insert(COL_UPDATED_BY.into(), json!(user_id));
+            ctx.new_record.insert(COL_UPDATED_BY.into(), json!(user_int_id));
         }
         Ok(Advice::Continue)
     }
@@ -130,7 +130,8 @@ mod tests {
         engine.register(OwnableAspect);
 
         let mut ctx = DataBeforeCreateContext {
-            base: BaseContext::new(Some("user-123".into()), "default".into(), "now".into()),
+            base: BaseContext::new(Some("user-123".into()), "default".into(), "now".into())
+                .with_user_int_id(Some(42)),
             table: "articles".into(),
             record: Record::new(),
             schema: None,
@@ -140,8 +141,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(ctx.record.get("created_by").unwrap(), &json!("user-123"));
-        assert_eq!(ctx.record.get("updated_by").unwrap(), &json!("user-123"));
+        assert_eq!(ctx.record.get("created_by").unwrap(), &json!(42));
+        assert_eq!(ctx.record.get("updated_by").unwrap(), &json!(42));
     }
 
     #[tokio::test]
@@ -183,7 +184,8 @@ mod tests {
                 Some("user-1".into()),
                 "default".into(),
                 "2026-01-01T00:00:00Z".into(),
-            ),
+            )
+            .with_user_int_id(Some(1)),
             table: "articles".into(),
             record: Record::new(),
             schema: None,
@@ -193,7 +195,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(ctx.record.get("created_by").unwrap(), &json!("user-1"));
+        assert_eq!(ctx.record.get("created_by").unwrap(), &json!(1));
         assert_eq!(
             ctx.record.get("created_at").unwrap(),
             &json!("2026-01-01T00:00:00Z")
@@ -213,7 +215,8 @@ mod tests {
         record.insert("created_by".into(), json!("old-user"));
 
         let mut ctx = DataBeforeCreateContext {
-            base: BaseContext::new(Some("new-user".into()), "default".into(), "now".into()),
+            base: BaseContext::new(Some("new-user".into()), "default".into(), "now".into())
+                .with_user_int_id(Some(99)),
             table: "articles".into(),
             record,
             schema: None,
@@ -223,7 +226,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(ctx.record.get("created_by").unwrap(), &json!("new-user"));
+        assert_eq!(ctx.record.get("created_by").unwrap(), &json!(99));
     }
 
     #[tokio::test]
@@ -235,7 +238,8 @@ mod tests {
         new_record.insert("title".into(), json!("updated"));
 
         let mut ctx = DataBeforeUpdateContext {
-            base: BaseContext::new(Some("user-1".into()), "default".into(), "now".into()),
+            base: BaseContext::new(Some("user-1".into()), "default".into(), "now".into())
+                .with_user_int_id(Some(1)),
             table: "articles".into(),
             old_record: {
                 let mut r = Record::new();
@@ -252,7 +256,7 @@ mod tests {
         result.unwrap();
 
         assert!(!ctx.new_record.contains_key("created_by"));
-        assert_eq!(ctx.new_record.get("updated_by").unwrap(), &json!("user-1"));
+        assert_eq!(ctx.new_record.get("updated_by").unwrap(), &json!(1));
     }
 
     #[tokio::test]
@@ -261,7 +265,8 @@ mod tests {
         engine.register(OwnableAspect);
 
         let mut ctx = DataBeforeCreateContext {
-            base: BaseContext::new(Some("user-1".into()), "default".into(), "now".into()),
+            base: BaseContext::new(Some("user-1".into()), "default".into(), "now".into())
+                .with_user_int_id(Some(1)),
             table: String::new(),
             record: Record::new(),
             schema: None,
@@ -269,7 +274,7 @@ mod tests {
 
         dispatch_create(&engine, "", &mut ctx).await.unwrap();
 
-        assert_eq!(ctx.record.get("created_by").unwrap(), &json!("user-1"));
+        assert_eq!(ctx.record.get("created_by").unwrap(), &json!(1));
     }
 
     #[tokio::test]
@@ -278,7 +283,8 @@ mod tests {
         engine.register(OwnableAspect);
 
         let mut ctx1 = DataBeforeCreateContext {
-            base: BaseContext::new(Some("user-a".into()), "default".into(), "now".into()),
+            base: BaseContext::new(Some("user-a".into()), "default".into(), "now".into())
+                .with_user_int_id(Some(10)),
             table: "articles".into(),
             record: Record::new(),
             schema: None,
@@ -286,10 +292,11 @@ mod tests {
         dispatch_create(&engine, "articles", &mut ctx1)
             .await
             .unwrap();
-        assert_eq!(ctx1.record.get("created_by").unwrap(), &json!("user-a"));
+        assert_eq!(ctx1.record.get("created_by").unwrap(), &json!(10));
 
         let mut ctx2 = DataBeforeCreateContext {
-            base: BaseContext::new(Some("user-b".into()), "default".into(), "now".into()),
+            base: BaseContext::new(Some("user-b".into()), "default".into(), "now".into())
+                .with_user_int_id(Some(20)),
             table: "articles".into(),
             record: Record::new(),
             schema: None,
@@ -297,7 +304,7 @@ mod tests {
         dispatch_create(&engine, "articles", &mut ctx2)
             .await
             .unwrap();
-        assert_eq!(ctx2.record.get("created_by").unwrap(), &json!("user-b"));
+        assert_eq!(ctx2.record.get("created_by").unwrap(), &json!(20));
     }
 
     #[tokio::test]

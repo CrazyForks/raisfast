@@ -6,9 +6,9 @@ use axum::extract::{Path, Query, State};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
-use crate::handlers::dto::{CreateTagRequest, UpdateTagRequest};
+use crate::dto::{CreateTagRequest, UpdateTagRequest};
 use crate::middleware::auth::AuthUser;
-use crate::services::post;
+use crate::services::tag;
 use crate::utils::pagination::PaginationParams;
 
 /// 获取标签列表（分页）
@@ -21,7 +21,7 @@ pub async fn list(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<crate::models::tag::Tag>>> {
     params.sanitize();
-    let (items, total) = post::list_tags_paginated(
+    let (items, total) = tag::list_tags_paginated(
         state.tag_repo.as_ref(),
         &auth,
         params.page,
@@ -44,7 +44,7 @@ pub async fn create(
 ) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
-    let tag = post::create_tag(state.tag_repo.as_ref(), &auth, req).await?;
+    let tag = tag::create_tag(state.tag_repo.as_ref(), &auth, req).await?;
     Ok(ApiResponse::success(tag))
 }
 
@@ -60,7 +60,7 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_author()?;
-    post::delete_tag(state.tag_repo.as_ref(), &id, &auth).await?;
+    tag::delete_tag(state.tag_repo.as_ref(), &id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -79,6 +79,6 @@ pub async fn update(
 ) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
-    let tag = post::update_tag(state.tag_repo.as_ref(), &id, &auth, req.name).await?;
+    let tag = tag::update_tag(state.tag_repo.as_ref(), &id, &auth, req.name).await?;
     Ok(ApiResponse::success(tag))
 }

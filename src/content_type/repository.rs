@@ -23,6 +23,7 @@ use sqlx::Row;
 #[derive(Debug, Clone, Default)]
 pub struct SaveContext {
     pub user_id: Option<String>,
+    pub user_int_id: Option<i64>,
     pub user_role: Option<String>,
     pub tenant_id: Option<String>,
 }
@@ -31,6 +32,7 @@ impl SaveContext {
     pub fn from_auth(auth: &AuthUser) -> Self {
         Self {
             user_id: auth.user_id().map(|s| s.to_string()),
+            user_int_id: auth.user_int_id(),
             user_role: auth.is_authenticated().then(|| auth.role().to_string()),
             tenant_id: auth.tenant_id().map(|s| s.to_string()),
         }
@@ -410,32 +412,79 @@ impl ContentRepository {
             values.push(tid.clone());
         }
 
-        let relation_column_map: std::collections::HashMap<String, String> = ct
-            .fields
-            .iter()
-            .filter(|f| f.field_type == super::schema::FieldType::Relation)
-            .map(|f| {
-                let fk = f
-                    .relation
-                    .as_ref()
-                    .and_then(|r| r.foreign_key.clone())
-                    .unwrap_or_else(|| format!("{}_id", f.name));
-                (f.name.clone(), fk)
-            })
-            .collect();
+        let mut fk_relation_map: std::collections::HashMap<String, (String, String)> =
+            std::collections::HashMap::new();
+        let mut junction_fields: Vec<(String, String, String, String, String)> = Vec::new();
+
+        for field in &ct.fields {
+            if field.field_type != FieldType::Relation {
+                continue;
+            }
+            let Some(ref rel) = field.relation else {
+                continue;
+            };
+            match rel.relation_type {
+                RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay => {
+                    let fk = rel
+                        .foreign_key
+                        .clone()
+                        .unwrap_or_else(|| format!("{}_id", field.name));
+                    fk_relation_map.insert(field.name.clone(), (fk, rel.target.clone()));
+                }
+                RelationType::ManyToMany | RelationType::ManyWay => {
+                    let through = rel
+                        .through
+                        .clone()
+                        .unwrap_or_else(|| format!("{}_{}", ct.table, rel.target));
+                    let source_col = format!("{}_id", ct.singular);
+                    let target_col = format!("{}_id", rel.target);
+                    junction_fields.push((
+                        field.name.clone(),
+                        through,
+                        rel.target.clone(),
+                        source_col,
+                        target_col,
+                    ));
+                }
+                RelationType::OneToMany => {}
+            }
+        }
+
+        let junction_field_names: Vec<&str> =
+            junction_fields.iter().map(|(n, ..)| n.as_str()).collect();
 
         for (key, val) in obj.iter() {
-            if key == COL_TENANT_ID {
+            if key == COL_TENANT_ID || junction_field_names.contains(&key.as_str()) {
                 continue;
             }
             if !crate::db::dialect::is_safe_identifier(key) {
                 continue;
             }
-            let col = relation_column_map
-                .get(key)
-                .cloned()
-                .unwrap_or_else(|| key.clone());
-            cols.push(col);
+
+            if let Some((fk_col, target_table)) = fk_relation_map.get(key) {
+                let doc_id = value_to_string(val);
+                if doc_id.is_empty() {
+                    cols.push(fk_col.clone());
+                    placeholders.push(crate::db::dialect::ph(idx));
+                    idx += 1;
+                    values.push(String::new());
+                } else {
+                    let int_id = resolve_document_id_to_int_id(&self.pool, target_table, &doc_id)
+                        .await?
+                        .ok_or_else(|| {
+                            AppError::BadRequest(format!(
+                                "relation target '{doc_id}' not found in {target_table}"
+                            ))
+                        })?;
+                    cols.push(fk_col.clone());
+                    placeholders.push(crate::db::dialect::ph(idx));
+                    idx += 1;
+                    values.push(int_id.to_string());
+                }
+                continue;
+            }
+
+            cols.push(key.clone());
             placeholders.push(crate::db::dialect::ph(idx));
             idx += 1;
             values.push(value_to_string(val));
@@ -457,6 +506,54 @@ impl ContentRepository {
             .execute(&mut *tx)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("insert failed: {e}")))?;
+
+        let source_int_id: i64 = {
+            let id_sql = format!(
+                "SELECT {COL_ID} FROM {} WHERE {COL_DOCUMENT_ID} = {}",
+                ct.table,
+                crate::db::dialect::ph(1)
+            );
+            sqlx::query_scalar::<_, i64>(&id_sql)
+                .bind(&document_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("fetch int_id failed: {e}")))?
+        };
+
+        for (field_name, through_table, target_table, source_col, target_col) in &junction_fields {
+            if !crate::db::dialect::is_safe_identifier(through_table)
+                || !crate::db::dialect::is_safe_identifier(source_col)
+                || !crate::db::dialect::is_safe_identifier(target_col)
+            {
+                tracing::warn!(
+                    "skipping junction with unsafe identifier: through={through_table}, source={source_col}, target={target_col}"
+                );
+                continue;
+            }
+            let Some(val) = obj.get(field_name) else {
+                continue;
+            };
+            let doc_ids = extract_document_ids(val);
+            if doc_ids.is_empty() {
+                continue;
+            }
+            let int_ids = resolve_document_ids_batch(&self.pool, target_table, &doc_ids).await?;
+            for target_int_id in int_ids {
+                let jsql = format!(
+                    "INSERT OR IGNORE INTO {through_table} ({source_col}, {target_col}) VALUES ({}, {})",
+                    crate::db::dialect::ph(1),
+                    crate::db::dialect::ph(2)
+                );
+                sqlx::query(&jsql)
+                    .bind(source_int_id)
+                    .bind(target_int_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| {
+                        AppError::Internal(anyhow::anyhow!("junction insert failed: {e}"))
+                    })?;
+            }
+        }
 
         tx.commit()
             .await
@@ -525,32 +622,93 @@ impl ContentRepository {
         let mut values: Vec<String> = Vec::new();
         let mut idx = 1;
 
-        let relation_column_map: std::collections::HashMap<String, String> = ct
-            .fields
-            .iter()
-            .filter(|f| f.field_type == super::schema::FieldType::Relation)
-            .map(|f| {
-                let fk = f
-                    .relation
-                    .as_ref()
-                    .and_then(|r| r.foreign_key.clone())
-                    .unwrap_or_else(|| format!("{}_id", f.name));
-                (f.name.clone(), fk)
-            })
-            .collect();
+        let mut fk_relation_map: std::collections::HashMap<String, (String, String)> =
+            std::collections::HashMap::new();
+        let mut junction_fields: Vec<(String, String, String, String, String)> = Vec::new();
+
+        for field in &ct.fields {
+            if field.field_type != FieldType::Relation {
+                continue;
+            }
+            let Some(ref rel) = field.relation else {
+                continue;
+            };
+            match rel.relation_type {
+                RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay => {
+                    let fk = rel
+                        .foreign_key
+                        .clone()
+                        .unwrap_or_else(|| format!("{}_id", field.name));
+                    fk_relation_map.insert(field.name.clone(), (fk, rel.target.clone()));
+                }
+                RelationType::ManyToMany | RelationType::ManyWay => {
+                    let through = rel
+                        .through
+                        .clone()
+                        .unwrap_or_else(|| format!("{}_{}", ct.table, rel.target));
+                    let source_col = format!("{}_id", ct.singular);
+                    let target_col = format!("{}_id", rel.target);
+                    junction_fields.push((
+                        field.name.clone(),
+                        through,
+                        rel.target.clone(),
+                        source_col,
+                        target_col,
+                    ));
+                }
+                RelationType::OneToMany => {}
+            }
+        }
+
+        let junction_field_names: Vec<&str> =
+            junction_fields.iter().map(|(n, ..)| n.as_str()).collect();
 
         let decl = ct.declaration();
+
+        let source_int_id: i64 = {
+            let id_sql = format!(
+                "SELECT {COL_ID} FROM {} WHERE {COL_DOCUMENT_ID} = {}",
+                ct.table,
+                crate::db::dialect::ph(1)
+            );
+            sqlx::query_scalar::<_, i64>(&id_sql)
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("fetch int_id failed: {e}")))?
+                .ok_or_else(|| AppError::not_found(&format!("{}/{}", ct.singular, id)))?
+        };
 
         for (key, val) in obj.iter() {
             if ct.get_field(key).is_some() || ct.is_protocol_column(key) {
                 if !crate::db::dialect::is_safe_identifier(key) {
                     continue;
                 }
-                let col = relation_column_map
-                    .get(key)
-                    .cloned()
-                    .unwrap_or_else(|| key.clone());
-                set_clauses.push(format!("{col} = {}", crate::db::dialect::ph(idx)));
+                if junction_field_names.contains(&key.as_str()) {
+                    continue;
+                }
+                if let Some((fk_col, target_table)) = fk_relation_map.get(key) {
+                    let doc_id = value_to_string(val);
+                    if doc_id.is_empty() {
+                        set_clauses.push(format!("{fk_col} = {}", crate::db::dialect::ph(idx)));
+                        idx += 1;
+                        values.push(String::new());
+                    } else {
+                        let int_id =
+                            resolve_document_id_to_int_id(&self.pool, target_table, &doc_id)
+                                .await?
+                                .ok_or_else(|| {
+                                    AppError::BadRequest(format!(
+                                        "relation target '{doc_id}' not found in {target_table}"
+                                    ))
+                                })?;
+                        set_clauses.push(format!("{fk_col} = {}", crate::db::dialect::ph(idx)));
+                        idx += 1;
+                        values.push(int_id.to_string());
+                    }
+                    continue;
+                }
+                set_clauses.push(format!("{key} = {}", crate::db::dialect::ph(idx)));
                 idx += 1;
                 values.push(value_to_string(val));
             }
@@ -560,52 +718,102 @@ impl ContentRepository {
             set_clauses.push(format!("{lock_col} = {lock_col} + 1"));
         }
 
-        if set_clauses.is_empty() {
+        let has_junction_updates = junction_field_names.iter().any(|j| obj.contains_key(*j));
+        if set_clauses.is_empty() && !has_junction_updates {
             return Err(AppError::BadRequest("no fields to update".into()));
         }
 
-        let mut where_parts = vec![format!(
-            "{COL_DOCUMENT_ID} = {}",
-            crate::db::dialect::ph(idx)
-        )];
-        idx += 1;
-        values.push(id.to_string());
+        if !set_clauses.is_empty() {
+            let mut where_parts = vec![format!(
+                "{COL_DOCUMENT_ID} = {}",
+                crate::db::dialect::ph(idx)
+            )];
+            idx += 1;
+            values.push(id.to_string());
 
-        if let Some(ref tid) = tid {
-            where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::dialect::ph(idx)));
-            values.push(tid.clone());
+            if let Some(ref tid) = tid {
+                where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::dialect::ph(idx)));
+                values.push(tid.clone());
+            }
+
+            if let Some(ref lock_col) = decl.lock_column
+                && let Some(current_version) = obj.get(lock_col).and_then(|v| v.as_i64())
+            {
+                where_parts.push(format!("{lock_col} = {}", crate::db::dialect::ph(idx)));
+                values.push(current_version.to_string());
+            }
+
+            let sql = format!(
+                "UPDATE {} SET {} WHERE {}",
+                ct.table,
+                set_clauses.join(", "),
+                where_parts.join(" AND ")
+            );
+
+            let mut query = sqlx::query(&sql);
+            for v in &values {
+                query = query.bind(v);
+            }
+
+            let result = query
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("update failed: {e}")))?;
+
+            if let Some(ref lock_col) = decl.lock_column
+                && result.rows_affected() == 0
+            {
+                return Err(AppError::Conflict(format!(
+                    "记录已被他人修改（{lock_col} 冲突），请刷新后重试"
+                )));
+            }
         }
 
-        if let Some(ref lock_col) = decl.lock_column
-            && let Some(current_version) = data.get(lock_col).and_then(|v| v.as_i64())
-        {
-            where_parts.push(format!("{lock_col} = {}", crate::db::dialect::ph(idx)));
-            values.push(current_version.to_string());
-        }
+        for (field_name, through_table, target_table, source_col, target_col) in &junction_fields {
+            if !crate::db::dialect::is_safe_identifier(through_table)
+                || !crate::db::dialect::is_safe_identifier(source_col)
+                || !crate::db::dialect::is_safe_identifier(target_col)
+            {
+                tracing::warn!(
+                    "skipping junction with unsafe identifier: through={through_table}, source={source_col}, target={target_col}"
+                );
+                continue;
+            }
+            let Some(val) = obj.get(field_name) else {
+                continue;
+            };
+            let del_sql = format!(
+                "DELETE FROM {through_table} WHERE {source_col} = {}",
+                crate::db::dialect::ph(1)
+            );
+            sqlx::query(&del_sql)
+                .bind(source_int_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| {
+                    AppError::Internal(anyhow::anyhow!("junction delete failed: {e}"))
+                })?;
 
-        let sql = format!(
-            "UPDATE {} SET {} WHERE {}",
-            ct.table,
-            set_clauses.join(", "),
-            where_parts.join(" AND ")
-        );
-
-        let mut query = sqlx::query(&sql);
-        for v in &values {
-            query = query.bind(v);
-        }
-
-        let result = query
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("update failed: {e}")))?;
-
-        if let Some(ref lock_col) = decl.lock_column
-            && result.rows_affected() == 0
-        {
-            return Err(AppError::Conflict(format!(
-                "记录已被他人修改（{lock_col} 冲突），请刷新后重试"
-            )));
+            let doc_ids = extract_document_ids(val);
+            if doc_ids.is_empty() {
+                continue;
+            }
+            let int_ids = resolve_document_ids_batch(&self.pool, target_table, &doc_ids).await?;
+            for target_int_id in int_ids {
+                let jsql = format!(
+                    "INSERT OR IGNORE INTO {through_table} ({source_col}, {target_col}) VALUES ({}, {})",
+                    crate::db::dialect::ph(1),
+                    crate::db::dialect::ph(2)
+                );
+                sqlx::query(&jsql)
+                    .bind(source_int_id)
+                    .bind(target_int_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| {
+                        AppError::Internal(anyhow::anyhow!("junction insert failed: {e}"))
+                    })?;
+            }
         }
 
         tx.commit()
@@ -866,7 +1074,7 @@ pub fn build_column_names(
 
         if field.field_type == FieldType::Relation {
             match field.relation.as_ref().map(|r| &r.relation_type) {
-                Some(RelationType::ManyToOne | RelationType::OneToOne) => {
+                Some(RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay) => {
                     let fk = field
                         .relation
                         .as_ref()
@@ -993,6 +1201,90 @@ fn value_to_string(v: &Value) -> String {
         Value::Null => String::new(),
         other => other.to_string(),
     }
+}
+
+fn extract_document_ids(val: &Value) -> Vec<String> {
+    match val {
+        Value::String(s) if !s.is_empty() => vec![s.clone()],
+        Value::Array(arr) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .filter(|s| !s.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+pub(crate) async fn resolve_document_id_to_int_id(
+    pool: &Pool,
+    target_table: &str,
+    document_id: &str,
+) -> Result<Option<i64>, AppError> {
+    if document_id.is_empty() {
+        return Ok(None);
+    }
+    if !crate::db::dialect::is_safe_identifier(target_table) {
+        return Err(AppError::BadRequest(format!(
+            "invalid target table: {target_table}"
+        )));
+    }
+    let sql = format!(
+        "SELECT {COL_ID} FROM {target_table} WHERE {COL_DOCUMENT_ID} = {}",
+        crate::db::dialect::ph(1)
+    );
+    let result = sqlx::query_scalar::<_, i64>(&sql)
+        .bind(document_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("resolve document_id failed: {e}")))?;
+    Ok(result)
+}
+
+async fn resolve_document_ids_batch(
+    pool: &Pool,
+    target_table: &str,
+    document_ids: &[String],
+) -> Result<Vec<i64>, AppError> {
+    if document_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !crate::db::dialect::is_safe_identifier(target_table) {
+        return Err(AppError::BadRequest(format!(
+            "invalid target table: {target_table}"
+        )));
+    }
+    let placeholders: Vec<String> = (1..=document_ids.len())
+        .map(crate::db::dialect::ph)
+        .collect();
+    let sql = format!(
+        "SELECT {COL_ID}, {COL_DOCUMENT_ID} FROM {target_table} WHERE {COL_DOCUMENT_ID} IN ({})",
+        placeholders.join(", ")
+    );
+    let mut q = sqlx::query(&sql);
+    for id in document_ids {
+        q = q.bind(id);
+    }
+    let rows = q.fetch_all(pool).await.map_err(|e| {
+        AppError::Internal(anyhow::anyhow!("batch resolve document_ids failed: {e}"))
+    })?;
+    let mut lookup: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for row in &rows {
+        let int_id: i64 = row.try_get(COL_ID).unwrap_or(0);
+        let doc_id: String = row.try_get(COL_DOCUMENT_ID).unwrap_or_default();
+        if int_id > 0 && !doc_id.is_empty() {
+            lookup.insert(doc_id, int_id);
+        }
+    }
+    let mut result = Vec::new();
+    for doc_id in document_ids {
+        let int_id = lookup.remove(doc_id).ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "relation target document_id '{doc_id}' not found in {target_table}"
+            ))
+        })?;
+        result.push(int_id);
+    }
+    Ok(result)
 }
 
 /// 生成查询表列名的 SQL 和列名所在的列索引

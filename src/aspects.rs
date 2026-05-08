@@ -148,6 +148,7 @@ impl Default for Extensions {
 #[derive(Clone)]
 pub struct BaseContext {
     pub user_id: Option<String>,
+    pub user_int_id: Option<i64>,
     pub user_role: Option<String>,
     pub tenant_id: String,
     pub now: String,
@@ -160,6 +161,7 @@ impl BaseContext {
     pub fn new(user_id: Option<String>, tenant_id: String, now: String) -> Self {
         Self {
             user_id,
+            user_int_id: None,
             user_role: None,
             tenant_id,
             now,
@@ -171,6 +173,11 @@ impl BaseContext {
 
     pub fn with_pool(mut self, pool: crate::db::pool::Pool) -> Self {
         self.pool = Some(pool);
+        self
+    }
+
+    pub fn with_user_int_id(mut self, user_int_id: Option<i64>) -> Self {
+        self.user_int_id = user_int_id;
         self
     }
 }

@@ -13,7 +13,7 @@
 use serde_json::Value;
 use sqlx::Row;
 
-use super::schema::{ContentTypeSchema, FieldType};
+use super::schema::{ContentTypeSchema, FieldType, RelationType};
 use crate::constants::COL_DOCUMENT_ID;
 use crate::db::Pool;
 use crate::errors::app_error::AppError;
@@ -62,6 +62,31 @@ async fn do_validate_create(
 
         if let Err(e) = check_type(&field.field_type, val) {
             errors.push(format!("field '{}': {e}", field.name));
+            continue;
+        }
+
+        if field.field_type == FieldType::Relation {
+            if let Some(ref rel) = field.relation {
+                match rel.relation_type {
+                    RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay => {
+                        if !val.is_string() && !val.is_null() {
+                            errors.push(format!(
+                                "field '{}': expected string (document_id) or null",
+                                field.name
+                            ));
+                        }
+                    }
+                    RelationType::ManyToMany | RelationType::ManyWay => {
+                        if !val.is_array() && !val.is_null() {
+                            errors.push(format!(
+                                "field '{}': expected array of document_ids or null",
+                                field.name
+                            ));
+                        }
+                    }
+                    RelationType::OneToMany => {}
+                }
+            }
             continue;
         }
 
@@ -179,6 +204,31 @@ async fn do_validate_update(
 
         if let Err(e) = check_type(&field.field_type, val) {
             errors.push(format!("field '{}': {e}", field.name));
+            continue;
+        }
+
+        if field.field_type == FieldType::Relation {
+            if let Some(ref rel) = field.relation {
+                match rel.relation_type {
+                    RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay => {
+                        if !val.is_string() && !val.is_null() {
+                            errors.push(format!(
+                                "field '{}': expected string (document_id) or null",
+                                field.name
+                            ));
+                        }
+                    }
+                    RelationType::ManyToMany | RelationType::ManyWay => {
+                        if !val.is_array() && !val.is_null() {
+                            errors.push(format!(
+                                "field '{}': expected array of document_ids or null",
+                                field.name
+                            ));
+                        }
+                    }
+                    RelationType::OneToMany => {}
+                }
+            }
             continue;
         }
 

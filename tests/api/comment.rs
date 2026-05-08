@@ -138,7 +138,7 @@ async fn delete_own_comment() {
         ),
     )
     .await;
-    let cid = b["data"]["id"].as_i64().unwrap();
+    let cid = b["data"]["document_id"].as_str().unwrap().to_string();
     let (status, _): (StatusCode, Value) = send(
         &mut app,
         delete_auth(&format!("/api/v1/comments/{cid}"), &tok),
@@ -161,7 +161,7 @@ async fn delete_not_owner_forbidden() {
         ),
     )
     .await;
-    let cid = b["data"]["id"].as_i64().unwrap();
+    let cid = b["data"]["document_id"].as_str().unwrap().to_string();
     let (status, _): (StatusCode, Value) = send(
         &mut app,
         delete_auth(&format!("/api/v1/comments/{cid}"), &t2),
@@ -182,7 +182,7 @@ async fn update_status_admin() {
     )
     .await;
 
-    let cid: i64 = sqlx::query_scalar("SELECT id FROM comments WHERE content = 'mod me'")
+    let cid: String = sqlx::query_scalar("SELECT document_id FROM comments WHERE content = 'mod me'")
         .fetch_one(&state.pool)
         .await
         .unwrap();
@@ -205,7 +205,7 @@ async fn update_status_admin() {
 async fn update_status_requires_admin() {
     let (mut app, _, _, _) = setup_with_post().await;
     let (tok, _) = register_and_login(&mut app, "na@test.com", "nauser", "Password123").await;
-    let fake = 999999_i64;
+    let fake = "nonexistent-document-id";
     let (status, _): (StatusCode, Value) = send(
         &mut app,
         put_json_auth(

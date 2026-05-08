@@ -77,7 +77,7 @@ pub struct WorkflowInstance {
     pub status: String,
     pub current_step: Option<String>,
     pub context: String,
-    pub triggered_by: Option<String>,
+    pub triggered_by: Option<i64>,
     pub started_at: String,
     pub completed_at: Option<String>,
     pub updated_at: String,
@@ -183,7 +183,7 @@ pub async fn create_instance(
     document_id: &str,
     definition_id: i64,
     context: &serde_json::Value,
-    triggered_by: Option<&str>,
+    triggered_by: Option<i64>,
 ) -> anyhow::Result<WorkflowInstance> {
     let now = crate::utils::tz::now_str();
     let ctx_str = serde_json::to_string(context)?;

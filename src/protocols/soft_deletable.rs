@@ -45,7 +45,7 @@ impl Aspect for SoftDeletableAspect {
             },
             ColumnDef {
                 name: COL_DELETED_BY.into(),
-                sql_type: SqlType::Text,
+                sql_type: SqlType::Integer,
                 default: None,
             },
         ]
@@ -55,8 +55,8 @@ impl Aspect for SoftDeletableAspect {
         ctx.soft_delete = true;
         ctx.record
             .insert(COL_DELETED_AT.into(), json!(ctx.base.now));
-        if let Some(user_id) = &ctx.base.user_id {
-            ctx.record.insert(COL_DELETED_BY.into(), json!(user_id));
+        if let Some(user_int_id) = ctx.base.user_int_id {
+            ctx.record.insert(COL_DELETED_BY.into(), json!(user_int_id));
         }
         Ok(Advice::Continue)
     }
@@ -115,7 +115,8 @@ mod tests {
                 Some("user-1".into()),
                 "default".into(),
                 "2026-01-01T00:00:00Z".into(),
-            ),
+            )
+            .with_user_int_id(Some(1)),
             table: "articles".into(),
             record: Record::new(),
             soft_delete: false,
@@ -132,7 +133,7 @@ mod tests {
             ctx.record.get("deleted_at").unwrap(),
             &json!("2026-01-01T00:00:00Z")
         );
-        assert_eq!(ctx.record.get("deleted_by").unwrap(), &json!("user-1"));
+        assert_eq!(ctx.record.get("deleted_by").unwrap(), &json!(1));
     }
 
     #[tokio::test]

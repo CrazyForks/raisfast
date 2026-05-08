@@ -52,6 +52,7 @@ impl MutationRoot {
 
         let save_ctx = SaveContext {
             user_id: auth.user_id().map(|s| s.to_string()),
+            user_int_id: auth.user_int_id(),
             user_role: Some(auth.role().to_string()),
             tenant_id: auth.tenant_id().map(|s| s.to_string()),
         };
@@ -107,6 +108,7 @@ impl MutationRoot {
 
         let save_ctx = SaveContext {
             user_id: auth.user_id().map(|s| s.to_string()),
+            user_int_id: auth.user_int_id(),
             user_role: Some(auth.role().to_string()),
             tenant_id: auth.tenant_id().map(|s| s.to_string()),
         };

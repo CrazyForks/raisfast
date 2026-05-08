@@ -3,10 +3,41 @@
 use crate::errors::app_error::AppResult;
 use crate::models::options;
 
-use super::OptionsRepository;
 use crate::repositories::define_sqlx_repo;
 
 define_sqlx_repo!(SqlxOptionsRepository);
+
+/// 站点配置 Repository 接口
+#[async_trait::async_trait]
+pub trait OptionsRepository: Send + Sync {
+    /// 查询所有 autoload 配置（含元数据）
+    async fn find_autoload(&self) -> AppResult<Vec<crate::models::options::OptionRow>>;
+
+    /// 根据 key 查询单条配置（含元数据）
+    async fn find_by_key(
+        &self,
+        key: &str,
+        tenant_id: Option<i64>,
+    ) -> AppResult<Option<crate::models::options::OptionRow>>;
+
+    /// 查询所有配置（含元数据）
+    async fn find_all(
+        &self,
+        tenant_id: Option<i64>,
+    ) -> AppResult<Vec<crate::models::options::OptionRow>>;
+
+    /// 更新配置值
+    async fn upsert_value(
+        &self,
+        key: &str,
+        value: &str,
+        tenant_id: Option<i64>,
+        updated_at: &str,
+    ) -> AppResult<()>;
+
+    /// 根据 key 删除配置
+    async fn delete_by_key(&self, key: &str, tenant_id: Option<i64>) -> AppResult<()>;
+}
 
 #[async_trait::async_trait]
 impl OptionsRepository for SqlxOptionsRepository {

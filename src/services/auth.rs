@@ -6,7 +6,6 @@
 //! - JWT 访问令牌的生成与验证（HS256）
 //! - 刷新令牌的生成与轮换
 //! - 用户注册、登录、登出
-//! - 用户资料查询与修改
 
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
@@ -14,11 +13,11 @@ use chrono::Utc;
 use jsonwebtoken::{EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 
-use crate::commands::{CreateUserCmd, UpdateProfileCmd};
+use crate::commands::CreateUserCmd;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::eventbus::{Event, EventBus};
-use crate::handlers::dto::{
-    LoginResponse, RegisterRequest, UpdatePasswordRequest, UpdateUserRequest, UserResponse,
+use crate::dto::{
+    LoginResponse, RegisterRequest, UpdatePasswordRequest, UserResponse,
 };
 use crate::middleware::auth::AuthUser;
 use crate::plugins::{HookPoint, PluginManager};
@@ -206,7 +205,7 @@ pub async fn register(
     });
 
     if require_email_verification {
-        let _ = trigger_email_verification(pool, eventbus, user.id, &user.email).await;
+        let _ = crate::services::email_verification::trigger_email_verification(pool, eventbus, user.id, &user.email).await;
     }
 
     Ok(user.into())
@@ -222,7 +221,7 @@ pub async fn login(
     refresh_token_repo: &dyn RefreshTokenRepository,
     plugins: &PluginManager,
     eventbus: &EventBus,
-    req: &crate::handlers::dto::LoginRequest,
+    req: &crate::dto::LoginRequest,
     jwt_secret: &str,
     jwt_access_expires: u64,
     jwt_refresh_expires: u64,
@@ -384,36 +383,6 @@ pub async fn logout(
     refresh_token_repo.delete_by_user(user.id).await
 }
 
-/// 获取当前用户资料。
-pub async fn get_me(user_repo: &dyn UserRepository, auth: &AuthUser) -> AppResult<UserResponse> {
-    let user = user_repo
-        .find_by_id(auth.ensure_authenticated()?, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("user"))?;
-    Ok(user.into())
-}
-
-/// 更新当前用户资料（用户名、简介、网站、头像）。
-pub async fn update_me(
-    user_repo: &dyn UserRepository,
-    auth: &AuthUser,
-    req: UpdateUserRequest,
-) -> AppResult<UserResponse> {
-    let user = user_repo
-        .update_profile(
-            UpdateProfileCmd {
-                id: auth.user_int_id().ok_or(AppError::Unauthorized)?,
-                username: req.username,
-                bio: req.bio,
-                website: req.website,
-                avatar: req.avatar,
-            },
-            auth.tenant_id(),
-        )
-        .await?;
-    Ok(user.into())
-}
-
 /// 修改密码。
 ///
 /// 验证旧密码正确后，在事务中用新密码的哈希替换旧哈希，
@@ -448,160 +417,6 @@ pub async fn change_password(
     .bind(user.id)
     .execute(pool)
     .await?;
-    Ok(())
-}
-
-/// 获取指定用户的公开资料。
-pub async fn get_public_user(
-    user_repo: &dyn UserRepository,
-    id: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<UserResponse> {
-    let user = user_repo
-        .find_by_id(id, tenant_id)
-        .await?
-        .ok_or_else(|| AppError::not_found("user"))?;
-    Ok(user.into())
-}
-
-/// 分页查询用户列表。
-///
-/// 返回用户响应列表和总记录数。
-pub async fn list_users(
-    user_repo: &dyn UserRepository,
-    page: i64,
-    page_size: i64,
-    tenant_id: Option<&str>,
-) -> AppResult<(Vec<UserResponse>, i64)> {
-    let (users, total) = user_repo.find_all(page, page_size, tenant_id).await?;
-    let responses = users.into_iter().map(UserResponse::from).collect();
-    Ok((responses, total))
-}
-
-/// 请求密码重置。
-///
-/// 查找用户，删除旧令牌，创建新令牌，通过 EventBus 触发邮件发送。
-/// 无论用户是否存在都返回成功（防止邮箱枚举）。
-pub async fn forgot_password(
-    pool: &crate::db::Pool,
-    user_repo: &dyn UserRepository,
-    eventbus: &EventBus,
-    email: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<()> {
-    let user = match user_repo.find_by_email(email, tenant_id).await? {
-        Some(u) => u,
-        None => return Ok(()),
-    };
-
-    crate::models::password_reset::delete_unused_by_user(pool, user.id).await?;
-
-    let reset_token = crate::models::password_reset::create(pool, user.id, 3600).await?;
-
-    eventbus.emit(Event::PasswordResetRequested {
-        user_id: user.document_id,
-        email: user.email,
-        reset_token: reset_token.token,
-    });
-
-    Ok(())
-}
-
-/// 重置密码。
-///
-/// 验证令牌有效性（未使用且未过期），更新密码，标记令牌已使用，
-/// 删除所有刷新令牌使旧会话失效。
-pub async fn reset_password(
-    user_repo: &dyn UserRepository,
-    pool: &crate::db::Pool,
-    token: &str,
-    new_password: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<()> {
-    let reset_token = crate::models::password_reset::find_by_token(pool, token)
-        .await?
-        .ok_or_else(|| AppError::BadRequest("invalid_or_expired_token".into()))?;
-
-    let expires_at = chrono::DateTime::parse_from_rfc3339(&reset_token.expires_at)
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid token expiry")))?;
-
-    if expires_at < Utc::now() {
-        return Err(AppError::BadRequest("invalid_or_expired_token".into()));
-    }
-
-    validate_password_strength(new_password)?;
-    let new_hash = hash_password(new_password)?;
-
-    let mut tx = pool.begin().await?;
-
-    let sql = format!(
-        "UPDATE users SET password_hash = {}, updated_at = {} WHERE id = {}",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2),
-        crate::db::dialect::ph(3)
-    );
-    let now = Utc::now().to_rfc3339();
-    sqlx::query(&sql)
-        .bind(&new_hash)
-        .bind(&now)
-        .bind(reset_token.user_id)
-        .execute(&mut *tx)
-        .await?;
-
-    let sql = format!(
-        "UPDATE password_reset_tokens SET used_at = {} WHERE id = {}",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2)
-    );
-    sqlx::query(&sql)
-        .bind(&now)
-        .bind(reset_token.id)
-        .execute(&mut *tx)
-        .await?;
-
-    let del_sql = format!(
-        "DELETE FROM refresh_tokens WHERE user_id = {}",
-        crate::db::dialect::ph(1)
-    );
-    sqlx::query(&del_sql)
-        .bind(reset_token.user_id)
-        .execute(&mut *tx)
-        .await?;
-
-    tx.commit().await?;
-
-    let _ = user_repo;
-    let _ = tenant_id;
-    Ok(())
-}
-
-/// OAuth 用户设置密码。
-///
-/// 已登录用户（通过 OAuth 注册、无密码）设置密码。不需要旧密码验证。
-pub async fn set_password(
-    user_repo: &dyn UserRepository,
-    pool: &crate::db::Pool,
-    auth: &AuthUser,
-    new_password: &str,
-) -> AppResult<()> {
-    let user_id = auth.ensure_authenticated()?;
-    let tenant_id = auth.tenant_id();
-    let user = user_repo
-        .find_by_id(user_id, tenant_id)
-        .await?
-        .ok_or_else(|| AppError::not_found("user"))?;
-
-    if !user.password_hash.starts_with("!oauth:") {
-        return Err(AppError::BadRequest("password_already_set".into()));
-    }
-
-    validate_password_strength(new_password)?;
-    let new_hash = hash_password(new_password)?;
-    user_repo
-        .update_password(user_id, &new_hash, tenant_id)
-        .await?;
-
-    let _ = pool;
     Ok(())
 }
 
@@ -691,255 +506,4 @@ mod tests {
         let token = generate_access_token_for_test("user-1", 1, "author");
         assert!(token.len() > 20);
     }
-
-    #[test]
-    fn sms_code_generate_length() {
-        let code = crate::models::sms_code::generate_code(6);
-        assert_eq!(code.len(), 6);
-        assert!(code.chars().all(|c| c.is_ascii_digit()));
-    }
-}
-
-/// 发送短信验证码。
-///
-/// 检查配置是否启用、限流、生成验证码、入库、通过 Worker 发送。
-pub async fn send_sms_code(
-    pool: &crate::db::Pool,
-    config: &crate::config::app::AppConfig,
-    phone: &str,
-    purpose: &str,
-) -> AppResult<()> {
-    if !config.registration_sms_enabled {
-        return Err(AppError::BadRequest("sms_not_enabled".into()));
-    }
-
-    crate::models::sms_code::is_rate_limited(pool, phone, purpose, config.sms_rate_limit_secs)
-        .await?
-        .then_some(())
-        .ok_or_else(|| AppError::BadRequest("sms_rate_limited".into()))?;
-
-    let code = crate::models::sms_code::generate_code(config.sms_code_length);
-    crate::models::sms_code::create(
-        pool,
-        phone,
-        &code,
-        purpose,
-        config.sms_code_expires_in,
-        None,
-    )
-    .await?;
-
-    tracing::info!("[sms] code generated for phone={phone} purpose={purpose}");
-
-    Ok(())
-}
-
-/// 验证短信验证码并自动注册/登录。
-///
-/// 验证通过后：若手机号已注册则直接登录，否则自动创建用户（无密码）并登录。
-#[allow(clippy::too_many_arguments)]
-pub async fn verify_sms_and_auth(
-    user_repo: &dyn UserRepository,
-    refresh_token_repo: &dyn RefreshTokenRepository,
-    pool: &crate::db::Pool,
-    phone: &str,
-    code: &str,
-    purpose: &str,
-    jwt_secret: &str,
-    jwt_access_expires: u64,
-    jwt_refresh_expires: u64,
-) -> AppResult<LoginResponse> {
-    let sms = crate::models::sms_code::find_latest_unverified(pool, phone, purpose)
-        .await?
-        .ok_or_else(|| AppError::BadRequest("invalid_code".into()))?;
-
-    let result = crate::models::sms_code::verify_code(pool, sms.id, code).await?;
-
-    match result {
-        crate::models::sms_code::VerifyResult::Verified => {}
-        crate::models::sms_code::VerifyResult::WrongCode => {
-            return Err(AppError::BadRequest("wrong_code".into()));
-        }
-        crate::models::sms_code::VerifyResult::Expired => {
-            return Err(AppError::BadRequest("code_expired".into()));
-        }
-        crate::models::sms_code::VerifyResult::AlreadyUsed => {
-            return Err(AppError::BadRequest("code_already_used".into()));
-        }
-        crate::models::sms_code::VerifyResult::MaxAttempts => {
-            return Err(AppError::BadRequest("max_attempts".into()));
-        }
-    }
-
-    let user = match user_repo.find_by_phone(phone).await? {
-        Some(u) => u,
-        None => {
-            let username = format!(
-                "user_{}",
-                &phone.replace(|c: char| !c.is_ascii_alphanumeric(), "")
-            );
-            let password_hash = format!("!sms:{phone}");
-            user_repo
-                .create(
-                    crate::commands::CreateUserCmd {
-                        email: format!("!sms:{phone}"),
-                        username,
-                        password_hash,
-                    },
-                    None,
-                )
-                .await?
-        }
-    };
-
-    let access_token = generate_access_token_internal(
-        &user.document_id,
-        user.id,
-        &user.role,
-        user.tenant_id
-            .as_deref()
-            .unwrap_or(crate::constants::DEFAULT_TENANT),
-        jwt_secret,
-        jwt_access_expires,
-    )?;
-    let refresh_token_str = generate_refresh_token_string_internal()?;
-
-    let expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
-    refresh_token_repo
-        .create_token(user.id, &refresh_token_str, &expires_at.to_rfc3339())
-        .await?;
-
-    Ok(LoginResponse {
-        access_token,
-        refresh_token: refresh_token_str,
-        expires_in: jwt_access_expires,
-        user: user.into(),
-    })
-}
-
-/// 已登录用户绑定手机号。
-pub async fn bind_phone(
-    user_repo: &dyn UserRepository,
-    pool: &crate::db::Pool,
-    auth: &AuthUser,
-    phone: &str,
-    code: &str,
-) -> AppResult<()> {
-    let user_id = auth.ensure_authenticated()?;
-    let tenant_id = auth.tenant_id();
-    if user_repo.find_by_phone(phone).await?.is_some() {
-        return Err(AppError::Conflict("phone_already_bound".into()));
-    }
-
-    let sms = crate::models::sms_code::find_latest_unverified(pool, phone, "bind_phone")
-        .await?
-        .ok_or_else(|| AppError::BadRequest("invalid_code".into()))?;
-
-    let result = crate::models::sms_code::verify_code(pool, sms.id, code).await?;
-
-    match result {
-        crate::models::sms_code::VerifyResult::Verified => {}
-        crate::models::sms_code::VerifyResult::WrongCode => {
-            return Err(AppError::BadRequest("wrong_code".into()));
-        }
-        crate::models::sms_code::VerifyResult::Expired => {
-            return Err(AppError::BadRequest("code_expired".into()));
-        }
-        crate::models::sms_code::VerifyResult::AlreadyUsed => {
-            return Err(AppError::BadRequest("code_already_used".into()));
-        }
-        crate::models::sms_code::VerifyResult::MaxAttempts => {
-            return Err(AppError::BadRequest("max_attempts".into()));
-        }
-    }
-
-    user_repo.update_phone(user_id, phone, tenant_id).await
-}
-
-/// 注册后触发邮箱验证（若配置启用）。
-///
-/// 删除旧令牌，创建新令牌，通过 EventBus 发送验证邮件。
-pub async fn trigger_email_verification(
-    pool: &crate::db::Pool,
-    eventbus: &EventBus,
-    user_id: i64,
-    email: &str,
-) -> AppResult<()> {
-    crate::models::email_verification::delete_unused_by_user(pool, user_id).await?;
-
-    let verification =
-        crate::models::email_verification::create(pool, user_id, email, 86400).await?;
-
-    eventbus.emit(Event::EmailVerificationRequested {
-        user_id: user_id.to_string(),
-        email: email.to_string(),
-        verify_token: verification.token,
-    });
-
-    Ok(())
-}
-
-/// 验证邮箱。
-///
-/// 校验令牌有效性，标记令牌已使用，更新 users.email_verified = 1。
-pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> {
-    let verification = crate::models::email_verification::find_by_token(pool, token)
-        .await?
-        .ok_or_else(|| AppError::BadRequest("invalid_or_expired_token".into()))?;
-
-    let expires_at = chrono::DateTime::parse_from_rfc3339(&verification.expires_at)
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid token expiry")))?;
-
-    if expires_at < Utc::now() {
-        return Err(AppError::BadRequest("invalid_or_expired_token".into()));
-    }
-
-    let mut tx = pool.begin().await?;
-
-    let now = Utc::now().to_rfc3339();
-    let sql = format!(
-        "UPDATE email_verification_tokens SET verified_at = {} WHERE id = {}",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2)
-    );
-    sqlx::query(&sql)
-        .bind(&now)
-        .bind(verification.id)
-        .execute(&mut *tx)
-        .await?;
-
-    let sql = format!(
-        "UPDATE users SET email_verified = 1, updated_at = {} WHERE id = {}",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2)
-    );
-    sqlx::query(&sql)
-        .bind(&now)
-        .bind(verification.user_id)
-        .execute(&mut *tx)
-        .await?;
-
-    tx.commit().await?;
-    Ok(())
-}
-
-/// 重新发送验证邮件。
-///
-/// 只有未验证的用户才能重新发送。限流由 sms_codes 的 rate_limit 逻辑类似处理。
-pub async fn resend_verification(
-    pool: &crate::db::Pool,
-    user_repo: &dyn UserRepository,
-    eventbus: &EventBus,
-    email: &str,
-) -> AppResult<()> {
-    let user = user_repo
-        .find_by_email(email, None)
-        .await?
-        .ok_or_else(|| AppError::not_found("user"))?;
-
-    if user.email_verified == 1 {
-        return Err(AppError::BadRequest("email_already_verified".into()));
-    }
-
-    trigger_email_verification(pool, eventbus, user.id, &user.email).await
 }

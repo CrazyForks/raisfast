@@ -1,6 +1,6 @@
-//! 页面与块处理器
+//! 页面处理器
 //!
-//! 处理页面 CRUD、状态变更、排序、站点地图，以及可复用块管理。
+//! 处理页面 CRUD、状态变更、排序与站点地图。
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -14,8 +14,16 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
-use crate::services::page as page_service;
+use crate::services::{page as page_service, post::resolve_doc_id_to_int};
 use crate::utils::pagination::PaginationParams;
+
+async fn resolve_page_parent_id(
+    pool: &crate::db::Pool,
+    parent_id: Option<String>,
+) -> AppResult<Option<i64>> {
+    let Some(doc_id) = parent_id else { return Ok(None) };
+    resolve_doc_id_to_int(pool, "pages", &doc_id, None).await
+}
 
 // ── DTO ──
 
@@ -80,28 +88,6 @@ pub struct ReorderRequest {
 pub struct ReorderItem {
     pub id: String,
     pub sort_order: i64,
-}
-
-#[derive(Debug, Deserialize, Validate)]
-pub struct CreateReusableRequest {
-    #[validate(length(min = 1, max = 200))]
-    pub name: String,
-    #[validate(length(min = 1))]
-    pub block_type: String,
-    #[validate(length(min = 1))]
-    pub content: String,
-    pub description: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Validate)]
-pub struct UpdateReusableRequest {
-    #[validate(length(min = 1, max = 200))]
-    pub name: Option<String>,
-    #[validate(length(min = 1))]
-    pub block_type: Option<String>,
-    #[validate(length(min = 1))]
-    pub content: Option<String>,
-    pub description: Option<String>,
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -194,6 +180,8 @@ pub async fn create(
     let template = req.template.unwrap_or_else(|| "default".to_string());
     let status = req.status.unwrap_or_else(|| "draft".to_string());
 
+    let resolved_parent_id =
+        resolve_page_parent_id(&state.pool, req.parent_id).await?;
     let cmd = CreatePageCmd {
         title: req.title,
         slug,
@@ -203,7 +191,7 @@ pub async fn create(
         meta_description: req.meta_description,
         og_image: req.og_image,
         template,
-        parent_id: req.parent_id.and_then(|s| s.parse().ok()),
+        parent_id: resolved_parent_id,
         sort_order: req.sort_order.unwrap_or(0),
         status,
         created_by: auth.user_int_id().ok_or(AppError::Unauthorized)?,
@@ -224,6 +212,11 @@ pub async fn update(
     auth.ensure_author()?;
     validation::validate(&req)?;
 
+    let resolved_parent_id = resolve_page_parent_id(
+        &state.pool,
+        req.parent_id.flatten(),
+    )
+    .await?;
     let cmd = UpdatePageCmd {
         id: 0,
         title: req.title,
@@ -234,7 +227,7 @@ pub async fn update(
         meta_description: req.meta_description,
         og_image: req.og_image,
         template: req.template,
-        parent_id: req.parent_id.map(|opt| opt.and_then(|s| s.parse().ok())),
+        parent_id: Some(resolved_parent_id),
         sort_order: req.sort_order,
         status: req.status,
         cover_image: req.cover_image,
@@ -278,78 +271,5 @@ pub async fn reorder(
         .map(|i| (i.id, i.sort_order))
         .collect();
     page_service::reorder(&state.pool, items, &auth).await?;
-    Ok(ApiResponse::success(()))
-}
-
-// ── 可复用块 ──
-
-pub async fn list_reusable(
-    auth: AuthUser,
-    State(state): State<crate::AppState>,
-) -> AppResult<ApiResponse<Vec<crate::models::page::ReusableBlock>>> {
-    auth.ensure_author()?;
-    let items = page_service::list_reusable(&state.pool, &auth).await?;
-    Ok(ApiResponse::success(items))
-}
-
-pub async fn get_reusable(
-    auth: AuthUser,
-    State(state): State<crate::AppState>,
-    Path(id): Path<String>,
-) -> AppResult<ApiResponse<crate::models::page::ReusableBlock>> {
-    auth.ensure_author()?;
-    let block = page_service::get_reusable(&state.pool, &id, &auth)
-        .await?
-        .ok_or_else(|| AppError::not_found("reusable_block"))?;
-    Ok(ApiResponse::success(block))
-}
-
-pub async fn create_reusable(
-    auth: AuthUser,
-    State(state): State<crate::AppState>,
-    Json(req): Json<CreateReusableRequest>,
-) -> AppResult<ApiResponse<crate::models::page::ReusableBlock>> {
-    auth.ensure_author()?;
-    validation::validate(&req)?;
-    let block = page_service::create_reusable(
-        &state.pool,
-        &auth,
-        &req.name,
-        &req.block_type,
-        &req.content,
-        req.description.as_deref(),
-    )
-    .await?;
-    Ok(ApiResponse::success(block))
-}
-
-pub async fn update_reusable(
-    auth: AuthUser,
-    State(state): State<crate::AppState>,
-    Path(id): Path<String>,
-    Json(req): Json<UpdateReusableRequest>,
-) -> AppResult<ApiResponse<crate::models::page::ReusableBlock>> {
-    auth.ensure_author()?;
-    validation::validate(&req)?;
-    let block = page_service::update_reusable(
-        &state.pool,
-        &id,
-        &auth,
-        req.name.as_deref(),
-        req.block_type.as_deref(),
-        req.content.as_deref(),
-        req.description.as_deref(),
-    )
-    .await?;
-    Ok(ApiResponse::success(block))
-}
-
-pub async fn delete_reusable(
-    auth: AuthUser,
-    State(state): State<crate::AppState>,
-    Path(id): Path<String>,
-) -> AppResult<ApiResponse<()>> {
-    auth.ensure_author()?;
-    page_service::delete_reusable(&state.pool, &id, &auth).await?;
     Ok(ApiResponse::success(()))
 }

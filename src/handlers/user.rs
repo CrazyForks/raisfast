@@ -8,11 +8,11 @@ use axum::extract::{Path, Query, State};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
-use crate::handlers::dto::{
+use crate::dto::{
     UpdatePasswordRequest, UpdateRoleRequest, UpdateUserRequest, UserResponse,
 };
 use crate::middleware::auth::AuthUser;
-use crate::services::auth;
+use crate::services::{auth, user};
 use crate::utils::pagination::PaginationParams;
 
 /// 获取当前登录用户资料
@@ -24,7 +24,7 @@ pub async fn get_me(
     auth: AuthUser,
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<UserResponse>> {
-    let user = auth::get_me(state.user_repo.as_ref(), &auth).await?;
+    let user = user::get_me(state.user_repo.as_ref(), &auth).await?;
     Ok(ApiResponse::success(user))
 }
 
@@ -40,7 +40,7 @@ pub async fn update_me(
     Json(req): Json<UpdateUserRequest>,
 ) -> AppResult<ApiResponse<UserResponse>> {
     validation::validate(&req)?;
-    let user = auth::update_me(state.user_repo.as_ref(), &auth, req).await?;
+    let user = user::update_me(state.user_repo.as_ref(), &auth, req).await?;
     Ok(ApiResponse::success(user))
 }
 
@@ -71,7 +71,7 @@ pub async fn get_user(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<UserResponse>> {
-    let user = auth::get_public_user(state.user_repo.as_ref(), &id, auth.tenant_id()).await?;
+    let user = user::get_public_user(state.user_repo.as_ref(), &id, auth.tenant_id()).await?;
     Ok(ApiResponse::success(user))
 }
 
@@ -87,7 +87,7 @@ pub async fn list_users(
 ) -> AppResult<ApiResponse<PaginatedData<UserResponse>>> {
     auth.ensure_admin()?;
     params.sanitize();
-    let (users, total) = auth::list_users(
+    let (users, total) = user::list_users(
         state.user_repo.as_ref(),
         params.page,
         params.page_size,

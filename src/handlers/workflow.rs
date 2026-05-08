@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::AppState;
+use crate::db::dialect;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::models::workflow::StepDef;
 
@@ -88,9 +89,24 @@ pub async fn start(
     Path(id): Path<String>,
     Json(body): Json<StartWorkflowRequest>,
 ) -> AppResult<impl IntoResponse> {
+    let triggered_by_int: Option<i64> = match &body.triggered_by {
+        Some(doc_id) if !doc_id.is_empty() => {
+            let sql = format!(
+                "SELECT id FROM users WHERE document_id = {}",
+                dialect::ph(1)
+            );
+            sqlx::query_scalar::<_, i64>(&sql)
+                .bind(doc_id)
+                .fetch_optional(&state.pool)
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
+        }
+        _ => None,
+    };
+
     let instance = state
         .workflow
-        .start_workflow(&id, &body.context, body.triggered_by.as_deref())
+        .start_workflow(&id, &body.context, triggered_by_int)
         .await?;
     Ok(Json(
         json!({"code": 0, "message": "started", "data": instance}),

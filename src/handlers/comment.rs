@@ -9,7 +9,7 @@ use axum::extract::{Path, State};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
-use crate::handlers::dto::{CreateCommentRequest, UpdateCommentStatusRequest};
+use crate::dto::{CreateCommentRequest, UpdateCommentStatusRequest};
 use crate::middleware::auth::AuthUser;
 use crate::services::comment as comment_service;
 use crate::utils::pagination::PaginationParams;

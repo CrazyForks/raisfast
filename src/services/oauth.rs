@@ -11,7 +11,7 @@ use ts_rs::TS;
 
 use crate::commands::CreateUserCmd;
 use crate::errors::app_error::{AppError, AppResult};
-use crate::handlers::dto::LoginResponse;
+use crate::dto::LoginResponse;
 use crate::middleware::auth::AuthUser;
 use crate::models::oauth;
 use crate::oauth::{OAuthProviderRegistry, OAuthUserInfo};

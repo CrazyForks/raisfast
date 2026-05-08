@@ -47,7 +47,7 @@ pub async fn create_revision(
     content_type: &str,
     record_id: &str,
     snapshot: &Value,
-    created_by: Option<&str>,
+    created_by: Option<i64>,
 ) -> AppResult<ContentRevision> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_str();

@@ -10,7 +10,7 @@ use axum::response::Redirect;
 use axum::response::{IntoResponse, Response};
 use utoipa::OpenApi;
 
-use crate::handlers::dto;
+use crate::dto;
 
 /// OpenAPI 规范定义
 ///

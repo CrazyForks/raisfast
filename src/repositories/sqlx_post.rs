@@ -8,7 +8,6 @@ use crate::db::Pool;
 use crate::errors::app_error::AppResult;
 use crate::models::post::{self, Post, PostJoinedRow, TagBrief};
 
-use super::PostRepository;
 use crate::commands::{CreatePostCmd, FindPublishedQuery, UpdatePostCmd};
 use crate::repositories::define_sqlx_repo;
 
@@ -20,6 +19,76 @@ impl SqlxPostRepository {
     pub fn pool(&self) -> &Pool {
         &self.pool
     }
+}
+
+/// 文章 Repository 接口
+#[async_trait::async_trait]
+pub trait PostRepository: Send + Sync {
+    /// 获取内部连接池引用
+    fn pool(&self) -> &crate::db::Pool;
+
+    /// 根据 slug 查找文章
+    async fn find_by_slug(&self, slug: &str, tenant_id: Option<&str>) -> AppResult<Option<Post>>;
+
+    /// 根据 ID 查找文章
+    async fn find_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<Option<Post>>;
+
+    /// 根据 ID 查找文章（JOIN 作者名和分类名）
+    async fn find_joined_by_id(&self, id: i64, tenant_id: Option<&str>)
+    -> AppResult<PostJoinedRow>;
+
+    /// 分页查询已发布文章（JOIN 作者名和分类名）
+    async fn find_published_joined(
+        &self,
+        query: FindPublishedQuery,
+        tenant_id: Option<&str>,
+    ) -> AppResult<(Vec<PostJoinedRow>, i64)>;
+
+    /// 查询全部文章（含所有状态），用于后台管理
+    async fn find_all_joined(
+        &self,
+        page: i64,
+        page_size: i64,
+        status: Option<&str>,
+        tenant_id: Option<&str>,
+    ) -> AppResult<(Vec<PostJoinedRow>, i64)>;
+
+    /// 原子性增加浏览量并返回 JOIN 查询结果
+    async fn increment_view_count_joined(
+        &self,
+        slug: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<PostJoinedRow>;
+
+    /// 获取单篇文章的标签
+    async fn get_post_tags(
+        &self,
+        post_id: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<Vec<TagBrief>>;
+
+    /// 批量获取多篇文章的标签
+    async fn get_tags_for_posts(
+        &self,
+        post_ids: &[i64],
+        tenant_id: Option<&str>,
+    ) -> AppResult<HashMap<i64, Vec<TagBrief>>>;
+
+    /// 根据 ID 列表批量查询已发布文章（JOIN 作者名和分类名）
+    async fn find_joined_by_ids(
+        &self,
+        ids: &[i64],
+        tenant_id: Option<&str>,
+    ) -> AppResult<Vec<PostJoinedRow>>;
+
+    /// 创建文章，根据 `tag_ids` 是否为 Some 决定是否同步标签
+    async fn create(&self, cmd: CreatePostCmd, tenant_id: Option<&str>) -> AppResult<Post>;
+
+    /// 更新文章，根据 `tag_ids` 是否为 Some 决定是否同步标签
+    async fn update(&self, cmd: UpdatePostCmd, tenant_id: Option<&str>) -> AppResult<Post>;
+
+    /// 删除文章
+    async fn delete(&self, id: i64, tenant_id: Option<&str>) -> AppResult<()>;
 }
 
 #[async_trait::async_trait]

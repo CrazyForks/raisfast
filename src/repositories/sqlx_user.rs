@@ -3,11 +3,55 @@
 use crate::errors::app_error::AppResult;
 use crate::models::user::{self, User};
 
-use super::UserRepository;
 use crate::commands::{CreateUserCmd, UpdateProfileCmd};
 use crate::repositories::define_sqlx_repo;
 
 define_sqlx_repo!(SqlxUserRepository);
+
+/// 用户 Repository 接口
+#[async_trait::async_trait]
+pub trait UserRepository: Send + Sync {
+    /// 根据邮箱查找用户
+    async fn find_by_email(&self, email: &str, tenant_id: Option<&str>) -> AppResult<Option<User>>;
+
+    /// 根据 ID 查找用户
+    async fn find_by_id(&self, id: &str, tenant_id: Option<&str>) -> AppResult<Option<User>>;
+
+    /// 创建新用户
+    async fn create(&self, cmd: CreateUserCmd, tenant_id: Option<&str>) -> AppResult<User>;
+
+    /// 更新用户资料
+    async fn update_profile(
+        &self,
+        cmd: UpdateProfileCmd,
+        tenant_id: Option<&str>,
+    ) -> AppResult<User>;
+
+    /// 更新用户密码
+    async fn update_password(
+        &self,
+        id: &str,
+        new_password_hash: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<()>;
+
+    /// 分页查询所有用户
+    async fn find_all(
+        &self,
+        page: i64,
+        page_size: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<(Vec<User>, i64)>;
+
+    /// 管理员更新用户角色
+    async fn update_role(&self, id: &str, role: &str, tenant_id: Option<&str>) -> AppResult<User>;
+
+    /// 根据手机号查找用户
+    async fn find_by_phone(&self, phone: &str) -> AppResult<Option<User>>;
+
+    /// 绑定手机号
+    async fn update_phone(&self, id: &str, phone: &str, tenant_id: Option<&str>) -> AppResult<()>;
+}
 
 #[async_trait::async_trait]
 impl UserRepository for SqlxUserRepository {

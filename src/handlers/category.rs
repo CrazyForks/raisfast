@@ -6,9 +6,9 @@ use axum::extract::{Path, Query, State};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
-use crate::handlers::dto::{CreateCategoryRequest, UpdateCategoryRequest};
+use crate::dto::{CreateCategoryRequest, UpdateCategoryRequest};
 use crate::middleware::auth::AuthUser;
-use crate::services::post;
+use crate::services::category;
 use crate::utils::pagination::PaginationParams;
 
 /// 获取分类列表（分页）
@@ -22,7 +22,7 @@ pub async fn list(
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<crate::models::category::Category>>>
 {
     params.sanitize();
-    let (items, total) = post::list_categories_paginated(
+    let (items, total) = category::list_categories_paginated(
         state.category_repo.as_ref(),
         &auth,
         params.page,
@@ -45,7 +45,7 @@ pub async fn create(
 ) -> AppResult<ApiResponse<crate::models::category::Category>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
-    let category = post::create_category(state.category_repo.as_ref(), &auth, req).await?;
+    let category = category::create_category(state.category_repo.as_ref(), &auth, req).await?;
     Ok(ApiResponse::success(category))
 }
 
@@ -64,7 +64,7 @@ pub async fn update(
 ) -> AppResult<ApiResponse<crate::models::category::Category>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
-    let category = post::update_category(state.category_repo.as_ref(), &auth, &id, req).await?;
+    let category = category::update_category(state.category_repo.as_ref(), &auth, &id, req).await?;
     Ok(ApiResponse::success(category))
 }
 
@@ -80,6 +80,6 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_author()?;
-    post::delete_category(state.category_repo.as_ref(), &id, &auth).await?;
+    category::delete_category(state.category_repo.as_ref(), &id, &auth).await?;
     Ok(ApiResponse::success(()))
 }

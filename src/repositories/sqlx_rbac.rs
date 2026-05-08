@@ -1,12 +1,63 @@
 //! 基于 sqlx 的 `RbacRepository` 实现
 
 use crate::errors::app_error::AppResult;
-use crate::models::rbac;
-
-use super::RbacRepository;
+use crate::models::rbac::{self, Permission, Role};
 use crate::repositories::define_sqlx_repo;
 
 define_sqlx_repo!(SqlxRbacRepository);
+
+/// RBAC Repository 接口
+#[async_trait::async_trait]
+pub trait RbacRepository: Send + Sync {
+    /// 查询所有角色
+    async fn list_roles(&self) -> AppResult<Vec<Role>>;
+
+    /// 根据 ID 查找角色
+    async fn find_role_by_id(&self, id: &str) -> AppResult<Option<Role>>;
+
+    /// 根据角色名查找角色 ID
+    async fn find_role_id_by_name(&self, name: &str) -> AppResult<Option<i64>>;
+
+    /// 创建角色
+    async fn create_role(
+        &self,
+        id: &str,
+        name: &str,
+        description: Option<&str>,
+        created_at: &str,
+    ) -> AppResult<Role>;
+
+    /// 更新角色
+    async fn update_role(
+        &self,
+        id: &str,
+        name: Option<&str>,
+        description: Option<&str>,
+        updated_at: &str,
+    ) -> AppResult<Role>;
+
+    /// 删除角色
+    async fn delete_role(&self, id: &str) -> AppResult<()>;
+
+    /// 查询角色的所有权限
+    async fn find_permissions_by_role_id(&self, role_id: i64) -> AppResult<Vec<Permission>>;
+
+    /// 删除角色的所有权限
+    async fn delete_permissions_by_role_id(&self, role_id: i64) -> AppResult<()>;
+
+    /// 插入单条权限
+    #[allow(clippy::too_many_arguments)]
+    async fn insert_permission(
+        &self,
+        document_id: &str,
+        role_id: i64,
+        action: &str,
+        subject: &str,
+        fields: Option<&str>,
+        conditions: Option<&str>,
+        created_at: &str,
+    ) -> AppResult<()>;
+}
 
 #[async_trait::async_trait]
 impl RbacRepository for SqlxRbacRepository {

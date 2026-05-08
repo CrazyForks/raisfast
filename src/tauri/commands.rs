@@ -16,7 +16,7 @@ pub async fn auth_register(
     email: String,
     password: String,
 ) -> Result<serde_json::Value, String> {
-    let req = crate::handlers::dto::RegisterRequest {
+    let req = crate::dto::RegisterRequest {
         username,
         email,
         password,
@@ -40,7 +40,7 @@ pub async fn auth_login(
     email: String,
     password: String,
 ) -> Result<serde_json::Value, String> {
-    let req = crate::handlers::dto::LoginRequest { email, password };
+    let req = crate::dto::LoginRequest { email, password };
     crate::services::auth::login(
         state.0.user_repo.as_ref(),
         state.0.refresh_token_repo.as_ref(),
@@ -65,7 +65,7 @@ pub async fn auth_get_me(
 ) -> Result<serde_json::Value, String> {
     let auth =
         crate::middleware::auth::AuthUser::from_parts(Some(user_id), None, String::new(), None);
-    crate::services::auth::get_me(state.0.user_repo.as_ref(), &auth)
+    crate::services::user::get_me(state.0.user_repo.as_ref(), &auth)
         .await
         .map_err(|e| e.to_string())
         .map(|r| serde_json::to_value(r).unwrap_or_default())
@@ -121,7 +121,7 @@ pub async fn post_create(
     title: String,
     content: String,
 ) -> Result<serde_json::Value, String> {
-    let req = crate::handlers::dto::CreatePostRequest {
+    let req = crate::dto::CreatePostRequest {
         title,
         content,
         excerpt: None,

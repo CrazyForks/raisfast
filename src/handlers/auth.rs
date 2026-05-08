@@ -9,13 +9,13 @@ use axum::extract::State;
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
-use crate::handlers::dto::{
+use crate::dto::{
     AuthConfigResponse, BindPhoneRequest, ForgotPasswordRequest, LoginRequest, RefreshRequest,
     RegisterRequest, ResendVerificationRequest, ResetPasswordRequest, SendSmsCodeRequest,
     SetPasswordRequest, VerifyEmailRequest, VerifySmsRequest,
 };
 use crate::middleware::auth::AuthUser;
-use crate::services::auth;
+use crate::services::{auth, email_verification, password_reset, sms};
 
 /// 用户注册
 #[utoipa::path(post, path = "/auth/register", tag = "auth",
@@ -26,7 +26,7 @@ pub async fn register(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Json(req): Json<RegisterRequest>,
-) -> AppResult<ApiResponse<crate::handlers::dto::UserResponse>> {
+) -> AppResult<ApiResponse<crate::dto::UserResponse>> {
     if !state.config.registration_email_enabled {
         return Err(crate::errors::app_error::AppError::BadRequest(
             "email_registration_disabled".into(),
@@ -54,7 +54,7 @@ pub async fn login(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Json(req): Json<LoginRequest>,
-) -> AppResult<ApiResponse<crate::handlers::dto::LoginResponse>> {
+) -> AppResult<ApiResponse<crate::dto::LoginResponse>> {
     validation::validate(&req)?;
     let resp = auth::login(
         state.user_repo.as_ref(),
@@ -78,7 +78,7 @@ pub async fn verify_email(
     Json(req): Json<VerifyEmailRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
-    auth::verify_email(&state.pool, &req.token).await?;
+    email_verification::verify_email(&state.pool, &req.token).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -88,7 +88,7 @@ pub async fn resend_verification(
     Json(req): Json<ResendVerificationRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
-    auth::resend_verification(
+    email_verification::resend_verification(
         &state.pool,
         state.user_repo.as_ref(),
         &state.eventbus,
@@ -106,7 +106,7 @@ pub async fn resend_verification(
 pub async fn refresh(
     State(state): State<crate::AppState>,
     Json(req): Json<RefreshRequest>,
-) -> AppResult<ApiResponse<crate::handlers::dto::LoginResponse>> {
+) -> AppResult<ApiResponse<crate::dto::LoginResponse>> {
     validation::validate(&req)?;
     let resp = auth::refresh(
         state.user_repo.as_ref(),
@@ -146,7 +146,7 @@ pub async fn forgot_password(
     Json(req): Json<ForgotPasswordRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
-    auth::forgot_password(
+    password_reset::forgot_password(
         &state.pool,
         state.user_repo.as_ref(),
         &state.eventbus,
@@ -167,7 +167,7 @@ pub async fn reset_password(
     Json(req): Json<ResetPasswordRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
-    auth::reset_password(
+    password_reset::reset_password(
         state.user_repo.as_ref(),
         &state.pool,
         &req.token,
@@ -190,7 +190,7 @@ pub async fn set_password(
     Json(req): Json<SetPasswordRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
-    auth::set_password(
+    password_reset::set_password(
         state.user_repo.as_ref(),
         &state.pool,
         &auth,
@@ -228,7 +228,7 @@ pub async fn send_sms_code(
     Json(req): Json<SendSmsCodeRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
-    auth::send_sms_code(&state.pool, &state.config, &req.phone, &req.purpose).await?;
+    sms::send_sms_code(&state.pool, &state.config, &req.phone, &req.purpose).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -236,9 +236,9 @@ pub async fn send_sms_code(
 pub async fn verify_sms(
     State(state): State<crate::AppState>,
     Json(req): Json<VerifySmsRequest>,
-) -> AppResult<ApiResponse<crate::handlers::dto::LoginResponse>> {
+) -> AppResult<ApiResponse<crate::dto::LoginResponse>> {
     validation::validate(&req)?;
-    let resp = auth::verify_sms_and_auth(
+    let resp = sms::verify_sms_and_auth(
         state.user_repo.as_ref(),
         state.refresh_token_repo.as_ref(),
         &state.pool,
@@ -260,7 +260,7 @@ pub async fn bind_phone(
     Json(req): Json<BindPhoneRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
-    auth::bind_phone(
+    sms::bind_phone(
         state.user_repo.as_ref(),
         &state.pool,
         &auth,
