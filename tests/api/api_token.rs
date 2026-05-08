@@ -2,8 +2,8 @@ use super::*;
 
 async fn setup() -> (axum::Router, String, raisfast::db::Pool) {
     let (app, state) = test_app().await;
-    let admin_id = create_admin(&state.pool).await;
-    let tok = make_token(&admin_id, "admin");
+    let (int_id, doc_id) = create_admin(&state.pool).await;
+    let tok = make_token(&doc_id, int_id, "admin");
     (app, tok, state.pool)
 }
 
@@ -181,23 +181,23 @@ async fn delete_token_non_owner_forbidden() {
     let id = create_body["data"]["id"].as_str().unwrap();
 
     let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
-    let reader_id = uuid::Uuid::now_v7().to_string();
+    let reader_doc_id = uuid::Uuid::now_v7().to_string();
     let sql = format!(
-        "INSERT INTO users (id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'reader')",
+        "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'reader') RETURNING id",
         raisfast::db::dialect::ph(1),
         raisfast::db::dialect::ph(2),
         raisfast::db::dialect::ph(3),
         raisfast::db::dialect::ph(4)
     );
-    sqlx::query(&sql)
-        .bind(&reader_id)
+    let reader_int_id: i64 = sqlx::query_scalar(&sql)
+        .bind(&reader_doc_id)
         .bind("reader-token@test.com")
         .bind("tokenreader")
         .bind(&reader_hash)
-        .execute(&pool)
+        .fetch_one(&pool)
         .await
         .unwrap();
-    let reader_tok = make_token(&reader_id, "reader");
+    let reader_tok = make_token(&reader_doc_id, reader_int_id, "reader");
 
     let (status, _) = send(
         &mut app,
@@ -211,23 +211,23 @@ async fn delete_token_non_owner_forbidden() {
 async fn admin_can_delete_other_users_token() {
     let (mut app, tok, pool) = setup().await;
     let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
-    let reader_id = uuid::Uuid::now_v7().to_string();
+    let reader_doc_id = uuid::Uuid::now_v7().to_string();
     let sql = format!(
-        "INSERT INTO users (id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'reader')",
+        "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'reader') RETURNING id",
         raisfast::db::dialect::ph(1),
         raisfast::db::dialect::ph(2),
         raisfast::db::dialect::ph(3),
         raisfast::db::dialect::ph(4)
     );
-    sqlx::query(&sql)
-        .bind(&reader_id)
+    let reader_int_id: i64 = sqlx::query_scalar(&sql)
+        .bind(&reader_doc_id)
         .bind("reader-admin-del@test.com")
         .bind("readeradmindel")
         .bind(&reader_hash)
-        .execute(&pool)
+        .fetch_one(&pool)
         .await
         .unwrap();
-    let reader_tok = make_token(&reader_id, "reader");
+    let reader_tok = make_token(&reader_doc_id, reader_int_id, "reader");
 
     let (_, create_body) = send(
         &mut app,
@@ -463,23 +463,23 @@ async fn each_user_sees_only_own_tokens() {
     let (mut app, tok, pool) = setup().await;
 
     let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
-    let reader_id = uuid::Uuid::now_v7().to_string();
+    let reader_doc_id = uuid::Uuid::now_v7().to_string();
     let sql = format!(
-        "INSERT INTO users (id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'reader')",
+        "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'reader') RETURNING id",
         raisfast::db::dialect::ph(1),
         raisfast::db::dialect::ph(2),
         raisfast::db::dialect::ph(3),
         raisfast::db::dialect::ph(4)
     );
-    sqlx::query(&sql)
-        .bind(&reader_id)
+    let reader_int_id: i64 = sqlx::query_scalar(&sql)
+        .bind(&reader_doc_id)
         .bind("isolation@test.com")
         .bind("isolationreader")
         .bind(&reader_hash)
-        .execute(&pool)
+        .fetch_one(&pool)
         .await
         .unwrap();
-    let reader_tok = make_token(&reader_id, "reader");
+    let reader_tok = make_token(&reader_doc_id, reader_int_id, "reader");
 
     send(
         &mut app,

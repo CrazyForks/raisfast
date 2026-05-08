@@ -14,7 +14,8 @@ use crate::aspects::ColumnDef;
 pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnDef]) -> String {
     let mut cols = Vec::new();
 
-    cols.push("    id TEXT PRIMARY KEY".to_string());
+    cols.push("    id INTEGER PRIMARY KEY AUTOINCREMENT".to_string());
+    cols.push("    document_id TEXT NOT NULL UNIQUE".to_string());
 
     for field in &ct.fields {
         if field.field_type == FieldType::Relation {
@@ -31,7 +32,7 @@ pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnD
                         .map_or("users", |r| r.target.as_str());
                     let not_null = if field.required { " NOT NULL" } else { "" };
                     cols.push(format!(
-                        "    {fk} TEXT{not_null} REFERENCES {target_table}(id)"
+                        "    {fk} INTEGER{not_null} REFERENCES {target_table}(id)"
                     ));
                 }
                 Some(RelationType::ManyToMany) => {
@@ -109,8 +110,8 @@ pub fn generate_junction_tables(ct: &ContentTypeSchema) -> Vec<String> {
 
             let sql = format!(
                 "CREATE TABLE IF NOT EXISTS {through} (\n\
-                 {source_col} TEXT NOT NULL REFERENCES {source_table}(id) ON DELETE CASCADE,\n\
-                 {target_col} TEXT NOT NULL REFERENCES {target_table}(id) ON DELETE CASCADE,\n\
+                 {source_col} INTEGER NOT NULL REFERENCES {source_table}(id) ON DELETE CASCADE,\n\
+                 {target_col} INTEGER NOT NULL REFERENCES {target_table}(id) ON DELETE CASCADE,\n\
                  PRIMARY KEY ({source_col}, {target_col})\n\
                  )",
                 through = through,
@@ -199,7 +200,7 @@ pub fn generate_alter_table(
                             ""
                         };
                         stmts.push(format!(
-                            "ALTER TABLE {} ADD COLUMN {fk} TEXT{not_null_default} REFERENCES {target_table}(id)",
+                            "ALTER TABLE {} ADD COLUMN {fk} INTEGER{not_null_default} REFERENCES {target_table}(id)",
                             ct.table
                         ));
                     }
@@ -250,7 +251,7 @@ pub fn generate_alter_table(
 /// 获取 content type schema 期望的所有列名（用于与 DB 对比）
 #[must_use]
 pub fn expected_columns(ct: &ContentTypeSchema, protocol_columns: &[ColumnDef]) -> Vec<String> {
-    let mut cols = vec!["id".to_string()];
+    let mut cols = vec!["id".to_string(), "document_id".to_string()];
 
     for field in &ct.fields {
         if field.field_type == FieldType::Relation {
@@ -375,6 +376,7 @@ unique = true
 
         let sql = generate_create_table(&ct, &default_protocol_columns());
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS tags"));
+        assert!(sql.contains("document_id TEXT NOT NULL UNIQUE"));
         assert!(sql.contains("name TEXT NOT NULL"));
         assert!(sql.contains("created_at TEXT"));
         assert!(!sql.contains("status"));
@@ -438,6 +440,7 @@ default = false
 
         let existing = vec![
             "id".into(),
+            "document_id".into(),
             "title".into(),
             "slug".into(),
             "content".into(),
@@ -484,6 +487,7 @@ unique = true
 
         let existing = vec![
             "id".into(),
+            "document_id".into(),
             "name".into(),
             "slug".into(),
             "created_at".into(),
@@ -514,7 +518,7 @@ required = true
         )
         .unwrap();
 
-        let existing = vec!["id".into(), "title".into()];
+        let existing = vec!["id".into(), "document_id".into(), "title".into()];
 
         let stmts = generate_alter_table(&ct, &existing, &soft_delete_protocol_columns());
         assert!(stmts.iter().any(|s| s.contains("created_at TEXT")));
@@ -546,6 +550,7 @@ foreign_key = "author_id"
 
         let cols = expected_columns(&ct, &default_protocol_columns());
         assert!(cols.contains(&"id".to_string()));
+        assert!(cols.contains(&"document_id".to_string()));
         assert!(cols.contains(&"title".to_string()));
         assert!(cols.contains(&"author_id".to_string()));
         assert!(cols.contains(&"created_by".to_string()));

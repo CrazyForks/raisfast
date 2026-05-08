@@ -11,7 +11,8 @@
 
 -- 用户
 CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
     email TEXT UNIQUE NOT NULL,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
@@ -31,8 +32,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS
 
 -- Refresh Tokens
 CREATE TABLE IF NOT EXISTS refresh_tokens (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token TEXT UNIQUE NOT NULL,
     expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -44,7 +46,8 @@ CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expir
 
 -- 站点配置
 CREATE TABLE IF NOT EXISTS options (
-    id TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
     option_key TEXT NOT NULL,
     value TEXT NOT NULL,
     type TEXT NOT NULL DEFAULT 'text',
@@ -61,7 +64,8 @@ CREATE TABLE IF NOT EXISTS options (
 
 -- RBAC 角色
 CREATE TABLE IF NOT EXISTS roles (
-    id TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL UNIQUE,
     description TEXT,
     is_system BOOLEAN NOT NULL DEFAULT 0,
@@ -71,8 +75,9 @@ CREATE TABLE IF NOT EXISTS roles (
 
 -- RBAC 权限
 CREATE TABLE IF NOT EXISTS permissions (
-    id TEXT PRIMARY KEY,
-    role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
     action TEXT NOT NULL,
     subject TEXT NOT NULL,
     fields TEXT,
@@ -85,7 +90,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_role_action_subject
 
 -- 租户
 CREATE TABLE IF NOT EXISTS tenants (
-    id TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     domain TEXT UNIQUE,
     config TEXT NOT NULL DEFAULT '{}',
@@ -96,8 +102,9 @@ CREATE TABLE IF NOT EXISTS tenants (
 
 -- 审计日志
 CREATE TABLE IF NOT EXISTS audit_log (
-    id TEXT PRIMARY KEY,
-    actor_id TEXT,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    actor_id INTEGER,
     actor_role TEXT,
     action TEXT NOT NULL,
     subject TEXT NOT NULL,
@@ -114,8 +121,9 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
 
 -- API Token
 CREATE TABLE IF NOT EXISTS api_tokens (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     token_hash TEXT UNIQUE NOT NULL,
     token_prefix TEXT NOT NULL,
@@ -130,7 +138,8 @@ CREATE INDEX IF NOT EXISTS idx_api_tokens_token_hash ON api_tokens(token_hash);
 
 -- Webhook 订阅
 CREATE TABLE IF NOT EXISTS webhook_subscriptions (
-    id TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
     url TEXT NOT NULL,
     secret TEXT NOT NULL,
     events TEXT NOT NULL DEFAULT '[]',
@@ -156,12 +165,13 @@ CREATE INDEX IF NOT EXISTS idx_plugin_storage_plugin ON plugin_storage(plugin_id
 
 -- 内容版本历史
 CREATE TABLE IF NOT EXISTS content_revisions (
-    id TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
     content_type TEXT NOT NULL,
-    record_id TEXT NOT NULL,
+    record_id INTEGER NOT NULL,
     revision_number INTEGER NOT NULL,
     snapshot TEXT NOT NULL,
-    created_by TEXT,
+    created_by INTEGER,
     created_at TEXT NOT NULL,
     UNIQUE(content_type, record_id, revision_number)
 );
@@ -173,8 +183,9 @@ CREATE INDEX IF NOT EXISTS idx_revisions_ct_record_rev
 
 -- OAuth 账号绑定
 CREATE TABLE IF NOT EXISTS oauth_accounts (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     provider TEXT NOT NULL,
     provider_user_id TEXT NOT NULL,
     email TEXT,
@@ -194,10 +205,11 @@ CREATE INDEX IF NOT EXISTS idx_oauth_accounts_provider ON oauth_accounts(provide
 
 -- OAuth 短期 state 存储（PKCE）
 CREATE TABLE IF NOT EXISTS oauth_states (
-    id TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
     provider TEXT NOT NULL,
     code_verifier TEXT NOT NULL,
-    user_id TEXT,
+    user_id INTEGER,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     expires_at TEXT NOT NULL
 );
@@ -206,8 +218,9 @@ CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
 
 -- 密码重置令牌
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token TEXT NOT NULL UNIQUE,
     expires_at TEXT NOT NULL,
     used_at TEXT,
@@ -220,7 +233,8 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires_at ON password_rese
 
 -- 短信验证码
 CREATE TABLE IF NOT EXISTS sms_codes (
-    id TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
     phone TEXT NOT NULL,
     code TEXT NOT NULL,
     purpose TEXT NOT NULL,
@@ -236,8 +250,9 @@ CREATE INDEX IF NOT EXISTS idx_sms_codes_expires ON sms_codes(expires_at);
 
 -- 邮箱验证令牌
 CREATE TABLE IF NOT EXISTS email_verification_tokens (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token TEXT NOT NULL UNIQUE,
     email TEXT NOT NULL,
     expires_at TEXT NOT NULL,
@@ -251,7 +266,8 @@ CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expires ON email_verifi
 
 -- 后台任务队列
 CREATE TABLE IF NOT EXISTS jobs (
-    id           TEXT PRIMARY KEY,
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id  TEXT NOT NULL UNIQUE,
     job_type     TEXT NOT NULL,
     payload      TEXT NOT NULL,
     status       TEXT NOT NULL DEFAULT 'pending',
@@ -269,7 +285,8 @@ CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs(job_type);
 
 -- 定时任务调度
 CREATE TABLE IF NOT EXISTS cron_schedules (
-    id           TEXT PRIMARY KEY,
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id  TEXT NOT NULL UNIQUE,
     label        TEXT NOT NULL,
     job_type     TEXT NOT NULL,
     payload      TEXT,
@@ -288,8 +305,9 @@ CREATE INDEX IF NOT EXISTS idx_cron_plugin ON cron_schedules(plugin_id);
 
 -- Cron 执行历史
 CREATE TABLE IF NOT EXISTS cron_execution_log (
-    id           TEXT PRIMARY KEY,
-    schedule_id  TEXT NOT NULL,
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id  TEXT NOT NULL UNIQUE,
+    schedule_id  INTEGER NOT NULL,
     job_type     TEXT NOT NULL,
     label        TEXT NOT NULL,
     status       TEXT NOT NULL DEFAULT 'running',
@@ -307,41 +325,44 @@ CREATE INDEX IF NOT EXISTS idx_cron_log_started ON cron_execution_log(started_at
 
 -- 分类
 CREATE TABLE IF NOT EXISTS categories (
-    id TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
     name TEXT UNIQUE NOT NULL,
     slug TEXT UNIQUE NOT NULL,
     description TEXT,
-    parent_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
+    parent_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
-    created_by TEXT,
-    updated_by TEXT,
+    created_by INTEGER,
+    updated_by INTEGER,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- 标签
 CREATE TABLE IF NOT EXISTS tags (
-    id TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
     name TEXT UNIQUE NOT NULL,
     slug TEXT UNIQUE NOT NULL,
-    created_by TEXT,
-    updated_by TEXT,
+    created_by INTEGER,
+    updated_by INTEGER,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- 文章
 CREATE TABLE IF NOT EXISTS posts (
-    id TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
     title TEXT NOT NULL,
     slug TEXT UNIQUE NOT NULL,
     content TEXT NOT NULL,
     excerpt TEXT,
     cover_image TEXT,
     status TEXT NOT NULL DEFAULT 'draft',
-    created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    updated_by TEXT,
-    category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
+    created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    updated_by INTEGER,
+    category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
     view_count INTEGER NOT NULL DEFAULT 0,
     is_pinned INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -363,8 +384,8 @@ CREATE INDEX IF NOT EXISTS idx_posts_status_author
 
 -- 文章-标签（多对多）
 CREATE TABLE IF NOT EXISTS posts_tags (
-    post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-    tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
     PRIMARY KEY (post_id, tag_id)
 );
 
@@ -372,14 +393,15 @@ CREATE INDEX IF NOT EXISTS idx_posts_tags_tag_id ON posts_tags(tag_id);
 
 -- 评论
 CREATE TABLE IF NOT EXISTS comments (
-    id TEXT PRIMARY KEY,
-    post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
-    updated_by TEXT,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_by INTEGER,
     nickname TEXT,
     email TEXT,
     content TEXT NOT NULL,
-    parent_id TEXT REFERENCES comments(id) ON DELETE CASCADE,
+    parent_id INTEGER REFERENCES comments(id) ON DELETE CASCADE,
     status TEXT NOT NULL DEFAULT 'pending',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -395,7 +417,8 @@ CREATE INDEX IF NOT EXISTS idx_comments_parent_id
 -- ── 内置模块：Pages（BUILTIN_PAGES=true） ────────────────
 
 CREATE TABLE IF NOT EXISTS pages (
-    id               TEXT PRIMARY KEY,
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id      TEXT NOT NULL UNIQUE,
     title            TEXT NOT NULL,
     slug             TEXT NOT NULL UNIQUE,
     content          TEXT,
@@ -404,11 +427,11 @@ CREATE TABLE IF NOT EXISTS pages (
     meta_description TEXT,
     og_image         TEXT,
     template         TEXT NOT NULL DEFAULT 'default',
-    parent_id        TEXT REFERENCES pages(id) ON DELETE SET NULL,
+    parent_id        INTEGER REFERENCES pages(id) ON DELETE SET NULL,
     sort_order       INTEGER NOT NULL DEFAULT 0,
     status           TEXT NOT NULL DEFAULT 'draft',
-    created_by       TEXT NOT NULL REFERENCES users(id),
-    updated_by       TEXT,
+    created_by       INTEGER NOT NULL REFERENCES users(id),
+    updated_by       INTEGER,
     cover_image      TEXT,
     published_at     TEXT,
     created_at       TEXT NOT NULL DEFAULT (datetime('now')),
@@ -421,13 +444,14 @@ CREATE INDEX IF NOT EXISTS idx_pages_parent    ON pages(parent_id);
 CREATE INDEX IF NOT EXISTS idx_pages_author    ON pages(created_by);
 
 CREATE TABLE IF NOT EXISTS reusable_blocks (
-    id          TEXT PRIMARY KEY,
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
     name        TEXT NOT NULL,
     block_type  TEXT NOT NULL,
     content     TEXT NOT NULL,
     description TEXT,
-    created_by  TEXT,
-    updated_by  TEXT,
+    created_by  INTEGER,
+    updated_by  INTEGER,
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -435,8 +459,9 @@ CREATE TABLE IF NOT EXISTS reusable_blocks (
 -- ── 内置模块：Media（BUILTIN_MEDIA=true） ────────────────
 
 CREATE TABLE IF NOT EXISTS media (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     filename TEXT NOT NULL,
     filepath TEXT NOT NULL,
     mimetype TEXT NOT NULL,
@@ -452,7 +477,8 @@ CREATE INDEX IF NOT EXISTS idx_media_user_created
 -- ── 内置模块：Workflow（BUILTIN_WORKFLOW=true） ──────────
 
 CREATE TABLE IF NOT EXISTS workflow_definitions (
-    id TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     description TEXT,
     steps TEXT NOT NULL,
@@ -464,12 +490,13 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
 );
 
 CREATE TABLE IF NOT EXISTS workflow_instances (
-    id TEXT PRIMARY KEY,
-    definition_id TEXT NOT NULL REFERENCES workflow_definitions(id),
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    definition_id INTEGER NOT NULL REFERENCES workflow_definitions(id),
     status TEXT NOT NULL DEFAULT 'running',
     current_step TEXT,
     context TEXT NOT NULL DEFAULT '{}',
-    triggered_by TEXT,
+    triggered_by INTEGER,
     started_at TEXT NOT NULL DEFAULT (datetime('now')),
     completed_at TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -479,8 +506,9 @@ CREATE INDEX IF NOT EXISTS idx_wf_instances_definition ON workflow_instances(def
 CREATE INDEX IF NOT EXISTS idx_wf_instances_status ON workflow_instances(status);
 
 CREATE TABLE IF NOT EXISTS workflow_step_logs (
-    id TEXT PRIMARY KEY,
-    instance_id TEXT NOT NULL REFERENCES workflow_instances(id),
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    instance_id INTEGER NOT NULL REFERENCES workflow_instances(id),
     step_id TEXT NOT NULL,
     step_name TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'running',
@@ -498,38 +526,38 @@ CREATE INDEX IF NOT EXISTS idx_wf_step_logs_instance ON workflow_step_logs(insta
 -- ============================================================
 
 -- 默认租户
-INSERT OR IGNORE INTO tenants (id, name, domain, config, status, created_at, updated_at) VALUES
+INSERT OR IGNORE INTO tenants (document_id, name, domain, config, status, created_at, updated_at) VALUES
     ('default', 'Default', NULL, '{}', 'active', datetime('now'), datetime('now'));
 
 -- 系统角色
-INSERT OR IGNORE INTO roles (id, name, description, is_system, created_at, updated_at) VALUES
+INSERT OR IGNORE INTO roles (document_id, name, description, is_system, created_at, updated_at) VALUES
     ('role-admin', 'admin', '超级管理员', 1, datetime('now'), datetime('now')),
     ('role-editor', 'editor', '编辑', 0, datetime('now'), datetime('now')),
     ('role-author', 'author', '作者', 0, datetime('now'), datetime('now')),
     ('role-reader', 'reader', '读者', 1, datetime('now'), datetime('now'));
 
 -- admin 全局权限
-INSERT OR IGNORE INTO permissions (id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('perm-admin-all', 'role-admin', '*', '*', '["*"]', NULL, datetime('now'));
+INSERT OR IGNORE INTO permissions (document_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    ('perm-admin-all', (SELECT id FROM roles WHERE document_id = 'role-admin'), '*', '*', '["*"]', NULL, datetime('now'));
 
 -- editor 权限
-INSERT OR IGNORE INTO permissions (id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('perm-editor-ct-create', 'role-editor', 'content-type::*.*', 'content-type::*', '["*"]', NULL, datetime('now'));
+INSERT OR IGNORE INTO permissions (document_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    ('perm-editor-ct-create', (SELECT id FROM roles WHERE document_id = 'role-editor'), 'content-type::*.*', 'content-type::*', '["*"]', NULL, datetime('now'));
 
 -- author 权限
-INSERT OR IGNORE INTO permissions (id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('perm-author-post-create', 'role-author', 'content-type::post.create', 'content-type::post', '["*"]', NULL, datetime('now')),
-    ('perm-author-post-read', 'role-author', 'content-type::post.read', 'content-type::post', '["*"]', NULL, datetime('now')),
-    ('perm-author-post-update', 'role-author', 'content-type::post.update', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', datetime('now')),
-    ('perm-author-post-delete', 'role-author', 'content-type::post.delete', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', datetime('now'));
+INSERT OR IGNORE INTO permissions (document_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    ('perm-author-post-create', (SELECT id FROM roles WHERE document_id = 'role-author'), 'content-type::post.create', 'content-type::post', '["*"]', NULL, datetime('now')),
+    ('perm-author-post-read', (SELECT id FROM roles WHERE document_id = 'role-author'), 'content-type::post.read', 'content-type::post', '["*"]', NULL, datetime('now')),
+    ('perm-author-post-update', (SELECT id FROM roles WHERE document_id = 'role-author'), 'content-type::post.update', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', datetime('now')),
+    ('perm-author-post-delete', (SELECT id FROM roles WHERE document_id = 'role-author'), 'content-type::post.delete', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', datetime('now'));
 
 -- reader 权限
-INSERT OR IGNORE INTO permissions (id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('perm-reader-post-read', 'role-reader', 'content-type::post.read', 'content-type::post', '["title","slug","content","excerpt","status"]', NULL, datetime('now')),
-    ('perm-reader-comment-create', 'role-reader', 'content-type::comment.create', 'content-type::comment', '["content","nickname","email"]', NULL, datetime('now'));
+INSERT OR IGNORE INTO permissions (document_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    ('perm-reader-post-read', (SELECT id FROM roles WHERE document_id = 'role-reader'), 'content-type::post.read', 'content-type::post', '["title","slug","content","excerpt","status"]', NULL, datetime('now')),
+    ('perm-reader-comment-create', (SELECT id FROM roles WHERE document_id = 'role-reader'), 'content-type::comment.create', 'content-type::comment', '["content","nickname","email"]', NULL, datetime('now'));
 
 -- 站点配置
-INSERT OR IGNORE INTO options (id, option_key, value, type, group_name, label, description, validation, is_public, autoload, sort_order, updated_at) VALUES
+INSERT OR IGNORE INTO options (document_id, option_key, value, type, group_name, label, description, validation, is_public, autoload, sort_order, updated_at) VALUES
     ('opt-site-title', 'site_title', '"My Blog"', 'text', 'general', '站点标题', '显示在浏览器标题栏和页面头部', '{"max_length":100}', 1, 1, 1, datetime('now')),
     ('opt-site-desc', 'site_description', '""', 'text', 'general', '站点描述', '简短描述站点用途', '{"max_length":500}', 1, 1, 2, datetime('now')),
     ('opt-site-url', 'site_url', '""', 'url', 'general', '站点 URL', '如 https://example.com', NULL, 1, 1, 3, datetime('now')),

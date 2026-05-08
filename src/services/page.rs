@@ -34,7 +34,7 @@ pub async fn get_by_slug(
 }
 
 pub async fn get_by_id(pool: &crate::db::Pool, id: &str, auth: &AuthUser) -> AppResult<page::Page> {
-    page::find_by_id(pool, id, auth.tenant_id())
+    page::find_by_document_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("page"))
 }
@@ -64,11 +64,8 @@ pub async fn create_page(
         cmd.status.clone()
     };
 
-    let (id, _) = crate::utils::id::new_id_and_timestamp();
-
     page::create(
         pool,
-        &id,
         &cmd.title,
         &cmd.slug,
         cmd.content.as_deref(),
@@ -77,10 +74,10 @@ pub async fn create_page(
         cmd.meta_description.as_deref(),
         cmd.og_image.as_deref(),
         &cmd.template,
-        cmd.parent_id.as_deref(),
+        cmd.parent_id,
         cmd.sort_order,
         &status,
-        &cmd.created_by,
+        cmd.created_by,
         cmd.cover_image.as_deref(),
         auth.tenant_id(),
     )
@@ -90,15 +87,20 @@ pub async fn create_page(
 pub async fn update_page(
     pool: &crate::db::Pool,
     auth: &AuthUser,
+    document_id: &str,
     cmd: UpdatePageCmd,
 ) -> AppResult<page::Page> {
     if let Some(ref blocks) = cmd.blocks {
         validate_blocks_json(blocks)?;
     }
 
+    let existing = page::find_by_document_id(pool, document_id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("page"))?;
+
     page::update(
         pool,
-        &cmd.id,
+        existing.id,
         cmd.title.as_deref(),
         cmd.slug.as_deref(),
         cmd.content.as_deref(),
@@ -107,18 +109,21 @@ pub async fn update_page(
         cmd.meta_description.as_deref(),
         cmd.og_image.as_deref(),
         cmd.template.as_deref(),
-        cmd.parent_id.as_ref().map(|opt| opt.as_deref()),
+        cmd.parent_id,
         cmd.sort_order,
         cmd.status.as_deref(),
         cmd.cover_image.as_deref(),
-        cmd.updated_by.as_deref(),
+        cmd.updated_by,
         auth.tenant_id(),
     )
     .await
 }
 
 pub async fn delete_page(pool: &crate::db::Pool, id: &str, auth: &AuthUser) -> AppResult<()> {
-    page::delete(pool, id, auth.tenant_id()).await
+    let p = page::find_by_document_id(pool, id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("page"))?;
+    page::delete(pool, p.id, auth.tenant_id()).await
 }
 
 pub async fn update_status(
@@ -131,7 +136,10 @@ pub async fn update_status(
     if !valid.contains(&status) {
         return Err(AppError::BadRequest(format!("invalid status: {status}")));
     }
-    page::update_status(pool, id, status, auth.user_id(), auth.tenant_id()).await
+    let p = page::find_by_document_id(pool, id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("page"))?;
+    page::update_status(pool, p.id, status, auth.user_int_id(), auth.tenant_id()).await
 }
 
 pub async fn reorder(
@@ -139,7 +147,14 @@ pub async fn reorder(
     items: Vec<(String, i64)>,
     auth: &AuthUser,
 ) -> AppResult<()> {
-    page::reorder(pool, &items, auth.tenant_id()).await
+    let mut resolved = Vec::new();
+    for (doc_id, sort_order) in items {
+        let p = page::find_by_document_id(pool, &doc_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("page"))?;
+        resolved.push((p.id, sort_order));
+    }
+    page::reorder(pool, &resolved, auth.tenant_id()).await
 }
 
 pub async fn sitemap(
@@ -163,7 +178,7 @@ pub async fn get_reusable(
     id: &str,
     auth: &AuthUser,
 ) -> AppResult<Option<page::ReusableBlock>> {
-    page::find_reusable_by_id(pool, id, auth.tenant_id()).await
+    page::find_reusable_by_document_id(pool, id, auth.tenant_id()).await
 }
 
 pub async fn create_reusable(
@@ -175,11 +190,9 @@ pub async fn create_reusable(
     description: Option<&str>,
 ) -> AppResult<page::ReusableBlock> {
     validate_blocks_json(content)?;
-    let (id, _) = crate::utils::id::new_id_and_timestamp();
 
     page::create_reusable(
         pool,
-        &id,
         name,
         block_type,
         content,
@@ -202,9 +215,12 @@ pub async fn update_reusable(
     if let Some(c) = content {
         validate_blocks_json(c)?;
     }
+    let block = page::find_reusable_by_document_id(pool, id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("reusable_block"))?;
     page::update_reusable(
         pool,
-        id,
+        block.id,
         name,
         block_type,
         content,
@@ -216,7 +232,10 @@ pub async fn update_reusable(
 }
 
 pub async fn delete_reusable(pool: &crate::db::Pool, id: &str, auth: &AuthUser) -> AppResult<()> {
-    page::delete_reusable(pool, id, auth.tenant_id()).await
+    let block = page::find_reusable_by_document_id(pool, id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("reusable_block"))?;
+    page::delete_reusable(pool, block.id, auth.tenant_id()).await
 }
 
 pub fn generate_slug(title: &str) -> String {

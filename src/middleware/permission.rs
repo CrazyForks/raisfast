@@ -48,12 +48,12 @@ impl PermissionGuard {
         let role_id = rbac
             .get_role_id_by_name(&self.role)
             .await?
+            .map(|id| id.to_string())
             .unwrap_or_else(|| self.role.clone());
 
         rbac.check_permission(&role_id, action, subject, None).await
     }
 
-    /// 带条件的权限检查
     pub async fn check_with_context(
         &self,
         rbac: &RbacService,
@@ -64,6 +64,7 @@ impl PermissionGuard {
         let role_id = rbac
             .get_role_id_by_name(&self.role)
             .await?
+            .map(|id| id.to_string())
             .unwrap_or_else(|| self.role.clone());
 
         rbac.check_permission(&role_id, action, subject, Some(context))

@@ -59,7 +59,7 @@ async fn setup_pool() -> sqlx::SqlitePool {
     tenant::invalidate_cache().await;
     pool
 }
-async fn create_test_user(pool: &sqlx::SqlitePool, label: &str) -> String {
+async fn create_test_user(pool: &sqlx::SqlitePool, label: &str) -> (i64, String) {
     let eventbus = raisfast::eventbus::EventBus::new(16);
     let user_repo = SqlxUserRepository::new(pool.clone());
     let req = raisfast::handlers::dto::RegisterRequest {
@@ -70,7 +70,12 @@ async fn create_test_user(pool: &sqlx::SqlitePool, label: &str) -> String {
     let user = auth::register(&user_repo, &eventbus, req, None, false, pool)
         .await
         .unwrap();
-    user.id
+    let row: (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
+        .bind(&user.id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    (row.0, user.id)
 }
 
 fn parse_todo_ct() -> ContentTypeSchema {
@@ -257,6 +262,7 @@ async fn tauri_auth_get_me_service() {
 
     let auth = raisfast::middleware::auth::AuthUser::from_parts(
         Some(user.id.clone()),
+        None,
         "author".to_string(),
         None,
     );
@@ -272,7 +278,7 @@ async fn tauri_auth_get_me_service() {
 #[tokio::test]
 async fn tauri_post_create_and_list() {
     let pool = setup_pool().await;
-    let author_id = create_test_user(&pool, "author-001").await;
+    let (author_int_id, author_doc_id) = create_test_user(&pool, "author-001").await;
     let sqlx_repo = SqlxPostRepository::new(pool.clone());
     let post_repo: Arc<dyn PostRepository> =
         Arc::new(raisfast::repositories::CachedPostRepository::new(
@@ -295,7 +301,8 @@ async fn tauri_post_create_and_list() {
     };
 
     let auth = raisfast::middleware::auth::AuthUser::from_parts(
-        Some(author_id.clone()),
+        Some(author_doc_id.clone()),
+        Some(author_int_id),
         "author".to_string(),
         None,
     );
@@ -304,7 +311,7 @@ async fn tauri_post_create_and_list() {
         .unwrap();
 
     assert_eq!(created.title, "Test Post");
-    assert_eq!(created.created_by, author_id);
+    assert_eq!(created.created_by, author_int_id);
 
     let (items, total) = post::list_posts(
         post_repo.as_ref(),
@@ -327,7 +334,7 @@ async fn tauri_post_create_and_list() {
 #[tokio::test]
 async fn tauri_post_get_by_slug() {
     let pool = setup_pool().await;
-    let author_id = create_test_user(&pool, "author-002").await;
+    let (author_int_id, author_doc_id) = create_test_user(&pool, "author-002").await;
     let sqlx_repo = SqlxPostRepository::new(pool.clone());
     let post_repo: Arc<dyn PostRepository> =
         Arc::new(raisfast::repositories::CachedPostRepository::new(
@@ -350,7 +357,8 @@ async fn tauri_post_get_by_slug() {
     };
 
     let auth = raisfast::middleware::auth::AuthUser::from_parts(
-        Some(author_id.clone()),
+        Some(author_doc_id.clone()),
+        Some(author_int_id),
         "author".to_string(),
         None,
     );
@@ -424,7 +432,7 @@ async fn tauri_cms_get_by_id() {
     let data = with_timestamps(serde_json::json!({"title": "Read book", "done": false}));
     let created = repo.create(&ct, data, None, &save_ctx).await.unwrap();
 
-    let id = created["id"].as_str().unwrap();
+    let id = created["document_id"].as_str().unwrap();
     let found = repo.find_by_id(&ct, id, None, true).await.unwrap().unwrap();
     assert_eq!(found["title"], "Read book");
 }
@@ -440,7 +448,7 @@ async fn tauri_cms_update() {
     let data = with_timestamps(serde_json::json!({"title": "Original", "done": false}));
     let created = repo.create(&ct, data, None, &save_ctx).await.unwrap();
 
-    let id = created["id"].as_str().unwrap().to_string();
+    let id = created["document_id"].as_str().unwrap().to_string();
     let update_data = serde_json::json!({"title": "Updated", "done": true});
     repo.update(&ct, &id, update_data, None, &save_ctx)
         .await
@@ -465,7 +473,7 @@ async fn tauri_cms_delete() {
     let data = with_timestamps(serde_json::json!({"title": "To delete", "done": false}));
     let created = repo.create(&ct, data, None, &save_ctx).await.unwrap();
 
-    let id = created["id"].as_str().unwrap().to_string();
+    let id = created["document_id"].as_str().unwrap().to_string();
     repo.delete(&ct, &id, None, &test_protocol_registry())
         .await
         .unwrap();

@@ -18,7 +18,7 @@ impl RbacRepository for SqlxRbacRepository {
         rbac::find_role_by_id(&self.pool, id).await
     }
 
-    async fn find_role_id_by_name(&self, name: &str) -> AppResult<Option<String>> {
+    async fn find_role_id_by_name(&self, name: &str) -> AppResult<Option<i64>> {
         rbac::find_role_id_by_name(&self.pool, name).await
     }
 
@@ -46,18 +46,18 @@ impl RbacRepository for SqlxRbacRepository {
         rbac::delete_role(&self.pool, id).await
     }
 
-    async fn find_permissions_by_role_id(&self, role_id: &str) -> AppResult<Vec<rbac::Permission>> {
+    async fn find_permissions_by_role_id(&self, role_id: i64) -> AppResult<Vec<rbac::Permission>> {
         rbac::find_permissions_by_role_id(&self.pool, role_id).await
     }
 
-    async fn delete_permissions_by_role_id(&self, role_id: &str) -> AppResult<()> {
+    async fn delete_permissions_by_role_id(&self, role_id: i64) -> AppResult<()> {
         rbac::delete_permissions_by_role_id(&self.pool, role_id).await
     }
 
     async fn insert_permission(
         &self,
-        id: &str,
-        role_id: &str,
+        document_id: &str,
+        role_id: i64,
         action: &str,
         subject: &str,
         fields: Option<&str>,
@@ -65,7 +65,14 @@ impl RbacRepository for SqlxRbacRepository {
         created_at: &str,
     ) -> AppResult<()> {
         rbac::insert_permission(
-            &self.pool, id, role_id, action, subject, fields, conditions, created_at,
+            &self.pool,
+            document_id,
+            role_id,
+            action,
+            subject,
+            fields,
+            conditions,
+            created_at,
         )
         .await
     }

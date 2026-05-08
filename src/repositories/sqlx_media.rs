@@ -17,7 +17,7 @@ impl MediaRepository for SqlxMediaRepository {
 
     async fn find_all(
         &self,
-        user_id: &str,
+        user_id: i64,
         page: i64,
         page_size: i64,
         tenant_id: Option<&str>,
@@ -25,15 +25,15 @@ impl MediaRepository for SqlxMediaRepository {
         media::find_all(&self.pool, user_id, page, page_size, tenant_id).await
     }
 
-    async fn find_by_id(&self, id: &str, tenant_id: Option<&str>) -> AppResult<Option<Media>> {
+    async fn find_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<Option<Media>> {
         media::find_by_id(&self.pool, id, tenant_id).await
     }
 
-    async fn delete(&self, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
+    async fn delete(&self, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
         media::delete(&self.pool, id, tenant_id).await
     }
 
-    async fn stats(&self, user_id: &str, tenant_id: Option<&str>) -> AppResult<media::MediaStats> {
+    async fn stats(&self, user_id: i64, tenant_id: Option<&str>) -> AppResult<media::MediaStats> {
         media::stats(&self.pool, user_id, tenant_id).await
     }
 }

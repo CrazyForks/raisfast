@@ -11,7 +11,6 @@ use crate::models::comment::{self, CommentResponse};
 use crate::plugins::{HookPoint, PluginManager};
 use crate::repositories::{CommentRepository, PostRepository};
 
-/// 评论输入数据（用于 Hook 传递）
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CommentInput {
     pub content: String,
@@ -20,15 +19,6 @@ pub struct CommentInput {
     pub parent_id: Option<String>,
 }
 
-/// 创建评论。
-///
-/// 执行以下校验：
-/// 1. 目标文章必须存在。
-/// 2. 若指定父评论，父评论必须属于同一篇文章。
-/// 3. 嵌套深度不得超过 3 层。
-/// 4. 通过插件 `on_comment_creating` Hook 过滤。
-///
-/// 校验通过后以 `"pending"` 状态创建评论。
 #[allow(clippy::too_many_arguments)]
 pub async fn create_comment(
     post_repo: &dyn PostRepository,
@@ -47,9 +37,12 @@ pub async fn create_comment(
         .await?
         .ok_or_else(|| AppError::not_found("post"))?;
 
-    if let Some(pid) = parent_id {
+    if let Some(pid_str) = parent_id {
+        let pid: i64 = pid_str
+            .parse()
+            .map_err(|_| AppError::BadRequest("invalid parent_id".into()))?;
         let all_comments = comment_repo
-            .find_approved_by_post(&p.id, auth.tenant_id())
+            .find_approved_by_post(p.id, auth.tenant_id())
             .await?;
         let parent = all_comments
             .iter()
@@ -78,18 +71,18 @@ pub async fn create_comment(
         .create(
             CreateCommentCmd {
                 post_id: p.id,
-                created_by: auth.user_id().map(|s| s.to_string()),
+                created_by: auth.user_int_id(),
                 nickname: filtered.nickname,
                 email: filtered.email,
                 content: filtered.content,
-                parent_id: filtered.parent_id,
+                parent_id: filtered.parent_id.and_then(|s| s.parse().ok()),
             },
             auth.tenant_id(),
         )
         .await?;
 
     eventbus.emit(Event::CommentCreated {
-        id: c.id.clone(),
+        id: c.document_id.clone(),
         post_slug: post_slug.to_string(),
         author_name: c.nickname.clone().unwrap_or_default(),
     });
@@ -107,9 +100,6 @@ pub async fn create_comment(
     })
 }
 
-/// 分页获取指定文章的评论列表。
-///
-/// 仅返回状态为 `"approved"` 的评论，并组织为树形结构。
 pub async fn list_comments_paginated(
     post_repo: &dyn PostRepository,
     comment_repo: &dyn CommentRepository,
@@ -124,37 +114,37 @@ pub async fn list_comments_paginated(
         .ok_or_else(|| AppError::not_found("post"))?;
 
     let (comments, total) = comment_repo
-        .find_approved_by_post_paginated(&p.id, page, page_size, auth.tenant_id())
+        .find_approved_by_post_paginated(p.id, page, page_size, auth.tenant_id())
         .await?;
     Ok((comment::build_tree(&comments), total))
 }
 
-/// 删除评论。
-///
-/// 仅评论作者或管理员有权限执行此操作。
 pub async fn delete_comment(
     comment_repo: &dyn CommentRepository,
     comment_id: &str,
     auth: &AuthUser,
 ) -> AppResult<()> {
+    let id: i64 = comment_id
+        .parse()
+        .map_err(|_| AppError::BadRequest("invalid comment id".into()))?;
     let c = comment_repo
-        .find_by_id(comment_id, auth.tenant_id())
+        .find_by_id(id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("comment"))?;
 
     crate::utils::auth::require_owner_or_admin_opt(
         auth.role(),
-        auth.ensure_authenticated()?,
-        c.created_by.as_deref(),
+        &auth
+            .user_int_id()
+            .ok_or(AppError::Unauthorized)?
+            .to_string(),
+        c.created_by.as_ref().map(|id| id.to_string()).as_deref(),
     )?;
 
-    comment_repo.delete(comment_id, auth.tenant_id()).await?;
+    comment_repo.delete(id, auth.tenant_id()).await?;
     Ok(())
 }
 
-/// 更新评论状态。
-///
-/// 仅接受 `"approved"`、`"spam"`、`"pending"` 三种状态值。
 pub async fn update_comment_status(
     comment_repo: &dyn CommentRepository,
     comment_id: &str,
@@ -164,8 +154,11 @@ pub async fn update_comment_status(
     if status != "approved" && status != "spam" && status != "pending" {
         return Err(AppError::BadRequest("invalid_comment_status".into()));
     }
+    let id: i64 = comment_id
+        .parse()
+        .map_err(|_| AppError::BadRequest("invalid comment id".into()))?;
     comment_repo
-        .update_status(comment_id, status, auth.tenant_id())
+        .update_status(id, status, auth.tenant_id())
         .await?;
 
     Ok(())

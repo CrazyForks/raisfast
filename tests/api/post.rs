@@ -12,28 +12,28 @@ struct Ctx {
 
 async fn setup() -> Ctx {
     let (mut app, state) = test_app().await;
-    let author_id = create_author(&state.pool).await;
-    let tok = make_token(&author_id, "author");
+    let (author_int_id, author_doc_id) = create_author(&state.pool).await;
+    let tok = make_token(&author_doc_id, author_int_id, "author");
 
     let (_, cb): (StatusCode, Value) = send(
         &mut app,
         post_json_auth("/api/v1/categories", json!({"name": "Tech"}), &tok),
     )
     .await;
-    let cat_id = cb["data"]["id"].as_str().unwrap().to_string();
+    let cat_id = cb["data"]["id"].as_i64().unwrap().to_string();
 
     let (_, tb): (StatusCode, Value) = send(
         &mut app,
         post_json_auth("/api/v1/tags", json!({"name": "rust"}), &tok),
     )
     .await;
-    let tag_id = tb["data"]["id"].as_str().unwrap().to_string();
+    let tag_id = tb["data"]["id"].as_i64().unwrap().to_string();
 
     Ctx {
         app,
         state,
         tok,
-        created_by: author_id,
+        created_by: author_doc_id,
         cat_id,
         tag_id,
     }
@@ -223,7 +223,7 @@ async fn admin_can_delete_others() {
     let mut c = setup().await;
     let slug = create_published_post(&mut c.app, &c.tok).await;
     let admin_id = create_admin(&c.state.pool).await;
-    let admin_tok = make_token(&admin_id, "admin");
+    let admin_tok = make_token(&admin_id.1, admin_id.0, "admin");
     let (status, _): (StatusCode, Value) = send(
         &mut c.app,
         delete_auth(&format!("/api/v1/posts/{slug}"), &admin_tok),
@@ -240,7 +240,7 @@ async fn filter_by_category() {
         post_json_auth("/api/v1/categories", json!({"name": "Other"}), &c.tok),
     )
     .await;
-    let other_cat = cb["data"]["id"].as_str().unwrap();
+    let other_cat = cb["data"]["id"].as_i64().unwrap().to_string();
 
     let _: (StatusCode, Value) = send(
         &mut c.app,
@@ -267,5 +267,6 @@ async fn filter_by_category() {
     )
     .await;
     let items = body["data"]["items"].as_array().unwrap();
-    assert!(items.iter().all(|p| p["category_id"] == c.cat_id));
+    let cat_int: i64 = c.cat_id.parse().unwrap();
+    assert!(items.iter().all(|p| p["category_id"] == cat_int));
 }

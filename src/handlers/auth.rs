@@ -131,7 +131,7 @@ pub async fn logout(
     State(state): State<crate::AppState>,
     auth: AuthUser,
 ) -> AppResult<ApiResponse<()>> {
-    auth::logout(state.refresh_token_repo.as_ref(), &auth).await?;
+    auth::logout(&state.pool, state.refresh_token_repo.as_ref(), &auth).await?;
     Ok(ApiResponse::success(()))
 }
 

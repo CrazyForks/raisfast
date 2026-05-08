@@ -18,7 +18,8 @@ use crate::errors::app_error::{AppError, AppResult};
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
 pub struct User {
-    pub id: String,
+    pub id: i64,
+    pub document_id: String,
     pub tenant_id: Option<String>,
     pub email: String,
     pub username: String,
@@ -34,7 +35,7 @@ pub struct User {
 }
 
 crate::impl_from_row_opt_tenant!(User {
-    required { id, email, username, password_hash, role, email_verified, created_at, updated_at }
+    required { id, document_id, email, username, password_hash, role, email_verified, created_at, updated_at }
     optional { phone, avatar, bio, website }
 });
 
@@ -77,12 +78,28 @@ pub async fn find_by_phone(pool: &crate::db::Pool, phone: &str) -> AppResult<Opt
     Ok(user)
 }
 
-/// 根据用户 ID 查找用户
+/// 根据 document_id 查找用户（外部接口）
 ///
 /// 返回 `Ok(Some(user))` 或 `Ok(None)`（未找到时）。
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: &str,
+    document_id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<User>> {
+    let filter = tenant_filter_ph(tenant_id, 2);
+    let sql = format!("SELECT * FROM users WHERE document_id = {}{filter}", ph(1));
+    let mut q = sqlx::query_as::<_, User>(&sql).bind(document_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let user = q.fetch_optional(pool).await?;
+    Ok(user)
+}
+
+/// 根据整数主键查找用户（内部 FK 查询）
+pub async fn find_by_pk(
+    pool: &crate::db::Pool,
+    id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<User>> {
     let filter = tenant_filter_ph(tenant_id, 2);
@@ -97,24 +114,24 @@ pub async fn find_by_id(
 
 /// 创建新用户
 ///
-/// 自动生成 UUID v7 作为主键，默认角色为 `reader`。
+/// 自动生成 document_id，默认角色为 `reader`。
 /// 创建完成后重新查询并返回完整用户记录。
 pub async fn create(
     pool: &crate::db::Pool,
     cmd: &crate::commands::CreateUserCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
     match tenant_id {
         Some(tid) => {
             let vals1 = (1..=5).map(ph).collect::<Vec<_>>().join(", ");
             let vals2 = (6..=7).map(ph).collect::<Vec<_>>().join(", ");
             let sql = format!(
-                "INSERT INTO users (id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES ({vals1}, 'reader', {vals2})"
+                "INSERT INTO users (document_id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES ({vals1}, 'reader', {vals2})"
             );
             sqlx::query(&sql)
-                .bind(&id)
+                .bind(&document_id)
                 .bind(tid)
                 .bind(&cmd.email)
                 .bind(&cmd.username)
@@ -128,10 +145,10 @@ pub async fn create(
             let vals1 = (1..=4).map(ph).collect::<Vec<_>>().join(", ");
             let vals2 = (5..=6).map(ph).collect::<Vec<_>>().join(", ");
             let sql = format!(
-                "INSERT INTO users (id, email, username, password_hash, role, created_at, updated_at) VALUES ({vals1}, 'reader', {vals2})"
+                "INSERT INTO users (document_id, email, username, password_hash, role, created_at, updated_at) VALUES ({vals1}, 'reader', {vals2})"
             );
             sqlx::query(&sql)
-                .bind(&id)
+                .bind(&document_id)
                 .bind(&cmd.email)
                 .bind(&cmd.username)
                 .bind(&cmd.password_hash)
@@ -142,7 +159,14 @@ pub async fn create(
         }
     }
 
-    let user = find_by_id(pool, &id, tenant_id)
+    let filter = tenant_filter_ph(tenant_id, 2);
+    let sql = format!("SELECT * FROM users WHERE document_id = {}{filter}", ph(1));
+    let mut q = sqlx::query_as::<_, User>(&sql).bind(&document_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let user = q
+        .fetch_optional(pool)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch newly created user")))?;
     Ok(user)
@@ -158,7 +182,7 @@ pub async fn update_profile(
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
     let now = Utc::now().to_rfc3339();
-    let user = find_by_id(pool, &cmd.id, tenant_id)
+    let user = find_by_pk(pool, cmd.id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
 
@@ -195,13 +219,13 @@ pub async fn update_profile(
         .bind(website)
         .bind(avatar)
         .bind(now)
-        .bind(&cmd.id);
+        .bind(user.id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
     q.execute(pool).await?;
 
-    find_by_id(pool, &cmd.id, tenant_id)
+    find_by_pk(pool, cmd.id, tenant_id)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch updated user")))
 }
@@ -211,19 +235,22 @@ pub async fn update_profile(
 /// 直接用新的哈希值覆盖 `password_hash`，并更新 `updated_at`。
 pub async fn update_password(
     pool: &crate::db::Pool,
-    id: &str,
+    document_id: &str,
     new_password_hash: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     let filter = tenant_filter_ph(tenant_id, 4);
     let sql = format!(
-        "UPDATE users SET password_hash = {}, updated_at = {} WHERE id = {}{filter}",
+        "UPDATE users SET password_hash = {}, updated_at = {} WHERE document_id = {}{filter}",
         ph(1),
         ph(2),
         ph(3)
     );
-    let mut q = sqlx::query(&sql).bind(new_password_hash).bind(now).bind(id);
+    let mut q = sqlx::query(&sql)
+        .bind(new_password_hash)
+        .bind(now)
+        .bind(document_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -234,19 +261,19 @@ pub async fn update_password(
 /// 绑定手机号
 pub async fn update_phone(
     pool: &crate::db::Pool,
-    id: &str,
+    document_id: &str,
     phone: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     let filter = tenant_filter_ph(tenant_id, 4);
     let sql = format!(
-        "UPDATE users SET phone = {}, updated_at = {} WHERE id = {}{filter}",
+        "UPDATE users SET phone = {}, updated_at = {} WHERE document_id = {}{filter}",
         ph(1),
         ph(2),
         ph(3)
     );
-    let mut q = sqlx::query(&sql).bind(phone).bind(now).bind(id);
+    let mut q = sqlx::query(&sql).bind(phone).bind(now).bind(document_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -291,19 +318,19 @@ pub async fn find_all(
 /// 管理员更新用户角色
 pub async fn update_role(
     pool: &crate::db::Pool,
-    id: &str,
+    document_id: &str,
     role: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
     let now = Utc::now().to_rfc3339();
     let filter = tenant_filter_ph(tenant_id, 4);
     let sql = format!(
-        "UPDATE users SET role = {}, updated_at = {} WHERE id = {}{filter}",
+        "UPDATE users SET role = {}, updated_at = {} WHERE document_id = {}{filter}",
         ph(1),
         ph(2),
         ph(3)
     );
-    let mut q = sqlx::query(&sql).bind(role).bind(now).bind(id);
+    let mut q = sqlx::query(&sql).bind(role).bind(now).bind(document_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -311,7 +338,7 @@ pub async fn update_role(
 
     AppError::expect_affected(&result, "user")?;
 
-    find_by_id(pool, id, tenant_id)
+    find_by_id(pool, document_id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))
 }

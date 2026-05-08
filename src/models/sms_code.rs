@@ -11,7 +11,8 @@ use crate::utils::id;
 #[derive(Debug, FromRow)]
 #[non_exhaustive]
 pub struct SmsCode {
-    pub id: String,
+    pub id: i64,
+    pub document_id: String,
     pub phone: String,
     pub code: String,
     pub purpose: String,
@@ -48,11 +49,11 @@ pub async fn create(
     expires_in_secs: u64,
     ip_address: Option<&str>,
 ) -> AppResult<SmsCode> {
-    let (id, now) = id::new_id_and_timestamp();
+    let (document_id, now) = id::new_document_id_and_timestamp();
     let expires_at = (Utc::now() + chrono::Duration::seconds(expires_in_secs as i64)).to_rfc3339();
 
     let sql = format!(
-        "INSERT INTO sms_codes (id, phone, code, purpose, expires_at, ip_address, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
+        "INSERT INTO sms_codes (document_id, phone, code, purpose, expires_at, ip_address, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
@@ -62,7 +63,7 @@ pub async fn create(
         ph(7),
     );
     sqlx::query(&sql)
-        .bind(&id)
+        .bind(&document_id)
         .bind(phone)
         .bind(code)
         .bind(purpose)
@@ -72,17 +73,21 @@ pub async fn create(
         .execute(pool)
         .await?;
 
-    find_by_id(pool, &id).await?.ok_or_else(|| {
-        crate::errors::app_error::AppError::Internal(anyhow::anyhow!("failed to fetch sms code"))
-    })
+    let sql2 = format!("SELECT * FROM sms_codes WHERE document_id = {}", ph(1));
+    sqlx::query_as::<_, SmsCode>(&sql2)
+        .bind(&document_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| {
+            crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
+                "failed to fetch sms code"
+            ))
+        })
 }
 
 /// 根据 ID 查找验证码
-pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<SmsCode>> {
-    let sql = format!(
-        "SELECT * FROM sms_codes WHERE id = {}",
-        ph(1)
-    );
+pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<Option<SmsCode>> {
+    let sql = format!("SELECT * FROM sms_codes WHERE id = {}", ph(1));
     let row = sqlx::query_as::<_, SmsCode>(&sql)
         .bind(id)
         .fetch_optional(pool)
@@ -135,7 +140,7 @@ pub async fn is_rate_limited(
 /// 验证码验证：匹配后标记已验证，错误时增加 attempts
 pub async fn verify_code(
     pool: &crate::db::Pool,
-    id: &str,
+    id: i64,
     input_code: &str,
 ) -> AppResult<VerifyResult> {
     let sms = find_by_id(pool, id)
@@ -191,10 +196,7 @@ pub enum VerifyResult {
 /// 清理过期的验证码记录
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
     let now = Utc::now().to_rfc3339();
-    let sql = format!(
-        "DELETE FROM sms_codes WHERE expires_at < {}",
-        ph(1)
-    );
+    let sql = format!("DELETE FROM sms_codes WHERE expires_at < {}", ph(1));
     let result = sqlx::query(&sql).bind(now).execute(pool).await?;
     Ok(result.rows_affected())
 }

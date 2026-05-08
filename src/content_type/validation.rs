@@ -270,7 +270,7 @@ async fn check_unique_fields(
         sql_builder.clear();
         if exclude_id.is_some() {
             sql_builder = format!(
-                "SELECT COUNT(*) as cnt FROM {} WHERE {} = {} AND id != {}",
+                "SELECT COUNT(*) as cnt FROM {} WHERE {} = {} AND document_id != {}",
                 ct.table,
                 field.name,
                 crate::db::dialect::ph(1),
@@ -566,7 +566,7 @@ immutable = true
             )
             .await
             .unwrap();
-        let id = created["id"].as_str().unwrap().to_string();
+        let id = created["document_id"].as_str().unwrap().to_string();
 
         let result = validate_update(&pool, &ct, &id, &json!({"secret": "new"})).await;
         assert!(result.is_err());
@@ -594,7 +594,7 @@ immutable = true
             )
             .await
             .unwrap();
-        let id = created["id"].as_str().unwrap().to_string();
+        let id = created["document_id"].as_str().unwrap().to_string();
 
         let result =
             validate_update(&pool, &ct, &id, &json!({"name": "Updated", "code": "XYZ"})).await;

@@ -9,7 +9,7 @@ pub struct CreateUserCmd {
 
 /// 更新用户资料
 pub struct UpdateProfileCmd {
-    pub id: String,
+    pub id: i64,
     pub username: Option<String>,
     pub bio: Option<String>,
     pub website: Option<String>,

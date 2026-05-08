@@ -25,10 +25,11 @@ impl WebhookService {
         description: Option<String>,
         enabled: bool,
     ) -> AppResult<model::WebhookSubscription> {
-        let (id, now) = new_id_and_timestamp();
+        let (document_id, now) = new_id_and_timestamp();
         let secret = Self::generate_secret();
         let sub = model::WebhookSubscription {
-            id,
+            id: 0,
+            document_id,
             tenant_id: tenant_id.map(|t| t.to_string()),
             url,
             secret,
@@ -39,7 +40,8 @@ impl WebhookService {
             updated_at: now,
         };
         model::insert(&self.pool, &sub).await?;
-        Ok(sub)
+        let inserted = model::find_by_id(&self.pool, &sub.document_id).await?;
+        Ok(inserted)
     }
 
     /// 分页查询订阅

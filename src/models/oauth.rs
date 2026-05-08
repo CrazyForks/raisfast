@@ -11,8 +11,9 @@ use crate::errors::app_error::AppResult;
 /// OAuth 账号绑定记录
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct OAuthAccount {
-    pub id: String,
-    pub user_id: String,
+    pub id: i64,
+    pub document_id: String,
+    pub user_id: i64,
     pub provider: String,
     pub provider_user_id: String,
     pub email: Option<String>,
@@ -29,10 +30,11 @@ pub struct OAuthAccount {
 /// OAuth 短期 state 记录
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct OAuthState {
-    pub id: String,
+    pub id: i64,
+    pub document_id: String,
     pub provider: String,
     pub code_verifier: String,
-    pub user_id: Option<String>,
+    pub user_id: Option<i64>,
     pub created_at: String,
     pub expires_at: String,
 }
@@ -40,15 +42,15 @@ pub struct OAuthState {
 /// 创建 OAuth state 记录
 pub async fn create_state(
     pool: &crate::db::Pool,
-    id: &str,
     provider: &str,
     code_verifier: &str,
-    user_id: Option<&str>,
+    user_id: Option<i64>,
     expires_at: &str,
-) -> AppResult<()> {
+) -> AppResult<String> {
+    let document_id = crate::utils::id::new_document_id();
     let now = crate::utils::tz::now_str();
     let sql = format!(
-        "INSERT INTO oauth_states (id, provider, code_verifier, user_id, created_at, expires_at) VALUES ({}, {}, {}, {}, {}, {})",
+        "INSERT INTO oauth_states (document_id, provider, code_verifier, user_id, created_at, expires_at) VALUES ({}, {}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
@@ -57,36 +59,39 @@ pub async fn create_state(
         ph(6)
     );
     let mut q = sqlx::query(&sql)
-        .bind(id)
+        .bind(&document_id)
         .bind(provider)
         .bind(code_verifier);
     q = if let Some(uid) = user_id {
         q.bind(uid)
     } else {
-        q.bind(Option::<String>::None)
+        q.bind(Option::<i64>::None)
     };
     q.bind(now).bind(expires_at).execute(pool).await?;
-    Ok(())
+    Ok(document_id)
 }
 
-/// 根据 state ID 查找并删除（一次性）
-pub async fn consume_state(pool: &crate::db::Pool, id: &str) -> AppResult<Option<OAuthState>> {
+/// 根据 state document_id 查找并删除（一次性）
+pub async fn consume_state(
+    pool: &crate::db::Pool,
+    document_id: &str,
+) -> AppResult<Option<OAuthState>> {
     let sql = format!(
-        "SELECT * FROM oauth_states WHERE id = {} AND expires_at > {}",
+        "SELECT * FROM oauth_states WHERE document_id = {} AND expires_at > {}",
         ph(1),
         crate::db::dialect::now_fn(),
     );
     let state = sqlx::query_as::<_, OAuthState>(&sql)
-        .bind(id)
+        .bind(document_id)
         .fetch_optional(pool)
         .await?;
 
     if state.is_some() {
-        let del_sql = format!(
-            "DELETE FROM oauth_states WHERE id = {}",
-            ph(1)
-        );
-        sqlx::query(&del_sql).bind(id).execute(pool).await?;
+        let del_sql = format!("DELETE FROM oauth_states WHERE document_id = {}", ph(1));
+        sqlx::query(&del_sql)
+            .bind(document_id)
+            .execute(pool)
+            .await?;
     }
 
     Ok(state)
@@ -122,10 +127,7 @@ pub async fn find_by_provider_user(
 }
 
 /// 查找用户的所有 OAuth 绑定
-pub async fn find_by_user_id(
-    pool: &crate::db::Pool,
-    user_id: &str,
-) -> AppResult<Vec<OAuthAccount>> {
+pub async fn find_by_user_id(pool: &crate::db::Pool, user_id: i64) -> AppResult<Vec<OAuthAccount>> {
     let sql = format!(
         "SELECT * FROM oauth_accounts WHERE user_id = {} ORDER BY created_at",
         ph(1)
@@ -139,7 +141,7 @@ pub async fn find_by_user_id(
 
 /// 创建 OAuth 账号绑定的参数
 pub struct CreateOAuthAccountParams<'a> {
-    pub user_id: &'a str,
+    pub user_id: i64,
     pub provider: &'a str,
     pub provider_user_id: &'a str,
     pub email: Option<&'a str>,
@@ -156,10 +158,10 @@ pub async fn create_account(
     pool: &crate::db::Pool,
     params: CreateOAuthAccountParams<'_>,
 ) -> AppResult<OAuthAccount> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
     let sql = format!(
-        "INSERT INTO oauth_accounts (id, user_id, provider, provider_user_id, email, display_name, avatar_url, access_token, refresh_token, token_expires_at, profile, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+        "INSERT INTO oauth_accounts (document_id, user_id, provider, provider_user_id, email, display_name, avatar_url, access_token, refresh_token, token_expires_at, profile, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
@@ -175,7 +177,7 @@ pub async fn create_account(
         ph(13)
     );
     sqlx::query(&sql)
-        .bind(&id)
+        .bind(&document_id)
         .bind(params.user_id)
         .bind(params.provider)
         .bind(params.provider_user_id)
@@ -191,12 +193,9 @@ pub async fn create_account(
         .execute(pool)
         .await?;
 
-    let sql2 = format!(
-        "SELECT * FROM oauth_accounts WHERE id = {}",
-        ph(1)
-    );
+    let sql2 = format!("SELECT * FROM oauth_accounts WHERE document_id = {}", ph(1));
     let account = sqlx::query_as::<_, OAuthAccount>(&sql2)
-        .bind(&id)
+        .bind(&document_id)
         .fetch_one(pool)
         .await?;
 
@@ -205,7 +204,7 @@ pub async fn create_account(
 
 /// 更新 OAuth 账号绑定的参数
 pub struct UpdateOAuthAccountParams<'a> {
-    pub id: &'a str,
+    pub id: i64,
     pub email: Option<&'a str>,
     pub display_name: Option<&'a str>,
     pub avatar_url: Option<&'a str>,
@@ -251,7 +250,7 @@ pub async fn update_account(
 /// 删除 OAuth 账号绑定（解绑）
 pub async fn delete_account(
     pool: &crate::db::Pool,
-    user_id: &str,
+    user_id: i64,
     provider: &str,
 ) -> AppResult<bool> {
     let sql = format!(
@@ -268,7 +267,7 @@ pub async fn delete_account(
 }
 
 /// 统计用户绑定的 OAuth Provider 数量
-pub async fn count_by_user(pool: &crate::db::Pool, user_id: &str) -> AppResult<i64> {
+pub async fn count_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<i64> {
     let sql = format!(
         "SELECT COUNT(*) FROM oauth_accounts WHERE user_id = {}",
         ph(1)

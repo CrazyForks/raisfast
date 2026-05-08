@@ -2,7 +2,7 @@
 
 /// 创建媒体文件记录
 pub struct CreateMediaCmd {
-    pub user_id: String,
+    pub user_id: i64,
     pub filename: String,
     pub filepath: String,
     pub mimetype: String,

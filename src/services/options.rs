@@ -12,7 +12,6 @@ use tokio::sync::RwLock;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::constants::DEFAULT_TENANT;
 use crate::errors::app_error::AppError;
 use crate::models::options::OptionRow;
 use crate::repositories::OptionsRepository;
@@ -69,15 +68,13 @@ impl From<&OptionRow> for OptionEntry {
 pub struct OptionsService {
     cache: Arc<RwLock<HashMap<String, OptionEntry>>>,
     repo: Arc<dyn OptionsRepository>,
-    tenant_filter: bool,
 }
 
 impl OptionsService {
-    pub async fn new(repo: Arc<dyn OptionsRepository>, builtin_tenantable: bool) -> Self {
+    pub async fn new(repo: Arc<dyn OptionsRepository>, _builtin_tenantable: bool) -> Self {
         let service = Self {
             cache: Arc::new(RwLock::new(HashMap::new())),
             repo,
-            tenant_filter: builtin_tenantable,
         };
         if let Err(e) = service.load_autoload().await {
             tracing::error!("failed to autoload options: {}", e);
@@ -85,12 +82,8 @@ impl OptionsService {
         service
     }
 
-    fn tenant_arg(&self) -> Option<&str> {
-        if self.tenant_filter {
-            Some(DEFAULT_TENANT)
-        } else {
-            None
-        }
+    fn tenant_arg(&self) -> Option<i64> {
+        None
     }
 
     async fn load_autoload(&self) -> Result<(), AppError> {

@@ -111,6 +111,7 @@ pub(crate) fn mime_to_ext(content_type: &str) -> &'static str {
 pub async fn save_file(
     storage: &dyn Storage,
     media_repo: &dyn MediaRepository,
+    pool: &crate::db::Pool,
     auth: &AuthUser,
     max_size: usize,
     bucket: &str,
@@ -159,10 +160,14 @@ pub async fn save_file(
         (None, None)
     };
 
+    let user = crate::models::user::find_by_id(pool, user_id, tenant_id)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+
     let media = media_repo
         .create(
             CreateMediaCmd {
-                user_id: user_id.to_string(),
+                user_id: user.id,
                 filename: filename.to_string(),
                 filepath: key.clone(),
                 mimetype: content_type.to_string(),
@@ -200,17 +205,17 @@ fn parse_image_dimensions(data: &[u8]) -> (Option<i32>, Option<i32>) {
 /// 分页查询指定用户的媒体文件列表。
 pub async fn list(
     media_repo: &dyn MediaRepository,
+    pool: &crate::db::Pool,
     auth: &AuthUser,
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<media::Media>, i64)> {
+    let user_id = auth.ensure_authenticated()?;
+    let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
+        .await?
+        .ok_or(AppError::Unauthorized)?;
     media_repo
-        .find_all(
-            auth.ensure_authenticated()?,
-            page,
-            page_size,
-            auth.tenant_id(),
-        )
+        .find_all(user.id, page, page_size, auth.tenant_id())
         .await
 }
 
@@ -220,18 +225,39 @@ pub async fn list(
 pub async fn delete_media(
     storage: &dyn Storage,
     media_repo: &dyn MediaRepository,
+    pool: &crate::db::Pool,
     media_id: &str,
     auth: &AuthUser,
 ) -> AppResult<()> {
     let user_id = auth.ensure_authenticated()?;
-    let m = media_repo
-        .find_by_id(media_id, auth.tenant_id())
+    let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+
+    let sql = format!(
+        "SELECT id FROM media WHERE document_id = {}{}",
+        crate::db::dialect::ph(1),
+        crate::db::tenant::tenant_filter_ph(auth.tenant_id(), 2)
+    );
+    let mut q = sqlx::query_as::<_, (i64,)>(&sql).bind(media_id);
+    if let Some(tid) = auth.tenant_id() {
+        q = q.bind(tid);
+    }
+    let (media_pk,): (i64,) = q
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
+        .ok_or_else(|| AppError::not_found("media"))?;
+
+    let m = crate::models::media::find_by_id(pool, media_pk, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("media"))?;
 
-    crate::utils::auth::require_owner_or_admin(auth.role(), user_id, &m.user_id)?;
+    if !auth.is_admin() && m.user_id != user.id {
+        return Err(AppError::Forbidden);
+    }
 
-    media_repo.delete(media_id, auth.tenant_id()).await?;
+    media_repo.delete(media_pk, auth.tenant_id()).await?;
 
     if let Err(e) = storage.delete(&m.filepath).await {
         tracing::warn!(key = %m.filepath, error = %e, "failed to delete file from storage");
@@ -243,11 +269,14 @@ pub async fn delete_media(
 /// 获取存储统计
 pub async fn stats(
     media_repo: &dyn MediaRepository,
+    pool: &crate::db::Pool,
     auth: &AuthUser,
 ) -> AppResult<media::MediaStats> {
-    media_repo
-        .stats(auth.ensure_authenticated()?, auth.tenant_id())
-        .await
+    let user_id = auth.ensure_authenticated()?;
+    let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+    media_repo.stats(user.id, auth.tenant_id()).await
 }
 
 /// 校验文件实际内容的 magic bytes 是否与声明的 Content-Type 匹配。

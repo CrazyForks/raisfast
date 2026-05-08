@@ -81,14 +81,11 @@ pub trait PostRepository: Send + Sync {
     async fn find_by_slug(&self, slug: &str, tenant_id: Option<&str>) -> AppResult<Option<Post>>;
 
     /// 根据 ID 查找文章
-    async fn find_by_id(&self, id: &str, tenant_id: Option<&str>) -> AppResult<Option<Post>>;
+    async fn find_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<Option<Post>>;
 
     /// 根据 ID 查找文章（JOIN 作者名和分类名）
-    async fn find_joined_by_id(
-        &self,
-        id: &str,
-        tenant_id: Option<&str>,
-    ) -> AppResult<PostJoinedRow>;
+    async fn find_joined_by_id(&self, id: i64, tenant_id: Option<&str>)
+    -> AppResult<PostJoinedRow>;
 
     /// 分页查询已发布文章（JOIN 作者名和分类名）
     async fn find_published_joined(
@@ -116,21 +113,21 @@ pub trait PostRepository: Send + Sync {
     /// 获取单篇文章的标签
     async fn get_post_tags(
         &self,
-        post_id: &str,
+        post_id: i64,
         tenant_id: Option<&str>,
     ) -> AppResult<Vec<TagBrief>>;
 
     /// 批量获取多篇文章的标签
     async fn get_tags_for_posts(
         &self,
-        post_ids: &[String],
+        post_ids: &[i64],
         tenant_id: Option<&str>,
-    ) -> AppResult<HashMap<String, Vec<TagBrief>>>;
+    ) -> AppResult<HashMap<i64, Vec<TagBrief>>>;
 
     /// 根据 ID 列表批量查询已发布文章（JOIN 作者名和分类名）
     async fn find_joined_by_ids(
         &self,
-        ids: &[String],
+        ids: &[i64],
         tenant_id: Option<&str>,
     ) -> AppResult<Vec<PostJoinedRow>>;
 
@@ -141,7 +138,7 @@ pub trait PostRepository: Send + Sync {
     async fn update(&self, cmd: UpdatePostCmd, tenant_id: Option<&str>) -> AppResult<Post>;
 
     /// 删除文章
-    async fn delete(&self, id: &str, tenant_id: Option<&str>) -> AppResult<()>;
+    async fn delete(&self, id: i64, tenant_id: Option<&str>) -> AppResult<()>;
 }
 
 /// 用户 Repository 接口
@@ -204,26 +201,32 @@ pub trait CategoryRepository: Send + Sync {
     ) -> AppResult<(Vec<Category>, i64)>;
 
     /// 根据 ID 查找分类
-    async fn find_by_id(&self, id: &str, tenant_id: Option<&str>) -> AppResult<Category>;
+    async fn find_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<Category>;
+
+    /// 根据 document_id 查找分类
+    async fn find_by_document_id(
+        &self,
+        document_id: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<Option<Category>>;
 
     /// 创建新分类
     async fn create(
         &self,
         cmd: CreateCategoryCmd,
         tenant_id: Option<&str>,
-        created_by: Option<&str>,
+        created_by: Option<i64>,
     ) -> AppResult<Category>;
 
-    /// 更新分类
     async fn update(
         &self,
         cmd: UpdateCategoryCmd,
         tenant_id: Option<&str>,
-        updated_by: Option<&str>,
+        updated_by: Option<i64>,
     ) -> AppResult<Category>;
 
     /// 删除分类
-    async fn delete(&self, id: &str, tenant_id: Option<&str>) -> AppResult<()>;
+    async fn delete(&self, id: i64, tenant_id: Option<&str>) -> AppResult<()>;
 }
 
 /// 标签 Repository 接口
@@ -246,16 +249,16 @@ pub trait TagRepository: Send + Sync {
         name: &str,
         slug: &str,
         tenant_id: Option<&str>,
-        created_by: Option<&str>,
+        created_by: Option<i64>,
     ) -> AppResult<Tag>;
 
     /// 删除标签
-    async fn delete(&self, id: &str, tenant_id: Option<&str>) -> AppResult<()>;
+    async fn delete(&self, id: i64, tenant_id: Option<&str>) -> AppResult<()>;
 
     /// 更新标签
     async fn update(
         &self,
-        id: &str,
+        id: i64,
         name: &str,
         slug: &str,
         tenant_id: Option<&str>,
@@ -266,7 +269,7 @@ pub trait TagRepository: Send + Sync {
 #[async_trait::async_trait]
 pub trait CommentRepository: Send + Sync {
     /// 根据评论 ID 查找评论
-    async fn find_by_id(&self, id: &str, tenant_id: Option<&str>) -> AppResult<Option<Comment>>;
+    async fn find_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<Option<Comment>>;
 
     /// 创建新评论
     async fn create(&self, cmd: CreateCommentCmd, tenant_id: Option<&str>) -> AppResult<Comment>;
@@ -274,14 +277,14 @@ pub trait CommentRepository: Send + Sync {
     /// 查询指定文章下已审核通过的评论
     async fn find_approved_by_post(
         &self,
-        post_id: &str,
+        post_id: i64,
         tenant_id: Option<&str>,
     ) -> AppResult<Vec<Comment>>;
 
     /// 分页查询指定文章下已审核通过的评论
     async fn find_approved_by_post_paginated(
         &self,
-        post_id: &str,
+        post_id: i64,
         page: i64,
         page_size: i64,
         tenant_id: Option<&str>,
@@ -296,11 +299,10 @@ pub trait CommentRepository: Send + Sync {
     ) -> AppResult<(Vec<AdminCommentRow>, i64)>;
 
     /// 更新评论审核状态
-    async fn update_status(&self, id: &str, status: &str, tenant_id: Option<&str>)
-    -> AppResult<()>;
+    async fn update_status(&self, id: i64, status: &str, tenant_id: Option<&str>) -> AppResult<()>;
 
     /// 删除评论
-    async fn delete(&self, id: &str, tenant_id: Option<&str>) -> AppResult<()>;
+    async fn delete(&self, id: i64, tenant_id: Option<&str>) -> AppResult<()>;
 }
 
 /// 媒体文件 Repository 接口
@@ -312,27 +314,27 @@ pub trait MediaRepository: Send + Sync {
     /// 分页查询指定用户的媒体文件
     async fn find_all(
         &self,
-        user_id: &str,
+        user_id: i64,
         page: i64,
         page_size: i64,
         tenant_id: Option<&str>,
     ) -> AppResult<(Vec<Media>, i64)>;
 
     /// 根据媒体文件 ID 查找
-    async fn find_by_id(&self, id: &str, tenant_id: Option<&str>) -> AppResult<Option<Media>>;
+    async fn find_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<Option<Media>>;
 
     /// 删除媒体文件记录
-    async fn delete(&self, id: &str, tenant_id: Option<&str>) -> AppResult<()>;
+    async fn delete(&self, id: i64, tenant_id: Option<&str>) -> AppResult<()>;
 
     /// 获取存储统计
-    async fn stats(&self, user_id: &str, tenant_id: Option<&str>) -> AppResult<MediaStats>;
+    async fn stats(&self, user_id: i64, tenant_id: Option<&str>) -> AppResult<MediaStats>;
 }
 
 /// 刷新令牌 Repository 接口
 #[async_trait::async_trait]
 pub trait RefreshTokenRepository: Send + Sync {
     /// 创建新的刷新令牌记录
-    async fn create_token(&self, user_id: &str, token: &str, expires_at: &str) -> AppResult<()>;
+    async fn create_token(&self, user_id: i64, token: &str, expires_at: &str) -> AppResult<()>;
 
     /// 根据令牌字符串查找刷新令牌
     async fn find_by_token(&self, token: &str) -> AppResult<Option<RefreshToken>>;
@@ -341,7 +343,7 @@ pub trait RefreshTokenRepository: Send + Sync {
     async fn delete_by_token(&self, token: &str) -> AppResult<()>;
 
     /// 删除指定用户的所有刷新令牌
-    async fn delete_by_user(&self, user_id: &str) -> AppResult<()>;
+    async fn delete_by_user(&self, user_id: i64) -> AppResult<()>;
 }
 
 /// 站点配置 Repository 接口
@@ -354,13 +356,13 @@ pub trait OptionsRepository: Send + Sync {
     async fn find_by_key(
         &self,
         key: &str,
-        tenant_id: Option<&str>,
+        tenant_id: Option<i64>,
     ) -> AppResult<Option<crate::models::options::OptionRow>>;
 
     /// 查询所有配置（含元数据）
     async fn find_all(
         &self,
-        tenant_id: Option<&str>,
+        tenant_id: Option<i64>,
     ) -> AppResult<Vec<crate::models::options::OptionRow>>;
 
     /// 更新配置值
@@ -368,12 +370,12 @@ pub trait OptionsRepository: Send + Sync {
         &self,
         key: &str,
         value: &str,
-        tenant_id: Option<&str>,
+        tenant_id: Option<i64>,
         updated_at: &str,
     ) -> AppResult<()>;
 
     /// 根据 key 删除配置
-    async fn delete_by_key(&self, key: &str, tenant_id: Option<&str>) -> AppResult<()>;
+    async fn delete_by_key(&self, key: &str, tenant_id: Option<i64>) -> AppResult<()>;
 }
 
 /// RBAC Repository 接口
@@ -386,7 +388,7 @@ pub trait RbacRepository: Send + Sync {
     async fn find_role_by_id(&self, id: &str) -> AppResult<Option<Role>>;
 
     /// 根据角色名查找角色 ID
-    async fn find_role_id_by_name(&self, name: &str) -> AppResult<Option<String>>;
+    async fn find_role_id_by_name(&self, name: &str) -> AppResult<Option<i64>>;
 
     /// 创建角色
     async fn create_role(
@@ -410,17 +412,17 @@ pub trait RbacRepository: Send + Sync {
     async fn delete_role(&self, id: &str) -> AppResult<()>;
 
     /// 查询角色的所有权限
-    async fn find_permissions_by_role_id(&self, role_id: &str) -> AppResult<Vec<Permission>>;
+    async fn find_permissions_by_role_id(&self, role_id: i64) -> AppResult<Vec<Permission>>;
 
     /// 删除角色的所有权限
-    async fn delete_permissions_by_role_id(&self, role_id: &str) -> AppResult<()>;
+    async fn delete_permissions_by_role_id(&self, role_id: i64) -> AppResult<()>;
 
     /// 插入单条权限
     #[allow(clippy::too_many_arguments)]
     async fn insert_permission(
         &self,
-        id: &str,
-        role_id: &str,
+        document_id: &str,
+        role_id: i64,
         action: &str,
         subject: &str,
         fields: Option<&str>,

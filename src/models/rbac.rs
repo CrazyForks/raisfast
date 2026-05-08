@@ -14,7 +14,8 @@ use crate::errors::app_error::{AppError, AppResult};
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct Role {
-    pub id: String,
+    pub id: i64,
+    pub document_id: String,
     pub name: String,
     pub description: Option<String>,
     pub is_system: bool,
@@ -26,8 +27,9 @@ pub struct Role {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct Permission {
-    pub id: String,
-    pub role_id: String,
+    pub id: i64,
+    pub document_id: String,
+    pub role_id: i64,
     pub action: String,
     pub subject: String,
     pub fields: Option<String>,
@@ -38,33 +40,30 @@ pub struct Permission {
 /// 查询所有角色
 pub async fn list_roles(pool: &crate::db::Pool) -> AppResult<Vec<Role>> {
     let roles = sqlx::query_as::<_, Role>(
-        "SELECT id, name, description, is_system, created_at, updated_at FROM roles ORDER BY name",
+        "SELECT id, document_id, name, description, is_system, created_at, updated_at FROM roles ORDER BY name",
     )
     .fetch_all(pool)
     .await?;
     Ok(roles)
 }
 
-/// 根据 ID 查找角色
-pub async fn find_role_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<Role>> {
+/// 根据 document_id 查找角色
+pub async fn find_role_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<Option<Role>> {
     let sql = format!(
-        "SELECT id, name, description, is_system, created_at, updated_at FROM roles WHERE id = {}",
+        "SELECT id, document_id, name, description, is_system, created_at, updated_at FROM roles WHERE document_id = {}",
         ph(1)
     );
     let role = sqlx::query_as::<_, Role>(&sql)
-        .bind(id)
+        .bind(document_id)
         .fetch_optional(pool)
         .await?;
     Ok(role)
 }
 
-/// 根据角色名查找角色 ID
-pub async fn find_role_id_by_name(pool: &crate::db::Pool, name: &str) -> AppResult<Option<String>> {
-    let sql = format!(
-        "SELECT id FROM roles WHERE name = {}",
-        ph(1)
-    );
-    let row = sqlx::query_as::<_, (String,)>(&sql)
+/// 根据角色名查找角色 ID（返回整数 PK）
+pub async fn find_role_id_by_name(pool: &crate::db::Pool, name: &str) -> AppResult<Option<i64>> {
+    let sql = format!("SELECT id FROM roles WHERE name = {}", ph(1));
+    let row = sqlx::query_as::<_, (i64,)>(&sql)
         .bind(name)
         .fetch_optional(pool)
         .await?;
@@ -74,13 +73,13 @@ pub async fn find_role_id_by_name(pool: &crate::db::Pool, name: &str) -> AppResu
 /// 创建角色
 pub async fn create_role(
     pool: &crate::db::Pool,
-    id: &str,
+    document_id: &str,
     name: &str,
     description: Option<&str>,
     created_at: &str,
 ) -> AppResult<Role> {
     let sql = format!(
-        "INSERT INTO roles (id, name, description, is_system, created_at, updated_at) VALUES ({}, {}, {}, 0, {}, {})",
+        "INSERT INTO roles (document_id, name, description, is_system, created_at, updated_at) VALUES ({}, {}, {}, 0, {}, {})",
         ph(1),
         ph(2),
         ph(3),
@@ -88,7 +87,7 @@ pub async fn create_role(
         ph(5)
     );
     sqlx::query(&sql)
-        .bind(id)
+        .bind(document_id)
         .bind(name)
         .bind(description)
         .bind(created_at)
@@ -97,7 +96,7 @@ pub async fn create_role(
         .await
         .map_err(|e| AppError::Conflict(format!("create role failed: {e}")))?;
 
-    find_role_by_id(pool, id)
+    find_role_by_id(pool, document_id)
         .await?
         .ok_or_else(|| AppError::not_found("role"))
 }
@@ -105,7 +104,7 @@ pub async fn create_role(
 /// 更新角色（动态 SET 子句）
 pub async fn update_role(
     pool: &crate::db::Pool,
-    id: &str,
+    document_id: &str,
     name: Option<&str>,
     description: Option<&str>,
     updated_at: &str,
@@ -124,7 +123,7 @@ pub async fn update_role(
     idx += 1;
 
     let sql = format!(
-        "UPDATE roles SET {} WHERE id = {}",
+        "UPDATE roles SET {} WHERE document_id = {}",
         sets.join(", "),
         ph(idx)
     );
@@ -135,28 +134,28 @@ pub async fn update_role(
     if let Some(d) = description {
         q = q.bind(d);
     }
-    q = q.bind(updated_at).bind(id);
+    q = q.bind(updated_at).bind(document_id);
     q.execute(pool).await?;
 
-    find_role_by_id(pool, id)
+    find_role_by_id(pool, document_id)
         .await?
-        .ok_or_else(|| AppError::not_found(&format!("role/{id}")))
+        .ok_or_else(|| AppError::not_found(&format!("role/{document_id}")))
 }
 
 /// 删除角色
-pub async fn delete_role(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
-    let sql = format!("DELETE FROM roles WHERE id = {}", ph(1));
-    sqlx::query(&sql).bind(id).execute(pool).await?;
+pub async fn delete_role(pool: &crate::db::Pool, document_id: &str) -> AppResult<()> {
+    let sql = format!("DELETE FROM roles WHERE document_id = {}", ph(1));
+    sqlx::query(&sql).bind(document_id).execute(pool).await?;
     Ok(())
 }
 
 /// 查询角色的所有权限
 pub async fn find_permissions_by_role_id(
     pool: &crate::db::Pool,
-    role_id: &str,
+    role_id: i64,
 ) -> AppResult<Vec<Permission>> {
     let sql = format!(
-        "SELECT id, role_id, action, subject, fields, conditions, created_at FROM permissions WHERE role_id = {} ORDER BY action",
+        "SELECT id, document_id, role_id, action, subject, fields, conditions, created_at FROM permissions WHERE role_id = {} ORDER BY action",
         ph(1)
     );
     let perms = sqlx::query_as::<_, Permission>(&sql)
@@ -167,11 +166,8 @@ pub async fn find_permissions_by_role_id(
 }
 
 /// 删除角色的所有权限
-pub async fn delete_permissions_by_role_id(pool: &crate::db::Pool, role_id: &str) -> AppResult<()> {
-    let sql = format!(
-        "DELETE FROM permissions WHERE role_id = {}",
-        ph(1)
-    );
+pub async fn delete_permissions_by_role_id(pool: &crate::db::Pool, role_id: i64) -> AppResult<()> {
+    let sql = format!("DELETE FROM permissions WHERE role_id = {}", ph(1));
     sqlx::query(&sql).bind(role_id).execute(pool).await?;
     Ok(())
 }
@@ -180,8 +176,8 @@ pub async fn delete_permissions_by_role_id(pool: &crate::db::Pool, role_id: &str
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_permission(
     pool: &crate::db::Pool,
-    id: &str,
-    role_id: &str,
+    document_id: &str,
+    role_id: i64,
     action: &str,
     subject: &str,
     fields: Option<&str>,
@@ -189,7 +185,7 @@ pub async fn insert_permission(
     created_at: &str,
 ) -> AppResult<()> {
     let sql = format!(
-        "INSERT INTO permissions (id, role_id, action, subject, fields, conditions, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
+        "INSERT INTO permissions (document_id, role_id, action, subject, fields, conditions, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
@@ -199,7 +195,7 @@ pub async fn insert_permission(
         ph(7)
     );
     sqlx::query(&sql)
-        .bind(id)
+        .bind(document_id)
         .bind(role_id)
         .bind(action)
         .bind(subject)

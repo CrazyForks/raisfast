@@ -95,7 +95,7 @@ impl TenantService {
         let id = crate::db::tenant::resolve_tenant(tenant_id);
         let tenant = self.repo.find_by_id(id).await?;
         match tenant {
-            Some(t) if t.status == "active" => Ok(t.id),
+            Some(t) if t.status == "active" => Ok(t.document_id),
             Some(_) => Err(AppError::BadRequest("tenant is not active".into())),
             None => Err(AppError::not_found(&format!("tenant/{id}"))),
         }

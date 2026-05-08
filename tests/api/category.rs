@@ -2,9 +2,8 @@ use super::*;
 
 async fn setup() -> (axum::Router, AppState, String) {
     let (mut app, state) = test_app().await;
-    let id = create_author(&state.pool).await;
-    let tok = make_token(&id, "author");
-    // warm up router
+    let (int_id, doc_id) = create_author(&state.pool).await;
+    let tok = make_token(&doc_id, int_id, "author");
     let _: (StatusCode, Value) = send(&mut app, get_req("/api/v1/categories")).await;
     (app, state, tok)
 }
@@ -54,7 +53,7 @@ async fn update_success() {
         post_json_auth("/api/v1/categories", json!({"name": "Orig"}), &tok),
     )
     .await;
-    let id = b["data"]["id"].as_str().unwrap();
+    let id = b["data"]["document_id"].as_str().unwrap();
     let (status, body): (StatusCode, Value) = send(
         &mut app,
         put_json_auth(
@@ -76,7 +75,7 @@ async fn delete_success() {
         post_json_auth("/api/v1/categories", json!({"name": "Del"}), &tok),
     )
     .await;
-    let id = b["data"]["id"].as_str().unwrap();
+    let id = b["data"]["document_id"].as_str().unwrap();
     let (status, _): (StatusCode, Value) = send(
         &mut app,
         delete_auth(&format!("/api/v1/categories/{id}"), &tok),

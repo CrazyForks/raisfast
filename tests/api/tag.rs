@@ -2,8 +2,8 @@ use super::*;
 
 async fn setup() -> (axum::Router, AppState, String) {
     let (mut app, state) = test_app().await;
-    let id = create_author(&state.pool).await;
-    let tok = make_token(&id, "author");
+    let (int_id, doc_id) = create_author(&state.pool).await;
+    let tok = make_token(&doc_id, int_id, "author");
     let _: (StatusCode, Value) = send(&mut app, get_req("/api/v1/tags")).await;
     (app, state, tok)
 }
@@ -49,7 +49,7 @@ async fn delete_success() {
         post_json_auth("/api/v1/tags", json!({"name": "delme"}), &tok),
     )
     .await;
-    let id = b["data"]["id"].as_str().unwrap();
+    let id = b["data"]["id"].as_i64().unwrap().to_string();
     let (status, _): (StatusCode, Value) =
         send(&mut app, delete_auth(&format!("/api/v1/tags/{id}"), &tok)).await;
     assert!(status.is_success());
@@ -58,7 +58,7 @@ async fn delete_success() {
 #[tokio::test]
 async fn delete_not_found() {
     let (mut app, _, tok) = setup().await;
-    let fake = uuid::Uuid::now_v7().to_string();
+    let fake = 999999_i64;
     let (status, _): (StatusCode, Value) =
         send(&mut app, delete_auth(&format!("/api/v1/tags/{fake}"), &tok)).await;
     assert_eq!(status, StatusCode::NOT_FOUND);

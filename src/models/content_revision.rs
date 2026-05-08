@@ -12,41 +12,36 @@ use ts_rs::TS;
 use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
 
-/// 内容版本历史完整数据库行模型
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct ContentRevision {
-    pub id: String,
+    pub id: i64,
+    pub document_id: String,
     pub content_type: String,
     pub record_id: String,
     pub revision_number: i64,
     pub snapshot: String,
-    pub created_by: Option<String>,
+    pub created_by: Option<i64>,
     pub created_at: String,
 }
 
-/// API 响应用：版本摘要（不含完整 snapshot）
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RevisionSummary {
-    pub id: String,
+    pub id: i64,
     pub revision_number: i64,
-    pub created_by: Option<String>,
+    pub created_by: Option<i64>,
     pub created_at: String,
 }
 
-/// 版本摘要数据库行
 #[derive(Debug, FromRow)]
 struct RevisionSummaryRow {
-    id: String,
+    id: i64,
     revision_number: i64,
-    created_by: Option<String>,
+    created_by: Option<i64>,
     created_at: String,
 }
 
-/// 创建一条版本记录
-///
-/// 自动递增 `revision_number`（同一 content_type + record_id 下最大值 + 1）。
 pub async fn create_revision(
     pool: &crate::db::Pool,
     content_type: &str,
@@ -54,7 +49,7 @@ pub async fn create_revision(
     snapshot: &Value,
     created_by: Option<&str>,
 ) -> AppResult<ContentRevision> {
-    let id = uuid::Uuid::now_v7().to_string();
+    let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_str();
 
     let next_rev = next_revision_number(pool, content_type, record_id).await?;
@@ -63,7 +58,7 @@ pub async fn create_revision(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("snapshot serialize: {e}")))?;
 
     let sql = format!(
-        "INSERT INTO content_revisions (id, content_type, record_id, revision_number, snapshot, created_by, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
+        "INSERT INTO content_revisions (document_id, content_type, record_id, revision_number, snapshot, created_by, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
@@ -73,7 +68,7 @@ pub async fn create_revision(
         ph(7),
     );
     sqlx::query(&sql)
-        .bind(&id)
+        .bind(&document_id)
         .bind(content_type)
         .bind(record_id)
         .bind(next_rev)
@@ -84,17 +79,16 @@ pub async fn create_revision(
         .await?;
 
     let sql = format!(
-        "SELECT * FROM content_revisions WHERE id = {}",
+        "SELECT * FROM content_revisions WHERE document_id = {}",
         ph(1)
     );
     let row = sqlx::query_as::<_, ContentRevision>(&sql)
-        .bind(&id)
+        .bind(&document_id)
         .fetch_one(pool)
         .await?;
     Ok(row)
 }
 
-/// 获取下一个 revision_number
 async fn next_revision_number(
     pool: &crate::db::Pool,
     content_type: &str,
@@ -114,7 +108,6 @@ async fn next_revision_number(
     Ok(max + 1)
 }
 
-/// 列出某条记录的所有版本（按 revision_number DESC）
 pub async fn list_revisions(
     pool: &crate::db::Pool,
     content_type: &str,
@@ -142,12 +135,11 @@ pub async fn list_revisions(
         .collect())
 }
 
-/// 获取指定版本的完整快照
 pub async fn get_revision(
     pool: &crate::db::Pool,
     content_type: &str,
     record_id: &str,
-    revision_id: &str,
+    revision_id: i64,
 ) -> AppResult<Option<ContentRevision>> {
     let sql = format!(
         "SELECT * FROM content_revisions WHERE id = {} AND content_type = {} AND record_id = {}",
@@ -164,9 +156,6 @@ pub async fn get_revision(
     Ok(row)
 }
 
-/// 计算两个版本之间的 diff
-///
-/// 返回 `added`/`removed`/`changed` 三个 JSON 对象。
 pub fn compute_diff(old: &Value, new: &Value) -> Value {
     let old_obj = old.as_object();
     let new_obj = new.as_object();
@@ -208,7 +197,6 @@ pub fn compute_diff(old: &Value, new: &Value) -> Value {
     }
 }
 
-/// 删除某条记录的所有版本（删除记录时调用）
 pub async fn delete_revisions(
     pool: &crate::db::Pool,
     content_type: &str,

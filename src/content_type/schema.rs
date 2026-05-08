@@ -1001,23 +1001,26 @@ fn parse_relation_config(table: &toml::Table) -> Result<RelationConfig, AppError
     };
 
     let raw_target = table.get("target").and_then(|v| v.as_str()).unwrap_or("");
-    let target = crate::db::dialect::sanitize_identifier(raw_target)
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!(
+    let target = crate::db::dialect::sanitize_identifier(raw_target).ok_or_else(|| {
+        AppError::Internal(anyhow::anyhow!(
             "relation target '{raw_target}' contains invalid characters"
-        )))?;
+        ))
+    })?;
     if let Some(raw_fk) = table.get("foreign_key").and_then(|v| v.as_str()) {
-        let fk = crate::db::dialect::sanitize_identifier(raw_fk)
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!(
+        let fk = crate::db::dialect::sanitize_identifier(raw_fk).ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
                 "relation foreign_key '{raw_fk}' contains invalid characters"
-            )))?;
+            ))
+        })?;
         // validated — store trimmed
         let _ = fk;
     }
     if let Some(raw_through) = table.get("through").and_then(|v| v.as_str()) {
-        let through = crate::db::dialect::sanitize_identifier(raw_through)
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!(
+        let through = crate::db::dialect::sanitize_identifier(raw_through).ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
                 "relation through '{raw_through}' contains invalid characters"
-            )))?;
+            ))
+        })?;
         let _ = through;
     }
 

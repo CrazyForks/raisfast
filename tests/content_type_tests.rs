@@ -199,7 +199,7 @@ async fn create_and_find_by_id() {
     assert_eq!(created["price"], 99);
 
     let found = repo
-        .find_by_id(&ct, created["id"].as_str().unwrap(), None, true)
+        .find_by_id(&ct, created["document_id"].as_str().unwrap(), None, true)
         .await
         .unwrap()
         .unwrap();
@@ -336,7 +336,7 @@ async fn update_changes_fields() {
         )
         .await
         .unwrap();
-    let id = created["id"].as_str().unwrap().to_string();
+    let id = created["document_id"].as_str().unwrap().to_string();
 
     let updated = repo
         .update(
@@ -370,7 +370,7 @@ async fn delete_removes_record() {
         )
         .await
         .unwrap();
-    let id = created["id"].as_str().unwrap().to_string();
+    let id = created["document_id"].as_str().unwrap().to_string();
 
     repo.delete(&ct, &id, None, &test_protocol_registry())
         .await
@@ -418,17 +418,18 @@ required = true
         )
         .await
         .unwrap();
-    let id = created["id"].as_str().unwrap().to_string();
+    let id = created["document_id"].as_str().unwrap().to_string();
 
     repo.delete(&ct, &id, None, &test_protocol_registry())
         .await
         .unwrap();
 
-    let row: Option<(String,)> = sqlx::query_as("SELECT deleted_at FROM ct_notes WHERE id = ?")
-        .bind(&id)
-        .fetch_optional(&repo.pool)
-        .await
-        .unwrap();
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT deleted_at FROM ct_notes WHERE document_id = ?")
+            .bind(&id)
+            .fetch_optional(&repo.pool)
+            .await
+            .unwrap();
 
     let deleted_at = row.unwrap().0;
     assert!(!deleted_at.is_empty());
@@ -484,8 +485,8 @@ async fn tenant_isolation() {
         .await
         .unwrap();
 
-    let id_a = a["id"].as_str().unwrap();
-    let id_b = b["id"].as_str().unwrap();
+    let id_a = a["document_id"].as_str().unwrap();
+    let id_b = b["document_id"].as_str().unwrap();
 
     assert!(
         repo.find_by_id(&ct, id_a, Some("tenant_b"), true)
@@ -547,7 +548,7 @@ async fn delete_respects_tenant() {
         )
         .await
         .unwrap();
-    let id_a = a["id"].as_str().unwrap();
+    let id_a = a["document_id"].as_str().unwrap();
 
     repo.delete(&ct, id_a, Some("tenant_b"), &test_protocol_registry())
         .await
@@ -720,8 +721,9 @@ async fn create_auto_generates_id_and_timestamps() {
         .await
         .unwrap();
 
-    assert!(result["id"].is_string());
-    assert!(!result["id"].as_str().unwrap().is_empty());
+    assert!(result["id"].is_i64());
+    assert!(result["document_id"].is_string());
+    assert!(!result["document_id"].as_str().unwrap().is_empty());
     assert!(result.get("created_at").is_some());
     assert!(result.get("updated_at").is_some());
 }
@@ -755,7 +757,7 @@ async fn update_with_no_fields_returns_error() {
         )
         .await
         .unwrap();
-    let id = created["id"].as_str().unwrap().to_string();
+    let id = created["document_id"].as_str().unwrap().to_string();
 
     let result = repo
         .update(
@@ -886,7 +888,7 @@ async fn versioning_creates_revision_on_update() {
         )
         .await
         .unwrap();
-    let id = created["id"].as_str().unwrap();
+    let id = created["document_id"].as_str().unwrap();
 
     let _updated = repo
         .update(
@@ -906,7 +908,7 @@ async fn versioning_creates_revision_on_update() {
     assert_eq!(revisions[0].revision_number, 1);
 
     let rev =
-        raisfast::models::content_revision::get_revision(&pool, "article", id, &revisions[0].id)
+        raisfast::models::content_revision::get_revision(&pool, "article", id, revisions[0].id)
             .await
             .unwrap()
             .unwrap();
@@ -932,7 +934,7 @@ async fn versioning_multiple_updates_create_multiple_revisions() {
         )
         .await
         .unwrap();
-    let id = created["id"].as_str().unwrap();
+    let id = created["document_id"].as_str().unwrap();
 
     repo.update(
         &ct,
@@ -988,7 +990,7 @@ async fn versioning_delete_cleans_up_revisions() {
         )
         .await
         .unwrap();
-    let id = created["id"].as_str().unwrap();
+    let id = created["document_id"].as_str().unwrap();
 
     repo.update(
         &ct,
@@ -1048,7 +1050,7 @@ required = true
         )
         .await
         .unwrap();
-    let id = created["id"].as_str().unwrap();
+    let id = created["document_id"].as_str().unwrap();
 
     repo.update(
         &ct,
@@ -1130,7 +1132,7 @@ target_field = "title"
         )
         .await
         .unwrap();
-    let deleted_id = deleted["id"].as_str().unwrap();
+    let deleted_id = deleted["document_id"].as_str().unwrap();
 
     let now = now_str();
     repo.soft_delete(&ct, deleted_id, &now, None, None)
@@ -1196,7 +1198,7 @@ target_field = "title"
         )
         .await
         .unwrap();
-    let id = created["id"].as_str().unwrap();
+    let id = created["document_id"].as_str().unwrap();
 
     let now = now_str();
     repo.soft_delete(&ct, id, &now, None, None).await.unwrap();
@@ -1240,7 +1242,7 @@ required = true
         )
         .await
         .unwrap();
-    let id = created["id"].as_str().unwrap();
+    let id = created["document_id"].as_str().unwrap();
 
     let now = now_str();
     repo.soft_delete(&ct, id, &now, None, None).await.unwrap();
@@ -1282,19 +1284,20 @@ required = true
         )
         .await
         .unwrap();
-    let id = created["id"].as_str().unwrap();
+    let id = created["document_id"].as_str().unwrap();
 
     let now = now_str();
     repo.soft_delete(&ct, id, &now, Some("user-123"), None)
         .await
         .unwrap();
 
-    let row: (String, String) =
-        sqlx::query_as("SELECT deleted_at, deleted_by FROM ct_soft_deleted_by WHERE id = ?")
-            .bind(&id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let row: (String, String) = sqlx::query_as(
+        "SELECT deleted_at, deleted_by FROM ct_soft_deleted_by WHERE document_id = ?",
+    )
+    .bind(&id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert!(!row.0.is_empty());
     assert_eq!(row.1, "user-123");
 }
@@ -1334,7 +1337,7 @@ required = true
         )
         .await
         .unwrap();
-    let id = created["id"].as_str().unwrap();
+    let id = created["document_id"].as_str().unwrap();
 
     let now = now_str();
     repo.soft_delete(&ct, id, &now, None, None).await.unwrap();

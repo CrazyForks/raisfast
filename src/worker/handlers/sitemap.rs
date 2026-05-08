@@ -103,7 +103,8 @@ mod tests {
     fn build_xml_with_posts() {
         use crate::models::post::Post;
         let posts = vec![Post {
-            id: "p1".into(),
+            id: 1i64,
+            document_id: "test-doc-id".to_string(),
             tenant_id: Some(crate::constants::DEFAULT_TENANT.to_string()),
             title: "Hello".into(),
             slug: "hello".into(),
@@ -111,8 +112,8 @@ mod tests {
             excerpt: None,
             cover_image: None,
             status: "published".into(),
-            created_by: "u1".into(),
-            updated_by: "u1".into(),
+            created_by: 1i64,
+            updated_by: 1i64,
             category_id: None,
             view_count: 0,
             is_pinned: false,

@@ -2,7 +2,7 @@ use super::*;
 
 async fn setup_admin() -> (axum::Router, String) {
     let admin_id = uuid::Uuid::now_v7().to_string();
-    let token = make_token(&admin_id, "admin");
+    let token = make_token(&admin_id, 1, "admin");
     let (app, _) = test_app().await;
     (app, token)
 }
@@ -38,7 +38,7 @@ async fn create_success() {
     assert_eq!(body["data"]["url"], "https://example.com/hook");
     assert!(body["data"]["secret"].as_str().unwrap().len() > 0);
     assert_eq!(body["data"]["enabled"], true);
-    assert!(body["data"]["id"].as_str().unwrap().len() > 0);
+    assert!(body["data"]["document_id"].as_str().unwrap().len() > 0);
 }
 
 #[tokio::test]
@@ -114,7 +114,7 @@ async fn create_validation_empty_events() {
 async fn create_requires_admin() {
     let (mut app, _state) = test_app().await;
     let author_id = uuid::Uuid::now_v7().to_string();
-    let tok = make_token(&author_id, "author");
+    let tok = make_token(&author_id, 1, "author");
     let (status, _body) = send(
         &mut app,
         post_json_auth(
@@ -139,7 +139,7 @@ async fn get_by_id() {
         ),
     )
     .await;
-    let id = create_body["data"]["id"].as_str().unwrap();
+    let id = create_body["data"]["document_id"].as_str().unwrap();
 
     let (status, body) = send(
         &mut app,
@@ -147,7 +147,7 @@ async fn get_by_id() {
     )
     .await;
     assert!(status.is_success(), "get: {status} {body:?}");
-    assert_eq!(body["data"]["id"], id);
+    assert_eq!(body["data"]["document_id"], id);
     assert_eq!(body["data"]["url"], "https://example.com/get");
 }
 
@@ -175,7 +175,7 @@ async fn update_changes_fields() {
         ),
     )
     .await;
-    let id = create_body["data"]["id"].as_str().unwrap();
+    let id = create_body["data"]["document_id"].as_str().unwrap();
 
     let (status, body) = send(
         &mut app,
@@ -204,7 +204,7 @@ async fn update_events() {
         ),
     )
     .await;
-    let id = create_body["data"]["id"].as_str().unwrap();
+    let id = create_body["data"]["document_id"].as_str().unwrap();
 
     let (status, body) = send(
         &mut app,
@@ -236,7 +236,7 @@ async fn update_partial_only_description() {
         ),
     )
     .await;
-    let id = create_body["data"]["id"].as_str().unwrap();
+    let id = create_body["data"]["document_id"].as_str().unwrap();
     let original_url = create_body["data"]["url"].as_str().unwrap();
 
     let (status, body) = send(
@@ -265,7 +265,7 @@ async fn delete_success() {
         ),
     )
     .await;
-    let id = create_body["data"]["id"].as_str().unwrap();
+    let id = create_body["data"]["document_id"].as_str().unwrap();
 
     let (status, body) = send(
         &mut app,
@@ -379,7 +379,10 @@ async fn full_lifecycle_create_read_update_delete() {
     )
     .await;
     assert!(status.is_success());
-    let id = create_body["data"]["id"].as_str().unwrap().to_string();
+    let id = create_body["data"]["document_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let secret = create_body["data"]["secret"].as_str().unwrap().to_string();
 
     let (status, get_body) = send(

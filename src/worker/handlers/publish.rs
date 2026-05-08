@@ -27,7 +27,8 @@ impl JobHandler for ScheduledPublishHandler {
             return Ok(());
         };
 
-        let post = crate::models::post::find_by_id(&self.pool, post_id, None).await?;
+        let post_id_i64: i64 = post_id.parse().unwrap_or(0);
+        let post = crate::models::post::find_by_id(&self.pool, post_id_i64, None).await?;
         let Some(post) = post else {
             tracing::warn!("[publish] post {} not found, skipping", post_id);
             return Ok(());
@@ -41,7 +42,7 @@ impl JobHandler for ScheduledPublishHandler {
         crate::models::post::update(
             &self.pool,
             &crate::commands::UpdatePostCmd {
-                id: post_id.clone(),
+                id: post.id,
                 title: None,
                 slug: None,
                 content: None,
@@ -76,7 +77,7 @@ mod tests {
         pool
     }
 
-    async fn create_author(pool: &Pool) -> String {
+    async fn create_author(pool: &Pool) -> i64 {
         let u = user::create(
             pool,
             &crate::commands::CreateUserCmd {
@@ -88,7 +89,7 @@ mod tests {
         )
         .await
         .unwrap();
-        user::update_role(pool, &u.id, "author", None)
+        user::update_role(pool, &u.document_id, "author", None)
             .await
             .unwrap();
         u.id
@@ -120,11 +121,11 @@ mod tests {
 
         let handler = ScheduledPublishHandler::new(pool.clone());
         let job = Job::ScheduledPublish {
-            post_id: p.id.clone(),
+            post_id: p.id.to_string(),
         };
         assert!(handler.handle(&job).await.is_ok());
 
-        let updated = post::find_by_id(&pool, &p.id, None).await.unwrap().unwrap();
+        let updated = post::find_by_id(&pool, p.id, None).await.unwrap().unwrap();
         assert_eq!(updated.status, "published");
         assert!(updated.published_at.is_some());
     }
@@ -154,7 +155,9 @@ mod tests {
         .unwrap();
 
         let handler = ScheduledPublishHandler::new(pool);
-        let job = Job::ScheduledPublish { post_id: p.id };
+        let job = Job::ScheduledPublish {
+            post_id: p.id.to_string(),
+        };
         assert!(handler.handle(&job).await.is_ok());
     }
 

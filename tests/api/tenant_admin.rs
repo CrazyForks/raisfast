@@ -2,8 +2,8 @@ use super::*;
 
 async fn admin_token() -> String {
     let pool = test_pool().await;
-    let id = create_admin(&pool).await;
-    make_token(&id, "admin")
+    let (int_id, doc_id) = create_admin(&pool).await;
+    make_token(&doc_id, int_id, "admin")
 }
 
 #[tokio::test]
@@ -22,7 +22,7 @@ async fn create_and_get_tenant() {
     .await;
     assert!(status.is_success(), "create tenant: {status} {body:?}");
     assert_eq!(body["data"]["name"], "Acme Corp");
-    let id = body["data"]["id"].as_str().unwrap().to_string();
+    let id = body["data"]["document_id"].as_str().unwrap().to_string();
 
     let (status, body) = send(
         &mut app,
@@ -43,7 +43,7 @@ async fn update_tenant() {
         post_json_auth("/api/v1/admin/tenants", json!({"name": "Original"}), &tok),
     )
     .await;
-    let id = create_body["data"]["id"].as_str().unwrap();
+    let id = create_body["data"]["document_id"].as_str().unwrap();
 
     let (status, body) = send(
         &mut app,
@@ -68,7 +68,7 @@ async fn delete_tenant() {
         post_json_auth("/api/v1/admin/tenants", json!({"name": "ToDelete"}), &tok),
     )
     .await;
-    let id = create_body["data"]["id"].as_str().unwrap();
+    let id = create_body["data"]["document_id"].as_str().unwrap();
 
     let (status, _) = send(
         &mut app,

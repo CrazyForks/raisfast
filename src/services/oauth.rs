@@ -31,22 +31,29 @@ pub async fn initiate_oauth(
         AppError::BadRequest(format!("unsupported OAuth provider: {provider_name}"))
     })?;
 
-    let state = crate::oauth::generate_state();
+    let _state = crate::oauth::generate_state();
     let code_verifier = crate::oauth::generate_code_verifier();
     let code_challenge = crate::oauth::generate_code_challenge(&code_verifier);
 
     let expires_at = (Utc::now() + chrono::Duration::minutes(10)).to_rfc3339();
-    oauth::create_state(
+    let resolved_user_id = if let Some(uid_str) = current_user_id {
+        let user = crate::models::user::find_by_id(pool, uid_str, None)
+            .await?
+            .ok_or(AppError::Unauthorized)?;
+        Some(user.id)
+    } else {
+        None
+    };
+    let state_doc_id = oauth::create_state(
         pool,
-        &state,
         provider_name,
         &code_verifier,
-        current_user_id,
+        resolved_user_id,
         &expires_at,
     )
     .await?;
 
-    Ok(provider.authorize_url(&state, &code_challenge))
+    Ok(provider.authorize_url(&state_doc_id, &code_challenge))
 }
 
 /// OAuth 回调处理结果
@@ -107,7 +114,7 @@ pub async fn handle_callback(
 
     if let Some(account) = existing {
         let user = user_repo
-            .find_by_id(&account.user_id, None)
+            .find_by_id(&account.user_id.to_string(), None)
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("OAuth bound user not found")))?;
 
@@ -120,16 +127,15 @@ pub async fn handle_callback(
         )
         .await?;
 
-        update_oauth_account(pool, &account.id, &token_resp, &user_info).await?;
+        update_oauth_account(pool, account.id, &token_resp, &user_info).await?;
 
         return Ok(OAuthCallbackResult::LoginSuccess(login_resp));
     }
 
     if let Some(bind_user_id) = oauth_state.user_id {
-        do_bind_oauth(pool, &bind_user_id, provider_name, &token_resp, &user_info).await?;
+        do_bind_oauth(pool, bind_user_id, provider_name, &token_resp, &user_info).await?;
 
-        let user = user_repo
-            .find_by_id(&bind_user_id, None)
+        let user = crate::models::user::find_by_pk(pool, bind_user_id, None)
             .await?
             .ok_or_else(|| AppError::not_found("user"))?;
 
@@ -148,7 +154,7 @@ pub async fn handle_callback(
     if let Some(email) = &user_info.email
         && let Some(user) = user_repo.find_by_email(email, None).await?
     {
-        do_bind_oauth(pool, &user.id, provider_name, &token_resp, &user_info).await?;
+        do_bind_oauth(pool, user.id, provider_name, &token_resp, &user_info).await?;
 
         let login_resp = create_login_response_for_user(
             &user,
@@ -160,7 +166,7 @@ pub async fn handle_callback(
         .await?;
 
         eventbus.emit(crate::eventbus::Event::UserLoggedIn {
-            id: user.id.clone(),
+            id: user.document_id.clone(),
             success: true,
         });
 
@@ -169,7 +175,7 @@ pub async fn handle_callback(
 
     let user = auto_register_user(pool, user_repo, provider_name, &user_info, eventbus).await?;
 
-    do_bind_oauth(pool, &user.id, provider_name, &token_resp, &user_info).await?;
+    do_bind_oauth(pool, user.id, provider_name, &token_resp, &user_info).await?;
 
     let login_resp = create_login_response_for_user(
         &user,
@@ -195,7 +201,7 @@ pub async fn unbind_oauth(
         .ok_or_else(|| AppError::not_found("user"))?;
 
     if user.password_hash.is_empty() {
-        let count = oauth::count_by_user(pool, user_id).await?;
+        let count = oauth::count_by_user(pool, user.id).await?;
         if count <= 1 {
             return Err(AppError::BadRequest(
                 "cannot unbind: user has no password and this is the only login method".into(),
@@ -203,7 +209,7 @@ pub async fn unbind_oauth(
         }
     }
 
-    let deleted = oauth::delete_account(pool, user_id, provider_name).await?;
+    let deleted = oauth::delete_account(pool, user.id, provider_name).await?;
     if !deleted {
         return Err(AppError::not_found("oauth binding"));
     }
@@ -217,7 +223,10 @@ pub async fn list_bindings(
     auth: &AuthUser,
 ) -> AppResult<Vec<OAuthBindingInfo>> {
     let user_id = auth.ensure_authenticated()?;
-    let accounts = oauth::find_by_user_id(pool, user_id).await?;
+    let user = crate::models::user::find_by_id(pool, user_id, None)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+    let accounts = oauth::find_by_user_id(pool, user.id).await?;
     Ok(accounts
         .into_iter()
         .map(|a| OAuthBindingInfo {
@@ -250,7 +259,8 @@ async fn create_login_response_for_user(
     jwt_refresh_expires: u64,
 ) -> AppResult<LoginResponse> {
     let access_token = crate::services::auth::generate_access_token_internal(
-        &user.id,
+        &user.document_id,
+        user.id,
         &user.role,
         user.tenant_id
             .as_deref()
@@ -263,7 +273,7 @@ async fn create_login_response_for_user(
     let expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
 
     refresh_token_repo
-        .create_token(&user.id, &refresh_token_str, &expires_at.to_rfc3339())
+        .create_token(user.id, &refresh_token_str, &expires_at.to_rfc3339())
         .await?;
 
     Ok(LoginResponse {
@@ -315,7 +325,7 @@ async fn auto_register_user(
         sqlx::query(&sql)
             .bind(avatar)
             .bind(now)
-            .bind(&user.id)
+            .bind(user.id)
             .execute(pool)
             .await?;
     } else {
@@ -327,17 +337,17 @@ async fn auto_register_user(
         );
         sqlx::query(&sql)
             .bind(now)
-            .bind(&user.id)
+            .bind(user.id)
             .execute(pool)
             .await?;
     }
 
-    let user = crate::models::user::find_by_id(pool, &user.id, None)
+    let user = crate::models::user::find_by_pk(pool, user.id, None)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch created user")))?;
 
     eventbus.emit(crate::eventbus::Event::UserRegistered {
-        id: user.id.clone(),
+        id: user.document_id.clone(),
         username: user.username.clone(),
         email: user.email.clone(),
     });
@@ -386,7 +396,7 @@ fn sanitize_username(name: &str) -> String {
 /// 执行 OAuth 绑定（upsert）
 async fn do_bind_oauth(
     pool: &crate::db::Pool,
-    user_id: &str,
+    user_id: i64,
     provider_name: &str,
     token_resp: &crate::oauth::OAuthTokenResponse,
     user_info: &OAuthUserInfo,
@@ -403,7 +413,7 @@ async fn do_bind_oauth(
         oauth::update_account(
             pool,
             oauth::UpdateOAuthAccountParams {
-                id: &account.id,
+                id: account.id,
                 email: user_info.email.as_deref(),
                 display_name: user_info.display_name.as_deref(),
                 avatar_url: user_info.avatar_url.as_deref(),
@@ -439,7 +449,7 @@ async fn do_bind_oauth(
 /// 更新已有的 OAuth 绑定信息
 async fn update_oauth_account(
     pool: &crate::db::Pool,
-    account_id: &str,
+    account_id: i64,
     token_resp: &crate::oauth::OAuthTokenResponse,
     user_info: &OAuthUserInfo,
 ) -> AppResult<()> {

@@ -22,7 +22,7 @@ fn tid(tenant_id: Option<&str>) -> &str {
     tenant_id.unwrap_or("all")
 }
 
-fn cache_key_id(tenant_id: Option<&str>, id: &str) -> String {
+fn cache_key_id(tenant_id: Option<&str>, id: i64) -> String {
     format!("{KEY_PREFIX}:{}:id:{id}", tid(tenant_id))
 }
 
@@ -30,7 +30,7 @@ fn cache_key_slug(tenant_id: Option<&str>, slug: &str) -> String {
     format!("{KEY_PREFIX}:{}:slug:{slug}", tid(tenant_id))
 }
 
-fn cache_key_joined(tenant_id: Option<&str>, id: &str) -> String {
+fn cache_key_joined(tenant_id: Option<&str>, id: i64) -> String {
     format!("{KEY_PREFIX}:{}:joined:{id}", tid(tenant_id))
 }
 
@@ -65,7 +65,7 @@ impl<P: PostRepository> CachedPostRepository<P> {
     }
 
     /// 清除指定 ID 相关的缓存（包括 slug 索引）
-    async fn invalidate_by_id(&self, tenant_id: Option<&str>, id: &str) {
+    async fn invalidate_by_id(&self, tenant_id: Option<&str>, id: i64) {
         let id_key = cache_key_id(tenant_id, id);
         if let Some(cached) = self.cache.get(&id_key).await
             && let Ok(post) = serde_json::from_str::<Post>(&cached)
@@ -103,13 +103,13 @@ impl<P: PostRepository> PostRepository for CachedPostRepository<P> {
             && let Ok(json) = serde_json::to_string(post)
         {
             let _ = self.cache.set(&key, &json, Some(self.ttl)).await;
-            let id_key = cache_key_id(tenant_id, &post.id);
+            let id_key = cache_key_id(tenant_id, post.id);
             let _ = self.cache.set(&id_key, &json, Some(self.ttl)).await;
         }
         Ok(result)
     }
 
-    async fn find_by_id(&self, id: &str, tenant_id: Option<&str>) -> AppResult<Option<Post>> {
+    async fn find_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<Option<Post>> {
         let key = cache_key_id(tenant_id, id);
         if let Some(cached) = self.cache.get(&key).await
             && let Ok(post) = serde_json::from_str::<Post>(&cached)
@@ -130,7 +130,7 @@ impl<P: PostRepository> PostRepository for CachedPostRepository<P> {
 
     async fn find_joined_by_id(
         &self,
-        id: &str,
+        id: i64,
         tenant_id: Option<&str>,
     ) -> AppResult<PostJoinedRow> {
         let key = cache_key_joined(tenant_id, id);
@@ -157,8 +157,16 @@ impl<P: PostRepository> PostRepository for CachedPostRepository<P> {
             tid(tenant_id),
             query.page,
             query.page_size,
-            query.category_id.as_deref().unwrap_or(""),
-            query.tag_id.as_deref().unwrap_or(""),
+            query
+                .category_id
+                .map(|id| id.to_string())
+                .as_deref()
+                .unwrap_or(""),
+            query
+                .tag_id
+                .map(|id| id.to_string())
+                .as_deref()
+                .unwrap_or(""),
             query.q.as_deref().unwrap_or("")
         );
         if let Some(cached) = self.cache.get(&key).await
@@ -201,7 +209,7 @@ impl<P: PostRepository> PostRepository for CachedPostRepository<P> {
 
     async fn get_post_tags(
         &self,
-        post_id: &str,
+        post_id: i64,
         tenant_id: Option<&str>,
     ) -> AppResult<Vec<TagBrief>> {
         self.inner.get_post_tags(post_id, tenant_id).await
@@ -209,15 +217,15 @@ impl<P: PostRepository> PostRepository for CachedPostRepository<P> {
 
     async fn get_tags_for_posts(
         &self,
-        post_ids: &[String],
+        post_ids: &[i64],
         tenant_id: Option<&str>,
-    ) -> AppResult<HashMap<String, Vec<TagBrief>>> {
+    ) -> AppResult<HashMap<i64, Vec<TagBrief>>> {
         self.inner.get_tags_for_posts(post_ids, tenant_id).await
     }
 
     async fn find_joined_by_ids(
         &self,
-        ids: &[String],
+        ids: &[i64],
         tenant_id: Option<&str>,
     ) -> AppResult<Vec<PostJoinedRow>> {
         self.inner.find_joined_by_ids(ids, tenant_id).await
@@ -231,11 +239,11 @@ impl<P: PostRepository> PostRepository for CachedPostRepository<P> {
 
     async fn update(&self, cmd: UpdatePostCmd, tenant_id: Option<&str>) -> AppResult<Post> {
         let post = self.inner.update(cmd, tenant_id).await?;
-        self.invalidate_by_id(tenant_id, &post.id).await;
+        self.invalidate_by_id(tenant_id, post.id).await;
         Ok(post)
     }
 
-    async fn delete(&self, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
+    async fn delete(&self, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
         self.inner.delete(id, tenant_id).await?;
         self.invalidate_by_id(tenant_id, id).await;
         Ok(())

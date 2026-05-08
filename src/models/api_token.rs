@@ -14,8 +14,9 @@ use crate::errors::app_error::AppResult;
 /// API Token 完整数据库行模型
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct ApiToken {
-    pub id: String,
-    pub user_id: String,
+    pub id: i64,
+    pub document_id: String,
+    pub user_id: i64,
     pub name: String,
     pub token_hash: String,
     pub token_prefix: String,
@@ -29,7 +30,8 @@ pub struct ApiToken {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct ApiTokenListItem {
-    pub id: String,
+    pub id: i64,
+    pub document_id: String,
     pub name: String,
     pub token_prefix: String,
     pub scopes: String,
@@ -41,16 +43,16 @@ pub struct ApiTokenListItem {
 /// 创建新的 API Token 记录
 pub async fn create(
     pool: &crate::db::Pool,
-    user_id: &str,
+    user_id: i64,
     name: &str,
     token_hash: &str,
     token_prefix: &str,
     scopes: &str,
     expires_at: Option<&str>,
 ) -> AppResult<ApiToken> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
     let sql = format!(
-        "INSERT INTO api_tokens (id, user_id, name, token_hash, token_prefix, scopes, expires_at, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
+        "INSERT INTO api_tokens (document_id, user_id, name, token_hash, token_prefix, scopes, expires_at, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
@@ -61,7 +63,7 @@ pub async fn create(
         ph(8)
     );
     sqlx::query(&sql)
-        .bind(&id)
+        .bind(&document_id)
         .bind(user_id)
         .bind(name)
         .bind(token_hash)
@@ -71,9 +73,9 @@ pub async fn create(
         .bind(&now)
         .execute(pool)
         .await?;
-    let sql = format!("SELECT * FROM api_tokens WHERE id = {}", ph(1));
+    let sql = format!("SELECT * FROM api_tokens WHERE document_id = {}", ph(1));
     let row = sqlx::query_as::<_, ApiToken>(&sql)
-        .bind(&id)
+        .bind(&document_id)
         .fetch_one(pool)
         .await?;
     Ok(row)
@@ -92,10 +94,10 @@ pub async fn find_by_hash(pool: &crate::db::Pool, token_hash: &str) -> AppResult
 /// 列出指定用户的所有 API Token（脱敏）
 pub async fn list_by_user(
     pool: &crate::db::Pool,
-    user_id: &str,
+    user_id: i64,
 ) -> AppResult<Vec<ApiTokenListItem>> {
     let sql = format!(
-        "SELECT id, name, token_prefix, scopes, last_used_at, expires_at, created_at FROM api_tokens WHERE user_id = {} ORDER BY created_at DESC",
+        "SELECT id, document_id, name, token_prefix, scopes, last_used_at, expires_at, created_at FROM api_tokens WHERE user_id = {} ORDER BY created_at DESC",
         ph(1)
     );
     let rows = sqlx::query_as::<_, ApiTokenListItem>(&sql)
@@ -105,25 +107,25 @@ pub async fn list_by_user(
     Ok(rows)
 }
 
-/// 根据 ID 查找 API Token
-pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<Option<ApiToken>> {
-    let sql = format!("SELECT * FROM api_tokens WHERE id = {}", ph(1));
+/// 根据 document_id 查找 API Token
+pub async fn find_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<Option<ApiToken>> {
+    let sql = format!("SELECT * FROM api_tokens WHERE document_id = {}", ph(1));
     let row = sqlx::query_as::<_, ApiToken>(&sql)
-        .bind(id)
+        .bind(document_id)
         .fetch_optional(pool)
         .await?;
     Ok(row)
 }
 
-/// 根据 ID 删除 API Token
-pub async fn delete_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
-    let sql = format!("DELETE FROM api_tokens WHERE id = {}", ph(1));
-    sqlx::query(&sql).bind(id).execute(pool).await?;
+/// 根据 document_id 删除 API Token
+pub async fn delete_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<()> {
+    let sql = format!("DELETE FROM api_tokens WHERE document_id = {}", ph(1));
+    sqlx::query(&sql).bind(document_id).execute(pool).await?;
     Ok(())
 }
 
-/// 更新 last_used_at
-pub async fn touch_last_used(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
+/// 更新 last_used_at（按整数主键）
+pub async fn touch_last_used(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
     let now = chrono::Utc::now().to_rfc3339();
     let sql = format!(
         "UPDATE api_tokens SET last_used_at = {} WHERE id = {}",
@@ -147,32 +149,33 @@ mod tests {
         pool
     }
 
-    async fn insert_user(pool: &crate::db::Pool, id: &str) {
+    async fn insert_user(pool: &crate::db::Pool, document_id: &str) -> i64 {
         let hash = "$argon2id$v=19$m=19456,t=2,p=1$test$test".to_string();
         let sql = format!(
-            "INSERT INTO users (id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'admin')",
+            "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'admin') RETURNING id",
             ph(1),
             ph(2),
             ph(3),
             ph(4)
         );
-        sqlx::query(&sql)
-            .bind(id)
+        let (id,): (i64,) = sqlx::query_as(&sql)
+            .bind(document_id)
             .bind("model-test@test.com")
             .bind("modeltestuser")
             .bind(&hash)
-            .execute(pool)
+            .fetch_one(pool)
             .await
             .unwrap();
+        id
     }
 
     #[tokio::test]
     async fn create_and_find_by_hash() {
         let pool = setup_pool().await;
-        insert_user(&pool, "user-1").await;
+        let user_id = insert_user(&pool, "user-1-doc").await;
         let row = create(
             &pool,
-            "user-1",
+            user_id,
             "Test",
             "hash123",
             "rblog_ab",
@@ -201,28 +204,20 @@ mod tests {
     #[tokio::test]
     async fn find_by_id_not_found() {
         let pool = setup_pool().await;
-        let result = find_by_id(&pool, "nonexistent").await.unwrap();
+        let result = find_by_id(&pool, "nonexistent-doc-id").await.unwrap();
         assert!(result.is_none());
     }
 
     #[tokio::test]
     async fn list_by_user_returns_tokens() {
         let pool = setup_pool().await;
-        insert_user(&pool, "user-2").await;
+        let user_id = insert_user(&pool, "user-2-doc").await;
+        create(&pool, user_id, "First", "h1", "rblog_a", "[\"read\"]", None)
+            .await
+            .unwrap();
         create(
             &pool,
-            "user-2",
-            "First",
-            "h1",
-            "rblog_a",
-            "[\"read\"]",
-            None,
-        )
-        .await
-        .unwrap();
-        create(
-            &pool,
-            "user-2",
+            user_id,
             "Second",
             "h2",
             "rblog_b",
@@ -232,7 +227,7 @@ mod tests {
         .await
         .unwrap();
 
-        let list = list_by_user(&pool, "user-2").await.unwrap();
+        let list = list_by_user(&pool, user_id).await.unwrap();
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].name, "Second");
         assert_eq!(list[1].name, "First");
@@ -241,51 +236,43 @@ mod tests {
     #[tokio::test]
     async fn list_by_user_empty() {
         let pool = setup_pool().await;
-        let list = list_by_user(&pool, "nobody").await.unwrap();
+        let list = list_by_user(&pool, 99999).await.unwrap();
         assert!(list.is_empty());
     }
 
     #[tokio::test]
     async fn delete_by_id_removes_token() {
         let pool = setup_pool().await;
-        insert_user(&pool, "user-3").await;
-        let row = create(&pool, "user-3", "Del", "h3", "rblog_c", "[\"read\"]", None)
+        let user_id = insert_user(&pool, "user-3-doc").await;
+        let row = create(&pool, user_id, "Del", "h3", "rblog_c", "[\"read\"]", None)
             .await
             .unwrap();
-        delete_by_id(&pool, &row.id).await.unwrap();
-        let found = find_by_id(&pool, &row.id).await.unwrap();
+        delete_by_id(&pool, &row.document_id).await.unwrap();
+        let found = find_by_id(&pool, &row.document_id).await.unwrap();
         assert!(found.is_none());
     }
 
     #[tokio::test]
     async fn touch_last_used_updates_field() {
         let pool = setup_pool().await;
-        insert_user(&pool, "user-4").await;
-        let row = create(
-            &pool,
-            "user-4",
-            "Touch",
-            "h4",
-            "rblog_d",
-            "[\"read\"]",
-            None,
-        )
-        .await
-        .unwrap();
+        let user_id = insert_user(&pool, "user-4-doc").await;
+        let row = create(&pool, user_id, "Touch", "h4", "rblog_d", "[\"read\"]", None)
+            .await
+            .unwrap();
         assert!(row.last_used_at.is_none());
 
-        touch_last_used(&pool, &row.id).await.unwrap();
-        let updated = find_by_id(&pool, &row.id).await.unwrap().unwrap();
+        touch_last_used(&pool, row.id).await.unwrap();
+        let updated = find_by_id(&pool, &row.document_id).await.unwrap().unwrap();
         assert!(updated.last_used_at.is_some());
     }
 
     #[tokio::test]
     async fn create_with_expires_at() {
         let pool = setup_pool().await;
-        insert_user(&pool, "user-5").await;
+        let user_id = insert_user(&pool, "user-5-doc").await;
         let row = create(
             &pool,
-            "user-5",
+            user_id,
             "Expiring",
             "h5",
             "rblog_e",
@@ -300,10 +287,10 @@ mod tests {
     #[tokio::test]
     async fn list_by_user_does_not_include_hash() {
         let pool = setup_pool().await;
-        insert_user(&pool, "user-6").await;
+        let user_id = insert_user(&pool, "user-6-doc").await;
         create(
             &pool,
-            "user-6",
+            user_id,
             "Safe",
             "secret_hash",
             "rblog_f",
@@ -312,7 +299,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let list = list_by_user(&pool, "user-6").await.unwrap();
+        let list = list_by_user(&pool, user_id).await.unwrap();
         let json = serde_json::to_value(&list[0]).unwrap();
         let obj = json.as_object().unwrap();
         assert!(!obj.contains_key("token_hash"));

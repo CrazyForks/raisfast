@@ -12,33 +12,27 @@ use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
 
-/// 分类完整数据库行模型
-///
-/// 直接映射 `categories` 表的所有字段。
-/// `parent_id` 用于构建层级分类，`sort_order` 控制显示顺序。
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Category {
-    pub id: String,
+    pub id: i64,
+    pub document_id: String,
     pub tenant_id: Option<String>,
     pub name: String,
     pub slug: String,
     pub description: Option<String>,
-    pub parent_id: Option<String>,
+    pub parent_id: Option<i64>,
     pub sort_order: i64,
-    pub updated_by: Option<String>,
+    pub updated_by: Option<i64>,
     pub updated_at: Option<String>,
     pub created_at: String,
 }
 
 crate::impl_from_row_opt_tenant!(Category {
-    required { id, name, slug, sort_order, created_at }
+    required { id, document_id, name, slug, sort_order, created_at }
     optional { description, parent_id, updated_by, updated_at }
 });
 
-/// 查询所有分类
-///
-/// 按 `sort_order` 和 `name` 排序返回完整分类列表。
 pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppResult<Vec<Category>> {
     let sql = format!(
         "SELECT * FROM categories WHERE 1=1{} ORDER BY sort_order, name",
@@ -52,9 +46,6 @@ pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppRes
     Ok(categories)
 }
 
-/// 分页查询分类
-///
-/// 返回 (当前页数据, 总条数)。
 pub async fn find_paginated(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
@@ -90,12 +81,9 @@ pub async fn find_paginated(
     Ok((items, total))
 }
 
-/// 根据分类 ID 查找分类
-///
-/// 若未找到则返回 [`AppError::NotFound`]。
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: &str,
+    id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Category> {
     let sql = format!(
@@ -110,21 +98,35 @@ pub async fn find_by_id(
     q.fetch_one(pool).await.map_err(Into::into)
 }
 
-/// 创建新分类
-///
-/// 自动生成 UUID v7 作为主键。创建完成后重新查询并返回完整分类记录。
+pub async fn find_by_document_id(
+    pool: &crate::db::Pool,
+    document_id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<Category>> {
+    let sql = format!(
+        "SELECT * FROM categories WHERE document_id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
+    );
+    let mut q = sqlx::query_as::<_, Category>(&sql).bind(document_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    q.fetch_optional(pool).await.map_err(Into::into)
+}
+
 pub async fn create(
     pool: &crate::db::Pool,
     cmd: &crate::commands::CreateCategoryCmd,
     tenant_id: Option<&str>,
-    created_by: Option<&str>,
+    created_by: Option<i64>,
 ) -> AppResult<Category> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
     match tenant_id {
         Some(tid) => {
             let sql = format!(
-                "INSERT INTO categories (id, tenant_id, name, slug, description, parent_id, sort_order, created_by, updated_by, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                "INSERT INTO categories (document_id, tenant_id, name, slug, description, parent_id, sort_order, created_by, updated_by, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
                 ph(1),
                 ph(2),
                 ph(3),
@@ -137,12 +139,12 @@ pub async fn create(
                 ph(10)
             );
             sqlx::query(&sql)
-                .bind(&id)
+                .bind(&document_id)
                 .bind(tid)
                 .bind(&cmd.name)
                 .bind(&cmd.slug)
                 .bind(&cmd.description)
-                .bind(&cmd.parent_id)
+                .bind(cmd.parent_id)
                 .bind(cmd.sort_order)
                 .bind(created_by)
                 .bind(created_by)
@@ -152,7 +154,7 @@ pub async fn create(
         }
         None => {
             let sql = format!(
-                "INSERT INTO categories (id, name, slug, description, parent_id, sort_order, created_by, updated_by, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})",
+                "INSERT INTO categories (document_id, name, slug, description, parent_id, sort_order, created_by, updated_by, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})",
                 ph(1),
                 ph(2),
                 ph(3),
@@ -164,11 +166,11 @@ pub async fn create(
                 ph(9)
             );
             sqlx::query(&sql)
-                .bind(&id)
+                .bind(&document_id)
                 .bind(&cmd.name)
                 .bind(&cmd.slug)
                 .bind(&cmd.description)
-                .bind(&cmd.parent_id)
+                .bind(cmd.parent_id)
                 .bind(cmd.sort_order)
                 .bind(created_by)
                 .bind(created_by)
@@ -178,19 +180,19 @@ pub async fn create(
         }
     }
 
-    find_by_id(pool, &id, tenant_id).await
+    find_by_document_id(pool, &document_id, tenant_id)
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch created category")))
 }
 
-/// 更新分类
-///
-/// 仅更新传入的非空字段，其余保留原值。
 pub async fn update(
     pool: &crate::db::Pool,
     cmd: &crate::commands::UpdateCategoryCmd,
     tenant_id: Option<&str>,
-    updated_by: Option<&str>,
+    updated_by: Option<i64>,
 ) -> AppResult<Category> {
-    let existing = find_by_id(pool, &cmd.id, tenant_id).await?;
+    let cat_id: i64 = cmd.id;
+    let existing = find_by_id(pool, cat_id, tenant_id).await?;
     let now = crate::utils::tz::now_str();
 
     let name = cmd.name.as_deref().unwrap_or(&existing.name);
@@ -200,11 +202,7 @@ pub async fn update(
         .as_deref()
         .map(std::string::ToString::to_string)
         .or(existing.description);
-    let parent = cmd
-        .parent_id
-        .as_deref()
-        .map(std::string::ToString::to_string)
-        .or(existing.parent_id);
+    let parent = cmd.parent_id.or(existing.parent_id);
     let sort = cmd.sort_order.unwrap_or(existing.sort_order);
 
     let sql = format!(
@@ -227,19 +225,16 @@ pub async fn update(
         .bind(sort)
         .bind(updated_by)
         .bind(&now)
-        .bind(&cmd.id);
+        .bind(cat_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
     q.execute(pool).await?;
 
-    find_by_id(pool, &cmd.id, tenant_id).await
+    find_by_id(pool, cat_id, tenant_id).await
 }
 
-/// 删除分类
-///
-/// 若分类不存在则返回 [`AppError::NotFound`]。
-pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
+pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
     let sql = format!(
         "DELETE FROM categories WHERE id = {}{}",
         ph(1),

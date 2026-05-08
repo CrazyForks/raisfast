@@ -9,12 +9,11 @@ use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
 
-// ── 数据库行模型 ──
-
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Page {
-    pub id: String,
+    pub id: i64,
+    pub document_id: String,
     pub tenant_id: Option<String>,
     pub title: String,
     pub slug: String,
@@ -24,11 +23,11 @@ pub struct Page {
     pub meta_description: Option<String>,
     pub og_image: Option<String>,
     pub template: String,
-    pub parent_id: Option<String>,
+    pub parent_id: Option<i64>,
     pub sort_order: i64,
     pub status: String,
-    pub created_by: String,
-    pub updated_by: Option<String>,
+    pub created_by: i64,
+    pub updated_by: Option<i64>,
     pub cover_image: Option<String>,
     pub published_at: Option<String>,
     pub created_at: String,
@@ -36,31 +35,30 @@ pub struct Page {
 }
 
 crate::impl_from_row_opt_tenant!(Page {
-    required { id, title, slug, template, sort_order, status, created_by, created_at, updated_at }
+    required { id, document_id, title, slug, template, sort_order, status, created_by, created_at, updated_at }
     optional { content, blocks, meta_title, meta_description, og_image, parent_id, updated_by, cover_image, published_at }
 });
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ReusableBlock {
-    pub id: String,
+    pub id: i64,
+    pub document_id: String,
     pub tenant_id: Option<String>,
     pub name: String,
     pub block_type: String,
     pub content: String,
     pub description: Option<String>,
-    pub created_by: Option<String>,
-    pub updated_by: Option<String>,
+    pub created_by: Option<i64>,
+    pub updated_by: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
 
 crate::impl_from_row_opt_tenant!(ReusableBlock {
-    required { id, name, block_type, content, created_at, updated_at }
+    required { id, document_id, name, block_type, content, created_at, updated_at }
     optional { description, created_by, updated_by }
 });
-
-// ── Block 类型系统 ──
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -323,8 +321,6 @@ pub struct ColumnDef {
     pub blocks: Vec<PageBlock>,
 }
 
-// ── 查询函数 ──
-
 pub async fn find_by_slug(
     pool: &crate::db::Pool,
     slug: &str,
@@ -341,12 +337,26 @@ pub async fn find_by_slug(
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: &str,
+    id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Page>> {
     let filter = tenant_filter_ph(tenant_id, 2);
     let sql = format!("SELECT * FROM pages WHERE id = {}{filter}", ph(1));
     let mut q = sqlx::query_as::<_, Page>(&sql).bind(id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    Ok(q.fetch_optional(pool).await?)
+}
+
+pub async fn find_by_document_id(
+    pool: &crate::db::Pool,
+    document_id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<Page>> {
+    let filter = tenant_filter_ph(tenant_id, 2);
+    let sql = format!("SELECT * FROM pages WHERE document_id = {}{filter}", ph(1));
+    let mut q = sqlx::query_as::<_, Page>(&sql).bind(document_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -431,7 +441,6 @@ pub async fn list_all(
 #[allow(clippy::too_many_arguments)]
 pub async fn create(
     pool: &crate::db::Pool,
-    id: &str,
     title: &str,
     slug: &str,
     content: Option<&str>,
@@ -440,14 +449,14 @@ pub async fn create(
     meta_description: Option<&str>,
     og_image: Option<&str>,
     template: &str,
-    parent_id: Option<&str>,
+    parent_id: Option<i64>,
     sort_order: i64,
     status: &str,
-    created_by: &str,
+    created_by: i64,
     cover_image: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
-    let now = Utc::now().to_rfc3339();
+    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
     let published_at = if status == "published" {
         Some(now.clone())
     } else {
@@ -458,10 +467,10 @@ pub async fn create(
         Some(tid) => {
             let vals = (1..=19).map(ph).collect::<Vec<_>>().join(", ");
             let sql = format!(
-                "INSERT INTO pages (id, tenant_id, title, slug, content, blocks, meta_title, meta_description, og_image, template, parent_id, sort_order, status, created_by, updated_by, cover_image, published_at, created_at, updated_at) VALUES ({vals})"
+                "INSERT INTO pages (document_id, tenant_id, title, slug, content, blocks, meta_title, meta_description, og_image, template, parent_id, sort_order, status, created_by, updated_by, cover_image, published_at, created_at, updated_at) VALUES ({vals})"
             );
             sqlx::query(&sql)
-                .bind(id)
+                .bind(&document_id)
                 .bind(tid)
                 .bind(title)
                 .bind(slug)
@@ -486,10 +495,10 @@ pub async fn create(
         None => {
             let vals = (1..=18).map(ph).collect::<Vec<_>>().join(", ");
             let sql = format!(
-                "INSERT INTO pages (id, title, slug, content, blocks, meta_title, meta_description, og_image, template, parent_id, sort_order, status, created_by, updated_by, cover_image, published_at, created_at, updated_at) VALUES ({vals})"
+                "INSERT INTO pages (document_id, title, slug, content, blocks, meta_title, meta_description, og_image, template, parent_id, sort_order, status, created_by, updated_by, cover_image, published_at, created_at, updated_at) VALUES ({vals})"
             );
             sqlx::query(&sql)
-                .bind(id)
+                .bind(&document_id)
                 .bind(title)
                 .bind(slug)
                 .bind(content)
@@ -512,7 +521,7 @@ pub async fn create(
         }
     }
 
-    find_by_id(pool, id, tenant_id)
+    find_by_document_id(pool, &document_id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("page"))
 }
@@ -520,7 +529,7 @@ pub async fn create(
 #[allow(clippy::too_many_arguments)]
 pub async fn update(
     pool: &crate::db::Pool,
-    id: &str,
+    id: i64,
     title: Option<&str>,
     slug: Option<&str>,
     content: Option<&str>,
@@ -529,11 +538,11 @@ pub async fn update(
     meta_description: Option<&str>,
     og_image: Option<&str>,
     template: Option<&str>,
-    parent_id: Option<Option<&str>>,
+    parent_id: Option<Option<i64>>,
     sort_order: Option<i64>,
     status: Option<&str>,
     cover_image: Option<&str>,
-    updated_by: Option<&str>,
+    updated_by: Option<i64>,
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
     let now = Utc::now().to_rfc3339();
@@ -663,7 +672,7 @@ pub async fn update(
         .ok_or_else(|| AppError::not_found("page"))
 }
 
-pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
+pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
     let filter = tenant_filter_ph(tenant_id, 2);
     let sql = format!("DELETE FROM pages WHERE id = {}{filter}", ph(1));
     let mut q = sqlx::query(&sql).bind(id);
@@ -676,9 +685,9 @@ pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -
 
 pub async fn update_status(
     pool: &crate::db::Pool,
-    id: &str,
+    id: i64,
     status: &str,
-    updated_by: Option<&str>,
+    updated_by: Option<i64>,
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
     let now = Utc::now().to_rfc3339();
@@ -729,7 +738,7 @@ pub async fn update_status(
 
 pub async fn reorder(
     pool: &crate::db::Pool,
-    items: &[(String, i64)],
+    items: &[(i64, i64)],
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
@@ -766,16 +775,31 @@ pub async fn list_sitemap(
     Ok(q.fetch_all(pool).await?)
 }
 
-// ── 可复用块查询 ──
-
 pub async fn find_reusable_by_id(
     pool: &crate::db::Pool,
-    id: &str,
+    id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<ReusableBlock>> {
     let filter = tenant_filter_ph(tenant_id, 2);
     let sql = format!("SELECT * FROM reusable_blocks WHERE id = {}{filter}", ph(1));
     let mut q = sqlx::query_as::<_, ReusableBlock>(&sql).bind(id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    Ok(q.fetch_optional(pool).await?)
+}
+
+pub async fn find_reusable_by_document_id(
+    pool: &crate::db::Pool,
+    document_id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<ReusableBlock>> {
+    let filter = tenant_filter_ph(tenant_id, 2);
+    let sql = format!(
+        "SELECT * FROM reusable_blocks WHERE document_id = {}{filter}",
+        ph(1)
+    );
+    let mut q = sqlx::query_as::<_, ReusableBlock>(&sql).bind(document_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -798,7 +822,6 @@ pub async fn list_reusable(
 #[allow(clippy::too_many_arguments)]
 pub async fn create_reusable(
     pool: &crate::db::Pool,
-    id: &str,
     name: &str,
     block_type: &str,
     content: &str,
@@ -806,15 +829,15 @@ pub async fn create_reusable(
     created_by: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<ReusableBlock> {
-    let now = Utc::now().to_rfc3339();
+    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
     match tenant_id {
         Some(tid) => {
             let vals = (1..=10).map(ph).collect::<Vec<_>>().join(", ");
             let sql = format!(
-                "INSERT INTO reusable_blocks (id, tenant_id, name, block_type, content, description, created_by, updated_by, created_at, updated_at) VALUES ({vals})"
+                "INSERT INTO reusable_blocks (document_id, tenant_id, name, block_type, content, description, created_by, updated_by, created_at, updated_at) VALUES ({vals})"
             );
             sqlx::query(&sql)
-                .bind(id)
+                .bind(&document_id)
                 .bind(tid)
                 .bind(name)
                 .bind(block_type)
@@ -830,10 +853,10 @@ pub async fn create_reusable(
         None => {
             let vals = (1..=9).map(ph).collect::<Vec<_>>().join(", ");
             let sql = format!(
-                "INSERT INTO reusable_blocks (id, name, block_type, content, description, created_by, updated_by, created_at, updated_at) VALUES ({vals})"
+                "INSERT INTO reusable_blocks (document_id, name, block_type, content, description, created_by, updated_by, created_at, updated_at) VALUES ({vals})"
             );
             sqlx::query(&sql)
-                .bind(id)
+                .bind(&document_id)
                 .bind(name)
                 .bind(block_type)
                 .bind(content)
@@ -847,7 +870,7 @@ pub async fn create_reusable(
         }
     }
 
-    find_reusable_by_id(pool, id, tenant_id)
+    find_reusable_by_document_id(pool, &document_id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("reusable_block"))
 }
@@ -855,7 +878,7 @@ pub async fn create_reusable(
 #[allow(clippy::too_many_arguments)]
 pub async fn update_reusable(
     pool: &crate::db::Pool,
-    id: &str,
+    id: i64,
     name: Option<&str>,
     block_type: Option<&str>,
     content: Option<&str>,
@@ -927,7 +950,7 @@ pub async fn update_reusable(
 
 pub async fn delete_reusable(
     pool: &crate::db::Pool,
-    id: &str,
+    id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let filter = tenant_filter_ph(tenant_id, 2);

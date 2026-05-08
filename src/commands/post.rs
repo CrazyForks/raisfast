@@ -8,31 +8,31 @@ pub struct CreatePostCmd {
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
     pub status: String,
-    pub created_by: String,
-    pub updated_by: Option<String>,
-    pub category_id: Option<String>,
-    pub tag_ids: Option<Vec<String>>,
+    pub created_by: i64,
+    pub updated_by: Option<i64>,
+    pub category_id: Option<i64>,
+    pub tag_ids: Option<Vec<i64>>,
 }
 
 /// 更新文章
 pub struct UpdatePostCmd {
-    pub id: String,
+    pub id: i64,
     pub title: Option<String>,
     pub slug: Option<String>,
     pub content: Option<String>,
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
     pub status: Option<String>,
-    pub category_id: Option<String>,
-    pub tag_ids: Option<Vec<String>>,
-    pub updated_by: Option<String>,
+    pub category_id: Option<i64>,
+    pub tag_ids: Option<Vec<i64>>,
+    pub updated_by: Option<i64>,
 }
 
 /// 查询已发布文章
 pub struct FindPublishedQuery {
     pub page: i64,
     pub page_size: i64,
-    pub category_id: Option<String>,
-    pub tag_id: Option<String>,
+    pub category_id: Option<i64>,
+    pub tag_id: Option<i64>,
     pub q: Option<String>,
 }

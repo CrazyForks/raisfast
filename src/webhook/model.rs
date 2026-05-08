@@ -10,7 +10,8 @@ use crate::errors::app_error::{AppError, AppResult};
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WebhookSubscription {
-    pub id: String,
+    pub id: i64,
+    pub document_id: String,
     pub tenant_id: Option<String>,
     pub url: String,
     pub secret: String,
@@ -22,7 +23,7 @@ pub struct WebhookSubscription {
 }
 
 crate::impl_from_row_opt_tenant!(WebhookSubscription {
-    required { id, url, secret, events, enabled, created_at, updated_at }
+    required { id, document_id, url, secret, events, enabled, created_at, updated_at }
     optional { description }
 });
 
@@ -59,7 +60,7 @@ pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
     match &sub.tenant_id {
         Some(tid) => {
             let sql = format!(
-                "INSERT INTO webhook_subscriptions (id, tenant_id, url, secret, events, enabled, description, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})",
+                "INSERT INTO webhook_subscriptions (document_id, tenant_id, url, secret, events, enabled, description, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})",
                 crate::db::dialect::ph(1),
                 crate::db::dialect::ph(2),
                 crate::db::dialect::ph(3),
@@ -71,7 +72,7 @@ pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
                 crate::db::dialect::ph(9)
             );
             sqlx::query(&sql)
-                .bind(&sub.id)
+                .bind(&sub.document_id)
                 .bind(tid)
                 .bind(&sub.url)
                 .bind(&sub.secret)
@@ -85,7 +86,7 @@ pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
         }
         None => {
             let sql = format!(
-                "INSERT INTO webhook_subscriptions (id, url, secret, events, enabled, description, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
+                "INSERT INTO webhook_subscriptions (document_id, url, secret, events, enabled, description, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
                 crate::db::dialect::ph(1),
                 crate::db::dialect::ph(2),
                 crate::db::dialect::ph(3),
@@ -96,7 +97,7 @@ pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
                 crate::db::dialect::ph(8)
             );
             sqlx::query(&sql)
-                .bind(&sub.id)
+                .bind(&sub.document_id)
                 .bind(&sub.url)
                 .bind(&sub.secret)
                 .bind(&sub.events)
@@ -153,7 +154,7 @@ pub async fn find_paginated(
 /// 根据 ID 查找订阅
 pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<WebhookSubscription> {
     let sql = format!(
-        "SELECT * FROM webhook_subscriptions WHERE id = {}",
+        "SELECT * FROM webhook_subscriptions WHERE document_id = {}",
         crate::db::dialect::ph(1)
     );
     sqlx::query_as::<_, WebhookSubscription>(&sql)
@@ -166,7 +167,7 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<WebhookSu
 /// 根据 ID 更新订阅
 pub async fn update(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppResult<()> {
     let sql = format!(
-        "UPDATE webhook_subscriptions SET url = {}, secret = {}, events = {}, enabled = {}, description = {}, updated_at = {} WHERE id = {}",
+        "UPDATE webhook_subscriptions SET url = {}, secret = {}, events = {}, enabled = {}, description = {}, updated_at = {} WHERE document_id = {}",
         crate::db::dialect::ph(1),
         crate::db::dialect::ph(2),
         crate::db::dialect::ph(3),
@@ -182,17 +183,16 @@ pub async fn update(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
         .bind(sub.enabled)
         .bind(&sub.description)
         .bind(&sub.updated_at)
-        .bind(&sub.id)
+        .bind(&sub.document_id)
         .execute(pool)
         .await?;
     AppError::expect_affected(&result, "webhook_subscription")?;
     Ok(())
 }
 
-/// 根据 ID 删除订阅
 pub async fn delete_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
     let sql = format!(
-        "DELETE FROM webhook_subscriptions WHERE id = {}",
+        "DELETE FROM webhook_subscriptions WHERE document_id = {}",
         crate::db::dialect::ph(1)
     );
     let result = sqlx::query(&sql).bind(id).execute(pool).await?;

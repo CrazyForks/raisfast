@@ -44,6 +44,7 @@ pub const COL_META: &str = "__meta";
 pub const COL_TENANT_ID: &str = "tenant_id";
 /// 主键列
 pub const COL_ID: &str = "id";
+pub const COL_DOCUMENT_ID: &str = "document_id";
 
 // ─── Auth Header ───
 

@@ -163,7 +163,7 @@ pub struct UserResponse {
 impl From<User> for UserResponse {
     fn from(user: User) -> Self {
         Self {
-            id: user.id,
+            id: user.document_id,
             email: user.email,
             username: user.username,
             role: user.role,
@@ -223,7 +223,6 @@ pub struct UpdatePostRequest {
     pub tag_ids: Option<Vec<String>>,
 }
 
-/// 文章 API 响应
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Clone, ToSchema)]
 #[non_exhaustive]
@@ -235,9 +234,9 @@ pub struct PostResponse {
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
     pub status: String,
-    pub created_by: String,
+    pub created_by: i64,
     pub author_name: Option<String>,
-    pub category_id: Option<String>,
+    pub category_id: Option<i64>,
     pub category_name: Option<String>,
     pub tags: Vec<crate::models::post::TagBrief>,
     pub view_count: i64,
@@ -245,9 +244,7 @@ pub struct PostResponse {
     pub created_at: String,
     pub updated_at: String,
     pub published_at: Option<String>,
-    /// 搜索时标题高亮 HTML（含 `<em>` 标签），非搜索时为 None
     pub title_highlight: Option<String>,
-    /// 搜索时内容摘要高亮 HTML，非搜索时为 None
     pub excerpt_highlight: Option<String>,
 }
 
@@ -334,8 +331,8 @@ pub struct MediaResponse {
 #[must_use]
 pub fn media_to_response(media: &Media, base_url: &str) -> MediaResponse {
     MediaResponse {
-        id: media.id.clone(),
-        user_id: media.user_id.clone(),
+        id: media.document_id.clone(),
+        user_id: media.user_id.to_string(),
         filename: media.filename.clone(),
         url: format!("{}/uploads/{}", base_url, media.filepath),
         mimetype: media.mimetype.clone(),
@@ -350,8 +347,8 @@ pub fn media_to_response(media: &Media, base_url: &str) -> MediaResponse {
 #[must_use]
 pub fn media_to_response_with_url(media: &Media, url: &str) -> MediaResponse {
     MediaResponse {
-        id: media.id.clone(),
-        user_id: media.user_id.clone(),
+        id: media.document_id.clone(),
+        user_id: media.user_id.to_string(),
         filename: media.filename.clone(),
         url: url.to_string(),
         mimetype: media.mimetype.clone(),
@@ -433,9 +430,9 @@ fn validate_comment_status(status: &str) -> Result<(), validator::ValidationErro
 }
 
 fn validate_optional_uuid(id: &str) -> Result<(), validator::ValidationError> {
-    if id.parse::<uuid::Uuid>().is_err() {
-        let mut err = validator::ValidationError::new("invalid_uuid");
-        err.message = Some("invalid UUID format".into());
+    if id.parse::<uuid::Uuid>().is_err() && id.parse::<i64>().is_err() {
+        let mut err = validator::ValidationError::new("invalid_id");
+        err.message = Some("invalid ID format".into());
         return Err(err);
     }
     Ok(())
@@ -443,9 +440,9 @@ fn validate_optional_uuid(id: &str) -> Result<(), validator::ValidationError> {
 
 fn validate_uuid_vec(ids: &[String]) -> Result<(), validator::ValidationError> {
     for id in ids {
-        if id.parse::<uuid::Uuid>().is_err() {
-            let mut err = validator::ValidationError::new("invalid_uuid");
-            err.message = Some("invalid UUID format".into());
+        if id.parse::<uuid::Uuid>().is_err() && id.parse::<i64>().is_err() {
+            let mut err = validator::ValidationError::new("invalid_id");
+            err.message = Some("invalid ID format".into());
             return Err(err);
         }
     }

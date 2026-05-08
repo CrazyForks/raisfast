@@ -10,7 +10,7 @@ define_sqlx_repo!(SqlxRefreshTokenRepository);
 
 #[async_trait::async_trait]
 impl RefreshTokenRepository for SqlxRefreshTokenRepository {
-    async fn create_token(&self, user_id: &str, token: &str, expires_at: &str) -> AppResult<()> {
+    async fn create_token(&self, user_id: i64, token: &str, expires_at: &str) -> AppResult<()> {
         refresh_token::create_token(&self.pool, user_id, token, expires_at).await
     }
 
@@ -22,7 +22,7 @@ impl RefreshTokenRepository for SqlxRefreshTokenRepository {
         refresh_token::delete_by_token(&self.pool, token).await
     }
 
-    async fn delete_by_user(&self, user_id: &str) -> AppResult<()> {
+    async fn delete_by_user(&self, user_id: i64) -> AppResult<()> {
         refresh_token::delete_by_user(&self.pool, user_id).await
     }
 }

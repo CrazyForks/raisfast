@@ -82,10 +82,11 @@ async fn change_password_wrong_old() {
 async fn get_user_by_id() {
     let (mut app, state) = test_app().await;
     let _ = register_and_login(&mut app, "pub@test.com", "pubuser", "Password123").await;
-    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE email = 'pub@test.com'")
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
+    let user_id: String =
+        sqlx::query_scalar("SELECT document_id FROM users WHERE email = 'pub@test.com'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
     let (status, body): (StatusCode, Value) =
         send(&mut app, get_req(&format!("/api/v1/users/{user_id}"))).await;
     assert!(status.is_success());
@@ -95,7 +96,7 @@ async fn get_user_by_id() {
 #[tokio::test]
 async fn get_user_not_found() {
     let (mut app, _) = test_app().await;
-    let fake = uuid::Uuid::now_v7().to_string();
+    let fake = "nonexistent-user-id";
     let (status, _): (StatusCode, Value) =
         send(&mut app, get_req(&format!("/api/v1/users/{fake}"))).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -105,7 +106,7 @@ async fn get_user_not_found() {
 async fn list_users_admin_only() {
     let (mut app, state) = test_app().await;
     let admin_id = create_admin(&state.pool).await;
-    let admin_token = make_token(&admin_id, "admin");
+    let admin_token = make_token(&admin_id.1, admin_id.0, "admin");
     let (reader_tok, _) =
         register_and_login(&mut app, "reader@test.com", "reader", "Password123").await;
 

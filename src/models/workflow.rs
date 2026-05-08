@@ -48,7 +48,8 @@ pub struct StepDef {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct WorkflowDefinition {
-    pub id: String,
+    pub id: i64,
+    pub document_id: String,
     pub name: String,
     pub description: Option<String>,
     pub steps: String,
@@ -70,8 +71,9 @@ impl WorkflowDefinition {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct WorkflowInstance {
-    pub id: String,
-    pub definition_id: String,
+    pub id: i64,
+    pub document_id: String,
+    pub definition_id: i64,
     pub status: String,
     pub current_step: Option<String>,
     pub context: String,
@@ -92,8 +94,9 @@ impl WorkflowInstance {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct StepLog {
-    pub id: String,
-    pub instance_id: String,
+    pub id: i64,
+    pub document_id: String,
+    pub instance_id: i64,
     pub step_id: String,
     pub step_name: String,
     pub status: String,
@@ -107,7 +110,7 @@ pub struct StepLog {
 /// 创建工作流定义
 pub async fn create_definition(
     pool: &Pool,
-    id: &str,
+    document_id: &str,
     name: &str,
     description: Option<&str>,
     steps: &str,
@@ -115,7 +118,7 @@ pub async fn create_definition(
 ) -> anyhow::Result<WorkflowDefinition> {
     let now = crate::utils::tz::now_str();
     let sql = format!(
-        "INSERT INTO workflow_definitions (id, name, description, steps, initial_step, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
+        "INSERT INTO workflow_definitions (document_id, name, description, steps, initial_step, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
@@ -125,7 +128,7 @@ pub async fn create_definition(
         ph(7)
     );
     sqlx::query(&sql)
-        .bind(id)
+        .bind(document_id)
         .bind(name)
         .bind(description)
         .bind(steps)
@@ -134,27 +137,22 @@ pub async fn create_definition(
         .bind(&now)
         .execute(pool)
         .await?;
-    Ok(WorkflowDefinition {
-        id: id.to_string(),
-        name: name.to_string(),
-        description: description.map(String::from),
-        steps: steps.to_string(),
-        initial_step: initial_step.to_string(),
-        version: 1,
-        enabled: true,
-        created_at: now.clone(),
-        updated_at: now,
-    })
+    get_definition(pool, document_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("failed to fetch created workflow definition"))
 }
 
 /// 获取工作流定义
-pub async fn get_definition(pool: &Pool, id: &str) -> anyhow::Result<Option<WorkflowDefinition>> {
+pub async fn get_definition(
+    pool: &Pool,
+    document_id: &str,
+) -> anyhow::Result<Option<WorkflowDefinition>> {
     let sql = format!(
-        "SELECT id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions WHERE id = {}",
+        "SELECT id, document_id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions WHERE document_id = {}",
         ph(1)
     );
     let row = sqlx::query_as::<_, WorkflowDefinition>(&sql)
-        .bind(id)
+        .bind(document_id)
         .fetch_optional(pool)
         .await?;
     Ok(row)
@@ -162,7 +160,7 @@ pub async fn get_definition(pool: &Pool, id: &str) -> anyhow::Result<Option<Work
 
 /// 列出所有工作流定义
 pub async fn list_definitions(pool: &Pool) -> anyhow::Result<Vec<WorkflowDefinition>> {
-    let sql = "SELECT id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions ORDER BY created_at DESC";
+    let sql = "SELECT id, document_id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions ORDER BY created_at DESC";
     let rows = sqlx::query_as::<_, WorkflowDefinition>(sql)
         .fetch_all(pool)
         .await?;
@@ -170,27 +168,27 @@ pub async fn list_definitions(pool: &Pool) -> anyhow::Result<Vec<WorkflowDefinit
 }
 
 /// 删除工作流定义
-pub async fn delete_definition(pool: &Pool, id: &str) -> anyhow::Result<()> {
+pub async fn delete_definition(pool: &Pool, document_id: &str) -> anyhow::Result<()> {
     let sql = format!(
-        "DELETE FROM workflow_definitions WHERE id = {}",
+        "DELETE FROM workflow_definitions WHERE document_id = {}",
         ph(1)
     );
-    sqlx::query(&sql).bind(id).execute(pool).await?;
+    sqlx::query(&sql).bind(document_id).execute(pool).await?;
     Ok(())
 }
 
 /// 创建工作流实例
 pub async fn create_instance(
     pool: &Pool,
-    id: &str,
-    definition_id: &str,
+    document_id: &str,
+    definition_id: i64,
     context: &serde_json::Value,
     triggered_by: Option<&str>,
 ) -> anyhow::Result<WorkflowInstance> {
     let now = crate::utils::tz::now_str();
     let ctx_str = serde_json::to_string(context)?;
     let sql = format!(
-        "INSERT INTO workflow_instances (id, definition_id, status, context, triggered_by, started_at, updated_at) VALUES ({}, {}, 'running', {}, {}, {}, {})",
+        "INSERT INTO workflow_instances (document_id, definition_id, status, context, triggered_by, started_at, updated_at) VALUES ({}, {}, 'running', {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
@@ -199,7 +197,7 @@ pub async fn create_instance(
         ph(6)
     );
     sqlx::query(&sql)
-        .bind(id)
+        .bind(document_id)
         .bind(definition_id)
         .bind(&ctx_str)
         .bind(triggered_by)
@@ -207,27 +205,22 @@ pub async fn create_instance(
         .bind(&now)
         .execute(pool)
         .await?;
-    Ok(WorkflowInstance {
-        id: id.to_string(),
-        definition_id: definition_id.to_string(),
-        status: "running".to_string(),
-        current_step: None,
-        context: ctx_str,
-        triggered_by: triggered_by.map(String::from),
-        started_at: now.clone(),
-        completed_at: None,
-        updated_at: now,
-    })
+    get_instance(pool, document_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("failed to fetch created workflow instance"))
 }
 
 /// 获取工作流实例
-pub async fn get_instance(pool: &Pool, id: &str) -> anyhow::Result<Option<WorkflowInstance>> {
+pub async fn get_instance(
+    pool: &Pool,
+    document_id: &str,
+) -> anyhow::Result<Option<WorkflowInstance>> {
     let sql = format!(
-        "SELECT id, definition_id, status, current_step, context, triggered_by, started_at, completed_at, updated_at FROM workflow_instances WHERE id = {}",
+        "SELECT id, document_id, definition_id, status, current_step, context, triggered_by, started_at, completed_at, updated_at FROM workflow_instances WHERE document_id = {}",
         ph(1)
     );
     let row = sqlx::query_as::<_, WorkflowInstance>(&sql)
-        .bind(id)
+        .bind(document_id)
         .fetch_optional(pool)
         .await?;
     Ok(row)
@@ -236,14 +229,14 @@ pub async fn get_instance(pool: &Pool, id: &str) -> anyhow::Result<Option<Workfl
 /// 列出工作流实例
 pub async fn list_instances(
     pool: &Pool,
-    definition_id: Option<&str>,
+    definition_id: Option<i64>,
     status: Option<&str>,
     page: i64,
     page_size: i64,
 ) -> anyhow::Result<(Vec<WorkflowInstance>, i64)> {
     let offset = (page - 1) * page_size;
     let sql = format!(
-        "SELECT id, definition_id, status, current_step, context, triggered_by, started_at, completed_at, updated_at FROM workflow_instances WHERE ({} IS NULL OR definition_id = {}) AND ({} IS NULL OR status = {}) ORDER BY started_at DESC LIMIT {} OFFSET {}",
+        "SELECT id, document_id, definition_id, status, current_step, context, triggered_by, started_at, completed_at, updated_at FROM workflow_instances WHERE ({} IS NULL OR definition_id = {}) AND ({} IS NULL OR status = {}) ORDER BY started_at DESC LIMIT {} OFFSET {}",
         ph(1),
         ph(2),
         ph(3),
@@ -282,7 +275,7 @@ pub async fn list_instances(
 /// 更新实例状态和当前步骤
 pub async fn update_instance_step(
     pool: &Pool,
-    id: &str,
+    document_id: &str,
     status: &str,
     current_step: Option<&str>,
     context: &serde_json::Value,
@@ -295,7 +288,7 @@ pub async fn update_instance_step(
         None
     };
     let sql = format!(
-        "UPDATE workflow_instances SET status = {}, current_step = {}, context = {}, completed_at = COALESCE({}, completed_at), updated_at = {} WHERE id = {}",
+        "UPDATE workflow_instances SET status = {}, current_step = {}, context = {}, completed_at = COALESCE({}, completed_at), updated_at = {} WHERE document_id = {}",
         ph(1),
         ph(2),
         ph(3),
@@ -309,7 +302,7 @@ pub async fn update_instance_step(
         .bind(&ctx_str)
         .bind(&completed_at)
         .bind(&now)
-        .bind(id)
+        .bind(document_id)
         .execute(pool)
         .await?;
     Ok(())
@@ -318,8 +311,8 @@ pub async fn update_instance_step(
 /// 创建步骤执行日志
 pub async fn create_step_log(
     pool: &Pool,
-    id: &str,
-    instance_id: &str,
+    document_id: &str,
+    instance_id: i64,
     step_id: &str,
     step_name: &str,
     input: Option<&serde_json::Value>,
@@ -327,7 +320,7 @@ pub async fn create_step_log(
     let now = crate::utils::tz::now_str();
     let input_str = input.map(|v| serde_json::to_string(v).unwrap_or_default());
     let sql = format!(
-        "INSERT INTO workflow_step_logs (id, instance_id, step_id, step_name, status, input, started_at) VALUES ({}, {}, {}, {}, 'running', {}, {})",
+        "INSERT INTO workflow_step_logs (document_id, instance_id, step_id, step_name, status, input, started_at) VALUES ({}, {}, {}, {}, 'running', {}, {})",
         ph(1),
         ph(2),
         ph(3),
@@ -336,7 +329,7 @@ pub async fn create_step_log(
         ph(6)
     );
     sqlx::query(&sql)
-        .bind(id)
+        .bind(document_id)
         .bind(instance_id)
         .bind(step_id)
         .bind(step_name)
@@ -344,30 +337,27 @@ pub async fn create_step_log(
         .bind(&now)
         .execute(pool)
         .await?;
-    Ok(StepLog {
-        id: id.to_string(),
-        instance_id: instance_id.to_string(),
-        step_id: step_id.to_string(),
-        step_name: step_name.to_string(),
-        status: "running".to_string(),
-        input: input_str,
-        output: None,
-        error: None,
-        started_at: now,
-        completed_at: None,
-    })
+    let fetch_sql = format!(
+        "SELECT id, document_id, instance_id, step_id, step_name, status, input, output, error, started_at, completed_at FROM workflow_step_logs WHERE document_id = {}",
+        ph(1)
+    );
+    sqlx::query_as::<_, StepLog>(&fetch_sql)
+        .bind(document_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to fetch created step log: {e}"))
 }
 
 /// 完成步骤执行日志
 pub async fn complete_step_log(
     pool: &Pool,
-    id: &str,
+    document_id: &str,
     output: Option<&serde_json::Value>,
 ) -> anyhow::Result<()> {
     let now = crate::utils::tz::now_str();
     let output_str = output.map(|v| serde_json::to_string(v).unwrap_or_default());
     let sql = format!(
-        "UPDATE workflow_step_logs SET status = 'completed', output = {}, completed_at = {} WHERE id = {}",
+        "UPDATE workflow_step_logs SET status = 'completed', output = {}, completed_at = {} WHERE document_id = {}",
         ph(1),
         ph(2),
         ph(3)
@@ -375,17 +365,17 @@ pub async fn complete_step_log(
     sqlx::query(&sql)
         .bind(&output_str)
         .bind(&now)
-        .bind(id)
+        .bind(document_id)
         .execute(pool)
         .await?;
     Ok(())
 }
 
 /// 标记步骤执行失败
-pub async fn fail_step_log(pool: &Pool, id: &str, error: &str) -> anyhow::Result<()> {
+pub async fn fail_step_log(pool: &Pool, document_id: &str, error: &str) -> anyhow::Result<()> {
     let now = crate::utils::tz::now_str();
     let sql = format!(
-        "UPDATE workflow_step_logs SET status = 'failed', error = {}, completed_at = {} WHERE id = {}",
+        "UPDATE workflow_step_logs SET status = 'failed', error = {}, completed_at = {} WHERE document_id = {}",
         ph(1),
         ph(2),
         ph(3)
@@ -393,16 +383,16 @@ pub async fn fail_step_log(pool: &Pool, id: &str, error: &str) -> anyhow::Result
     sqlx::query(&sql)
         .bind(error)
         .bind(&now)
-        .bind(id)
+        .bind(document_id)
         .execute(pool)
         .await?;
     Ok(())
 }
 
 /// 列出实例的步骤日志
-pub async fn list_step_logs(pool: &Pool, instance_id: &str) -> anyhow::Result<Vec<StepLog>> {
+pub async fn list_step_logs(pool: &Pool, instance_id: i64) -> anyhow::Result<Vec<StepLog>> {
     let sql = format!(
-        "SELECT id, instance_id, step_id, step_name, status, input, output, error, started_at, completed_at FROM workflow_step_logs WHERE instance_id = {} ORDER BY started_at ASC",
+        "SELECT id, document_id, instance_id, step_id, step_name, status, input, output, error, started_at, completed_at FROM workflow_step_logs WHERE instance_id = {} ORDER BY started_at ASC",
         ph(1)
     );
     let rows = sqlx::query_as::<_, StepLog>(&sql)

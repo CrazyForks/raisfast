@@ -2,7 +2,7 @@ use super::*;
 
 fn admin_token() -> String {
     let id = uuid::Uuid::now_v7().to_string();
-    make_token(&id, "admin")
+    make_token(&id, 1, "admin")
 }
 
 #[tokio::test]

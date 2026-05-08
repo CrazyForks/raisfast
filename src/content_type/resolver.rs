@@ -75,17 +75,17 @@ async fn resolve_many_to_one_batch(
         .clone()
         .unwrap_or_else(|| format!("{}_id", field.name));
 
-    let mut fk_ids: Vec<String> = Vec::new();
+    let mut fk_ids: Vec<i64> = Vec::new();
     for item in &*items {
         let Some(obj) = item.as_object() else {
             continue;
         };
         let Some(fk_val) = obj.get(&fk) else { continue };
-        let Some(fk_id) = fk_val.as_str() else {
+        let Some(fk_id) = fk_val.as_i64() else {
             continue;
         };
-        if !fk_id.is_empty() {
-            fk_ids.push(fk_id.to_string());
+        if fk_id > 0 {
+            fk_ids.push(fk_id);
         }
     }
     if fk_ids.is_empty() {
@@ -96,12 +96,12 @@ async fn resolve_many_to_one_batch(
     let columns = fetch_column_names(pool, target_table).await;
     let select_cols = columns.join(", ");
 
-    let deduped_ids: Vec<String> = {
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let deduped_ids: Vec<i64> = {
+        let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
         let mut deduped = Vec::new();
         for id in &fk_ids {
-            if seen.insert(id.clone()) {
-                deduped.push(id.clone());
+            if seen.insert(*id) {
+                deduped.push(*id);
             }
         }
         deduped
@@ -124,11 +124,11 @@ async fn resolve_many_to_one_batch(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("batch relation query failed: {e}")))?;
 
-    let mut lookup: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+    let mut lookup: std::collections::HashMap<i64, Value> = std::collections::HashMap::new();
     for row in &rows {
         let val = super::repository::row_to_value(row, &columns);
-        if let Some(id) = val.get("id").and_then(|v| v.as_str()) {
-            lookup.insert(id.to_string(), val);
+        if let Some(id) = val.get("id").and_then(|v| v.as_i64()) {
+            lookup.insert(id, val);
         }
     }
 
@@ -137,13 +137,13 @@ async fn resolve_many_to_one_batch(
             continue;
         };
         let Some(fk_val) = obj.get(&fk) else { continue };
-        let Some(fk_id) = fk_val.as_str() else {
+        let Some(fk_id) = fk_val.as_i64() else {
             continue;
         };
-        if fk_id.is_empty() {
+        if fk_id == 0 {
             continue;
         }
-        if let Some(target_data) = lookup.get(fk_id) {
+        if let Some(target_data) = lookup.get(&fk_id) {
             obj.insert(field.name.clone(), target_data.clone());
         }
     }
@@ -163,26 +163,19 @@ async fn resolve_one_to_many_batch(
         .clone()
         .unwrap_or_else(|| format!("{}_id", ct.singular));
 
-    let item_ids: Vec<String> = items
+    let item_ids: Vec<i64> = items
         .iter()
-        .filter_map(|item| {
-            item.get("id")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        })
-        .filter(|s| !s.is_empty())
+        .filter_map(|item| item.get("id").and_then(|v| v.as_i64()))
+        .filter(|&id| id > 0)
         .collect();
 
     if item_ids.is_empty() {
         return Ok(());
     }
 
-    let deduped_ids: Vec<String> = {
+    let deduped_ids: Vec<i64> = {
         let mut seen = std::collections::HashSet::new();
-        item_ids
-            .into_iter()
-            .filter(|id| seen.insert(id.clone()))
-            .collect()
+        item_ids.into_iter().filter(|id| seen.insert(*id)).collect()
     };
 
     let target_table = &rel.target;
@@ -206,19 +199,18 @@ async fn resolve_one_to_many_batch(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("batch one_to_many query failed: {e}")))?;
 
-    let mut lookup: std::collections::HashMap<String, Vec<Value>> =
-        std::collections::HashMap::new();
+    let mut lookup: std::collections::HashMap<i64, Vec<Value>> = std::collections::HashMap::new();
     for row in &rows {
-        let fk_val: String = row.try_get("__fk").unwrap_or_default();
+        let fk_val: i64 = row.try_get("__fk").unwrap_or(0);
         let val = super::repository::row_to_value(row, &columns);
         lookup.entry(fk_val).or_default().push(val);
     }
 
     for item in items.iter_mut() {
-        let Some(item_id) = item.get("id").and_then(|v| v.as_str()) else {
+        let Some(item_id) = item.get("id").and_then(|v| v.as_i64()) else {
             continue;
         };
-        let targets = lookup.get(item_id).cloned().unwrap_or_default();
+        let targets = lookup.get(&item_id).cloned().unwrap_or_default();
         if let Some(obj) = item.as_object_mut() {
             obj.insert(field_name.to_string(), json!(targets));
         }
@@ -239,26 +231,19 @@ async fn resolve_many_to_many_batch(
         .clone()
         .unwrap_or_else(|| format!("{}_{}", ct.table, rel.target));
 
-    let item_ids: Vec<String> = items
+    let item_ids: Vec<i64> = items
         .iter()
-        .filter_map(|item| {
-            item.get("id")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        })
-        .filter(|s| !s.is_empty())
+        .filter_map(|item| item.get("id").and_then(|v| v.as_i64()))
+        .filter(|&id| id > 0)
         .collect();
 
     if item_ids.is_empty() {
         return Ok(());
     }
 
-    let deduped_ids: Vec<String> = {
+    let deduped_ids: Vec<i64> = {
         let mut seen = std::collections::HashSet::new();
-        item_ids
-            .into_iter()
-            .filter(|id| seen.insert(id.clone()))
-            .collect()
+        item_ids.into_iter().filter(|id| seen.insert(*id)).collect()
     };
 
     let target_table = &rel.target;
@@ -287,19 +272,18 @@ async fn resolve_many_to_many_batch(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("batch many_to_many query failed: {e}")))?;
 
-    let mut lookup: std::collections::HashMap<String, Vec<Value>> =
-        std::collections::HashMap::new();
+    let mut lookup: std::collections::HashMap<i64, Vec<Value>> = std::collections::HashMap::new();
     for row in &rows {
-        let source_id: String = row.try_get("__source_id").unwrap_or_default();
+        let source_id: i64 = row.try_get("__source_id").unwrap_or(0);
         let val = super::repository::row_to_value(row, &columns);
         lookup.entry(source_id).or_default().push(val);
     }
 
     for item in items.iter_mut() {
-        let Some(item_id) = item.get("id").and_then(|v| v.as_str()) else {
+        let Some(item_id) = item.get("id").and_then(|v| v.as_i64()) else {
             continue;
         };
-        let targets = lookup.get(item_id).cloned().unwrap_or_default();
+        let targets = lookup.get(&item_id).cloned().unwrap_or_default();
         if let Some(obj) = item.as_object_mut() {
             obj.insert(field_name.to_string(), json!(targets));
         }
@@ -382,47 +366,47 @@ through = "ct_resolve_posts_tags"
         let pool = crate::db::Pool::connect(":memory:").await.unwrap();
 
         sqlx::query(
-            "CREATE TABLE ct_resolve_users (id TEXT PRIMARY KEY, name TEXT, slug TEXT, title TEXT)",
+            "CREATE TABLE ct_resolve_users (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, name TEXT, slug TEXT, title TEXT)",
         )
         .execute(&pool)
         .await
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE ct_resolve_tags (id TEXT PRIMARY KEY, name TEXT, slug TEXT, title TEXT)",
+            "CREATE TABLE ct_resolve_tags (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, name TEXT, slug TEXT, title TEXT)",
         )
         .execute(&pool)
         .await
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE ct_resolve_posts (id TEXT PRIMARY KEY, title TEXT, author_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT, updated_by TEXT)",
+            "CREATE TABLE ct_resolve_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, title TEXT, author_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT, updated_by TEXT)",
         )
         .execute(&pool)
         .await
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE ct_resolve_posts_tags (post_id TEXT NOT NULL, ct_resolve_tags_id TEXT NOT NULL, PRIMARY KEY (post_id, ct_resolve_tags_id))",
+            "CREATE TABLE ct_resolve_posts_tags (post_id INTEGER NOT NULL, ct_resolve_tags_id INTEGER NOT NULL, PRIMARY KEY (post_id, ct_resolve_tags_id))",
         )
         .execute(&pool)
         .await
         .unwrap();
 
-        sqlx::query("INSERT INTO ct_resolve_users (id, name, slug, title) VALUES ('u1', 'Alice', 'alice', '')")
+        sqlx::query("INSERT INTO ct_resolve_users (id, document_id, name, slug, title) VALUES (1, 'u1', 'Alice', 'alice', '')")
             .execute(&pool)
             .await
             .unwrap();
 
         sqlx::query(
-            "INSERT INTO ct_resolve_tags (id, name, slug, title) VALUES ('t1', 'Rust', 'rust', '')",
+            "INSERT INTO ct_resolve_tags (id, document_id, name, slug, title) VALUES (1, 't1', 'Rust', 'rust', '')",
         )
         .execute(&pool)
         .await
         .unwrap();
 
         sqlx::query(
-            "INSERT INTO ct_resolve_tags (id, name, slug, title) VALUES ('t2', 'Web', 'web', '')",
+            "INSERT INTO ct_resolve_tags (id, document_id, name, slug, title) VALUES (2, 't2', 'Web', 'web', '')",
         )
         .execute(&pool)
         .await
@@ -437,9 +421,10 @@ through = "ct_resolve_posts_tags"
         let ct = make_ct_with_relations();
 
         let mut items = vec![serde_json::json!({
-            "id": "p1",
+            "id": 1,
+            "document_id": "p1",
             "title": "Hello",
-            "author_id": "u1",
+            "author_id": 1,
             "created_at": "2024-01-01T00:00:00Z",
             "updated_at": "2024-01-01T00:00:00Z"
         })];
@@ -458,22 +443,30 @@ through = "ct_resolve_posts_tags"
         let ct = make_ct_with_relations();
 
         sqlx::query(
-            "INSERT INTO ct_resolve_posts_tags (post_id, ct_resolve_tags_id) VALUES ('p1', 't1')",
+            "INSERT INTO ct_resolve_posts (id, document_id, title, author_id, created_at, updated_at) VALUES (1, 'p1', 'Hello', 1, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO ct_resolve_posts_tags (post_id, ct_resolve_tags_id) VALUES (1, 1)",
         )
         .execute(&pool)
         .await
         .unwrap();
         sqlx::query(
-            "INSERT INTO ct_resolve_posts_tags (post_id, ct_resolve_tags_id) VALUES ('p1', 't2')",
+            "INSERT INTO ct_resolve_posts_tags (post_id, ct_resolve_tags_id) VALUES (1, 2)",
         )
         .execute(&pool)
         .await
         .unwrap();
 
         let mut items = vec![serde_json::json!({
-            "id": "p1",
+            "id": 1,
+            "document_id": "p1",
             "title": "Hello",
-            "author_id": "u1",
+            "author_id": 1,
             "created_at": "2024-01-01T00:00:00Z",
             "updated_at": "2024-01-01T00:00:00Z"
         })];
@@ -495,9 +488,10 @@ through = "ct_resolve_posts_tags"
         let ct = make_ct_with_relations();
 
         let mut items = vec![serde_json::json!({
-            "id": "p1",
+            "id": 1,
+            "document_id": "p1",
             "title": "Hello",
-            "author_id": "u1",
+            "author_id": 1,
             "created_at": "2024-01-01T00:00:00Z",
             "updated_at": "2024-01-01T00:00:00Z"
         })];

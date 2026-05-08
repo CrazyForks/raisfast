@@ -2,8 +2,8 @@ use super::*;
 
 async fn admin_token() -> String {
     let pool = test_pool().await;
-    let id = create_admin(&pool).await;
-    make_token(&id, "admin")
+    let (int_id, doc_id) = create_admin(&pool).await;
+    make_token(&doc_id, int_id, "admin")
 }
 
 #[tokio::test]

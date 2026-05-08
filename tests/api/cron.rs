@@ -6,9 +6,9 @@ async fn cron_app() -> (axum::Router, AppState) {
 
 #[tokio::test]
 async fn list_returns_empty() {
-    let admin_id = create_admin_helper().await;
+    let (int_id, doc_id) = create_admin_helper().await;
     let (mut app, _) = cron_app().await;
-    let tok = make_token(&admin_id, "admin");
+    let tok = make_token(&doc_id, int_id, "admin");
     let (status, body) = send(&mut app, get_auth("/api/v1/admin/crons", &tok)).await;
     assert!(status.is_success());
     assert_eq!(body["code"], 0);
@@ -17,9 +17,9 @@ async fn list_returns_empty() {
 
 #[tokio::test]
 async fn create_and_get() {
-    let admin_id = create_admin_helper().await;
+    let (int_id, doc_id) = create_admin_helper().await;
     let (mut app, _) = cron_app().await;
-    let tok = make_token(&admin_id, "admin");
+    let tok = make_token(&doc_id, int_id, "admin");
 
     let (status, body) = send(
         &mut app,
@@ -41,7 +41,7 @@ async fn create_and_get() {
     assert_eq!(body["data"]["job_type"], "generate_sitemap");
     assert!(body["data"]["enabled"].as_bool().unwrap());
 
-    let id = body["data"]["id"].as_str().unwrap();
+    let id = body["data"]["document_id"].as_str().unwrap();
 
     let (status, body) = send(
         &mut app,
@@ -49,14 +49,14 @@ async fn create_and_get() {
     )
     .await;
     assert!(status.is_success());
-    assert_eq!(body["data"]["id"], id);
+    assert_eq!(body["data"]["document_id"], id);
 }
 
 #[tokio::test]
 async fn update_changes_fields() {
-    let admin_id = create_admin_helper().await;
+    let (int_id, doc_id) = create_admin_helper().await;
     let (mut app, _) = cron_app().await;
-    let tok = make_token(&admin_id, "admin");
+    let tok = make_token(&doc_id, int_id, "admin");
 
     let (_, body) = send(
         &mut app,
@@ -72,7 +72,7 @@ async fn update_changes_fields() {
         ),
     )
     .await;
-    let id = body["data"]["id"].as_str().unwrap();
+    let id = body["data"]["document_id"].as_str().unwrap();
 
     let (status, body) = send(
         &mut app,
@@ -90,9 +90,9 @@ async fn update_changes_fields() {
 
 #[tokio::test]
 async fn toggle_enables_and_disables() {
-    let admin_id = create_admin_helper().await;
+    let (int_id, doc_id) = create_admin_helper().await;
     let (mut app, _) = cron_app().await;
-    let tok = make_token(&admin_id, "admin");
+    let tok = make_token(&doc_id, int_id, "admin");
 
     let (_, body) = send(
         &mut app,
@@ -108,7 +108,7 @@ async fn toggle_enables_and_disables() {
         ),
     )
     .await;
-    let id = body["data"]["id"].as_str().unwrap();
+    let id = body["data"]["document_id"].as_str().unwrap();
 
     let (status, _) = send(
         &mut app,
@@ -131,9 +131,9 @@ async fn toggle_enables_and_disables() {
 
 #[tokio::test]
 async fn delete_removes_schedule() {
-    let admin_id = create_admin_helper().await;
+    let (int_id, doc_id) = create_admin_helper().await;
     let (mut app, _) = cron_app().await;
-    let tok = make_token(&admin_id, "admin");
+    let tok = make_token(&doc_id, int_id, "admin");
 
     let (_, body) = send(
         &mut app,
@@ -149,7 +149,7 @@ async fn delete_removes_schedule() {
         ),
     )
     .await;
-    let id = body["data"]["id"].as_str().unwrap();
+    let id = body["data"]["document_id"].as_str().unwrap();
 
     let (status, _) = send(
         &mut app,
@@ -165,14 +165,14 @@ async fn delete_removes_schedule() {
 
     let (_, list_body) = send(&mut app, get_auth("/api/v1/admin/crons", &tok)).await;
     let items = list_body["data"]["items"].as_array().unwrap();
-    assert!(items.iter().all(|s| s["id"] != id));
+    assert!(items.iter().all(|s| s["document_id"] != id));
 }
 
 #[tokio::test]
 async fn logs_returns_empty_initially() {
-    let admin_id = create_admin_helper().await;
+    let (int_id, doc_id) = create_admin_helper().await;
     let (mut app, _) = cron_app().await;
-    let tok = make_token(&admin_id, "admin");
+    let tok = make_token(&doc_id, int_id, "admin");
 
     let (status, body) = send(&mut app, get_auth("/api/v1/admin/crons/logs", &tok)).await;
     assert!(status.is_success());
@@ -181,9 +181,9 @@ async fn logs_returns_empty_initially() {
 
 #[tokio::test]
 async fn validation_rejects_empty_label() {
-    let admin_id = create_admin_helper().await;
+    let (int_id, doc_id) = create_admin_helper().await;
     let (mut app, _) = cron_app().await;
-    let tok = make_token(&admin_id, "admin");
+    let tok = make_token(&doc_id, int_id, "admin");
 
     let (status, body) = send(
         &mut app,
@@ -202,7 +202,7 @@ async fn validation_rejects_empty_label() {
     assert!(!status.is_success() || body["code"] != 0);
 }
 
-async fn create_admin_helper() -> String {
+async fn create_admin_helper() -> (i64, String) {
     let pool = test_pool().await;
     create_admin(&pool).await
 }

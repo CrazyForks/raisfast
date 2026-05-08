@@ -41,8 +41,9 @@ pub struct PermissionEntry {
 /// 面向 handler 的 Permission 视图（fields/conditions 已反序列化）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionView {
-    pub id: String,
-    pub role_id: String,
+    pub id: i64,
+    pub document_id: String,
+    pub role_id: i64,
     pub action: String,
     pub subject: String,
     pub fields: Option<Vec<String>>,
@@ -52,8 +53,9 @@ pub struct PermissionView {
 
 fn perm_to_view(p: &Permission) -> PermissionView {
     PermissionView {
-        id: p.id.clone(),
-        role_id: p.role_id.clone(),
+        id: p.id,
+        document_id: p.document_id.clone(),
+        role_id: p.role_id,
         action: p.action.clone(),
         subject: p.subject.clone(),
         fields: p.fields.as_ref().and_then(|f| serde_json::from_str(f).ok()),
@@ -117,20 +119,29 @@ impl RbacService {
 
     /// 获取角色的所有权限（fields/conditions 从 JSON 反序列化）
     pub async fn get_permissions(&self, role_id: &str) -> Result<Vec<PermissionView>, AppError> {
-        let perms = self.repo.find_permissions_by_role_id(role_id).await?;
+        let role = self
+            .repo
+            .find_role_by_id(role_id)
+            .await?
+            .ok_or_else(|| AppError::not_found(&format!("role/{role_id}")))?;
+        let perms = self.repo.find_permissions_by_role_id(role.id).await?;
         Ok(perms.iter().map(perm_to_view).collect())
     }
 
-    /// 替换角色的所有权限
     pub async fn set_permissions(
         &self,
         role_id: &str,
         entries: &[PermissionEntry],
     ) -> Result<Vec<PermissionView>, AppError> {
-        self.repo.delete_permissions_by_role_id(role_id).await?;
+        let role = self
+            .repo
+            .find_role_by_id(role_id)
+            .await?
+            .ok_or_else(|| AppError::not_found(&format!("role/{role_id}")))?;
+        self.repo.delete_permissions_by_role_id(role.id).await?;
 
         for entry in entries {
-            let (id, now) = crate::utils::id::new_id_and_timestamp();
+            let (doc_id, now) = crate::utils::id::new_id_and_timestamp();
             let fields_json = entry
                 .fields
                 .as_ref()
@@ -142,8 +153,8 @@ impl RbacService {
 
             self.repo
                 .insert_permission(
-                    &id,
-                    role_id,
+                    &doc_id,
+                    role.id,
                     &entry.action,
                     &entry.subject,
                     fields_json.as_deref(),
@@ -182,7 +193,7 @@ impl RbacService {
     }
 
     /// 根据角色名获取角色 ID
-    pub async fn get_role_id_by_name(&self, name: &str) -> Result<Option<String>, AppError> {
+    pub async fn get_role_id_by_name(&self, name: &str) -> Result<Option<i64>, AppError> {
         self.repo.find_role_id_by_name(name).await
     }
 }

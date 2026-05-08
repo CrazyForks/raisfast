@@ -11,15 +11,12 @@ use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
 
-/// 媒体文件完整数据库行模型
-///
-/// 直接映射 `media` 表的所有字段。
-/// `filepath` 存储相对于上传目录的相对路径。
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Media {
-    pub id: String,
+    pub id: i64,
+    pub document_id: String,
     pub tenant_id: Option<String>,
-    pub user_id: String,
+    pub user_id: i64,
     pub filename: String,
     pub filepath: String,
     pub mimetype: String,
@@ -30,25 +27,21 @@ pub struct Media {
 }
 
 crate::impl_from_row_opt_tenant!(Media {
-    required { id, user_id, filename, filepath, mimetype, size, created_at }
+    required { id, document_id, user_id, filename, filepath, mimetype, size, created_at }
     optional { width, height }
 });
 
-/// 创建媒体文件记录
-///
-/// 自动生成 UUID v7 作为主键。
-/// 创建完成后重新查询并返回完整媒体文件记录。
 pub async fn create(
     pool: &crate::db::Pool,
     cmd: &crate::commands::CreateMediaCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Media> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
     match tenant_id {
         Some(tid) => {
             let sql = format!(
-                "INSERT INTO media (id, tenant_id, user_id, filename, filepath, mimetype, size, width, height, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                "INSERT INTO media (document_id, tenant_id, user_id, filename, filepath, mimetype, size, width, height, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
                 ph(1),
                 ph(2),
                 ph(3),
@@ -61,9 +54,9 @@ pub async fn create(
                 ph(10)
             );
             sqlx::query(&sql)
-                .bind(&id)
+                .bind(&document_id)
                 .bind(tid)
-                .bind(&cmd.user_id)
+                .bind(cmd.user_id)
                 .bind(&cmd.filename)
                 .bind(&cmd.filepath)
                 .bind(&cmd.mimetype)
@@ -76,7 +69,7 @@ pub async fn create(
         }
         None => {
             let sql = format!(
-                "INSERT INTO media (id, user_id, filename, filepath, mimetype, size, width, height, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})",
+                "INSERT INTO media (document_id, user_id, filename, filepath, mimetype, size, width, height, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})",
                 ph(1),
                 ph(2),
                 ph(3),
@@ -88,8 +81,8 @@ pub async fn create(
                 ph(9)
             );
             sqlx::query(&sql)
-                .bind(&id)
-                .bind(&cmd.user_id)
+                .bind(&document_id)
+                .bind(cmd.user_id)
                 .bind(&cmd.filename)
                 .bind(&cmd.filepath)
                 .bind(&cmd.mimetype)
@@ -103,11 +96,11 @@ pub async fn create(
     }
 
     let sql = format!(
-        "SELECT * FROM media WHERE id = {}{}",
+        "SELECT * FROM media WHERE document_id = {}{}",
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    let mut q = sqlx::query_as::<_, Media>(&sql).bind(&id);
+    let mut q = sqlx::query_as::<_, Media>(&sql).bind(&document_id);
     if let Some(t) = tenant_id {
         q = q.bind(t);
     }
@@ -116,12 +109,9 @@ pub async fn create(
     Ok(media)
 }
 
-/// 分页查询指定用户的媒体文件
-///
-/// 按 `created_at` 降序排列。返回媒体文件列表和总记录数。
 pub async fn find_all(
     pool: &crate::db::Pool,
-    user_id: &str,
+    user_id: i64,
     page: i64,
     page_size: i64,
     tenant_id: Option<&str>,
@@ -156,12 +146,9 @@ pub async fn find_all(
     Ok((items, total.0))
 }
 
-/// 根据媒体文件 ID 查找
-///
-/// 返回 `Ok(Some(media))` 或 `Ok(None)`（未找到时）。
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: &str,
+    id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Media>> {
     let sql = format!(
@@ -177,7 +164,6 @@ pub async fn find_by_id(
     Ok(media)
 }
 
-/// 存储统计信息
 #[derive(Debug, Serialize, Clone)]
 pub struct MediaStats {
     pub total_files: i64,
@@ -185,7 +171,6 @@ pub struct MediaStats {
     pub by_type: Vec<MediaTypeInfo>,
 }
 
-/// 按 MIME 类型分组的统计
 #[derive(Debug, Serialize, Clone)]
 pub struct MediaTypeInfo {
     pub mimetype: String,
@@ -193,10 +178,9 @@ pub struct MediaTypeInfo {
     pub total_size: i64,
 }
 
-/// 获取存储统计信息
 pub async fn stats(
     pool: &crate::db::Pool,
-    user_id: &str,
+    user_id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<MediaStats> {
     let filter = tenant_filter_ph(tenant_id, 2);
@@ -237,11 +221,7 @@ pub async fn stats(
     })
 }
 
-/// 删除媒体文件记录
-///
-/// 仅删除数据库记录，不删除磁盘文件。
-/// 若记录不存在则返回 [`AppError::NotFound`]。
-pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
+pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
     let sql = format!(
         "DELETE FROM media WHERE id = {}{}",
         ph(1),

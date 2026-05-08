@@ -14,8 +14,9 @@ use crate::utils::id;
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
 pub struct PasswordResetToken {
-    pub id: String,
-    pub user_id: String,
+    pub id: i64,
+    pub document_id: String,
+    pub user_id: i64,
     pub token: String,
     pub expires_at: String,
     pub used_at: Option<String>,
@@ -24,13 +25,13 @@ pub struct PasswordResetToken {
 
 /// 创建新的密码重置令牌
 ///
-/// 生成 UUID v7 主键和 32 字节随机令牌，有效期由 `expires_in_secs` 控制。
+/// 生成 document_id 和 32 字节随机令牌，有效期由 `expires_in_secs` 控制。
 pub async fn create(
     pool: &crate::db::Pool,
-    user_id: &str,
+    user_id: i64,
     expires_in_secs: i64,
 ) -> AppResult<PasswordResetToken> {
-    let (id, now) = id::new_id_and_timestamp();
+    let (document_id, now) = id::new_document_id_and_timestamp();
 
     let mut token_bytes = [0u8; 32];
     getrandom::getrandom(&mut token_bytes).map_err(|e| {
@@ -43,7 +44,7 @@ pub async fn create(
     let expires_at = (Utc::now() + chrono::Duration::seconds(expires_in_secs)).to_rfc3339();
 
     let sql = format!(
-        "INSERT INTO password_reset_tokens (id, user_id, token, expires_at, created_at) VALUES ({}, {}, {}, {}, {})",
+        "INSERT INTO password_reset_tokens (document_id, user_id, token, expires_at, created_at) VALUES ({}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
@@ -51,7 +52,7 @@ pub async fn create(
         ph(5),
     );
     sqlx::query(&sql)
-        .bind(&id)
+        .bind(&document_id)
         .bind(user_id)
         .bind(&token)
         .bind(&expires_at)
@@ -83,7 +84,7 @@ pub async fn find_by_token(
 }
 
 /// 标记令牌为已使用
-pub async fn mark_used(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
+pub async fn mark_used(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     let sql = format!(
         "UPDATE password_reset_tokens SET used_at = {} WHERE id = {}",
@@ -95,7 +96,7 @@ pub async fn mark_used(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
 }
 
 /// 删除用户所有未使用的重置令牌（在创建新令牌前调用，防止令牌堆积）
-pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: &str) -> AppResult<()> {
+pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<()> {
     let sql = format!(
         "DELETE FROM password_reset_tokens WHERE user_id = {} AND used_at IS NULL",
         ph(1),

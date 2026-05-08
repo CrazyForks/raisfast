@@ -42,6 +42,7 @@ use crate::errors::app_error::{AppError, AppResult};
 
 struct Claims {
     user_id: String,
+    user_int_id: i64,
     role: String,
     tenant_id: String,
 }
@@ -49,6 +50,7 @@ struct Claims {
 #[derive(Debug, Clone)]
 struct RequestIdentity {
     user_id: Option<String>,
+    user_int_id: Option<i64>,
     role: String,
     tenant_id: Option<String>,
     is_super_admin: bool,
@@ -64,6 +66,10 @@ pub struct AuthUser(RequestIdentity);
 impl AuthUser {
     pub fn user_id(&self) -> Option<&str> {
         self.0.user_id.as_deref()
+    }
+
+    pub fn user_int_id(&self) -> Option<i64> {
+        self.0.user_int_id
     }
 
     pub fn role(&self) -> &str {
@@ -110,9 +116,15 @@ impl AuthUser {
         }
     }
 
-    pub fn from_parts(user_id: Option<String>, role: String, tenant_id: Option<String>) -> Self {
+    pub fn from_parts(
+        user_id: Option<String>,
+        user_int_id: Option<i64>,
+        role: String,
+        tenant_id: Option<String>,
+    ) -> Self {
         AuthUser(RequestIdentity {
             user_id,
+            user_int_id,
             role,
             tenant_id,
             is_super_admin: false,
@@ -129,6 +141,7 @@ impl AuthUser {
             } else {
                 Some(user_id.to_string())
             },
+            user_int_id: None,
             role: role.to_string(),
             tenant_id: if tenant_id.is_empty() {
                 None
@@ -161,12 +174,13 @@ async fn extract_claims(parts: &Parts, state: &AppState) -> Option<Claims> {
     let token = extract_bearer_token(parts)?;
 
     if crate::services::api_token::is_api_token(token) {
-        let (user_id, role, tenant_id) =
+        let (user_id, user_int_id, role, tenant_id) =
             crate::services::api_token::verify_api_token(&state.pool, &*state.cache, token)
                 .await
                 .ok()?;
         Some(Claims {
             user_id,
+            user_int_id,
             role,
             tenant_id: tenant_id.unwrap_or_else(|| crate::constants::DEFAULT_TENANT.to_string()),
         })
@@ -174,6 +188,7 @@ async fn extract_claims(parts: &Parts, state: &AppState) -> Option<Claims> {
         let claims = crate::services::auth::verify_token(token, &state.jwt_decoding_key).ok()?;
         Some(Claims {
             user_id: claims.sub,
+            user_int_id: claims.iid,
             role: claims.role,
             tenant_id: claims.tenant_id,
         })
@@ -197,30 +212,35 @@ impl FromRequestParts<AppState> for AuthUser {
             let identity = match (claims, header_tenant) {
                 (Some(c), Some(ht)) if c.role == "admin" => RequestIdentity {
                     user_id: Some(c.user_id),
+                    user_int_id: Some(c.user_int_id),
                     role: c.role,
                     tenant_id: if no_tenant { None } else { Some(ht) },
                     is_super_admin: true,
                 },
                 (Some(c), None) if c.role == "admin" => RequestIdentity {
                     user_id: Some(c.user_id),
+                    user_int_id: Some(c.user_int_id),
                     role: c.role,
                     tenant_id: None,
                     is_super_admin: true,
                 },
                 (Some(c), _) => RequestIdentity {
                     user_id: Some(c.user_id),
+                    user_int_id: Some(c.user_int_id),
                     role: c.role,
                     tenant_id: if no_tenant { None } else { Some(c.tenant_id) },
                     is_super_admin: false,
                 },
                 (None, Some(ht)) => RequestIdentity {
                     user_id: None,
+                    user_int_id: None,
                     role: String::new(),
                     tenant_id: if no_tenant { None } else { Some(ht) },
                     is_super_admin: false,
                 },
                 (None, None) => RequestIdentity {
                     user_id: None,
+                    user_int_id: None,
                     role: String::new(),
                     tenant_id: if no_tenant {
                         None

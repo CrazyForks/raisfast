@@ -30,7 +30,7 @@ async fn joined_row_to_response(
     _plugins: &PluginManager,
 ) -> PostResponse {
     PostResponse {
-        id: r.id,
+        id: r.document_id,
         title: r.title,
         slug: r.slug,
         content: r.content,
@@ -52,7 +52,6 @@ async fn joined_row_to_response(
     }
 }
 
-/// 从内存中的 Post 对象构建响应（创建/更新时使用，避免 2 次额外 DB 查询）
 async fn build_response_from_post(
     post: &crate::models::post::Post,
     author_name: Option<String>,
@@ -60,16 +59,16 @@ async fn build_response_from_post(
     tags: Vec<crate::models::post::TagBrief>,
 ) -> PostResponse {
     PostResponse {
-        id: post.id.clone(),
+        id: post.document_id.clone(),
         title: post.title.clone(),
         slug: post.slug.clone(),
         content: post.content.clone(),
         excerpt: post.excerpt.clone(),
         cover_image: post.cover_image.clone(),
         status: post.status.clone(),
-        created_by: post.created_by.clone(),
+        created_by: post.created_by,
         author_name,
-        category_id: post.category_id.clone(),
+        category_id: post.category_id,
         category_name,
         tags,
         view_count: post.view_count,
@@ -82,24 +81,20 @@ async fn build_response_from_post(
     }
 }
 
-/// 从仓库查询关联数据构建响应（读取详情时使用）
 async fn build_post_response_from_repo(
     repo: &dyn PostRepository,
-    id: &str,
+    id: i64,
     plugins: &PluginManager,
     auth: &AuthUser,
 ) -> AppResult<PostResponse> {
     let row = repo.find_joined_by_id(id, auth.tenant_id()).await?;
     let tags = repo
-        .get_post_tags(&row.id, auth.tenant_id())
+        .get_post_tags(row.id, auth.tenant_id())
         .await
         .unwrap_or_default();
     Ok(joined_row_to_response(row, tags, plugins).await)
 }
 
-/// 创建分类。
-///
-/// 从分类名称自动生成 slug。
 pub async fn create_category(
     category_repo: &dyn CategoryRepository,
     auth: &AuthUser,
@@ -112,54 +107,56 @@ pub async fn create_category(
                 name: req.name,
                 slug,
                 description: req.description,
-                parent_id: req.parent_id,
+                parent_id: req.parent_id.and_then(|s| s.parse().ok()),
                 sort_order: req.sort_order.unwrap_or(0),
             },
             auth.tenant_id(),
-            auth.user_id(),
+            auth.user_int_id(),
         )
         .await
 }
 
-/// 更新分类。
-///
-/// 若名称变更，自动重新生成 slug。
 pub async fn update_category(
     category_repo: &dyn CategoryRepository,
     auth: &AuthUser,
     id: &str,
     req: UpdateCategoryRequest,
 ) -> AppResult<crate::models::category::Category> {
-    let existing = category_repo.find_by_id(id, auth.tenant_id()).await?;
+    let existing = category_repo
+        .find_by_document_id(id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("category"))?;
     let new_slug = req.name.as_ref().map(slugify).unwrap_or(existing.slug);
 
     category_repo
         .update(
             UpdateCategoryCmd {
-                id: id.to_string(),
+                id: existing.id,
                 name: req.name,
                 slug: Some(new_slug),
                 description: req.description,
-                parent_id: req.parent_id,
+                parent_id: req.parent_id.and_then(|s| s.parse().ok()),
                 sort_order: req.sort_order,
             },
             auth.tenant_id(),
-            auth.user_id(),
+            auth.user_int_id(),
         )
         .await
 }
 
-/// 删除分类。
 pub async fn delete_category(
     category_repo: &dyn CategoryRepository,
     id: &str,
     auth: &AuthUser,
 ) -> AppResult<()> {
-    category_repo.delete(id, auth.tenant_id()).await?;
+    let existing = category_repo
+        .find_by_document_id(id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("category"))?;
+    category_repo.delete(existing.id, auth.tenant_id()).await?;
     Ok(())
 }
 
-/// 获取所有分类列表。
 pub async fn list_categories(
     category_repo: &dyn CategoryRepository,
     auth: &AuthUser,
@@ -167,7 +164,6 @@ pub async fn list_categories(
     category_repo.find_all(auth.tenant_id()).await
 }
 
-/// 分页查询分类。
 pub async fn list_categories_paginated(
     category_repo: &dyn CategoryRepository,
     auth: &AuthUser,
@@ -179,9 +175,6 @@ pub async fn list_categories_paginated(
         .await
 }
 
-/// 创建标签。
-///
-/// 从标签名称自动生成 slug。
 pub async fn create_tag(
     tag_repo: &dyn TagRepository,
     auth: &AuthUser,
@@ -189,17 +182,18 @@ pub async fn create_tag(
 ) -> AppResult<crate::models::tag::Tag> {
     let slug = slugify(&req.name);
     tag_repo
-        .create(&req.name, &slug, auth.tenant_id(), auth.user_id())
+        .create(&req.name, &slug, auth.tenant_id(), auth.user_int_id())
         .await
 }
 
-/// 删除标签。
 pub async fn delete_tag(tag_repo: &dyn TagRepository, id: &str, auth: &AuthUser) -> AppResult<()> {
-    tag_repo.delete(id, auth.tenant_id()).await?;
+    let id_i64: i64 = id
+        .parse()
+        .map_err(|_| AppError::BadRequest("invalid id".into()))?;
+    tag_repo.delete(id_i64, auth.tenant_id()).await?;
     Ok(())
 }
 
-/// 更新标签。
 pub async fn update_tag(
     tag_repo: &dyn TagRepository,
     id: &str,
@@ -207,10 +201,14 @@ pub async fn update_tag(
     name: String,
 ) -> AppResult<crate::models::tag::Tag> {
     let slug = slugify(&name);
-    tag_repo.update(id, &name, &slug, auth.tenant_id()).await
+    let id_i64: i64 = id
+        .parse()
+        .map_err(|_| AppError::BadRequest("invalid id".into()))?;
+    tag_repo
+        .update(id_i64, &name, &slug, auth.tenant_id())
+        .await
 }
 
-/// 获取所有标签列表。
 pub async fn list_tags(
     tag_repo: &dyn TagRepository,
     auth: &AuthUser,
@@ -218,7 +216,6 @@ pub async fn list_tags(
     tag_repo.find_all(auth.tenant_id()).await
 }
 
-/// 分页查询标签。
 pub async fn list_tags_paginated(
     tag_repo: &dyn TagRepository,
     auth: &AuthUser,
@@ -230,17 +227,11 @@ pub async fn list_tags_paginated(
         .await
 }
 
-/// 生成唯一的 slug。
-///
-/// 直接追加 4 位随机 hex 后缀，避免循环查 DB 去重。
 fn make_unique_slug(base_slug: &str) -> String {
     let suffix = crate::utils::id::random_hex(2);
     format!("{base_slug}-{suffix}")
 }
 
-/// 从文章内容中提取摘要。
-///
-/// 取前 `max_len` 个字符作为摘要，超出部分以 `"..."` 结尾。
 fn extract_excerpt(content: &str, max_len: usize) -> String {
     let plain = content
         .chars()
@@ -253,11 +244,6 @@ fn extract_excerpt(content: &str, max_len: usize) -> String {
     }
 }
 
-/// 创建文章。
-///
-/// - 从标题自动生成唯一 slug。
-/// - 若未提供摘要，从内容中自动提取前 200 字符。
-/// - 通过 Repository 创建文章并同步关联标签，确保原子性。
 #[tracing::instrument(skip(repo, plugins, eventbus), fields(slug = tracing::field::Empty))]
 #[allow(clippy::too_many_arguments)]
 pub async fn create_post(
@@ -287,20 +273,22 @@ pub async fn create_post(
         excerpt: Some(excerpt),
         cover_image: req.cover_image,
         status: status.to_string(),
-        created_by: user_id.to_string(),
-        updated_by: Some(user_id.to_string()),
-        category_id: req.category_id.filter(|s: &String| !s.is_empty()),
-        tag_ids: req.tag_ids,
+        created_by: auth.user_int_id().ok_or(AppError::Unauthorized)?,
+        updated_by: auth.user_int_id(),
+        category_id: req.category_id.and_then(|s| s.parse().ok()),
+        tag_ids: req
+            .tag_ids
+            .map(|ids| ids.iter().filter_map(|s| s.parse().ok()).collect()),
     };
     let p = repo.create(cmd, auth.tenant_id()).await?;
 
     let author_name =
-        crate::models::post::get_author_name(repo.pool(), &p.created_by, auth.tenant_id())
+        crate::models::post::get_author_name(repo.pool(), p.created_by, auth.tenant_id())
             .await
             .ok()
             .flatten();
 
-    let category_name = if let Some(ref cat_id) = p.category_id {
+    let category_name = if let Some(cat_id) = p.category_id {
         crate::models::post::get_category_name(repo.pool(), cat_id, auth.tenant_id())
             .await
             .ok()
@@ -310,14 +298,14 @@ pub async fn create_post(
     };
 
     let tags = repo
-        .get_post_tags(&p.id, auth.tenant_id())
+        .get_post_tags(p.id, auth.tenant_id())
         .await
         .unwrap_or_default();
 
     let resp = build_response_from_post(&p, author_name, category_name, tags).await;
     tracing::Span::current().record("slug", &resp.slug);
     eventbus.emit(Event::PostCreated {
-        id: p.id.clone(),
+        id: p.document_id.clone(),
         slug: resp.slug.clone(),
         title: resp.title.clone(),
         author_id: user_id.to_string(),
@@ -328,7 +316,7 @@ pub async fn create_post(
 async fn update_post_inner(
     repo: &dyn PostRepository,
     plugins: &PluginManager,
-    id: &str,
+    id: i64,
     req: UpdatePostRequest,
     auth: &AuthUser,
 ) -> AppResult<PostResponse> {
@@ -355,33 +343,29 @@ async fn update_post_inner(
         .unwrap_or_else(|| extract_excerpt(content, 200));
 
     let cmd = UpdatePostCmd {
-        id: id.to_string(),
+        id: existing.id,
         title: req.title,
         slug,
         content: Some(content.to_string()),
         excerpt: Some(excerpt),
         cover_image: req.cover_image,
         status: req.status,
-        category_id: req.category_id.filter(|s: &String| !s.is_empty()),
-        tag_ids: req.tag_ids,
-        updated_by: auth.user_id().map(|s| s.to_string()),
+        category_id: req.category_id.and_then(|s| s.parse().ok()),
+        tag_ids: req
+            .tag_ids
+            .map(|ids| ids.iter().filter_map(|s| s.parse().ok()).collect()),
+        updated_by: auth.user_int_id(),
     };
     repo.update(cmd, auth.tenant_id()).await?;
 
     build_post_response_from_repo(repo, id, plugins, auth).await
 }
 
-async fn delete_post_inner(repo: &dyn PostRepository, id: &str, auth: &AuthUser) -> AppResult<()> {
-    repo.delete(id, auth.tenant_id()).await?;
+async fn delete_post_inner(repo: &dyn PostRepository, id: i64, _auth: &AuthUser) -> AppResult<()> {
+    repo.delete(id, _auth.tenant_id()).await?;
     Ok(())
 }
 
-/// 更新文章。
-///
-/// - 若标题变更，重新生成唯一 slug。
-/// - 重新生成摘要（若内容变更）。
-/// - 通过 Repository 更新文章并同步关联标签，确保原子性。
-/// - 仅文章作者或管理员可执行。
 #[allow(clippy::too_many_arguments)]
 pub async fn update_post(
     repo: &dyn PostRepository,
@@ -398,21 +382,21 @@ pub async fn update_post(
 
     crate::utils::auth::require_owner_or_admin(
         auth.role(),
-        auth.user_id().ok_or(AppError::Unauthorized)?,
-        &existing.created_by,
+        &auth
+            .user_int_id()
+            .ok_or(AppError::Unauthorized)?
+            .to_string(),
+        &existing.created_by.to_string(),
     )?;
 
-    let resp = update_post_inner(repo, plugins, &existing.id, req, auth).await?;
+    let resp = update_post_inner(repo, plugins, existing.id, req, auth).await?;
     eventbus.emit(Event::PostUpdated {
-        id: existing.id.clone(),
+        id: existing.document_id.clone(),
         slug: resp.slug.clone(),
     });
     Ok(resp)
 }
 
-/// 删除文章。
-///
-/// 仅文章作者或管理员可执行。
 #[allow(clippy::too_many_arguments)]
 pub async fn delete_post(
     repo: &dyn PostRepository,
@@ -428,21 +412,23 @@ pub async fn delete_post(
 
     crate::utils::auth::require_owner_or_admin(
         auth.role(),
-        auth.user_id().ok_or(AppError::Unauthorized)?,
-        &existing.created_by,
+        &auth
+            .user_int_id()
+            .ok_or(AppError::Unauthorized)?
+            .to_string(),
+        &existing.created_by.to_string(),
     )?;
 
-    let id = existing.id.clone();
+    let doc_id = existing.document_id.clone();
     let slug_val = slug.to_string();
-    delete_post_inner(repo, &existing.id, auth).await?;
-    eventbus.emit(Event::PostDeleted { id, slug: slug_val });
+    delete_post_inner(repo, existing.id, auth).await?;
+    eventbus.emit(Event::PostDeleted {
+        id: doc_id,
+        slug: slug_val,
+    });
     Ok(())
 }
 
-/// 获取已发布文章的详情。
-///
-/// 每次访问原子递增文章的浏览计数（`view_count`），
-/// 并通过 JOIN 一次查询获取作者名和分类名。
 pub async fn get_post(
     repo: &dyn PostRepository,
     slug: &str,
@@ -453,18 +439,12 @@ pub async fn get_post(
         .increment_view_count_joined(slug, auth.tenant_id())
         .await?;
     let tags = repo
-        .get_post_tags(&row.id, auth.tenant_id())
+        .get_post_tags(row.id, auth.tenant_id())
         .await
         .unwrap_or_default();
     Ok(joined_row_to_response(row, tags, plugins).await)
 }
 
-/// 分页查询已发布文章列表。
-///
-/// 支持按分类、标签和关键词进行可选过滤。
-/// 当提供 `search` 且有关键词时，优先使用搜索引擎（Tantivy）进行查询；
-/// 若搜索引擎不可用或查询为空，则回退到 SQL LIKE 查询。
-/// 使用 JOIN 查询和批量标签获取，将查询次数从 3N+1 降至 2~3 次。
 #[allow(clippy::too_many_arguments)]
 pub async fn list_posts(
     repo: &dyn PostRepository,
@@ -477,95 +457,97 @@ pub async fn list_posts(
     search: Option<&dyn SearchEngine>,
     auth: &AuthUser,
 ) -> AppResult<(Vec<PostResponse>, i64)> {
-    let (rows, total, highlights) = if let (Some(engine), Some(keyword)) = (search, q) {
-        if !engine.is_noop() && !keyword.is_empty() {
-            let (results, total) = engine.search(keyword, page, page_size).await?;
-            let mut hmap = std::collections::HashMap::new();
-            let ids: Vec<String> = results
-                .into_iter()
-                .map(|r| {
-                    hmap.insert(r.post_id.clone(), (r.title_highlight, r.excerpt_highlight));
-                    r.post_id
-                })
-                .collect();
-            let rows = repo.find_joined_by_ids(&ids, auth.tenant_id()).await?;
-            (rows, total, hmap)
+    let (rows, total, highlights): (Vec<_>, _, std::collections::HashMap<i64, _>) =
+        if let (Some(engine), Some(keyword)) = (search, q) {
+            if !engine.is_noop() && !keyword.is_empty() {
+                let (results, total) = engine.search(keyword, page, page_size).await?;
+                let mut hmap = std::collections::HashMap::new();
+                let ids: Vec<i64> = results
+                    .into_iter()
+                    .filter_map(|r| {
+                        let pid: i64 = r.post_id.parse().ok()?;
+                        hmap.insert(pid, (r.title_highlight, r.excerpt_highlight));
+                        Some(pid)
+                    })
+                    .collect();
+                let rows = repo.find_joined_by_ids(&ids, auth.tenant_id()).await?;
+                (rows, total, hmap)
+            } else {
+                let (rows, total) = repo
+                    .find_published_joined(
+                        FindPublishedQuery {
+                            page,
+                            page_size,
+                            category_id: category_id.and_then(|s| s.parse().ok()),
+                            tag_id: tag_id.and_then(|s| s.parse().ok()),
+                            q: if keyword.is_empty() {
+                                None
+                            } else {
+                                Some(keyword.to_string())
+                            },
+                        },
+                        auth.tenant_id(),
+                    )
+                    .await?;
+                let hmap = if keyword.is_empty() {
+                    std::collections::HashMap::new()
+                } else {
+                    rows.iter()
+                        .map(|r| {
+                            let title_hl = crate::search::highlight_text(keyword, &r.title);
+                            let excerpt_hl = r
+                                .excerpt
+                                .as_ref()
+                                .map(|e| crate::search::highlight_text(keyword, e))
+                                .or_else(|| {
+                                    crate::search::make_excerpt(&r.content, keyword, 200)
+                                        .map(|e| crate::search::highlight_text(keyword, &e))
+                                });
+                            (r.id, (Some(title_hl), excerpt_hl))
+                        })
+                        .collect()
+                };
+                (rows, total, hmap)
+            }
         } else {
             let (rows, total) = repo
                 .find_published_joined(
                     FindPublishedQuery {
                         page,
                         page_size,
-                        category_id: category_id.map(std::string::ToString::to_string),
-                        tag_id: tag_id.map(std::string::ToString::to_string),
-                        q: if keyword.is_empty() {
-                            None
-                        } else {
-                            Some(keyword.to_string())
-                        },
+                        category_id: category_id.and_then(|s| s.parse().ok()),
+                        tag_id: tag_id.and_then(|s| s.parse().ok()),
+                        q: q.map(std::string::ToString::to_string),
                     },
                     auth.tenant_id(),
                 )
                 .await?;
-            let hmap = if keyword.is_empty() {
-                std::collections::HashMap::new()
+            let hmap = if let Some(kw) = q {
+                if kw.is_empty() {
+                    std::collections::HashMap::new()
+                } else {
+                    rows.iter()
+                        .map(|r| {
+                            let title_hl = crate::search::highlight_text(kw, &r.title);
+                            let excerpt_hl = r
+                                .excerpt
+                                .as_ref()
+                                .map(|e| crate::search::highlight_text(kw, e))
+                                .or_else(|| {
+                                    crate::search::make_excerpt(&r.content, kw, 200)
+                                        .map(|e| crate::search::highlight_text(kw, &e))
+                                });
+                            (r.id, (Some(title_hl), excerpt_hl))
+                        })
+                        .collect()
+                }
             } else {
-                rows.iter()
-                    .map(|r| {
-                        let title_hl = crate::search::highlight_text(keyword, &r.title);
-                        let excerpt_hl = r
-                            .excerpt
-                            .as_ref()
-                            .map(|e| crate::search::highlight_text(keyword, e))
-                            .or_else(|| {
-                                crate::search::make_excerpt(&r.content, keyword, 200)
-                                    .map(|e| crate::search::highlight_text(keyword, &e))
-                            });
-                        (r.id.clone(), (Some(title_hl), excerpt_hl))
-                    })
-                    .collect()
+                std::collections::HashMap::new()
             };
             (rows, total, hmap)
-        }
-    } else {
-        let (rows, total) = repo
-            .find_published_joined(
-                FindPublishedQuery {
-                    page,
-                    page_size,
-                    category_id: category_id.map(std::string::ToString::to_string),
-                    tag_id: tag_id.map(std::string::ToString::to_string),
-                    q: q.map(std::string::ToString::to_string),
-                },
-                auth.tenant_id(),
-            )
-            .await?;
-        let hmap = if let Some(kw) = q {
-            if kw.is_empty() {
-                std::collections::HashMap::new()
-            } else {
-                rows.iter()
-                    .map(|r| {
-                        let title_hl = crate::search::highlight_text(kw, &r.title);
-                        let excerpt_hl = r
-                            .excerpt
-                            .as_ref()
-                            .map(|e| crate::search::highlight_text(kw, e))
-                            .or_else(|| {
-                                crate::search::make_excerpt(&r.content, kw, 200)
-                                    .map(|e| crate::search::highlight_text(kw, &e))
-                            });
-                        (r.id.clone(), (Some(title_hl), excerpt_hl))
-                    })
-                    .collect()
-            }
-        } else {
-            std::collections::HashMap::new()
         };
-        (rows, total, hmap)
-    };
 
-    let post_ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+    let post_ids: Vec<i64> = rows.iter().map(|r: &PostJoinedRow| r.id).collect();
     let tags_map = repo
         .get_tags_for_posts(&post_ids, auth.tenant_id())
         .await
@@ -573,11 +555,11 @@ pub async fn list_posts(
 
     let mut responses = Vec::with_capacity(rows.len());
     for r in rows {
-        let (title_hl, excerpt_hl) = highlights
+        let (title_hl, excerpt_hl): (Option<String>, Option<String>) = highlights
             .get(&r.id)
             .map_or((None, None), |(t, e)| (t.clone(), e.clone()));
         responses.push(PostResponse {
-            id: r.id.clone(),
+            id: r.document_id.clone(),
             title: r.title,
             slug: r.slug,
             content: r.content,
@@ -602,7 +584,6 @@ pub async fn list_posts(
     Ok((responses, total))
 }
 
-/// 后台管理：按 slug 获取文章详情（不过滤状态，不增加浏览量）
 pub async fn get_post_any_status(
     repo: &dyn PostRepository,
     slug: &str,
@@ -612,15 +593,14 @@ pub async fn get_post_any_status(
     let post = repo.find_by_slug(slug, auth.tenant_id()).await?;
     let post =
         post.ok_or_else(|| crate::errors::app_error::AppError::not_found("post not found"))?;
-    let row = repo.find_joined_by_id(&post.id, auth.tenant_id()).await?;
+    let row = repo.find_joined_by_id(post.id, auth.tenant_id()).await?;
     let tags = repo
-        .get_post_tags(&row.id, auth.tenant_id())
+        .get_post_tags(row.id, auth.tenant_id())
         .await
         .unwrap_or_default();
     Ok(joined_row_to_response(row, tags, plugins).await)
 }
 
-/// 后台管理：分页查询全部文章（含所有状态）
 pub async fn list_all_posts(
     repo: &dyn PostRepository,
     page: i64,
@@ -633,7 +613,7 @@ pub async fn list_all_posts(
         .find_all_joined(page, page_size, status, auth.tenant_id())
         .await?;
 
-    let post_ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+    let post_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let tags_map = repo
         .get_tags_for_posts(&post_ids, auth.tenant_id())
         .await
@@ -642,7 +622,7 @@ pub async fn list_all_posts(
     let mut responses = Vec::with_capacity(rows.len());
     for r in rows {
         responses.push(PostResponse {
-            id: r.id.clone(),
+            id: r.document_id.clone(),
             title: r.title,
             slug: r.slug,
             content: r.content,

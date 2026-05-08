@@ -77,6 +77,19 @@ impl WorkflowService {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))
     }
 
+    async fn get_definition_by_pk(&self, id: i64) -> AppResult<WorkflowDefinition> {
+        let sql = format!(
+            "SELECT id, document_id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions WHERE id = {}",
+            crate::db::dialect::ph(1)
+        );
+        sqlx::query_as::<_, WorkflowDefinition>(&sql)
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
+            .ok_or_else(|| AppError::not_found("workflow definition"))
+    }
+
     /// 删除工作流定义
     pub async fn delete_workflow(&self, id: &str) -> AppResult<()> {
         crate::models::workflow::delete_definition(&self.pool, id)
@@ -98,7 +111,7 @@ impl WorkflowService {
         }
 
         let id = uuid::Uuid::now_v7().to_string();
-        let instance = create_instance(&self.pool, &id, definition_id, context, triggered_by)
+        let instance = create_instance(&self.pool, &id, def.id, context, triggered_by)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
@@ -118,7 +131,7 @@ impl WorkflowService {
         create_step_log(
             &self.pool,
             &log_id,
-            &id,
+            instance.id,
             &initial.id,
             &initial.name,
             Some(context),
@@ -157,7 +170,7 @@ impl WorkflowService {
             .as_deref()
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("no current step")))?;
 
-        let def = self.get_workflow(&instance.definition_id).await?;
+        let def = self.get_definition_by_pk(instance.definition_id).await?;
         let steps = def
             .parse_steps()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
@@ -171,7 +184,7 @@ impl WorkflowService {
         let mut context = instance.parse_context();
         merge_output_into_context(&mut context, step_output);
 
-        let active_logs: Vec<_> = list_step_logs(&self.pool, instance_id)
+        let active_logs: Vec<_> = list_step_logs(&self.pool, instance.id)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
             .into_iter()
@@ -179,7 +192,7 @@ impl WorkflowService {
             .collect();
 
         if let Some(log) = active_logs.first() {
-            complete_step_log(&self.pool, &log.id, Some(step_output))
+            complete_step_log(&self.pool, &log.document_id, Some(step_output))
                 .await
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
         }
@@ -205,7 +218,7 @@ impl WorkflowService {
                         create_step_log(
                             &self.pool,
                             &log_id,
-                            instance_id,
+                            instance.id,
                             &ns.id,
                             &ns.name,
                             Some(&context),
@@ -242,7 +255,7 @@ impl WorkflowService {
             .ok_or_else(|| AppError::not_found("workflow instance"))?;
 
         if let Some(ref step_id) = instance.current_step {
-            let active_logs: Vec<_> = list_step_logs(&self.pool, instance_id)
+            let active_logs: Vec<_> = list_step_logs(&self.pool, instance.id)
                 .await
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
                 .into_iter()
@@ -250,7 +263,7 @@ impl WorkflowService {
                 .collect();
 
             if let Some(log) = active_logs.first() {
-                fail_step_log(&self.pool, &log.id, error)
+                fail_step_log(&self.pool, &log.document_id, error)
                     .await
                     .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
             }
@@ -298,7 +311,11 @@ impl WorkflowService {
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<WorkflowInstance>, i64)> {
-        crate::models::workflow::list_instances(&self.pool, definition_id, status, page, page_size)
+        let def_id: Option<i64> = match definition_id {
+            Some(did) => Some(self.get_workflow(did).await?.id),
+            None => None,
+        };
+        crate::models::workflow::list_instances(&self.pool, def_id, status, page, page_size)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))
     }
@@ -308,7 +325,11 @@ impl WorkflowService {
         &self,
         instance_id: &str,
     ) -> AppResult<Vec<crate::models::workflow::StepLog>> {
-        list_step_logs(&self.pool, instance_id)
+        let instance = self
+            .get_instance(instance_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("workflow instance"))?;
+        list_step_logs(&self.pool, instance.id)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))
     }

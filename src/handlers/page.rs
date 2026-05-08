@@ -203,10 +203,10 @@ pub async fn create(
         meta_description: req.meta_description,
         og_image: req.og_image,
         template,
-        parent_id: req.parent_id,
+        parent_id: req.parent_id.and_then(|s| s.parse().ok()),
         sort_order: req.sort_order.unwrap_or(0),
         status,
-        created_by: auth.ensure_authenticated()?.to_string(),
+        created_by: auth.user_int_id().ok_or(AppError::Unauthorized)?,
         updated_by: None,
         cover_image: req.cover_image,
     };
@@ -225,7 +225,7 @@ pub async fn update(
     validation::validate(&req)?;
 
     let cmd = UpdatePageCmd {
-        id,
+        id: 0,
         title: req.title,
         slug: req.slug,
         content: req.content,
@@ -234,14 +234,14 @@ pub async fn update(
         meta_description: req.meta_description,
         og_image: req.og_image,
         template: req.template,
-        parent_id: req.parent_id,
+        parent_id: req.parent_id.map(|opt| opt.and_then(|s| s.parse().ok())),
         sort_order: req.sort_order,
         status: req.status,
         cover_image: req.cover_image,
-        updated_by: None,
+        updated_by: auth.user_int_id(),
     };
 
-    let page = page_service::update_page(&state.pool, &auth, cmd).await?;
+    let page = page_service::update_page(&state.pool, &auth, &id, cmd).await?;
     Ok(ApiResponse::success(page))
 }
 

@@ -217,7 +217,7 @@ impl ContentRepository {
         let select_cols = columns.join(", ");
         let tid = self.resolve_tenant(ct, tenant_id);
 
-        let mut where_parts = vec![format!("id = {}", crate::db::dialect::ph(1))];
+        let mut where_parts = vec![format!("document_id = {}", crate::db::dialect::ph(1))];
         let mut idx = 2;
         if tid.is_some() {
             where_parts.push(format!("tenant_id = {}", crate::db::dialect::ph(idx)));
@@ -384,13 +384,14 @@ impl ContentRepository {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("begin tx: {e}")))?;
 
         super::validation::validate_create_tx(&self.pool, ct, &data).await?;
-        let id = uuid::Uuid::now_v7().to_string();
+        let document_id = crate::utils::id::new_document_id();
 
         let obj = data
             .as_object_mut()
             .ok_or_else(|| AppError::BadRequest("request body must be a JSON object".into()))?;
 
-        obj.insert("id".into(), json!(id));
+        obj.remove("id");
+        obj.insert("document_id".into(), json!(document_id));
 
         let tid = self.resolve_tenant(ct, tenant_id);
 
@@ -461,12 +462,12 @@ impl ContentRepository {
         let columns = ct.column_names(None, true);
         let select_cols = columns.join(", ");
         let sql = format!(
-            "SELECT {select_cols} FROM {} WHERE id = {}",
+            "SELECT {select_cols} FROM {} WHERE document_id = {}",
             ct.table,
             crate::db::dialect::ph(1)
         );
         let row = sqlx::query(&sql)
-            .bind(&id)
+            .bind(&document_id)
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
@@ -513,6 +514,7 @@ impl ContentRepository {
             .ok_or_else(|| AppError::BadRequest("request body must be a JSON object".into()))?;
 
         obj.remove("id");
+        obj.remove("document_id");
 
         let tid = self.resolve_tenant(ct, tenant_id);
 
@@ -559,7 +561,7 @@ impl ContentRepository {
             return Err(AppError::BadRequest("no fields to update".into()));
         }
 
-        let mut where_parts = vec![format!("id = {}", crate::db::dialect::ph(idx))];
+        let mut where_parts = vec![format!("document_id = {}", crate::db::dialect::ph(idx))];
         idx += 1;
         values.push(id.to_string());
 
@@ -624,7 +626,7 @@ impl ContentRepository {
         let tid = self.resolve_tenant(ct, tenant_id);
 
         let mut idx = 1;
-        let mut where_parts = vec![format!("id = {}", crate::db::dialect::ph(idx))];
+        let mut where_parts = vec![format!("document_id = {}", crate::db::dialect::ph(idx))];
         idx += 1;
 
         let mut values = vec![id.to_string()];
@@ -711,7 +713,7 @@ impl ContentRepository {
             idx += 1;
         }
 
-        let mut where_parts = vec![format!("id = {}", crate::db::dialect::ph(idx))];
+        let mut where_parts = vec![format!("document_id = {}", crate::db::dialect::ph(idx))];
         values.push(id.to_string());
         idx += 1;
 
@@ -837,6 +839,7 @@ pub fn build_column_names(
 ) -> Vec<String> {
     let mut cols = Vec::new();
     cols.push("id".into());
+    cols.push("document_id".into());
 
     for field in &ct.fields {
         if !include_private && field.private {
@@ -1062,6 +1065,7 @@ unique = true
 
         let cols = build_column_names(&ct, None, false);
         assert!(cols.contains(&"id".to_string()));
+        assert!(cols.contains(&"document_id".to_string()));
         assert!(cols.contains(&"name".to_string()));
         assert!(cols.contains(&"slug".to_string()));
         assert!(cols.contains(&"created_at".to_string()));

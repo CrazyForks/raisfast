@@ -542,7 +542,7 @@ pub async fn do_get(
             crate::plugins::HookPoint::ContentViewed,
             &json!({
                 "content_type": ct.singular,
-                "id": result.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                "id": result.get("document_id").and_then(|v| v.as_str()).unwrap_or(""),
             }),
         )
         .await;
@@ -596,7 +596,7 @@ pub async fn do_create(
     invalidate_cms_cache(state, ct);
 
     let id = result
-        .get("id")
+        .get("document_id")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
@@ -943,7 +943,7 @@ pub async fn do_single_update(
     let repo = ContentRepository::new(state.pool.clone());
     let existing = repo.ensure_single(ct, None).await?;
     let id = existing
-        .get("id")
+        .get("document_id")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
@@ -1328,7 +1328,7 @@ fn filter_fields(
     let protocol_cols: Vec<&str> = ct.protocol_column_names();
     let system_keys: Vec<String> = obj
         .keys()
-        .filter(|k| *k == "id" || protocol_cols.contains(&k.as_str()))
+        .filter(|k| *k == "id" || *k == "document_id" || protocol_cols.contains(&k.as_str()))
         .cloned()
         .collect();
     obj.retain(|k, _| allowed.contains(&k.to_string()) || system_keys.contains(k));

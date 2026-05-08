@@ -36,6 +36,7 @@ pub async fn upload(
     let media = media_service::save_file(
         state.storage.as_ref(),
         state.media_repo.as_ref(),
+        &state.pool,
         &auth,
         state.config.max_upload_size,
         bucket,
@@ -60,6 +61,7 @@ pub async fn list(
     params.sanitize();
     let (items, total) = media_service::list(
         state.media_repo.as_ref(),
+        &state.pool,
         &auth,
         params.page,
         params.page_size,
@@ -85,6 +87,7 @@ pub async fn delete(
     media_service::delete_media(
         state.storage.as_ref(),
         state.media_repo.as_ref(),
+        &state.pool,
         &id,
         &auth,
     )
@@ -97,7 +100,7 @@ pub async fn stats(
     auth: AuthUser,
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<crate::handlers::dto::MediaStatsResponse>> {
-    let s = media_service::stats(state.media_repo.as_ref(), &auth).await?;
+    let s = media_service::stats(state.media_repo.as_ref(), &state.pool, &auth).await?;
     Ok(ApiResponse::success(
         crate::handlers::dto::stats_to_response(&s),
     ))

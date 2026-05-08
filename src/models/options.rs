@@ -11,8 +11,9 @@ use crate::errors::app_error::AppResult;
 /// options 表行模型（含完整元数据）
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OptionRow {
-    pub id: String,
-    pub tenant_id: Option<String>,
+    pub id: i64,
+    pub document_id: String,
+    pub tenant_id: Option<i64>,
     pub option_key: String,
     pub value: String,
     #[serde(rename = "type")]
@@ -32,8 +33,9 @@ impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for OptionRow {
     fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
         use sqlx::Row;
         Ok(Self {
-            tenant_id: row.try_get("tenant_id").ok(),
             id: row.try_get("id")?,
+            document_id: row.try_get("document_id")?,
+            tenant_id: row.try_get("tenant_id").ok(),
             option_key: row.try_get("option_key")?,
             value: row.try_get("value")?,
             type_: row.try_get("type")?,
@@ -53,8 +55,9 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for OptionRow {
     fn from_row(row: &'r sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
         use sqlx::Row;
         Ok(Self {
-            tenant_id: row.try_get("tenant_id").ok(),
             id: row.try_get("id")?,
+            document_id: row.try_get("document_id")?,
+            tenant_id: row.try_get("tenant_id").ok(),
             option_key: row.try_get("option_key")?,
             value: row.try_get("value")?,
             type_: row.try_get("type")?,
@@ -74,8 +77,9 @@ impl<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> for OptionRow {
     fn from_row(row: &'r sqlx::mysql::MySqlRow) -> Result<Self, sqlx::Error> {
         use sqlx::Row;
         Ok(Self {
-            tenant_id: row.try_get("tenant_id").ok(),
             id: row.try_get("id")?,
+            document_id: row.try_get("document_id")?,
+            tenant_id: row.try_get("tenant_id").ok(),
             option_key: row.try_get("option_key")?,
             value: row.try_get("value")?,
             type_: row.try_get("type")?,
@@ -102,7 +106,7 @@ pub async fn find_autoload(pool: &crate::db::Pool) -> AppResult<Vec<OptionRow>> 
 pub async fn find_by_key(
     pool: &crate::db::Pool,
     key: &str,
-    tenant_id: Option<&str>,
+    tenant_id: Option<i64>,
 ) -> AppResult<Option<OptionRow>> {
     match tenant_id {
         Some(tid) => {
@@ -119,10 +123,7 @@ pub async fn find_by_key(
             Ok(row)
         }
         None => {
-            let sql = format!(
-                "SELECT * FROM options WHERE option_key = {}",
-                ph(1)
-            );
+            let sql = format!("SELECT * FROM options WHERE option_key = {}", ph(1));
             let row = sqlx::query_as::<_, OptionRow>(&sql)
                 .bind(key)
                 .fetch_optional(pool)
@@ -133,10 +134,7 @@ pub async fn find_by_key(
 }
 
 /// 查询所有配置
-pub async fn find_all(
-    pool: &crate::db::Pool,
-    tenant_id: Option<&str>,
-) -> AppResult<Vec<OptionRow>> {
+pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<i64>) -> AppResult<Vec<OptionRow>> {
     match tenant_id {
         Some(tid) => {
             let sql = format!(
@@ -162,7 +160,7 @@ pub async fn upsert_value(
     pool: &crate::db::Pool,
     key: &str,
     value: &str,
-    tenant_id: Option<&str>,
+    tenant_id: Option<i64>,
     updated_at: &str,
 ) -> AppResult<()> {
     match tenant_id {
@@ -204,7 +202,7 @@ pub async fn upsert_value(
 pub async fn delete_by_key(
     pool: &crate::db::Pool,
     key: &str,
-    tenant_id: Option<&str>,
+    tenant_id: Option<i64>,
 ) -> AppResult<()> {
     match tenant_id {
         Some(tid) => {
@@ -216,10 +214,7 @@ pub async fn delete_by_key(
             sqlx::query(&sql).bind(tid).bind(key).execute(pool).await?;
         }
         None => {
-            let sql = format!(
-                "DELETE FROM options WHERE option_key = {}",
-                ph(1)
-            );
+            let sql = format!("DELETE FROM options WHERE option_key = {}", ph(1));
             sqlx::query(&sql).bind(key).execute(pool).await?;
         }
     }

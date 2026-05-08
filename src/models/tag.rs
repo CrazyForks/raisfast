@@ -11,29 +11,24 @@ use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
 
-/// 标签完整数据库行模型
-///
-/// 直接映射 `tags` 表的所有字段。
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Tag {
-    pub id: String,
+    pub id: i64,
+    pub document_id: String,
     pub tenant_id: Option<String>,
     pub name: String,
     pub slug: String,
-    pub updated_by: Option<String>,
+    pub updated_by: Option<i64>,
     pub updated_at: Option<String>,
     pub created_at: String,
 }
 
 crate::impl_from_row_opt_tenant!(Tag {
-    required { id, name, slug, created_at }
+    required { id, document_id, name, slug, created_at }
     optional { updated_by, updated_at }
 });
 
-/// 查询所有标签
-///
-/// 按 `name` 字母顺序排列返回完整标签列表。
 pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppResult<Vec<Tag>> {
     let sql = format!(
         "SELECT * FROM tags WHERE 1=1{} ORDER BY name",
@@ -47,9 +42,6 @@ pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppRes
     Ok(tags)
 }
 
-/// 分页查询标签
-///
-/// 返回 (当前页数据, 总条数)。
 pub async fn find_paginated(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
@@ -85,12 +77,9 @@ pub async fn find_paginated(
     Ok((items, total))
 }
 
-/// 根据标签 ID 查找标签
-///
-/// 若未找到则返回 [`AppError::NotFound`]。
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: &str,
+    id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Tag> {
     let sql = format!(
@@ -105,22 +94,36 @@ pub async fn find_by_id(
     q.fetch_one(pool).await.map_err(Into::into)
 }
 
-/// 创建新标签
-///
-/// 自动生成 UUID v7 作为主键。创建完成后重新查询并返回完整标签记录。
+pub async fn find_by_document_id(
+    pool: &crate::db::Pool,
+    document_id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Tag> {
+    let sql = format!(
+        "SELECT * FROM tags WHERE document_id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
+    );
+    let mut q = sqlx::query_as::<_, Tag>(&sql).bind(document_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    q.fetch_one(pool).await.map_err(Into::into)
+}
+
 pub async fn create(
     pool: &crate::db::Pool,
     name: &str,
     slug: &str,
     tenant_id: Option<&str>,
-    created_by: Option<&str>,
+    created_by: Option<i64>,
 ) -> AppResult<Tag> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
     match tenant_id {
         Some(tid) => {
             let sql = format!(
-                "INSERT INTO tags (id, tenant_id, name, slug, created_by, updated_by, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
+                "INSERT INTO tags (document_id, tenant_id, name, slug, created_by, updated_by, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
                 ph(1),
                 ph(2),
                 ph(3),
@@ -130,7 +133,7 @@ pub async fn create(
                 ph(7)
             );
             sqlx::query(&sql)
-                .bind(&id)
+                .bind(&document_id)
                 .bind(tid)
                 .bind(name)
                 .bind(slug)
@@ -142,7 +145,7 @@ pub async fn create(
         }
         None => {
             let sql = format!(
-                "INSERT INTO tags (id, name, slug, created_by, updated_by, created_at) VALUES ({}, {}, {}, {}, {}, {})",
+                "INSERT INTO tags (document_id, name, slug, created_by, updated_by, created_at) VALUES ({}, {}, {}, {}, {}, {})",
                 ph(1),
                 ph(2),
                 ph(3),
@@ -151,7 +154,7 @@ pub async fn create(
                 ph(6)
             );
             sqlx::query(&sql)
-                .bind(&id)
+                .bind(&document_id)
                 .bind(name)
                 .bind(slug)
                 .bind(created_by)
@@ -162,13 +165,10 @@ pub async fn create(
         }
     }
 
-    find_by_id(pool, &id, tenant_id).await
+    find_by_document_id(pool, &document_id, tenant_id).await
 }
 
-/// 删除标签
-///
-/// 若标签不存在则返回 [`AppError::NotFound`]。
-pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
+pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
     let sql = format!(
         "DELETE FROM tags WHERE id = {}{}",
         ph(1),
@@ -183,10 +183,9 @@ pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -
     AppError::expect_affected(&result, "tag")
 }
 
-/// 更新标签名称
 pub async fn update(
     pool: &crate::db::Pool,
-    id: &str,
+    id: i64,
     name: &str,
     slug: &str,
     tenant_id: Option<&str>,

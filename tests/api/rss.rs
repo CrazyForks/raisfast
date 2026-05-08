@@ -13,8 +13,8 @@ async fn feed_empty() {
 #[tokio::test]
 async fn feed_with_posts() {
     let (mut app, state) = test_app().await;
-    let author_id = create_author(&state.pool).await;
-    let tok = make_token(&author_id, "author");
+    let (int_id, doc_id) = create_author(&state.pool).await;
+    let tok = make_token(&doc_id, int_id, "author");
     let _: (StatusCode, Value) = send(
         &mut app,
         post_json_auth(

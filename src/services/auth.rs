@@ -34,6 +34,7 @@ use crate::repositories::{RefreshTokenRepository, UserRepository};
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     pub sub: String,
+    pub iid: i64,
     pub role: String,
     #[serde(default = "default_tenant_id")]
     pub tenant_id: String,
@@ -106,6 +107,7 @@ pub fn verify_password(password: &str, hash: &str) -> AppResult<bool> {
 /// 生成 HS256 签名的 JWT 访问令牌。
 pub(crate) fn generate_access_token_internal(
     user_id: &str,
+    user_int_id: i64,
     role: &str,
     tenant_id: &str,
     secret: &str,
@@ -116,6 +118,7 @@ pub(crate) fn generate_access_token_internal(
     let exp = (now.timestamp() as usize) + (expires_in as usize);
     let claims = Claims {
         sub: user_id.to_string(),
+        iid: user_int_id,
         role: role.to_string(),
         tenant_id: tenant_id.to_string(),
         exp,
@@ -152,9 +155,10 @@ pub(crate) fn generate_refresh_token_string_internal() -> AppResult<String> {
 /// 测试辅助：使用固定 secret 生成 JWT token。
 #[allow(clippy::doc_lazy_continuation)]
 #[must_use]
-pub fn generate_access_token_for_test(user_id: &str, role: &str) -> String {
+pub fn generate_access_token_for_test(user_id: &str, user_int_id: i64, role: &str) -> String {
     generate_access_token_internal(
         user_id,
+        user_int_id,
         role,
         crate::constants::DEFAULT_TENANT,
         "test-secret-key-at-least-32-characters-long",
@@ -196,13 +200,13 @@ pub async fn register(
         )
         .await?;
     eventbus.emit(Event::UserRegistered {
-        id: user.id.clone(),
+        id: user.document_id.clone(),
         username: user.username.clone(),
         email: user.email.clone(),
     });
 
     if require_email_verification {
-        let _ = trigger_email_verification(pool, eventbus, &user.id, &user.email).await;
+        let _ = trigger_email_verification(pool, eventbus, user.id, &user.email).await;
     }
 
     Ok(user.into())
@@ -245,7 +249,8 @@ pub async fn login(
     }
 
     let access_token = generate_access_token_internal(
-        &user.id,
+        &user.document_id,
+        user.id,
         &user.role,
         user.tenant_id
             .as_deref()
@@ -257,18 +262,18 @@ pub async fn login(
 
     let expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
     refresh_token_repo
-        .create_token(&user.id, &refresh_token_str, &expires_at.to_rfc3339())
+        .create_token(user.id, &refresh_token_str, &expires_at.to_rfc3339())
         .await?;
 
     plugins
         .dispatch_action(
             HookPoint::OnLogin,
-            &serde_json::json!({"email": &req.email, "success": true, "user_id": &user.id}),
+            &serde_json::json!({"email": &req.email, "success": true, "user_id": &user.document_id}),
         )
         .await;
 
     eventbus.emit(Event::UserLoggedIn {
-        id: user.id.clone(),
+        id: user.document_id.clone(),
         success: true,
     });
 
@@ -286,7 +291,7 @@ pub async fn login(
 /// 生成新的访问令牌和刷新令牌，确保原子性。
 #[allow(clippy::too_many_arguments)]
 pub async fn refresh(
-    user_repo: &dyn UserRepository,
+    _user_repo: &dyn UserRepository,
     refresh_token_repo: &dyn RefreshTokenRepository,
     pool: &crate::db::Pool,
     refresh_token_str: &str,
@@ -308,13 +313,13 @@ pub async fn refresh(
         return Err(AppError::Unauthorized);
     }
 
-    let user = user_repo
-        .find_by_id(&stored.user_id, tenant_id)
+    let user = crate::models::user::find_by_pk(pool, stored.user_id, tenant_id)
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
 
     let access_token = generate_access_token_internal(
-        &user.id,
+        &user.document_id,
+        user.id,
         &user.role,
         user.tenant_id
             .as_deref()
@@ -339,7 +344,7 @@ pub async fn refresh(
     .await?;
 
     sqlx::query(&format!(
-        "INSERT INTO refresh_tokens (id, user_id, token, expires_at, created_at) VALUES ({}, {}, {}, {}, {})",
+        "INSERT INTO refresh_tokens (document_id, user_id, token, expires_at, created_at) VALUES ({}, {}, {}, {}, {})",
         crate::db::dialect::ph(1),
         crate::db::dialect::ph(2),
         crate::db::dialect::ph(3),
@@ -347,7 +352,7 @@ pub async fn refresh(
         crate::db::dialect::ph(5)
     ))
     .bind(&new_id)
-    .bind(&user.id)
+    .bind(user.id)
     .bind(&new_refresh_token)
     .bind(&new_expires_str)
     .bind(&now)
@@ -368,12 +373,15 @@ pub async fn refresh(
 ///
 /// 删除该用户的所有刷新令牌，使其所有设备上的会话失效。
 pub async fn logout(
+    pool: &crate::db::Pool,
     refresh_token_repo: &dyn RefreshTokenRepository,
     auth: &AuthUser,
 ) -> AppResult<()> {
-    refresh_token_repo
-        .delete_by_user(auth.ensure_authenticated()?)
-        .await
+    let user_id = auth.ensure_authenticated()?;
+    let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+    refresh_token_repo.delete_by_user(user.id).await
 }
 
 /// 获取当前用户资料。
@@ -394,7 +402,7 @@ pub async fn update_me(
     let user = user_repo
         .update_profile(
             UpdateProfileCmd {
-                id: auth.ensure_authenticated()?.to_string(),
+                id: auth.user_int_id().ok_or(AppError::Unauthorized)?,
                 username: req.username,
                 bio: req.bio,
                 website: req.website,
@@ -437,7 +445,7 @@ pub async fn change_password(
         "DELETE FROM refresh_tokens WHERE user_id = {}",
         crate::db::dialect::ph(1)
     ))
-    .bind(user_id)
+    .bind(user.id)
     .execute(pool)
     .await?;
     Ok(())
@@ -486,12 +494,12 @@ pub async fn forgot_password(
         None => return Ok(()),
     };
 
-    crate::models::password_reset::delete_unused_by_user(pool, &user.id).await?;
+    crate::models::password_reset::delete_unused_by_user(pool, user.id).await?;
 
-    let reset_token = crate::models::password_reset::create(pool, &user.id, 3600).await?;
+    let reset_token = crate::models::password_reset::create(pool, user.id, 3600).await?;
 
     eventbus.emit(Event::PasswordResetRequested {
-        user_id: user.id,
+        user_id: user.document_id,
         email: user.email,
         reset_token: reset_token.token,
     });
@@ -536,7 +544,7 @@ pub async fn reset_password(
     sqlx::query(&sql)
         .bind(&new_hash)
         .bind(&now)
-        .bind(&reset_token.user_id)
+        .bind(reset_token.user_id)
         .execute(&mut *tx)
         .await?;
 
@@ -547,7 +555,7 @@ pub async fn reset_password(
     );
     sqlx::query(&sql)
         .bind(&now)
-        .bind(&reset_token.id)
+        .bind(reset_token.id)
         .execute(&mut *tx)
         .await?;
 
@@ -556,7 +564,7 @@ pub async fn reset_password(
         crate::db::dialect::ph(1)
     );
     sqlx::query(&del_sql)
-        .bind(&reset_token.user_id)
+        .bind(reset_token.user_id)
         .execute(&mut *tx)
         .await?;
 
@@ -641,7 +649,7 @@ mod tests {
     #[test]
     fn generate_and_verify_token() {
         let token =
-            generate_access_token_internal("user-1", "admin", "default", "secret", 900).unwrap();
+            generate_access_token_internal("user-1", 1, "admin", "default", "secret", 900).unwrap();
         let key = jsonwebtoken::DecodingKey::from_secret("secret".as_bytes());
         let claims = verify_token(&token, &key).unwrap();
         assert_eq!(claims.sub, "user-1");
@@ -651,7 +659,8 @@ mod tests {
     #[test]
     fn verify_token_rejects_wrong_secret() {
         let token =
-            generate_access_token_internal("user-1", "admin", "default", "secret-a", 900).unwrap();
+            generate_access_token_internal("user-1", 1, "admin", "default", "secret-a", 900)
+                .unwrap();
         let key = jsonwebtoken::DecodingKey::from_secret("secret-b".as_bytes());
         assert!(verify_token(&token, &key).is_err());
     }
@@ -661,6 +670,7 @@ mod tests {
         let now = chrono::Utc::now();
         let claims = Claims {
             sub: "user-1".into(),
+            iid: 1,
             role: "admin".into(),
             tenant_id: "default".to_string(),
             exp: (now - chrono::Duration::seconds(120)).timestamp() as usize,
@@ -678,7 +688,7 @@ mod tests {
 
     #[test]
     fn generate_test_token_is_valid() {
-        let token = generate_access_token_for_test("user-1", "author");
+        let token = generate_access_token_for_test("user-1", 1, "author");
         assert!(token.len() > 20);
     }
 
@@ -743,7 +753,7 @@ pub async fn verify_sms_and_auth(
         .await?
         .ok_or_else(|| AppError::BadRequest("invalid_code".into()))?;
 
-    let result = crate::models::sms_code::verify_code(pool, &sms.id, code).await?;
+    let result = crate::models::sms_code::verify_code(pool, sms.id, code).await?;
 
     match result {
         crate::models::sms_code::VerifyResult::Verified => {}
@@ -783,7 +793,8 @@ pub async fn verify_sms_and_auth(
     };
 
     let access_token = generate_access_token_internal(
-        &user.id,
+        &user.document_id,
+        user.id,
         &user.role,
         user.tenant_id
             .as_deref()
@@ -795,7 +806,7 @@ pub async fn verify_sms_and_auth(
 
     let expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
     refresh_token_repo
-        .create_token(&user.id, &refresh_token_str, &expires_at.to_rfc3339())
+        .create_token(user.id, &refresh_token_str, &expires_at.to_rfc3339())
         .await?;
 
     Ok(LoginResponse {
@@ -824,7 +835,7 @@ pub async fn bind_phone(
         .await?
         .ok_or_else(|| AppError::BadRequest("invalid_code".into()))?;
 
-    let result = crate::models::sms_code::verify_code(pool, &sms.id, code).await?;
+    let result = crate::models::sms_code::verify_code(pool, sms.id, code).await?;
 
     match result {
         crate::models::sms_code::VerifyResult::Verified => {}
@@ -851,7 +862,7 @@ pub async fn bind_phone(
 pub async fn trigger_email_verification(
     pool: &crate::db::Pool,
     eventbus: &EventBus,
-    user_id: &str,
+    user_id: i64,
     email: &str,
 ) -> AppResult<()> {
     crate::models::email_verification::delete_unused_by_user(pool, user_id).await?;
@@ -893,7 +904,7 @@ pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> 
     );
     sqlx::query(&sql)
         .bind(&now)
-        .bind(&verification.id)
+        .bind(verification.id)
         .execute(&mut *tx)
         .await?;
 
@@ -904,7 +915,7 @@ pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> 
     );
     sqlx::query(&sql)
         .bind(&now)
-        .bind(&verification.user_id)
+        .bind(verification.user_id)
         .execute(&mut *tx)
         .await?;
 
@@ -930,5 +941,5 @@ pub async fn resend_verification(
         return Err(AppError::BadRequest("email_already_verified".into()));
     }
 
-    trigger_email_verification(pool, eventbus, &user.id, &user.email).await
+    trigger_email_verification(pool, eventbus, user.id, &user.email).await
 }

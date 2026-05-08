@@ -25,18 +25,18 @@ macro_rules! skip_without_tenant {
     };
 }
 
-async fn create_tenant_in_db(pool: &raisfast::db::Pool, id: &str, name: &str) {
+async fn create_tenant_in_db(pool: &raisfast::db::Pool, document_id: &str, name: &str) {
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
-        "INSERT OR IGNORE INTO tenants (id, name, config, status, created_at, updated_at) VALUES (?, ?, '{}', 'active', ?, ?)"
+        "INSERT OR IGNORE INTO tenants (document_id, name, config, status, created_at, updated_at) VALUES (?, ?, '{}', 'active', ?, ?)"
     )
-    .bind(id).bind(name).bind(&now).bind(&now)
+    .bind(document_id).bind(name).bind(&now).bind(&now)
     .execute(pool).await.unwrap();
 }
 
 async fn create_user_in_tenant(
     pool: &raisfast::db::Pool,
-    id: &str,
+    document_id: &str,
     email: &str,
     username: &str,
     role: &str,
@@ -45,7 +45,7 @@ async fn create_user_in_tenant(
     let hash = raisfast::services::auth::hash_password("TestPass123!").unwrap();
     let now = chrono::Utc::now().to_rfc3339();
     let sql = format!(
-        "INSERT INTO users (id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
+        "INSERT INTO users (document_id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
         raisfast::db::dialect::ph(1),
         raisfast::db::dialect::ph(2),
         raisfast::db::dialect::ph(3),
@@ -56,7 +56,7 @@ async fn create_user_in_tenant(
         raisfast::db::dialect::ph(8)
     );
     sqlx::query(&sql)
-        .bind(id)
+        .bind(document_id)
         .bind(tenant_id)
         .bind(email)
         .bind(username)
@@ -71,15 +71,20 @@ async fn create_user_in_tenant(
 
 async fn create_published_post_in_tenant(
     pool: &raisfast::db::Pool,
-    id: &str,
+    document_id: &str,
     slug: &str,
     title: &str,
-    author_id: &str,
+    author_doc_id: &str,
     tenant_id: &str,
 ) {
     let now = chrono::Utc::now().to_rfc3339();
+    let author_int_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE document_id = ?")
+        .bind(author_doc_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
     let sql = format!(
-        "INSERT INTO posts (id, tenant_id, title, slug, content, excerpt, status, created_by, updated_by, created_at, updated_at) VALUES ({}, {}, {}, {}, 'content', 'excerpt', 'published', {}, NULL, {}, {})",
+        "INSERT INTO posts (document_id, tenant_id, title, slug, content, excerpt, status, created_by, updated_by, created_at, updated_at) VALUES ({}, {}, {}, {}, 'content', 'excerpt', 'published', {}, NULL, {}, {})",
         raisfast::db::dialect::ph(1),
         raisfast::db::dialect::ph(2),
         raisfast::db::dialect::ph(3),
@@ -89,11 +94,11 @@ async fn create_published_post_in_tenant(
         raisfast::db::dialect::ph(7)
     );
     sqlx::query(&sql)
-        .bind(id)
+        .bind(document_id)
         .bind(tenant_id)
         .bind(title)
         .bind(slug)
-        .bind(author_id)
+        .bind(author_int_id)
         .bind(&now)
         .bind(&now)
         .execute(pool)

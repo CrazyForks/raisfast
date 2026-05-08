@@ -30,7 +30,7 @@ async fn create_simple_workflow(app: &mut axum::Router, token: &str) -> String {
 #[tokio::test]
 async fn workflow_crud_lifecycle() {
     let (mut app, _) = test_app().await;
-    let token = make_token("u1", "admin");
+    let token = make_token("u1", 1, "admin");
 
     let id = create_simple_workflow(&mut app, &token).await;
 
@@ -57,7 +57,7 @@ async fn workflow_crud_lifecycle() {
 #[tokio::test]
 async fn workflow_start_and_execute_steps() {
     let (mut app, _) = test_app().await;
-    let token = make_token("u1", "admin");
+    let token = make_token("u1", 1, "admin");
 
     let id = create_simple_workflow(&mut app, &token).await;
 
@@ -71,7 +71,7 @@ async fn workflow_start_and_execute_steps() {
     )
     .await;
     assert!(status.is_success(), "start failed: {status} {body:?}");
-    let instance_id = body["data"]["id"].as_str().unwrap().to_string();
+    let instance_id = body["data"]["document_id"].as_str().unwrap().to_string();
     assert_eq!(body["data"]["status"], "running");
     assert_eq!(body["data"]["current_step"], "s1");
 
@@ -110,7 +110,7 @@ async fn workflow_start_and_execute_steps() {
 #[tokio::test]
 async fn workflow_branch_condition() {
     let (mut app, _) = test_app().await;
-    let token = make_token("u1", "admin");
+    let token = make_token("u1", 1, "admin");
 
     let id = uuid::Uuid::now_v7().to_string();
     let (status, body) = send(
@@ -145,7 +145,7 @@ async fn workflow_branch_condition() {
     )
     .await;
     assert!(status.is_success());
-    let instance_id = body["data"]["id"].as_str().unwrap().to_string();
+    let instance_id = body["data"]["document_id"].as_str().unwrap().to_string();
 
     let (status, body) = send(
         &mut app,
@@ -163,7 +163,7 @@ async fn workflow_branch_condition() {
 #[tokio::test]
 async fn workflow_cancel_instance() {
     let (mut app, _) = test_app().await;
-    let token = make_token("u1", "admin");
+    let token = make_token("u1", 1, "admin");
 
     let id = uuid::Uuid::now_v7().to_string();
     let _ = send(
@@ -192,7 +192,7 @@ async fn workflow_cancel_instance() {
     )
     .await;
     assert!(status.is_success());
-    let instance_id = body["data"]["id"].as_str().unwrap().to_string();
+    let instance_id = body["data"]["document_id"].as_str().unwrap().to_string();
 
     let (status, _) = send(
         &mut app,
@@ -220,7 +220,7 @@ async fn workflow_cancel_instance() {
 #[tokio::test]
 async fn workflow_step_logs() {
     let (mut app, _) = test_app().await;
-    let token = make_token("u1", "admin");
+    let token = make_token("u1", 1, "admin");
 
     let id = uuid::Uuid::now_v7().to_string();
     let _ = send(
@@ -249,7 +249,7 @@ async fn workflow_step_logs() {
     )
     .await;
     assert!(status.is_success());
-    let instance_id = body["data"]["id"].as_str().unwrap().to_string();
+    let instance_id = body["data"]["document_id"].as_str().unwrap().to_string();
 
     let _ = send(
         &mut app,

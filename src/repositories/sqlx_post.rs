@@ -32,13 +32,13 @@ impl PostRepository for SqlxPostRepository {
         post::find_by_slug(&self.pool, slug, tenant_id).await
     }
 
-    async fn find_by_id(&self, id: &str, tenant_id: Option<&str>) -> AppResult<Option<Post>> {
+    async fn find_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<Option<Post>> {
         post::find_by_id(&self.pool, id, tenant_id).await
     }
 
     async fn find_joined_by_id(
         &self,
-        id: &str,
+        id: i64,
         tenant_id: Option<&str>,
     ) -> AppResult<PostJoinedRow> {
         post::find_joined_by_id(&self.pool, id, tenant_id).await
@@ -49,12 +49,14 @@ impl PostRepository for SqlxPostRepository {
         query: FindPublishedQuery,
         tenant_id: Option<&str>,
     ) -> AppResult<(Vec<PostJoinedRow>, i64)> {
+        let category_id = query.category_id;
+        let tag_id = query.tag_id;
         post::find_published_joined(
             &self.pool,
             query.page,
             query.page_size,
-            query.category_id.as_deref(),
-            query.tag_id.as_deref(),
+            category_id,
+            tag_id,
             query.q.as_deref(),
             tenant_id,
         )
@@ -81,7 +83,7 @@ impl PostRepository for SqlxPostRepository {
 
     async fn get_post_tags(
         &self,
-        post_id: &str,
+        post_id: i64,
         tenant_id: Option<&str>,
     ) -> AppResult<Vec<TagBrief>> {
         post::get_post_tags(&self.pool, post_id, tenant_id).await
@@ -89,15 +91,15 @@ impl PostRepository for SqlxPostRepository {
 
     async fn get_tags_for_posts(
         &self,
-        post_ids: &[String],
+        post_ids: &[i64],
         tenant_id: Option<&str>,
-    ) -> AppResult<HashMap<String, Vec<TagBrief>>> {
+    ) -> AppResult<HashMap<i64, Vec<TagBrief>>> {
         post::get_tags_for_posts(&self.pool, post_ids, tenant_id).await
     }
 
     async fn find_joined_by_ids(
         &self,
-        ids: &[String],
+        ids: &[i64],
         tenant_id: Option<&str>,
     ) -> AppResult<Vec<PostJoinedRow>> {
         post::find_joined_by_ids(&self.pool, ids, tenant_id).await
@@ -107,7 +109,7 @@ impl PostRepository for SqlxPostRepository {
         if let Some(ref tag_ids) = cmd.tag_ids {
             let mut tx = self.pool.begin().await?;
             let p = post::create_tx(&mut tx, &cmd, tenant_id).await?;
-            post::sync_tags_tx(&mut tx, &p.id, tag_ids).await?;
+            post::sync_tags_tx(&mut tx, p.id, tag_ids).await?;
             tx.commit().await?;
             Ok(p)
         } else {
@@ -119,9 +121,9 @@ impl PostRepository for SqlxPostRepository {
         if let Some(ref tag_ids) = cmd.tag_ids {
             let mut tx = self.pool.begin().await?;
             post::update_tx(&mut tx, &cmd, tenant_id).await?;
-            post::sync_tags_tx(&mut tx, &cmd.id, tag_ids).await?;
+            post::sync_tags_tx(&mut tx, cmd.id, tag_ids).await?;
             tx.commit().await?;
-            post::find_by_id(&self.pool, &cmd.id, tenant_id)
+            post::find_by_id(&self.pool, cmd.id, tenant_id)
                 .await?
                 .ok_or_else(|| {
                     crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
@@ -133,7 +135,7 @@ impl PostRepository for SqlxPostRepository {
         }
     }
 
-    async fn delete(&self, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
+    async fn delete(&self, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
         post::delete(&self.pool, id, tenant_id).await
     }
 }

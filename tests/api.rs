@@ -354,8 +354,8 @@ pub(crate) fn delete_auth(path: &str, token: &str) -> Request<Body> {
         .unwrap()
 }
 
-pub(crate) fn make_token(user_id: &str, role: &str) -> String {
-    raisfast::services::auth::generate_access_token_for_test(user_id, role)
+pub(crate) fn make_token(user_id: &str, iid: i64, role: &str) -> String {
+    raisfast::services::auth::generate_access_token_for_test(user_id, iid, role)
 }
 
 pub(crate) async fn register_and_login(
@@ -390,46 +390,46 @@ pub(crate) async fn register_and_login(
     )
 }
 
-pub(crate) async fn create_admin(pool: &raisfast::db::Pool) -> String {
+pub(crate) async fn create_admin(pool: &raisfast::db::Pool) -> (i64, String) {
     let hash = raisfast::services::auth::hash_password("AdminPass123!").unwrap();
-    let id = uuid::Uuid::now_v7().to_string();
+    let doc_id = uuid::Uuid::now_v7().to_string();
     let sql = format!(
-        "INSERT INTO users (id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'admin')",
+        "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'admin') RETURNING id",
         raisfast::db::dialect::ph(1),
         raisfast::db::dialect::ph(2),
         raisfast::db::dialect::ph(3),
         raisfast::db::dialect::ph(4)
     );
-    sqlx::query(&sql)
-        .bind(&id)
+    let int_id: i64 = sqlx::query_scalar(&sql)
+        .bind(&doc_id)
         .bind("admin@test.com")
         .bind("testadmin")
         .bind(&hash)
-        .execute(pool)
+        .fetch_one(pool)
         .await
         .unwrap();
-    id
+    (int_id, doc_id)
 }
 
-pub(crate) async fn create_author(pool: &raisfast::db::Pool) -> String {
+pub(crate) async fn create_author(pool: &raisfast::db::Pool) -> (i64, String) {
     let hash = raisfast::services::auth::hash_password("AuthorPass123!").unwrap();
-    let id = uuid::Uuid::now_v7().to_string();
+    let doc_id = uuid::Uuid::now_v7().to_string();
     let sql = format!(
-        "INSERT INTO users (id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'author')",
+        "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'author') RETURNING id",
         raisfast::db::dialect::ph(1),
         raisfast::db::dialect::ph(2),
         raisfast::db::dialect::ph(3),
         raisfast::db::dialect::ph(4)
     );
-    sqlx::query(&sql)
-        .bind(&id)
+    let int_id: i64 = sqlx::query_scalar(&sql)
+        .bind(&doc_id)
         .bind("author@test.com")
         .bind("testauthor")
         .bind(&hash)
-        .execute(pool)
+        .fetch_one(pool)
         .await
         .unwrap();
-    id
+    (int_id, doc_id)
 }
 
 pub(crate) async fn create_published_post(app: &mut axum::Router, token: &str) -> String {

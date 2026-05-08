@@ -297,7 +297,7 @@ impl HostContext {
     /// `params_json` 为 JSON 数组字符串，与 SQL 中 `host.ph(N)` 占位符按序对应。
     /// 示例：
     /// ```js
-    /// const sql = `INSERT INTO tags (id, name) VALUES (${host.ph(1)}, ${host.ph(2)})`;
+    /// const sql = `INSERT INTO tags (document_id, name) VALUES (${host.ph(1)}, ${host.ph(2)})`;
     /// host.dbExecute(sql, JSON.stringify(["tag-1", "Rust"]));
     /// ```
     #[must_use]
@@ -996,16 +996,19 @@ mod tests {
         let ctx = HostContext::new("test", config, "p1".into(), perms, Some(pool));
 
         let result = ctx.db_execute(
-            "INSERT INTO tags (id, name, slug) VALUES ('tag-1', 'Test', 'test')",
+            "INSERT INTO tags (document_id, name, slug) VALUES ('tag-1', 'Test', 'test')",
             "[]",
         );
         assert!(result.contains("rows_affected"));
         assert!(!result.contains("error"));
 
-        let update = ctx.db_execute("UPDATE tags SET name = 'Updated' WHERE id = 'tag-1'", "[]");
+        let update = ctx.db_execute(
+            "UPDATE tags SET name = 'Updated' WHERE document_id = 'tag-1'",
+            "[]",
+        );
         assert!(update.contains("rows_affected"));
 
-        let delete = ctx.db_execute("DELETE FROM tags WHERE id = 'tag-1'", "[]");
+        let delete = ctx.db_execute("DELETE FROM tags WHERE document_id = 'tag-1'", "[]");
         assert!(delete.contains("rows_affected"));
     }
 
@@ -1025,19 +1028,19 @@ mod tests {
         let ctx = HostContext::new("test", config, "p1".into(), perms, Some(pool));
 
         let result = ctx.db_execute(
-            "INSERT INTO tags (id, name, slug) VALUES (?, ?, ?)",
+            "INSERT INTO tags (document_id, name, slug) VALUES (?, ?, ?)",
             r#"["t2","Param Tag","param-tag"]"#,
         );
         assert!(result.contains("rows_affected"));
         assert!(!result.contains("error"));
 
         let update = ctx.db_execute(
-            "UPDATE tags SET name = ? WHERE id = ?",
+            "UPDATE tags SET name = ? WHERE document_id = ?",
             r#"["Renamed","t2"]"#,
         );
         assert!(update.contains("rows_affected"));
 
-        let delete = ctx.db_execute("DELETE FROM tags WHERE id = ?", r#"["t2"]"#);
+        let delete = ctx.db_execute("DELETE FROM tags WHERE document_id = ?", r#"["t2"]"#);
         assert!(delete.contains("rows_affected"));
     }
 
@@ -1049,7 +1052,10 @@ mod tests {
             ..Permissions::default()
         };
         let ctx = HostContext::new("test", config, "p1".into(), perms, None);
-        let result = ctx.db_execute("INSERT INTO tags (id) VALUES (?)", "not valid json");
+        let result = ctx.db_execute(
+            "INSERT INTO tags (document_id, name, slug) VALUES (?)",
+            "not valid json",
+        );
         assert!(result.contains("invalid params JSON"));
     }
 
@@ -1062,7 +1068,7 @@ mod tests {
         };
         let ctx = HostContext::new("test", config, "p1".into(), perms, None);
         let result = ctx.db_execute(
-            "INSERT INTO tags (id) VALUES (?)",
+            "INSERT INTO tags (document_id, name, slug) VALUES (?, ?, ?)",
             r#"[{"nested":"object"}]"#,
         );
         assert!(result.contains("unsupported param type"));
@@ -1111,7 +1117,7 @@ mod tests {
         assert!(begin.contains(r#""ok":true"#), "begin failed: {begin}");
 
         let insert = ctx.db_execute(
-            "INSERT INTO tags (id, name, slug) VALUES ('tx-1', 'TxTest', 'tx-test')",
+            "INSERT INTO tags (document_id, name, slug) VALUES ('tx-1', 'TxTest', 'tx-test')",
             "[]",
         );
         assert!(insert.contains("rows_affected"), "insert failed: {insert}");
@@ -1119,11 +1125,12 @@ mod tests {
         let commit = ctx.db_commit();
         assert!(commit.contains(r#""ok":true"#), "commit failed: {commit}");
 
-        let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM tags WHERE id = 'tx-1'")
-            .bind("tx-1")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT document_id FROM tags WHERE document_id = 'tx-1'")
+                .bind("tx-1")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
         assert_eq!(rows.len(), 1, "row should be committed");
     }
 
@@ -1146,7 +1153,7 @@ mod tests {
         assert!(begin.contains(r#""ok":true"#));
 
         let insert = ctx.db_execute(
-            "INSERT INTO tags (id, name, slug) VALUES ('rb-1', 'RbTest', 'rb-test')",
+            "INSERT INTO tags (document_id, name, slug) VALUES ('rb-1', 'RbTest', 'rb-test')",
             "[]",
         );
         assert!(insert.contains("rows_affected"));
@@ -1154,7 +1161,7 @@ mod tests {
         let rollback = ctx.db_rollback();
         assert!(rollback.contains(r#""ok":true"#));
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags WHERE id = 'rb-1'")
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags WHERE document_id = 'rb-1'")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -1202,14 +1209,14 @@ mod tests {
         assert!(begin.contains(r#""ok":true"#));
 
         let insert = ctx.db_execute(
-            "INSERT INTO tags (id, name, slug) VALUES ('cl-1', 'CleanTest', 'cl-test')",
+            "INSERT INTO tags (document_id, name, slug) VALUES ('cl-1', 'CleanTest', 'cl-test')",
             "[]",
         );
         assert!(insert.contains("rows_affected"));
 
         ctx.cleanup_tx();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags WHERE id = 'cl-1'")
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags WHERE document_id = 'cl-1'")
             .fetch_one(&pool)
             .await
             .unwrap();

@@ -16,14 +16,11 @@ use crate::db::dialect::ph;
 use crate::db::tenant::{tenant_filter_aliased_ph, tenant_filter_ph};
 use crate::errors::app_error::{AppError, AppResult};
 
-/// 文章完整数据库行模型
-///
-/// 直接映射 `posts` 表的所有字段。
-/// 首次发布时自动填充 `published_at`；`status` 可取 `draft`、`published` 等。
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
 pub struct Post {
-    pub id: String,
+    pub id: i64,
+    pub document_id: String,
     pub tenant_id: Option<String>,
     pub title: String,
     pub slug: String,
@@ -31,9 +28,9 @@ pub struct Post {
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
     pub status: String,
-    pub created_by: String,
-    pub updated_by: String,
-    pub category_id: Option<String>,
+    pub created_by: i64,
+    pub updated_by: i64,
+    pub category_id: Option<i64>,
     pub view_count: i64,
     pub is_pinned: bool,
     pub created_at: String,
@@ -42,24 +39,18 @@ pub struct Post {
 }
 
 crate::impl_from_row_opt_tenant!(Post {
-    required { id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, created_at, updated_at }
+    required { id, document_id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, created_at, updated_at }
     optional { excerpt, cover_image, category_id, published_at }
 });
 
-/// 标签摘要
-///
-/// 用于文章响应中展示标签的简要信息，包含 ID、名称和 slug。
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone, utoipa::ToSchema)]
 pub struct TagBrief {
-    pub id: String,
+    pub id: i64,
     pub name: String,
     pub slug: String,
 }
 
-/// 根据 slug 查找文章
-///
-/// 返回 `Ok(Some(post))` 或 `Ok(None)`（未找到时）。
 pub async fn find_by_slug(
     pool: &crate::db::Pool,
     slug: &str,
@@ -78,12 +69,9 @@ pub async fn find_by_slug(
     Ok(post)
 }
 
-/// 根据文章 ID 查找文章
-///
-/// 返回 `Ok(Some(post))` 或 `Ok(None)`（未找到时）。
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: &str,
+    id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Post>> {
     let sql = format!(
@@ -99,10 +87,24 @@ pub async fn find_by_id(
     Ok(post)
 }
 
-/// 创建新文章
-///
-/// 自动生成 UUID v7 作为主键；若 `status` 为 `published` 则同时设置 `published_at`。
-/// 创建完成后重新查询并返回完整文章记录。
+pub async fn find_by_document_id(
+    pool: &crate::db::Pool,
+    document_id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<Post>> {
+    let sql = format!(
+        "SELECT * FROM posts WHERE document_id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
+    );
+    let mut q = sqlx::query_as::<_, Post>(&sql).bind(document_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let post = q.fetch_optional(pool).await?;
+    Ok(post)
+}
+
 pub async fn create(
     pool: &crate::db::Pool,
     cmd: &crate::commands::CreatePostCmd,
@@ -110,19 +112,19 @@ pub async fn create(
 ) -> AppResult<Post> {
     let mut tx = pool.begin().await?;
     let post = create_tx(&mut tx, cmd, tenant_id).await?;
+    let doc_id = post.document_id.clone();
     tx.commit().await?;
-    Ok(post)
+    find_by_document_id(pool, &doc_id, tenant_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("post"))
 }
 
-/// 在已有事务中创建新文章
-///
-/// 直接从命令数据构造 Post 对象，不回读数据库。
 pub async fn create_tx(
     tx: &mut crate::db::Transaction<'_>,
     cmd: &crate::commands::CreatePostCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Post> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
     let published_at = if cmd.status == "published" {
         Some(now.clone())
     } else {
@@ -131,7 +133,7 @@ pub async fn create_tx(
     match tenant_id {
         Some(tid) => {
             let sql = format!(
-                "INSERT INTO posts (id, tenant_id, title, slug, content, excerpt, cover_image, status, created_by, updated_by, category_id, published_at, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                "INSERT INTO posts (document_id, tenant_id, title, slug, content, excerpt, cover_image, status, created_by, updated_by, category_id, published_at, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
                 ph(1),
                 ph(2),
                 ph(3),
@@ -148,7 +150,7 @@ pub async fn create_tx(
                 ph(14)
             );
             sqlx::query(&sql)
-                .bind(&id)
+                .bind(&document_id)
                 .bind(tid)
                 .bind(&cmd.title)
                 .bind(&cmd.slug)
@@ -156,9 +158,9 @@ pub async fn create_tx(
                 .bind(&cmd.excerpt)
                 .bind(&cmd.cover_image)
                 .bind(&cmd.status)
-                .bind(&cmd.created_by)
-                .bind(&cmd.updated_by)
-                .bind(&cmd.category_id)
+                .bind(cmd.created_by)
+                .bind(cmd.updated_by)
+                .bind(cmd.category_id)
                 .bind(&published_at)
                 .bind(&now)
                 .bind(&now)
@@ -167,7 +169,7 @@ pub async fn create_tx(
         }
         None => {
             let sql = format!(
-                "INSERT INTO posts (id, title, slug, content, excerpt, cover_image, status, created_by, updated_by, category_id, published_at, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                "INSERT INTO posts (document_id, title, slug, content, excerpt, cover_image, status, created_by, updated_by, category_id, published_at, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
                 ph(1),
                 ph(2),
                 ph(3),
@@ -183,16 +185,16 @@ pub async fn create_tx(
                 ph(13)
             );
             sqlx::query(&sql)
-                .bind(&id)
+                .bind(&document_id)
                 .bind(&cmd.title)
                 .bind(&cmd.slug)
                 .bind(&cmd.content)
                 .bind(&cmd.excerpt)
                 .bind(&cmd.cover_image)
                 .bind(&cmd.status)
-                .bind(&cmd.created_by)
-                .bind(&cmd.updated_by)
-                .bind(&cmd.category_id)
+                .bind(cmd.created_by)
+                .bind(cmd.updated_by)
+                .bind(cmd.category_id)
                 .bind(&published_at)
                 .bind(&now)
                 .bind(&now)
@@ -201,30 +203,27 @@ pub async fn create_tx(
         }
     }
 
-    Ok(Post {
-        id,
-        tenant_id: tenant_id.map(|t| t.to_string()),
-        title: cmd.title.clone(),
-        slug: cmd.slug.clone(),
-        content: cmd.content.clone(),
-        excerpt: cmd.excerpt.clone(),
-        cover_image: cmd.cover_image.clone(),
-        status: cmd.status.clone(),
-        created_by: cmd.created_by.clone(),
-        updated_by: cmd.updated_by.clone().unwrap_or_default(),
-        category_id: cmd.category_id.clone(),
-        view_count: 0,
-        is_pinned: false,
-        created_at: now.clone(),
-        updated_at: now,
-        published_at,
-    })
+    let created = find_by_document_id_tx(tx, &document_id, tenant_id)
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to read created post")))?;
+
+    Ok(created)
 }
 
-/// 更新文章
-///
-/// 仅更新传入的非空字段，其余保留原值。
-/// 若文章首次从草稿变为已发布状态，自动填充 `published_at`。
+async fn find_by_document_id_tx(
+    tx: &mut crate::db::Transaction<'_>,
+    document_id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<Post>> {
+    let filter = tenant_filter_ph(tenant_id, 2);
+    let sql = format!("SELECT * FROM posts WHERE document_id = {}{filter}", ph(1));
+    let mut q = sqlx::query_as::<_, Post>(&sql).bind(document_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    q.fetch_optional(&mut **tx).await.map_err(Into::into)
+}
+
 pub async fn update(
     pool: &crate::db::Pool,
     cmd: &crate::commands::UpdatePostCmd,
@@ -236,20 +235,18 @@ pub async fn update(
     Ok(post)
 }
 
-/// 在已有事务中更新文章
-///
-/// 直接从合并数据构造 Post 对象，不回读数据库。
 pub async fn update_tx(
     tx: &mut crate::db::Transaction<'_>,
     cmd: &crate::commands::UpdatePostCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Post> {
+    let post_id: i64 = cmd.id;
     let sql = format!(
         "SELECT * FROM posts WHERE id = {}{}",
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    let mut q = sqlx::query_as::<_, Post>(&sql).bind(&cmd.id);
+    let mut q = sqlx::query_as::<_, Post>(&sql).bind(post_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -278,16 +275,9 @@ pub async fn update_tx(
         .as_deref()
         .map(std::string::ToString::to_string)
         .or(existing.cover_image);
-    let category_id = cmd
-        .category_id
-        .as_deref()
-        .map(std::string::ToString::to_string)
-        .or(existing.category_id);
+    let category_id: Option<i64> = cmd.category_id.or(existing.category_id);
     let slug = cmd.slug.as_deref().unwrap_or(&existing.slug);
-    let updated_by = cmd
-        .updated_by
-        .clone()
-        .unwrap_or(existing.updated_by.clone());
+    let updated_by: i64 = cmd.updated_by.unwrap_or(existing.updated_by);
 
     let sql = format!(
         "UPDATE posts SET title = {}, slug = {}, content = {}, excerpt = {}, cover_image = {}, status = {}, category_id = {}, published_at = {}, updated_by = {}, updated_at = {} WHERE id = {}{}",
@@ -311,11 +301,11 @@ pub async fn update_tx(
         .bind(&excerpt)
         .bind(&cover_image)
         .bind(new_status)
-        .bind(&category_id)
+        .bind(category_id)
         .bind(&published_at)
-        .bind(&updated_by)
+        .bind(updated_by)
         .bind(&now)
-        .bind(&cmd.id);
+        .bind(post_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -323,6 +313,7 @@ pub async fn update_tx(
 
     Ok(Post {
         id: existing.id,
+        document_id: existing.document_id,
         tenant_id: existing.tenant_id,
         title: title.to_string(),
         slug: slug.to_string(),
@@ -341,10 +332,7 @@ pub async fn update_tx(
     })
 }
 
-/// 删除文章
-///
-/// 若文章不存在则返回 [`AppError::NotFound`]。
-pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -> AppResult<()> {
+pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
     let sql = format!(
         "DELETE FROM posts WHERE id = {}{}",
         ph(1),
@@ -359,9 +347,6 @@ pub async fn delete(pool: &crate::db::Pool, id: &str, tenant_id: Option<&str>) -
     AppError::expect_affected(&result, "post")
 }
 
-/// 原子性地增加文章浏览量并返回 JOIN 查询结果。
-///
-/// 单条 SQL 完成 UPDATE + SELECT，避免 `get_post` 中查询与更新之间的竞态。
 pub async fn increment_view_count_joined(
     pool: &crate::db::Pool,
     slug: &str,
@@ -381,21 +366,17 @@ pub async fn increment_view_count_joined(
     find_published_joined_by_slug(pool, slug, tenant_id).await
 }
 
-/// 同步文章与标签的关联关系
-///
-/// 在事务中执行：先删除该文章的所有现有关联，再逐条插入新的关联。
-pub async fn sync_tags(pool: &crate::db::Pool, post_id: &str, tag_ids: &[String]) -> AppResult<()> {
+pub async fn sync_tags(pool: &crate::db::Pool, post_id: i64, tag_ids: &[i64]) -> AppResult<()> {
     let mut tx = pool.begin().await?;
     sync_tags_tx(&mut tx, post_id, tag_ids).await?;
     tx.commit().await?;
     Ok(())
 }
 
-/// 在已有事务中同步文章与标签的关联关系
 pub async fn sync_tags_tx(
     tx: &mut crate::db::Transaction<'_>,
-    post_id: &str,
-    tag_ids: &[String],
+    post_id: i64,
+    tag_ids: &[i64],
 ) -> AppResult<()> {
     let sql = format!("DELETE FROM posts_tags WHERE post_id = {}", ph(1));
     sqlx::query(&sql).bind(post_id).execute(&mut **tx).await?;
@@ -416,22 +397,16 @@ pub async fn sync_tags_tx(
     Ok(())
 }
 
-/// 标签查询中间行类型
-///
-/// 用于从 `tags` 表与 `posts_tags` 关联查询中提取标签的 id、name、slug。
 #[derive(Debug, FromRow)]
 pub struct TagRow {
-    pub id: String,
+    pub id: i64,
     pub name: String,
     pub slug: String,
 }
 
-/// 获取文章关联的标签列表
-///
-/// 通过 `posts_tags` 关联表查询，返回 [`TagBrief`] 列表。
 pub async fn get_post_tags(
     pool: &crate::db::Pool,
-    post_id: &str,
+    post_id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<TagBrief>> {
     let sql = format!(
@@ -455,20 +430,14 @@ pub async fn get_post_tags(
         .collect())
 }
 
-/// 作者名查询中间行类型
-///
-/// 用于从 `users` 表查询作者用户名。
 #[derive(Debug, FromRow)]
 pub struct AuthorRow {
     pub username: String,
 }
 
-/// 根据用户 ID 获取作者用户名
-///
-/// 返回 `Ok(Some(username))` 或 `Ok(None)`（用户不存在时）。
 pub async fn get_author_name(
     pool: &crate::db::Pool,
-    created_by: &str,
+    created_by: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<String>> {
     let sql = format!(
@@ -484,20 +453,14 @@ pub async fn get_author_name(
     Ok(row.map(|r| r.username))
 }
 
-/// 分类名查询中间行类型
-///
-/// 用于从 `categories` 表查询分类名称。
 #[derive(Debug, FromRow)]
 pub struct CategoryNameRow {
     pub name: String,
 }
 
-/// 根据分类 ID 获取分类名称
-///
-/// 返回 `Ok(Some(name))` 或 `Ok(None)`（分类不存在时）。
 pub async fn get_category_name(
     pool: &crate::db::Pool,
-    category_id: &str,
+    category_id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<String>> {
     let sql = format!(
@@ -513,17 +476,12 @@ pub async fn get_category_name(
     Ok(row.map(|r| r.name))
 }
 
-/// 分页查询已发布文章
-///
-/// 支持按分类 ID、标签 ID、关键词（搜索标题和内容）筛选。
-/// 结果按 `is_pinned DESC, created_at DESC` 排序。
-/// 返回文章列表和总记录数。
 pub async fn find_published(
     pool: &crate::db::Pool,
     page: i64,
     page_size: i64,
-    category_id: Option<&str>,
-    tag_id: Option<&str>,
+    category_id: Option<i64>,
+    tag_id: Option<i64>,
     q: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Post>, i64)> {
@@ -640,10 +598,6 @@ pub async fn find_published(
     Ok((posts, total))
 }
 
-/// 查询全部文章（包含所有状态），用于后台管理
-///
-/// 支持按 `status` 筛选，`None` 表示返回全部状态。
-/// 通过 LEFT JOIN 获取 `author_name` 和 `category_name`。
 pub async fn find_all_joined(
     pool: &crate::db::Pool,
     page: i64,
@@ -720,21 +674,27 @@ mod tests {
         pool
     }
 
-    async fn create_user(pool: &crate::db::Pool) -> String {
+    async fn create_user(pool: &crate::db::Pool) -> i64 {
         let uid = uuid::Uuid::now_v7().to_string();
         sqlx::query(
-            "INSERT INTO users (id, username, email, password_hash, role) VALUES (?, 'testuser', 'test@test.com', 'hash', 'author')",
+            "INSERT INTO users (document_id, username, email, password_hash, role) VALUES (?, 'testuser', 'test@test.com', 'hash', 'author')",
         )
         .bind(&uid)
         .execute(pool)
         .await
         .unwrap();
-        uid
+
+        let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
+            .bind(&uid)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        id
     }
 
     async fn create_test_post(
         pool: &crate::db::Pool,
-        created_by: &str,
+        created_by: i64,
         status: &str,
         title: &str,
     ) -> Post {
@@ -747,8 +707,8 @@ mod tests {
                 excerpt: None,
                 cover_image: None,
                 status: status.to_string(),
-                created_by: created_by.to_string(),
-                updated_by: Some(created_by.to_string()),
+                created_by: created_by,
+                updated_by: Some(created_by),
                 category_id: None,
                 tag_ids: None,
             },
@@ -769,10 +729,8 @@ mod tests {
     async fn find_joined_by_ids_single() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let p = create_test_post(&pool, &uid, "published", "测试文章").await;
-        let result = find_joined_by_ids(&pool, &[p.id.clone()], None)
-            .await
-            .unwrap();
+        let p = create_test_post(&pool, uid, "published", "测试文章").await;
+        let result = find_joined_by_ids(&pool, &[p.id], None).await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, p.id);
         assert_eq!(result[0].title, "测试文章");
@@ -783,36 +741,32 @@ mod tests {
     async fn find_joined_by_ids_multiple() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let p1 = create_test_post(&pool, &uid, "published", "文章A").await;
-        let p2 = create_test_post(&pool, &uid, "published", "文章B").await;
-        let p3 = create_test_post(&pool, &uid, "published", "文章C").await;
-        let result = find_joined_by_ids(&pool, &[p1.id.clone(), p3.id.clone()], None)
+        let p1 = create_test_post(&pool, uid, "published", "文章A").await;
+        let p2 = create_test_post(&pool, uid, "published", "文章B").await;
+        let p3 = create_test_post(&pool, uid, "published", "文章C").await;
+        let result = find_joined_by_ids(&pool, &[p1.id, p3.id], None)
             .await
             .unwrap();
         assert_eq!(result.len(), 2);
-        let ids: Vec<&str> = result.iter().map(|r| r.id.as_str()).collect();
-        assert!(ids.contains(&p1.id.as_str()));
-        assert!(ids.contains(&p3.id.as_str()));
-        assert!(!ids.contains(&p2.id.as_str()));
+        let ids: Vec<i64> = result.iter().map(|r| r.id).collect();
+        assert!(ids.contains(&p1.id));
+        assert!(ids.contains(&p3.id));
+        assert!(!ids.contains(&p2.id));
     }
 
     #[tokio::test]
     async fn find_joined_by_ids_filters_draft() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let p = create_test_post(&pool, &uid, "draft", "草稿文章").await;
-        let result = find_joined_by_ids(&pool, &[p.id.clone()], None)
-            .await
-            .unwrap();
+        let p = create_test_post(&pool, uid, "draft", "草稿文章").await;
+        let result = find_joined_by_ids(&pool, &[p.id], None).await.unwrap();
         assert!(result.is_empty());
     }
 
     #[tokio::test]
     async fn find_joined_by_ids_nonexistent() {
         let pool = setup_pool().await;
-        let result = find_joined_by_ids(&pool, &["nonexistent-id".to_string()], None)
-            .await
-            .unwrap();
+        let result = find_joined_by_ids(&pool, &[-1], None).await.unwrap();
         assert!(result.is_empty());
     }
 
@@ -820,9 +774,9 @@ mod tests {
     async fn find_joined_by_ids_mixed_published_and_draft() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let pub_post = create_test_post(&pool, &uid, "published", "已发布").await;
-        let draft_post = create_test_post(&pool, &uid, "draft", "草稿").await;
-        let result = find_joined_by_ids(&pool, &[pub_post.id.clone(), draft_post.id.clone()], None)
+        let pub_post = create_test_post(&pool, uid, "published", "已发布").await;
+        let draft_post = create_test_post(&pool, uid, "draft", "草稿").await;
+        let result = find_joined_by_ids(&pool, &[pub_post.id, draft_post.id], None)
             .await
             .unwrap();
         assert_eq!(result.len(), 1);
@@ -833,12 +787,18 @@ mod tests {
     async fn find_joined_by_ids_with_category() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let cat_id = uuid::Uuid::now_v7().to_string();
-        sqlx::query("INSERT INTO categories (id, name, slug) VALUES (?, '技术', 'tech')")
-            .bind(&cat_id)
+        let cat_doc_id = uuid::Uuid::now_v7().to_string();
+        sqlx::query("INSERT INTO categories (document_id, name, slug) VALUES (?, '技术', 'tech')")
+            .bind(&cat_doc_id)
             .execute(&pool)
             .await
             .unwrap();
+        let (cat_int_id,): (i64,) =
+            sqlx::query_as("SELECT id FROM categories WHERE document_id = ?")
+                .bind(&cat_doc_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         let p = create(
             &pool,
             &CreatePostCmd {
@@ -848,18 +808,16 @@ mod tests {
                 excerpt: None,
                 cover_image: None,
                 status: "published".to_string(),
-                created_by: uid.clone(),
+                created_by: uid,
                 updated_by: Some(uid),
-                category_id: Some(cat_id),
+                category_id: Some(cat_int_id),
                 tag_ids: None,
             },
             None,
         )
         .await
         .unwrap();
-        let result = find_joined_by_ids(&pool, &[p.id.clone()], None)
-            .await
-            .unwrap();
+        let result = find_joined_by_ids(&pool, &[p.id], None).await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].category_name.as_deref(), Some("技术"));
     }
@@ -875,7 +833,7 @@ mod tests {
     async fn count_published_by_ids_single() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let p = create_test_post(&pool, &uid, "published", "计数文章").await;
+        let p = create_test_post(&pool, uid, "published", "计数文章").await;
         let count = count_published_by_ids(&pool, &[p.id], None).await.unwrap();
         assert_eq!(count, 1);
     }
@@ -884,7 +842,7 @@ mod tests {
     async fn count_published_by_ids_filters_draft() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let p = create_test_post(&pool, &uid, "draft", "草稿").await;
+        let p = create_test_post(&pool, uid, "draft", "草稿").await;
         let count = count_published_by_ids(&pool, &[p.id], None).await.unwrap();
         assert_eq!(count, 0);
     }
@@ -893,9 +851,9 @@ mod tests {
     async fn count_published_by_ids_multiple() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let p1 = create_test_post(&pool, &uid, "published", "A").await;
-        let p2 = create_test_post(&pool, &uid, "draft", "B").await;
-        let p3 = create_test_post(&pool, &uid, "published", "C").await;
+        let p1 = create_test_post(&pool, uid, "published", "A").await;
+        let p2 = create_test_post(&pool, uid, "draft", "B").await;
+        let p3 = create_test_post(&pool, uid, "published", "C").await;
         let count = count_published_by_ids(&pool, &[p1.id, p2.id, p3.id], None)
             .await
             .unwrap();
@@ -905,17 +863,15 @@ mod tests {
     #[tokio::test]
     async fn count_published_by_ids_nonexistent() {
         let pool = setup_pool().await;
-        let count = count_published_by_ids(&pool, &["fake-id".to_string()], None)
-            .await
-            .unwrap();
+        let count = count_published_by_ids(&pool, &[-1], None).await.unwrap();
         assert_eq!(count, 0);
     }
 }
 
-/// JOIN 查询中间行类型（含作者名和分类名）
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PostJoinedRow {
-    pub id: String,
+    pub id: i64,
+    pub document_id: String,
     pub tenant_id: Option<String>,
     pub title: String,
     pub slug: String,
@@ -923,9 +879,9 @@ pub struct PostJoinedRow {
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
     pub status: String,
-    pub created_by: String,
-    pub updated_by: String,
-    pub category_id: Option<String>,
+    pub created_by: i64,
+    pub updated_by: i64,
+    pub category_id: Option<i64>,
     pub view_count: i64,
     pub is_pinned: bool,
     pub created_at: String,
@@ -936,22 +892,21 @@ pub struct PostJoinedRow {
 }
 
 crate::impl_from_row_opt_tenant!(PostJoinedRow {
-    required { id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, created_at, updated_at }
+    required { id, document_id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, created_at, updated_at }
     optional { excerpt, cover_image, category_id, published_at, author_name, category_name }
 });
 
 const JOIN_SQL: &str = "\
-    SELECT p.id, p.title, p.slug, p.content, p.excerpt, p.cover_image, p.status, \
+    SELECT p.id, p.document_id, p.title, p.slug, p.content, p.excerpt, p.cover_image, p.status, \
     p.created_by, p.updated_by, p.category_id, p.view_count, p.is_pinned, p.created_at, p.updated_at, \
     p.published_at, u.username AS author_name, c.name AS category_name \
     FROM posts p \
     LEFT JOIN users u ON p.created_by = u.id \
     LEFT JOIN categories c ON p.category_id = c.id";
 
-/// 根据 ID 用 JOIN 查询单篇文章（含作者名和分类名）
 pub async fn find_joined_by_id(
     pool: &crate::db::Pool,
-    id: &str,
+    id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<PostJoinedRow> {
     let sql = format!(
@@ -966,7 +921,6 @@ pub async fn find_joined_by_id(
     q.fetch_one(pool).await.map_err(Into::into)
 }
 
-/// 根据 slug 用 JOIN 查询已发布单篇文章（含作者名和分类名）
 pub async fn find_published_joined_by_slug(
     pool: &crate::db::Pool,
     slug: &str,
@@ -984,14 +938,11 @@ pub async fn find_published_joined_by_slug(
     q.fetch_one(pool).await.map_err(Into::into)
 }
 
-/// 批量获取多篇文章的标签
-///
-/// 返回以 `post_id` 为键的 `HashMap`，每个值是该文章的标签列表。
 pub async fn get_tags_for_posts(
     pool: &crate::db::Pool,
-    post_ids: &[String],
+    post_ids: &[i64],
     tenant_id: Option<&str>,
-) -> AppResult<std::collections::HashMap<String, Vec<TagBrief>>> {
+) -> AppResult<std::collections::HashMap<i64, Vec<TagBrief>>> {
     if post_ids.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
@@ -1009,8 +960,8 @@ pub async fn get_tags_for_posts(
 
     #[derive(Debug, FromRow)]
     struct TagWithPostId {
-        post_id: String,
-        id: String,
+        post_id: i64,
+        id: i64,
         name: String,
         slug: String,
     }
@@ -1024,8 +975,7 @@ pub async fn get_tags_for_posts(
     }
     let rows = query.fetch_all(pool).await?;
 
-    let mut map: std::collections::HashMap<String, Vec<TagBrief>> =
-        std::collections::HashMap::new();
+    let mut map: std::collections::HashMap<i64, Vec<TagBrief>> = std::collections::HashMap::new();
     for row in rows {
         map.entry(row.post_id).or_default().push(TagBrief {
             id: row.id,
@@ -1036,13 +986,9 @@ pub async fn get_tags_for_posts(
     Ok(map)
 }
 
-/// 根据 ID 列表批量查询已发布文章（JOIN 用户和分类表）
-///
-/// 用于搜索引擎返回 ID 后从数据库获取完整行数据。
-/// 按 `is_pinned DESC, created_at DESC` 排序，结果不超出 `ids` 范围。
 pub async fn find_joined_by_ids(
     pool: &crate::db::Pool,
-    ids: &[String],
+    ids: &[i64],
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<PostJoinedRow>> {
     if ids.is_empty() {
@@ -1071,12 +1017,9 @@ pub async fn find_joined_by_ids(
     Ok(rows)
 }
 
-/// 根据 ID 列表统计已发布文章数量
-///
-/// 用于搜索引擎返回总数时进行验证，或作为后备计数。
 pub async fn count_published_by_ids(
     pool: &crate::db::Pool,
-    ids: &[String],
+    ids: &[i64],
     tenant_id: Option<&str>,
 ) -> AppResult<i64> {
     if ids.is_empty() {
@@ -1100,15 +1043,13 @@ pub async fn count_published_by_ids(
     let (count,) = query.fetch_one(pool).await?;
     Ok(count)
 }
-///
-/// 与 [`find_published`] 相同的筛选逻辑，但通过 LEFT JOIN 一次性获取
-/// `author_name` 和 `category_name`，避免 N+1 查询。
+
 pub async fn find_published_joined(
     pool: &crate::db::Pool,
     page: i64,
     page_size: i64,
-    category_id: Option<&str>,
-    tag_id: Option<&str>,
+    category_id: Option<i64>,
+    tag_id: Option<i64>,
     q: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<PostJoinedRow>, i64)> {
