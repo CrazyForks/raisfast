@@ -281,8 +281,12 @@ pub async fn global_rate_limit(
 }
 
 pub fn extract_api_token_prefix(req: &Request) -> Option<String> {
-    let auth = req.headers().get("authorization")?.to_str().ok()?;
-    let token = auth.strip_prefix("Bearer ")?;
+    let auth = req
+        .headers()
+        .get(crate::constants::HEADER_AUTHORIZATION)?
+        .to_str()
+        .ok()?;
+    let token = auth.strip_prefix(crate::constants::AUTH_BEARER_PREFIX)?;
     if token.starts_with("rblog_") {
         token.get(..12).map(|s| s.to_string())
     } else {

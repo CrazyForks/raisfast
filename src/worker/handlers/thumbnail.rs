@@ -38,8 +38,7 @@ impl JobHandler for GenerateThumbnailHandler {
             return Ok(());
         };
 
-        let media_id_i64: i64 = media_id.parse().unwrap_or(0);
-        let media = crate::models::media::find_by_id(&self.pool, media_id_i64, None)
+        let media = crate::models::media::find_by_id(&self.pool, *media_id, None)
             .await?
             .ok_or_else(|| crate::errors::app_error::AppError::not_found("media"))?;
 
@@ -53,7 +52,7 @@ impl JobHandler for GenerateThumbnailHandler {
         }
 
         let src_path = PathBuf::from(&self.config.upload_dir).join(&media.filepath);
-        let thumb_path = self.thumb_path(media_id, *size);
+        let thumb_path = self.thumb_path(&media_id.to_string(), *size);
 
         let src = src_path.clone();
         let dst = thumb_path.clone();

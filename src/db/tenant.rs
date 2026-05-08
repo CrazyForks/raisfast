@@ -32,6 +32,8 @@ use std::collections::HashSet;
 
 use tokio::sync::RwLock;
 
+use crate::constants::COL_TENANT_ID;
+
 use super::Pool;
 
 // ---------------------------------------------------------------------------
@@ -76,7 +78,8 @@ async fn check_column_exists(pool: &Pool, table: &str) -> bool {
             .fetch_all(pool)
             .await
             .unwrap_or_default();
-        rows.iter().any(|(_, name, _, _, _, _)| name == "tenant_id")
+        rows.iter()
+            .any(|(_, name, _, _, _, _)| name == COL_TENANT_ID)
     }
     #[cfg(feature = "db-postgres")]
     {
@@ -137,7 +140,10 @@ fn inject_where(sql: &str, idx: usize) -> String {
     } else {
         " WHERE "
     };
-    format!("{sql}{connector}tenant_id = {}", super::dialect::ph(idx))
+    format!(
+        "{sql}{connector}{COL_TENANT_ID} = {}",
+        super::dialect::ph(idx)
+    )
 }
 
 /// 解析 `Option<&str>` 为有效的租户 ID。
@@ -149,7 +155,7 @@ pub fn resolve_tenant(tenant_id: Option<&str>) -> &str {
 }
 
 fn sql_has_tenant(sql: &str) -> bool {
-    sql.to_lowercase().contains("tenant_id")
+    sql.to_lowercase().contains(COL_TENANT_ID)
 }
 
 /// 返回 `AND tenant_id = {ph(idx)}` 或空串，用于条件 SQL 拼接。
@@ -159,7 +165,7 @@ fn sql_has_tenant(sql: &str) -> bool {
 /// ```
 pub fn tenant_filter_ph(tenant_id: Option<&str>, idx: usize) -> String {
     match tenant_id {
-        Some(_) => format!(" AND tenant_id = {}", super::dialect::ph(idx)),
+        Some(_) => format!(" AND {COL_TENANT_ID} = {}", super::dialect::ph(idx)),
         None => String::new(),
     }
 }
@@ -167,7 +173,7 @@ pub fn tenant_filter_ph(tenant_id: Option<&str>, idx: usize) -> String {
 /// 返回 ` And p.tenant_id = ?` 或空串，用于 JOIN 查询中带表别名的条件拼接。
 pub fn tenant_filter_aliased(alias: &str, tenant_id: Option<&str>) -> String {
     match tenant_id {
-        Some(_) => format!(" AND {alias}.tenant_id = ?"),
+        Some(_) => format!(" AND {alias}.{COL_TENANT_ID} = ?"),
         None => String::new(),
     }
 }
@@ -175,7 +181,7 @@ pub fn tenant_filter_aliased(alias: &str, tenant_id: Option<&str>) -> String {
 /// [`tenant_filter_aliased`] 的占位符安全版本。
 pub fn tenant_filter_aliased_ph(alias: &str, tenant_id: Option<&str>, idx: usize) -> String {
     match tenant_id {
-        Some(_) => format!(" AND {alias}.tenant_id = {}", super::dialect::ph(idx)),
+        Some(_) => format!(" AND {alias}.{COL_TENANT_ID} = {}", super::dialect::ph(idx)),
         None => String::new(),
     }
 }
@@ -244,7 +250,10 @@ impl TenantPool {
         let (cols, placeholders) = if has {
             let placeholders: Vec<String> =
                 (1..=user_param_count + 1).map(super::dialect::ph).collect();
-            (format!("{user_cols}, tenant_id"), placeholders.join(", "))
+            (
+                format!("{user_cols}, {COL_TENANT_ID}"),
+                placeholders.join(", "),
+            )
         } else {
             let placeholders: Vec<String> =
                 (1..=user_param_count).map(super::dialect::ph).collect();
@@ -296,7 +305,7 @@ mod tests {
     #[tokio::test]
     async fn prepare_select_injects_when_has_column() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query("CREATE TABLE posts (id TEXT, title TEXT, tenant_id TEXT)")
+        sqlx::query("CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, title TEXT, tenant_id TEXT)")
             .execute(&pool)
             .await
             .unwrap();
@@ -313,7 +322,7 @@ mod tests {
     #[tokio::test]
     async fn prepare_select_skips_when_no_column() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query("CREATE TABLE logs (id TEXT, msg TEXT)")
+        sqlx::query("CREATE TABLE logs (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, msg TEXT)")
             .execute(&pool)
             .await
             .unwrap();
@@ -330,14 +339,14 @@ mod tests {
     #[tokio::test]
     async fn prepare_insert_injects_column() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query("CREATE TABLE items (id TEXT, name TEXT, tenant_id TEXT)")
+        sqlx::query("CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, name TEXT, tenant_id TEXT)")
             .execute(&pool)
             .await
             .unwrap();
         invalidate_cache().await;
 
         let tp = TenantPool::new(pool, "t1");
-        let (sql, bind) = tp.prepare_insert("items", "id, name", 2).await;
+        let (sql, bind) = tp.prepare_insert("items", "document_id, name", 2).await;
         assert!(bind);
         assert!(sql.contains("tenant_id"));
         assert!(sql.contains("?, ?")); // 2 user + 1 tenant
@@ -347,33 +356,40 @@ mod tests {
     async fn end_to_end_select_filters_by_tenant() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
-            "CREATE TABLE posts (id TEXT, title TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, title TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
         )
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO posts (id, title, tenant_id) VALUES ('1', 'Hello', 't1')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO posts (id, title, tenant_id) VALUES ('2', 'World', 't2')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO posts (document_id, title, tenant_id) VALUES ('doc1', 'Hello', 't1')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO posts (document_id, title, tenant_id) VALUES ('doc2', 'World', 't2')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         invalidate_cache().await;
 
         #[derive(sqlx::FromRow)]
         #[allow(dead_code)]
         struct Post {
-            id: String,
+            document_id: String,
             title: String,
         }
 
         let tp = TenantPool::new(pool, "t1");
         let (sql, bind) = tp
-            .prepare_select("posts", "SELECT id, title FROM posts WHERE id = ?")
+            .prepare_select(
+                "posts",
+                "SELECT document_id, title FROM posts WHERE document_id = ?",
+            )
             .await;
-        let mut q = sqlx::query_as::<_, Post>(&sql).bind("1");
+        let mut q = sqlx::query_as::<_, Post>(&sql).bind("doc1");
         if bind {
             q = q.bind(tp.tenant_id());
         }
@@ -381,9 +397,12 @@ mod tests {
         assert_eq!(p.title, "Hello");
 
         let (sql, bind) = tp
-            .prepare_select("posts", "SELECT id, title FROM posts WHERE id = ?")
+            .prepare_select(
+                "posts",
+                "SELECT document_id, title FROM posts WHERE document_id = ?",
+            )
             .await;
-        let mut q = sqlx::query_as::<_, Post>(&sql).bind("2");
+        let mut q = sqlx::query_as::<_, Post>(&sql).bind("doc2");
         if bind {
             q = q.bind(tp.tenant_id());
         }
@@ -394,7 +413,7 @@ mod tests {
     async fn end_to_end_insert_auto_tenant() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
-            "CREATE TABLE items (id TEXT, name TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, name TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
         )
         .execute(&pool)
         .await
@@ -402,17 +421,18 @@ mod tests {
         invalidate_cache().await;
 
         let tp = TenantPool::new(pool.clone(), "t1");
-        let (sql, bind) = tp.prepare_insert("items", "id, name", 2).await;
+        let (sql, bind) = tp.prepare_insert("items", "document_id, name", 2).await;
         let mut q = sqlx::query(&sql).bind("i1").bind("Test");
         if bind {
             q = q.bind(tp.tenant_id());
         }
         q.execute(tp.pool()).await.unwrap();
 
-        let row: (String, String, String) = sqlx::query_as("SELECT id, name, tenant_id FROM items")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let row: (String, String, String) =
+            sqlx::query_as("SELECT document_id, name, tenant_id FROM items")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(row.2, "t1");
     }
 
@@ -420,16 +440,16 @@ mod tests {
     async fn end_to_end_delete_respects_tenant() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
-            "CREATE TABLE items (id TEXT, name TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, name TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
         )
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO items VALUES ('1', 'A', 't1')")
+        sqlx::query("INSERT INTO items (document_id, name, tenant_id) VALUES ('d1', 'A', 't1')")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO items VALUES ('2', 'B', 't2')")
+        sqlx::query("INSERT INTO items (document_id, name, tenant_id) VALUES ('d2', 'B', 't2')")
             .execute(&pool)
             .await
             .unwrap();
@@ -437,11 +457,10 @@ mod tests {
 
         let tp = TenantPool::new(pool.clone(), "t1");
 
-        // 删除其他租户的数据 → 不影响
         let (sql, bind) = tp
-            .prepare_modify("items", "DELETE FROM items WHERE id = ?")
+            .prepare_modify("items", "DELETE FROM items WHERE document_id = ?")
             .await;
-        let mut q = sqlx::query(&sql).bind("2");
+        let mut q = sqlx::query(&sql).bind("d2");
         if bind {
             q = q.bind(tp.tenant_id());
         }
@@ -452,11 +471,10 @@ mod tests {
             .unwrap();
         assert_eq!(count.0, 2);
 
-        // 删除自己的数据 → 成功
         let (sql, bind) = tp
-            .prepare_modify("items", "DELETE FROM items WHERE id = ?")
+            .prepare_modify("items", "DELETE FROM items WHERE document_id = ?")
             .await;
-        let mut q = sqlx::query(&sql).bind("1");
+        let mut q = sqlx::query(&sql).bind("d1");
         if bind {
             q = q.bind(tp.tenant_id());
         }

@@ -9,19 +9,19 @@ use crate::services::auth::Claims;
 pub fn extract_claims(parts: &mut Parts, state: &AppState) -> Result<Claims, AppError> {
     let auth_header = parts
         .headers
-        .get("Authorization")
+        .get(crate::constants::HEADER_AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .ok_or(AppError::Unauthorized)?;
 
     let token = auth_header
-        .strip_prefix("Bearer ")
+        .strip_prefix(crate::constants::AUTH_BEARER_PREFIX)
         .ok_or(AppError::Unauthorized)?;
 
     crate::services::auth::verify_token(token, &state.jwt_decoding_key)
 }
 
 /// 校验当前用户是管理员或资源所有者，否则返回 `Forbidden`。
-pub fn require_owner_or_admin(role: &str, user_id: &str, owner_id: &str) -> AppResult<()> {
+pub fn require_owner_or_admin(role: &str, user_id: i64, owner_id: i64) -> AppResult<()> {
     if role != "admin" && owner_id != user_id {
         return Err(AppError::Forbidden);
     }
@@ -31,8 +31,8 @@ pub fn require_owner_or_admin(role: &str, user_id: &str, owner_id: &str) -> AppR
 /// 与 [`require_owner_or_admin`] 相同逻辑，但 `owner_id` 为 `Option`（如访客评论）。
 pub fn require_owner_or_admin_opt(
     role: &str,
-    user_id: &str,
-    owner_id: Option<&str>,
+    user_id: i64,
+    owner_id: Option<i64>,
 ) -> AppResult<()> {
     if role != "admin" && owner_id != Some(user_id) {
         return Err(AppError::Forbidden);
@@ -46,31 +46,31 @@ mod tests {
 
     #[test]
     fn require_owner_or_admin_allows_owner() {
-        assert!(require_owner_or_admin("author", "u1", "u1").is_ok());
+        assert!(require_owner_or_admin("author", 1, 1).is_ok());
     }
 
     #[test]
     fn require_owner_or_admin_allows_admin() {
-        assert!(require_owner_or_admin("admin", "u1", "u2").is_ok());
+        assert!(require_owner_or_admin("admin", 1, 2).is_ok());
     }
 
     #[test]
     fn require_owner_or_admin_rejects_other() {
-        assert!(require_owner_or_admin("author", "u1", "u2").is_err());
+        assert!(require_owner_or_admin("author", 1, 2).is_err());
     }
 
     #[test]
     fn require_owner_or_admin_opt_allows_owner() {
-        assert!(require_owner_or_admin_opt("author", "u1", Some("u1")).is_ok());
+        assert!(require_owner_or_admin_opt("author", 1, Some(1)).is_ok());
     }
 
     #[test]
     fn require_owner_or_admin_opt_allows_admin_with_none() {
-        assert!(require_owner_or_admin_opt("admin", "u1", None).is_ok());
+        assert!(require_owner_or_admin_opt("admin", 1, None).is_ok());
     }
 
     #[test]
     fn require_owner_or_admin_opt_rejects_reader() {
-        assert!(require_owner_or_admin_opt("reader", "u1", Some("u2")).is_err());
+        assert!(require_owner_or_admin_opt("reader", 1, Some(2)).is_err());
     }
 }

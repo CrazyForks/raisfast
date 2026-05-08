@@ -20,7 +20,7 @@ impl AuditService {
     pub async fn log(
         &self,
         tenant_id: &str,
-        actor_id: Option<&str>,
+        actor_id: Option<i64>,
         actor_role: Option<&str>,
         action: &str,
         subject: &str,
@@ -29,11 +29,12 @@ impl AuditService {
         ip_address: Option<&str>,
         user_agent: Option<&str>,
     ) -> AppResult<()> {
-        let (id, now) = crate::utils::id::new_id_and_timestamp();
+        let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
         let entry = AuditEntry {
-            id,
+            id: 0,
+            document_id,
             tenant_id: Some(tenant_id.to_string()),
-            actor_id: actor_id.map(|s| s.to_string()),
+            actor_id,
             actor_role: actor_role.map(|s| s.to_string()),
             action: action.to_string(),
             subject: subject.to_string(),
@@ -46,20 +47,18 @@ impl AuditService {
         model::insert(&self.pool, &entry).await
     }
 
-    /// 分页查询审计日志
     pub async fn list(
         &self,
         tenant_id: Option<&str>,
         action: Option<&str>,
-        actor_id: Option<&str>,
+        actor_id: Option<i64>,
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<AuditEntry>, i64)> {
         model::find_paginated(&self.pool, tenant_id, action, actor_id, page, page_size).await
     }
 
-    /// 根据 ID 获取审计日志
-    pub async fn get(&self, id: &str) -> AppResult<AuditEntry> {
+    pub async fn get(&self, id: i64) -> AppResult<AuditEntry> {
         model::find_by_id(&self.pool, id).await
     }
 }

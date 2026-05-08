@@ -12,6 +12,7 @@ use axum::response::IntoResponse;
 use serde_json::json;
 
 use crate::AppState;
+use crate::constants::COL_ID;
 use crate::content_type::repository::ContentRepository;
 use crate::errors::app_error::AppError;
 
@@ -106,7 +107,7 @@ pub async fn restore_revision(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("snapshot parse: {e}")))?;
 
     if let Some(obj) = snapshot.as_object_mut() {
-        obj.remove("id");
+        obj.remove(COL_ID);
         obj.remove("created_at");
         obj.remove("updated_at");
     }

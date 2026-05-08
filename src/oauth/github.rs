@@ -26,7 +26,10 @@ impl GitHubProvider {
     ) -> Option<String> {
         let resp = client
             .get("https://api.github.com/user/emails")
-            .header("Authorization", format!("Bearer {access_token}"))
+            .header(
+                crate::constants::HEADER_AUTHORIZATION,
+                format!("{}{access_token}", crate::constants::AUTH_BEARER_PREFIX),
+            )
             .header("User-Agent", "raisfast")
             .header("Accept", "application/json")
             .send()
@@ -97,7 +100,10 @@ impl OAuthProvider for GitHubProvider {
 
         let resp = client
             .get("https://api.github.com/user")
-            .header("Authorization", format!("Bearer {access_token}"))
+            .header(
+                crate::constants::HEADER_AUTHORIZATION,
+                format!("{}{access_token}", crate::constants::AUTH_BEARER_PREFIX),
+            )
             .header("User-Agent", "raisfast")
             .header("Accept", "application/json")
             .send()

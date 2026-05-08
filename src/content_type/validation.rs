@@ -14,6 +14,7 @@ use serde_json::Value;
 use sqlx::Row;
 
 use super::schema::{ContentTypeSchema, FieldType};
+use crate::constants::COL_DOCUMENT_ID;
 use crate::db::Pool;
 use crate::errors::app_error::AppError;
 
@@ -270,7 +271,7 @@ async fn check_unique_fields(
         sql_builder.clear();
         if exclude_id.is_some() {
             sql_builder = format!(
-                "SELECT COUNT(*) as cnt FROM {} WHERE {} = {} AND document_id != {}",
+                "SELECT COUNT(*) as cnt FROM {} WHERE {} = {} AND {COL_DOCUMENT_ID} != {}",
                 ct.table,
                 field.name,
                 crate::db::dialect::ph(1),

@@ -10,9 +10,10 @@ use crate::errors::app_error::AppResult;
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AuditEntry {
-    pub id: String,
+    pub id: i64,
+    pub document_id: String,
     pub tenant_id: Option<String>,
-    pub actor_id: Option<String>,
+    pub actor_id: Option<i64>,
     pub actor_role: Option<String>,
     pub action: String,
     pub subject: String,
@@ -24,7 +25,7 @@ pub struct AuditEntry {
 }
 
 crate::impl_from_row_opt_tenant!(AuditEntry {
-    required { id, action, subject, created_at }
+    required { id, document_id, action, subject, created_at }
     optional { actor_id, actor_role, subject_id, detail, ip_address, user_agent }
 });
 
@@ -33,7 +34,7 @@ pub async fn insert(pool: &crate::db::Pool, entry: &AuditEntry) -> AppResult<()>
     match &entry.tenant_id {
         Some(tid) => {
             let sql = format!(
-                "INSERT INTO audit_log (id, tenant_id, actor_id, actor_role, action, subject, subject_id, detail, ip_address, user_agent, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                "INSERT INTO audit_log (document_id, tenant_id, actor_id, actor_role, action, subject, subject_id, detail, ip_address, user_agent, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
                 crate::db::dialect::ph(1),
                 crate::db::dialect::ph(2),
                 crate::db::dialect::ph(3),
@@ -47,9 +48,9 @@ pub async fn insert(pool: &crate::db::Pool, entry: &AuditEntry) -> AppResult<()>
                 crate::db::dialect::ph(11)
             );
             sqlx::query(&sql)
-                .bind(&entry.id)
+                .bind(&entry.document_id)
                 .bind(tid)
-                .bind(&entry.actor_id)
+                .bind(entry.actor_id)
                 .bind(&entry.actor_role)
                 .bind(&entry.action)
                 .bind(&entry.subject)
@@ -63,7 +64,7 @@ pub async fn insert(pool: &crate::db::Pool, entry: &AuditEntry) -> AppResult<()>
         }
         None => {
             let sql = format!(
-                "INSERT INTO audit_log (id, actor_id, actor_role, action, subject, subject_id, detail, ip_address, user_agent, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                "INSERT INTO audit_log (document_id, actor_id, actor_role, action, subject, subject_id, detail, ip_address, user_agent, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
                 crate::db::dialect::ph(1),
                 crate::db::dialect::ph(2),
                 crate::db::dialect::ph(3),
@@ -76,8 +77,8 @@ pub async fn insert(pool: &crate::db::Pool, entry: &AuditEntry) -> AppResult<()>
                 crate::db::dialect::ph(10)
             );
             sqlx::query(&sql)
-                .bind(&entry.id)
-                .bind(&entry.actor_id)
+                .bind(&entry.document_id)
+                .bind(entry.actor_id)
                 .bind(&entry.actor_role)
                 .bind(&entry.action)
                 .bind(&entry.subject)
@@ -98,7 +99,7 @@ pub async fn find_paginated(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
     action: Option<&str>,
-    actor_id: Option<&str>,
+    actor_id: Option<i64>,
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<AuditEntry>, i64)> {
@@ -152,13 +153,28 @@ pub async fn find_paginated(
 }
 
 /// 根据 ID 查找审计日志
-pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<AuditEntry> {
+pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<AuditEntry> {
     let sql = format!(
         "SELECT * FROM audit_log WHERE id = {}",
         crate::db::dialect::ph(1)
     );
     sqlx::query_as::<_, AuditEntry>(&sql)
         .bind(id)
+        .fetch_one(pool)
+        .await
+        .map_err(Into::into)
+}
+
+pub async fn find_by_document_id(
+    pool: &crate::db::Pool,
+    document_id: &str,
+) -> AppResult<AuditEntry> {
+    let sql = format!(
+        "SELECT * FROM audit_log WHERE document_id = {}",
+        crate::db::dialect::ph(1)
+    );
+    sqlx::query_as::<_, AuditEntry>(&sql)
+        .bind(document_id)
         .fetch_one(pool)
         .await
         .map_err(Into::into)

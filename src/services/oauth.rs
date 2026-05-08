@@ -113,8 +113,7 @@ pub async fn handle_callback(
         oauth::find_by_provider_user(pool, provider_name, &user_info.provider_user_id).await?;
 
     if let Some(account) = existing {
-        let user = user_repo
-            .find_by_id(&account.user_id.to_string(), None)
+        let user = crate::models::user::find_by_pk(pool, account.user_id, None)
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("OAuth bound user not found")))?;
 

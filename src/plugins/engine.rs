@@ -13,6 +13,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::{Mutex, Semaphore};
 
+use crate::constants::COL_ID;
 use crate::plugins::bindings::PluginWorld;
 use crate::plugins::bindings::exports::raisfast::plugin_wit::plugin_hooks::CommentInput;
 use crate::plugins::bindings::exports::raisfast::plugin_wit::plugin_hooks::ContentEvent;
@@ -259,7 +260,7 @@ impl WasmComponentInstance {
                     .get("content_type")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let id = input_val.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let id = input_val.get(COL_ID).and_then(|v| v.as_str()).unwrap_or("");
                 hooks.call_on_content_deleted(&mut self.store, ct, id)?;
             }
             "on_login" => {
@@ -311,7 +312,7 @@ fn post_input_to_json(p: &PostInput) -> serde_json::Value {
 
 fn json_to_post_output(v: &serde_json::Value) -> anyhow::Result<PostOutput> {
     Ok(PostOutput {
-        id: v["id"].as_str().unwrap_or("").to_string(),
+        id: v[COL_ID].as_str().unwrap_or("").to_string(),
         title: v["title"].as_str().unwrap_or("").to_string(),
         slug: v["slug"].as_str().unwrap_or("").to_string(),
         content: v["content"].as_str().unwrap_or("").to_string(),
@@ -349,7 +350,7 @@ fn json_to_content_event(v: &serde_json::Value) -> anyhow::Result<ContentEvent> 
     Ok(ContentEvent {
         content_type: v["content_type"].as_str().unwrap_or("").to_string(),
         data: v["data"].as_str().unwrap_or("").to_string(),
-        id: v["id"].as_str().map(|s| s.to_string()),
+        id: v[COL_ID].as_str().map(|s| s.to_string()),
     })
 }
 

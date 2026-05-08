@@ -24,7 +24,7 @@ pub async fn list(
         .list(
             auth.tenant_id(),
             filter.action.as_deref(),
-            filter.actor_id.as_deref(),
+            filter.actor_id,
             params.page,
             params.page_size,
         )
@@ -36,15 +36,15 @@ pub async fn list(
 pub async fn get(
     auth: AuthUser,
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(id): Path<i64>,
 ) -> AppResult<ApiResponse<crate::audit::model::AuditEntry>> {
     auth.ensure_admin()?;
-    let entry = state.audit.get(&id).await?;
+    let entry = state.audit.get(id).await?;
     Ok(ApiResponse::success(entry))
 }
 
 #[derive(Debug, Deserialize)]
 pub struct AuditFilter {
     pub action: Option<String>,
-    pub actor_id: Option<String>,
+    pub actor_id: Option<i64>,
 }

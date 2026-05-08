@@ -5,6 +5,7 @@
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
 
 use crate::aspects::ColumnDef;
+use crate::constants::{COL_DOCUMENT_ID, COL_ID};
 
 /// 根据内容类型定义生成 CREATE TABLE SQL
 ///
@@ -14,8 +15,8 @@ use crate::aspects::ColumnDef;
 pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnDef]) -> String {
     let mut cols = Vec::new();
 
-    cols.push("    id INTEGER PRIMARY KEY AUTOINCREMENT".to_string());
-    cols.push("    document_id TEXT NOT NULL UNIQUE".to_string());
+    cols.push(format!("    {COL_ID} INTEGER PRIMARY KEY AUTOINCREMENT"));
+    cols.push(format!("    {COL_DOCUMENT_ID} TEXT NOT NULL UNIQUE"));
 
     for field in &ct.fields {
         if field.field_type == FieldType::Relation {
@@ -110,8 +111,8 @@ pub fn generate_junction_tables(ct: &ContentTypeSchema) -> Vec<String> {
 
             let sql = format!(
                 "CREATE TABLE IF NOT EXISTS {through} (\n\
-                 {source_col} INTEGER NOT NULL REFERENCES {source_table}(id) ON DELETE CASCADE,\n\
-                 {target_col} INTEGER NOT NULL REFERENCES {target_table}(id) ON DELETE CASCADE,\n\
+                 {source_col} INTEGER NOT NULL REFERENCES {source_table}({COL_ID}) ON DELETE CASCADE,\n\
+                 {target_col} INTEGER NOT NULL REFERENCES {target_table}({COL_ID}) ON DELETE CASCADE,\n\
                  PRIMARY KEY ({source_col}, {target_col})\n\
                  )",
                 through = through,
@@ -200,7 +201,7 @@ pub fn generate_alter_table(
                             ""
                         };
                         stmts.push(format!(
-                            "ALTER TABLE {} ADD COLUMN {fk} INTEGER{not_null_default} REFERENCES {target_table}(id)",
+                            "ALTER TABLE {} ADD COLUMN {fk} INTEGER{not_null_default} REFERENCES {target_table}({COL_ID})",
                             ct.table
                         ));
                     }
@@ -251,7 +252,7 @@ pub fn generate_alter_table(
 /// 获取 content type schema 期望的所有列名（用于与 DB 对比）
 #[must_use]
 pub fn expected_columns(ct: &ContentTypeSchema, protocol_columns: &[ColumnDef]) -> Vec<String> {
-    let mut cols = vec!["id".to_string(), "document_id".to_string()];
+    let mut cols = vec![COL_ID.to_string(), COL_DOCUMENT_ID.to_string()];
 
     for field in &ct.fields {
         if field.field_type == FieldType::Relation {

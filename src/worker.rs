@@ -38,30 +38,30 @@ use crate::errors::app_error::AppResult;
 #[non_exhaustive]
 pub enum Job {
     SendWelcomeEmail {
-        user_id: String,
+        user_id: i64,
         email: String,
         username: String,
     },
     GenerateThumbnail {
-        media_id: String,
+        media_id: i64,
         size: u32,
     },
     ScheduledPublish {
-        post_id: String,
+        post_id: i64,
     },
     WebhookNotify {
         url: String,
         payload: serde_json::Value,
     },
     RebuildSearchIndex {
-        post_ids: Vec<String>,
+        post_ids: Vec<i64>,
     },
     InvalidateCache {
         keys: Vec<String>,
     },
     GenerateSitemap,
     SendPasswordResetEmail {
-        user_id: String,
+        user_id: i64,
         email: String,
         reset_token: String,
     },
@@ -71,7 +71,7 @@ pub enum Job {
         purpose: String,
     },
     SendEmailVerification {
-        user_id: String,
+        user_id: i64,
         email: String,
         verify_token: String,
     },
@@ -125,7 +125,7 @@ impl From<Job> for NewJob {
 /// 出队的任务记录
 #[derive(Debug, Clone)]
 pub struct QueuedJob {
-    pub id: String,
+    pub document_id: String,
     pub job: Job,
     pub attempts: u32,
     pub max_attempts: u32,
@@ -165,7 +165,7 @@ pub struct JobStats {
 /// 任务列表行（管理 API）
 #[derive(Debug, Clone, Serialize)]
 pub struct JobRow {
-    pub id: String,
+    pub document_id: String,
     pub job_type: String,
     pub payload: String,
     pub status: String,
@@ -248,7 +248,7 @@ mod tests {
         assert_eq!(job.job_type(), "generate_sitemap");
 
         let job = Job::SendWelcomeEmail {
-            user_id: "u1".into(),
+            user_id: 1,
             email: "a@b.com".into(),
             username: "alice".into(),
         };
@@ -258,7 +258,7 @@ mod tests {
     #[test]
     fn serialize_roundtrip() {
         let job = Job::RebuildSearchIndex {
-            post_ids: vec!["p1".into(), "p2".into()],
+            post_ids: vec![1, 2],
         };
         let payload = serialize_job(&job);
         let parsed = parse_job("rebuild_search_index", &payload).unwrap();

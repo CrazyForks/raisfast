@@ -1427,7 +1427,7 @@ pub fn spawn_audit_subscriber(
                         &str,
                         &str,
                         String,
-                        Option<String>,
+                        Option<i64>,
                         Option<String>,
                     ) = match event.as_ref() {
                         Event::PostCreated {
@@ -1439,7 +1439,7 @@ pub fn spawn_audit_subscriber(
                             "create",
                             "post",
                             id.clone(),
-                            Some(author_id.clone()),
+                            author_id.parse().ok(),
                             Some(format!("title={title}")),
                         ),
                         Event::PostUpdated { id, slug } => (
@@ -1488,7 +1488,7 @@ pub fn spawn_audit_subscriber(
                             "login",
                             "user",
                             id.clone(),
-                            Some(id.clone()),
+                            id.parse().ok(),
                             Some(format!("success={success}")),
                         ),
                         Event::MediaUploaded {
@@ -1499,7 +1499,7 @@ pub fn spawn_audit_subscriber(
                             "upload",
                             "media",
                             id.clone(),
-                            Some(uploader_id.clone()),
+                            uploader_id.parse().ok(),
                             Some(format!("filename={filename}")),
                         ),
                         Event::MediaDeleted { id } => ("delete", "media", id.clone(), None, None),
@@ -1523,7 +1523,7 @@ pub fn spawn_audit_subscriber(
                     if let Err(e) = audit
                         .log(
                             default_tenant,
-                            actor_id.as_deref(),
+                            actor_id,
                             None,
                             action,
                             subject,

@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use sqlx::Row;
 
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
+use crate::constants::COL_ID;
 use crate::db::Pool;
 use crate::errors::app_error::AppError;
 
@@ -111,7 +112,7 @@ async fn resolve_many_to_one_batch(
         .map(crate::db::dialect::ph)
         .collect();
     let sql = format!(
-        "SELECT {select_cols} FROM {target_table} WHERE id IN ({})",
+        "SELECT {select_cols} FROM {target_table} WHERE {COL_ID} IN ({})",
         placeholders.join(", ")
     );
 
@@ -127,7 +128,7 @@ async fn resolve_many_to_one_batch(
     let mut lookup: std::collections::HashMap<i64, Value> = std::collections::HashMap::new();
     for row in &rows {
         let val = super::repository::row_to_value(row, &columns);
-        if let Some(id) = val.get("id").and_then(|v| v.as_i64()) {
+        if let Some(id) = val.get(COL_ID).and_then(|v| v.as_i64()) {
             lookup.insert(id, val);
         }
     }
@@ -165,7 +166,7 @@ async fn resolve_one_to_many_batch(
 
     let item_ids: Vec<i64> = items
         .iter()
-        .filter_map(|item| item.get("id").and_then(|v| v.as_i64()))
+        .filter_map(|item| item.get(COL_ID).and_then(|v| v.as_i64()))
         .filter(|&id| id > 0)
         .collect();
 
@@ -207,7 +208,7 @@ async fn resolve_one_to_many_batch(
     }
 
     for item in items.iter_mut() {
-        let Some(item_id) = item.get("id").and_then(|v| v.as_i64()) else {
+        let Some(item_id) = item.get(COL_ID).and_then(|v| v.as_i64()) else {
             continue;
         };
         let targets = lookup.get(&item_id).cloned().unwrap_or_default();
@@ -233,7 +234,7 @@ async fn resolve_many_to_many_batch(
 
     let item_ids: Vec<i64> = items
         .iter()
-        .filter_map(|item| item.get("id").and_then(|v| v.as_i64()))
+        .filter_map(|item| item.get(COL_ID).and_then(|v| v.as_i64()))
         .filter(|&id| id > 0)
         .collect();
 
@@ -258,7 +259,7 @@ async fn resolve_many_to_many_batch(
     let sql = format!(
         "SELECT {select_cols}, {through}.{source_col} as __source_id \
          FROM {target_table} \
-         INNER JOIN {through} ON {through}.{target_col} = {target_table}.id \
+         INNER JOIN {through} ON {through}.{target_col} = {target_table}.{COL_ID} \
          WHERE {through}.{source_col} IN ({})",
         placeholders.join(", ")
     );
@@ -280,7 +281,7 @@ async fn resolve_many_to_many_batch(
     }
 
     for item in items.iter_mut() {
-        let Some(item_id) = item.get("id").and_then(|v| v.as_i64()) else {
+        let Some(item_id) = item.get(COL_ID).and_then(|v| v.as_i64()) else {
             continue;
         };
         let targets = lookup.get(&item_id).cloned().unwrap_or_default();
@@ -306,7 +307,7 @@ async fn fetch_column_names(pool: &Pool, table: &str) -> Vec<String> {
 
     if !crate::db::dialect::is_safe_identifier(table) {
         tracing::warn!(table, "rejected unsafe table name in fetch_column_names");
-        return vec!["id".into()];
+        return vec![COL_ID.into()];
     }
 
     let (sql, col_index) = super::repository::fetch_columns_sql(table);
@@ -318,7 +319,7 @@ async fn fetch_column_names(pool: &Pool, table: &str) -> Vec<String> {
                 .map(|row| row.try_get(col_index).unwrap_or_default())
                 .collect()
         })
-        .unwrap_or_else(|_| vec!["id".into()]);
+        .unwrap_or_else(|_| vec![COL_ID.into()]);
 
     {
         let mut cache = CACHE.write().unwrap_or_else(|e| e.into_inner());

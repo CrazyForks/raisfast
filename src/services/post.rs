@@ -382,11 +382,8 @@ pub async fn update_post(
 
     crate::utils::auth::require_owner_or_admin(
         auth.role(),
-        &auth
-            .user_int_id()
-            .ok_or(AppError::Unauthorized)?
-            .to_string(),
-        &existing.created_by.to_string(),
+        auth.user_int_id().ok_or(AppError::Unauthorized)?,
+        existing.created_by,
     )?;
 
     let resp = update_post_inner(repo, plugins, existing.id, req, auth).await?;
@@ -412,11 +409,8 @@ pub async fn delete_post(
 
     crate::utils::auth::require_owner_or_admin(
         auth.role(),
-        &auth
-            .user_int_id()
-            .ok_or(AppError::Unauthorized)?
-            .to_string(),
-        &existing.created_by.to_string(),
+        auth.user_int_id().ok_or(AppError::Unauthorized)?,
+        existing.created_by,
     )?;
 
     let doc_id = existing.document_id.clone();

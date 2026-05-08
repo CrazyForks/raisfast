@@ -20,12 +20,7 @@ async fn list_audit_empty() {
 async fn get_audit_not_found() {
     let (mut app, _) = test_app().await;
     let tok = admin_token().await;
-    let fake_id = uuid::Uuid::now_v7().to_string();
-    let (status, _) = send(
-        &mut app,
-        get_auth(&format!("/api/v1/admin/audit/{fake_id}"), &tok),
-    )
-    .await;
+    let (status, _) = send(&mut app, get_auth("/api/v1/admin/audit/999999", &tok)).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 

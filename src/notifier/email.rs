@@ -148,7 +148,10 @@ impl EmailSender for SendGridSender {
 
         let resp = client
             .post("https://api.sendgrid.com/v3/mail/send")
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header(
+                crate::constants::HEADER_AUTHORIZATION,
+                format!("{}{}", crate::constants::AUTH_BEARER_PREFIX, self.api_key),
+            )
             .json(&payload)
             .send()
             .await?;
@@ -211,7 +214,10 @@ impl EmailSender for ResendSender {
 
         let resp = client
             .post("https://api.resend.com/emails")
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header(
+                crate::constants::HEADER_AUTHORIZATION,
+                format!("{}{}", crate::constants::AUTH_BEARER_PREFIX, self.api_key),
+            )
             .json(&payload)
             .send()
             .await?;

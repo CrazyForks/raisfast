@@ -45,8 +45,7 @@ impl JobHandler for RebuildSearchIndexHandler {
 
         let mut posts = Vec::with_capacity(post_ids.len());
         for id in post_ids {
-            let id_i64: i64 = id.parse().unwrap_or(0);
-            match crate::models::post::find_by_id(&self.pool, id_i64, None).await {
+            match crate::models::post::find_by_id(&self.pool, *id, None).await {
                 Ok(Some(post)) => posts.push(SearchablePost {
                     id: post.document_id,
                     title: post.title,
@@ -54,7 +53,7 @@ impl JobHandler for RebuildSearchIndexHandler {
                 }),
                 Ok(None) => {
                     tracing::debug!("[search_index] post {id} not found, deleting from index");
-                    self.search.delete_post(id).await?;
+                    self.search.delete_post(&id.to_string()).await?;
                 }
                 Err(e) => {
                     tracing::warn!("[search_index] failed to fetch post {id}: {e}");
@@ -79,9 +78,7 @@ mod tests {
     async fn noop_engine_skips_indexing() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         let handler = RebuildSearchIndexHandler::new(pool, Arc::new(NoopSearchEngine));
-        let job = Job::RebuildSearchIndex {
-            post_ids: vec!["p1".into()],
-        };
+        let job = Job::RebuildSearchIndex { post_ids: vec![1] };
         assert!(handler.handle(&job).await.is_ok());
     }
 
@@ -147,7 +144,7 @@ mod tests {
         let engine = Arc::new(crate::search::TantivyEngine::open_in_memory().unwrap());
         let handler = RebuildSearchIndexHandler::new(pool, engine.clone());
         let job = Job::RebuildSearchIndex {
-            post_ids: vec![post_int_id.to_string()],
+            post_ids: vec![post_int_id],
         };
         assert!(handler.handle(&job).await.is_ok());
 
@@ -167,7 +164,7 @@ mod tests {
         let engine = Arc::new(crate::search::TantivyEngine::open_in_memory().unwrap());
         let handler = RebuildSearchIndexHandler::new(pool, engine.clone());
         let job = Job::RebuildSearchIndex {
-            post_ids: vec![p1_id.to_string(), p2_id.to_string()],
+            post_ids: vec![p1_id, p2_id],
         };
         assert!(handler.handle(&job).await.is_ok());
 
@@ -185,7 +182,7 @@ mod tests {
 
         engine
             .index_post(&SearchablePost {
-                id: "ghost".into(),
+                id: "0".into(),
                 title: "幽灵文章".into(),
                 content: "内容".into(),
             })
@@ -195,9 +192,7 @@ mod tests {
         assert_eq!(t, 1);
 
         let handler = RebuildSearchIndexHandler::new(pool, engine.clone());
-        let job = Job::RebuildSearchIndex {
-            post_ids: vec!["ghost".into()],
-        };
+        let job = Job::RebuildSearchIndex { post_ids: vec![0] };
         assert!(handler.handle(&job).await.is_ok());
 
         let (_, t) = engine.search("幽灵", 1, 10).await.unwrap();
@@ -224,7 +219,7 @@ mod tests {
         let engine = Arc::new(crate::search::TantivyEngine::open_in_memory().unwrap());
         let handler = RebuildSearchIndexHandler::new(pool, engine.clone());
         let job = Job::RebuildSearchIndex {
-            post_ids: vec![real_id.to_string(), "999999".into()],
+            post_ids: vec![real_id, 999999],
         };
         assert!(handler.handle(&job).await.is_ok());
 

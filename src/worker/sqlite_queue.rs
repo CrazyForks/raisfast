@@ -4,6 +4,7 @@ use chrono::Utc;
 use sqlx::Row;
 use uuid::Uuid;
 
+use crate::constants::{COL_DOCUMENT_ID, COL_ID};
 use crate::db::Pool;
 use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
@@ -34,7 +35,7 @@ impl JobQueue for SqliteJobQueue {
         let now = Utc::now().to_rfc3339();
 
         sqlx::query(&format!(
-            "INSERT INTO jobs (document_id, job_type, payload, status, max_attempts, run_after, created_at, updated_at)
+            "INSERT INTO jobs ({COL_DOCUMENT_ID}, job_type, payload, status, max_attempts, run_after, created_at, updated_at)
              VALUES ({}, {}, {}, 'pending', {}, {}, {}, {})",
             ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7)
         ))
@@ -56,13 +57,13 @@ impl JobQueue for SqliteJobQueue {
         let now = Utc::now().to_rfc3339();
         let limit_i64 = limit as i64;
 
-        let returning = crate::db::dialect::returning_col(
-            "document_id as id, job_type, payload, attempts, max_attempts, created_at",
-        );
+        let returning = crate::db::dialect::returning_col(&format!(
+            "{COL_DOCUMENT_ID} as {COL_ID}, job_type, payload, attempts, max_attempts, created_at"
+        ));
         let sql = format!(
             "UPDATE jobs SET status = 'running', attempts = attempts + 1, updated_at = {}
-             WHERE id IN (
-               SELECT id FROM jobs
+             WHERE {COL_ID} IN (
+               SELECT {COL_ID} FROM jobs
                WHERE status = 'pending' AND (run_after IS NULL OR run_after <= {})
                ORDER BY created_at ASC LIMIT {}
              )
@@ -89,7 +90,7 @@ impl JobQueue for SqliteJobQueue {
             let created_at: String = row.get("created_at");
             match parse_job(&job_type, &payload) {
                 Ok(job) => jobs.push(QueuedJob {
-                    id,
+                    document_id: id,
                     job,
                     attempts: attempts as u32,
                     max_attempts: max_attempts as u32,
@@ -108,7 +109,7 @@ impl JobQueue for SqliteJobQueue {
     async fn complete(&self, id: &str) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
         sqlx::query(&format!(
-            "UPDATE jobs SET status = 'completed', updated_at = {} WHERE document_id = {}",
+            "UPDATE jobs SET status = 'completed', updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
             ph(1),
             ph(2)
         ))
@@ -126,7 +127,7 @@ impl JobQueue for SqliteJobQueue {
         let mut tx = self.pool.begin().await?;
 
         let row = sqlx::query(&format!(
-            "SELECT attempts, max_attempts FROM jobs WHERE document_id = {}",
+            "SELECT attempts, max_attempts FROM jobs WHERE {COL_DOCUMENT_ID} = {}",
             ph(1)
         ))
         .bind(id)
@@ -142,16 +143,16 @@ impl JobQueue for SqliteJobQueue {
 
         if attempts >= max_attempts {
             sqlx::query(&format!(
-            "UPDATE jobs SET status = 'dead', error = {}, updated_at = {} WHERE document_id = {}",
-                ph(1),
-                ph(2),
-                ph(3)
-            ))
-            .bind(error)
-            .bind(&now)
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+            "UPDATE jobs SET status = 'dead', error = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
+            ph(1),
+            ph(2),
+            ph(3)
+        ))
+        .bind(error)
+        .bind(&now)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
             tx.commit().await?;
             tracing::error!("job {id} dead: {error}");
             return Ok(());
@@ -162,7 +163,7 @@ impl JobQueue for SqliteJobQueue {
             (Utc::now() + chrono::Duration::from_std(delay).unwrap_or_default()).to_rfc3339();
 
         sqlx::query(&format!(
-            "UPDATE jobs SET status = 'pending', error = {}, run_after = {}, updated_at = {} WHERE document_id = {}",
+            "UPDATE jobs SET status = 'pending', error = {}, run_after = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
             ph(1), ph(2), ph(3), ph(4)
         ))
         .bind(error)
@@ -183,7 +184,7 @@ impl JobQueue for SqliteJobQueue {
     async fn dead(&self, id: &str, error: &str) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
         sqlx::query(&format!(
-            "UPDATE jobs SET status = 'dead', error = {}, updated_at = {} WHERE document_id = {}",
+            "UPDATE jobs SET status = 'dead', error = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
             ph(1),
             ph(2),
             ph(3)
@@ -229,7 +230,7 @@ impl JobQueue for SqliteJobQueue {
 
         let (items, total): (Vec<JobRow>, i64) = if let Some(s) = status {
             let rows = sqlx::query(&format!(
-                "SELECT document_id as id, job_type, payload, status, attempts, max_attempts, run_after, error, created_at, updated_at
+                "SELECT {COL_DOCUMENT_ID} as {COL_ID}, job_type, payload, status, attempts, max_attempts, run_after, error, created_at, updated_at
                  FROM jobs WHERE status = {} ORDER BY created_at DESC LIMIT {} OFFSET {}",
                 ph(1), ph(2), ph(3)
             ))
@@ -251,7 +252,7 @@ impl JobQueue for SqliteJobQueue {
             let items = rows
                 .into_iter()
                 .map(|r| JobRow {
-                    id: r.get::<Option<String>, _>("id").unwrap_or_default(),
+                    document_id: r.get::<Option<String>, _>(COL_ID).unwrap_or_default(),
                     job_type: r.get("job_type"),
                     payload: r.get("payload"),
                     status: r.get("status"),
@@ -267,7 +268,7 @@ impl JobQueue for SqliteJobQueue {
             (items, total)
         } else {
             let rows = sqlx::query(&format!(
-                "SELECT document_id as id, job_type, payload, status, attempts, max_attempts, run_after, error, created_at, updated_at
+                "SELECT {COL_DOCUMENT_ID} as {COL_ID}, job_type, payload, status, attempts, max_attempts, run_after, error, created_at, updated_at
                  FROM jobs ORDER BY created_at DESC LIMIT {} OFFSET {}",
                 ph(1), ph(2)
             ))
@@ -284,7 +285,7 @@ impl JobQueue for SqliteJobQueue {
             let items = rows
                 .into_iter()
                 .map(|r| JobRow {
-                    id: r.get::<Option<String>, _>("id").unwrap_or_default(),
+                    document_id: r.get::<Option<String>, _>(COL_ID).unwrap_or_default(),
                     job_type: r.get("job_type"),
                     payload: r.get("payload"),
                     status: r.get("status"),
@@ -307,7 +308,7 @@ impl JobQueue for SqliteJobQueue {
         let now = Utc::now().to_rfc3339();
         let result = sqlx::query(&format!(
             "UPDATE jobs SET status = 'pending', attempts = 0, error = NULL, run_after = NULL, updated_at = {}
-             WHERE document_id = {} AND status = 'dead'",
+             WHERE {COL_DOCUMENT_ID} = {} AND status = 'dead'",
             ph(1), ph(2)
         ))
         .bind(&now)
@@ -324,10 +325,13 @@ impl JobQueue for SqliteJobQueue {
     }
 
     async fn remove(&self, id: &str) -> AppResult<()> {
-        let result = sqlx::query(&format!("DELETE FROM jobs WHERE document_id = {}", ph(1)))
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        let result = sqlx::query(&format!(
+            "DELETE FROM jobs WHERE {COL_DOCUMENT_ID} = {}",
+            ph(1)
+        ))
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
 
         if result.rows_affected() == 0 {
             return Err(AppError::not_found("job"));
@@ -415,7 +419,7 @@ mod tests {
         q.enqueue(sample_job()).await.unwrap();
         let jobs = q.dequeue(10).await.unwrap();
 
-        q.complete(&jobs[0].id).await.unwrap();
+        q.complete(&jobs[0].document_id).await.unwrap();
 
         let stats = q.stats().await.unwrap();
         assert_eq!(stats.completed, 1);
@@ -429,7 +433,9 @@ mod tests {
         q.enqueue(sample_job()).await.unwrap();
         let jobs = q.dequeue(10).await.unwrap();
 
-        q.fail(&jobs[0].id, "something went wrong").await.unwrap();
+        q.fail(&jobs[0].document_id, "something went wrong")
+            .await
+            .unwrap();
 
         let stats = q.stats().await.unwrap();
         assert_eq!(stats.pending, 1);
@@ -455,7 +461,9 @@ mod tests {
         assert_eq!(jobs[0].attempts, 1);
         assert_eq!(jobs[0].max_attempts, 1);
 
-        q.fail(&jobs[0].id, "permanent failure").await.unwrap();
+        q.fail(&jobs[0].document_id, "permanent failure")
+            .await
+            .unwrap();
 
         let stats = q.stats().await.unwrap();
         assert_eq!(stats.dead, 1);
@@ -469,7 +477,7 @@ mod tests {
         q.enqueue(sample_job()).await.unwrap();
         let jobs = q.dequeue(10).await.unwrap();
 
-        q.dead(&jobs[0].id, "fatal").await.unwrap();
+        q.dead(&jobs[0].document_id, "fatal").await.unwrap();
 
         let stats = q.stats().await.unwrap();
         assert_eq!(stats.dead, 1);
@@ -491,7 +499,7 @@ mod tests {
         q.enqueue(sample_job()).await.unwrap();
 
         let jobs = q.dequeue(1).await.unwrap();
-        q.complete(&jobs[0].id).await.unwrap();
+        q.complete(&jobs[0].document_id).await.unwrap();
 
         let stats = q.stats().await.unwrap();
         assert_eq!(stats.pending, 2);
@@ -523,7 +531,7 @@ mod tests {
         q.enqueue(sample_job()).await.unwrap();
 
         let jobs = q.dequeue(1).await.unwrap();
-        q.complete(&jobs[0].id).await.unwrap();
+        q.complete(&jobs[0].document_id).await.unwrap();
 
         let (pending, _) = q.list(Some("pending"), 1, 10).await.unwrap();
         assert_eq!(pending.len(), 1);
@@ -562,12 +570,12 @@ mod tests {
         .unwrap();
 
         let jobs = q.dequeue(10).await.unwrap();
-        q.fail(&jobs[0].id, "err").await.unwrap();
+        q.fail(&jobs[0].document_id, "err").await.unwrap();
 
         let stats = q.stats().await.unwrap();
         assert_eq!(stats.dead, 1);
 
-        q.retry(&jobs[0].id).await.unwrap();
+        q.retry(&jobs[0].document_id).await.unwrap();
 
         let stats = q.stats().await.unwrap();
         assert_eq!(stats.pending, 1);
@@ -585,7 +593,7 @@ mod tests {
         q.enqueue(sample_job()).await.unwrap();
         let jobs = q.dequeue(10).await.unwrap();
 
-        let result = q.retry(&jobs[0].id).await;
+        let result = q.retry(&jobs[0].document_id).await;
         assert!(result.is_err());
     }
 
@@ -604,7 +612,7 @@ mod tests {
         let (rows, _) = q.list(None, 1, 10).await.unwrap();
         assert_eq!(rows.len(), 1);
 
-        q.remove(&rows[0].id).await.unwrap();
+        q.remove(&rows[0].document_id).await.unwrap();
 
         let (rows, _) = q.list(None, 1, 10).await.unwrap();
         assert!(rows.is_empty());
@@ -637,19 +645,17 @@ mod tests {
     async fn enqueue_multiple_job_types() {
         let q = setup().await;
         q.enqueue(NewJob::from(Job::SendWelcomeEmail {
-            user_id: "u1".into(),
+            user_id: 1,
             email: "a@b.com".into(),
             username: "alice".into(),
         }))
         .await
         .unwrap();
-        q.enqueue(NewJob::from(Job::RebuildSearchIndex {
-            post_ids: vec!["p1".into()],
-        }))
-        .await
-        .unwrap();
+        q.enqueue(NewJob::from(Job::RebuildSearchIndex { post_ids: vec![1] }))
+            .await
+            .unwrap();
         q.enqueue(NewJob::from(Job::GenerateThumbnail {
-            media_id: "m1".into(),
+            media_id: 1,
             size: 300,
         }))
         .await

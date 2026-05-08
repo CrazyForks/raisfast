@@ -119,15 +119,13 @@ mod tests {
         let handler = LogJobHandler;
         let jobs = vec![
             Job::SendWelcomeEmail {
-                user_id: "u1".into(),
+                user_id: 1,
                 email: "a@b.com".into(),
                 username: "alice".into(),
             },
-            Job::RebuildSearchIndex {
-                post_ids: vec!["p1".into()],
-            },
+            Job::RebuildSearchIndex { post_ids: vec![1] },
             Job::GenerateThumbnail {
-                media_id: "m1".into(),
+                media_id: 1,
                 size: 300,
             },
         ];

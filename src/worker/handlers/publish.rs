@@ -27,8 +27,7 @@ impl JobHandler for ScheduledPublishHandler {
             return Ok(());
         };
 
-        let post_id_i64: i64 = post_id.parse().unwrap_or(0);
-        let post = crate::models::post::find_by_id(&self.pool, post_id_i64, None).await?;
+        let post = crate::models::post::find_by_id(&self.pool, *post_id, None).await?;
         let Some(post) = post else {
             tracing::warn!("[publish] post {} not found, skipping", post_id);
             return Ok(());
@@ -120,9 +119,7 @@ mod tests {
         .unwrap();
 
         let handler = ScheduledPublishHandler::new(pool.clone());
-        let job = Job::ScheduledPublish {
-            post_id: p.id.to_string(),
-        };
+        let job = Job::ScheduledPublish { post_id: p.id };
         assert!(handler.handle(&job).await.is_ok());
 
         let updated = post::find_by_id(&pool, p.id, None).await.unwrap().unwrap();
@@ -155,9 +152,7 @@ mod tests {
         .unwrap();
 
         let handler = ScheduledPublishHandler::new(pool);
-        let job = Job::ScheduledPublish {
-            post_id: p.id.to_string(),
-        };
+        let job = Job::ScheduledPublish { post_id: p.id };
         assert!(handler.handle(&job).await.is_ok());
     }
 
@@ -165,9 +160,7 @@ mod tests {
     async fn skips_nonexistent_post() {
         let pool = setup().await;
         let handler = ScheduledPublishHandler::new(pool);
-        let job = Job::ScheduledPublish {
-            post_id: "nonexistent".into(),
-        };
+        let job = Job::ScheduledPublish { post_id: 999999 };
         assert!(handler.handle(&job).await.is_ok());
     }
 

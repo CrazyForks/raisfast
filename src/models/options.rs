@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::constants::COL_TENANT_ID;
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 
@@ -111,7 +112,7 @@ pub async fn find_by_key(
     match tenant_id {
         Some(tid) => {
             let sql = format!(
-                "SELECT * FROM options WHERE tenant_id = {} AND option_key = {}",
+                "SELECT * FROM options WHERE {COL_TENANT_ID} = {} AND option_key = {}",
                 ph(1),
                 ph(2)
             );
@@ -138,7 +139,7 @@ pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<i64>) -> AppResu
     match tenant_id {
         Some(tid) => {
             let sql = format!(
-                "SELECT * FROM options WHERE tenant_id = {} ORDER BY sort_order, option_key",
+                "SELECT * FROM options WHERE {COL_TENANT_ID} = {} ORDER BY sort_order, option_key",
                 ph(1)
             );
             let rows = sqlx::query_as::<_, OptionRow>(&sql)
@@ -166,7 +167,7 @@ pub async fn upsert_value(
     match tenant_id {
         Some(tid) => {
             let sql = format!(
-                "UPDATE options SET value = {}, updated_at = {} WHERE tenant_id = {} AND option_key = {}",
+                "UPDATE options SET value = {}, updated_at = {} WHERE {COL_TENANT_ID} = {} AND option_key = {}",
                 ph(1),
                 ph(2),
                 ph(3),
@@ -207,7 +208,7 @@ pub async fn delete_by_key(
     match tenant_id {
         Some(tid) => {
             let sql = format!(
-                "DELETE FROM options WHERE tenant_id = {} AND option_key = {}",
+                "DELETE FROM options WHERE {COL_TENANT_ID} = {} AND option_key = {}",
                 ph(1),
                 ph(2)
             );

@@ -47,18 +47,21 @@ impl JobEnqueuer {
     fn create_jobs(&self, event: &Event) -> Vec<NewJob> {
         match event {
             Event::PostCreated { id, .. } => {
+                let post_id: i64 = id.parse().unwrap_or(0);
                 vec![NewJob::from(Job::RebuildSearchIndex {
-                    post_ids: vec![id.clone()],
+                    post_ids: vec![post_id],
                 })]
             }
             Event::PostUpdated { id, .. } => {
+                let post_id: i64 = id.parse().unwrap_or(0);
                 vec![NewJob::from(Job::RebuildSearchIndex {
-                    post_ids: vec![id.clone()],
+                    post_ids: vec![post_id],
                 })]
             }
             Event::PostDeleted { id, .. } => {
+                let post_id: i64 = id.parse().unwrap_or(0);
                 vec![NewJob::from(Job::RebuildSearchIndex {
-                    post_ids: vec![id.clone()],
+                    post_ids: vec![post_id],
                 })]
             }
             Event::UserRegistered {
@@ -66,15 +69,17 @@ impl JobEnqueuer {
                 email,
                 username,
             } => {
+                let user_id: i64 = id.parse().unwrap_or(0);
                 vec![NewJob::from(Job::SendWelcomeEmail {
-                    user_id: id.clone(),
+                    user_id,
                     email: email.clone(),
                     username: username.clone(),
                 })]
             }
             Event::MediaUploaded { id, .. } => {
+                let media_id: i64 = id.parse().unwrap_or(0);
                 vec![NewJob::from(Job::GenerateThumbnail {
-                    media_id: id.clone(),
+                    media_id,
                     size: 300,
                 })]
             }
@@ -83,8 +88,9 @@ impl JobEnqueuer {
                 email,
                 reset_token,
             } => {
+                let uid: i64 = user_id.parse().unwrap_or(0);
                 vec![NewJob::from(Job::SendPasswordResetEmail {
-                    user_id: user_id.clone(),
+                    user_id: uid,
                     email: email.clone(),
                     reset_token: reset_token.clone(),
                 })]
@@ -94,8 +100,9 @@ impl JobEnqueuer {
                 email,
                 verify_token,
             } => {
+                let uid: i64 = user_id.parse().unwrap_or(0);
                 vec![NewJob::from(Job::SendEmailVerification {
-                    user_id: user_id.clone(),
+                    user_id: uid,
                     email: email.clone(),
                     verify_token: verify_token.clone(),
                 })]
@@ -127,7 +134,7 @@ mod tests {
         JobEnqueuer::spawn(&bus, queue.clone());
 
         bus.emit(Event::PostCreated {
-            id: "p1".into(),
+            id: "1".into(),
             slug: "hello".into(),
             title: "Hello".into(),
             author_id: "u1".into(),
@@ -139,7 +146,7 @@ mod tests {
         assert_eq!(jobs.len(), 1);
         assert!(matches!(
             &jobs[0].job,
-            Job::RebuildSearchIndex { post_ids } if post_ids == &vec!["p1".to_string()]
+            Job::RebuildSearchIndex { post_ids } if post_ids == &vec![1]
         ));
     }
 
@@ -149,7 +156,7 @@ mod tests {
         JobEnqueuer::spawn(&bus, queue.clone());
 
         bus.emit(Event::UserRegistered {
-            id: "u1".into(),
+            id: "1".into(),
             username: "alice".into(),
             email: "alice@example.com".into(),
         });
@@ -161,7 +168,7 @@ mod tests {
         assert!(matches!(
             &jobs[0].job,
             Job::SendWelcomeEmail { user_id, email, username }
-            if user_id == "u1" && email == "alice@example.com" && username == "alice"
+            if user_id == &1 && email == "alice@example.com" && username == "alice"
         ));
     }
 
@@ -171,9 +178,9 @@ mod tests {
         JobEnqueuer::spawn(&bus, queue.clone());
 
         bus.emit(Event::MediaUploaded {
-            id: "m1".into(),
+            id: "1".into(),
             filename: "photo.jpg".into(),
-            uploader_id: "u1".into(),
+            uploader_id: "1".into(),
         });
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -182,7 +189,7 @@ mod tests {
         assert_eq!(jobs.len(), 1);
         assert!(matches!(
             &jobs[0].job,
-            Job::GenerateThumbnail { media_id, size: 300 } if media_id == "m1"
+            Job::GenerateThumbnail { media_id, size: 300 } if media_id == &1
         ));
     }
 
@@ -192,12 +199,12 @@ mod tests {
         JobEnqueuer::spawn(&bus, queue.clone());
 
         bus.emit(Event::CommentCreated {
-            id: "c1".into(),
+            id: "1".into(),
             post_slug: "hello".into(),
             author_name: "bob".into(),
         });
         bus.emit(Event::UserLoggedIn {
-            id: "u1".into(),
+            id: "1".into(),
             success: true,
         });
 
@@ -213,13 +220,13 @@ mod tests {
         JobEnqueuer::spawn(&bus, queue.clone());
 
         bus.emit(Event::PostCreated {
-            id: "p1".into(),
+            id: "1".into(),
             slug: "a".into(),
             title: "A".into(),
             author_id: "u1".into(),
         });
         bus.emit(Event::PostCreated {
-            id: "p2".into(),
+            id: "2".into(),
             slug: "b".into(),
             title: "B".into(),
             author_id: "u1".into(),

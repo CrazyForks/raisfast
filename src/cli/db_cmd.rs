@@ -205,7 +205,7 @@ pub async fn seed(
     let password_hash = raisfast::services::auth::hash_password(password)
         .map_err(|e| anyhow::anyhow!("password hashing failed: {e}"))?;
 
-    let (id, now) = raisfast::utils::id::new_id_and_timestamp();
+    let (document_id, now) = raisfast::utils::id::new_document_id_and_timestamp();
 
     let tid = if cfg!(feature = "db-sqlite") {
         let row: Option<(String,)> =
@@ -220,7 +220,7 @@ pub async fn seed(
     match tid {
         Some(tid) => {
             sqlx::query(&format!(
-                "INSERT INTO users (id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, 'admin', {}, {})",
+                "INSERT INTO users (document_id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, 'admin', {}, {})",
                 dialect::ph(1),
                 dialect::ph(2),
                 dialect::ph(3),
@@ -229,7 +229,7 @@ pub async fn seed(
                 dialect::ph(6),
                 dialect::ph(7),
             ))
-            .bind(&id)
+            .bind(&document_id)
             .bind(&tid)
             .bind(email)
             .bind(username)
@@ -241,7 +241,7 @@ pub async fn seed(
         }
         None => {
             sqlx::query(&format!(
-                "INSERT INTO users (id, email, username, password_hash, role, created_at, updated_at) VALUES ({}, {}, {}, {}, 'admin', {}, {})",
+                "INSERT INTO users (document_id, email, username, password_hash, role, created_at, updated_at) VALUES ({}, {}, {}, {}, 'admin', {}, {})",
                 dialect::ph(1),
                 dialect::ph(2),
                 dialect::ph(3),
@@ -249,7 +249,7 @@ pub async fn seed(
                 dialect::ph(5),
                 dialect::ph(6),
             ))
-            .bind(&id)
+            .bind(&document_id)
             .bind(email)
             .bind(username)
             .bind(&password_hash)

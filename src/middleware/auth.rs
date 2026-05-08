@@ -156,7 +156,7 @@ impl AuthUser {
 fn extract_header_tenant(parts: &Parts) -> Option<String> {
     parts
         .headers
-        .get("X-Tenant-ID")
+        .get(crate::constants::HEADER_TENANT_ID)
         .and_then(|v| v.to_str().ok())
         .filter(|s| !s.is_empty())
         .map(std::string::ToString::to_string)
@@ -165,9 +165,9 @@ fn extract_header_tenant(parts: &Parts) -> Option<String> {
 fn extract_bearer_token(parts: &Parts) -> Option<&str> {
     parts
         .headers
-        .get("Authorization")
+        .get(crate::constants::HEADER_AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
+        .and_then(|v| v.strip_prefix(crate::constants::AUTH_BEARER_PREFIX))
 }
 
 async fn extract_claims(parts: &Parts, state: &AppState) -> Option<Claims> {

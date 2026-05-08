@@ -82,7 +82,7 @@ mod tests {
         let (config, sender) = test_deps();
         let handler = SendEmailVerificationHandler::new(config, sender);
         let job = Job::SendEmailVerification {
-            user_id: "u1".into(),
+            user_id: 1,
             email: "alice@example.com".into(),
             verify_token: "abc123".into(),
         };

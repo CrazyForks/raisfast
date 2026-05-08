@@ -132,7 +132,7 @@ mod tests {
         let config = Arc::new(test_config());
         let handler = GenerateSitemapHandler::new(pool, config);
         let job = Job::SendWelcomeEmail {
-            user_id: "u1".into(),
+            user_id: 1,
             email: "a@b.com".into(),
             username: "alice".into(),
         };

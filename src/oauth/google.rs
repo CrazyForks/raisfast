@@ -69,7 +69,10 @@ impl OAuthProvider for GoogleProvider {
     async fn fetch_user_info(&self, access_token: &str) -> AppResult<OAuthUserInfo> {
         let resp = reqwest::Client::new()
             .get("https://www.googleapis.com/oauth2/v2/userinfo")
-            .header("Authorization", format!("Bearer {access_token}"))
+            .header(
+                crate::constants::HEADER_AUTHORIZATION,
+                format!("{}{access_token}", crate::constants::AUTH_BEARER_PREFIX),
+            )
             .header("Accept", "application/json")
             .send()
             .await

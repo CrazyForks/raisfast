@@ -134,11 +134,8 @@ pub async fn delete_comment(
 
     crate::utils::auth::require_owner_or_admin_opt(
         auth.role(),
-        &auth
-            .user_int_id()
-            .ok_or(AppError::Unauthorized)?
-            .to_string(),
-        c.created_by.as_ref().map(|id| id.to_string()).as_deref(),
+        auth.user_int_id().ok_or(AppError::Unauthorized)?,
+        c.created_by,
     )?;
 
     comment_repo.delete(id, auth.tenant_id()).await?;

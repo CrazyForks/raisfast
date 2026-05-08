@@ -156,7 +156,7 @@ mod tests {
         let (config, sender) = test_deps();
         let handler = SendWelcomeEmailHandler::new(config, sender);
         let job = Job::SendWelcomeEmail {
-            user_id: "u1".into(),
+            user_id: 1,
             email: "alice@example.com".into(),
             username: "alice".into(),
         };
@@ -168,7 +168,7 @@ mod tests {
         let (config, sender) = test_deps();
         let handler = SendPasswordResetEmailHandler::new(config, sender);
         let job = Job::SendPasswordResetEmail {
-            user_id: "u1".into(),
+            user_id: 1,
             email: "alice@example.com".into(),
             reset_token: "abc123".into(),
         };
