@@ -906,7 +906,7 @@ impl ContentRepository {
         ct: &ContentTypeSchema,
         id: &str,
         deleted_at: &str,
-        deleted_by: Option<&str>,
+        deleted_by: Option<i64>,
         tenant_id: Option<&str>,
     ) -> Result<(), AppError> {
         let tid = self.resolve_tenant(ct, tenant_id);
@@ -917,16 +917,14 @@ impl ContentRepository {
             COL_DELETED_AT,
             crate::db::dialect::ph(idx)
         )];
-        let mut values: Vec<String> = vec![deleted_at.to_string()];
         idx += 1;
 
-        if let Some(by) = deleted_by {
+        if deleted_by.is_some() {
             set_parts.push(format!(
                 "{} = {}",
                 COL_DELETED_BY,
                 crate::db::dialect::ph(idx)
             ));
-            values.push(by.to_string());
             idx += 1;
         }
 
@@ -934,12 +932,10 @@ impl ContentRepository {
             "{COL_DOCUMENT_ID} = {}",
             crate::db::dialect::ph(idx)
         )];
-        values.push(id.to_string());
         idx += 1;
 
-        if let Some(ref tid) = tid {
+        if tid.is_some() {
             where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::dialect::ph(idx)));
-            values.push(tid.clone());
         }
 
         let sql = format!(
@@ -950,8 +946,13 @@ impl ContentRepository {
         );
 
         let mut query = sqlx::query(&sql);
-        for v in &values {
-            query = query.bind(v);
+        query = query.bind(deleted_at);
+        if let Some(by) = deleted_by {
+            query = query.bind(by);
+        }
+        query = query.bind(id);
+        if let Some(ref tid) = tid {
+            query = query.bind(tid.as_str());
         }
 
         query

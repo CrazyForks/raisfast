@@ -807,7 +807,7 @@ pub async fn do_delete(
         let deleted_by = before_ctx
             .record
             .get(COL_DELETED_BY)
-            .and_then(|v| v.as_str());
+            .and_then(|v| v.as_i64());
         repo.soft_delete(ct, id, deleted_at, deleted_by, auth.tenant_id())
             .await?;
     } else {

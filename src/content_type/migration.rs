@@ -13,6 +13,10 @@ use crate::constants::{COL_DOCUMENT_ID, COL_ID};
 /// 包含所有 implements 协议声明的列（如 ownable、timestampable、soft_deletable）。
 #[must_use]
 pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnDef]) -> String {
+    let table = ct.table.as_str();
+    if !crate::db::dialect::is_safe_identifier(table) {
+        return format!("-- unsafe table name skipped: {table}");
+    }
     let mut cols = Vec::new();
 
     cols.push(format!("    {COL_ID} INTEGER PRIMARY KEY AUTOINCREMENT"));
@@ -31,6 +35,11 @@ pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnD
                         .relation
                         .as_ref()
                         .map_or("users", |r| r.target.as_str());
+                    if !crate::db::dialect::is_safe_identifier(&fk)
+                        || !crate::db::dialect::is_safe_identifier(target_table)
+                    {
+                        continue;
+                    }
                     let not_null = if field.required { " NOT NULL" } else { "" };
                     cols.push(format!(
                         "    {fk} INTEGER{not_null} REFERENCES {target_table}(id)"
@@ -97,6 +106,7 @@ pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnD
 pub fn generate_junction_tables(ct: &ContentTypeSchema) -> Vec<String> {
     let mut tables = Vec::new();
 
+    let is_safe = crate::db::dialect::is_safe_identifier;
     for field in &ct.fields {
         if let Some(ref rel) = field.relation
             && matches!(rel.relation_type, RelationType::ManyToMany | RelationType::ManyWay)
@@ -105,9 +115,17 @@ pub fn generate_junction_tables(ct: &ContentTypeSchema) -> Vec<String> {
                 .through
                 .clone()
                 .unwrap_or_else(|| format!("{}_{}", ct.table, rel.target));
-            let target_table = &rel.target;
             let source_col = format!("{}_id", ct.singular);
             let target_col = format!("{}_id", rel.target);
+
+            if !is_safe(&through)
+                || !is_safe(ct.table.as_str())
+                || !is_safe(rel.target.as_str())
+                || !is_safe(&source_col)
+                || !is_safe(&target_col)
+            {
+                continue;
+            }
 
             let sql = format!(
                 "CREATE TABLE IF NOT EXISTS {through} (\n\
@@ -119,7 +137,7 @@ pub fn generate_junction_tables(ct: &ContentTypeSchema) -> Vec<String> {
                 source_col = source_col,
                 source_table = ct.table,
                 target_col = target_col,
-                target_table = target_table,
+                target_table = rel.target,
             );
             tables.push(sql);
         }

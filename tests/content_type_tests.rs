@@ -1285,11 +1285,11 @@ required = true
     let id = created["document_id"].as_str().unwrap();
 
     let now = now_str();
-    repo.soft_delete(&ct, id, &now, Some("user-123"), None)
+    repo.soft_delete(&ct, id, &now, Some(42), None)
         .await
         .unwrap();
 
-    let row: (String, String) = sqlx::query_as(
+    let row: (String, i64) = sqlx::query_as(
         "SELECT deleted_at, deleted_by FROM ct_soft_deleted_by WHERE document_id = ?",
     )
     .bind(&id)
@@ -1297,7 +1297,7 @@ required = true
     .await
     .unwrap();
     assert!(!row.0.is_empty());
-    assert_eq!(row.1, "user-123");
+    assert_eq!(row.1, 42);
 }
 
 #[tokio::test]
