@@ -47,9 +47,7 @@ pub async fn resolve_relations(
         };
 
         match rel.relation_type {
-            RelationType::ManyToOne
-            | RelationType::OneToOne
-            | RelationType::OneWay => {
+            RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay => {
                 resolve_many_to_one_batch(pool, ct, field, rel, items).await?;
             }
             RelationType::OneToMany => {

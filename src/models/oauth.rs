@@ -278,3 +278,213 @@ pub async fn count_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<i6
         .await?;
     Ok(count)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    async fn insert_user(pool: &crate::db::Pool) -> i64 {
+        let cmd = crate::commands::user::CreateUserCmd {
+            email: format!("{}@test.com", crate::utils::id::new_document_id()),
+            username: crate::utils::id::new_document_id(),
+            password_hash: "$argon2id$v=19$m=19456,t=2,p=1$test$test".to_string(),
+        };
+        let user = crate::models::user::create(pool, &cmd, None).await.unwrap();
+        user.id
+    }
+
+    #[tokio::test]
+    async fn create_and_consume_state() {
+        let pool = setup_pool().await;
+        let user_id = insert_user(&pool).await;
+        let doc_id = create_state(
+            &pool,
+            "github",
+            "verifier123",
+            Some(user_id),
+            "2099-12-31T00:00:00Z",
+        )
+        .await
+        .unwrap();
+        let state = consume_state(&pool, &doc_id).await.unwrap().unwrap();
+        assert_eq!(state.document_id, doc_id);
+        assert_eq!(state.provider, "github");
+        assert_eq!(state.code_verifier, "verifier123");
+        assert_eq!(state.user_id, Some(user_id));
+    }
+
+    #[tokio::test]
+    async fn consume_state_twice_returns_none() {
+        let pool = setup_pool().await;
+        let user_id = insert_user(&pool).await;
+        let doc_id = create_state(
+            &pool,
+            "github",
+            "verifier123",
+            Some(user_id),
+            "2099-12-31T00:00:00Z",
+        )
+        .await
+        .unwrap();
+        let first = consume_state(&pool, &doc_id).await.unwrap();
+        assert!(first.is_some());
+        let second = consume_state(&pool, &doc_id).await.unwrap();
+        assert!(second.is_none());
+    }
+
+    #[tokio::test]
+    async fn create_and_find_account() {
+        let pool = setup_pool().await;
+        let user_id = insert_user(&pool).await;
+        let account = create_account(
+            &pool,
+            CreateOAuthAccountParams {
+                user_id,
+                provider: "github",
+                provider_user_id: "github-123",
+                email: Some("user@example.com"),
+                display_name: Some("Test User"),
+                avatar_url: None,
+                access_token: None,
+                refresh_token: None,
+                token_expires_at: None,
+                profile: None,
+            },
+        )
+        .await
+        .unwrap();
+        let found = find_by_provider_user(&pool, "github", "github-123")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.id, account.id);
+        assert_eq!(found.provider, "github");
+        assert_eq!(found.provider_user_id, "github-123");
+    }
+
+    #[tokio::test]
+    async fn find_by_user_id() {
+        let pool = setup_pool().await;
+        let user_id = insert_user(&pool).await;
+        create_account(
+            &pool,
+            CreateOAuthAccountParams {
+                user_id,
+                provider: "github",
+                provider_user_id: "github-123",
+                email: None,
+                display_name: None,
+                avatar_url: None,
+                access_token: None,
+                refresh_token: None,
+                token_expires_at: None,
+                profile: None,
+            },
+        )
+        .await
+        .unwrap();
+        create_account(
+            &pool,
+            CreateOAuthAccountParams {
+                user_id,
+                provider: "google",
+                provider_user_id: "google-456",
+                email: None,
+                display_name: None,
+                avatar_url: None,
+                access_token: None,
+                refresh_token: None,
+                token_expires_at: None,
+                profile: None,
+            },
+        )
+        .await
+        .unwrap();
+        let accounts = super::find_by_user_id(&pool, user_id).await.unwrap();
+        assert_eq!(accounts.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn delete_account() {
+        let pool = setup_pool().await;
+        let user_id = insert_user(&pool).await;
+        create_account(
+            &pool,
+            CreateOAuthAccountParams {
+                user_id,
+                provider: "github",
+                provider_user_id: "github-123",
+                email: None,
+                display_name: None,
+                avatar_url: None,
+                access_token: None,
+                refresh_token: None,
+                token_expires_at: None,
+                profile: None,
+            },
+        )
+        .await
+        .unwrap();
+        let deleted = super::delete_account(&pool, user_id, "github")
+            .await
+            .unwrap();
+        assert!(deleted);
+        assert!(
+            find_by_provider_user(&pool, "github", "github-123")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn count_by_user() {
+        let pool = setup_pool().await;
+        let user_id = insert_user(&pool).await;
+        create_account(
+            &pool,
+            CreateOAuthAccountParams {
+                user_id,
+                provider: "github",
+                provider_user_id: "github-123",
+                email: None,
+                display_name: None,
+                avatar_url: None,
+                access_token: None,
+                refresh_token: None,
+                token_expires_at: None,
+                profile: None,
+            },
+        )
+        .await
+        .unwrap();
+        create_account(
+            &pool,
+            CreateOAuthAccountParams {
+                user_id,
+                provider: "google",
+                provider_user_id: "google-456",
+                email: None,
+                display_name: None,
+                avatar_url: None,
+                access_token: None,
+                refresh_token: None,
+                token_expires_at: None,
+                profile: None,
+            },
+        )
+        .await
+        .unwrap();
+        let count = super::count_by_user(&pool, user_id).await.unwrap();
+        assert_eq!(count, 2);
+    }
+}

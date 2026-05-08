@@ -235,3 +235,113 @@ pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) ->
 
     AppError::expect_affected(&result, "media")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::media::CreateMediaCmd;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    async fn insert_user(pool: &crate::db::Pool) -> i64 {
+        let doc_id = crate::utils::id::new_document_id();
+        let sql = format!(
+            "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'admin') RETURNING id",
+            crate::db::dialect::ph(1),
+            crate::db::dialect::ph(2),
+            crate::db::dialect::ph(3),
+            crate::db::dialect::ph(4)
+        );
+        let (id,): (i64,) = sqlx::query_as(&sql)
+            .bind(&doc_id)
+            .bind("media-test@test.com")
+            .bind("mediauser")
+            .bind("$argon2id$v=19$m=19456,t=2,p=1$test$test")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        id
+    }
+
+    fn make_cmd(user_id: i64, filename: &str) -> CreateMediaCmd {
+        CreateMediaCmd {
+            user_id,
+            filename: filename.to_string(),
+            filepath: format!("/uploads/{filename}"),
+            mimetype: "image/png".to_string(),
+            size: 1024,
+            width: Some(100),
+            height: Some(100),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_and_find_by_id() {
+        let pool = setup_pool().await;
+        let uid = insert_user(&pool).await;
+        let media = create(&pool, &make_cmd(uid, "photo.png"), None)
+            .await
+            .unwrap();
+        let found = find_by_id(&pool, media.id, None).await.unwrap().unwrap();
+        assert_eq!(found.id, media.id);
+        assert_eq!(found.filename, "photo.png");
+        assert_eq!(found.user_id, uid);
+    }
+
+    #[tokio::test]
+    async fn find_all_paginated() {
+        let pool = setup_pool().await;
+        let uid = insert_user(&pool).await;
+        for i in 0..5 {
+            create(&pool, &make_cmd(uid, &format!("file{i}.png")), None)
+                .await
+                .unwrap();
+        }
+        let (items, total) = find_all(&pool, uid, 1, 3, None).await.unwrap();
+        assert_eq!(total, 5);
+        assert_eq!(items.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn stats_returns_counts() {
+        let pool = setup_pool().await;
+        let uid = insert_user(&pool).await;
+        for i in 0..3 {
+            create(&pool, &make_cmd(uid, &format!("img{i}.png")), None)
+                .await
+                .unwrap();
+        }
+        let s = stats(&pool, uid, None).await.unwrap();
+        assert_eq!(s.total_files, 3);
+        assert_eq!(s.total_size, 3 * 1024);
+        assert_eq!(s.by_type.len(), 1);
+        assert_eq!(s.by_type[0].mimetype, "image/png");
+        assert_eq!(s.by_type[0].count, 3);
+    }
+
+    #[tokio::test]
+    async fn delete_removes_media() {
+        let pool = setup_pool().await;
+        let uid = insert_user(&pool).await;
+        let media = create(&pool, &make_cmd(uid, "gone.png"), None)
+            .await
+            .unwrap();
+        delete(&pool, media.id, None).await.unwrap();
+        let found = find_by_id(&pool, media.id, None).await.unwrap();
+        assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn find_by_id_not_found() {
+        let pool = setup_pool().await;
+        let found = find_by_id(&pool, 99999, None).await.unwrap();
+        assert!(found.is_none());
+    }
+}

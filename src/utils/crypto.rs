@@ -1,5 +1,42 @@
 //! 加密工具函数。
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hmac_sha1_deterministic() {
+        let a = hmac_sha1_sign("key", "data");
+        let b = hmac_sha1_sign("key", "data");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn hmac_sha1_different_keys() {
+        let a = hmac_sha1_sign("key1", "data");
+        let b = hmac_sha1_sign("key2", "data");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn hmac_sha1_different_data() {
+        let a = hmac_sha1_sign("key", "data1");
+        let b = hmac_sha1_sign("key", "data2");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn hmac_sha1_is_base64() {
+        let result = hmac_sha1_sign("secret", "message");
+        use base64::Engine;
+        assert!(
+            base64::engine::general_purpose::STANDARD
+                .decode(&result)
+                .is_ok()
+        );
+    }
+}
+
 /// 使用 HMAC-SHA1 签名（Base64 编码）。
 ///
 /// key 会自动追加 `&` 后缀（OAuth 1.0 签名规范）。

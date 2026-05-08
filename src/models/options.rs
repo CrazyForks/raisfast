@@ -221,3 +221,116 @@ pub async fn delete_by_key(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    async fn insert_test_option(
+        pool: &crate::db::Pool,
+        key: &str,
+        value: &str,
+        autoload: bool,
+        updated_at: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO options (document_id, option_key, value, type, group_name, label, autoload, sort_order, updated_at) \
+             VALUES (?, ?, ?, 'text', 'test', 'test', ?, 0, ?)",
+        )
+        .bind(crate::utils::id::new_document_id())
+        .bind(key)
+        .bind(value)
+        .bind(autoload)
+        .bind(updated_at)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn upsert_and_find_by_key() {
+        let pool = setup_pool().await;
+        let key = format!("test.{}", crate::utils::id::new_document_id());
+        let now = chrono::Utc::now().to_rfc3339();
+
+        insert_test_option(&pool, &key, "initial", true, &now).await;
+        upsert_value(&pool, &key, "updated", None, &now)
+            .await
+            .unwrap();
+
+        let found = find_by_key(&pool, &key, None).await.unwrap();
+        assert!(found.is_some());
+        let row = found.unwrap();
+        assert_eq!(row.option_key, key);
+        assert_eq!(row.value, "updated");
+    }
+
+    #[tokio::test]
+    async fn find_all_returns_all() {
+        let pool = setup_pool().await;
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let k1 = format!("test.{}", crate::utils::id::new_document_id());
+        let k2 = format!("test.{}", crate::utils::id::new_document_id());
+        let k3 = format!("test.{}", crate::utils::id::new_document_id());
+        insert_test_option(&pool, &k1, "v1", true, &now).await;
+        insert_test_option(&pool, &k2, "v2", true, &now).await;
+        insert_test_option(&pool, &k3, "v3", true, &now).await;
+
+        let all = find_all(&pool, None).await.unwrap();
+        assert!(all.len() >= 3);
+    }
+
+    #[tokio::test]
+    async fn upsert_overwrites() {
+        let pool = setup_pool().await;
+        let key = format!("test.{}", crate::utils::id::new_document_id());
+        let now = chrono::Utc::now().to_rfc3339();
+
+        insert_test_option(&pool, &key, "v1", true, &now).await;
+        upsert_value(&pool, &key, "v2", None, &now).await.unwrap();
+
+        let found = find_by_key(&pool, &key, None).await.unwrap().unwrap();
+        assert_eq!(found.value, "v2");
+    }
+
+    #[tokio::test]
+    async fn delete_by_key_removes() {
+        let pool = setup_pool().await;
+        let key = format!("test.{}", crate::utils::id::new_document_id());
+        let now = chrono::Utc::now().to_rfc3339();
+
+        insert_test_option(&pool, &key, "val", true, &now).await;
+        delete_by_key(&pool, &key, None).await.unwrap();
+
+        let found = find_by_key(&pool, &key, None).await.unwrap();
+        assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn find_autoload_test() {
+        let pool = setup_pool().await;
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let k1 = format!("test.{}", crate::utils::id::new_document_id());
+        let k2 = format!("test.{}", crate::utils::id::new_document_id());
+        let k3 = format!("test.{}", crate::utils::id::new_document_id());
+        insert_test_option(&pool, &k1, "v1", true, &now).await;
+        insert_test_option(&pool, &k2, "v2", true, &now).await;
+        insert_test_option(&pool, &k3, "v3", false, &now).await;
+
+        let autoloaded = find_autoload(&pool).await.unwrap();
+        assert!(autoloaded.iter().any(|r| r.option_key == k1));
+        assert!(autoloaded.iter().any(|r| r.option_key == k2));
+        assert!(!autoloaded.iter().any(|r| r.option_key == k3));
+    }
+}

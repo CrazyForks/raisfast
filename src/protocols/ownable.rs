@@ -79,7 +79,8 @@ impl Aspect for OwnableAspect {
                 .as_ref()
                 .is_none_or(|s| s.is_protocol_column(COL_UPDATED_BY))
         {
-            ctx.new_record.insert(COL_UPDATED_BY.into(), json!(user_int_id));
+            ctx.new_record
+                .insert(COL_UPDATED_BY.into(), json!(user_int_id));
         }
         Ok(Advice::Continue)
     }

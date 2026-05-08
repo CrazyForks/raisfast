@@ -13,7 +13,9 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::repository::{ContentQuery, ContentRepository, SaveContext, resolve_document_id_to_int_id};
+use super::repository::{
+    ContentQuery, ContentRepository, SaveContext, resolve_document_id_to_int_id,
+};
 use super::rule_engine::compile_rule_sql;
 use super::schema::{ContentKind, ContentTypeSchema, FieldType, RelationType, check_api_access};
 use crate::AppState;
@@ -410,13 +412,11 @@ pub async fn do_list(
                             .foreign_key
                             .clone()
                             .unwrap_or_else(|| format!("{}_id", field.name));
-                        let int_id = resolve_document_id_to_int_id(
-                            &state.pool, &rel.target, v,
-                        )
-                        .await
-                        .ok()
-                        .flatten()
-                        .unwrap_or(-1);
+                        let int_id = resolve_document_id_to_int_id(&state.pool, &rel.target, v)
+                            .await
+                            .ok()
+                            .flatten()
+                            .unwrap_or(-1);
                         filters.insert(fk_col, json!(int_id));
                     }
                     _ => {}
@@ -876,13 +876,11 @@ async fn do_admin_list(
                             .foreign_key
                             .clone()
                             .unwrap_or_else(|| format!("{}_id", field.name));
-                        let int_id = resolve_document_id_to_int_id(
-                            &state.pool, &rel.target, v,
-                        )
-                        .await
-                        .ok()
-                        .flatten()
-                        .unwrap_or(-1);
+                        let int_id = resolve_document_id_to_int_id(&state.pool, &rel.target, v)
+                            .await
+                            .ok()
+                            .flatten()
+                            .unwrap_or(-1);
                         filters.insert(fk_col, json!(int_id));
                     }
                     _ => {}

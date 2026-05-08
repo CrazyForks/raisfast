@@ -1,8 +1,8 @@
 //! 用户资料管理服务。
 
 use crate::commands::UpdateProfileCmd;
-use crate::errors::app_error::{AppError, AppResult};
 use crate::dto::{UpdateUserRequest, UserResponse};
+use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::repositories::UserRepository;
 

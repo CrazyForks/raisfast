@@ -342,3 +342,138 @@ pub async fn update_role(
         .await?
         .ok_or_else(|| AppError::not_found("user"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    fn new_cmd(email: &str, username: &str) -> crate::commands::user::CreateUserCmd {
+        crate::commands::user::CreateUserCmd {
+            email: email.to_string(),
+            username: username.to_string(),
+            password_hash: "$argon2id$v=19$m=19456,t=2,p=1$test$test".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_and_find_by_email() {
+        let pool = setup_pool().await;
+        let user = create(&pool, &new_cmd("a@b.com", "alice"), None)
+            .await
+            .unwrap();
+        let found = find_by_email(&pool, "a@b.com", None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.id, user.id);
+        assert_eq!(found.email, "a@b.com");
+    }
+
+    #[tokio::test]
+    async fn find_by_id() {
+        let pool = setup_pool().await;
+        let user = create(&pool, &new_cmd("id@b.com", "iduser"), None)
+            .await
+            .unwrap();
+        let found = super::find_by_id(&pool, &user.document_id, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.id, user.id);
+        assert_eq!(found.document_id, user.document_id);
+    }
+
+    #[tokio::test]
+    async fn find_by_pk() {
+        let pool = setup_pool().await;
+        let user = create(&pool, &new_cmd("pk@b.com", "pkuser"), None)
+            .await
+            .unwrap();
+        let found = super::find_by_pk(&pool, user.id, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.document_id, user.document_id);
+        assert_eq!(found.email, "pk@b.com");
+    }
+
+    #[tokio::test]
+    async fn update_profile() {
+        let pool = setup_pool().await;
+        let user = create(&pool, &new_cmd("prof@b.com", "profuser"), None)
+            .await
+            .unwrap();
+        let updated = super::update_profile(
+            &pool,
+            &crate::commands::user::UpdateProfileCmd {
+                id: user.id,
+                username: Some("newname".to_string()),
+                bio: Some("hello world".to_string()),
+                website: None,
+                avatar: None,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.username, "newname");
+        assert_eq!(updated.bio.unwrap(), "hello world");
+    }
+
+    #[tokio::test]
+    async fn update_password() {
+        let pool = setup_pool().await;
+        let user = create(&pool, &new_cmd("pw@b.com", "pwuser"), None)
+            .await
+            .unwrap();
+        let old_hash = user.password_hash.clone();
+        super::update_password(&pool, &user.document_id, "$new_hash", None)
+            .await
+            .unwrap();
+        let found = super::find_by_id(&pool, &user.document_id, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(found.password_hash, old_hash);
+        assert_eq!(found.password_hash, "$new_hash");
+    }
+
+    #[tokio::test]
+    async fn find_all_paginated() {
+        let pool = setup_pool().await;
+        for i in 0..5 {
+            create(
+                &pool,
+                &new_cmd(&format!("page{i}@b.com"), &format!("user{i}")),
+                None,
+            )
+            .await
+            .unwrap();
+        }
+        let (users, total) = find_all(&pool, 1, 3, None).await.unwrap();
+        assert_eq!(users.len(), 3);
+        assert_eq!(total, 5);
+    }
+
+    #[tokio::test]
+    async fn update_role() {
+        let pool = setup_pool().await;
+        let user = create(&pool, &new_cmd("role@b.com", "roleuser"), None)
+            .await
+            .unwrap();
+        assert_eq!(user.role, "reader");
+        let updated = super::update_role(&pool, &user.document_id, "author", None)
+            .await
+            .unwrap();
+        assert_eq!(updated.role, "author");
+    }
+}

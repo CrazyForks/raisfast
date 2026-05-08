@@ -551,4 +551,112 @@ mod tests {
         assert_eq!(ctx["count"], 5);
         assert_eq!(ctx["name"], "test");
     }
+
+    #[test]
+    fn validate_steps_rejects_branch_with_non_array_next() {
+        let steps = vec![make_step("s1", "Branch", StepType::Branch, json!("s2"))];
+        assert!(validate_steps(&steps).is_err());
+    }
+
+    #[test]
+    fn validate_steps_rejects_branch_unknown_ref() {
+        let steps = vec![make_step(
+            "s1",
+            "Branch",
+            StepType::Branch,
+            json!([{"condition": {"x": "y"}, "step": "s99"}]),
+        )];
+        assert!(validate_steps(&steps).is_err());
+    }
+
+    #[test]
+    fn validate_steps_accepts_branch_valid() {
+        let steps = vec![
+            make_step(
+                "s1",
+                "Branch",
+                StepType::Branch,
+                json!([{"condition": {"ok": true}, "step": "s2"}]),
+            ),
+            make_step("s2", "End", StepType::Task, json!(null)),
+        ];
+        assert!(validate_steps(&steps).is_ok());
+    }
+
+    #[test]
+    fn validate_steps_rejects_parallel_with_non_array_next() {
+        let steps = vec![make_step("s1", "Par", StepType::Parallel, json!("s2"))];
+        assert!(validate_steps(&steps).is_err());
+    }
+
+    #[test]
+    fn validate_steps_rejects_parallel_unknown_ref() {
+        let steps = vec![make_step("s1", "Par", StepType::Parallel, json!(["s99"]))];
+        assert!(validate_steps(&steps).is_err());
+    }
+
+    #[test]
+    fn validate_steps_accepts_parallel_valid() {
+        let steps = vec![
+            make_step("s1", "Par", StepType::Parallel, json!(["s2", "s3"])),
+            make_step("s2", "A", StepType::Task, json!(null)),
+            make_step("s3", "B", StepType::Task, json!(null)),
+        ];
+        assert!(validate_steps(&steps).is_ok());
+    }
+
+    #[test]
+    fn validate_steps_accepts_empty_next_for_task() {
+        let steps = vec![make_step("s1", "Final", StepType::Task, json!(null))];
+        assert!(validate_steps(&steps).is_ok());
+    }
+
+    #[test]
+    fn resolve_next_parallel_returns_first() {
+        let step = make_step("s1", "Par", StepType::Parallel, json!(["s2", "s3"]));
+        assert_eq!(resolve_next_step(&step, &json!({})), Some("s2".to_string()));
+    }
+
+    #[test]
+    fn evaluate_condition_bool_match() {
+        let cond = json!({"active": true});
+        let ctx = json!({"active": true, "name": "test"});
+        assert!(evaluate_condition(&cond, &ctx));
+    }
+
+    #[test]
+    fn evaluate_condition_number_mismatch() {
+        let cond = json!({"count": 5});
+        let ctx = json!({"count": 3});
+        assert!(!evaluate_condition(&cond, &ctx));
+    }
+
+    #[test]
+    fn evaluate_condition_missing_field() {
+        let cond = json!({"missing": "value"});
+        let ctx = json!({});
+        assert!(!evaluate_condition(&cond, &ctx));
+    }
+
+    #[test]
+    fn evaluate_condition_non_object_returns_false() {
+        assert!(!evaluate_condition(&json!("string"), &json!({})));
+        assert!(!evaluate_condition(&json!(42), &json!({})));
+    }
+
+    #[test]
+    fn merge_output_preserves_existing_keys() {
+        let mut ctx = json!({"a": 1, "b": 2});
+        merge_output_into_context(&mut ctx, &json!({"b": 99, "c": 3}));
+        assert_eq!(ctx["a"], 1);
+        assert_eq!(ctx["b"], 99);
+        assert_eq!(ctx["c"], 3);
+    }
+
+    #[test]
+    fn merge_output_non_object_context_noop() {
+        let mut ctx = json!("string");
+        merge_output_into_context(&mut ctx, &json!({"a": 1}));
+        assert_eq!(ctx, json!("string"));
+    }
 }

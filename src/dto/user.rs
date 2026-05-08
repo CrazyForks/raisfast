@@ -181,3 +181,123 @@ pub struct LoginResponse {
     pub expires_in: u64,
     pub user: UserResponse,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn register_request_valid() {
+        let req = RegisterRequest {
+            email: "test@example.com".to_string(),
+            username: "testuser".to_string(),
+            password: "Password1".to_string(),
+        };
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
+    fn register_request_bad_email() {
+        let req = RegisterRequest {
+            email: "not-an-email".to_string(),
+            username: "testuser".to_string(),
+            password: "Password1".to_string(),
+        };
+        assert!(req.validate().is_err());
+    }
+
+    #[test]
+    fn register_request_short_username() {
+        let req = RegisterRequest {
+            email: "test@example.com".to_string(),
+            username: "a".to_string(),
+            password: "Password1".to_string(),
+        };
+        assert!(req.validate().is_err());
+    }
+
+    #[test]
+    fn register_request_short_password() {
+        let req = RegisterRequest {
+            email: "test@example.com".to_string(),
+            username: "testuser".to_string(),
+            password: "short".to_string(),
+        };
+        assert!(req.validate().is_err());
+    }
+
+    #[test]
+    fn register_request_password_no_digit() {
+        let req = RegisterRequest {
+            email: "test@example.com".to_string(),
+            username: "testuser".to_string(),
+            password: "passwordonly".to_string(),
+        };
+        assert!(req.validate().is_err());
+    }
+
+    #[test]
+    fn login_request_valid() {
+        let req = LoginRequest {
+            email: "test@example.com".to_string(),
+            password: "anypassword".to_string(),
+        };
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
+    fn login_request_empty_password() {
+        let req = LoginRequest {
+            email: "test@example.com".to_string(),
+            password: "".to_string(),
+        };
+        assert!(req.validate().is_err());
+    }
+
+    #[test]
+    fn update_user_request_valid() {
+        let req = UpdateUserRequest {
+            username: Some("newname".to_string()),
+            bio: None,
+            website: None,
+            avatar: None,
+        };
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
+    fn update_password_request_valid() {
+        let req = UpdatePasswordRequest {
+            old_password: "OldPass1".to_string(),
+            new_password: "NewPass2".to_string(),
+        };
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
+    fn update_password_request_weak_new_password() {
+        let req = UpdatePasswordRequest {
+            old_password: "OldPass1".to_string(),
+            new_password: "abcdefgh".to_string(),
+        };
+        assert!(req.validate().is_err());
+    }
+
+    #[test]
+    fn user_response_from_user_serializes() {
+        let resp = UserResponse {
+            id: "doc-123".to_string(),
+            email: "a@b.com".to_string(),
+            username: "test".to_string(),
+            role: "reader".to_string(),
+            phone: None,
+            avatar: None,
+            bio: None,
+            website: None,
+            created_at: "2025-01-01T00:00:00Z".to_string(),
+            updated_at: "2025-01-01T00:00:00Z".to_string(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"id\":\"doc-123\""));
+    }
+}

@@ -171,3 +171,91 @@ async fn logout_without_token() {
         send(&mut app, post_json("/api/v1/auth/logout", json!({}))).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn register_then_login_and_access_me() {
+    let (mut app, _) = test_app().await;
+    let (access, _) = register_and_login(
+        &mut app,
+        "lifecycle@test.com",
+        "lifecycleuser",
+        "Password123",
+    )
+    .await;
+
+    let (status, body) = send(&mut app, get_auth("/api/v1/users/me", &access)).await;
+    assert!(status.is_success(), "{status} {body:?}");
+    assert_eq!(body["data"]["email"], "lifecycle@test.com");
+    assert_eq!(body["data"]["username"], "lifecycleuser");
+}
+
+#[tokio::test]
+async fn register_duplicate_username() {
+    let (mut app, _) = test_app().await;
+    let req_body =
+        json!({"email": "dupu1@test.com", "username": "dupuser", "password": "Password123"});
+    let (s, _): (StatusCode, Value) =
+        send(&mut app, post_json("/api/v1/auth/register", req_body)).await;
+    assert!(s.is_success());
+
+    let (status, body): (StatusCode, Value) = send(
+        &mut app,
+        post_json(
+            "/api/v1/auth/register",
+            json!({"email": "dupu2@test.com", "username": "dupuser", "password": "Password123"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["code"], 40900);
+}
+
+#[tokio::test]
+async fn refresh_token_after_password_change() {
+    let (mut app, _) = test_app().await;
+    let (access, refresh) =
+        register_and_login(&mut app, "rpc@test.com", "rpcuser", "OldPass123").await;
+
+    let (status, _): (StatusCode, Value) = send(
+        &mut app,
+        put_json_auth(
+            "/api/v1/users/me/password",
+            json!({"old_password": "OldPass123", "new_password": "NewPass456"}),
+            &access,
+        ),
+    )
+    .await;
+    assert!(status.is_success());
+
+    let (status, _): (StatusCode, Value) = send(
+        &mut app,
+        post_json("/api/v1/auth/refresh", json!({"refresh_token": refresh})),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "old refresh token should be invalidated after password change"
+    );
+}
+
+#[tokio::test]
+async fn logout_invalidates_access() {
+    let (mut app, _) = test_app().await;
+    let (access, _) =
+        register_and_login(&mut app, "loinv@test.com", "loinvuser", "Password123").await;
+
+    let (status, _): (StatusCode, Value) = send(
+        &mut app,
+        post_json_auth("/api/v1/auth/logout", json!({}), &access),
+    )
+    .await;
+    assert!(status.is_success());
+
+    let (status, _): (StatusCode, Value) =
+        send(&mut app, get_auth("/api/v1/users/me", &access)).await;
+    assert!(
+        status.is_success(),
+        "JWT is stateless — still valid after logout"
+    );
+}

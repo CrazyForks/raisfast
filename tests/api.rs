@@ -19,9 +19,9 @@ use raisfast::cache::MemoryCache;
 use raisfast::config::app::AppConfig;
 use raisfast::handlers::{
     api_token as h_token, auth as h_auth, category as h_cat, comment as h_cmt, cron as h_cron,
-    health as h_health, media as h_media, options as h_options, plugin as h_plugin, post as h_post,
-    rbac as h_rbac, rss as h_rss, sse as h_sse, stats as h_stats, tag as h_tag, tenant as h_tenant,
-    user as h_user,
+    health as h_health, media as h_media, options as h_options, page as h_page, plugin as h_plugin,
+    post as h_post, rbac as h_rbac, reusable_block as h_block, rss as h_rss, sse as h_sse,
+    stats as h_stats, tag as h_tag, tenant as h_tenant, user as h_user,
 };
 use raisfast::middleware::locale::locale_middleware;
 use raisfast::middleware::rate_limit::{
@@ -269,6 +269,31 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
             "/admin/workflows/instances/{id}/logs",
             get(raisfast::handlers::workflow::get_step_logs),
         )
+        .route("/pages", get(h_page::list).post(h_page::create))
+        .route(
+            "/pages/{slug}",
+            get(h_page::get_by_slug)
+                .put(h_page::update)
+                .delete(h_page::delete),
+        )
+        .route("/admin/pages", get(h_page::admin_list))
+        .route(
+            "/admin/pages/{id}",
+            get(h_page::admin_get)
+                .put(h_page::update)
+                .delete(h_page::delete),
+        )
+        .route("/admin/pages/{id}/status", put(h_page::update_status))
+        .route(
+            "/admin/reusable-blocks",
+            get(h_block::list_reusable).post(h_block::create_reusable),
+        )
+        .route(
+            "/admin/reusable-blocks/{id}",
+            get(h_block::get_reusable)
+                .put(h_block::update_reusable)
+                .delete(h_block::delete_reusable),
+        )
         .layer(from_fn(global_rate_limit))
         .layer(axum::Extension(RateLimiterSet::new_default()));
 
@@ -463,12 +488,16 @@ mod health;
 mod media;
 #[path = "api/options.rs"]
 mod options;
+#[path = "api/page.rs"]
+mod page;
 #[path = "api/plugin.rs"]
 mod plugin;
 #[path = "api/post.rs"]
 mod post;
 #[path = "api/rbac.rs"]
 mod rbac;
+#[path = "api/reusable_block.rs"]
+mod reusable_block;
 #[path = "api/rss.rs"]
 mod rss;
 #[path = "api/sse.rs"]

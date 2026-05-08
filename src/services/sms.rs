@@ -2,8 +2,8 @@
 
 use chrono::Utc;
 
-use crate::errors::app_error::{AppError, AppResult};
 use crate::dto::LoginResponse;
+use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::repositories::{RefreshTokenRepository, UserRepository};
 

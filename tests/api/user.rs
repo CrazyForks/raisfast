@@ -119,3 +119,82 @@ async fn list_users_admin_only() {
     assert!(body["data"]["items"].is_array());
     assert!(body["data"]["total"].is_number());
 }
+
+#[tokio::test]
+async fn update_me_with_bio_and_website() {
+    let (mut app, _) = test_app().await;
+    let (access, _) =
+        register_and_login(&mut app, "bioweb@test.com", "biowebuser", "Password123").await;
+    let (status, body): (StatusCode, Value) = send(
+        &mut app,
+        put_json_auth(
+            "/api/v1/users/me",
+            json!({"bio": "I write Rust", "website": "https://rust-lang.org"}),
+            &access,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body:?}");
+    assert_eq!(body["data"]["bio"], "I write Rust");
+    assert_eq!(body["data"]["website"], "https://rust-lang.org");
+}
+
+#[tokio::test]
+async fn change_password_too_short() {
+    let (mut app, _) = test_app().await;
+    let (access, _) =
+        register_and_login(&mut app, "short@test.com", "shortuser", "Password123").await;
+    let (status, body): (StatusCode, Value) = send(
+        &mut app,
+        put_json_auth(
+            "/api/v1/users/me/password",
+            json!({"old_password": "Password123", "new_password": "abc"}),
+            &access,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{status} {body:?}");
+}
+
+#[tokio::test]
+async fn admin_can_update_role() {
+    let (mut app, state) = test_app().await;
+    let admin_id = create_admin(&state.pool).await;
+    let admin_token = make_token(&admin_id.1, admin_id.0, "admin");
+    let _ = register_and_login(&mut app, "roleuser@test.com", "roleuser", "Password123").await;
+    let reader_id: String =
+        sqlx::query_scalar("SELECT document_id FROM users WHERE email = 'roleuser@test.com'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    let (status, body): (StatusCode, Value) = send(
+        &mut app,
+        put_json_auth(
+            &format!("/api/v1/users/{reader_id}/role"),
+            json!({"role": "author"}),
+            &admin_token,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body:?}");
+    assert_eq!(body["data"]["role"], "author");
+}
+
+#[tokio::test]
+async fn get_user_by_id_returns_public_info() {
+    let (mut app, state) = test_app().await;
+    let _ = register_and_login(&mut app, "pubinfo@test.com", "pubinfouser", "Password123").await;
+    let user_id: String =
+        sqlx::query_scalar("SELECT document_id FROM users WHERE email = 'pubinfo@test.com'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    let (status, body): (StatusCode, Value) =
+        send(&mut app, get_req(&format!("/api/v1/users/{user_id}"))).await;
+    assert!(status.is_success());
+    assert_eq!(body["data"]["id"], user_id);
+    assert_eq!(body["data"]["email"], "pubinfo@test.com");
+    assert_eq!(body["data"]["username"], "pubinfouser");
+    assert!(body["data"]["created_at"].is_string());
+    assert!(body["data"]["updated_at"].is_string());
+}

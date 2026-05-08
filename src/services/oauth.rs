@@ -10,8 +10,8 @@ use chrono::Utc;
 use ts_rs::TS;
 
 use crate::commands::CreateUserCmd;
-use crate::errors::app_error::{AppError, AppResult};
 use crate::dto::LoginResponse;
+use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::oauth;
 use crate::oauth::{OAuthProviderRegistry, OAuthUserInfo};
@@ -471,4 +471,53 @@ async fn update_oauth_account(
         },
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_username_alphanumeric_only() {
+        assert_eq!(sanitize_username("JohnDoe123"), "JohnDoe123");
+    }
+
+    #[test]
+    fn sanitize_username_strips_special_chars() {
+        assert_eq!(
+            sanitize_username("john.doe@example.com"),
+            "johndoeexamplecom"
+        );
+    }
+
+    #[test]
+    fn sanitize_username_keeps_underscore() {
+        assert_eq!(sanitize_username("john_doe"), "john_doe");
+    }
+
+    #[test]
+    fn sanitize_username_strips_leading_trailing_underscores() {
+        assert_eq!(sanitize_username("__john__"), "john");
+    }
+
+    #[test]
+    fn sanitize_username_all_special_returns_default() {
+        assert_eq!(sanitize_username("@#$%"), "user");
+    }
+
+    #[test]
+    fn sanitize_username_empty_returns_default() {
+        assert_eq!(sanitize_username(""), "user");
+    }
+
+    #[test]
+    fn sanitize_username_unicode_stripped() {
+        let result = sanitize_username("用户名");
+        assert_eq!(result, "user");
+    }
+
+    #[test]
+    fn sanitize_username_mixed() {
+        assert_eq!(sanitize_username("John_Doe-123!"), "John_Doe123");
+    }
 }

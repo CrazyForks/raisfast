@@ -343,4 +343,85 @@ mod tests {
         assert_eq!(resolve_template("$user.id", &ctx), "user-1");
         assert_eq!(resolve_template("literal_value", &ctx), "literal_value");
     }
+
+    #[test]
+    fn rsplit_dot_with_dot() {
+        assert_eq!(rsplit_dot("a.b.c"), ("a.b", "c"));
+        assert_eq!(rsplit_dot("single"), ("single", ""));
+    }
+
+    #[test]
+    fn rsplit_dot_no_dot() {
+        assert_eq!(rsplit_dot("noun"), ("noun", ""));
+    }
+
+    #[test]
+    fn ns_matches_exact() {
+        assert!(ns_matches("content-type", "content-type"));
+        assert!(ns_matches("a::b", "a::b"));
+    }
+
+    #[test]
+    fn ns_matches_wildcard() {
+        assert!(ns_matches("*", "content-type"));
+        assert!(ns_matches("*::*", "content-type::post"));
+        assert!(!ns_matches("a::*", "b::c"));
+    }
+
+    #[test]
+    fn ns_matches_different_depth() {
+        assert!(!ns_matches("a", "a::b"));
+        assert!(!ns_matches("a::b::c", "a::b"));
+    }
+
+    #[test]
+    fn matches_action_exact_match() {
+        assert!(matches_action("post.create", "post.create"));
+        assert!(!matches_action("post.create", "post.delete"));
+    }
+
+    #[test]
+    fn matches_action_wildcard_op() {
+        assert!(matches_action("post.*", "post.create"));
+        assert!(matches_action("post.*", "post.delete"));
+    }
+
+    #[test]
+    fn matches_subject_wildcard_parts() {
+        assert!(matches_subject("content-type::*", "content-type::post"));
+        assert!(matches_subject("*::*", "content-type::post"));
+        assert!(!matches_subject("blog::*", "content-type::post"));
+    }
+
+    #[test]
+    fn matches_subject_different_depth() {
+        assert!(!matches_subject("a", "a::b"));
+    }
+
+    #[test]
+    fn check_conditions_missing_key() {
+        let mut conditions = HashMap::new();
+        conditions.insert("missing_key".into(), "value".into());
+        let context = HashMap::new();
+        assert!(!check_conditions(&conditions, &context));
+    }
+
+    #[test]
+    fn check_conditions_empty_passes() {
+        let conditions = HashMap::new();
+        let context = HashMap::new();
+        assert!(check_conditions(&conditions, &context));
+    }
+
+    #[test]
+    fn resolve_template_missing_var() {
+        let ctx = HashMap::new();
+        assert_eq!(resolve_template("$user.nonexistent", &ctx), "");
+    }
+
+    #[test]
+    fn resolve_template_non_user_var() {
+        let ctx = HashMap::new();
+        assert_eq!(resolve_template("plain_text", &ctx), "plain_text");
+    }
 }

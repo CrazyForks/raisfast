@@ -270,3 +270,142 @@ async fn filter_by_category() {
     let cat_int: i64 = c.cat_id.parse().unwrap();
     assert!(items.iter().all(|p| p["category_id"] == cat_int));
 }
+
+#[tokio::test]
+async fn filter_by_status() {
+    let mut c = setup().await;
+    let _: (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth(
+            "/api/v1/posts",
+            json!({"title": "Published1", "content": "c", "status": "published", "category_id": c.cat_id}),
+            &c.tok,
+        ),
+    )
+    .await;
+    let _: (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth(
+            "/api/v1/posts",
+            json!({"title": "Draft1", "content": "c", "status": "draft", "category_id": c.cat_id}),
+            &c.tok,
+        ),
+    )
+    .await;
+
+    let (_, body): (StatusCode, Value) =
+        send(&mut c.app, get_req("/api/v1/posts?status=published")).await;
+    let items = body["data"]["items"].as_array().unwrap();
+    assert!(
+        items.iter().all(|p| p["status"] == "published"),
+        "expected all published, got: {items:?}"
+    );
+}
+
+#[tokio::test]
+async fn filter_by_tag() {
+    let mut c = setup().await;
+    let (_, tb): (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth("/api/v1/tags", json!({"name": "go"}), &c.tok),
+    )
+    .await;
+    let tag_go = tb["data"]["id"].as_i64().unwrap().to_string();
+
+    let _: (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth(
+            "/api/v1/posts",
+            json!({"title": "RustPost", "content": "c", "status": "published", "tag_ids": [c.tag_id]}),
+            &c.tok,
+        ),
+    )
+    .await;
+    let _: (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth(
+            "/api/v1/posts",
+            json!({"title": "GoPost", "content": "c", "status": "published", "tag_ids": [&tag_go]}),
+            &c.tok,
+        ),
+    )
+    .await;
+
+    let (_, body): (StatusCode, Value) = send(
+        &mut c.app,
+        get_req(&format!("/api/v1/posts?tag_id={}", c.tag_id)),
+    )
+    .await;
+    let items = body["data"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "expected 1 post, got: {items:?}");
+    assert_eq!(items[0]["title"], "RustPost");
+}
+
+#[tokio::test]
+async fn update_changes_category() {
+    let mut c = setup().await;
+    let (_, cb): (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth("/api/v1/categories", json!({"name": "CatB"}), &c.tok),
+    )
+    .await;
+    let cat_b = cb["data"]["id"].as_i64().unwrap().to_string();
+
+    let slug = create_published_post(&mut c.app, &c.tok).await;
+    let (status, body): (StatusCode, Value) = send(
+        &mut c.app,
+        put_json_auth(
+            &format!("/api/v1/posts/{slug}"),
+            json!({"category_id": &cat_b}),
+            &c.tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body:?}");
+    assert_eq!(body["data"]["category_id"], cat_b.parse::<i64>().unwrap());
+}
+
+#[tokio::test]
+async fn create_with_excerpt() {
+    let mut c = setup().await;
+    let (status, body): (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth(
+            "/api/v1/posts",
+            json!({
+                "title": "ExcerptPost",
+                "content": "Some content here",
+                "status": "published",
+                "excerpt": "Custom excerpt text",
+                "category_id": c.cat_id,
+            }),
+            &c.tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body:?}");
+    assert_eq!(body["data"]["excerpt"], "Custom excerpt text");
+}
+
+#[tokio::test]
+async fn list_sorting_by_created_at() {
+    let mut c = setup().await;
+    let uid = uuid::Uuid::now_v7().to_string();
+    for i in 1..=3u8 {
+        let (status, body): (StatusCode, Value) = send(
+            &mut c.app,
+            post_json_auth(
+                "/api/v1/posts",
+                json!({"title": format!("Sort{uid}{i}"), "content": "c", "status": "published"}),
+                &c.tok,
+            ),
+        )
+        .await;
+        assert!(status.is_success(), "create post {i}: {status} {body:?}");
+    }
+
+    let (status, body): (StatusCode, Value) = send(&mut c.app, get_req("/api/v1/posts")).await;
+    assert!(status.is_success(), "list: {status} {body:?}");
+    let total = body["data"]["total"].as_i64().unwrap_or(0);
+    assert!(total >= 3, "expected total >= 3, got {total}");
+}

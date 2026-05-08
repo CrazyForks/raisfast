@@ -458,4 +458,180 @@ mod tests {
         let comments = vec![make_comment(1, 10, None)];
         assert!(validate_depth(&comments, 999).is_err());
     }
+
+    mod integration {
+        use super::*;
+        use crate::commands::CreateCommentCmd;
+
+        async fn setup_pool() -> crate::db::Pool {
+            let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+            sqlx::query(crate::db::schema::SCHEMA_SQL)
+                .execute(&pool)
+                .await
+                .unwrap();
+            pool
+        }
+
+        async fn insert_user(pool: &crate::db::Pool) -> i64 {
+            let doc_id = crate::utils::id::new_document_id();
+            sqlx::query(
+                "INSERT INTO users (document_id, username, email, password_hash, role) VALUES (?, 'testuser', 'test@test.com', 'hash', 'author')",
+            )
+            .bind(&doc_id)
+            .execute(pool)
+            .await
+            .unwrap();
+
+            let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
+                .bind(&doc_id)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            id
+        }
+
+        async fn insert_post(pool: &crate::db::Pool, user_id: i64) -> i64 {
+            let doc_id = crate::utils::id::new_document_id();
+            let slug = format!("slug-{doc_id}");
+            sqlx::query(
+                "INSERT INTO posts (document_id, title, slug, content, status, created_by, updated_by) VALUES (?, 'Test', ?, 'content', 'published', ?, ?)",
+            )
+            .bind(&doc_id)
+            .bind(&slug)
+            .bind(user_id)
+            .bind(user_id)
+            .execute(pool)
+            .await
+            .unwrap();
+
+            let (id,): (i64,) = sqlx::query_as("SELECT id FROM posts WHERE document_id = ?")
+                .bind(&doc_id)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            id
+        }
+
+        fn make_cmd(post_id: i64) -> CreateCommentCmd {
+            CreateCommentCmd {
+                post_id,
+                created_by: None,
+                nickname: Some("Alice".into()),
+                email: Some("alice@test.com".into()),
+                content: "hello".into(),
+                parent_id: None,
+            }
+        }
+
+        #[tokio::test]
+        async fn create_and_find_by_id() {
+            let pool = setup_pool().await;
+            let uid = insert_user(&pool).await;
+            let pid = insert_post(&pool, uid).await;
+            let c = create(&pool, &make_cmd(pid), None).await.unwrap();
+            assert_eq!(c.post_id, pid);
+            assert_eq!(c.content, "hello");
+            let found = super::find_by_id(&pool, c.id, None).await.unwrap().unwrap();
+            assert_eq!(found.id, c.id);
+            assert_eq!(found.document_id, c.document_id);
+        }
+
+        #[tokio::test]
+        async fn find_by_document_id_test() {
+            let pool = setup_pool().await;
+            let uid = insert_user(&pool).await;
+            let pid = insert_post(&pool, uid).await;
+            let c = create(&pool, &make_cmd(pid), None).await.unwrap();
+            let found = super::find_by_document_id(&pool, &c.document_id, None)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(found.id, c.id);
+            assert_eq!(found.content, "hello");
+        }
+
+        #[tokio::test]
+        async fn find_approved_by_post_returns_only_approved() {
+            let pool = setup_pool().await;
+            let uid = insert_user(&pool).await;
+            let pid = insert_post(&pool, uid).await;
+            let c1 = create(&pool, &make_cmd(pid), None).await.unwrap();
+            let _c2 = create(&pool, &make_cmd(pid), None).await.unwrap();
+            update_status(&pool, c1.id, "approved", None).await.unwrap();
+
+            let approved = super::find_approved_by_post(&pool, pid, None)
+                .await
+                .unwrap();
+            assert_eq!(approved.len(), 1);
+            assert_eq!(approved[0].id, c1.id);
+        }
+
+        #[tokio::test]
+        async fn find_approved_by_post_paginated_test() {
+            let pool = setup_pool().await;
+            let uid = insert_user(&pool).await;
+            let pid = insert_post(&pool, uid).await;
+            let mut ids = Vec::new();
+            for i in 0..5 {
+                let mut cmd = make_cmd(pid);
+                cmd.content = format!("comment {i}");
+                let c = create(&pool, &cmd, None).await.unwrap();
+                update_status(&pool, c.id, "approved", None).await.unwrap();
+                ids.push(c.id);
+            }
+
+            let (page1, total) = super::find_approved_by_post_paginated(&pool, pid, 1, 2, None)
+                .await
+                .unwrap();
+            assert_eq!(total, 5);
+            assert_eq!(page1.len(), 2);
+
+            let (page3, _) = super::find_approved_by_post_paginated(&pool, pid, 3, 2, None)
+                .await
+                .unwrap();
+            assert_eq!(page3.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn update_status_changes_status() {
+            let pool = setup_pool().await;
+            let uid = insert_user(&pool).await;
+            let pid = insert_post(&pool, uid).await;
+            let c = create(&pool, &make_cmd(pid), None).await.unwrap();
+            assert_eq!(c.status, "pending");
+            update_status(&pool, c.id, "approved", None).await.unwrap();
+            let found = super::find_by_id(&pool, c.id, None).await.unwrap().unwrap();
+            assert_eq!(found.status, "approved");
+        }
+
+        #[tokio::test]
+        async fn delete_removes_comment() {
+            let pool = setup_pool().await;
+            let uid = insert_user(&pool).await;
+            let pid = insert_post(&pool, uid).await;
+            let c = create(&pool, &make_cmd(pid), None).await.unwrap();
+            super::delete(&pool, c.id, None).await.unwrap();
+            let found = super::find_by_id(&pool, c.id, None).await.unwrap();
+            assert!(found.is_none());
+        }
+
+        #[tokio::test]
+        async fn find_all_paginated_test() {
+            let pool = setup_pool().await;
+            let uid = insert_user(&pool).await;
+            let pid = insert_post(&pool, uid).await;
+            for i in 0..5 {
+                let mut cmd = make_cmd(pid);
+                cmd.content = format!("comment {i}");
+                create(&pool, &cmd, None).await.unwrap();
+            }
+
+            let (page1, total) = super::find_all_paginated(&pool, 1, 2, None).await.unwrap();
+            assert_eq!(total, 5);
+            assert_eq!(page1.len(), 2);
+
+            let (page3, _) = super::find_all_paginated(&pool, 3, 2, None).await.unwrap();
+            assert_eq!(page3.len(), 1);
+        }
+    }
 }

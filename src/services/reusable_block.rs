@@ -81,3 +81,31 @@ pub async fn delete_reusable(pool: &crate::db::Pool, id: &str, auth: &AuthUser) 
         .ok_or_else(|| AppError::not_found("reusable_block"))?;
     reusable_block::delete_reusable(pool, block.id, auth.tenant_id()).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_blocks_json_valid_empty() {
+        let blocks = validate_blocks_json("[]").unwrap();
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn validate_blocks_json_valid_block() {
+        let json = r#"[{"type":"richtext","content":"block content"}]"#;
+        let blocks = validate_blocks_json(json).unwrap();
+        assert_eq!(blocks.len(), 1);
+    }
+
+    #[test]
+    fn validate_blocks_json_invalid() {
+        assert!(validate_blocks_json("{bad").is_err());
+    }
+
+    #[test]
+    fn validate_blocks_json_wrong_type() {
+        assert!(validate_blocks_json(r#"[123]"#).is_err());
+    }
+}

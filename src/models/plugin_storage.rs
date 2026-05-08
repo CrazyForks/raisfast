@@ -120,3 +120,82 @@ pub async fn delete_all(pool: &Pool, plugin_id: &str) -> AppResult<()> {
     .await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn set_and_get() {
+        let pool = setup_pool().await;
+        set(&pool, "plugin_set_get", "key1", "hello", None)
+            .await
+            .unwrap();
+        let val = get(&pool, "plugin_set_get", "key1").await.unwrap();
+        assert_eq!(val, Some("hello".to_string()));
+    }
+
+    #[tokio::test]
+    async fn get_missing_returns_none() {
+        let pool = setup_pool().await;
+        let val = get(&pool, "plugin_missing", "nope").await.unwrap();
+        assert!(val.is_none());
+    }
+
+    #[tokio::test]
+    async fn set_overwrites() {
+        let pool = setup_pool().await;
+        set(&pool, "plugin_overwrite", "key1", "v1", None)
+            .await
+            .unwrap();
+        set(&pool, "plugin_overwrite", "key1", "v2", None)
+            .await
+            .unwrap();
+        let val = get(&pool, "plugin_overwrite", "key1").await.unwrap();
+        assert_eq!(val, Some("v2".to_string()));
+    }
+
+    #[tokio::test]
+    async fn delete_key() {
+        let pool = setup_pool().await;
+        set(&pool, "plugin_delete", "key1", "val", None)
+            .await
+            .unwrap();
+        delete(&pool, "plugin_delete", "key1").await.unwrap();
+        let val = get(&pool, "plugin_delete", "key1").await.unwrap();
+        assert!(val.is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_all_removes_all() {
+        let pool = setup_pool().await;
+        let pid = "plugin_delete_all";
+        set(&pool, pid, "k1", "v1", None).await.unwrap();
+        set(&pool, pid, "k2", "v2", None).await.unwrap();
+        set(&pool, pid, "k3", "v3", None).await.unwrap();
+        delete_all(&pool, pid).await.unwrap();
+        assert!(get(&pool, pid, "k1").await.unwrap().is_none());
+        assert!(get(&pool, pid, "k2").await.unwrap().is_none());
+        assert!(get(&pool, pid, "k3").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn set_with_ttl() {
+        let pool = setup_pool().await;
+        set(&pool, "plugin_ttl", "key1", "expires", Some(1))
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        let val = get(&pool, "plugin_ttl", "key1").await.unwrap();
+        assert!(val.is_none());
+    }
+}

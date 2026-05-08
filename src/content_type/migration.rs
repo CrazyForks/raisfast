@@ -109,7 +109,10 @@ pub fn generate_junction_tables(ct: &ContentTypeSchema) -> Vec<String> {
     let is_safe = crate::db::dialect::is_safe_identifier;
     for field in &ct.fields {
         if let Some(ref rel) = field.relation
-            && matches!(rel.relation_type, RelationType::ManyToMany | RelationType::ManyWay)
+            && matches!(
+                rel.relation_type,
+                RelationType::ManyToMany | RelationType::ManyWay
+            )
         {
             let through = rel
                 .through

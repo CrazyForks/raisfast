@@ -207,3 +207,89 @@ pub async fn update(
     AppError::expect_affected(&result, "tag")?;
     find_by_id(pool, id, tenant_id).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn create_and_find_by_id() {
+        let pool = setup_pool().await;
+        let tag = create(&pool, "rust", "rust", None, None).await.unwrap();
+        assert_eq!(tag.name, "rust");
+        assert_eq!(tag.slug, "rust");
+
+        let found = find_by_id(&pool, tag.id, None).await.unwrap();
+        assert_eq!(found.id, tag.id);
+        assert_eq!(found.name, "rust");
+    }
+
+    #[tokio::test]
+    async fn find_by_document_id() {
+        let pool = setup_pool().await;
+        let tag = create(&pool, "rust", "rust", None, None).await.unwrap();
+
+        let found = super::find_by_document_id(&pool, &tag.document_id, None)
+            .await
+            .unwrap();
+        assert_eq!(found.id, tag.id);
+        assert_eq!(found.document_id, tag.document_id);
+    }
+
+    #[tokio::test]
+    async fn find_all_returns_all() {
+        let pool = setup_pool().await;
+        create(&pool, "rust", "rust", None, None).await.unwrap();
+        create(&pool, "axum", "axum", None, None).await.unwrap();
+        create(&pool, "tokio", "tokio", None, None).await.unwrap();
+
+        let tags = find_all(&pool, None).await.unwrap();
+        assert_eq!(tags.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn find_paginated() {
+        let pool = setup_pool().await;
+        create(&pool, "rust", "rust", None, None).await.unwrap();
+        create(&pool, "axum", "axum", None, None).await.unwrap();
+        create(&pool, "tokio", "tokio", None, None).await.unwrap();
+        create(&pool, "serde", "serde", None, None).await.unwrap();
+        create(&pool, "clap", "clap", None, None).await.unwrap();
+
+        let (items, total) = super::find_paginated(&pool, None, 1, 3).await.unwrap();
+        assert_eq!(total, 5);
+        assert_eq!(items.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn update_changes_name() {
+        let pool = setup_pool().await;
+        let tag = create(&pool, "rust", "rust", None, None).await.unwrap();
+
+        let updated = update(&pool, tag.id, "Rust Lang", "rust-lang", None)
+            .await
+            .unwrap();
+        assert_eq!(updated.name, "Rust Lang");
+        assert_eq!(updated.slug, "rust-lang");
+        assert_eq!(updated.id, tag.id);
+    }
+
+    #[tokio::test]
+    async fn delete_removes_tag() {
+        let pool = setup_pool().await;
+        let tag = create(&pool, "rust", "rust", None, None).await.unwrap();
+
+        delete(&pool, tag.id, None).await.unwrap();
+        let result = find_by_id(&pool, tag.id, None).await;
+        assert!(result.is_err());
+    }
+}

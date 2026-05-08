@@ -137,3 +137,35 @@ pub fn get_str(record: &Record, key: &str) -> Option<String> {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn id_record_contains_id() {
+        let r = id_record("abc-123");
+        let val = r.get("id").and_then(|v| v.as_str());
+        assert_eq!(val, Some("abc-123"));
+    }
+
+    #[test]
+    fn get_str_returns_value() {
+        let mut r = Record::new();
+        r.insert("name".into(), serde_json::json!("test-value"));
+        assert_eq!(get_str(&r, "name"), Some("test-value".to_string()));
+    }
+
+    #[test]
+    fn get_str_missing_key_returns_none() {
+        let r = Record::new();
+        assert_eq!(get_str(&r, "missing"), None);
+    }
+
+    #[test]
+    fn get_str_non_string_returns_none() {
+        let mut r = Record::new();
+        r.insert("num".into(), serde_json::json!(42));
+        assert_eq!(get_str(&r, "num"), None);
+    }
+}

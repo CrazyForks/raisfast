@@ -200,3 +200,125 @@ pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
     let result = sqlx::query(&sql).bind(now).execute(pool).await?;
     Ok(result.rows_affected())
 }
+
+#[cfg(test)]
+mod tests {
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    fn unique_phone() -> String {
+        let id = crate::utils::id::new_document_id();
+        let hash = id
+            .bytes()
+            .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+        format!("1380000{:04}", hash % 10000)
+    }
+
+    #[test]
+    fn generate_code_length() {
+        let code = super::generate_code(6);
+        assert_eq!(code.len(), 6);
+        assert!(code.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[tokio::test]
+    async fn create_and_find_by_id() {
+        let pool = setup_pool().await;
+        let phone = unique_phone();
+        let code = super::generate_code(6);
+
+        let sms = super::create(&pool, &phone, &code, "login", 300, Some("127.0.0.1"))
+            .await
+            .unwrap();
+
+        let found = super::find_by_id(&pool, sms.id).await.unwrap();
+        assert!(found.is_some());
+        let row = found.unwrap();
+        assert_eq!(row.phone, phone);
+        assert_eq!(row.code, code);
+        assert_eq!(row.purpose, "login");
+    }
+
+    #[tokio::test]
+    async fn find_latest_unverified() {
+        let pool = setup_pool().await;
+        let phone = unique_phone();
+
+        let _first = super::create(&pool, &phone, "111111", "login", 300, None)
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        let second = super::create(&pool, &phone, "222222", "login", 300, None)
+            .await
+            .unwrap();
+
+        let latest = super::find_latest_unverified(&pool, &phone, "login")
+            .await
+            .unwrap();
+        assert!(latest.is_some());
+        assert_eq!(latest.unwrap().id, second.id);
+    }
+
+    #[tokio::test]
+    async fn verify_code_correct() {
+        let pool = setup_pool().await;
+        let phone = unique_phone();
+        let code = "654321";
+
+        let sms = super::create(&pool, &phone, code, "login", 300, None)
+            .await
+            .unwrap();
+
+        let result = super::verify_code(&pool, sms.id, code).await.unwrap();
+        assert_eq!(result, super::VerifyResult::Verified);
+    }
+
+    #[tokio::test]
+    async fn verify_code_wrong() {
+        let pool = setup_pool().await;
+        let phone = unique_phone();
+
+        let sms = super::create(&pool, &phone, "123456", "login", 300, None)
+            .await
+            .unwrap();
+
+        let result = super::verify_code(&pool, sms.id, "000000").await.unwrap();
+        assert_eq!(result, super::VerifyResult::WrongCode);
+    }
+
+    #[tokio::test]
+    async fn is_rate_limited() {
+        let pool = setup_pool().await;
+        let phone = unique_phone();
+
+        super::create(&pool, &phone, "111111", "login", 300, None)
+            .await
+            .unwrap();
+
+        let limited = super::is_rate_limited(&pool, &phone, "login", 60)
+            .await
+            .unwrap();
+        assert!(limited);
+    }
+
+    #[tokio::test]
+    async fn cleanup_expired() {
+        let pool = setup_pool().await;
+        let phone = unique_phone();
+
+        super::create(&pool, &phone, "111111", "login", 0, None)
+            .await
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        let removed = super::cleanup_expired(&pool).await.unwrap();
+        assert!(removed > 0);
+    }
+}

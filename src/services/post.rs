@@ -10,9 +10,9 @@
 use slug::slugify;
 
 use crate::commands::{CreatePostCmd, FindPublishedQuery, UpdatePostCmd};
+use crate::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::eventbus::{Event, EventBus};
-use crate::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::middleware::auth::AuthUser;
 use crate::models::post::PostJoinedRow;
 use crate::plugins::{HookPoint, PluginManager};
@@ -47,9 +47,9 @@ pub async fn resolve_doc_id_to_int(
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
-    q.fetch_optional(pool).await.map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("resolve doc_id in {table} failed: {e}"))
-    })
+    q.fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("resolve doc_id in {table} failed: {e}")))
 }
 
 async fn joined_row_to_response(
@@ -604,5 +604,28 @@ mod tests {
         let content = "你好世界".repeat(100);
         let result = extract_excerpt(&content, 200);
         assert!(result.ends_with("...") || result.len() <= 200);
+    }
+
+    #[test]
+    fn make_unique_slug_has_suffix() {
+        let slug = make_unique_slug("my-post");
+        assert!(slug.starts_with("my-post-"));
+        let suffix = &slug["my-post-".len()..];
+        assert_eq!(suffix.len(), 4);
+        assert!(suffix.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn make_unique_slug_different_each_call() {
+        let s1 = make_unique_slug("test");
+        let s2 = make_unique_slug("test");
+        assert_ne!(s1, s2);
+    }
+
+    #[test]
+    fn extract_excerpt_zero_max_len() {
+        let content = "hello world";
+        let result = extract_excerpt(content, 0);
+        assert!(result.is_empty() || result.ends_with("..."));
     }
 }

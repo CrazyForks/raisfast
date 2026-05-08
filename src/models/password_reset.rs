@@ -115,3 +115,106 @@ pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
     let result = sqlx::query(&sql).bind(now).execute(pool).await?;
     Ok(result.rows_affected())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    async fn insert_user(pool: &crate::db::Pool) -> i64 {
+        let doc_id = crate::utils::id::new_document_id();
+        let sql = format!(
+            "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'admin') RETURNING id",
+            crate::db::dialect::ph(1),
+            crate::db::dialect::ph(2),
+            crate::db::dialect::ph(3),
+            crate::db::dialect::ph(4)
+        );
+        let (id,): (i64,) = sqlx::query_as(&sql)
+            .bind(&doc_id)
+            .bind("pr-test@test.com")
+            .bind("pruser")
+            .bind("$argon2id$v=19$m=19456,t=2,p=1$test$test")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        id
+    }
+
+    #[tokio::test]
+    async fn create_and_find_by_token() {
+        let pool = setup_pool().await;
+        let user_id = insert_user(&pool).await;
+        let row = create(&pool, user_id, 3600).await.unwrap();
+        assert!(row.id > 0);
+        assert_eq!(row.user_id, user_id);
+        assert!(!row.token.is_empty());
+        assert!(row.used_at.is_none());
+
+        let found = find_by_token(&pool, &row.token).await.unwrap().unwrap();
+        assert_eq!(found.id, row.id);
+        assert_eq!(found.token, row.token);
+    }
+
+    #[tokio::test]
+    async fn test_mark_used() {
+        let pool = setup_pool().await;
+        let user_id = insert_user(&pool).await;
+        let row = create(&pool, user_id, 3600).await.unwrap();
+        assert!(row.used_at.is_none());
+
+        super::mark_used(&pool, row.id).await.unwrap();
+
+        let found = find_by_token(&pool, &row.token).await.unwrap();
+        assert!(
+            found.is_none(),
+            "used token should not be found by find_by_token"
+        );
+
+        let sql = format!(
+            "SELECT used_at FROM password_reset_tokens WHERE id = {}",
+            crate::db::dialect::ph(1),
+        );
+        let (used_at,): (Option<String>,) = sqlx::query_as(&sql)
+            .bind(row.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(used_at.is_some(), "used_at should be set after mark_used");
+    }
+
+    #[tokio::test]
+    async fn test_delete_unused_by_user() {
+        let pool = setup_pool().await;
+        let user_id = insert_user(&pool).await;
+        let row1 = create(&pool, user_id, 3600).await.unwrap();
+        let row2 = create(&pool, user_id, 3600).await.unwrap();
+
+        super::delete_unused_by_user(&pool, user_id).await.unwrap();
+
+        let found1 = find_by_token(&pool, &row1.token).await.unwrap();
+        let found2 = find_by_token(&pool, &row2.token).await.unwrap();
+        assert!(found1.is_none());
+        assert!(found2.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_expired() {
+        let pool = setup_pool().await;
+        let user_id = insert_user(&pool).await;
+        let _row = create(&pool, user_id, 1).await.unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        let removed = super::cleanup_expired(&pool).await.unwrap();
+        assert_eq!(removed, 1);
+    }
+}

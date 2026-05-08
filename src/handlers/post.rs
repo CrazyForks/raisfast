@@ -7,10 +7,10 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 
+use crate::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
-use crate::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::middleware::auth::AuthUser;
 use crate::services::post as post_service;
 use crate::utils::pagination::PaginationParams;

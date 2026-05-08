@@ -3,8 +3,8 @@
 use slug::slugify;
 
 use crate::commands::{CreateCategoryCmd, UpdateCategoryCmd};
-use crate::errors::app_error::{AppError, AppResult};
 use crate::dto::{CreateCategoryRequest, UpdateCategoryRequest};
+use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::repositories::CategoryRepository;
 

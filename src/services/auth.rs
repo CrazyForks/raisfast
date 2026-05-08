@@ -14,11 +14,9 @@ use jsonwebtoken::{EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::CreateUserCmd;
+use crate::dto::{LoginResponse, RegisterRequest, UpdatePasswordRequest, UserResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::eventbus::{Event, EventBus};
-use crate::dto::{
-    LoginResponse, RegisterRequest, UpdatePasswordRequest, UserResponse,
-};
 use crate::middleware::auth::AuthUser;
 use crate::plugins::{HookPoint, PluginManager};
 use crate::repositories::{RefreshTokenRepository, UserRepository};
@@ -205,7 +203,13 @@ pub async fn register(
     });
 
     if require_email_verification {
-        let _ = crate::services::email_verification::trigger_email_verification(pool, eventbus, user.id, &user.email).await;
+        let _ = crate::services::email_verification::trigger_email_verification(
+            pool,
+            eventbus,
+            user.id,
+            &user.email,
+        )
+        .await;
     }
 
     Ok(user.into())

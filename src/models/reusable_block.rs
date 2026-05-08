@@ -217,3 +217,118 @@ pub async fn delete_reusable(
     let result = q.execute(pool).await?;
     AppError::expect_affected(&result, "reusable_block")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    async fn insert_user(pool: &crate::db::Pool) -> i64 {
+        let doc_id = crate::utils::id::new_document_id();
+        let sql = format!(
+            "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'admin') RETURNING id",
+            crate::db::dialect::ph(1),
+            crate::db::dialect::ph(2),
+            crate::db::dialect::ph(3),
+            crate::db::dialect::ph(4)
+        );
+        let (id,): (i64,) = sqlx::query_as(&sql)
+            .bind(&doc_id)
+            .bind("block-test@test.com")
+            .bind("blockuser")
+            .bind("$argon2id$v=19$m=19456,t=2,p=1$test$test")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        id
+    }
+
+    #[sqlx::test]
+    async fn create_and_find_by_id() {
+        let pool = setup_pool().await;
+        let uid = insert_user(&pool).await;
+        let block = create_reusable(&pool, "Block", "text", "[]", None, Some(uid), None)
+            .await
+            .unwrap();
+        let found = find_reusable_by_id(&pool, block.id, None).await.unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().name, "Block");
+    }
+
+    #[sqlx::test]
+    async fn find_by_document_id_test() {
+        let pool = setup_pool().await;
+        let uid = insert_user(&pool).await;
+        let block = create_reusable(&pool, "Block", "text", "[]", None, Some(uid), None)
+            .await
+            .unwrap();
+        let found = super::find_reusable_by_document_id(&pool, &block.document_id, None)
+            .await
+            .unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id, block.id);
+    }
+
+    #[sqlx::test]
+    async fn list_reusable_test() {
+        let pool = setup_pool().await;
+        let uid = insert_user(&pool).await;
+        for i in 0..3 {
+            create_reusable(
+                &pool,
+                &format!("Block{i}"),
+                "text",
+                "[]",
+                None,
+                Some(uid),
+                None,
+            )
+            .await
+            .unwrap();
+        }
+        let list = super::list_reusable(&pool, None).await.unwrap();
+        assert!(list.len() >= 3);
+    }
+
+    #[sqlx::test]
+    async fn update_changes_name() {
+        let pool = setup_pool().await;
+        let uid = insert_user(&pool).await;
+        let block = create_reusable(&pool, "Block", "text", "[]", None, Some(uid), None)
+            .await
+            .unwrap();
+        let updated = update_reusable(
+            &pool,
+            block.id,
+            Some("Updated"),
+            None,
+            None,
+            None,
+            Some(uid),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.name, "Updated");
+    }
+
+    #[sqlx::test]
+    async fn delete_removes_block() {
+        let pool = setup_pool().await;
+        let uid = insert_user(&pool).await;
+        let block = create_reusable(&pool, "Block", "text", "[]", None, Some(uid), None)
+            .await
+            .unwrap();
+        delete_reusable(&pool, block.id, None).await.unwrap();
+        let found = find_reusable_by_id(&pool, block.id, None).await.unwrap();
+        assert!(found.is_none());
+    }
+}

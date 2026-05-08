@@ -2,8 +2,8 @@
 
 use slug::slugify;
 
-use crate::errors::app_error::{AppError, AppResult};
 use crate::dto::CreateTagRequest;
+use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::repositories::TagRepository;
 

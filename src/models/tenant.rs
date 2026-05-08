@@ -149,3 +149,131 @@ pub async fn delete(pool: &crate::db::Pool, document_id: &str) -> AppResult<()> 
     sqlx::query(&sql).bind(document_id).execute(pool).await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn create_and_find_by_id() {
+        let pool = setup_pool().await;
+        let doc_id = "tenant-001";
+        let now = chrono::Utc::now().to_rfc3339();
+        let row = create(
+            &pool,
+            doc_id,
+            "Test Tenant",
+            Some("test.example.com"),
+            "{}",
+            &now,
+        )
+        .await
+        .unwrap();
+        assert_eq!(row.document_id, doc_id);
+        assert_eq!(row.name, "Test Tenant");
+        assert_eq!(row.domain.unwrap(), "test.example.com");
+
+        let found = find_by_id(&pool, doc_id).await.unwrap().unwrap();
+        assert_eq!(found.id, row.id);
+        assert_eq!(found.document_id, doc_id);
+    }
+
+    #[tokio::test]
+    async fn find_by_domain_returns_match() {
+        let pool = setup_pool().await;
+        let now = chrono::Utc::now().to_rfc3339();
+        create(
+            &pool,
+            "tenant-002",
+            "Dom Tenant",
+            Some("dom.example.com"),
+            "{}",
+            &now,
+        )
+        .await
+        .unwrap();
+
+        let found = find_by_domain(&pool, "dom.example.com")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.document_id, "tenant-002");
+        assert_eq!(found.name, "Dom Tenant");
+
+        let missing = find_by_domain(&pool, "no.such.domain").await.unwrap();
+        assert!(missing.is_none());
+    }
+
+    #[tokio::test]
+    async fn find_all_returns_all() {
+        let pool = setup_pool().await;
+        let now = chrono::Utc::now().to_rfc3339();
+        create(&pool, "tenant-a", "Alpha", None, "{}", &now)
+            .await
+            .unwrap();
+        create(&pool, "tenant-b", "Bravo", None, "{}", &now)
+            .await
+            .unwrap();
+        create(&pool, "tenant-c", "Charlie", None, "{}", &now)
+            .await
+            .unwrap();
+
+        let all = find_all(&pool).await.unwrap();
+        assert!(all.len() >= 3);
+    }
+
+    #[tokio::test]
+    async fn update_changes_name() {
+        let pool = setup_pool().await;
+        let doc_id = "tenant-003";
+        let now = chrono::Utc::now().to_rfc3339();
+        create(
+            &pool,
+            doc_id,
+            "Original",
+            Some("orig.example.com"),
+            "{}",
+            &now,
+        )
+        .await
+        .unwrap();
+
+        let later = chrono::Utc::now().to_rfc3339();
+        let updated = update(
+            &pool,
+            doc_id,
+            Some("Updated Name"),
+            None,
+            None,
+            None,
+            &later,
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.name, "Updated Name");
+        assert_eq!(updated.domain.unwrap(), "orig.example.com");
+    }
+
+    #[tokio::test]
+    async fn delete_removes_tenant() {
+        let pool = setup_pool().await;
+        let doc_id = "tenant-004";
+        let now = chrono::Utc::now().to_rfc3339();
+        create(&pool, doc_id, "ToDelete", None, "{}", &now)
+            .await
+            .unwrap();
+
+        delete(&pool, doc_id).await.unwrap();
+        let found = find_by_id(&pool, doc_id).await.unwrap();
+        assert!(found.is_none());
+    }
+}

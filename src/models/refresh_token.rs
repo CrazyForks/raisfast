@@ -91,3 +91,70 @@ pub async fn delete_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<(
     .await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    async fn insert_user(pool: &crate::db::Pool) -> i64 {
+        let cmd = crate::commands::user::CreateUserCmd {
+            email: format!("{}@test.com", crate::utils::id::new_document_id()),
+            username: crate::utils::id::new_document_id(),
+            password_hash: "$argon2id$v=19$m=19456,t=2,p=1$test$test".to_string(),
+        };
+        let user = crate::models::user::create(pool, &cmd, None).await.unwrap();
+        user.id
+    }
+
+    #[tokio::test]
+    async fn create_and_find_by_token() {
+        let pool = setup_pool().await;
+        let user_id = insert_user(&pool).await;
+        let token = crate::utils::id::new_document_id();
+        create_token(&pool, user_id, &token, "2099-12-31T00:00:00Z")
+            .await
+            .unwrap();
+        let found = find_by_token(&pool, &token).await.unwrap().unwrap();
+        assert_eq!(found.token, token);
+        assert_eq!(found.user_id, user_id);
+        assert_eq!(found.expires_at, "2099-12-31T00:00:00Z");
+    }
+
+    #[tokio::test]
+    async fn delete_by_token() {
+        let pool = setup_pool().await;
+        let user_id = insert_user(&pool).await;
+        let token = crate::utils::id::new_document_id();
+        create_token(&pool, user_id, &token, "2099-12-31T00:00:00Z")
+            .await
+            .unwrap();
+        super::delete_by_token(&pool, &token).await.unwrap();
+        assert!(find_by_token(&pool, &token).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_by_user() {
+        let pool = setup_pool().await;
+        let user_id = insert_user(&pool).await;
+        let token1 = crate::utils::id::new_document_id();
+        let token2 = crate::utils::id::new_document_id();
+        create_token(&pool, user_id, &token1, "2099-12-31T00:00:00Z")
+            .await
+            .unwrap();
+        create_token(&pool, user_id, &token2, "2099-12-31T00:00:00Z")
+            .await
+            .unwrap();
+        super::delete_by_user(&pool, user_id).await.unwrap();
+        assert!(find_by_token(&pool, &token1).await.unwrap().is_none());
+        assert!(find_by_token(&pool, &token2).await.unwrap().is_none());
+    }
+}

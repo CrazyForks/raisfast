@@ -753,3 +753,143 @@ pub async fn list_sitemap(
     }
     Ok(q.fetch_all(pool).await?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    async fn create_user(pool: &crate::db::Pool) -> i64 {
+        let uid = uuid::Uuid::now_v7().to_string();
+        sqlx::query(
+            "INSERT INTO users (document_id, username, email, password_hash, role) VALUES (?, 'testuser', 'test@test.com', 'hash', 'author')",
+        )
+        .bind(&uid)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
+            .bind(&uid)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        id
+    }
+
+    async fn create_test_page(
+        pool: &crate::db::Pool,
+        title: &str,
+        slug: &str,
+        status: &str,
+        created_by: i64,
+    ) -> Page {
+        create(
+            pool, title, slug, None, None, None, None, None, "default", None, 0, status,
+            created_by, None, None,
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn create_and_find_by_slug() {
+        let pool = setup_pool().await;
+        let uid = create_user(&pool).await;
+        let page = create_test_page(&pool, "About Us", "about", "published", uid).await;
+
+        let found = find_by_slug(&pool, "about", None).await.unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id, page.id);
+    }
+
+    #[tokio::test]
+    async fn find_by_document_id_test() {
+        let pool = setup_pool().await;
+        let uid = create_user(&pool).await;
+        let page = create_test_page(&pool, "Contact", "contact", "draft", uid).await;
+
+        let found = super::find_by_document_id(&pool, &page.document_id, None)
+            .await
+            .unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().slug, "contact");
+    }
+
+    #[tokio::test]
+    async fn list_published_excludes_drafts() {
+        let pool = setup_pool().await;
+        let uid = create_user(&pool).await;
+        create_test_page(&pool, "Published Page", "pub", "published", uid).await;
+        create_test_page(&pool, "Draft Page", "draft", "draft", uid).await;
+
+        let (items, total) = list_published(&pool, 1, 10, None).await.unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].slug, "pub");
+    }
+
+    #[tokio::test]
+    async fn update_changes_title() {
+        let pool = setup_pool().await;
+        let uid = create_user(&pool).await;
+        let page = create_test_page(&pool, "Old Title", "old", "published", uid).await;
+
+        let updated = update(
+            &pool,
+            page.id,
+            Some("New Title"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(updated.title, "New Title");
+    }
+
+    #[tokio::test]
+    async fn delete_removes_page() {
+        let pool = setup_pool().await;
+        let uid = create_user(&pool).await;
+        let page = create_test_page(&pool, "To Delete", "delete-me", "published", uid).await;
+
+        delete(&pool, page.id, None).await.unwrap();
+        let found = find_by_slug(&pool, "delete-me", None).await.unwrap();
+        assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn update_status_changes() {
+        let pool = setup_pool().await;
+        let uid = create_user(&pool).await;
+        let page = create_test_page(&pool, "Status Test", "status-test", "draft", uid).await;
+
+        assert_eq!(page.status, "draft");
+
+        let updated = update_status(&pool, page.id, "published", None, None)
+            .await
+            .unwrap();
+        assert_eq!(updated.status, "published");
+        assert!(updated.published_at.is_some());
+    }
+}

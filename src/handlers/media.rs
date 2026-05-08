@@ -101,7 +101,5 @@ pub async fn stats(
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<crate::dto::MediaStatsResponse>> {
     let s = media_service::stats(state.media_repo.as_ref(), &state.pool, &auth).await?;
-    Ok(ApiResponse::success(
-        crate::dto::stats_to_response(&s),
-    ))
+    Ok(ApiResponse::success(crate::dto::stats_to_response(&s)))
 }

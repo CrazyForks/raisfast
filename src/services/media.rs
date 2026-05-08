@@ -425,3 +425,228 @@ fn detect_mime_from_magic(data: &[u8]) -> Option<&'static str> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mime_to_ext_known_types() {
+        assert_eq!(mime_to_ext("image/jpeg"), "jpg");
+        assert_eq!(mime_to_ext("image/png"), "png");
+        assert_eq!(mime_to_ext("image/gif"), "gif");
+        assert_eq!(mime_to_ext("image/webp"), "webp");
+        assert_eq!(mime_to_ext("image/svg+xml"), "svg");
+        assert_eq!(mime_to_ext("video/mp4"), "mp4");
+        assert_eq!(mime_to_ext("audio/mpeg"), "mp3");
+        assert_eq!(mime_to_ext("application/pdf"), "pdf");
+        assert_eq!(mime_to_ext("application/zip"), "zip");
+        assert_eq!(mime_to_ext("text/plain"), "txt");
+        assert_eq!(mime_to_ext("text/markdown"), "md");
+        assert_eq!(mime_to_ext("text/csv"), "csv");
+    }
+
+    #[test]
+    fn mime_to_ext_unknown_returns_bin() {
+        assert_eq!(mime_to_ext("application/x-unknown"), "bin");
+        assert_eq!(mime_to_ext("foo/bar"), "bin");
+    }
+
+    #[test]
+    fn validate_magic_bytes_empty_data() {
+        assert!(!validate_magic_bytes("image/jpeg", &[]));
+    }
+
+    #[test]
+    fn validate_magic_bytes_jpeg() {
+        assert!(validate_magic_bytes("image/jpeg", b"\xFF\xD8\xFF\xE0"));
+        assert!(!validate_magic_bytes("image/jpeg", b"\x89PNG\r\n\x1a\n"));
+    }
+
+    #[test]
+    fn validate_magic_bytes_png() {
+        let png_header = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR";
+        assert!(validate_magic_bytes("image/png", png_header));
+        assert!(!validate_magic_bytes("image/png", b"\xFF\xD8\xFF"));
+    }
+
+    #[test]
+    fn validate_magic_bytes_gif() {
+        assert!(validate_magic_bytes("image/gif", b"GIF89a\x00\x00"));
+        assert!(validate_magic_bytes("image/gif", b"GIF87a\x00\x00"));
+        assert!(!validate_magic_bytes("image/gif", b"BM\x00\x00\x00"));
+    }
+
+    #[test]
+    fn validate_magic_bytes_webp() {
+        let mut webp = vec![b'R', b'I', b'F', b'F', 0, 0, 0, 0, b'W', b'E', b'B', b'P'];
+        webp.extend_from_slice(&[0; 20]);
+        assert!(validate_magic_bytes("image/webp", &webp));
+        assert!(!validate_magic_bytes("image/webp", b"\xFF\xD8\xFF"));
+    }
+
+    #[test]
+    fn validate_magic_bytes_pdf() {
+        assert!(validate_magic_bytes("application/pdf", b"%PDF-1.4\n"));
+        assert!(!validate_magic_bytes("application/pdf", b"<html>"));
+    }
+
+    #[test]
+    fn validate_magic_bytes_zip() {
+        assert!(validate_magic_bytes(
+            "application/zip",
+            b"PK\x03\x04\x00\x00"
+        ));
+        assert!(!validate_magic_bytes("application/zip", b"\x1F\x8B\x08"));
+    }
+
+    #[test]
+    fn validate_magic_bytes_gzip() {
+        assert!(validate_magic_bytes(
+            "application/gzip",
+            b"\x1F\x8B\x08\x00"
+        ));
+        assert!(!validate_magic_bytes("application/gzip", b"PK\x03\x04"));
+    }
+
+    #[test]
+    fn validate_magic_bytes_rar() {
+        assert!(validate_magic_bytes(
+            "application/x-rar-compressed",
+            b"Rar!\x1A\x07\x00"
+        ));
+        assert!(!validate_magic_bytes(
+            "application/x-rar-compressed",
+            b"PK\x03\x04"
+        ));
+    }
+
+    #[test]
+    fn validate_magic_bytes_mp3() {
+        assert!(validate_magic_bytes("audio/mpeg", b"\xFF\xFB\x90\x00"));
+        assert!(validate_magic_bytes("audio/mpeg", b"ID3\x03\x00"));
+        assert!(!validate_magic_bytes("audio/mpeg", b"OggS\x00"));
+    }
+
+    #[test]
+    fn validate_magic_bytes_ogg() {
+        assert!(validate_magic_bytes("audio/ogg", b"OggS\x00\x02"));
+        assert!(!validate_magic_bytes("audio/ogg", b"\xFF\xFB"));
+    }
+
+    #[test]
+    fn validate_magic_bytes_wav() {
+        let mut wav = b"RIFF".to_vec();
+        wav.extend_from_slice(&[0, 0, 0, 0]);
+        wav.extend_from_slice(b"WAVE");
+        wav.extend_from_slice(&[0; 20]);
+        assert!(validate_magic_bytes("audio/wav", &wav));
+        assert!(!validate_magic_bytes("audio/wav", b"\xFF\xD8\xFF"));
+    }
+
+    #[test]
+    fn validate_magic_bytes_mp4() {
+        let mut mp4 = vec![0, 0, 0, 0x20];
+        mp4.extend_from_slice(b"ftypisom");
+        mp4.extend_from_slice(&[0; 24]);
+        assert!(validate_magic_bytes("video/mp4", &mp4));
+        assert!(!validate_magic_bytes("video/mp4", b"\x1a\x45\xdf\xa3"));
+    }
+
+    #[test]
+    fn validate_magic_bytes_webm() {
+        assert!(validate_magic_bytes(
+            "video/webm",
+            b"\x1a\x45\xdf\xa3\x00\x00"
+        ));
+        assert!(!validate_magic_bytes("video/webm", b"\xFF\xD8\xFF"));
+    }
+
+    #[test]
+    fn validate_magic_bytes_skip_types_always_pass() {
+        assert!(validate_magic_bytes("text/plain", b"hello"));
+        assert!(validate_magic_bytes("text/csv", b"a,b"));
+        assert!(validate_magic_bytes("text/markdown", b"# Title"));
+        assert!(validate_magic_bytes("image/svg+xml", b"<svg>"));
+        assert!(validate_magic_bytes("application/x-tar", b"foo"));
+    }
+
+    #[test]
+    fn validate_magic_bytes_unknown_type_fails() {
+        assert!(!validate_magic_bytes(
+            "application/x-totally-fake",
+            b"\x00\x01\x02"
+        ));
+    }
+
+    #[test]
+    fn detect_mime_from_magic_jpeg() {
+        assert_eq!(
+            detect_mime_from_magic(b"\xFF\xD8\xFF\xE0"),
+            Some("image/jpeg")
+        );
+    }
+
+    #[test]
+    fn detect_mime_from_magic_png() {
+        assert_eq!(
+            detect_mime_from_magic(b"\x89PNG\r\n\x1a\n\x00"),
+            Some("image/png")
+        );
+    }
+
+    #[test]
+    fn detect_mime_from_magic_gif() {
+        assert_eq!(
+            detect_mime_from_magic(b"GIF89a\x00\x00\x00"),
+            Some("image/gif")
+        );
+    }
+
+    #[test]
+    fn detect_mime_from_magic_pdf() {
+        assert_eq!(
+            detect_mime_from_magic(b"%PDF-1.4\n"),
+            Some("application/pdf")
+        );
+    }
+
+    #[test]
+    fn detect_mime_from_magic_zip() {
+        assert_eq!(
+            detect_mime_from_magic(b"PK\x03\x04\x00"),
+            Some("application/zip")
+        );
+    }
+
+    #[test]
+    fn detect_mime_from_magic_unknown() {
+        assert_eq!(detect_mime_from_magic(b"\x00\x01"), None);
+        assert_eq!(detect_mime_from_magic(b"\x00"), None);
+    }
+
+    #[test]
+    fn storage_key_format() {
+        let key = storage_key("uploads", "jpg");
+        assert!(key.starts_with("uploads/"));
+        assert!(key.ends_with(".jpg"));
+        let parts: Vec<&str> = key.split('/').collect();
+        assert_eq!(parts.len(), 4);
+        assert!(parts[1].len() == 4);
+        assert!(parts[2].len() == 2);
+    }
+
+    #[test]
+    fn parse_image_dimensions_invalid_data() {
+        let (w, h) = parse_image_dimensions(b"not an image");
+        assert_eq!(w, None);
+        assert_eq!(h, None);
+    }
+
+    #[test]
+    fn parse_image_dimensions_empty() {
+        let (w, h) = parse_image_dimensions(&[]);
+        assert_eq!(w, None);
+        assert_eq!(h, None);
+    }
+}

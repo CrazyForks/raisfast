@@ -65,3 +65,78 @@ fn validate_uuid_vec(ids: &[String]) -> Result<(), validator::ValidationError> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_password_valid() {
+        assert!(validate_password("abc123").is_ok());
+        assert!(validate_password("Password1").is_ok());
+    }
+
+    #[test]
+    fn validate_password_no_digit() {
+        assert!(validate_password("abcdef").is_err());
+    }
+
+    #[test]
+    fn validate_password_no_letter() {
+        assert!(validate_password("123456").is_err());
+    }
+
+    #[test]
+    fn validate_post_status_valid() {
+        assert!(validate_post_status("draft").is_ok());
+        assert!(validate_post_status("published").is_ok());
+    }
+
+    #[test]
+    fn validate_post_status_invalid() {
+        assert!(validate_post_status("archived").is_err());
+    }
+
+    #[test]
+    fn validate_comment_status_valid() {
+        assert!(validate_comment_status("approved").is_ok());
+        assert!(validate_comment_status("pending").is_ok());
+        assert!(validate_comment_status("spam").is_ok());
+    }
+
+    #[test]
+    fn validate_comment_status_invalid() {
+        assert!(validate_comment_status("deleted").is_err());
+    }
+
+    #[test]
+    fn validate_optional_uuid_valid_uuid() {
+        assert!(validate_optional_uuid("01901234-5678-7000-8000-000000000000").is_ok());
+    }
+
+    #[test]
+    fn validate_optional_uuid_valid_i64() {
+        assert!(validate_optional_uuid("42").is_ok());
+    }
+
+    #[test]
+    fn validate_optional_uuid_invalid() {
+        assert!(validate_optional_uuid("not-a-uuid").is_err());
+    }
+
+    #[test]
+    fn validate_uuid_vec_valid() {
+        assert!(
+            validate_uuid_vec(&[
+                "01901234-5678-7000-8000-000000000000".to_string(),
+                "1".to_string()
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_uuid_vec_invalid() {
+        assert!(validate_uuid_vec(&["bad-id".to_string()]).is_err());
+    }
+}

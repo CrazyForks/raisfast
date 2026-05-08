@@ -6,14 +6,14 @@
 use axum::Json;
 use axum::extract::State;
 
-use crate::errors::app_error::AppResult;
-use crate::errors::response::ApiResponse;
-use crate::errors::validation;
 use crate::dto::{
     AuthConfigResponse, BindPhoneRequest, ForgotPasswordRequest, LoginRequest, RefreshRequest,
     RegisterRequest, ResendVerificationRequest, ResetPasswordRequest, SendSmsCodeRequest,
     SetPasswordRequest, VerifyEmailRequest, VerifySmsRequest,
 };
+use crate::errors::app_error::AppResult;
+use crate::errors::response::ApiResponse;
+use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::services::{auth, email_verification, password_reset, sms};
 

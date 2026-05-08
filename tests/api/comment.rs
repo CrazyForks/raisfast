@@ -182,10 +182,11 @@ async fn update_status_admin() {
     )
     .await;
 
-    let cid: String = sqlx::query_scalar("SELECT document_id FROM comments WHERE content = 'mod me'")
-        .fetch_one(&state.pool)
-        .await
-        .unwrap();
+    let cid: String =
+        sqlx::query_scalar("SELECT document_id FROM comments WHERE content = 'mod me'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
 
     let (admin_int_id, admin_doc_id) = create_admin(&state.pool).await;
     let admin_tok = make_token(&admin_doc_id, admin_int_id, "admin");

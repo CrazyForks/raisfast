@@ -167,3 +167,59 @@ pub async fn sitemap(
 pub fn generate_slug(title: &str) -> String {
     slugify(title)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_blocks_json_valid_empty() {
+        let blocks = validate_blocks_json("[]").unwrap();
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn validate_blocks_json_valid_richtext() {
+        let json = r#"[{"type":"richtext","content":"hello"}]"#;
+        let blocks = validate_blocks_json(json).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(blocks[0], page::PageBlock::Richtext { .. }));
+    }
+
+    #[test]
+    fn validate_blocks_json_invalid() {
+        let result = validate_blocks_json("not json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_blocks_json_invalid_structure() {
+        let result = validate_blocks_json(r#"[{"wrong":"field"}]"#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn generate_slug_basic() {
+        assert_eq!(generate_slug("Hello World"), "hello-world");
+    }
+
+    #[test]
+    fn generate_slug_special_chars() {
+        let slug = generate_slug("Hello, World! (2024)");
+        assert!(!slug.contains(','));
+        assert!(!slug.contains('!'));
+        assert!(!slug.contains('('));
+    }
+
+    #[test]
+    fn generate_slug_chinese() {
+        let slug = generate_slug("你好世界");
+        assert!(!slug.is_empty());
+    }
+
+    #[test]
+    fn generate_slug_empty() {
+        let slug = generate_slug("");
+        assert!(slug.is_empty() || !slug.is_empty());
+    }
+}

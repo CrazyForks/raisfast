@@ -127,3 +127,98 @@ where
     let _ = cache.set(key, &value, Some(ttl)).await;
     Ok(value)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn set_and_get() {
+        let cache = MemoryCache::new();
+        cache.set("k", "v", None).await.unwrap();
+        assert_eq!(cache.get("k").await.unwrap(), "v");
+    }
+
+    #[tokio::test]
+    async fn get_missing_returns_none() {
+        let cache = MemoryCache::new();
+        assert!(cache.get("missing").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_removes_entry() {
+        let cache = MemoryCache::new();
+        cache.set("k", "v", None).await.unwrap();
+        cache.delete("k").await.unwrap();
+        assert!(cache.get("k").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn set_overwrites() {
+        let cache = MemoryCache::new();
+        cache.set("k", "v1", None).await.unwrap();
+        cache.set("k", "v2", None).await.unwrap();
+        assert_eq!(cache.get("k").await.unwrap(), "v2");
+    }
+
+    #[tokio::test]
+    async fn delete_prefix_removes_matching() {
+        let cache = MemoryCache::new();
+        cache.set("posts:1", "a", None).await.unwrap();
+        cache.set("posts:2", "b", None).await.unwrap();
+        cache.set("tags:1", "c", None).await.unwrap();
+        let count = cache.delete_prefix("posts:").await.unwrap();
+        assert_eq!(count, 2);
+        assert!(cache.get("posts:1").await.is_none());
+        assert!(cache.get("posts:2").await.is_none());
+        assert_eq!(cache.get("tags:1").await.unwrap(), "c");
+    }
+
+    #[tokio::test]
+    async fn expiry_with_ttl() {
+        let cache = MemoryCache::new();
+        cache
+            .set("k", "v", Some(Duration::from_millis(1)))
+            .await
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(10));
+        assert!(cache.get("k").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_or_cache_miss() {
+        let cache: Arc<dyn CacheStore> = Arc::new(MemoryCache::new());
+        let call_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count_clone = call_count.clone();
+        let result = get_or(&cache, "key", Duration::from_secs(60), || {
+            let c = count_clone.clone();
+            async move {
+                c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok("computed".to_string())
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(result, "computed");
+        assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn get_or_cache_hit() {
+        let cache: Arc<dyn CacheStore> = Arc::new(MemoryCache::new());
+        cache.set("key", "cached", None).await.unwrap();
+        let call_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count_clone = call_count.clone();
+        let result = get_or(&cache, "key", Duration::from_secs(60), || {
+            let c = count_clone.clone();
+            async move {
+                c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok("computed".to_string())
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(result, "cached");
+        assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+}

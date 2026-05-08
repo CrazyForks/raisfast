@@ -206,3 +206,132 @@ pub async fn insert_permission(
         .await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    fn now() -> String {
+        chrono::Utc::now().to_rfc3339()
+    }
+
+    #[sqlx::test]
+    async fn create_and_find_role_by_id() {
+        let pool = setup_pool().await;
+        let doc_id = crate::utils::id::new_document_id();
+        let role = create_role(&pool, &doc_id, "admin_test", Some("desc"), &now())
+            .await
+            .unwrap();
+        assert_eq!(role.document_id, doc_id);
+        assert_eq!(role.name, "admin_test");
+
+        let found = find_role_by_id(&pool, &doc_id).await.unwrap().unwrap();
+        assert_eq!(found.id, role.id);
+    }
+
+    #[sqlx::test]
+    async fn list_roles_test() {
+        let pool = setup_pool().await;
+        for i in 0..3 {
+            let doc_id = crate::utils::id::new_document_id();
+            create_role(&pool, &doc_id, &format!("role_{i}"), None, &now())
+                .await
+                .unwrap();
+        }
+        let roles = super::list_roles(&pool).await.unwrap();
+        assert!(roles.len() >= 3);
+    }
+
+    #[sqlx::test]
+    async fn update_role_changes_name() {
+        let pool = setup_pool().await;
+        let doc_id = crate::utils::id::new_document_id();
+        create_role(&pool, &doc_id, "original", None, &now())
+            .await
+            .unwrap();
+
+        let updated = update_role(&pool, &doc_id, Some("new_name"), None, &now())
+            .await
+            .unwrap();
+        assert_eq!(updated.name, "new_name");
+    }
+
+    #[sqlx::test]
+    async fn delete_role_test() {
+        let pool = setup_pool().await;
+        let doc_id = crate::utils::id::new_document_id();
+        create_role(&pool, &doc_id, "to_delete", None, &now())
+            .await
+            .unwrap();
+
+        super::delete_role(&pool, &doc_id).await.unwrap();
+        let found = find_role_by_id(&pool, &doc_id).await.unwrap();
+        assert!(found.is_none());
+    }
+
+    #[sqlx::test]
+    async fn permissions_crud() {
+        let pool = setup_pool().await;
+        let doc_id = crate::utils::id::new_document_id();
+        let role = create_role(&pool, &doc_id, "perm_role", None, &now())
+            .await
+            .unwrap();
+
+        let t = now();
+        insert_permission(
+            &pool,
+            &crate::utils::id::new_document_id(),
+            role.id,
+            "read",
+            "posts",
+            None,
+            None,
+            &t,
+        )
+        .await
+        .unwrap();
+        insert_permission(
+            &pool,
+            &crate::utils::id::new_document_id(),
+            role.id,
+            "write",
+            "posts",
+            None,
+            None,
+            &t,
+        )
+        .await
+        .unwrap();
+
+        let perms = find_permissions_by_role_id(&pool, role.id).await.unwrap();
+        assert_eq!(perms.len(), 2);
+
+        delete_permissions_by_role_id(&pool, role.id).await.unwrap();
+        let perms = find_permissions_by_role_id(&pool, role.id).await.unwrap();
+        assert!(perms.is_empty());
+    }
+
+    #[sqlx::test]
+    async fn find_role_id_by_name_test() {
+        let pool = setup_pool().await;
+        let doc_id = crate::utils::id::new_document_id();
+        let role = create_role(&pool, &doc_id, "lookup_name", None, &now())
+            .await
+            .unwrap();
+
+        let id = super::find_role_id_by_name(&pool, "lookup_name")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(id, role.id);
+    }
+}

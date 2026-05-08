@@ -5,12 +5,10 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 
+use crate::dto::{UpdatePasswordRequest, UpdateRoleRequest, UpdateUserRequest, UserResponse};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
-use crate::dto::{
-    UpdatePasswordRequest, UpdateRoleRequest, UpdateUserRequest, UserResponse,
-};
 use crate::middleware::auth::AuthUser;
 use crate::services::{auth, user};
 use crate::utils::pagination::PaginationParams;

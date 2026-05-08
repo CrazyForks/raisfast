@@ -248,3 +248,110 @@ pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) ->
 
     AppError::expect_affected(&result, "category")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::category::CreateCategoryCmd;
+    use crate::commands::category::UpdateCategoryCmd;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    fn make_cmd(name: &str) -> CreateCategoryCmd {
+        CreateCategoryCmd {
+            name: name.to_string(),
+            slug: name.to_lowercase(),
+            description: None,
+            parent_id: None,
+            sort_order: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn create_and_find_by_id() {
+        let pool = setup_pool().await;
+        let cat = create(&pool, &make_cmd("Tech"), None, None).await.unwrap();
+        let found = find_by_id(&pool, cat.id, None).await.unwrap();
+        assert_eq!(found.id, cat.id);
+        assert_eq!(found.name, "Tech");
+    }
+
+    #[tokio::test]
+    async fn find_by_document_id() {
+        let pool = setup_pool().await;
+        let cat = create(&pool, &make_cmd("Science"), None, None)
+            .await
+            .unwrap();
+        let found = super::find_by_document_id(&pool, &cat.document_id, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.id, cat.id);
+    }
+
+    #[tokio::test]
+    async fn find_all_returns_all() {
+        let pool = setup_pool().await;
+        create(&pool, &make_cmd("A"), None, None).await.unwrap();
+        create(&pool, &make_cmd("B"), None, None).await.unwrap();
+        create(&pool, &make_cmd("C"), None, None).await.unwrap();
+        let all = find_all(&pool, None).await.unwrap();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn find_paginated() {
+        let pool = setup_pool().await;
+        for name in ["A", "B", "C", "D", "E"] {
+            create(&pool, &make_cmd(name), None, None).await.unwrap();
+        }
+        let (items, total) = super::find_paginated(&pool, None, 1, 3).await.unwrap();
+        assert_eq!(total, 5);
+        assert_eq!(items.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn update_changes_name() {
+        let pool = setup_pool().await;
+        let cat = create(&pool, &make_cmd("Old"), None, None).await.unwrap();
+        let updated = update(
+            &pool,
+            &UpdateCategoryCmd {
+                id: cat.id,
+                name: Some("New".to_string()),
+                slug: None,
+                description: None,
+                parent_id: None,
+                sort_order: None,
+            },
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.name, "New");
+    }
+
+    #[tokio::test]
+    async fn delete_removes_category() {
+        let pool = setup_pool().await;
+        let cat = create(&pool, &make_cmd("Gone"), None, None).await.unwrap();
+        delete(&pool, cat.id, None).await.unwrap();
+        let result = find_by_id(&pool, cat.id, None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn find_by_id_not_found() {
+        let pool = setup_pool().await;
+        let result = find_by_id(&pool, 99999, None).await;
+        assert!(result.is_err());
+    }
+}

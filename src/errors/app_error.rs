@@ -267,3 +267,46 @@ impl From<sqlx::Error> for AppError {
 /// 所有 handler 和 service 函数的返回类型统一使用 `AppResult<T>`，
 /// 等价于 `Result<T, AppError>`，简化函数签名并保证错误处理的一致性。
 pub type AppResult<T> = Result<T, AppError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn not_found_convenience() {
+        let err = AppError::not_found("post");
+        match err {
+            AppError::NotFound(r) => assert_eq!(r, "post"),
+            _ => panic!("expected NotFound"),
+        }
+    }
+
+    #[test]
+    fn expect_affected_zero_rows() {
+        let result = sqlx::sqlite::SqliteQueryResult::default();
+        let outcome = AppError::expect_affected(&result, "user");
+        assert!(outcome.is_err());
+        match outcome.unwrap_err() {
+            AppError::NotFound(r) => assert_eq!(r, "user"),
+            _ => panic!("expected NotFound"),
+        }
+    }
+
+    #[test]
+    fn from_sqlx_row_not_found() {
+        let err: AppError = sqlx::Error::RowNotFound.into();
+        match err {
+            AppError::NotFound(_) => {}
+            _ => panic!("expected NotFound"),
+        }
+    }
+
+    #[test]
+    fn from_anyhow() {
+        let err = AppError::Internal(anyhow::anyhow!("boom"));
+        match err {
+            AppError::Internal(e) => assert_eq!(e.to_string(), "boom"),
+            _ => panic!("expected Internal"),
+        }
+    }
+}

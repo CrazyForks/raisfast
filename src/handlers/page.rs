@@ -21,7 +21,9 @@ async fn resolve_page_parent_id(
     pool: &crate::db::Pool,
     parent_id: Option<String>,
 ) -> AppResult<Option<i64>> {
-    let Some(doc_id) = parent_id else { return Ok(None) };
+    let Some(doc_id) = parent_id else {
+        return Ok(None);
+    };
     resolve_doc_id_to_int(pool, "pages", &doc_id, None).await
 }
 
@@ -180,8 +182,7 @@ pub async fn create(
     let template = req.template.unwrap_or_else(|| "default".to_string());
     let status = req.status.unwrap_or_else(|| "draft".to_string());
 
-    let resolved_parent_id =
-        resolve_page_parent_id(&state.pool, req.parent_id).await?;
+    let resolved_parent_id = resolve_page_parent_id(&state.pool, req.parent_id).await?;
     let cmd = CreatePageCmd {
         title: req.title,
         slug,
@@ -212,11 +213,7 @@ pub async fn update(
     auth.ensure_author()?;
     validation::validate(&req)?;
 
-    let resolved_parent_id = resolve_page_parent_id(
-        &state.pool,
-        req.parent_id.flatten(),
-    )
-    .await?;
+    let resolved_parent_id = resolve_page_parent_id(&state.pool, req.parent_id.flatten()).await?;
     let cmd = UpdatePageCmd {
         id: 0,
         title: req.title,

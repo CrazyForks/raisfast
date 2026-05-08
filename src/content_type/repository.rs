@@ -790,9 +790,7 @@ impl ContentRepository {
                 .bind(source_int_id)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| {
-                    AppError::Internal(anyhow::anyhow!("junction delete failed: {e}"))
-                })?;
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("junction delete failed: {e}")))?;
 
             let doc_ids = extract_document_ids(val);
             if doc_ids.is_empty() {
