@@ -27,14 +27,15 @@ pub struct Tag {
     pub og_title: Option<String>,
     pub og_description: Option<String>,
     pub og_image: Option<String>,
+    pub created_by: Option<i64>,
     pub updated_by: Option<i64>,
-    pub updated_at: Option<Timestamp>,
     pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 crate::impl_from_row_opt_tenant!(Tag {
-    required { id, document_id, name, slug, created_at }
-    optional { description, cover_image, meta_title, meta_description, og_title, og_description, og_image, updated_by, updated_at }
+    required { id, document_id, name, slug, created_at, updated_at }
+    optional { description, cover_image, meta_title, meta_description, og_title, og_description, og_image, created_by, updated_by }
 });
 
 pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppResult<Vec<Tag>> {

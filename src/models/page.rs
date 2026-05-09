@@ -640,6 +640,8 @@ pub async fn update(
     }
     if let Some(v) = status {
         q = q.bind(v);
+        q = q.bind(v);
+        q = q.bind(now);
     }
     if let Some(v) = cover_image {
         q = q.bind(v);

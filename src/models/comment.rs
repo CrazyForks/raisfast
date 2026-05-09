@@ -34,12 +34,12 @@ pub struct Comment {
     pub author_url: Option<String>,
     pub status: String,
     pub created_at: Timestamp,
-    pub updated_at: Option<Timestamp>,
+    pub updated_at: Timestamp,
 }
 
 crate::impl_from_row_opt_tenant!(Comment {
-    required { id, document_id, post_id, content, status, created_at }
-    optional { created_by, updated_by, nickname, email, parent_id, author_ip, author_url, updated_at }
+    required { id, document_id, post_id, content, status, created_at, updated_at }
+    optional { created_by, updated_by, nickname, email, parent_id, author_ip, author_url }
 });
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -397,7 +397,7 @@ mod tests {
             author_url: None,
             status: "approved".to_string(),
             created_at: "2025-01-01T00:00:00Z".parse().unwrap(),
-            updated_at: None,
+            updated_at: "2025-01-01T00:00:00Z".parse().unwrap(),
         }
     }
 

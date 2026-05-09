@@ -113,7 +113,7 @@ mod tests {
             cover_image: None,
             status: "published".into(),
             created_by: 1i64,
-            updated_by: 1i64,
+            updated_by: Some(1i64),
             category_id: None,
             view_count: 0,
             is_pinned: false,

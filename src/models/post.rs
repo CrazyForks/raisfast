@@ -29,7 +29,7 @@ pub struct Post {
     pub cover_image: Option<String>,
     pub status: String,
     pub created_by: i64,
-    pub updated_by: i64,
+    pub updated_by: Option<i64>,
     pub category_id: Option<i64>,
     pub view_count: i64,
     pub is_pinned: bool,
@@ -50,8 +50,8 @@ pub struct Post {
 }
 
 crate::impl_from_row_opt_tenant!(Post {
-    required { id, document_id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, comment_status, format, template, reading_time, created_at, updated_at }
-    optional { excerpt, cover_image, category_id, published_at, password, meta_title, meta_description, og_title, og_description, og_image, canonical_url }
+    required { id, document_id, title, slug, content, status, created_by, view_count, is_pinned, comment_status, format, template, reading_time, created_at, updated_at }
+    optional { excerpt, cover_image, updated_by, category_id, published_at, password, meta_title, meta_description, og_title, og_description, og_image, canonical_url }
 });
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -288,7 +288,7 @@ pub async fn update_tx(
         .or(existing.cover_image);
     let category_id: Option<i64> = cmd.category_id.or(existing.category_id);
     let slug = cmd.slug.as_deref().unwrap_or(&existing.slug);
-    let updated_by: i64 = cmd.updated_by.unwrap_or(existing.updated_by);
+    let updated_by: Option<i64> = cmd.updated_by.or(existing.updated_by);
 
     let sql = format!(
         "UPDATE posts SET title = {}, slug = {}, content = {}, excerpt = {}, cover_image = {}, status = {}, category_id = {}, published_at = {}, updated_by = {}, updated_at = {} WHERE id = {}{}",
@@ -902,7 +902,7 @@ pub struct PostJoinedRow {
     pub cover_image: Option<String>,
     pub status: String,
     pub created_by: i64,
-    pub updated_by: i64,
+    pub updated_by: Option<i64>,
     pub category_id: Option<i64>,
     pub view_count: i64,
     pub is_pinned: bool,
@@ -925,8 +925,8 @@ pub struct PostJoinedRow {
 }
 
 crate::impl_from_row_opt_tenant!(PostJoinedRow {
-    required { id, document_id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, comment_status, format, template, reading_time, created_at, updated_at }
-    optional { excerpt, cover_image, category_id, published_at, author_name, category_name, password, meta_title, meta_description, og_title, og_description, og_image, canonical_url }
+    required { id, document_id, title, slug, content, status, created_by, view_count, is_pinned, comment_status, format, template, reading_time, created_at, updated_at }
+    optional { excerpt, cover_image, updated_by, category_id, published_at, author_name, category_name, password, meta_title, meta_description, og_title, og_description, og_image, canonical_url }
 });
 
 const JOIN_SQL: &str = "\
