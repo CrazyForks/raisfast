@@ -22,8 +22,8 @@ CREATE TABLE IF NOT EXISTS users (
     website TEXT,
     phone TEXT,
     email_verified INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
@@ -34,10 +34,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id TEXT NOT NULL UNIQUE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
     token TEXT UNIQUE NOT NULL,
     expires_at TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS options (
     is_public BOOLEAN NOT NULL DEFAULT 0,
     autoload BOOLEAN NOT NULL DEFAULT 1,
     sort_order INTEGER NOT NULL DEFAULT 0,
-    updated_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     UNIQUE(option_key)
 );
 
@@ -69,21 +69,22 @@ CREATE TABLE IF NOT EXISTS roles (
     name TEXT NOT NULL UNIQUE,
     description TEXT,
     is_system BOOLEAN NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- RBAC 权限
 CREATE TABLE IF NOT EXISTS permissions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id TEXT NOT NULL UNIQUE,
-    role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    role_id INTEGER NOT NULL REFERENCES roles(id),
     action TEXT NOT NULL,
     subject TEXT NOT NULL,
-    fields TEXT,
+     fields TEXT,
     conditions TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
+
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_role_action_subject
     ON permissions(role_id, action, subject);
@@ -96,8 +97,8 @@ CREATE TABLE IF NOT EXISTS tenants (
     domain TEXT UNIQUE,
     config TEXT NOT NULL DEFAULT '{}',
     status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- 审计日志
@@ -110,10 +111,11 @@ CREATE TABLE IF NOT EXISTS audit_log (
     subject TEXT NOT NULL,
     subject_id TEXT,
     detail TEXT,
-    ip_address TEXT,
+     ip_address TEXT,
     user_agent TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
+
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(actor_id);
@@ -123,14 +125,14 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
 CREATE TABLE IF NOT EXISTS api_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id TEXT NOT NULL UNIQUE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
     name TEXT NOT NULL,
     token_hash TEXT UNIQUE NOT NULL,
     token_prefix TEXT NOT NULL,
     scopes TEXT NOT NULL DEFAULT '["read","write"]',
     last_used_at TEXT,
     expires_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_api_tokens_user_id ON api_tokens(user_id);
@@ -145,8 +147,8 @@ CREATE TABLE IF NOT EXISTS webhook_subscriptions (
     events TEXT NOT NULL DEFAULT '[]',
     enabled INTEGER NOT NULL DEFAULT 1,
     description TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_enabled ON webhook_subscriptions(enabled);
@@ -157,7 +159,7 @@ CREATE TABLE IF NOT EXISTS plugin_storage (
     storage_key TEXT NOT NULL,
     value TEXT NOT NULL,
     expires_at TEXT,
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     PRIMARY KEY (plugin_id, storage_key)
 );
 
@@ -172,7 +174,7 @@ CREATE TABLE IF NOT EXISTS content_revisions (
     revision_number INTEGER NOT NULL,
     snapshot TEXT NOT NULL,
     created_by INTEGER,
-    created_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     UNIQUE(content_type, record_id, revision_number)
 );
 
@@ -185,7 +187,7 @@ CREATE INDEX IF NOT EXISTS idx_revisions_ct_record_rev
 CREATE TABLE IF NOT EXISTS oauth_accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id TEXT NOT NULL UNIQUE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
     provider TEXT NOT NULL,
     provider_user_id TEXT NOT NULL,
     email TEXT,
@@ -195,8 +197,8 @@ CREATE TABLE IF NOT EXISTS oauth_accounts (
     refresh_token TEXT,
     token_expires_at TEXT,
     profile TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     UNIQUE(provider, provider_user_id)
 );
 
@@ -210,7 +212,7 @@ CREATE TABLE IF NOT EXISTS oauth_states (
     provider TEXT NOT NULL,
     code_verifier TEXT NOT NULL,
     user_id INTEGER,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     expires_at TEXT NOT NULL
 );
 
@@ -220,11 +222,11 @@ CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id TEXT NOT NULL UNIQUE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
     token TEXT NOT NULL UNIQUE,
     expires_at TEXT NOT NULL,
     used_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token);
@@ -242,7 +244,7 @@ CREATE TABLE IF NOT EXISTS sms_codes (
     verified_at TEXT,
     attempts INTEGER NOT NULL DEFAULT 0,
     ip_address TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_sms_codes_phone ON sms_codes(phone);
@@ -252,12 +254,12 @@ CREATE INDEX IF NOT EXISTS idx_sms_codes_expires ON sms_codes(expires_at);
 CREATE TABLE IF NOT EXISTS email_verification_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id TEXT NOT NULL UNIQUE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
     token TEXT NOT NULL UNIQUE,
     email TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     verified_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_token ON email_verification_tokens(token);
@@ -275,8 +277,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     max_attempts INTEGER NOT NULL DEFAULT 3,
     run_after    TEXT,
     error        TEXT,
-    created_at   TEXT NOT NULL,
-    updated_at   TEXT NOT NULL
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
@@ -295,8 +297,8 @@ CREATE TABLE IF NOT EXISTS cron_schedules (
     last_run_at  TEXT,
     next_run_at  TEXT NOT NULL,
     plugin_id    TEXT,
-    created_at   TEXT NOT NULL,
-    updated_at   TEXT NOT NULL
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_cron_enabled ON cron_schedules(enabled);
@@ -330,12 +332,12 @@ CREATE TABLE IF NOT EXISTS categories (
     name TEXT UNIQUE NOT NULL,
     slug TEXT UNIQUE NOT NULL,
     description TEXT,
-    parent_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+    parent_id INTEGER REFERENCES categories(id),
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_by INTEGER,
     updated_by INTEGER,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- 标签
@@ -346,8 +348,8 @@ CREATE TABLE IF NOT EXISTS tags (
     slug TEXT UNIQUE NOT NULL,
     created_by INTEGER,
     updated_by INTEGER,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- 文章
@@ -360,13 +362,13 @@ CREATE TABLE IF NOT EXISTS posts (
     excerpt TEXT,
     cover_image TEXT,
     status TEXT NOT NULL DEFAULT 'draft',
-    created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_by INTEGER NOT NULL REFERENCES users(id),
     updated_by INTEGER,
-    category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+    category_id INTEGER REFERENCES categories(id),
     view_count INTEGER NOT NULL DEFAULT 0,
     is_pinned INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     published_at TEXT
 );
 
@@ -384,8 +386,8 @@ CREATE INDEX IF NOT EXISTS idx_posts_status_author
 
 -- 文章-标签（多对多）
 CREATE TABLE IF NOT EXISTS posts_tags (
-    post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    post_id INTEGER NOT NULL REFERENCES posts(id),
+    tag_id INTEGER NOT NULL REFERENCES tags(id),
     PRIMARY KEY (post_id, tag_id)
 );
 
@@ -395,16 +397,16 @@ CREATE INDEX IF NOT EXISTS idx_posts_tags_tag_id ON posts_tags(tag_id);
 CREATE TABLE IF NOT EXISTS comments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id TEXT NOT NULL UNIQUE,
-    post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    post_id INTEGER NOT NULL REFERENCES posts(id),
+    created_by INTEGER REFERENCES users(id),
     updated_by INTEGER,
     nickname TEXT,
     email TEXT,
     content TEXT NOT NULL,
-    parent_id INTEGER REFERENCES comments(id) ON DELETE CASCADE,
+    parent_id INTEGER REFERENCES comments(id),
     status TEXT NOT NULL DEFAULT 'pending',
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id);
@@ -427,15 +429,15 @@ CREATE TABLE IF NOT EXISTS pages (
     meta_description TEXT,
     og_image         TEXT,
     template         TEXT NOT NULL DEFAULT 'default',
-    parent_id        INTEGER REFERENCES pages(id) ON DELETE SET NULL,
+    parent_id        INTEGER REFERENCES pages(id),
     sort_order       INTEGER NOT NULL DEFAULT 0,
     status           TEXT NOT NULL DEFAULT 'draft',
     created_by       INTEGER NOT NULL REFERENCES users(id),
     updated_by       INTEGER,
     cover_image      TEXT,
     published_at     TEXT,
-    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_pages_slug      ON pages(slug);
@@ -452,8 +454,8 @@ CREATE TABLE IF NOT EXISTS reusable_blocks (
     description TEXT,
     created_by  INTEGER,
     updated_by  INTEGER,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- ── 内置模块：Media（BUILTIN_MEDIA=true） ────────────────
@@ -461,14 +463,14 @@ CREATE TABLE IF NOT EXISTS reusable_blocks (
 CREATE TABLE IF NOT EXISTS media (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id TEXT NOT NULL UNIQUE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
     filename TEXT NOT NULL,
     filepath TEXT NOT NULL,
     mimetype TEXT NOT NULL,
     size INTEGER NOT NULL,
     width INTEGER,
     height INTEGER,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_media_user_created
@@ -485,8 +487,8 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
     initial_step TEXT NOT NULL,
     version INTEGER NOT NULL DEFAULT 1,
     enabled INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE TABLE IF NOT EXISTS workflow_instances (
@@ -497,9 +499,9 @@ CREATE TABLE IF NOT EXISTS workflow_instances (
     current_step TEXT,
     context TEXT NOT NULL DEFAULT '{}',
     triggered_by INTEGER,
-    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     completed_at TEXT,
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_wf_instances_definition ON workflow_instances(definition_id);
@@ -515,7 +517,7 @@ CREATE TABLE IF NOT EXISTS workflow_step_logs (
     input TEXT,
     output TEXT,
     error TEXT,
-    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     completed_at TEXT
 );
 
@@ -527,48 +529,48 @@ CREATE INDEX IF NOT EXISTS idx_wf_step_logs_instance ON workflow_step_logs(insta
 
 -- 默认租户
 INSERT OR IGNORE INTO tenants (document_id, name, domain, config, status, created_at, updated_at) VALUES
-    ('default', 'Default', NULL, '{}', 'active', datetime('now'), datetime('now'));
+    ('default', 'Default', NULL, '{}', 'active', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- 系统角色
 INSERT OR IGNORE INTO roles (document_id, name, description, is_system, created_at, updated_at) VALUES
-    ('role-admin', 'admin', '超级管理员', 1, datetime('now'), datetime('now')),
-    ('role-editor', 'editor', '编辑', 0, datetime('now'), datetime('now')),
-    ('role-author', 'author', '作者', 0, datetime('now'), datetime('now')),
-    ('role-reader', 'reader', '读者', 1, datetime('now'), datetime('now'));
+    ('role-admin', 'admin', '超级管理员', 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('role-editor', 'editor', '编辑', 0, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('role-author', 'author', '作者', 0, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('role-reader', 'reader', '读者', 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- admin 全局权限
 INSERT OR IGNORE INTO permissions (document_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('perm-admin-all', (SELECT id FROM roles WHERE document_id = 'role-admin'), '*', '*', '["*"]', NULL, datetime('now'));
+    ('perm-admin-all', (SELECT id FROM roles WHERE document_id = 'role-admin'), '*', '*', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- editor 权限
 INSERT OR IGNORE INTO permissions (document_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('perm-editor-ct-create', (SELECT id FROM roles WHERE document_id = 'role-editor'), 'content-type::*.*', 'content-type::*', '["*"]', NULL, datetime('now'));
+    ('perm-editor-ct-create', (SELECT id FROM roles WHERE document_id = 'role-editor'), 'content-type::*.*', 'content-type::*', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- author 权限
 INSERT OR IGNORE INTO permissions (document_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('perm-author-post-create', (SELECT id FROM roles WHERE document_id = 'role-author'), 'content-type::post.create', 'content-type::post', '["*"]', NULL, datetime('now')),
-    ('perm-author-post-read', (SELECT id FROM roles WHERE document_id = 'role-author'), 'content-type::post.read', 'content-type::post', '["*"]', NULL, datetime('now')),
-    ('perm-author-post-update', (SELECT id FROM roles WHERE document_id = 'role-author'), 'content-type::post.update', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', datetime('now')),
-    ('perm-author-post-delete', (SELECT id FROM roles WHERE document_id = 'role-author'), 'content-type::post.delete', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', datetime('now'));
+    ('perm-author-post-create', (SELECT id FROM roles WHERE document_id = 'role-author'), 'content-type::post.create', 'content-type::post', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('perm-author-post-read', (SELECT id FROM roles WHERE document_id = 'role-author'), 'content-type::post.read', 'content-type::post', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('perm-author-post-update', (SELECT id FROM roles WHERE document_id = 'role-author'), 'content-type::post.update', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('perm-author-post-delete', (SELECT id FROM roles WHERE document_id = 'role-author'), 'content-type::post.delete', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- reader 权限
 INSERT OR IGNORE INTO permissions (document_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('perm-reader-post-read', (SELECT id FROM roles WHERE document_id = 'role-reader'), 'content-type::post.read', 'content-type::post', '["title","slug","content","excerpt","status"]', NULL, datetime('now')),
-    ('perm-reader-comment-create', (SELECT id FROM roles WHERE document_id = 'role-reader'), 'content-type::comment.create', 'content-type::comment', '["content","nickname","email"]', NULL, datetime('now'));
+    ('perm-reader-post-read', (SELECT id FROM roles WHERE document_id = 'role-reader'), 'content-type::post.read', 'content-type::post', '["title","slug","content","excerpt","status"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('perm-reader-comment-create', (SELECT id FROM roles WHERE document_id = 'role-reader'), 'content-type::comment.create', 'content-type::comment', '["content","nickname","email"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- 站点配置
 INSERT OR IGNORE INTO options (document_id, option_key, value, type, group_name, label, description, validation, is_public, autoload, sort_order, updated_at) VALUES
-    ('opt-site-title', 'site_title', '"My Blog"', 'text', 'general', '站点标题', '显示在浏览器标题栏和页面头部', '{"max_length":100}', 1, 1, 1, datetime('now')),
-    ('opt-site-desc', 'site_description', '""', 'text', 'general', '站点描述', '简短描述站点用途', '{"max_length":500}', 1, 1, 2, datetime('now')),
-    ('opt-site-url', 'site_url', '""', 'url', 'general', '站点 URL', '如 https://example.com', NULL, 1, 1, 3, datetime('now')),
-    ('opt-admin-email', 'admin_email', '""', 'email', 'general', '管理员邮箱', NULL, NULL, 0, 1, 4, datetime('now')),
-    ('opt-timezone', 'timezone', '"UTC"', 'select', 'general', '时区', NULL, '{"values":["UTC","Asia/Shanghai","Asia/Tokyo","US/Eastern","US/Pacific","Europe/London","Europe/Berlin"]}', 1, 1, 5, datetime('now')),
-    ('opt-date-fmt', 'date_format', '"%Y-%m-%d"', 'select', 'general', '日期格式', NULL, '{"values":["%Y-%m-%d","%d/%m/%Y","%m/%d/%Y","%Y年%m月%d日"]}', 1, 1, 6, datetime('now')),
-    ('opt-per-page', 'posts_per_page', '10', 'integer', 'reading', '每页文章数', NULL, '{"min":1,"max":100}', 1, 1, 10, datetime('now')),
-    ('opt-rss-items', 'rss_items', '20', 'integer', 'reading', 'RSS 条目数', NULL, '{"min":1,"max":100}', 1, 1, 11, datetime('now')),
-    ('opt-permalink', 'permalink_structure', '"/:year/:month/:slug"', 'select', 'reading', 'URL 结构', NULL, '{"values":["/:year/:month/:slug","/:slug","/posts/:slug"]}', 1, 1, 12, datetime('now')),
-    ('opt-comment-mod', 'comment_moderation', 'true', 'boolean', 'discussion', '评论需审核', '开启后新评论需管理员审批', NULL, 0, 1, 20, datetime('now')),
-    ('opt-comment-order', 'comment_order', '"asc"', 'select', 'discussion', '评论排序', NULL, '{"values":["asc","desc"]}', 1, 1, 21, datetime('now')),
-    ('opt-default-role', 'default_role', '"reader"', 'select', 'discussion', '新用户默认角色', NULL, '{"values":["reader","author"]}', 0, 1, 22, datetime('now')),
-    ('opt-theme', 'theme', '"default"', 'select', 'appearance', '当前主题', NULL, '{"values":["default","corporate","minimal","warm"]}', 1, 1, 30, datetime('now')),
-    ('opt-maintenance', 'maintenance_mode', 'false', 'boolean', 'appearance', '维护模式', '开启后前台显示维护页面', NULL, 1, 1, 31, datetime('now'));
+    ('opt-site-title', 'site_title', '"My Blog"', 'text', 'general', '站点标题', '显示在浏览器标题栏和页面头部', '{"max_length":100}', 1, 1, 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('opt-site-desc', 'site_description', '""', 'text', 'general', '站点描述', '简短描述站点用途', '{"max_length":500}', 1, 1, 2, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('opt-site-url', 'site_url', '""', 'url', 'general', '站点 URL', '如 https://example.com', NULL, 1, 1, 3, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('opt-admin-email', 'admin_email', '""', 'email', 'general', '管理员邮箱', NULL, NULL, 0, 1, 4, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('opt-timezone', 'timezone', '"UTC"', 'select', 'general', '时区', NULL, '{"values":["UTC","Asia/Shanghai","Asia/Tokyo","US/Eastern","US/Pacific","Europe/London","Europe/Berlin"]}', 1, 1, 5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('opt-date-fmt', 'date_format', '"%Y-%m-%d"', 'select', 'general', '日期格式', NULL, '{"values":["%Y-%m-%d","%d/%m/%Y","%m/%d/%Y","%Y年%m月%d日"]}', 1, 1, 6, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('opt-per-page', 'posts_per_page', '10', 'integer', 'reading', '每页文章数', NULL, '{"min":1,"max":100}', 1, 1, 10, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('opt-rss-items', 'rss_items', '20', 'integer', 'reading', 'RSS 条目数', NULL, '{"min":1,"max":100}', 1, 1, 11, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('opt-permalink', 'permalink_structure', '"/:year/:month/:slug"', 'select', 'reading', 'URL 结构', NULL, '{"values":["/:year/:month/:slug","/:slug","/posts/:slug"]}', 1, 1, 12, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('opt-comment-mod', 'comment_moderation', 'true', 'boolean', 'discussion', '评论需审核', '开启后新评论需管理员审批', NULL, 0, 1, 20, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('opt-comment-order', 'comment_order', '"asc"', 'select', 'discussion', '评论排序', NULL, '{"values":["asc","desc"]}', 1, 1, 21, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('opt-default-role', 'default_role', '"reader"', 'select', 'discussion', '新用户默认角色', NULL, '{"values":["reader","author"]}', 0, 1, 22, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('opt-theme', 'theme', '"default"', 'select', 'appearance', '当前主题', NULL, '{"values":["default","corporate","minimal","warm"]}', 1, 1, 30, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('opt-maintenance', 'maintenance_mode', 'false', 'boolean', 'appearance', '维护模式', '开启后前台显示维护页面', NULL, 1, 1, 31, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));

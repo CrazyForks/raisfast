@@ -250,7 +250,7 @@ mod tests {
         let _first = super::create(&pool, &phone, "111111", "login", 300, None)
             .await
             .unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         let second = super::create(&pool, &phone, "222222", "login", 300, None)
             .await
             .unwrap();

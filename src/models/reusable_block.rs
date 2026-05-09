@@ -143,7 +143,7 @@ pub async fn update_reusable(
 ) -> AppResult<ReusableBlock> {
     let now = crate::utils::tz::now_utc();
     let mut idx = 1;
-    let mut sets = vec![format!("updated_at = {}", ph(idx))];
+    let mut sets = vec![format!("updated_at = {}", ph(1))];
 
     if updated_by.is_some() {
         idx += 1;
@@ -174,7 +174,8 @@ pub async fn update_reusable(
         sets.join(", ")
     );
 
-    let mut q = sqlx::query(&sql).bind(now);
+    let mut q = sqlx::query(&sql);
+    q = q.bind(now);
     if let Some(v) = updated_by {
         q = q.bind(v);
     }

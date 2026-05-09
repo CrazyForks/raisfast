@@ -124,7 +124,31 @@ pub async fn create(
     match tenant_id {
         Some(tid) => {
             let sql = format!(
-                "INSERT INTO tags (document_id, tenant_id, name, slug, created_by, updated_by, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
+                "INSERT INTO tags (document_id, tenant_id, name, slug, created_by, updated_by, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8)
+            );
+            sqlx::query(&sql)
+                .bind(&document_id)
+                .bind(tid)
+                .bind(name)
+                .bind(slug)
+                .bind(created_by)
+                .bind(created_by)
+                .bind(now)
+                .bind(now)
+                .execute(pool)
+                .await?;
+        }
+        None => {
+            let sql = format!(
+                "INSERT INTO tags (document_id, name, slug, created_by, updated_by, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
                 ph(1),
                 ph(2),
                 ph(3),
@@ -135,31 +159,11 @@ pub async fn create(
             );
             sqlx::query(&sql)
                 .bind(&document_id)
-                .bind(tid)
                 .bind(name)
                 .bind(slug)
                 .bind(created_by)
                 .bind(created_by)
                 .bind(now)
-                .execute(pool)
-                .await?;
-        }
-        None => {
-            let sql = format!(
-                "INSERT INTO tags (document_id, name, slug, created_by, updated_by, created_at) VALUES ({}, {}, {}, {}, {}, {})",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(name)
-                .bind(slug)
-                .bind(created_by)
-                .bind(created_by)
                 .bind(now)
                 .execute(pool)
                 .await?;

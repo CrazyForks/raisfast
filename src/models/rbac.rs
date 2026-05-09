@@ -77,22 +77,22 @@ pub async fn create_role(
     document_id: &str,
     name: &str,
     description: Option<&str>,
-    created_at: Timestamp,
 ) -> AppResult<Role> {
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "INSERT INTO roles (document_id, name, description, is_system, created_at, updated_at) VALUES ({}, {}, {}, 0, {}, {})",
         ph(1),
         ph(2),
         ph(3),
         ph(4),
-        ph(5)
+        ph(5),
     );
     sqlx::query(&sql)
         .bind(document_id)
         .bind(name)
         .bind(description)
-        .bind(created_at)
-        .bind(created_at)
+        .bind(now)
+        .bind(now)
         .execute(pool)
         .await
         .map_err(|e| AppError::Conflict(format!("create role failed: {e}")))?;
@@ -108,34 +108,35 @@ pub async fn update_role(
     document_id: &str,
     name: Option<&str>,
     description: Option<&str>,
-    updated_at: Timestamp,
 ) -> AppResult<Role> {
     let mut sets = Vec::new();
     let mut idx = 1;
+    let now = crate::utils::tz::now_utc();
+    sets.push(format!("updated_at = {}", ph(idx)));
     if name.is_some() {
-        sets.push(format!("name = {}", ph(idx)));
         idx += 1;
+        sets.push(format!("name = {}", ph(idx)));
     }
     if description.is_some() {
-        sets.push(format!("description = {}", ph(idx)));
         idx += 1;
+        sets.push(format!("description = {}", ph(idx)));
     }
-    sets.push(format!("updated_at = {}", ph(idx)));
-    idx += 1;
 
+    idx += 1;
     let sql = format!(
         "UPDATE roles SET {} WHERE document_id = {}",
         sets.join(", "),
         ph(idx)
     );
     let mut q = sqlx::query(sql.as_ref());
+    q = q.bind(now);
     if let Some(n) = name {
         q = q.bind(n);
     }
     if let Some(d) = description {
         q = q.bind(d);
     }
-    q = q.bind(updated_at).bind(document_id);
+    q = q.bind(document_id);
     q.execute(pool).await?;
 
     find_role_by_id(pool, document_id)
@@ -183,8 +184,8 @@ pub async fn insert_permission(
     subject: &str,
     fields: Option<&str>,
     conditions: Option<&str>,
-    created_at: Timestamp,
 ) -> AppResult<()> {
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "INSERT INTO permissions (document_id, role_id, action, subject, fields, conditions, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
         ph(1),
@@ -202,7 +203,7 @@ pub async fn insert_permission(
         .bind(subject)
         .bind(fields)
         .bind(conditions)
-        .bind(created_at)
+        .bind(now)
         .execute(pool)
         .await?;
     Ok(())
@@ -221,15 +222,11 @@ mod tests {
         pool
     }
 
-    fn now() -> Timestamp {
-        crate::utils::tz::now_utc()
-    }
-
     #[sqlx::test]
     async fn create_and_find_role_by_id() {
         let pool = setup_pool().await;
         let doc_id = crate::utils::id::new_document_id();
-        let role = create_role(&pool, &doc_id, "admin_test", Some("desc"), now())
+        let role = create_role(&pool, &doc_id, "admin_test", Some("desc"))
             .await
             .unwrap();
         assert_eq!(role.document_id, doc_id);
@@ -244,7 +241,7 @@ mod tests {
         let pool = setup_pool().await;
         for i in 0..3 {
             let doc_id = crate::utils::id::new_document_id();
-            create_role(&pool, &doc_id, &format!("role_{i}"), None, now())
+            create_role(&pool, &doc_id, &format!("role_{i}"), None)
                 .await
                 .unwrap();
         }
@@ -256,11 +253,9 @@ mod tests {
     async fn update_role_changes_name() {
         let pool = setup_pool().await;
         let doc_id = crate::utils::id::new_document_id();
-        create_role(&pool, &doc_id, "original", None, now())
-            .await
-            .unwrap();
+        create_role(&pool, &doc_id, "original", None).await.unwrap();
 
-        let updated = update_role(&pool, &doc_id, Some("new_name"), None, now())
+        let updated = update_role(&pool, &doc_id, Some("new_name"), None)
             .await
             .unwrap();
         assert_eq!(updated.name, "new_name");
@@ -270,7 +265,7 @@ mod tests {
     async fn delete_role_test() {
         let pool = setup_pool().await;
         let doc_id = crate::utils::id::new_document_id();
-        create_role(&pool, &doc_id, "to_delete", None, now())
+        create_role(&pool, &doc_id, "to_delete", None)
             .await
             .unwrap();
 
@@ -283,11 +278,10 @@ mod tests {
     async fn permissions_crud() {
         let pool = setup_pool().await;
         let doc_id = crate::utils::id::new_document_id();
-        let role = create_role(&pool, &doc_id, "perm_role", None, now())
+        let role = create_role(&pool, &doc_id, "perm_role", None)
             .await
             .unwrap();
 
-        let t = now();
         insert_permission(
             &pool,
             &crate::utils::id::new_document_id(),
@@ -296,7 +290,6 @@ mod tests {
             "posts",
             None,
             None,
-            t,
         )
         .await
         .unwrap();
@@ -308,7 +301,6 @@ mod tests {
             "posts",
             None,
             None,
-            t,
         )
         .await
         .unwrap();
@@ -325,7 +317,7 @@ mod tests {
     async fn find_role_id_by_name_test() {
         let pool = setup_pool().await;
         let doc_id = crate::utils::id::new_document_id();
-        let role = create_role(&pool, &doc_id, "lookup_name", None, now())
+        let role = create_role(&pool, &doc_id, "lookup_name", None)
             .await
             .unwrap();
 

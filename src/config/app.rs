@@ -376,7 +376,7 @@ impl Default for RuleEngineConfig {
             prefix_request_query: "@request.query.".into(),
             prefix_now: "@now".into(),
             prefix_cross_table: "@table.".into(),
-            sql_now_fn: "datetime('now')".into(),
+            sql_now_fn: "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')".into(),
             sql_isset_op: "IS NOT NULL".into(),
             sql_length_fn: "LENGTH".into(),
             sql_like_wildcard: "%".into(),
@@ -1163,7 +1163,7 @@ mod tests {
     fn rule_engine_config_defaults() {
         let r = RuleEngineConfig::default();
         assert_eq!(r.prefix_auth_id, "@request.auth.id");
-        assert_eq!(r.sql_now_fn, "datetime('now')");
+        assert_eq!(r.sql_now_fn, "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')");
         assert_eq!(r.cms_cache_ttl_secs, 30);
         assert_eq!(r.cms_max_page_size, 100);
     }

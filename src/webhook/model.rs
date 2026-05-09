@@ -58,6 +58,7 @@ pub struct WebhookPayload {
 
 /// 插入一条 webhook 订阅
 pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppResult<()> {
+    let now = crate::utils::tz::now_utc();
     match &sub.tenant_id {
         Some(tid) => {
             let sql = format!(
@@ -80,8 +81,8 @@ pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
                 .bind(&sub.events)
                 .bind(sub.enabled)
                 .bind(&sub.description)
-                .bind(sub.created_at)
-                .bind(sub.updated_at)
+                .bind(now)
+                .bind(now)
                 .execute(pool)
                 .await?;
         }
@@ -104,8 +105,8 @@ pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
                 .bind(&sub.events)
                 .bind(sub.enabled)
                 .bind(&sub.description)
-                .bind(sub.created_at)
-                .bind(sub.updated_at)
+                .bind(now)
+                .bind(now)
                 .execute(pool)
                 .await?;
         }
@@ -167,6 +168,7 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<WebhookSu
 
 /// 根据 ID 更新订阅
 pub async fn update(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppResult<()> {
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "UPDATE webhook_subscriptions SET url = {}, secret = {}, events = {}, enabled = {}, description = {}, updated_at = {} WHERE document_id = {}",
         crate::db::dialect::ph(1),
@@ -183,8 +185,8 @@ pub async fn update(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
         .bind(&sub.events)
         .bind(sub.enabled)
         .bind(&sub.description)
-.bind(sub.updated_at)
-                .bind(&sub.document_id)
+        .bind(now)
+        .bind(&sub.document_id)
         .execute(pool)
         .await?;
     AppError::expect_affected(&result, "webhook_subscription")?;

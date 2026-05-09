@@ -163,10 +163,10 @@ pub async fn upsert_value(
     key: &str,
     value: &str,
     tenant_id: Option<i64>,
-    updated_at: Timestamp,
 ) -> AppResult<()> {
     match tenant_id {
         Some(tid) => {
+            let now = crate::utils::tz::now_utc();
             let sql = format!(
                 "UPDATE options SET value = {}, updated_at = {} WHERE {COL_TENANT_ID} = {} AND option_key = {}",
                 ph(1),
@@ -176,13 +176,14 @@ pub async fn upsert_value(
             );
             sqlx::query(&sql)
                 .bind(value)
-                .bind(updated_at)
+                .bind(now)
                 .bind(tid)
                 .bind(key)
                 .execute(pool)
                 .await?;
         }
         None => {
+            let now = crate::utils::tz::now_utc();
             let sql = format!(
                 "UPDATE options SET value = {}, updated_at = {} WHERE option_key = {}",
                 ph(1),
@@ -191,7 +192,7 @@ pub async fn upsert_value(
             );
             sqlx::query(&sql)
                 .bind(value)
-                .bind(updated_at)
+                .bind(now)
                 .bind(key)
                 .execute(pool)
                 .await?;
@@ -261,13 +262,10 @@ mod tests {
     async fn upsert_and_find_by_key() {
         let pool = setup_pool().await;
         let key = format!("test.{}", crate::utils::id::new_document_id());
-        let now = crate::utils::tz::now_utc();
-        let now_str = now.to_rfc3339();
+        let now_str = crate::utils::tz::now_utc().to_rfc3339();
 
         insert_test_option(&pool, &key, "initial", true, &now_str).await;
-        upsert_value(&pool, &key, "updated", None, now)
-            .await
-            .unwrap();
+        upsert_value(&pool, &key, "updated", None).await.unwrap();
 
         let found = find_by_key(&pool, &key, None).await.unwrap();
         assert!(found.is_some());
@@ -301,7 +299,7 @@ mod tests {
         let now_str = now.to_rfc3339();
 
         insert_test_option(&pool, &key, "v1", true, &now_str).await;
-        upsert_value(&pool, &key, "v2", None, now).await.unwrap();
+        upsert_value(&pool, &key, "v2", None).await.unwrap();
 
         let found = find_by_key(&pool, &key, None).await.unwrap().unwrap();
         assert_eq!(found.value, "v2");

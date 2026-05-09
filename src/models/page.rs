@@ -525,8 +525,8 @@ pub async fn update(
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
     let now = crate::utils::tz::now_utc();
-    let mut idx = 1;
-    let mut sets = vec![format!("updated_at = {}", ph(idx))];
+    let mut idx = 0;
+    let mut sets = vec![];
 
     if updated_by.is_some() {
         idx += 1;
@@ -589,6 +589,9 @@ pub async fn update(
     }
 
     idx += 1;
+    sets.push(format!("updated_at = {}", ph(idx)));
+
+    idx += 1;
     let id_ph = ph(idx);
     let tf = tenant_filter_ph(tenant_id, idx + 1);
     let sql = format!(
@@ -596,7 +599,7 @@ pub async fn update(
         sets.join(", ")
     );
 
-    let mut q = sqlx::query(&sql).bind(now);
+    let mut q = sqlx::query(&sql);
     if let Some(v) = updated_by {
         q = q.bind(v);
     }
@@ -632,12 +635,11 @@ pub async fn update(
     }
     if let Some(v) = status {
         q = q.bind(v);
-        q = q.bind(v);
-        q = q.bind(now);
     }
     if let Some(v) = cover_image {
         q = q.bind(v);
     }
+    q = q.bind(now);
     q = q.bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -675,26 +677,27 @@ pub async fn update_status(
 
     let updated_by_clause = if updated_by.is_some() {
         idx += 1;
-        format!("updated_by = {}, ", ph(idx))
+        format!(", updated_by = {}", ph(idx))
     } else {
         String::new()
     };
 
     let published_at_clause = if status == "published" {
         idx += 1;
-        format!("published_at = COALESCE(published_at, {}), ", ph(idx))
+        format!(", published_at = COALESCE(published_at, {})", ph(idx))
     } else {
         String::new()
     };
 
     idx += 1;
-    let updated_at_ph = ph(idx);
+    let updated_at_clause = format!(", updated_at = {}", ph(idx));
+
     idx += 1;
     let id_ph = ph(idx);
     let tf = tenant_filter_ph(tenant_id, idx + 1);
 
     let sql = format!(
-        "UPDATE pages SET status = {status_ph}, {updated_by_clause}{published_at_clause}updated_at = {updated_at_ph} WHERE id = {id_ph}{tf}"
+        "UPDATE pages SET status = {status_ph}{updated_by_clause}{published_at_clause}{updated_at_clause} WHERE id = {id_ph}{tf}"
     );
     let mut q = sqlx::query(&sql).bind(status);
     if let Some(v) = updated_by {
@@ -703,7 +706,8 @@ pub async fn update_status(
     if status == "published" {
         q = q.bind(now);
     }
-    q = q.bind(now).bind(id);
+    q = q.bind(now);
+    q = q.bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -721,7 +725,7 @@ pub async fn reorder(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    let tf = tenant_filter_ph(tenant_id, 4);
+    let tf = tenant_filter_ph(tenant_id, 3);
     let sql = format!(
         "UPDATE pages SET sort_order = {}, updated_at = {} WHERE id = {}{tf}",
         ph(1),

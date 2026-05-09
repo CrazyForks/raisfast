@@ -34,7 +34,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     id BIGSERIAL PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id),
     token VARCHAR(500) UNIQUE NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS options (
     is_public BOOLEAN NOT NULL DEFAULT FALSE,
     autoload BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order INTEGER NOT NULL DEFAULT 0,
-    updated_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(option_key)
 );
 
@@ -69,20 +69,20 @@ CREATE TABLE IF NOT EXISTS roles (
     name VARCHAR(255) NOT NULL UNIQUE,
     description TEXT,
     is_system BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- RBAC 权限
 CREATE TABLE IF NOT EXISTS permissions (
     id BIGSERIAL PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,
-    role_id BIGINT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    role_id BIGINT NOT NULL REFERENCES roles(id),
     action VARCHAR(255) NOT NULL,
     subject VARCHAR(255) NOT NULL,
     fields JSONB,
     conditions JSONB,
-    created_at TIMESTAMPTZ NOT NULL
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_role_action_subject
@@ -96,8 +96,8 @@ CREATE TABLE IF NOT EXISTS tenants (
     domain VARCHAR(255) UNIQUE,
     config JSONB NOT NULL DEFAULT '{}',
     status VARCHAR(50) NOT NULL DEFAULT 'active',
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- 审计日志
@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     detail TEXT,
     ip_address VARCHAR(45),
     user_agent TEXT,
-    created_at TIMESTAMPTZ NOT NULL
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
@@ -123,7 +123,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
 CREATE TABLE IF NOT EXISTS api_tokens (
     id BIGSERIAL PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id),
     name VARCHAR(255) NOT NULL,
     token_hash VARCHAR(255) UNIQUE NOT NULL,
     token_prefix VARCHAR(50) NOT NULL,
@@ -145,8 +145,8 @@ CREATE TABLE IF NOT EXISTS webhook_subscriptions (
     events JSONB NOT NULL DEFAULT '[]',
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     description TEXT,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_enabled ON webhook_subscriptions(enabled);
@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS content_revisions (
     revision_number INTEGER NOT NULL,
     snapshot JSONB NOT NULL,
     created_by BIGINT,
-    created_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(content_type, record_id, revision_number)
 );
 
@@ -185,7 +185,7 @@ CREATE INDEX IF NOT EXISTS idx_revisions_ct_record_rev
 CREATE TABLE IF NOT EXISTS oauth_accounts (
     id BIGSERIAL PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id),
     provider VARCHAR(50) NOT NULL,
     provider_user_id VARCHAR(255) NOT NULL,
     email VARCHAR(255),
@@ -220,7 +220,7 @@ CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id BIGSERIAL PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id),
     token VARCHAR(255) NOT NULL UNIQUE,
     expires_at TIMESTAMPTZ NOT NULL,
     used_at TIMESTAMPTZ,
@@ -252,7 +252,7 @@ CREATE INDEX IF NOT EXISTS idx_sms_codes_expires ON sms_codes(expires_at);
 CREATE TABLE IF NOT EXISTS email_verification_tokens (
     id BIGSERIAL PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id),
     token VARCHAR(255) NOT NULL UNIQUE,
     email VARCHAR(255) NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
@@ -275,8 +275,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     max_attempts INTEGER NOT NULL DEFAULT 3,
     run_after    TIMESTAMPTZ,
     error        TEXT,
-    created_at   TIMESTAMPTZ NOT NULL,
-    updated_at   TIMESTAMPTZ NOT NULL
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
@@ -295,8 +295,8 @@ CREATE TABLE IF NOT EXISTS cron_schedules (
     last_run_at  TIMESTAMPTZ,
     next_run_at  TIMESTAMPTZ NOT NULL,
     plugin_id    VARCHAR(100),
-    created_at   TIMESTAMPTZ NOT NULL,
-    updated_at   TIMESTAMPTZ NOT NULL
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_cron_enabled ON cron_schedules(enabled);
@@ -330,7 +330,7 @@ CREATE TABLE IF NOT EXISTS categories (
     name VARCHAR(255) UNIQUE NOT NULL,
     slug VARCHAR(255) UNIQUE NOT NULL,
     description TEXT,
-    parent_id BIGINT REFERENCES categories(id) ON DELETE SET NULL,
+    parent_id BIGINT REFERENCES categories(id),
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_by BIGINT,
     updated_by BIGINT,
@@ -360,9 +360,9 @@ CREATE TABLE IF NOT EXISTS posts (
     excerpt TEXT,
     cover_image VARCHAR(500),
     status VARCHAR(50) NOT NULL DEFAULT 'draft',
-    created_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_by BIGINT NOT NULL REFERENCES users(id),
     updated_by BIGINT,
-    category_id BIGINT REFERENCES categories(id) ON DELETE SET NULL,
+    category_id BIGINT REFERENCES categories(id),
     view_count INTEGER NOT NULL DEFAULT 0,
     is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -384,8 +384,8 @@ CREATE INDEX IF NOT EXISTS idx_posts_status_author
 
 -- 文章-标签（多对多）
 CREATE TABLE IF NOT EXISTS posts_tags (
-    post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-    tag_id BIGINT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    post_id BIGINT NOT NULL REFERENCES posts(id),
+    tag_id BIGINT NOT NULL REFERENCES tags(id),
     PRIMARY KEY (post_id, tag_id)
 );
 
@@ -395,13 +395,13 @@ CREATE INDEX IF NOT EXISTS idx_posts_tags_tag_id ON posts_tags(tag_id);
 CREATE TABLE IF NOT EXISTS comments (
     id BIGSERIAL PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,
-    post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-    created_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    post_id BIGINT NOT NULL REFERENCES posts(id),
+    created_by BIGINT REFERENCES users(id),
     updated_by BIGINT,
     nickname VARCHAR(100),
     email VARCHAR(255),
     content TEXT NOT NULL,
-    parent_id BIGINT REFERENCES comments(id) ON DELETE CASCADE,
+    parent_id BIGINT REFERENCES comments(id),
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -427,7 +427,7 @@ CREATE TABLE IF NOT EXISTS pages (
     meta_description VARCHAR(500),
     og_image         VARCHAR(500),
     template         VARCHAR(100) NOT NULL DEFAULT 'default',
-    parent_id        BIGINT REFERENCES pages(id) ON DELETE SET NULL,
+    parent_id        BIGINT REFERENCES pages(id),
     sort_order       INTEGER NOT NULL DEFAULT 0,
     status           VARCHAR(50) NOT NULL DEFAULT 'draft',
     created_by       BIGINT NOT NULL REFERENCES users(id),
@@ -461,7 +461,7 @@ CREATE TABLE IF NOT EXISTS reusable_blocks (
 CREATE TABLE IF NOT EXISTS media (
     id BIGSERIAL PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id),
     filename VARCHAR(255) NOT NULL,
     filepath VARCHAR(500) NOT NULL,
     mimetype VARCHAR(100) NOT NULL,

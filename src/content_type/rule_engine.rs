@@ -1065,7 +1065,7 @@ mod tests {
         let cfg = default_config();
         let rule = Rule::parse("created_at > @now", &cfg).unwrap();
         let (sql, _params) = rule.to_sql(0, &cfg);
-        assert!(sql.contains("datetime('now')"));
+        assert!(sql.contains("strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"));
     }
 
     #[test]

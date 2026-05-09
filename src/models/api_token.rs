@@ -216,6 +216,7 @@ mod tests {
         create(&pool, user_id, "First", "h1", "rblog_a", "[\"read\"]", None)
             .await
             .unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         create(
             &pool,
             user_id,

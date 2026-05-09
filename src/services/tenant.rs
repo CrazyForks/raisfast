@@ -53,19 +53,18 @@ impl TenantService {
 
     /// 创建租户
     pub async fn create(&self, req: &CreateTenantRequest) -> Result<Tenant, AppError> {
-        let (id, now) = crate::utils::id::new_id_and_timestamp();
+        let (id, _now) = crate::utils::id::new_document_id_and_timestamp();
         let config = req.config.as_ref().map_or_else(
             || "{}".into(),
             |c| serde_json::to_string(c).unwrap_or_else(|_| "{}".into()),
         );
         self.repo
-            .create(&id, &req.name, req.domain.as_deref(), &config, now)
+            .create(&id, &req.name, req.domain.as_deref(), &config)
             .await
     }
 
     /// 更新租户
     pub async fn update(&self, id: &str, req: &UpdateTenantRequest) -> Result<Tenant, AppError> {
-        let now = crate::utils::tz::now_utc();
         let config = req
             .config
             .as_ref()
@@ -77,7 +76,6 @@ impl TenantService {
                 req.domain.as_deref(),
                 config.as_deref(),
                 req.status.as_deref(),
-                now,
             )
             .await
     }

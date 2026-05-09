@@ -125,10 +125,9 @@ pub async fn create(
 
     match tenant_id {
         Some(tid) => {
-            let vals1 = (1..=5).map(ph).collect::<Vec<_>>().join(", ");
-            let vals2 = (6..=7).map(ph).collect::<Vec<_>>().join(", ");
+            let vals = (1..=7).map(ph).collect::<Vec<_>>().join(", ");
             let sql = format!(
-                "INSERT INTO users (document_id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES ({vals1}, 'reader', {vals2})"
+                "INSERT INTO users (document_id, tenant_id, email, username, password_hash, created_at, updated_at, role) VALUES ({vals}, 'reader')"
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -142,10 +141,9 @@ pub async fn create(
                 .await?;
         }
         None => {
-            let vals1 = (1..=4).map(ph).collect::<Vec<_>>().join(", ");
-            let vals2 = (5..=6).map(ph).collect::<Vec<_>>().join(", ");
+            let vals = (1..=6).map(ph).collect::<Vec<_>>().join(", ");
             let sql = format!(
-                "INSERT INTO users (document_id, email, username, password_hash, role, created_at, updated_at) VALUES ({vals1}, 'reader', {vals2})"
+                "INSERT INTO users (document_id, email, username, password_hash, created_at, updated_at, role) VALUES ({vals}, 'reader')"
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -181,7 +179,6 @@ pub async fn update_profile(
     cmd: &crate::commands::UpdateProfileCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
-    let now = crate::utils::tz::now_utc();
     let user = find_by_pk(pool, cmd.id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
@@ -203,7 +200,8 @@ pub async fn update_profile(
         .map(std::string::ToString::to_string)
         .or(user.avatar);
 
-    let filter = tenant_filter_ph(tenant_id, 7);
+    let now = crate::utils::tz::now_utc();
+    let filter = tenant_filter_ph(tenant_id, 6);
     let sql = format!(
         "UPDATE users SET username = {}, bio = {}, website = {}, avatar = {}, updated_at = {} WHERE id = {}{filter}",
         ph(1),
@@ -240,7 +238,7 @@ pub async fn update_password(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    let filter = tenant_filter_ph(tenant_id, 4);
+    let filter = tenant_filter_ph(tenant_id, 3);
     let sql = format!(
         "UPDATE users SET password_hash = {}, updated_at = {} WHERE document_id = {}{filter}",
         ph(1),
@@ -266,7 +264,7 @@ pub async fn update_phone(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    let filter = tenant_filter_ph(tenant_id, 4);
+    let filter = tenant_filter_ph(tenant_id, 3);
     let sql = format!(
         "UPDATE users SET phone = {}, updated_at = {} WHERE document_id = {}{filter}",
         ph(1),
@@ -323,7 +321,7 @@ pub async fn update_role(
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
     let now = crate::utils::tz::now_utc();
-    let filter = tenant_filter_ph(tenant_id, 4);
+    let filter = tenant_filter_ph(tenant_id, 3);
     let sql = format!(
         "UPDATE users SET role = {}, updated_at = {} WHERE document_id = {}{filter}",
         ph(1),

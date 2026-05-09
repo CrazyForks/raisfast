@@ -29,10 +29,10 @@ impl SqliteJobQueue {
 impl JobQueue for SqliteJobQueue {
     async fn enqueue(&self, new_job: NewJob) -> AppResult<()> {
         let id = Uuid::now_v7().to_string();
+        let now = crate::utils::tz::now_utc();
         let job_type = new_job.job.job_type();
         let payload = serialize_job(&new_job.job);
         let max_attempts = new_job.max_attempts.unwrap_or(3);
-        let now = crate::utils::tz::now_utc();
 
         sqlx::query(&format!(
             "INSERT INTO jobs ({COL_DOCUMENT_ID}, job_type, payload, status, max_attempts, run_after, created_at, updated_at)
@@ -123,7 +123,6 @@ impl JobQueue for SqliteJobQueue {
 
     async fn fail(&self, id: &str, error: &str) -> AppResult<()> {
         let now = crate::utils::tz::now_utc();
-
         let mut tx = self.pool.begin().await?;
 
         let row = sqlx::query(&format!(
@@ -143,16 +142,16 @@ impl JobQueue for SqliteJobQueue {
 
         if attempts >= max_attempts {
             sqlx::query(&format!(
-            "UPDATE jobs SET status = 'dead', error = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
-            ph(1),
-            ph(2),
-            ph(3)
-        ))
-        .bind(error)
-        .bind(now)
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
+                "UPDATE jobs SET status = 'dead', error = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
+                ph(1),
+                ph(2),
+                ph(3)
+            ))
+            .bind(error)
+            .bind(now)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
             tx.commit().await?;
             tracing::error!("job {id} dead: {error}");
             return Ok(());
@@ -309,7 +308,8 @@ impl JobQueue for SqliteJobQueue {
         let result = sqlx::query(&format!(
             "UPDATE jobs SET status = 'pending', attempts = 0, error = NULL, run_after = NULL, updated_at = {}
              WHERE {COL_DOCUMENT_ID} = {} AND status = 'dead'",
-            ph(1), ph(2)
+            ph(1),
+            ph(2)
         ))
         .bind(now)
         .bind(id)

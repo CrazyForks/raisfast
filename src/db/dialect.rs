@@ -32,7 +32,7 @@ pub fn sanitize_identifier(name: &str) -> Option<&str> {
 pub fn now_fn() -> &'static str {
     #[cfg(feature = "db-sqlite")]
     {
-        "datetime('now')"
+        "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
     }
     #[cfg(not(feature = "db-sqlite"))]
     {
@@ -70,7 +70,7 @@ pub fn ph(idx: usize) -> String {
 pub fn ago_expr(days: i64) -> String {
     #[cfg(feature = "db-sqlite")]
     {
-        format!("datetime('now', '-{days} days')")
+        format!("strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-{days} days')")
     }
     #[cfg(feature = "db-postgres")]
     {

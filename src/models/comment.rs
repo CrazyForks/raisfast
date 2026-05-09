@@ -98,10 +98,9 @@ pub async fn create(
 
     match tenant_id {
         Some(tid) => {
-            let vals1 = (1..=9).map(ph).collect::<Vec<_>>().join(", ");
-            let vals2 = (10..=11).map(ph).collect::<Vec<_>>().join(", ");
+            let vals = (1..=11).map(ph).collect::<Vec<_>>().join(", ");
             let sql = format!(
-                "INSERT INTO comments (document_id, tenant_id, post_id, created_by, updated_by, nickname, email, content, parent_id, status, created_at, updated_at) VALUES ({vals1}, 'pending', {vals2})"
+                "INSERT INTO comments (document_id, tenant_id, post_id, created_by, updated_by, nickname, email, content, parent_id, created_at, updated_at, status) VALUES ({vals}, 'pending')"
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -119,10 +118,9 @@ pub async fn create(
                 .await?;
         }
         None => {
-            let vals1 = (1..=8).map(ph).collect::<Vec<_>>().join(", ");
-            let vals2 = (9..=10).map(ph).collect::<Vec<_>>().join(", ");
+            let vals = (1..=10).map(ph).collect::<Vec<_>>().join(", ");
             let sql = format!(
-                "INSERT INTO comments (document_id, post_id, created_by, updated_by, nickname, email, content, parent_id, status, created_at, updated_at) VALUES ({vals1}, 'pending', {vals2})"
+                "INSERT INTO comments (document_id, post_id, created_by, updated_by, nickname, email, content, parent_id, created_at, updated_at, status) VALUES ({vals}, 'pending')"
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -271,8 +269,8 @@ pub async fn update_status(
     status: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let (_, now) = crate::utils::id::new_document_id_and_timestamp();
-    let filter = tenant_filter_ph(tenant_id, 4);
+    let now = crate::utils::tz::now_utc();
+    let filter = tenant_filter_ph(tenant_id, 3);
     let sql = format!(
         "UPDATE comments SET status = {}, updated_at = {} WHERE id = {}{filter}",
         ph(1),

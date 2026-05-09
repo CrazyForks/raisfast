@@ -59,13 +59,13 @@ pub async fn reset_password(
 
     let mut tx = pool.begin().await?;
 
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "UPDATE users SET password_hash = {}, updated_at = {} WHERE id = {}",
         crate::db::dialect::ph(1),
         crate::db::dialect::ph(2),
         crate::db::dialect::ph(3)
     );
-    let now = crate::utils::tz::now_utc();
     sqlx::query(&sql)
         .bind(&new_hash)
         .bind(now)

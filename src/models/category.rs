@@ -127,7 +127,37 @@ pub async fn create(
     match tenant_id {
         Some(tid) => {
             let sql = format!(
-                "INSERT INTO categories (document_id, tenant_id, name, slug, description, parent_id, sort_order, created_by, updated_by, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                "INSERT INTO categories (document_id, tenant_id, name, slug, description, parent_id, sort_order, created_by, updated_by, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11)
+            );
+            sqlx::query(&sql)
+                .bind(&document_id)
+                .bind(tid)
+                .bind(&cmd.name)
+                .bind(&cmd.slug)
+                .bind(&cmd.description)
+                .bind(cmd.parent_id)
+                .bind(cmd.sort_order)
+                .bind(created_by)
+                .bind(created_by)
+                .bind(now)
+                .bind(now)
+                .execute(pool)
+                .await?;
+        }
+        None => {
+            let sql = format!(
+                "INSERT INTO categories (document_id, name, slug, description, parent_id, sort_order, created_by, updated_by, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
                 ph(1),
                 ph(2),
                 ph(3),
@@ -141,7 +171,6 @@ pub async fn create(
             );
             sqlx::query(&sql)
                 .bind(&document_id)
-                .bind(tid)
                 .bind(&cmd.name)
                 .bind(&cmd.slug)
                 .bind(&cmd.description)
@@ -150,31 +179,6 @@ pub async fn create(
                 .bind(created_by)
                 .bind(created_by)
                 .bind(now)
-                .execute(pool)
-                .await?;
-        }
-        None => {
-            let sql = format!(
-                "INSERT INTO categories (document_id, name, slug, description, parent_id, sort_order, created_by, updated_by, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(&cmd.name)
-                .bind(&cmd.slug)
-                .bind(&cmd.description)
-                .bind(cmd.parent_id)
-                .bind(cmd.sort_order)
-                .bind(created_by)
-                .bind(created_by)
                 .bind(now)
                 .execute(pool)
                 .await?;
@@ -194,7 +198,6 @@ pub async fn update(
 ) -> AppResult<Category> {
     let cat_id: i64 = cmd.id;
     let existing = find_by_id(pool, cat_id, tenant_id).await?;
-    let now = crate::utils::tz::now_utc();
 
     let name = cmd.name.as_deref().unwrap_or(&existing.name);
     let slug = cmd.slug.as_deref().unwrap_or(&existing.slug);
@@ -206,6 +209,7 @@ pub async fn update(
     let parent = cmd.parent_id.or(existing.parent_id);
     let sort = cmd.sort_order.unwrap_or(existing.sort_order);
 
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "UPDATE categories SET name = {}, slug = {}, description = {}, parent_id = {}, sort_order = {}, updated_by = {}, updated_at = {} WHERE id = {}{}",
         ph(1),

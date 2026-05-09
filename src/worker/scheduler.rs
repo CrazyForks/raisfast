@@ -460,7 +460,10 @@ impl CronScheduler {
         if let Some(next) = &next {
             sqlx::query(&format!(
                 "UPDATE cron_schedules SET last_run_at = {}, next_run_at = {}, updated_at = {} WHERE id = {}",
-                ph(1), ph(2), ph(3), ph(4)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4)
             ))
             .bind(now)
             .bind(next)
@@ -694,7 +697,6 @@ pub async fn sync_plugin_crons(
     entries: &[CronEntry],
 ) -> AppResult<()> {
     let mut tx = pool.begin().await?;
-    let now = crate::utils::tz::now_utc();
 
     let old = sqlx::query_as::<_, PluginCronRow>(&format!(
         "SELECT id, job_type FROM cron_schedules WHERE plugin_id = {}",
@@ -731,6 +733,7 @@ pub async fn sync_plugin_crons(
         .await?;
 
         if let Some(existing_row) = existing {
+            let now = crate::utils::tz::now_utc();
             let next = next_run(&entry.cron_expr, crate::utils::tz::now_utc())?;
             sqlx::query(&format!(
                 "UPDATE cron_schedules SET label = {}, payload = {}, cron_expr = {}, enabled = {}, next_run_at = {}, updated_at = {} WHERE id = {}",
@@ -749,8 +752,8 @@ pub async fn sync_plugin_crons(
             tracing::debug!("updated cron '{}' for plugin {plugin_id}", entry.job_type);
         } else {
             let document_id = uuid::Uuid::now_v7().to_string();
-            let next = next_run(&entry.cron_expr, crate::utils::tz::now_utc())?;
             let now = crate::utils::tz::now_utc();
+            let next = next_run(&entry.cron_expr, crate::utils::tz::now_utc())?;
             sqlx::query(&format!(
                 "INSERT INTO cron_schedules (document_id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
                  VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",

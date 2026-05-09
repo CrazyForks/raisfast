@@ -60,8 +60,8 @@ pub async fn create(
     name: &str,
     domain: Option<&str>,
     config: &str,
-    created_at: Timestamp,
 ) -> AppResult<Tenant> {
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "INSERT INTO tenants (document_id, name, domain, config, status, created_at, updated_at) VALUES ({}, {}, {}, {}, 'active', {}, {})",
         ph(1),
@@ -76,8 +76,8 @@ pub async fn create(
         .bind(name)
         .bind(domain)
         .bind(config)
-        .bind(created_at)
-        .bind(created_at)
+        .bind(now)
+        .bind(now)
         .execute(pool)
         .await
         .map_err(|e| AppError::Conflict(format!("create tenant failed: {e}")))?;
@@ -95,35 +95,36 @@ pub async fn update(
     domain: Option<&str>,
     config: Option<&str>,
     status: Option<&str>,
-    updated_at: Timestamp,
 ) -> AppResult<Tenant> {
     let mut sets = Vec::new();
     let mut idx = 1usize;
+    let now = crate::utils::tz::now_utc();
+    sets.push(format!("updated_at = {}", ph(idx)));
     if name.is_some() {
-        sets.push(format!("name = {}", ph(idx)));
         idx += 1;
+        sets.push(format!("name = {}", ph(idx)));
     }
     if domain.is_some() {
-        sets.push(format!("domain = {}", ph(idx)));
         idx += 1;
+        sets.push(format!("domain = {}", ph(idx)));
     }
     if config.is_some() {
-        sets.push(format!("config = {}", ph(idx)));
         idx += 1;
+        sets.push(format!("config = {}", ph(idx)));
     }
     if status.is_some() {
-        sets.push(format!("status = {}", ph(idx)));
         idx += 1;
+        sets.push(format!("status = {}", ph(idx)));
     }
-    sets.push(format!("updated_at = {}", ph(idx)));
-    idx += 1;
 
+    idx += 1;
     let sql = format!(
         "UPDATE tenants SET {} WHERE document_id = {}",
         sets.join(", "),
         ph(idx),
     );
     let mut q = sqlx::query(&sql);
+    q = q.bind(now);
     if let Some(n) = name {
         q = q.bind(n);
     }
@@ -136,7 +137,7 @@ pub async fn update(
     if let Some(s) = status {
         q = q.bind(s);
     }
-    q = q.bind(updated_at).bind(document_id);
+    q = q.bind(document_id);
     q.execute(pool).await?;
 
     find_by_id(pool, document_id)
@@ -168,17 +169,9 @@ mod tests {
     async fn create_and_find_by_id() {
         let pool = setup_pool().await;
         let doc_id = "tenant-001";
-        let now = crate::utils::tz::now_utc();
-        let row = create(
-            &pool,
-            doc_id,
-            "Test Tenant",
-            Some("test.example.com"),
-            "{}",
-            now,
-        )
-        .await
-        .unwrap();
+        let row = create(&pool, doc_id, "Test Tenant", Some("test.example.com"), "{}")
+            .await
+            .unwrap();
         assert_eq!(row.document_id, doc_id);
         assert_eq!(row.name, "Test Tenant");
         assert_eq!(row.domain.unwrap(), "test.example.com");
@@ -191,14 +184,12 @@ mod tests {
     #[tokio::test]
     async fn find_by_domain_returns_match() {
         let pool = setup_pool().await;
-        let now = crate::utils::tz::now_utc();
         create(
             &pool,
             "tenant-002",
             "Dom Tenant",
             Some("dom.example.com"),
             "{}",
-            now,
         )
         .await
         .unwrap();
@@ -217,14 +208,13 @@ mod tests {
     #[tokio::test]
     async fn find_all_returns_all() {
         let pool = setup_pool().await;
-        let now = crate::utils::tz::now_utc();
-        create(&pool, "tenant-a", "Alpha", None, "{}", now)
+        create(&pool, "tenant-a", "Alpha", None, "{}")
             .await
             .unwrap();
-        create(&pool, "tenant-b", "Bravo", None, "{}", now)
+        create(&pool, "tenant-b", "Bravo", None, "{}")
             .await
             .unwrap();
-        create(&pool, "tenant-c", "Charlie", None, "{}", now)
+        create(&pool, "tenant-c", "Charlie", None, "{}")
             .await
             .unwrap();
 
@@ -236,20 +226,11 @@ mod tests {
     async fn update_changes_name() {
         let pool = setup_pool().await;
         let doc_id = "tenant-003";
-        let now = crate::utils::tz::now_utc();
-        create(
-            &pool,
-            doc_id,
-            "Original",
-            Some("orig.example.com"),
-            "{}",
-            now,
-        )
-        .await
-        .unwrap();
+        create(&pool, doc_id, "Original", Some("orig.example.com"), "{}")
+            .await
+            .unwrap();
 
-        let later = crate::utils::tz::now_utc();
-        let updated = update(&pool, doc_id, Some("Updated Name"), None, None, None, later)
+        let updated = update(&pool, doc_id, Some("Updated Name"), None, None, None)
             .await
             .unwrap();
         assert_eq!(updated.name, "Updated Name");
@@ -260,10 +241,7 @@ mod tests {
     async fn delete_removes_tenant() {
         let pool = setup_pool().await;
         let doc_id = "tenant-004";
-        let now = crate::utils::tz::now_utc();
-        create(&pool, doc_id, "ToDelete", None, "{}", now)
-            .await
-            .unwrap();
+        create(&pool, doc_id, "ToDelete", None, "{}").await.unwrap();
 
         delete(&pool, doc_id).await.unwrap();
         let found = find_by_id(&pool, doc_id).await.unwrap();

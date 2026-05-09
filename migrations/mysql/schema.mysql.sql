@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     token VARCHAR(500) UNIQUE NOT NULL,
     expires_at DATETIME(3) NOT NULL,
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS options (
     is_public BOOLEAN NOT NULL DEFAULT FALSE,
     autoload BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order INT NOT NULL DEFAULT 0,
-    updated_at DATETIME(3) NOT NULL,
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     UNIQUE KEY uq_options_option_key (`option_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -74,8 +74,8 @@ CREATE TABLE IF NOT EXISTS roles (
     name VARCHAR(100) NOT NULL UNIQUE,
     description TEXT,
     is_system BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at DATETIME(3) NOT NULL,
-    updated_at DATETIME(3) NOT NULL
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- RBAC 权限
@@ -87,8 +87,8 @@ CREATE TABLE IF NOT EXISTS permissions (
     subject VARCHAR(255) NOT NULL,
     fields JSON,
     conditions JSON,
-    created_at DATETIME(3) NOT NULL,
-    FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    FOREIGN KEY (role_id) REFERENCES roles(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE UNIQUE INDEX idx_permissions_role_action_subject
@@ -102,8 +102,8 @@ CREATE TABLE IF NOT EXISTS tenants (
     domain VARCHAR(255) UNIQUE,
     config JSON NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'active',
-    created_at DATETIME(3) NOT NULL,
-    updated_at DATETIME(3) NOT NULL
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 审计日志
@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     detail TEXT,
     ip_address VARCHAR(45),
     user_agent TEXT,
-    created_at DATETIME(3) NOT NULL
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_audit_log_action ON audit_log(action);
@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     last_used_at DATETIME(3),
     expires_at DATETIME(3),
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_api_tokens_user_id ON api_tokens(user_id);
@@ -152,8 +152,8 @@ CREATE TABLE IF NOT EXISTS webhook_subscriptions (
     events JSON NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     description TEXT,
-    created_at DATETIME(3) NOT NULL,
-    updated_at DATETIME(3) NOT NULL
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_webhook_subscriptions_enabled ON webhook_subscriptions(enabled);
@@ -179,7 +179,7 @@ CREATE TABLE IF NOT EXISTS content_revisions (
     revision_number INT NOT NULL,
     snapshot TEXT NOT NULL,
     created_by BIGINT,
-    created_at DATETIME(3) NOT NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     UNIQUE KEY uq_revision (content_type, record_id, revision_number)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -205,7 +205,7 @@ CREATE TABLE IF NOT EXISTS oauth_accounts (
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     UNIQUE KEY uq_oauth_provider (provider, provider_user_id),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_oauth_accounts_user ON oauth_accounts(user_id);
@@ -233,7 +233,7 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
     expires_at DATETIME(3) NOT NULL,
     used_at DATETIME(3),
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_password_reset_tokens_token ON password_reset_tokens(token);
@@ -267,7 +267,7 @@ CREATE TABLE IF NOT EXISTS email_verification_tokens (
     expires_at DATETIME(3) NOT NULL,
     verified_at DATETIME(3),
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_email_verification_tokens_token ON email_verification_tokens(token);
@@ -285,8 +285,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     max_attempts INT NOT NULL DEFAULT 3,
     run_after    DATETIME(3),
     error        TEXT,
-    created_at   DATETIME(3) NOT NULL,
-    updated_at   DATETIME(3) NOT NULL
+    created_at   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_jobs_status ON jobs(status);
@@ -305,8 +305,8 @@ CREATE TABLE IF NOT EXISTS cron_schedules (
     last_run_at  DATETIME(3),
     next_run_at  DATETIME(3) NOT NULL,
     plugin_id    VARCHAR(100),
-    created_at   DATETIME(3) NOT NULL,
-    updated_at   DATETIME(3) NOT NULL
+    created_at   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_cron_enabled ON cron_schedules(enabled);
@@ -346,7 +346,7 @@ CREATE TABLE IF NOT EXISTS categories (
     updated_by BIGINT,
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (parent_id) REFERENCES categories(id) ON DELETE SET NULL
+    FOREIGN KEY (parent_id) REFERENCES categories(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 标签
@@ -379,8 +379,8 @@ CREATE TABLE IF NOT EXISTS posts (
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     published_at DATETIME(3),
-    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
+    FOREIGN KEY (created_by) REFERENCES users(id),
+    FOREIGN KEY (category_id) REFERENCES categories(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_posts_slug ON posts(slug);
@@ -400,8 +400,8 @@ CREATE TABLE IF NOT EXISTS posts_tags (
     post_id BIGINT NOT NULL,
     tag_id BIGINT NOT NULL,
     PRIMARY KEY (post_id, tag_id),
-    FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
-    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+    FOREIGN KEY (post_id) REFERENCES posts(id),
+    FOREIGN KEY (tag_id) REFERENCES tags(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_posts_tags_tag_id ON posts_tags(tag_id);
@@ -420,9 +420,9 @@ CREATE TABLE IF NOT EXISTS comments (
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
-    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
-    FOREIGN KEY (parent_id) REFERENCES comments(id) ON DELETE CASCADE
+    FOREIGN KEY (post_id) REFERENCES posts(id),
+    FOREIGN KEY (created_by) REFERENCES users(id),
+    FOREIGN KEY (parent_id) REFERENCES comments(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_comments_post ON comments(post_id);
@@ -455,7 +455,7 @@ CREATE TABLE IF NOT EXISTS pages (
     created_at       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (created_by) REFERENCES users(id),
-    FOREIGN KEY (parent_id) REFERENCES pages(id) ON DELETE SET NULL
+    FOREIGN KEY (parent_id) REFERENCES pages(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_pages_slug      ON pages(slug);
@@ -489,7 +489,7 @@ CREATE TABLE IF NOT EXISTS media (
     width INT,
     height INT,
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_media_user_created

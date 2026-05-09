@@ -91,17 +91,16 @@ impl RbacService {
 
     /// 创建角色
     pub async fn create_role(&self, req: &CreateRoleRequest) -> Result<Role, AppError> {
-        let (id, now) = crate::utils::id::new_id_and_timestamp();
+        let (id, _now) = crate::utils::id::new_document_id_and_timestamp();
         self.repo
-            .create_role(&id, &req.name, req.description.as_deref(), now)
+            .create_role(&id, &req.name, req.description.as_deref())
             .await
     }
 
     /// 更新角色
     pub async fn update_role(&self, id: &str, req: &UpdateRoleRequest) -> Result<Role, AppError> {
-        let now = crate::utils::tz::now_utc();
         self.repo
-            .update_role(id, req.name.as_deref(), req.description.as_deref(), now)
+            .update_role(id, req.name.as_deref(), req.description.as_deref())
             .await
     }
 
@@ -142,7 +141,7 @@ impl RbacService {
         self.repo.delete_permissions_by_role_id(role.id).await?;
 
         for entry in entries {
-            let (doc_id, now) = crate::utils::id::new_id_and_timestamp();
+            let (doc_id, _now) = crate::utils::id::new_document_id_and_timestamp();
             let fields_json = entry
                 .fields
                 .as_ref()
@@ -160,7 +159,6 @@ impl RbacService {
                     &entry.subject,
                     fields_json.as_deref(),
                     conditions_json.as_deref(),
-                    now,
                 )
                 .await?;
         }

@@ -345,6 +345,7 @@ async fn multiple_tokens_per_user() {
         ),
     )
     .await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     send(
         &mut app,
         post_json_auth(
@@ -354,6 +355,7 @@ async fn multiple_tokens_per_user() {
         ),
     )
     .await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     send(
         &mut app,
         post_json_auth(

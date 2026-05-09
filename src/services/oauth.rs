@@ -315,7 +315,7 @@ async fn auto_register_user(
         .await?;
 
     if let Some(avatar) = &user_info.avatar_url {
-        let now = crate::utils::tz::now_str();
+        let now = crate::utils::tz::now_utc();
         let sql = format!(
             "UPDATE users SET avatar = {}, email_verified = 1, updated_at = {} WHERE id = {}",
             crate::db::dialect::ph(1),
@@ -329,7 +329,7 @@ async fn auto_register_user(
             .execute(pool)
             .await?;
     } else {
-        let now = crate::utils::tz::now_str();
+        let now = crate::utils::tz::now_utc();
         let sql = format!(
             "UPDATE users SET email_verified = 1, updated_at = {} WHERE id = {}",
             crate::db::dialect::ph(1),

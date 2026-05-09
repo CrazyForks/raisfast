@@ -48,10 +48,9 @@ pub async fn create_state(
     user_id: Option<i64>,
     expires_at: &str,
 ) -> AppResult<String> {
-    let document_id = crate::utils::id::new_document_id();
-    let now = crate::utils::tz::now_utc();
+    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
     let sql = format!(
-        "INSERT INTO oauth_states (document_id, provider, code_verifier, user_id, created_at, expires_at) VALUES ({}, {}, {}, {}, {}, {})",
+        "INSERT INTO oauth_states (document_id, provider, code_verifier, user_id, expires_at, created_at) VALUES ({}, {}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
@@ -68,7 +67,7 @@ pub async fn create_state(
     } else {
         q.bind(Option::<i64>::None)
     };
-    q.bind(now).bind(expires_at).execute(pool).await?;
+    q.bind(expires_at).bind(now).execute(pool).await?;
     Ok(document_id)
 }
 
@@ -222,7 +221,7 @@ pub async fn update_account(
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     let sql = format!(
-        "UPDATE oauth_accounts SET email = {}, display_name = {}, avatar_url = {}, access_token = {}, refresh_token = {}, token_expires_at = {}, profile = {}, updated_at = {} WHERE id = {}",
+        "UPDATE oauth_accounts SET updated_at = {}, email = {}, display_name = {}, avatar_url = {}, access_token = {}, refresh_token = {}, token_expires_at = {}, profile = {} WHERE id = {}",
         ph(1),
         ph(2),
         ph(3),
@@ -234,6 +233,7 @@ pub async fn update_account(
         ph(9)
     );
     sqlx::query(&sql)
+        .bind(now)
         .bind(params.email)
         .bind(params.display_name)
         .bind(params.avatar_url)
@@ -241,7 +241,6 @@ pub async fn update_account(
         .bind(params.refresh_token)
         .bind(params.token_expires_at)
         .bind(params.profile)
-        .bind(now)
         .bind(params.id)
         .execute(pool)
         .await?;
