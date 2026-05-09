@@ -9,6 +9,10 @@ pub struct NoopSearchEngine;
 
 #[async_trait::async_trait]
 impl SearchEngine for NoopSearchEngine {
+    fn engine_name(&self) -> &str {
+        "noop"
+    }
+
     async fn index_post(&self, _post: &super::SearchablePost) -> AppResult<()> {
         Ok(())
     }

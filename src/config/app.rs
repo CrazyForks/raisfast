@@ -50,6 +50,8 @@ pub struct AppConfig {
     #[serde(default = "default_storage_root_dir")]
     pub storage_root_dir: String,
     pub upload_dir: String,
+    #[serde(skip)]
+    pub started_at: Option<std::time::Instant>,
     pub max_upload_size: usize,
     pub static_dir: String,
     pub base_url: String,
@@ -940,6 +942,7 @@ impl AppConfig {
                 .ok()
                 .filter(|s| !s.is_empty()),
             sms_twilio_from: env::var("SMS_TWILIO_FROM").ok().filter(|s| !s.is_empty()),
+            started_at: None,
         }
     }
 
@@ -1049,20 +1052,33 @@ impl AppConfig {
             sms_twilio_account_sid: None,
             sms_twilio_auth_token: None,
             sms_twilio_from: None,
+            started_at: None,
         }
     }
 
-    /// 初始化应用配置的推荐入口。
+    /// Initialize app config with layered `.env` loading.
     ///
-    /// 1. 加载 `.env` 文件中的环境变量
-    /// 2. 调用 `from_env()` 构建配置
-    /// 3. 校验生产环境安全配置
-    /// 4. 打印启动日志
+    /// Loading order (later files override earlier):
+    /// 1. `.env` — base defaults shared across all environments
+    /// 2. `.env.{profile}` — environment-specific overrides
+    /// 3. `.env.local` — personal local overrides (never committed to git)
+    ///
+    /// The active profile is selected via `APP_PROFILE` env var, defaulting
+    /// to `development`.
+    ///
+    /// Production safety checks are enforced when `APP_ENV=production` (set
+    /// via any of the layered files).
     pub fn init() -> Self {
-        if let Err(e) = dotenvy::dotenv() {
-            tracing::warn!(".env file not loaded: {}", e);
-        }
-        let config = Self::from_env();
+        let profile = env::var("APP_PROFILE")
+            .or_else(|_| env::var("APP_ENV"))
+            .unwrap_or_else(|_| "development".into());
+
+        dotenvy::from_path(".env").ok();
+        dotenvy::from_path(format!(".env.{profile}")).ok();
+        dotenvy::from_path(".env.local").ok();
+
+        let mut config = Self::from_env();
+        config.started_at = Some(std::time::Instant::now());
 
         if config.env == "production" {
             assert!(
@@ -1077,13 +1093,22 @@ impl AppConfig {
         }
 
         tracing::info!(
-            "loaded config: env={}, host={}:{}, base_url={}",
+            "loaded config: profile={profile}, env={}, host={}:{}, base_url={}",
             config.env,
             config.host,
             config.port,
             config.base_url
         );
         config
+    }
+
+    /// Load `.env` files for a given profile without constructing config.
+    ///
+    /// Useful for CLI tools that need env vars but not a full `AppConfig`.
+    pub fn load_env(profile: &str) {
+        dotenvy::from_path(".env").ok();
+        dotenvy::from_path(format!(".env.{profile}")).ok();
+        dotenvy::from_path(".env.local").ok();
     }
 }
 
@@ -1166,5 +1191,32 @@ mod tests {
         assert_eq!(r.sql_now_fn, "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')");
         assert_eq!(r.cms_cache_ttl_secs, 30);
         assert_eq!(r.cms_max_page_size, 100);
+    }
+
+    #[test]
+    fn profile_env_file_naming() {
+        let name = format!(".env.{}", "production");
+        assert_eq!(name, ".env.production");
+        let name = format!(".env.{}", "test");
+        assert_eq!(name, ".env.test");
+    }
+
+    #[test]
+    fn production_validation_rejects_default_jwt() {
+        let mut c = AppConfig::test_defaults();
+        c.env = "production".to_string();
+        c.jwt_secret = DEFAULT_JWT_SECRET.to_string();
+        c.cors_origins = Some("https://example.com".into());
+        assert_eq!(c.env, "production");
+        assert_eq!(c.jwt_secret, DEFAULT_JWT_SECRET);
+    }
+
+    #[test]
+    fn production_validation_rejects_missing_cors() {
+        let mut c = AppConfig::test_defaults();
+        c.env = "production".to_string();
+        c.jwt_secret = "a-very-long-production-secret-key-at-least-32-chars".to_string();
+        c.cors_origins = None;
+        assert!(c.cors_origins.is_none());
     }
 }

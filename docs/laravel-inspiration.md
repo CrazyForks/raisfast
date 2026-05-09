@@ -38,33 +38,44 @@ raisfast db rollback --step=3 # 回滚最近 3 个
 
 **现状**：测试中到处手写 `sqlx::query("INSERT INTO users ...")`，重复且易错。
 
-**方案**：借鉴 Laravel Factory 模式，为每个模型提供 Builder：
+**方案**：使用 derive 宏自动生成 Factory，而非 Laravel 式的手写 builder。Rust 的类型系统可以在编译期保证必填字段不为空，无需运行时校验。
 
 ```rust
-// src/test_factory.rs 或 src/testing/mod.rs
+// 在 proc-macro crate 中定义 derive 宏
 
-let user = UserFactory::new(&pool)
-    .email("admin@test.com")
-    .role("admin")
-    .create()
-    .await;
+#[derive(Factory)]
+#[factory(table = "users")]
+struct UserFactory {
+    #[factory(default = "Uuid::now_v7().to_string()")]
+    id: String,
+    #[factory(default = "format!(\"user_{}@test.com\", random_suffix())")]
+    email: String,
+    #[factory(default = "format!(\"user_{}\", random_suffix())")]
+    username: String,
+    #[factory(default = "\"$2b$12$fake_hash\".to_string()")]
+    password_hash: String,
+    #[factory(default = "Role::Author")]
+    role: Role,
+    #[factory(default = "Utc::now().to_rfc3339()")]
+    created_at: String,
+}
 
-let post = PostFactory::new(&pool)
-    .author(&user)
-    .status("published")
-    .tags(&[&tag1, &tag2])
-    .create()
-    .await;
+// 自动生成:
+// - UserFactory::new(pool) -> UserFactoryBuilder<MissingRequiredFields>
+// - .email("x@t.com") -> UserFactoryBuilder<HasEmail>
+// - .create() 编译通过（所有必填字段已设置）
 ```
 
-每个 Factory 封装：
-- 必填字段的默认值生成（UUID、时间戳、随机字符串）
-- 外键关联自动解析
-- 可链式覆盖任意字段
+核心设计点：
+- `#[derive(Factory)]` 在 proc-macro crate 中实现，解析字段属性生成 builder
+- 利用泛型状态机（phantom-typed builder）在**编译期**强制必填字段
+- `#[factory(default = ...)]` 标记可选覆盖字段，不填则使用默认值
+- 外键关联通过 `.associate("post", &post)` 自动解析
+- 生成的代码直接执行 `sqlx::query("INSERT INTO ...")` ，不引入额外 ORM 层
 
 **收益**：测试代码量砍半，可读性翻倍，新增测试不再是体力活。
 
-**工作量**：3-5 天（覆盖核心 8 个模型）
+**工作量**：3-5 天（含 proc-macro crate + 覆盖核心 8 个模型）
 
 ---
 
@@ -106,37 +117,56 @@ Handler 层强制约定：
 
 ---
 
-### 4. Model Observer（数据生命周期钩子）
+### 4. Lifecycle Hook（数据生命周期钩子）
 
 **现状**：`slug` 生成、`excerpt` 截取、时间戳填充散落在各 service 函数中，难以复用和扩展。
 
-**方案**：统一的生命周期事件钩子，和现有 EventBus 互补：
+**方案**：基于现有 `EventBus`（`src/eventbus.rs`）构建 Lifecycle Hook 系统。与 Laravel Observer 不同，Rust 版本不使用独立观察者注册表，而是复用已有的 pub/sub 基础设施，以 sync callback 形式在 service 层拦截。
 
 ```rust
-// 观察者注册（在 startup 时）
-observer::on("posts", Event::BeforeCreate, |ctx| {
-    ctx.data["slug"] = generate_slug(&ctx.data["title"]);
-    ctx.data["excerpt"] = extract_excerpt(&ctx.data["content"], 200);
-});
+// src/lifecycle.rs — 基于 EventBus 的钩子注册
 
-observer::on("posts", Event::AfterCreate, |ctx| {
-    ctx.eventbus.emit(Event::PostCreated { id: ctx.id });
-});
+use crate::eventbus::Event;
 
-observer::on("users", Event::BeforeCreate, |ctx| {
-    ctx.data["password_hash"] = hash_password(ctx.data["password"]);
-});
+pub struct LifecycleHooks;
+
+impl LifecycleHooks {
+    /// 在 startup 时调用，注册所有内置钩子
+    pub fn register(bus: &EventBus) {
+        // Slug 自动生成 — 写入前拦截
+        bus.on_sync(Event::PostCreating, |ctx| {
+            ctx.data["slug"] = generate_slug(&ctx.data["title"]);
+        });
+
+        // Excerpt 自动截取
+        bus.on_sync(Event::PostCreating, |ctx| {
+            ctx.data["excerpt"] = extract_excerpt(&ctx.data["content"], 200);
+        });
+
+        // 搜索索引更新 — 写入后异步触发
+        bus.on_sync(Event::PostCreated, |ctx| {
+            bus.emit(Event::SearchIndexUpdate { id: ctx.id });
+        });
+    }
+}
 ```
 
-生命周期事件：
-- `BeforeValidate` — 数据校验前
-- `BeforeCreate` / `BeforeUpdate` — 写入前修改数据
-- `AfterCreate` / `AfterUpdate` — 写入后触发副作用
-- `BeforeDelete` / `AfterDelete` — 删除前后
+设计要点：
+- **复用 EventBus**：`PostCreating` / `PostCreated` 等事件已在 `eventbus.rs` 中定义（`#[non_exhaustive]` enum）
+- **Sync hook**（`on_sync`）：在 service 写入 DB 前同步执行，可修改数据（slug、excerpt、password_hash）
+- **Async hook**：写入后通过 `bus.emit()` 异步触发副作用（搜索索引、webhook、通知）
+- **插件集成**：插件通过 `bus.on_sync(Event::Custom { ... }, handler)` 注册钩子
+- 生命周期事件映射：`PostCreating` → before create, `PostCreated` → after create，无需新建事件体系
 
-插件系统可以 `register_observer` 接入，无需修改核心代码。
+与 Laravel Observer 的区别：
+| | Laravel Observer | Rust Lifecycle Hook |
+|---|---|---|
+| 注册方式 | 独立 `Observer` 类 + `observe()` | 复用 `EventBus::on_sync()` |
+| 数据修改 | `$event->model->slug = ...` | `ctx.data["slug"] = ...` |
+| 异步 | 无（同步框架） | Sync 拦截 + Async 副作用 |
+| 插件扩展 | Service Provider 注册 | `bus.on_sync(Event::Custom)` |
 
-**工作量**：3-5 天
+**工作量**：2-3 天
 
 ---
 
@@ -245,30 +275,71 @@ if storage_root.join("maintenance").exists() && !is_exempt_path(&req) {
 
 ### 8. Query Scope（可复用查询片段）
 
-**现状**：每个 handler 重复拼 SQL WHERE 条件（`status = 'published'`、`created_at DESC` 等）。
+**现状**：每个 handler 重复拼 SQL WHERE 条件（`status = 'published'`、`created_at DESC` 等）。当前使用 `format!()` + `ph()` 手动拼接。
 
-**方案**：
+**方案**：Laravel 使用 `&mut QueryBuilder` 传入 scope 函数，但这种 `&mut` 模式在 Rust 中组合性差（借用冲突）。改为**方法链 + 泛型状态机**实现类型安全的查询组合：
 
 ```rust
 // src/repositories/scopes.rs
 
-pub fn published(query: &mut QueryBuilder) {
-    query.where("status = 'published'");
+/// Phantom-typed state machine：编译期追踪已应用的 filter
+pub struct Query<S: ScopeState = Init> {
+    table: &'static str,
+    clauses: Vec<String>,
+    params: Vec<SqliteValue>,
+    _state: PhantomData<S>,
 }
 
-pub fn by_author(query: &mut QueryBuilder, author_id: i64) {
-    query.where("created_by = ?").bind(author_id);
+// 状态标记
+pub struct Init;
+pub struct Published;
+pub struct ByAuthor { author_id: i64 }
+pub struct Paginated { page: u32, page_size: u32 }
+
+impl Query<Init> {
+    pub fn from(table: &'static str) -> Self { ... }
 }
 
-// 使用
-let mut q = QueryBuilder::select("posts");
-published(&mut q);
-by_author(&mut q, user.id);
-q.order("created_at", "DESC");
-let posts = q.fetch_all(&pool).await?;
+impl<S: ScopeState> Query<S> {
+    /// 所有 scope 方法返回新类型，链式调用
+    pub fn published(self) -> Query<Published> {
+        // status = 'published' 已编译期嵌入
+        ...
+    }
+
+    pub fn by_author(self, id: i64) -> Query<ByAuthor> {
+        ...
+    }
+
+    pub fn paginate(self, page: u32, size: u32) -> Query<Paginated> {
+        ...
+    }
+}
+
+// 使用 — 编译期保证 published() 只调用一次
+let posts = Query::from("posts")
+    .published()
+    .by_author(user.id)
+    .paginate(1, 20)
+    .fetch_all::<Post>(&pool)
+    .await?;
 ```
 
-**工作量**：2-3 天
+设计要点：
+- **Phantom-typed state machine**：每个 `scope` 方法消费 `self` 并返回新状态类型，防止重复调用（`published().published()` 编译报错）
+- **与 `ph()` 兼容**：内部仍使用 `db::dialect::ph()` 生成跨库占位符
+- **零运行时开销**：所有状态追踪在编译期完成
+- **可组合**：不同 scope 状态可以自由组合，只需为最终状态实现 `fetch_all`
+
+与 Laravel Scope 的区别：
+| | Laravel Scope | Rust Query Scope |
+|---|---|---|
+| 机制 | `&mut QueryBuilder` 传入函数 | 方法链消费 self 返回新状态 |
+| 安全性 | 运行时可能重复应用 filter | 编译期防止重复 |
+| 组合性 | 自由组合，可能冲突 | 类型状态显式编码组合关系 |
+| 跨库 | Eloquent 抽象 | 复用 `ph()` / `dialect` |
+
+**工作量**：3-5 天
 
 ---
 
@@ -300,12 +371,13 @@ Worker 从队列表拉取，处理后删除。重启不丢任务。
 
 | 特性 | 说明 | 工作量 |
 |------|------|--------|
-| **Config Cache** | `.env` 解析结果序列化缓存，避免每次重启重读 | 1 天 |
 | **Rate Limit per User** | 按 user_id / IP 限流，当前只有全局/路由级 | 1-2 天 |
 | **Scheduled Tasks 声明式** | Fluent API 替代 JSON cron 配置 | 2-3 天 |
 | **Storage Symlink** | `storage:link` 命令创建 `public/storage → storage/uploads` 软链 | 0.5 天 |
 | **Telescope 调试面板** | 记录 SQL 查询、请求日志、异常到 SQLite，管理后台查看 | 5-7 天 |
 | **Horizon 队列监控** | Worker 任务状态、失败重试的可视化 | 5-7 天 |
+
+> **注意**：Laravel 的 **Config Cache** 在 Rust 中无意义。`AppConfig::from_env()` 启动时一次性从 `.env` 读取所有配置，存入 `Arc<AppConfig>` 全生命周期共享，已经是"零成本缓存"。无需额外缓存层。
 
 ---
 
@@ -320,7 +392,7 @@ API Resource 转换层 (P0-3)
     ↓
 Migration 回滚 (P0-1)
     ↓
-Observer (P0-4)
+Lifecycle Hook (P0-4)
     ↓
 Policy (P1-5)
     ↓
@@ -329,4 +401,14 @@ Policy (P1-5)
 其余 P2 项按需排期
 ```
 
-前两项改动小收益大，中间两项是安全和可维护性相关，Observer 和 Policy 是架构升级。
+前两项改动小收益大，中间两项是安全和可维护性相关，Lifecycle Hook 和 Policy 是架构升级。
+
+## Laravel → Rust 适配原则
+
+| Laravel 模式 | Rust 适配 | 原因 |
+|---|---|---|
+| Factory（手写 builder） | `#[derive(Factory)]` proc-macro + phantom-typed builder | Rust 类型系统可在编译期保证必填字段，无需手写 |
+| Observer（独立注册表） | Lifecycle Hook（复用 EventBus） | 项目已有完整 EventBus pub/sub，不需要第二套注册机制 |
+| Scope（`&mut QueryBuilder`） | 方法链 + 泛型状态机 | `&mut` 模式在 Rust 中组合性差，phantom-typed state 更安全 |
+| Config Cache | 不需要 | Rust 启动时一次读取 + `Arc` 共享，已等效缓存 |
+| Migration / Policy / Transaction | 直接移植 | 这些模式与语言无关，Rust 实现几乎一致 |

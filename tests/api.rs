@@ -125,6 +125,7 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
         email_sender: raisfast::notifier::build_email_sender(&config),
         sms_sender: raisfast::notifier::build_sms_sender(&config),
         route_registry: Arc::new(Vec::new()),
+        services: raisfast::app::ServiceRegistry::new(),
     };
     let max_upload = state.config.max_upload_size;
 

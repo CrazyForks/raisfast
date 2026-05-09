@@ -13,6 +13,7 @@
 #[macro_use]
 mod macros;
 
+pub mod app;
 pub mod aspects;
 pub mod audit;
 pub mod cache;
@@ -47,6 +48,7 @@ pub mod admin_spa;
 #[cfg(feature = "tauri")]
 pub mod tauri;
 
+use app::ServiceRegistry;
 use audit::AuditService;
 use config::app::AppConfig;
 use content_type::ContentTypeRegistry;
@@ -107,6 +109,7 @@ pub struct AppState {
     pub email_sender: Arc<dyn EmailSender>,
     pub sms_sender: Arc<dyn SmsSender>,
     pub route_registry: Arc<Vec<crate::server::RouteInfo>>,
+    pub services: ServiceRegistry,
 }
 
 /// 构建 AppState（HTTP 服务器和 Tauri 共享）
@@ -199,6 +202,26 @@ pub async fn build_app_state(
 
     let storage = crate::storage::create_storage(config)?;
 
+    let services = ServiceRegistry::new();
+    services.insert(post_repo.clone());
+    services.insert(user_repo.clone());
+    services.insert(category_repo.clone());
+    services.insert(tag_repo.clone());
+    services.insert(comment_repo.clone());
+    services.insert(media_repo.clone());
+    services.insert(refresh_token_repo.clone());
+    services.insert(search.clone());
+    services.insert(aspect_engine.clone());
+    services.insert(protocol_registry.clone());
+    services.insert(ct_registry.clone());
+    services.insert(options_service.clone());
+    services.insert(rbac_service.clone());
+    services.insert(tenant_service.clone());
+    services.insert(audit_service.clone());
+    services.insert(webhook_service.clone());
+    services.insert(cache.clone());
+    services.insert(storage.clone());
+
     let state = AppState {
         pool: pool.clone(),
         config: Arc::new(config.clone()),
@@ -229,6 +252,7 @@ pub async fn build_app_state(
         email_sender: crate::notifier::build_email_sender(config),
         sms_sender: crate::notifier::build_sms_sender(config),
         route_registry: Arc::new(Vec::new()),
+        services,
     };
 
     crate::server::spawn_event_subscriber(

@@ -53,9 +53,14 @@ pub trait SearchEngine: Send + Sync {
         page_size: i64,
     ) -> AppResult<(Vec<SearchResult>, i64)>;
 
-    /// 是否为空实现（用于判断是否应回退到 SQL LIKE 查询）
+    /// Whether this is a no-op implementation (used to decide SQL LIKE fallback)
     fn is_noop(&self) -> bool {
         false
+    }
+
+    /// Human-readable engine name for health reporting
+    fn engine_name(&self) -> &str {
+        "unknown"
     }
 }
 

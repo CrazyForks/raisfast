@@ -102,6 +102,10 @@ impl TantivyEngine {
 
 #[async_trait::async_trait]
 impl SearchEngine for TantivyEngine {
+    fn engine_name(&self) -> &str {
+        "tantivy"
+    }
+
     async fn index_post(&self, post: &SearchablePost) -> AppResult<()> {
         let index = self.index.clone();
         let f_post_id = self.fields.post_id;
