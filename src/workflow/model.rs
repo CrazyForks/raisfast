@@ -600,4 +600,147 @@ mod tests {
 
         assert!(def.parse_steps().is_err());
     }
+
+    #[tokio::test]
+    async fn fail_step_log_marks_failed() {
+        let pool = setup_pool().await;
+        let doc_id = crate::utils::id::new_document_id();
+        let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
+        let def = super::create_definition(&pool, &doc_id, "WF", None, steps, "s1")
+            .await
+            .unwrap();
+
+        let inst_doc_id = crate::utils::id::new_document_id();
+        let inst =
+            super::create_instance(&pool, &inst_doc_id, def.id, &serde_json::json!({}), None)
+                .await
+                .unwrap();
+
+        let log_doc_id = crate::utils::id::new_document_id();
+        super::create_step_log(&pool, &log_doc_id, inst.id, "s1", "Step 1", None)
+            .await
+            .unwrap();
+
+        super::fail_step_log(&pool, &log_doc_id, "something broke")
+            .await
+            .unwrap();
+
+        let logs = super::list_step_logs(&pool, inst.id).await.unwrap();
+        assert_eq!(logs[0].status, "failed");
+        assert_eq!(logs[0].error, Some("something broke".to_string()));
+        assert!(logs[0].completed_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn list_instances_filter_by_status() {
+        let pool = setup_pool().await;
+        let doc_id = crate::utils::id::new_document_id();
+        let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
+        let def = super::create_definition(&pool, &doc_id, "WF", None, steps, "s1")
+            .await
+            .unwrap();
+
+        let inst_doc_id = crate::utils::id::new_document_id();
+        super::create_instance(&pool, &inst_doc_id, def.id, &serde_json::json!({}), None)
+            .await
+            .unwrap();
+
+        super::update_instance_step(
+            &pool,
+            &inst_doc_id,
+            "completed",
+            None,
+            &serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+
+        let (running, _) = super::list_instances(&pool, Some(def.id), Some("running"), 1, 10)
+            .await
+            .unwrap();
+        assert!(running.is_empty());
+
+        let (completed, total) =
+            super::list_instances(&pool, Some(def.id), Some("completed"), 1, 10)
+                .await
+                .unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(completed.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn list_instances_pagination() {
+        let pool = setup_pool().await;
+        let doc_id = crate::utils::id::new_document_id();
+        let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
+        let def = super::create_definition(&pool, &doc_id, "WF", None, steps, "s1")
+            .await
+            .unwrap();
+
+        for _ in 0..5 {
+            let inst_doc_id = crate::utils::id::new_document_id();
+            super::create_instance(&pool, &inst_doc_id, def.id, &serde_json::json!({}), None)
+                .await
+                .unwrap();
+        }
+
+        let (page1, total) = super::list_instances(&pool, Some(def.id), None, 1, 2)
+            .await
+            .unwrap();
+        assert_eq!(total, 5);
+        assert_eq!(page1.len(), 2);
+
+        let (page2, _) = super::list_instances(&pool, Some(def.id), None, 2, 2)
+            .await
+            .unwrap();
+        assert_eq!(page2.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn update_instance_completed_sets_completed_at() {
+        let pool = setup_pool().await;
+        let doc_id = crate::utils::id::new_document_id();
+        let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
+        let def = super::create_definition(&pool, &doc_id, "WF", None, steps, "s1")
+            .await
+            .unwrap();
+
+        let inst_doc_id = crate::utils::id::new_document_id();
+        super::create_instance(&pool, &inst_doc_id, def.id, &serde_json::json!({}), None)
+            .await
+            .unwrap();
+
+        super::update_instance_step(
+            &pool,
+            &inst_doc_id,
+            "completed",
+            None,
+            &serde_json::json!({"done": true}),
+        )
+        .await
+        .unwrap();
+
+        let inst = super::get_instance(&pool, &inst_doc_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(inst.status, "completed");
+        assert!(inst.completed_at.is_some());
+        let ctx = inst.parse_context();
+        assert_eq!(ctx["done"], true);
+    }
+
+    #[tokio::test]
+    async fn get_definition_not_found() {
+        let pool = setup_pool().await;
+        let result = super::get_definition(&pool, "nonexistent").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_instance_not_found() {
+        let pool = setup_pool().await;
+        let result = super::get_instance(&pool, "nonexistent").await.unwrap();
+        assert!(result.is_none());
+    }
 }

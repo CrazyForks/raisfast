@@ -1416,4 +1416,212 @@ type = "text"
         let order = build_order_by(Some("title:asc"), &ct);
         assert_eq!(order, " ORDER BY title ASC");
     }
+
+    #[test]
+    fn value_to_string_string() {
+        assert_eq!(value_to_string(&json!("hello")), "hello");
+    }
+
+    #[test]
+    fn value_to_string_number() {
+        assert_eq!(value_to_string(&json!(42)), "42");
+    }
+
+    #[test]
+    fn value_to_string_bool() {
+        assert_eq!(value_to_string(&json!(true)), "1");
+        assert_eq!(value_to_string(&json!(false)), "0");
+    }
+
+    #[test]
+    fn value_to_string_null() {
+        assert_eq!(value_to_string(&Value::Null), "");
+    }
+
+    #[test]
+    fn extract_document_ids_string() {
+        let ids = extract_document_ids(&json!("abc-123"));
+        assert_eq!(ids, vec!["abc-123"]);
+    }
+
+    #[test]
+    fn extract_document_ids_array() {
+        let ids = extract_document_ids(&json!(["a", "b", "c"]));
+        assert_eq!(ids, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn extract_document_ids_empty_string() {
+        let ids = extract_document_ids(&json!(""));
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn extract_document_ids_non_string() {
+        let ids = extract_document_ids(&json!(42));
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn extract_document_ids_array_filters_empty() {
+        let ids = extract_document_ids(&json!(["a", "", "c"]));
+        assert_eq!(ids, vec!["a", "c"]);
+    }
+
+    #[test]
+    fn fetch_columns_sql_sqlite() {
+        let (sql, idx) = fetch_columns_sql("my_table");
+        assert!(sql.contains("my_table"));
+        assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn build_column_names_excludes_private() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "T"
+singular = "t"
+plural = "ts"
+table = "ts"
+
+[fields.pub_field]
+type = "text"
+
+[fields.priv_field]
+type = "text"
+private = true
+"#,
+        )
+        .unwrap();
+        let cols = build_column_names(&ct, None, false);
+        assert!(cols.contains(&"pub_field".to_string()));
+        assert!(!cols.contains(&"priv_field".to_string()));
+    }
+
+    #[test]
+    fn build_column_names_includes_private_when_requested() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "T"
+singular = "t"
+plural = "ts"
+table = "ts"
+
+[fields.pub_field]
+type = "text"
+
+[fields.priv_field]
+type = "text"
+private = true
+"#,
+        )
+        .unwrap();
+        let cols = build_column_names(&ct, None, true);
+        assert!(cols.contains(&"pub_field".to_string()));
+        assert!(cols.contains(&"priv_field".to_string()));
+    }
+
+    #[test]
+    fn build_column_names_requested_filter() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "T"
+singular = "t"
+plural = "ts"
+table = "ts"
+
+[fields.a]
+type = "text"
+
+[fields.b]
+type = "integer"
+"#,
+        )
+        .unwrap();
+        let cols = build_column_names(&ct, Some(&["a".to_string()]), true);
+        assert!(cols.contains(&"a".to_string()));
+        assert!(!cols.contains(&"b".to_string()));
+    }
+
+    #[test]
+    fn build_column_names_m2o_uses_fk() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "T"
+singular = "t"
+plural = "ts"
+table = "ts"
+
+[fields.author]
+type = "relation"
+relation_type = "many_to_one"
+target = "users"
+"#,
+        )
+        .unwrap();
+        let cols = build_column_names(&ct, None, true);
+        assert!(cols.contains(&"author_id".to_string()));
+        assert!(!cols.contains(&"author".to_string()));
+    }
+
+    #[test]
+    fn build_order_by_invalid_column_ignored() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "T"
+singular = "t"
+plural = "ts"
+table = "ts"
+
+[fields.title]
+type = "text"
+"#,
+        )
+        .unwrap();
+        let order = build_order_by(Some("nonexistent:asc"), &ct);
+        assert!(order.is_empty());
+    }
+
+    #[test]
+    fn build_order_by_multiple_columns() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "T"
+singular = "t"
+plural = "ts"
+table = "ts"
+
+[fields.a]
+type = "text"
+
+[fields.b]
+type = "integer"
+"#,
+        )
+        .unwrap();
+        let order = build_order_by(Some("a:asc,b:desc"), &ct);
+        assert!(order.contains("a ASC"));
+        assert!(order.contains("b DESC"));
+    }
+
+    #[test]
+    fn save_context_from_auth() {
+        let auth = crate::middleware::auth::AuthUser::from_parts(
+            Some("u1".to_string()),
+            Some(42),
+            "admin".to_string(),
+            Some("t1".to_string()),
+        );
+        let ctx = SaveContext::from_auth(&auth);
+        assert_eq!(ctx.user_id, Some("u1".to_string()));
+        assert_eq!(ctx.user_int_id, Some(42));
+        assert_eq!(ctx.user_role, Some("admin".to_string()));
+        assert_eq!(ctx.tenant_id, Some("t1".to_string()));
+    }
 }

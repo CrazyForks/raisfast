@@ -651,4 +651,321 @@ immutable = true
             validate_update(&pool, &ct, &id, &json!({"name": "Updated", "code": "XYZ"})).await;
         assert!(result.is_ok(), "updating same unique value should be ok");
     }
+
+    #[test]
+    fn is_empty_value_various() {
+        assert!(is_empty_value(&Value::Null));
+        assert!(is_empty_value(&Value::String(String::new())));
+        assert!(!is_empty_value(&Value::String("x".into())));
+        assert!(!is_empty_value(&Value::Number(0.into())));
+        assert!(!is_empty_value(&Value::Bool(false)));
+    }
+
+    #[test]
+    fn value_to_db_string_various() {
+        assert_eq!(value_to_db_string(&json!("hello")), "hello");
+        assert_eq!(value_to_db_string(&json!(42)), "42");
+        assert_eq!(value_to_db_string(&json!(true)), "1");
+        assert_eq!(value_to_db_string(&json!(false)), "0");
+        assert_eq!(value_to_db_string(&json!(null)), "null");
+    }
+
+    #[test]
+    fn check_type_all_text_variants() {
+        for ft in &[
+            FieldType::Text,
+            FieldType::RichText,
+            FieldType::Email,
+            FieldType::Password,
+        ] {
+            assert!(check_type(ft, &json!("hello")).is_ok());
+            assert!(check_type(ft, &json!(42)).is_err());
+        }
+    }
+
+    #[test]
+    fn check_type_bigint() {
+        assert!(check_type(&FieldType::BigInt, &json!(42)).is_ok());
+        assert!(check_type(&FieldType::BigInt, &json!("42")).is_err());
+    }
+
+    #[test]
+    fn check_type_float_accepts_int_and_float() {
+        assert!(check_type(&FieldType::Float, &json!(3.14)).is_ok());
+        assert!(check_type(&FieldType::Float, &json!(42)).is_ok());
+        assert!(check_type(&FieldType::Float, &json!("42")).is_err());
+    }
+
+    #[test]
+    fn check_type_decimal_accepts_int_and_float() {
+        assert!(check_type(&FieldType::Decimal, &json!(9.99)).is_ok());
+        assert!(check_type(&FieldType::Decimal, &json!(42)).is_ok());
+    }
+
+    #[test]
+    fn check_type_date_variants() {
+        for ft in &[FieldType::Date, FieldType::DateTime, FieldType::Time] {
+            assert!(check_type(ft, &json!("2024-01-01")).is_ok());
+            assert!(check_type(ft, &json!(42)).is_err());
+        }
+    }
+
+    #[test]
+    fn check_type_uid_expects_string() {
+        assert!(check_type(&FieldType::Uid, &json!("abc123")).is_ok());
+        assert!(check_type(&FieldType::Uid, &json!(42)).is_err());
+    }
+
+    #[test]
+    fn check_type_json_accepts_anything() {
+        assert!(check_type(&FieldType::Json, &json!({"key": "val"})).is_ok());
+        assert!(check_type(&FieldType::Json, &json!(42)).is_ok());
+        assert!(check_type(&FieldType::Json, &json!(null)).is_ok());
+    }
+
+    #[test]
+    fn check_type_media_expects_string() {
+        assert!(check_type(&FieldType::Media, &json!("/img/a.png")).is_ok());
+        assert!(check_type(&FieldType::Media, &json!(42)).is_err());
+    }
+
+    #[test]
+    fn check_type_relation_accepts_anything() {
+        assert!(check_type(&FieldType::Relation, &json!("anything")).is_ok());
+        assert!(check_type(&FieldType::Relation, &json!(42)).is_ok());
+    }
+
+    #[tokio::test]
+    async fn validate_create_non_object_body() {
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let ct = make_test_ct();
+        let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
+        repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+        let result = validate_create(&pool, &ct, &json!("not an object")).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn validate_update_non_object_body() {
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let ct = make_test_ct();
+        let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
+        repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+        let result = validate_update(&pool, &ct, "some-id", &json!(42)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn validate_create_with_pattern_mismatch() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "T"
+singular = "t"
+plural = "ts"
+table = "ct_pattern_test"
+
+[fields.code]
+type = "text"
+pattern = "^[A-Z]{3}$"
+"#,
+        )
+        .unwrap();
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
+        repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+        let result = validate_create(&pool, &ct, &json!({"code": "abc"})).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("pattern"), "expected pattern error in: {msg}");
+    }
+
+    #[tokio::test]
+    async fn validate_create_with_pattern_match() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "T"
+singular = "t"
+plural = "ts"
+table = "ct_pattern_ok_test"
+
+[fields.code]
+type = "text"
+pattern = "^[A-Z]{3}$"
+"#,
+        )
+        .unwrap();
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
+        repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+        let result = validate_create(&pool, &ct, &json!({"code": "ABC"})).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn validate_create_max_exceeded() {
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "T"
+singular = "t"
+plural = "ts"
+table = "ct_max_test"
+
+[fields.qty]
+type = "integer"
+max = 100
+"#,
+        )
+        .unwrap();
+        let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
+        repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+        let result = validate_create(&pool, &ct, &json!({"qty": 200})).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("max"), "expected max error in: {msg}");
+    }
+
+    #[tokio::test]
+    async fn validate_create_wrong_type_for_field() {
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "T"
+singular = "t"
+plural = "ts"
+table = "ct_wrong_type_test"
+
+[fields.title]
+type = "text"
+"#,
+        )
+        .unwrap();
+        let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
+        repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+        let result = validate_create(&pool, &ct, &json!({"title": 123})).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("expected string"),
+            "expected type error in: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_create_with_m2o_relation_wrong_type() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "T"
+singular = "t"
+plural = "ts"
+table = "ct_rel_type_test"
+
+[fields.author]
+type = "relation"
+relation_type = "many_to_one"
+target = "users"
+"#,
+        )
+        .unwrap();
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
+        repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+        let result = validate_create(&pool, &ct, &json!({"author": 123})).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("expected string"),
+            "expected relation error in: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_create_with_m2m_relation_wrong_type() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "T"
+singular = "t"
+plural = "ts"
+table = "ct_rel_m2m_test"
+
+[fields.tags]
+type = "relation"
+relation_type = "many_to_many"
+target = "tags"
+"#,
+        )
+        .unwrap();
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
+        repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+        let result = validate_create(&pool, &ct, &json!({"tags": "not-array"})).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("expected array"),
+            "expected array error in: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_create_required_but_empty_string() {
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "T"
+singular = "t"
+plural = "ts"
+table = "ct_empty_req_test"
+
+[fields.title]
+type = "text"
+required = true
+"#,
+        )
+        .unwrap();
+        let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
+        repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+        let result = validate_create(&pool, &ct, &json!({"title": ""})).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn validate_create_required_but_null() {
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "T"
+singular = "t"
+plural = "ts"
+table = "ct_null_req_test"
+
+[fields.title]
+type = "text"
+required = true
+"#,
+        )
+        .unwrap();
+        let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
+        repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
+
+        let result = validate_create(&pool, &ct, &json!({"title": null})).await;
+        assert!(result.is_err());
+    }
 }

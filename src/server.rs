@@ -12,13 +12,14 @@ use crate::config::app::AppConfig;
 use crate::constants::DEFAULT_TENANT;
 use crate::handlers::{
     api_token, auth, category, comment, cron, health, media, options, page, plugin, post, rbac,
-    reusable_block, rss, sse, stats, tag, tenant, user, workflow, ws,
+    reusable_block, rss, sse, stats, tag, tenant, user, ws,
 };
 use crate::middleware::locale::locale_middleware;
 use crate::middleware::metrics;
 use crate::middleware::rate_limit::{
     RateLimiterSet, comment_rate_limit, global_rate_limit, login_rate_limit, register_rate_limit,
 };
+use crate::workflow;
 use axum::Extension;
 use axum::extract::State;
 use axum::http::HeaderValue;
@@ -898,7 +899,7 @@ async fn build_app(
             api_v1,
             registry,
             "/admin/workflows",
-            get(workflow::list).post(workflow::create),
+            get(workflow::handler::list).post(workflow::handler::create),
             "system",
             "admin/workflows",
             ["GET", "POST"]
@@ -907,7 +908,7 @@ async fn build_app(
             api_v1,
             registry,
             "/admin/workflows/{id}",
-            get(workflow::get).delete(workflow::delete),
+            get(workflow::handler::get).delete(workflow::handler::delete),
             "system",
             "admin/workflows",
             ["GET", "DELETE"]
@@ -916,7 +917,7 @@ async fn build_app(
             api_v1,
             registry,
             "/admin/workflows/{id}/start",
-            http_post(workflow::start),
+            http_post(workflow::handler::start),
             "system",
             "admin/workflows",
             ["POST"]
@@ -925,7 +926,7 @@ async fn build_app(
             api_v1,
             registry,
             "/admin/workflows/instances",
-            get(workflow::list_instances),
+            get(workflow::handler::list_instances),
             "system",
             "admin/workflows",
             ["GET"]
@@ -934,7 +935,7 @@ async fn build_app(
             api_v1,
             registry,
             "/admin/workflows/instances/{id}",
-            get(workflow::get_instance),
+            get(workflow::handler::get_instance),
             "system",
             "admin/workflows",
             ["GET"]
@@ -943,7 +944,7 @@ async fn build_app(
             api_v1,
             registry,
             "/admin/workflows/instances/{id}/execute",
-            http_post(workflow::execute_step),
+            http_post(workflow::handler::execute_step),
             "system",
             "admin/workflows",
             ["POST"]
@@ -952,7 +953,7 @@ async fn build_app(
             api_v1,
             registry,
             "/admin/workflows/instances/{id}/cancel",
-            http_post(workflow::cancel_instance),
+            http_post(workflow::handler::cancel_instance),
             "system",
             "admin/workflows",
             ["POST"]
@@ -961,7 +962,7 @@ async fn build_app(
             api_v1,
             registry,
             "/admin/workflows/instances/{id}/logs",
-            get(workflow::get_step_logs),
+            get(workflow::handler::get_step_logs),
             "system",
             "admin/workflows",
             ["GET"]

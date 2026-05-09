@@ -37,5 +37,4 @@ pub mod stats;
 pub mod tag;
 pub mod tenant;
 pub mod user;
-pub mod workflow;
 pub mod ws;

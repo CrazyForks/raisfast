@@ -40,6 +40,7 @@ pub mod storage;
 pub mod utils;
 pub mod webhook;
 pub mod worker;
+pub mod workflow;
 
 pub mod admin_spa;
 
@@ -62,10 +63,10 @@ use search::SearchEngine;
 use services::options::OptionsService;
 use services::rbac::RbacService;
 use services::tenant::TenantService;
-use services::workflow::WorkflowService;
 use std::sync::Arc;
 use storage::Storage;
 use webhook::WebhookService;
+use workflow::WorkflowService;
 
 pub use cache::CacheStore;
 

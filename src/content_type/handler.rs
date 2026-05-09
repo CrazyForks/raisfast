@@ -1371,3 +1371,233 @@ fn parse_include(s: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::content_type::schema::ContentTypeSchema;
+    use std::sync::Arc;
+
+    fn parse_ct() -> ContentTypeSchema {
+        ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Product"
+singular = "product"
+plural = "products"
+table = "products"
+
+[fields.title]
+type = "text"
+required = true
+
+[fields.price]
+type = "integer"
+private = true
+
+[fields.author]
+type = "relation"
+relation_type = "many_to_one"
+target = "users"
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn parse_dynamic_path_empty() {
+        assert!(parse_dynamic_path("").is_none());
+    }
+
+    #[test]
+    fn parse_dynamic_path_plural_only() {
+        let (seg, id) = parse_dynamic_path("products").unwrap();
+        assert_eq!(seg, "products");
+        assert!(id.is_none());
+    }
+
+    #[test]
+    fn parse_dynamic_path_with_id() {
+        let (seg, id) = parse_dynamic_path("products/abc-123").unwrap();
+        assert_eq!(seg, "products");
+        assert_eq!(id, Some("abc-123".to_string()));
+    }
+
+    #[test]
+    fn parse_dynamic_path_leading_slash() {
+        let (seg, id) = parse_dynamic_path("/products/xyz").unwrap();
+        assert_eq!(seg, "products");
+        assert_eq!(id, Some("xyz".to_string()));
+    }
+
+    #[test]
+    fn parse_dynamic_path_trailing_slash() {
+        let (seg, id) = parse_dynamic_path("products/").unwrap();
+        assert_eq!(seg, "products");
+        assert!(id.is_none());
+    }
+
+    #[test]
+    fn resolve_content_type_by_singular_single() {
+        let registry = crate::content_type::ContentTypeRegistry::new();
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Setting"
+singular = "setting"
+plural = "settings"
+table = "settings"
+kind = "single"
+
+[fields.key]
+type = "text"
+"#,
+        )
+        .unwrap();
+        let mut reg = crate::protocols::ProtocolRegistry::new();
+        let _ = registry.register(ct, &Default::default(), &[], &[], &reg);
+        let (found, is_single) = resolve_content_type(&registry, "setting").unwrap();
+        assert!(is_single);
+        assert_eq!(found.singular, "setting");
+    }
+
+    #[test]
+    fn resolve_content_type_by_plural() {
+        let registry = crate::content_type::ContentTypeRegistry::new();
+        let ct = parse_ct();
+        let reg = crate::protocols::ProtocolRegistry::new();
+        let _ = registry.register(ct, &Default::default(), &[], &[], &reg);
+        let (found, is_single) = resolve_content_type(&registry, "products").unwrap();
+        assert!(!is_single);
+        assert_eq!(found.singular, "product");
+    }
+
+    #[test]
+    fn resolve_content_type_not_found() {
+        let registry = crate::content_type::ContentTypeRegistry::new();
+        assert!(resolve_content_type(&registry, "nothing").is_none());
+    }
+
+    #[test]
+    fn filter_fields_with_whitelist() {
+        let ct = parse_ct();
+        let data =
+            json!({"title": "Hello", "price": 100, "id": 1, "document_id": "abc", "extra": "x"});
+        let filtered = filter_fields(data, Some(&["title".to_string()]), &ct);
+        let obj = filtered.as_object().unwrap();
+        assert!(obj.contains_key("title"));
+        assert!(obj.contains_key("id"));
+        assert!(obj.contains_key("document_id"));
+        assert!(!obj.contains_key("price"));
+        assert!(!obj.contains_key("extra"));
+    }
+
+    #[test]
+    fn filter_fields_no_whitelist() {
+        let ct = parse_ct();
+        let data = json!({"title": "Hello", "price": 100});
+        let filtered = filter_fields(data, None, &ct);
+        assert_eq!(filtered["title"], "Hello");
+        assert_eq!(filtered["price"], 100);
+    }
+
+    #[test]
+    fn filter_fields_empty_whitelist() {
+        let ct = parse_ct();
+        let data = json!({"title": "Hello"});
+        let filtered = filter_fields(data, Some(&[]), &ct);
+        assert_eq!(filtered["title"], "Hello");
+    }
+
+    #[test]
+    fn filter_fields_non_object_passthrough() {
+        let ct = parse_ct();
+        let data = json!("string");
+        let filtered = filter_fields(data, Some(&["title".to_string()]), &ct);
+        assert_eq!(filtered, json!("string"));
+    }
+
+    #[test]
+    fn parse_include_basic() {
+        let result = parse_include("author,tags,comments");
+        assert_eq!(result, vec!["author", "tags", "comments"]);
+    }
+
+    #[test]
+    fn parse_include_with_spaces() {
+        let result = parse_include(" author , tags ");
+        assert_eq!(result, vec!["author", "tags"]);
+    }
+
+    #[test]
+    fn parse_include_empty() {
+        let result = parse_include("");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn parse_include_trailing_comma() {
+        let result = parse_include("a,b,");
+        assert_eq!(result, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn cms_detail_cache_key_format() {
+        let ct = parse_ct();
+        let key = cms_detail_cache_key(&ct, "doc-123");
+        assert_eq!(key, "cms:products:detail:doc-123");
+    }
+
+    #[test]
+    fn cms_list_cache_key_contains_plural() {
+        let ct = parse_ct();
+        let query = crate::content_type::repository::ContentQuery {
+            page: 1,
+            page_size: 20,
+            sort: None,
+            filters: Default::default(),
+            status: None,
+            search: None,
+            fields: None,
+            tenant_id: None,
+            include: None,
+            rule_where: None,
+            rule_params: Vec::new(),
+            meta_filters: Vec::new(),
+            skip_total: false,
+            max_page_size: 100,
+            include_private: false,
+        };
+        let key = cms_list_cache_key(&ct, &query);
+        assert!(key.starts_with("cms:products:"));
+    }
+
+    #[test]
+    fn cms_list_cache_key_differs_for_different_params() {
+        let ct = parse_ct();
+        let q1 = crate::content_type::repository::ContentQuery {
+            page: 1,
+            page_size: 20,
+            sort: None,
+            filters: Default::default(),
+            status: None,
+            search: None,
+            fields: None,
+            tenant_id: None,
+            include: None,
+            rule_where: None,
+            rule_params: Vec::new(),
+            meta_filters: Vec::new(),
+            skip_total: false,
+            max_page_size: 100,
+            include_private: false,
+        };
+        let q2 = crate::content_type::repository::ContentQuery {
+            page: 2,
+            ..q1.clone()
+        };
+        let k1 = cms_list_cache_key(&ct, &q1);
+        let k2 = cms_list_cache_key(&ct, &q2);
+        assert_ne!(k1, k2);
+    }
+}

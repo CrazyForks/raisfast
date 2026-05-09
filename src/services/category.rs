@@ -111,3 +111,154 @@ pub async fn list_categories_paginated(
         .find_paginated(auth.tenant_id(), page, page_size)
         .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dto::CreateCategoryRequest;
+    use crate::repositories::sqlx_category::SqlxCategoryRepository;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    fn auth(tid: Option<&str>) -> AuthUser {
+        AuthUser::from_parts(
+            Some("u1".to_string()),
+            Some(1),
+            "admin".to_string(),
+            tid.map(|s| s.to_string()),
+        )
+    }
+
+    #[tokio::test]
+    async fn create_category_basic() {
+        let pool = setup_pool().await;
+        let repo = SqlxCategoryRepository::new(pool.clone());
+        let a = auth(None);
+        let cat = super::create_category(
+            &repo,
+            &a,
+            CreateCategoryRequest {
+                name: "Tech".into(),
+                description: Some("Technology".into()),
+                parent_id: None,
+                sort_order: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(cat.name, "Tech");
+        assert_eq!(cat.slug, "tech");
+    }
+
+    #[tokio::test]
+    async fn list_categories_empty() {
+        let pool = setup_pool().await;
+        let repo = SqlxCategoryRepository::new(pool.clone());
+        let a = auth(None);
+        let cats = super::list_categories(&repo, &a).await.unwrap();
+        assert!(cats.is_empty());
+    }
+
+    #[tokio::test]
+    async fn update_category_renames() {
+        let pool = setup_pool().await;
+        let repo = SqlxCategoryRepository::new(pool.clone());
+        let a = auth(None);
+        let cat = super::create_category(
+            &repo,
+            &a,
+            CreateCategoryRequest {
+                name: "Old".into(),
+                description: None,
+                parent_id: None,
+                sort_order: None,
+            },
+        )
+        .await
+        .unwrap();
+        let updated = super::update_category(
+            &repo,
+            &a,
+            &cat.document_id,
+            crate::dto::UpdateCategoryRequest {
+                name: Some("New".into()),
+                description: None,
+                parent_id: None,
+                sort_order: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.name, "New");
+        assert_eq!(updated.slug, "new");
+    }
+
+    #[tokio::test]
+    async fn delete_category() {
+        let pool = setup_pool().await;
+        let repo = SqlxCategoryRepository::new(pool.clone());
+        let a = auth(None);
+        let cat = super::create_category(
+            &repo,
+            &a,
+            CreateCategoryRequest {
+                name: "Del".into(),
+                description: None,
+                parent_id: None,
+                sort_order: None,
+            },
+        )
+        .await
+        .unwrap();
+        super::delete_category(&repo, &cat.document_id, &a)
+            .await
+            .unwrap();
+        let cats = super::list_categories(&repo, &a).await.unwrap();
+        assert!(cats.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_category_not_found() {
+        let pool = setup_pool().await;
+        let repo = SqlxCategoryRepository::new(pool.clone());
+        let a = auth(None);
+        assert!(
+            super::delete_category(&repo, "nonexistent", &a)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn list_categories_paginated() {
+        let pool = setup_pool().await;
+        let repo = SqlxCategoryRepository::new(pool.clone());
+        let a = auth(None);
+        for i in 0..5 {
+            super::create_category(
+                &repo,
+                &a,
+                CreateCategoryRequest {
+                    name: format!("Cat{i}"),
+                    description: None,
+                    parent_id: None,
+                    sort_order: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let (cats, total) = super::list_categories_paginated(&repo, &a, 1, 3)
+            .await
+            .unwrap();
+        assert_eq!(total, 5);
+        assert_eq!(cats.len(), 3);
+    }
+}

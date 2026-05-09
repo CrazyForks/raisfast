@@ -117,9 +117,7 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
         ))),
         audit: Arc::new(raisfast::audit::AuditService::new(pool.clone())),
         webhook: Arc::new(raisfast::webhook::WebhookService::new(pool.clone())),
-        workflow: Arc::new(raisfast::services::workflow::WorkflowService::new(
-            pool.clone(),
-        )),
+        workflow: Arc::new(raisfast::workflow::WorkflowService::new(pool.clone())),
         storage: raisfast::storage::create_storage(&config).expect("failed to create storage"),
         cache: Arc::new(raisfast::cache::MemoryCache::new()),
         cms_cache: Arc::new(dashmap::DashMap::new()),
@@ -239,35 +237,35 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
         )
         .route(
             "/admin/workflows",
-            get(raisfast::handlers::workflow::list).post(raisfast::handlers::workflow::create),
+            get(raisfast::workflow::handler::list).post(raisfast::workflow::handler::create),
         )
         .route(
             "/admin/workflows/{id}",
-            get(raisfast::handlers::workflow::get).delete(raisfast::handlers::workflow::delete),
+            get(raisfast::workflow::handler::get).delete(raisfast::workflow::handler::delete),
         )
         .route(
             "/admin/workflows/{id}/start",
-            http_post(raisfast::handlers::workflow::start),
+            http_post(raisfast::workflow::handler::start),
         )
         .route(
             "/admin/workflows/instances",
-            get(raisfast::handlers::workflow::list_instances),
+            get(raisfast::workflow::handler::list_instances),
         )
         .route(
             "/admin/workflows/instances/{id}",
-            get(raisfast::handlers::workflow::get_instance),
+            get(raisfast::workflow::handler::get_instance),
         )
         .route(
             "/admin/workflows/instances/{id}/execute",
-            http_post(raisfast::handlers::workflow::execute_step),
+            http_post(raisfast::workflow::handler::execute_step),
         )
         .route(
             "/admin/workflows/instances/{id}/cancel",
-            http_post(raisfast::handlers::workflow::cancel_instance),
+            http_post(raisfast::workflow::handler::cancel_instance),
         )
         .route(
             "/admin/workflows/instances/{id}/logs",
-            get(raisfast::handlers::workflow::get_step_logs),
+            get(raisfast::workflow::handler::get_step_logs),
         )
         .route("/pages", get(h_page::list).post(h_page::create))
         .route(

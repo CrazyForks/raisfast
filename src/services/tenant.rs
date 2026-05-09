@@ -101,3 +101,140 @@ impl TenantService {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repositories::sqlx_tenant::SqlxTenantRepository;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    fn svc(pool: crate::db::Pool) -> TenantService {
+        TenantService::new(std::sync::Arc::new(SqlxTenantRepository::new(pool)))
+    }
+
+    #[tokio::test]
+    async fn list_tenants_includes_default() {
+        let pool = setup_pool().await;
+        let s = svc(pool);
+        let list = s.list().await.unwrap();
+        assert!(list.len() >= 1);
+        assert!(list.iter().any(|t| t.name == "Default"));
+    }
+
+    #[tokio::test]
+    async fn create_tenant() {
+        let pool = setup_pool().await;
+        let s = svc(pool);
+        let t = s
+            .create(&CreateTenantRequest {
+                name: "TestCo".into(),
+                domain: Some("test.example.com".into()),
+                config: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(t.name, "TestCo");
+    }
+
+    #[tokio::test]
+    async fn get_tenant_by_id() {
+        let pool = setup_pool().await;
+        let s = svc(pool);
+        let t = s
+            .create(&CreateTenantRequest {
+                name: "Fetch".into(),
+                domain: None,
+                config: None,
+            })
+            .await
+            .unwrap();
+        let found = s.get(&t.document_id).await.unwrap().unwrap();
+        assert_eq!(found.name, "Fetch");
+    }
+
+    #[tokio::test]
+    async fn get_tenant_by_domain() {
+        let pool = setup_pool().await;
+        let s = svc(pool);
+        s.create(&CreateTenantRequest {
+            name: "Dom".into(),
+            domain: Some("dom.example.com".into()),
+            config: None,
+        })
+        .await
+        .unwrap();
+        let found = s.get_by_domain("dom.example.com").await.unwrap().unwrap();
+        assert_eq!(found.name, "Dom");
+    }
+
+    #[tokio::test]
+    async fn update_tenant() {
+        let pool = setup_pool().await;
+        let s = svc(pool);
+        let t = s
+            .create(&CreateTenantRequest {
+                name: "Old".into(),
+                domain: None,
+                config: None,
+            })
+            .await
+            .unwrap();
+        let updated = s
+            .update(
+                &t.document_id,
+                &UpdateTenantRequest {
+                    name: Some("New".into()),
+                    domain: None,
+                    config: None,
+                    status: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.name, "New");
+    }
+
+    #[tokio::test]
+    async fn delete_default_tenant_rejected() {
+        let pool = setup_pool().await;
+        let s = svc(pool);
+        let err = s
+            .delete(crate::constants::DEFAULT_TENANT)
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("cannot delete default tenant"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn delete_custom_tenant() {
+        let pool = setup_pool().await;
+        let s = svc(pool);
+        let t = s
+            .create(&CreateTenantRequest {
+                name: "Del".into(),
+                domain: None,
+                config: None,
+            })
+            .await
+            .unwrap();
+        s.delete(&t.document_id).await.unwrap();
+        assert!(s.get(&t.document_id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn resolve_tenant_id_default_is_active() {
+        let pool = setup_pool().await;
+        let s = svc(pool);
+        let id = s.resolve_tenant_id(None).await.unwrap();
+        assert_eq!(id, crate::constants::DEFAULT_TENANT);
+    }
+}

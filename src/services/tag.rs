@@ -60,3 +60,121 @@ pub async fn list_tags_paginated(
         .find_paginated(auth.tenant_id(), page, page_size)
         .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dto::CreateTagRequest;
+    use crate::repositories::sqlx_tag::SqlxTagRepository;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    fn auth() -> AuthUser {
+        AuthUser::from_parts(Some("u1".to_string()), Some(1), "admin".to_string(), None)
+    }
+
+    #[tokio::test]
+    async fn create_tag_basic() {
+        let pool = setup_pool().await;
+        let repo = SqlxTagRepository::new(pool.clone());
+        let a = auth();
+        let tag = super::create_tag(
+            &repo,
+            &a,
+            CreateTagRequest {
+                name: "Rust".into(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(tag.name, "Rust");
+        assert_eq!(tag.slug, "rust");
+    }
+
+    #[tokio::test]
+    async fn list_tags_empty() {
+        let pool = setup_pool().await;
+        let repo = SqlxTagRepository::new(pool.clone());
+        let a = auth();
+        let tags = super::list_tags(&repo, &a).await.unwrap();
+        assert!(tags.is_empty());
+    }
+
+    #[tokio::test]
+    async fn update_tag() {
+        let pool = setup_pool().await;
+        let repo = SqlxTagRepository::new(pool.clone());
+        let a = auth();
+        let tag = super::create_tag(&repo, &a, CreateTagRequest { name: "Old".into() })
+            .await
+            .unwrap();
+        let updated = super::update_tag(&repo, &tag.document_id, &a, "New".into())
+            .await
+            .unwrap();
+        assert_eq!(updated.name, "New");
+        assert_eq!(updated.slug, "new");
+    }
+
+    #[tokio::test]
+    async fn delete_tag() {
+        let pool = setup_pool().await;
+        let repo = SqlxTagRepository::new(pool.clone());
+        let a = auth();
+        let tag = super::create_tag(&repo, &a, CreateTagRequest { name: "Del".into() })
+            .await
+            .unwrap();
+        super::delete_tag(&repo, &tag.document_id, &a)
+            .await
+            .unwrap();
+        let tags = super::list_tags(&repo, &a).await.unwrap();
+        assert!(tags.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_tag_not_found() {
+        let pool = setup_pool().await;
+        let repo = SqlxTagRepository::new(pool.clone());
+        let a = auth();
+        assert!(super::delete_tag(&repo, "no-such-tag", &a).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn update_tag_not_found() {
+        let pool = setup_pool().await;
+        let repo = SqlxTagRepository::new(pool.clone());
+        let a = auth();
+        assert!(
+            super::update_tag(&repo, "missing", &a, "X".into())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn list_tags_paginated() {
+        let pool = setup_pool().await;
+        let repo = SqlxTagRepository::new(pool.clone());
+        let a = auth();
+        for i in 0..5 {
+            super::create_tag(
+                &repo,
+                &a,
+                CreateTagRequest {
+                    name: format!("Tag{i}"),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let (tags, total) = super::list_tags_paginated(&repo, &a, 1, 3).await.unwrap();
+        assert_eq!(total, 5);
+        assert_eq!(tags.len(), 3);
+    }
+}

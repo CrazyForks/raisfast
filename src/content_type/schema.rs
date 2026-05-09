@@ -1009,35 +1009,38 @@ fn parse_relation_config(table: &toml::Table) -> Result<RelationConfig, AppError
             "relation target '{raw_target}' contains invalid characters"
         ))
     })?;
-    if let Some(raw_fk) = table.get("foreign_key").and_then(|v| v.as_str()) {
-        let fk = crate::db::dialect::sanitize_identifier(raw_fk).ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "relation foreign_key '{raw_fk}' contains invalid characters"
-            ))
-        })?;
-        // validated — store trimmed
-        let _ = fk;
-    }
-    if let Some(raw_through) = table.get("through").and_then(|v| v.as_str()) {
-        let through = crate::db::dialect::sanitize_identifier(raw_through).ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "relation through '{raw_through}' contains invalid characters"
-            ))
-        })?;
-        let _ = through;
-    }
+
+    let foreign_key = table
+        .get("foreign_key")
+        .and_then(|v| v.as_str())
+        .map(|raw_fk| {
+            crate::db::dialect::sanitize_identifier(raw_fk).ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!(
+                    "relation foreign_key '{raw_fk}' contains invalid characters"
+                ))
+            })
+        })
+        .transpose()?
+        .map(|s| s.to_string());
+
+    let through = table
+        .get("through")
+        .and_then(|v| v.as_str())
+        .map(|raw_through| {
+            crate::db::dialect::sanitize_identifier(raw_through).ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!(
+                    "relation through '{raw_through}' contains invalid characters"
+                ))
+            })
+        })
+        .transpose()?
+        .map(|s| s.to_string());
 
     Ok(RelationConfig {
         relation_type,
         target: target.to_string(),
-        through: table
-            .get("through")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().to_string()),
-        foreign_key: table
-            .get("foreign_key")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().to_string()),
+        through,
+        foreign_key,
     })
 }
 
@@ -1471,5 +1474,442 @@ type = "text"
         assert!(ct.is_collection());
         assert!(!ct.is_single());
         assert_eq!(ct.kind, ContentKind::Collection);
+    }
+
+    #[test]
+    fn check_api_access_none_rejects() {
+        let auth = crate::middleware::auth::AuthUser::from_parts(
+            Some("u1".into()),
+            Some(1),
+            "admin".into(),
+            None,
+        );
+        assert!(check_api_access(ApiAccess::None, &auth).is_err());
+    }
+
+    #[test]
+    fn check_api_access_public_allows_all() {
+        let anon =
+            crate::middleware::auth::AuthUser::from_parts(None, None, "anonymous".into(), None);
+        assert!(check_api_access(ApiAccess::Public, &anon).is_ok());
+    }
+
+    #[test]
+    fn check_api_access_member_requires_auth() {
+        let anon =
+            crate::middleware::auth::AuthUser::from_parts(None, None, "anonymous".into(), None);
+        assert!(check_api_access(ApiAccess::Member, &anon).is_err());
+        let user = crate::middleware::auth::AuthUser::from_parts(
+            Some("u1".into()),
+            Some(1),
+            "member".into(),
+            None,
+        );
+        assert!(check_api_access(ApiAccess::Member, &user).is_ok());
+    }
+
+    #[test]
+    fn check_api_access_admin_requires_admin_role() {
+        let anon =
+            crate::middleware::auth::AuthUser::from_parts(None, None, "anonymous".into(), None);
+        assert!(check_api_access(ApiAccess::Admin, &anon).is_err());
+        let user = crate::middleware::auth::AuthUser::from_parts(
+            Some("u1".into()),
+            Some(1),
+            "member".into(),
+            None,
+        );
+        let err = check_api_access(ApiAccess::Admin, &user).unwrap_err();
+        assert!(matches!(err, AppError::Forbidden));
+        let admin = crate::middleware::auth::AuthUser::from_parts(
+            Some("u1".into()),
+            Some(1),
+            "admin".into(),
+            None,
+        );
+        assert!(check_api_access(ApiAccess::Admin, &admin).is_ok());
+    }
+
+    #[test]
+    fn validate_identifier_empty() {
+        let result = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "X"
+singular = ""
+plural = "xs"
+table = "xs"
+
+[fields.a]
+type = "text"
+"#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_identifier_invalid_chars() {
+        let result = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "X"
+singular = "bad name!"
+plural = "xs"
+table = "xs"
+
+[fields.a]
+type = "text"
+"#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_table_name_empty() {
+        let result = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = ""
+
+[fields.a]
+type = "text"
+"#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_table_name_invalid_chars() {
+        let result = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = "drop table users"
+
+[fields.a]
+type = "text"
+"#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_indexes_invalid_field() {
+        let result = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = "xs"
+
+[fields.a]
+type = "text"
+
+[[indexes]]
+fields = ["a; DROP TABLE"]
+"#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn protocol_ref_simple() {
+        let pr = ProtocolRef::Simple("sortable".into());
+        assert_eq!(pr.name(), "sortable");
+        assert!(pr.config().is_empty());
+        assert_eq!(format!("{pr}"), "sortable");
+    }
+
+    #[test]
+    fn protocol_ref_with_config() {
+        let pr = ProtocolRef::WithConfig {
+            name: "sortable".into(),
+            config: {
+                let mut m = HashMap::new();
+                m.insert("field".into(), "priority".into());
+                m
+            },
+        };
+        assert_eq!(pr.name(), "sortable");
+        assert_eq!(pr.config().get("field").unwrap(), "priority");
+    }
+
+    #[test]
+    fn content_kind_default_is_collection() {
+        assert_eq!(ContentKind::default(), ContentKind::Collection);
+    }
+
+    #[test]
+    fn api_config_defaults() {
+        let api = ApiConfig::default();
+        assert_eq!(api.list.access, ApiAccess::Public);
+        assert_eq!(api.get.access, ApiAccess::Public);
+        assert_eq!(api.create.access, ApiAccess::Member);
+        assert_eq!(api.update.access, ApiAccess::Member);
+        assert_eq!(api.delete.access, ApiAccess::Admin);
+    }
+
+    #[test]
+    fn api_endpoint_config_default() {
+        let ep = ApiEndpointConfig::default();
+        assert_eq!(ep.access, ApiAccess::Public);
+        assert!(ep.filter.is_none());
+        assert!(ep.filter_auth.is_none());
+        assert!(!ep.cache);
+        assert!(ep.fields.is_none());
+    }
+
+    #[test]
+    fn to_toml_round_trip_with_implements_and_indexes() {
+        let toml = r#"
+[content_type]
+name = "Post"
+singular = "post"
+plural = "posts"
+table = "posts"
+description = "Blog posts"
+slug_field = "title"
+builtin = true
+
+[fields.title]
+type = "text"
+required = true
+
+[[indexes]]
+fields = ["title"]
+unique = true
+"#;
+        let ct = ContentTypeSchema::parse_from_str(toml).unwrap();
+        let serialized = ct.to_toml().unwrap();
+        assert!(serialized.contains("description"));
+        assert!(serialized.contains("slug_field"));
+        assert!(serialized.contains("builtin"));
+        assert!(serialized.contains("[[indexes]]"));
+        let reparsed = ContentTypeSchema::parse_from_str(&serialized).unwrap();
+        assert_eq!(reparsed.name, ct.name);
+        assert_eq!(reparsed.fields.len(), ct.fields.len());
+        assert_eq!(reparsed.indexes.len(), ct.indexes.len());
+    }
+
+    #[test]
+    fn save_to_dir_creates_file() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Demo"
+singular = "demo"
+plural = "demos"
+table = "demos"
+
+[fields.name]
+type = "text"
+"#,
+        )
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        ct.save_to_dir(dir.path()).unwrap();
+        let path = dir.path().join("demo.toml");
+        assert!(path.exists());
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("Demo"));
+    }
+
+    #[test]
+    fn parse_field_not_table() {
+        let result = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = "xs"
+
+[fields.a]
+type = 42
+"#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_relation_missing_relation_type() {
+        let result = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = "xs"
+
+[fields.author]
+type = "relation"
+target = "user"
+"#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_relation_unknown_relation_type() {
+        let result = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = "xs"
+
+[fields.author]
+type = "relation"
+relation_type = "has_many"
+target = "user"
+"#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn get_field_nonexistent() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = "xs"
+
+[fields.a]
+type = "text"
+"#,
+        )
+        .unwrap();
+        assert!(ct.get_field("b").is_none());
+    }
+
+    #[test]
+    fn uid_field_none_when_no_uid() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = "xs"
+
+[fields.a]
+type = "text"
+"#,
+        )
+        .unwrap();
+        assert!(ct.uid_field().is_none());
+    }
+
+    #[test]
+    fn implements_protocol_check() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = "xs"
+implements = ["timestampable"]
+
+[fields.a]
+type = "text"
+"#,
+        )
+        .unwrap();
+        assert!(ct.implements_protocol("timestampable"));
+        assert!(!ct.implements_protocol("soft_deletable"));
+    }
+
+    #[test]
+    fn column_names_public_excludes_private() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = "xs"
+
+[fields.a]
+type = "text"
+
+[fields.secret]
+type = "text"
+private = true
+"#,
+        )
+        .unwrap();
+        let public = ct.column_names(None, false);
+        assert!(public.contains(&"a".to_string()));
+        assert!(!public.contains(&"secret".to_string()));
+        let all = ct.column_names(None, true);
+        assert!(all.contains(&"a".to_string()));
+        assert!(all.contains(&"secret".to_string()));
+    }
+
+    #[test]
+    fn column_names_requested_filter() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = "xs"
+
+[fields.a]
+type = "text"
+
+[fields.b]
+type = "text"
+"#,
+        )
+        .unwrap();
+        let filtered = ct.column_names(Some(&["a".to_string()]), false);
+        assert!(filtered.contains(&"a".to_string()));
+        assert!(!filtered.contains(&"b".to_string()));
+    }
+
+    #[test]
+    fn parse_from_file_not_found() {
+        let result = ContentTypeSchema::parse_from_file(Path::new("/nonexistent/path.toml"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_with_api_config() {
+        let toml = r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = "xs"
+
+[fields.a]
+type = "text"
+
+[api.list]
+access = "admin"
+cache = true
+
+[api.get]
+access = "member"
+filter = 'status = "published"'
+"#;
+        let ct = ContentTypeSchema::parse_from_str(toml).unwrap();
+        assert_eq!(ct.api.list.access, ApiAccess::Admin);
+        assert!(ct.api.list.cache);
+        assert_eq!(ct.api.get.access, ApiAccess::Member);
+        assert_eq!(ct.api.get.filter.as_deref(), Some("status = \"published\""));
     }
 }

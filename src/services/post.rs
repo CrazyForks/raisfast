@@ -628,4 +628,88 @@ mod tests {
         let result = extract_excerpt(content, 0);
         assert!(result.is_empty() || result.ends_with("..."));
     }
+
+    #[tokio::test]
+    async fn resolve_doc_id_empty_string() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        let result = resolve_doc_id_to_int(&pool, "users", "", None).await;
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn resolve_doc_id_numeric_string() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        let result = resolve_doc_id_to_int(&pool, "users", "42", None).await;
+        assert_eq!(result.unwrap(), Some(42));
+    }
+
+    #[tokio::test]
+    async fn resolve_doc_id_unsafe_table() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        let result = resolve_doc_id_to_int(&pool, "drop table", "abc", None).await;
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn resolve_doc_id_with_tenant() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("ALTER TABLE posts ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO users (id, document_id, email, username, password_hash, role) VALUES (1, 'u1', 'a@b.com', 'user1', 'hash', 'user')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO posts (id, document_id, title, slug, content, status, created_by, updated_by, tenant_id) VALUES (1, 'doc-t1', 'T', 't', 'c', 'draft', 1, 1, 't1')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let result = resolve_doc_id_to_int(&pool, "posts", "doc-t1", Some("t1"))
+            .await
+            .unwrap();
+        assert_eq!(result, Some(1));
+    }
+
+    #[tokio::test]
+    async fn resolve_doc_id_with_wrong_tenant() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("ALTER TABLE posts ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO users (id, document_id, email, username, password_hash, role) VALUES (1, 'u1', 'a@b.com', 'user1', 'hash', 'user')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO posts (id, document_id, title, slug, content, status, created_by, updated_by, tenant_id) VALUES (1, 'doc-t2', 'T', 't', 'c', 'draft', 1, 1, 't1')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let result = resolve_doc_id_to_int(&pool, "posts", "doc-t2", Some("wrong"))
+            .await
+            .unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn resolve_doc_id_not_found() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let result = resolve_doc_id_to_int(&pool, "users", "nonexistent", None)
+            .await
+            .unwrap();
+        assert_eq!(result, None);
+    }
 }

@@ -62,3 +62,120 @@ pub async fn list_users(
     let responses = users.into_iter().map(UserResponse::from).collect();
     Ok((responses, total))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::CreateUserCmd;
+    use crate::dto::UpdateUserRequest;
+    use crate::repositories::sqlx_user::SqlxUserRepository;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    fn auth(doc_id: &str) -> AuthUser {
+        AuthUser::from_parts(Some(doc_id.to_string()), Some(1), "admin".to_string(), None)
+    }
+
+    async fn insert_user(pool: &crate::db::Pool, email: &str) -> crate::models::user::User {
+        let repo = SqlxUserRepository::new(pool.clone());
+        repo.create(
+            CreateUserCmd {
+                email: email.to_string(),
+                username: email.to_string(),
+                password_hash: "$argon2id$v=19$m=19456,t=2,p=1$test$test".into(),
+            },
+            None,
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn get_me_returns_user() {
+        let pool = setup_pool().await;
+        let user = insert_user(&pool, "me@test.com").await;
+        let repo = SqlxUserRepository::new(pool.clone());
+        let a = AuthUser::from_parts(
+            Some(user.document_id.clone()),
+            Some(user.id),
+            "admin".to_string(),
+            None,
+        );
+        let resp = super::get_me(&repo, &a).await.unwrap();
+        assert_eq!(resp.email, "me@test.com");
+    }
+
+    #[tokio::test]
+    async fn get_me_not_found() {
+        let pool = setup_pool().await;
+        let repo = SqlxUserRepository::new(pool.clone());
+        let a = auth("ghost");
+        assert!(super::get_me(&repo, &a).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn update_me_changes_bio() {
+        let pool = setup_pool().await;
+        let user = insert_user(&pool, "upd@test.com").await;
+        let repo = SqlxUserRepository::new(pool.clone());
+        let a = AuthUser::from_parts(
+            Some(user.document_id.clone()),
+            Some(user.id),
+            "admin".to_string(),
+            None,
+        );
+        let resp = super::update_me(
+            &repo,
+            &a,
+            UpdateUserRequest {
+                username: None,
+                bio: Some("new bio".into()),
+                website: None,
+                avatar: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.bio, Some("new bio".to_string()));
+    }
+
+    #[tokio::test]
+    async fn get_public_user_found() {
+        let pool = setup_pool().await;
+        let user = insert_user(&pool, "pub@test.com").await;
+        let repo = SqlxUserRepository::new(pool.clone());
+        let resp = super::get_public_user(&repo, &user.document_id, None)
+            .await
+            .unwrap();
+        assert_eq!(resp.email, "pub@test.com");
+    }
+
+    #[tokio::test]
+    async fn get_public_user_not_found() {
+        let pool = setup_pool().await;
+        let repo = SqlxUserRepository::new(pool.clone());
+        assert!(
+            super::get_public_user(&repo, "missing", None)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn list_users_paginated() {
+        let pool = setup_pool().await;
+        insert_user(&pool, "a@test.com").await;
+        insert_user(&pool, "b@test.com").await;
+        let repo = SqlxUserRepository::new(pool.clone());
+        let (users, total) = super::list_users(&repo, 1, 10, None).await.unwrap();
+        assert_eq!(total, 2);
+        assert_eq!(users.len(), 2);
+    }
+}

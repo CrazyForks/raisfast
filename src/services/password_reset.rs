@@ -132,3 +132,186 @@ pub async fn set_password(
     let _ = pool;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::CreateUserCmd;
+    use crate::repositories::sqlx_user::SqlxUserRepository;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    fn eventbus() -> crate::eventbus::EventBus {
+        crate::eventbus::EventBus::new(16)
+    }
+
+    async fn insert_user(pool: &crate::db::Pool, email: &str) -> crate::models::user::User {
+        let repo = SqlxUserRepository::new(pool.clone());
+        repo.create(
+            CreateUserCmd {
+                email: email.to_string(),
+                username: email.to_string(),
+                password_hash: "$argon2id$v=19$m=19456,t=2,p=1$test$test".into(),
+            },
+            None,
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn forgot_password_existing_user() {
+        let pool = setup_pool().await;
+        let user = insert_user(&pool, "reset@test.com").await;
+        let repo = SqlxUserRepository::new(pool.clone());
+        let eb = eventbus();
+        super::forgot_password(&pool, &repo, &eb, &user.email, None)
+            .await
+            .unwrap();
+        let sql = format!(
+            "SELECT COUNT(*) FROM password_reset_tokens WHERE user_id = {} AND used_at IS NULL",
+            crate::db::dialect::ph(1),
+        );
+        let (count,): (i64,) = sqlx::query_as(&sql)
+            .bind(user.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn forgot_password_nonexistent_user_ok() {
+        let pool = setup_pool().await;
+        let repo = SqlxUserRepository::new(pool.clone());
+        let eb = eventbus();
+        super::forgot_password(&pool, &repo, &eb, "noone@test.com", None)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn reset_password_valid_token() {
+        let pool = setup_pool().await;
+        let user = insert_user(&pool, "rp@test.com").await;
+        let eb = eventbus();
+        let repo = SqlxUserRepository::new(pool.clone());
+        super::forgot_password(&pool, &repo, &eb, &user.email, None)
+            .await
+            .unwrap();
+        let sql = format!(
+            "SELECT token FROM password_reset_tokens WHERE user_id = {} AND used_at IS NULL LIMIT 1",
+            crate::db::dialect::ph(1),
+        );
+        let (token_str,): (String,) = sqlx::query_as(&sql)
+            .bind(user.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        super::reset_password(&repo, &pool, &token_str, "NewPass1", None)
+            .await
+            .unwrap();
+        let updated = repo
+            .find_by_id(&user.document_id, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(
+            updated.password_hash,
+            "$argon2id$v=19$m=19456,t=2,p=1$test$test"
+        );
+    }
+
+    #[tokio::test]
+    async fn reset_password_invalid_token() {
+        let pool = setup_pool().await;
+        let repo = SqlxUserRepository::new(pool.clone());
+        let err = super::reset_password(&repo, &pool, "bad-token", "NewPass1", None)
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("invalid_or_expired_token"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn reset_password_weak_password() {
+        let pool = setup_pool().await;
+        let user = insert_user(&pool, "weak@test.com").await;
+        let eb = eventbus();
+        let repo = SqlxUserRepository::new(pool.clone());
+        super::forgot_password(&pool, &repo, &eb, &user.email, None)
+            .await
+            .unwrap();
+        let sql = format!(
+            "SELECT token FROM password_reset_tokens WHERE user_id = {} AND used_at IS NULL LIMIT 1",
+            crate::db::dialect::ph(1),
+        );
+        let (token_str,): (String,) = sqlx::query_as(&sql)
+            .bind(user.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let err = super::reset_password(&repo, &pool, &token_str, "short", None)
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("password"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn set_password_oauth_user() {
+        let pool = setup_pool().await;
+        let repo = SqlxUserRepository::new(pool.clone());
+        let user = repo
+            .create(
+                CreateUserCmd {
+                    email: "oauth@test.com".into(),
+                    username: "oauthu".into(),
+                    password_hash: "!oauth:github:12345".into(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let a = AuthUser::from_parts(
+            Some(user.document_id.clone()),
+            Some(user.id),
+            "author".to_string(),
+            None,
+        );
+        super::set_password(&repo, &pool, &a, "StrongPass1")
+            .await
+            .unwrap();
+        let updated = repo
+            .find_by_id(&user.document_id, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!updated.password_hash.starts_with("!oauth:"));
+    }
+
+    #[tokio::test]
+    async fn set_password_already_set_rejected() {
+        let pool = setup_pool().await;
+        let user = insert_user(&pool, "already@test.com").await;
+        let repo = SqlxUserRepository::new(pool.clone());
+        let a = AuthUser::from_parts(
+            Some(user.document_id.clone()),
+            Some(user.id),
+            "author".to_string(),
+            None,
+        );
+        let err = super::set_password(&repo, &pool, &a, "NewPass1")
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("password_already_set"), "got: {msg}");
+    }
+}

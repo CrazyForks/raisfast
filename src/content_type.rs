@@ -334,3 +334,219 @@ impl ContentTypeRegistry {
         removed
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::app::RuleEngineConfig;
+
+    fn test_protocol_registry() -> crate::protocols::ProtocolRegistry {
+        let mut reg = crate::protocols::ProtocolRegistry::new();
+        reg.register(crate::protocols::ownable::OwnableProtocol);
+        reg.register(crate::protocols::timestampable::TimestampableProtocol);
+        reg.register(crate::protocols::soft_deletable::SoftDeletableProtocol);
+        reg.register(crate::protocols::versionable::VersionableProtocol);
+        reg
+    }
+
+    fn valid_protocols() -> Vec<&'static str> {
+        vec!["ownable", "timestampable", "soft_deletable", "versionable"]
+    }
+
+    fn register_ct(
+        reg: &ContentTypeRegistry,
+        singular: &str,
+        plural: &str,
+        table: &str,
+    ) -> Result<(), AppError> {
+        let toml = format!(
+            r#"
+[content_type]
+name = "{singular}"
+singular = "{singular}"
+plural = "{plural}"
+table = "{table}"
+
+[fields.title]
+type = "text"
+"#
+        );
+        let schema = schema::ContentTypeSchema::parse_from_str(&toml).unwrap();
+        reg.register(
+            schema,
+            &RuleEngineConfig::default(),
+            &[],
+            &valid_protocols(),
+            &test_protocol_registry(),
+        )
+    }
+
+    #[test]
+    fn new_registry_is_empty() {
+        let reg = ContentTypeRegistry::new();
+        assert!(reg.is_empty());
+        assert_eq!(reg.len(), 0);
+    }
+
+    #[test]
+    fn register_and_lookup() {
+        let reg = ContentTypeRegistry::new();
+        register_ct(&reg, "product", "products", "products").unwrap();
+        assert_eq!(reg.len(), 1);
+        assert!(reg.get("product").is_some());
+        assert!(reg.get_by_table("products").is_some());
+        assert!(reg.get_by_plural("products").is_some());
+        assert!(reg.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn register_conflict_table() {
+        let reg = ContentTypeRegistry::new();
+        reg.set_protected_tables(vec!["users".into()]);
+        let toml = r#"
+[content_type]
+name = "User"
+singular = "custom_user"
+plural = "custom_users"
+table = "users"
+
+[fields.name]
+type = "text"
+"#;
+        let schema = schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+        let result = reg.register(
+            schema,
+            &RuleEngineConfig::default(),
+            &[],
+            &valid_protocols(),
+            &test_protocol_registry(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn register_conflict_reserved_singular() {
+        let reg = ContentTypeRegistry::new();
+        let toml = r#"
+[content_type]
+name = "Auth"
+singular = "auth"
+plural = "auths"
+table = "auth_stuff"
+
+[fields.name]
+type = "text"
+"#;
+        let schema = schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+        let result = reg.register(
+            schema,
+            &RuleEngineConfig::default(),
+            &["auth"],
+            &valid_protocols(),
+            &test_protocol_registry(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn register_unknown_protocol() {
+        let reg = ContentTypeRegistry::new();
+        let toml = r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = "xs"
+implements = ["nonexistent_protocol"]
+
+[fields.title]
+type = "text"
+"#;
+        let schema = schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+        let result = reg.register(
+            schema,
+            &RuleEngineConfig::default(),
+            &[],
+            &valid_protocols(),
+            &test_protocol_registry(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn unregister_removes_ct() {
+        let reg = ContentTypeRegistry::new();
+        register_ct(&reg, "product", "products", "products").unwrap();
+        let removed = reg.unregister("product").unwrap();
+        assert_eq!(removed.singular, "product");
+        assert!(reg.is_empty());
+        assert!(reg.get("product").is_none());
+        assert!(reg.get_by_table("products").is_none());
+        assert!(reg.get_by_plural("products").is_none());
+    }
+
+    #[test]
+    fn unregister_nonexistent_returns_none() {
+        let reg = ContentTypeRegistry::new();
+        assert!(reg.unregister("ghost").is_none());
+    }
+
+    #[test]
+    fn all_returns_all_registered() {
+        let reg = ContentTypeRegistry::new();
+        register_ct(&reg, "a", "as", "table_a").unwrap();
+        register_ct(&reg, "b", "bs", "table_b").unwrap();
+        let all = reg.all();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn set_protected_tables_updates() {
+        let reg = ContentTypeRegistry::new();
+        reg.set_protected_tables(vec!["posts".into(), "users".into()]);
+        let toml = r#"
+[content_type]
+name = "P"
+singular = "p"
+plural = "ps"
+table = "posts"
+
+[fields.title]
+type = "text"
+"#;
+        let schema = schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+        let result = reg.register(
+            schema,
+            &RuleEngineConfig::default(),
+            &[],
+            &valid_protocols(),
+            &test_protocol_registry(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn register_duplicate_singular_different_table() {
+        let reg = ContentTypeRegistry::new();
+        register_ct(&reg, "product", "products", "products").unwrap();
+        let toml = r#"
+[content_type]
+name = "Product2"
+singular = "product"
+plural = "product2s"
+table = "product2s"
+
+[fields.title]
+type = "text"
+"#;
+        let schema = schema::ContentTypeSchema::parse_from_str(toml).unwrap();
+        let result = reg.register(
+            schema,
+            &RuleEngineConfig::default(),
+            &[],
+            &valid_protocols(),
+            &test_protocol_registry(),
+        );
+        assert!(result.is_err());
+    }
+}

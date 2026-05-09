@@ -579,4 +579,339 @@ foreign_key = "author_id"
         assert!(cols.contains(&"updated_by".to_string()));
         assert!(cols.contains(&"created_at".to_string()));
     }
+
+    #[test]
+    fn field_type_to_sql_all_types() {
+        assert_eq!(field_type_to_sql(&FieldType::Text), "TEXT");
+        assert_eq!(field_type_to_sql(&FieldType::RichText), "TEXT");
+        assert_eq!(field_type_to_sql(&FieldType::Integer), "INTEGER");
+        assert_eq!(field_type_to_sql(&FieldType::BigInt), "INTEGER");
+        assert_eq!(field_type_to_sql(&FieldType::Decimal), "REAL");
+        assert_eq!(field_type_to_sql(&FieldType::Float), "REAL");
+        assert_eq!(field_type_to_sql(&FieldType::Boolean), "BOOLEAN");
+        assert_eq!(field_type_to_sql(&FieldType::Date), "TEXT");
+        assert_eq!(field_type_to_sql(&FieldType::DateTime), "TEXT");
+        assert_eq!(field_type_to_sql(&FieldType::Time), "TEXT");
+        assert_eq!(field_type_to_sql(&FieldType::Email), "TEXT");
+        assert_eq!(field_type_to_sql(&FieldType::Password), "TEXT");
+        assert_eq!(field_type_to_sql(&FieldType::Enum), "TEXT");
+        assert_eq!(field_type_to_sql(&FieldType::Uid), "TEXT");
+        assert_eq!(field_type_to_sql(&FieldType::Json), "TEXT");
+        assert_eq!(field_type_to_sql(&FieldType::Media), "TEXT");
+        assert_eq!(field_type_to_sql(&FieldType::Relation), "TEXT");
+    }
+
+    #[test]
+    fn json_to_sql_literal_variants() {
+        assert_eq!(json_to_sql_literal(&serde_json::json!("hello")), "'hello'");
+        assert_eq!(json_to_sql_literal(&serde_json::json!("it's")), "'it''s'");
+        assert_eq!(json_to_sql_literal(&serde_json::json!(42)), "42");
+        assert_eq!(json_to_sql_literal(&serde_json::json!(true)), "1");
+        assert_eq!(json_to_sql_literal(&serde_json::json!(false)), "0");
+        assert_eq!(json_to_sql_literal(&serde_json::json!(null)), "NULL");
+        assert_eq!(json_to_sql_literal(&serde_json::json!([1, 2])), "'[1,2]'");
+    }
+
+    #[test]
+    fn generate_create_table_with_one_to_one_relation() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Profile"
+singular = "profile"
+plural = "profiles"
+table = "profiles"
+
+[fields.user]
+type = "relation"
+relation_type = "one_to_one"
+target = "users"
+"#,
+        )
+        .unwrap();
+        let sql = generate_create_table(&ct, &[]);
+        assert!(sql.contains("user_id INTEGER REFERENCES users(id)"));
+    }
+
+    #[test]
+    fn generate_create_table_with_required_relation() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Post"
+singular = "post"
+plural = "posts"
+table = "posts"
+
+[fields.author]
+type = "relation"
+relation_type = "many_to_one"
+target = "users"
+required = true
+"#,
+        )
+        .unwrap();
+        let sql = generate_create_table(&ct, &[]);
+        assert!(sql.contains("NOT NULL"));
+        assert!(sql.contains("REFERENCES users(id)"));
+    }
+
+    #[test]
+    fn generate_create_table_with_custom_fk() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Post"
+singular = "post"
+plural = "posts"
+table = "posts"
+
+[fields.author]
+type = "relation"
+relation_type = "many_to_one"
+target = "users"
+foreign_key = "owner_id"
+"#,
+        )
+        .unwrap();
+        let sql = generate_create_table(&ct, &[]);
+        assert!(sql.contains("owner_id INTEGER REFERENCES users(id)"));
+    }
+
+    #[test]
+    fn generate_create_table_m2m_no_fk_column() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Post"
+singular = "post"
+plural = "posts"
+table = "posts"
+
+[fields.tags]
+type = "relation"
+relation_type = "many_to_many"
+target = "tags"
+"#,
+        )
+        .unwrap();
+        let sql = generate_create_table(&ct, &[]);
+        assert!(!sql.contains("tags_id"));
+        assert!(!sql.contains("tags"));
+    }
+
+    #[test]
+    fn generate_junction_tables_basic() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Post"
+singular = "post"
+plural = "posts"
+table = "posts"
+
+[fields.tags]
+type = "relation"
+relation_type = "many_to_many"
+target = "tags"
+through = "posts_tags"
+"#,
+        )
+        .unwrap();
+        let tables = generate_junction_tables(&ct);
+        assert_eq!(tables.len(), 1);
+        assert!(tables[0].contains("CREATE TABLE IF NOT EXISTS posts_tags"));
+        assert!(tables[0].contains("post_id"));
+        assert!(tables[0].contains("tags_id"));
+        assert!(tables[0].contains("PRIMARY KEY"));
+    }
+
+    #[test]
+    fn generate_junction_tables_auto_name() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Post"
+singular = "post"
+plural = "posts"
+table = "posts"
+
+[fields.tags]
+type = "relation"
+relation_type = "many_to_many"
+target = "tags"
+"#,
+        )
+        .unwrap();
+        let tables = generate_junction_tables(&ct);
+        assert_eq!(tables.len(), 1);
+        assert!(tables[0].contains("posts_tags"));
+    }
+
+    #[test]
+    fn generate_junction_tables_empty_when_no_m2m() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Post"
+singular = "post"
+plural = "posts"
+table = "posts"
+
+[fields.author]
+type = "relation"
+relation_type = "many_to_one"
+target = "users"
+"#,
+        )
+        .unwrap();
+        let tables = generate_junction_tables(&ct);
+        assert!(tables.is_empty());
+    }
+
+    #[test]
+    fn generate_indexes_unique_field() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Tag"
+singular = "tag"
+plural = "tags"
+table = "tags"
+
+[fields.slug]
+type = "uid"
+unique = true
+
+[fields.name]
+type = "text"
+unique = true
+"#,
+        )
+        .unwrap();
+        let indexes = generate_indexes(&ct);
+        assert!(indexes.iter().any(|s| s.contains("idx_tags_name_unique")));
+        assert!(!indexes.iter().any(|s| s.contains("slug")));
+    }
+
+    #[test]
+    fn generate_indexes_composite() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Post"
+singular = "post"
+plural = "posts"
+table = "posts"
+
+[fields.title]
+type = "text"
+
+[[indexes]]
+fields = ["title", "slug"]
+unique = true
+
+[[indexes]]
+fields = ["title"]
+"#,
+        )
+        .unwrap();
+        let indexes = generate_indexes(&ct);
+        assert_eq!(indexes.len(), 2);
+        assert!(indexes[0].contains("UNIQUE"));
+        assert!(!indexes[1].contains("UNIQUE"));
+    }
+
+    #[test]
+    fn expected_columns_with_m2m_no_fk() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Post"
+singular = "post"
+plural = "posts"
+table = "posts"
+
+[fields.title]
+type = "text"
+
+[fields.tags]
+type = "relation"
+relation_type = "many_to_many"
+target = "tags"
+"#,
+        )
+        .unwrap();
+        let cols = expected_columns(&ct, &[]);
+        assert!(cols.contains(&"title".to_string()));
+        assert!(!cols.contains(&"tags_id".to_string()));
+    }
+
+    #[test]
+    fn generate_create_table_with_boolean_default() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = "xs"
+
+[fields.active]
+type = "boolean"
+required = true
+default = true
+"#,
+        )
+        .unwrap();
+        let sql = generate_create_table(&ct, &[]);
+        assert!(sql.contains("active BOOLEAN DEFAULT 1"));
+        let active_line = sql.lines().find(|l| l.contains("active BOOLEAN")).unwrap();
+        assert!(!active_line.contains("NOT NULL"));
+    }
+
+    #[test]
+    fn generate_create_table_with_default_string() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = "xs"
+
+[fields.status]
+type = "text"
+default = "draft"
+"#,
+        )
+        .unwrap();
+        let sql = generate_create_table(&ct, &[]);
+        assert!(sql.contains("DEFAULT 'draft'"));
+    }
+
+    #[test]
+    fn generate_create_table_protocol_col_not_duplicated() {
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "X"
+singular = "x"
+plural = "xs"
+table = "xs"
+
+[fields.created_at]
+type = "text"
+"#,
+        )
+        .unwrap();
+        let proto = vec![ColumnDef {
+            name: "created_at".into(),
+            sql_type: SqlType::Text,
+            default: None,
+        }];
+        let sql = generate_create_table(&ct, &proto);
+        let count = sql.matches("created_at").count();
+        assert_eq!(count, 1, "created_at should appear exactly once");
+    }
 }

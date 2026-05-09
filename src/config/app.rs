@@ -1062,3 +1062,85 @@ impl AppConfig {
         config
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_defaults_has_expected_values() {
+        let c = AppConfig::test_defaults();
+        assert_eq!(c.host, "0.0.0.0");
+        assert_eq!(c.port, 9898);
+        assert_eq!(c.env, "test");
+        assert_eq!(c.jwt_access_expires, 900);
+        assert_eq!(c.jwt_refresh_expires, 604800);
+        assert_eq!(c.max_upload_size, 104857600);
+        assert_eq!(c.db_pool_size, 1);
+        assert!(!c.graphql_enabled);
+        assert!(!c.websocket_enabled);
+        assert!(!c.worker_enabled);
+        assert!(c.registration_email_enabled);
+        assert!(!c.registration_sms_enabled);
+        assert!(!c.require_email_verification);
+    }
+
+    #[test]
+    fn test_defaults_jwt_secret_not_empty() {
+        let c = AppConfig::test_defaults();
+        assert!(c.jwt_secret.len() >= 32);
+    }
+
+    #[test]
+    fn builtins_default_all_enabled() {
+        let b = BuiltinsConfig::default();
+        assert!(b.blog);
+        assert!(b.pages);
+        assert!(b.media);
+        assert!(b.fulltext);
+        assert!(b.workflow);
+        assert!(!b.is_all_disabled());
+    }
+
+    #[test]
+    fn builtins_is_all_disabled() {
+        let b = BuiltinsConfig {
+            blog: false,
+            pages: false,
+            media: false,
+            fulltext: false,
+            workflow: false,
+        };
+        assert!(b.is_all_disabled());
+    }
+
+    #[test]
+    fn builtins_protected_tables_includes_users() {
+        let b = BuiltinsConfig::default();
+        let tables = b.protected_tables();
+        assert!(tables.contains(&"users".to_string()));
+        assert!(tables.contains(&"posts".to_string()));
+        assert!(tables.contains(&"pages".to_string()));
+        assert!(tables.contains(&"media".to_string()));
+    }
+
+    #[test]
+    fn builtins_protected_tables_without_blog() {
+        let b = BuiltinsConfig {
+            blog: false,
+            ..Default::default()
+        };
+        let tables = b.protected_tables();
+        assert!(!tables.contains(&"posts".to_string()));
+        assert!(!tables.contains(&"categories".to_string()));
+    }
+
+    #[test]
+    fn rule_engine_config_defaults() {
+        let r = RuleEngineConfig::default();
+        assert_eq!(r.prefix_auth_id, "@request.auth.id");
+        assert_eq!(r.sql_now_fn, "datetime('now')");
+        assert_eq!(r.cms_cache_ttl_secs, 30);
+        assert_eq!(r.cms_max_page_size, 100);
+    }
+}

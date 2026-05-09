@@ -6,10 +6,10 @@ use axum::response::IntoResponse;
 use serde::Deserialize;
 use serde_json::json;
 
+use super::model::StepDef;
 use crate::AppState;
 use crate::db::dialect;
 use crate::errors::app_error::{AppError, AppResult};
-use crate::models::workflow::StepDef;
 
 /// 创建工作流定义请求
 #[derive(Debug, Deserialize)]

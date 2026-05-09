@@ -93,3 +93,179 @@ pub async fn resend_verification(
 
     trigger_email_verification(pool, eventbus, user.id, &user.email).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::CreateUserCmd;
+    use crate::repositories::sqlx_user::SqlxUserRepository;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    fn eventbus() -> crate::eventbus::EventBus {
+        crate::eventbus::EventBus::new(16)
+    }
+
+    async fn insert_user(pool: &crate::db::Pool, email: &str) -> crate::models::user::User {
+        let repo = SqlxUserRepository::new(pool.clone());
+        repo.create(
+            CreateUserCmd {
+                email: email.to_string(),
+                username: email.to_string(),
+                password_hash: "$argon2id$v=19$m=19456,t=2,p=1$test$test".into(),
+            },
+            None,
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn trigger_email_verification_creates_token() {
+        let pool = setup_pool().await;
+        let user = insert_user(&pool, "verify@test.com").await;
+        let eb = eventbus();
+        super::trigger_email_verification(&pool, &eb, user.id, &user.email)
+            .await
+            .unwrap();
+        let row =
+            crate::models::email_verification::create(&pool, user.id, "verify@test.com", 3600)
+                .await
+                .unwrap();
+        let found = crate::models::email_verification::find_by_token(&pool, &row.token)
+            .await
+            .unwrap();
+        assert!(found.is_some());
+    }
+
+    #[tokio::test]
+    async fn trigger_email_verification_replaces_old() {
+        let pool = setup_pool().await;
+        let user = insert_user(&pool, "replace@test.com").await;
+        let eb = eventbus();
+        super::trigger_email_verification(&pool, &eb, user.id, &user.email)
+            .await
+            .unwrap();
+        let sql = format!(
+            "SELECT COUNT(*) FROM email_verification_tokens WHERE user_id = {} AND verified_at IS NULL",
+            crate::db::dialect::ph(1),
+        );
+        let (count_before,): (i64,) = sqlx::query_as(&sql)
+            .bind(user.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count_before, 1);
+        super::trigger_email_verification(&pool, &eb, user.id, &user.email)
+            .await
+            .unwrap();
+        let (count_after,): (i64,) = sqlx::query_as(&sql)
+            .bind(user.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count_after, 1);
+    }
+
+    #[tokio::test]
+    async fn verify_email_valid_token() {
+        let pool = setup_pool().await;
+        let user = insert_user(&pool, "v@test.com").await;
+        let eb = eventbus();
+        super::trigger_email_verification(&pool, &eb, user.id, &user.email)
+            .await
+            .unwrap();
+        let sql = format!(
+            "SELECT token FROM email_verification_tokens WHERE user_id = {} AND verified_at IS NULL LIMIT 1",
+            crate::db::dialect::ph(1),
+        );
+        let (token_str,): (String,) = sqlx::query_as(&sql)
+            .bind(user.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        super::verify_email(&pool, &token_str).await.unwrap();
+        let updated = SqlxUserRepository::new(pool.clone())
+            .find_by_id(&user.document_id, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.email_verified, 1);
+    }
+
+    #[tokio::test]
+    async fn verify_email_invalid_token() {
+        let pool = setup_pool().await;
+        let err = super::verify_email(&pool, "no-such-token")
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("invalid_or_expired_token"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn resend_verification_success() {
+        let pool = setup_pool().await;
+        let user = insert_user(&pool, "resend@test.com").await;
+        let eb = eventbus();
+        let repo = SqlxUserRepository::new(pool.clone());
+        super::resend_verification(&pool, &repo, &eb, &user.email)
+            .await
+            .unwrap();
+        let sql = format!(
+            "SELECT COUNT(*) FROM email_verification_tokens WHERE user_id = {} AND verified_at IS NULL",
+            crate::db::dialect::ph(1),
+        );
+        let (count,): (i64,) = sqlx::query_as(&sql)
+            .bind(user.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn resend_verification_already_verified() {
+        let pool = setup_pool().await;
+        let user = insert_user(&pool, "verified@test.com").await;
+        let eb = eventbus();
+        super::trigger_email_verification(&pool, &eb, user.id, &user.email)
+            .await
+            .unwrap();
+        let sql = format!(
+            "SELECT token FROM email_verification_tokens WHERE user_id = {} AND verified_at IS NULL LIMIT 1",
+            crate::db::dialect::ph(1),
+        );
+        let (token_str,): (String,) = sqlx::query_as(&sql)
+            .bind(user.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        super::verify_email(&pool, &token_str).await.unwrap();
+        let repo = SqlxUserRepository::new(pool.clone());
+        let err = super::resend_verification(&pool, &repo, &eb, &user.email)
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("email_already_verified"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn resend_verification_user_not_found() {
+        let pool = setup_pool().await;
+        let eb = eventbus();
+        let repo = SqlxUserRepository::new(pool.clone());
+        assert!(
+            super::resend_verification(&pool, &repo, &eb, "nope@no.com")
+                .await
+                .is_err()
+        );
+    }
+}

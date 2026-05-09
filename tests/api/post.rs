@@ -39,6 +39,19 @@ async fn setup() -> Ctx {
     }
 }
 
+async fn create_draft_post(app: &mut axum::Router, tok: &str) -> String {
+    let (_, body) = send(
+        app,
+        post_json_auth(
+            "/api/v1/posts",
+            json!({"title": "Draft Post", "content": "draft content", "status": "draft"}),
+            tok,
+        ),
+    )
+    .await;
+    body["data"]["slug"].as_str().unwrap().to_string()
+}
+
 #[tokio::test]
 async fn create_success() {
     let mut c = setup().await;
@@ -63,6 +76,123 @@ async fn create_success() {
     assert!(body["data"]["slug"].is_string());
     assert!(body["data"]["content"].is_string());
     assert_eq!(body["data"]["tags"].as_array().unwrap().len(), 1);
+    assert!(body["data"]["excerpt"].is_string());
+    assert!(body["data"]["created_at"].is_string());
+    assert!(body["data"]["updated_at"].is_string());
+    assert!(body["data"]["id"].is_string());
+    assert!(body["data"]["view_count"].is_number());
+    assert!(body["data"]["is_pinned"].is_boolean());
+}
+
+#[tokio::test]
+async fn create_draft_default_status() {
+    let mut c = setup().await;
+    let (status, body): (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth(
+            "/api/v1/posts",
+            json!({"title": "Auto Draft", "content": "some content"}),
+            &c.tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body:?}");
+    assert_eq!(body["data"]["status"], "draft");
+}
+
+#[tokio::test]
+async fn create_with_cover_image() {
+    let mut c = setup().await;
+    let (status, body): (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth(
+            "/api/v1/posts",
+            json!({
+                "title": "Cover Post",
+                "content": "content",
+                "status": "published",
+                "cover_image": "/uploads/cover.jpg",
+            }),
+            &c.tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body:?}");
+    assert_eq!(body["data"]["cover_image"], "/uploads/cover.jpg");
+}
+
+#[tokio::test]
+async fn create_without_tags() {
+    let mut c = setup().await;
+    let (status, body): (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth(
+            "/api/v1/posts",
+            json!({"title": "No Tags", "content": "c", "status": "published"}),
+            &c.tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body:?}");
+    assert_eq!(body["data"]["tags"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn create_auto_excerpt_from_long_content() {
+    let mut c = setup().await;
+    let long_content = "x".repeat(300);
+    let (status, body): (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth(
+            "/api/v1/posts",
+            json!({"title": "Long Content", "content": long_content, "status": "published"}),
+            &c.tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body:?}");
+    let excerpt = body["data"]["excerpt"].as_str().unwrap();
+    assert!(excerpt.ends_with("..."));
+}
+
+#[tokio::test]
+async fn create_author_name_populated() {
+    let mut c = setup().await;
+    let (status, body): (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth(
+            "/api/v1/posts",
+            json!({"title": "Author Post", "content": "c", "status": "published"}),
+            &c.tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body:?}");
+    assert!(
+        body["data"]["author_name"].is_string(),
+        "author_name should be set"
+    );
+}
+
+#[tokio::test]
+async fn create_with_category_name() {
+    let mut c = setup().await;
+    let (status, body): (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth(
+            "/api/v1/posts",
+            json!({
+                "title": "Cat Post",
+                "content": "c",
+                "status": "published",
+                "category_id": c.cat_id,
+            }),
+            &c.tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body:?}");
+    assert_eq!(body["data"]["category_name"], "Tech");
 }
 
 #[tokio::test]
@@ -97,6 +227,7 @@ async fn get_by_slug() {
         send(&mut c.app, get_req(&format!("/api/v1/posts/{slug}"))).await;
     assert!(status.is_success());
     assert_eq!(body["data"]["title"], "Test Post");
+    assert!(body["data"]["author_name"].is_string());
 }
 
 #[tokio::test]
@@ -142,6 +273,16 @@ async fn list_paginated() {
 }
 
 #[tokio::test]
+async fn list_empty() {
+    let (mut app, _) = test_app().await;
+    let (status, body): (StatusCode, Value) =
+        send(&mut app, get_req("/api/v1/posts?page=1&page_size=10")).await;
+    assert!(status.is_success());
+    assert_eq!(body["data"]["items"].as_array().unwrap().len(), 0);
+    assert_eq!(body["data"]["total"], 0);
+}
+
+#[tokio::test]
 async fn search() {
     let mut c = setup().await;
     let _: (StatusCode, Value) = send(
@@ -169,6 +310,15 @@ async fn search() {
 }
 
 #[tokio::test]
+async fn search_empty_query_lists_all() {
+    let mut c = setup().await;
+    create_published_post(&mut c.app, &c.tok).await;
+    let (status, body): (StatusCode, Value) = send(&mut c.app, get_req("/api/v1/posts?q=")).await;
+    assert!(status.is_success());
+    assert!(body["data"]["total"].as_i64().unwrap() >= 1);
+}
+
+#[tokio::test]
 async fn update_success() {
     let mut c = setup().await;
     let slug = create_published_post(&mut c.app, &c.tok).await;
@@ -183,6 +333,81 @@ async fn update_success() {
     .await;
     assert!(status.is_success(), "{status} {body:?}");
     assert_eq!(body["data"]["title"], "Updated");
+    assert_ne!(
+        body["data"]["slug"], slug,
+        "slug should change when title changes"
+    );
+}
+
+#[tokio::test]
+async fn update_content_and_excerpt() {
+    let mut c = setup().await;
+    let slug = create_published_post(&mut c.app, &c.tok).await;
+    let (status, body): (StatusCode, Value) = send(
+        &mut c.app,
+        put_json_auth(
+            &format!("/api/v1/posts/{slug}"),
+            json!({"content": "new content", "excerpt": "custom excerpt"}),
+            &c.tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body:?}");
+    assert_eq!(body["data"]["excerpt"], "custom excerpt");
+}
+
+#[tokio::test]
+async fn update_with_tag_ids() {
+    let mut c = setup().await;
+    let slug = create_published_post(&mut c.app, &c.tok).await;
+    let (status, body): (StatusCode, Value) = send(
+        &mut c.app,
+        put_json_auth(
+            &format!("/api/v1/posts/{slug}"),
+            json!({"tag_ids": [c.tag_id]}),
+            &c.tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body:?}");
+    assert_eq!(body["data"]["tags"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn update_cover_image() {
+    let mut c = setup().await;
+    let slug = create_published_post(&mut c.app, &c.tok).await;
+    let (status, body): (StatusCode, Value) = send(
+        &mut c.app,
+        put_json_auth(
+            &format!("/api/v1/posts/{slug}"),
+            json!({"cover_image": "/new/cover.png"}),
+            &c.tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body:?}");
+    assert_eq!(body["data"]["cover_image"], "/new/cover.png");
+}
+
+#[tokio::test]
+async fn update_same_title_slug_unchanged() {
+    let mut c = setup().await;
+    let slug = create_published_post(&mut c.app, &c.tok).await;
+    let (status, body): (StatusCode, Value) = send(
+        &mut c.app,
+        put_json_auth(
+            &format!("/api/v1/posts/{slug}"),
+            json!({"content": "just update content"}),
+            &c.tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body:?}");
+    assert_eq!(
+        body["data"]["slug"], slug,
+        "slug should not change when title unchanged"
+    );
 }
 
 #[tokio::test]
@@ -201,6 +426,40 @@ async fn update_not_owner_forbidden() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn admin_can_update_others_post() {
+    let mut c = setup().await;
+    let slug = create_published_post(&mut c.app, &c.tok).await;
+    let admin_id = create_admin(&c.state.pool).await;
+    let admin_tok = make_token(&admin_id.1, admin_id.0, "admin");
+    let (status, body): (StatusCode, Value) = send(
+        &mut c.app,
+        put_json_auth(
+            &format!("/api/v1/posts/{slug}"),
+            json!({"title": "Admin Edit"}),
+            &admin_tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body:?}");
+    assert_eq!(body["data"]["title"], "Admin Edit");
+}
+
+#[tokio::test]
+async fn update_nonexistent_post_404() {
+    let mut c = setup().await;
+    let (status, _): (StatusCode, Value) = send(
+        &mut c.app,
+        put_json_auth(
+            "/api/v1/posts/nonexistent-slug",
+            json!({"title": "Nope"}),
+            &c.tok,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -230,6 +489,28 @@ async fn admin_can_delete_others() {
     )
     .await;
     assert!(status.is_success());
+}
+
+#[tokio::test]
+async fn delete_nonexistent_404() {
+    let mut c = setup().await;
+    let (status, _): (StatusCode, Value) =
+        send(&mut c.app, delete_auth("/api/v1/posts/nope", &c.tok)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn delete_not_owner_forbidden() {
+    let mut c = setup().await;
+    let slug = create_published_post(&mut c.app, &c.tok).await;
+    let (other, _) =
+        register_and_login(&mut c.app, "other2@test.com", "otheruser2", "Password123").await;
+    let (status, _): (StatusCode, Value) = send(
+        &mut c.app,
+        delete_auth(&format!("/api/v1/posts/{slug}"), &other),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -408,4 +689,80 @@ async fn list_sorting_by_created_at() {
     assert!(status.is_success(), "list: {status} {body:?}");
     let total = body["data"]["total"].as_i64().unwrap_or(0);
     assert!(total >= 3, "expected total >= 3, got {total}");
+}
+
+#[tokio::test]
+async fn create_multiple_posts_unique_slugs() {
+    let mut c = setup().await;
+    let (_, b1): (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth(
+            "/api/v1/posts",
+            json!({"title": "Same Title", "content": "c1", "status": "published"}),
+            &c.tok,
+        ),
+    )
+    .await;
+    let (_, b2): (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth(
+            "/api/v1/posts",
+            json!({"title": "Same Title", "content": "c2", "status": "published"}),
+            &c.tok,
+        ),
+    )
+    .await;
+    let slug1 = b1["data"]["slug"].as_str().unwrap();
+    let slug2 = b2["data"]["slug"].as_str().unwrap();
+    assert_ne!(slug1, slug2, "slugs should be unique even with same title");
+}
+
+#[tokio::test]
+async fn create_with_invalid_category_id() {
+    let mut c = setup().await;
+    let (status, _): (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth(
+            "/api/v1/posts",
+            json!({
+                "title": "BadCat",
+                "content": "c",
+                "status": "published",
+                "category_id": "nonexistent-id",
+            }),
+            &c.tok,
+        ),
+    )
+    .await;
+    assert!(
+        status.is_server_error() || status == StatusCode::BAD_REQUEST,
+        "expected error for invalid category_id, got {status}"
+    );
+}
+
+#[tokio::test]
+async fn list_multiple_posts_with_tags() {
+    let mut c = setup().await;
+    let (_, tb): (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth("/api/v1/tags", json!({"name": "tag2"}), &c.tok),
+    )
+    .await;
+    let tag2 = tb["data"]["id"].as_i64().unwrap().to_string();
+
+    let _: (StatusCode, Value) = send(
+        &mut c.app,
+        post_json_auth(
+            "/api/v1/posts",
+            json!({"title": "MultiTag", "content": "c", "status": "published", "tag_ids": [c.tag_id, &tag2]}),
+            &c.tok,
+        ),
+    )
+    .await;
+
+    let (status, body): (StatusCode, Value) = send(&mut c.app, get_req("/api/v1/posts")).await;
+    assert!(status.is_success());
+    let items = body["data"]["items"].as_array().unwrap();
+    let multi = items.iter().find(|p| p["title"] == "MultiTag").unwrap();
+    assert_eq!(multi["tags"].as_array().unwrap().len(), 2);
 }

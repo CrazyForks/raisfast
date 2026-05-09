@@ -534,4 +534,136 @@ through = "ct_resolve_posts_tags"
         assert!(items[0].get("author").is_some());
         assert!(items[0].get("tags").is_none());
     }
+
+    #[tokio::test]
+    async fn resolve_empty_items() {
+        let pool = setup_test_db().await;
+        let ct = make_ct_with_relations();
+        let mut items: Vec<Value> = vec![];
+        let result = resolve_relations(&pool, &ct, &mut items, None).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn resolve_one_to_many() {
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+
+        sqlx::query(
+            "CREATE TABLE ct_resolve_comments (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, text TEXT, post_id INTEGER)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE ct_resolve_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, title TEXT, author_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query("INSERT INTO ct_resolve_posts (id, document_id, title, author_id, created_at, updated_at) VALUES (1, 'p1', 'Hello', 0, '2024-01-01', '2024-01-01')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query("INSERT INTO ct_resolve_comments (id, document_id, text, post_id) VALUES (1, 'c1', 'Nice', 1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO ct_resolve_comments (id, document_id, text, post_id) VALUES (2, 'c2', 'Great', 1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Post"
+singular = "post"
+plural = "posts"
+table = "ct_resolve_posts"
+
+[fields.title]
+type = "text"
+
+[fields.comments]
+type = "relation"
+relation_type = "one_to_many"
+target = "ct_resolve_comments"
+foreign_key = "post_id"
+"#,
+        )
+        .unwrap();
+
+        let mut items = vec![serde_json::json!({
+            "id": 1,
+            "document_id": "p1",
+            "title": "Hello",
+            "created_at": "2024-01-01",
+            "updated_at": "2024-01-01"
+        })];
+
+        resolve_relations(&pool, &ct, &mut items, None)
+            .await
+            .unwrap();
+
+        let comments = items[0].get("comments").unwrap().as_array().unwrap();
+        assert_eq!(comments.len(), 2);
+        let texts: Vec<&str> = comments.iter().filter_map(|c| c["text"].as_str()).collect();
+        assert!(texts.contains(&"Nice"));
+        assert!(texts.contains(&"Great"));
+    }
+
+    #[tokio::test]
+    async fn resolve_m2o_with_zero_fk_skipped() {
+        let pool = crate::db::Pool::connect(":memory:").await.unwrap();
+
+        sqlx::query(
+            "CREATE TABLE ct_resolve_users (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, name TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE ct_resolve_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, title TEXT, author_id INTEGER)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let ct = ContentTypeSchema::parse_from_str(
+            r#"
+[content_type]
+name = "Post"
+singular = "post"
+plural = "posts"
+table = "ct_resolve_posts"
+
+[fields.title]
+type = "text"
+
+[fields.author]
+type = "relation"
+relation_type = "many_to_one"
+target = "ct_resolve_users"
+foreign_key = "author_id"
+"#,
+        )
+        .unwrap();
+
+        let mut items = vec![serde_json::json!({
+            "id": 1,
+            "document_id": "p1",
+            "title": "NoAuthor",
+            "author_id": 0
+        })];
+
+        resolve_relations(&pool, &ct, &mut items, None)
+            .await
+            .unwrap();
+
+        assert!(items[0].get("author").is_none());
+    }
 }
