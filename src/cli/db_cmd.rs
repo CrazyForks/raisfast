@@ -122,7 +122,7 @@ pub fn backup(config: &AppConfig, output_dir: &str) -> anyhow::Result<()> {
             .trim_start_matches("sqlite:")
             .split('?')
             .next()
-            .unwrap_or("./data/blog.db");
+            .ok_or_else(|| anyhow::anyhow!("invalid DATABASE_URL: {}", config.database_url))?;
 
         if !Path::new(db_path).exists() {
             anyhow::bail!("database file not found: {}", db_path);
@@ -131,7 +131,7 @@ pub fn backup(config: &AppConfig, output_dir: &str) -> anyhow::Result<()> {
         std::fs::create_dir_all(output_dir)?;
 
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-        let backup_name = format!("blog_{}.db", timestamp);
+        let backup_name = format!("raisfast_{}.db", timestamp);
         let backup_path = Path::new(output_dir).join(&backup_name);
 
         std::fs::copy(db_path, &backup_path)?;

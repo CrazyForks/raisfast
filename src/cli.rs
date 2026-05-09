@@ -13,7 +13,7 @@ use raisfast::config::app::AppConfig;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "hello-axum", version, about = "Blog system built with Axum")]
+#[command(name = "raisfast", version, about = "Blog system built with Axum")]
 pub struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -78,9 +78,9 @@ pub enum DbAction {
     Migrate,
     /// Backup the database to a timestamped file
     Backup {
-        /// Output directory (default: ./backups)
-        #[arg(short, long, default_value = "./backups")]
-        output: String,
+        /// Output directory (default: {STORAGE_ROOT_DIR}/backups)
+        #[arg(short, long)]
+        output: Option<String>,
     },
     /// Seed initial data (admin user, default content types)
     Seed {
@@ -227,7 +227,8 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
         Some(Commands::Db {
             action: DbAction::Backup { output },
         }) => {
-            db_cmd::backup(config, &output)?;
+            let out = output.unwrap_or_else(|| format!("{}/backups", config.storage_root_dir));
+            db_cmd::backup(config, &out)?;
         }
 
         Some(Commands::Db {

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use rhai::{Engine, Scope, AST};
+use rhai::{AST, Engine, Scope};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -62,11 +62,7 @@ impl RhaiEngine {
         engine.set_max_array_size(10_000);
         engine.set_max_map_size(10_000);
 
-        let max_ops = if timeout_ms > 0 {
-            1_000_000
-        } else {
-            u64::MAX
-        };
+        let max_ops = if timeout_ms > 0 { 1_000_000 } else { u64::MAX };
         engine.on_progress(move |ops| {
             if ops > max_ops {
                 return Some("execution timeout".into());
@@ -135,14 +131,8 @@ impl RhaiEngine {
 
     #[cfg(test)]
     pub async fn load_plugin_default(&self, id: &str, code: &str) -> anyhow::Result<()> {
-        self.load_plugin(
-            id,
-            code,
-            Permissions::default(),
-            Path::new("."),
-            "",
-        )
-        .await
+        self.load_plugin(id, code, Permissions::default(), Path::new("."), "")
+            .await
     }
 
     pub async fn unload_plugin(&self, id: &str) {
@@ -163,15 +153,14 @@ impl RhaiEngine {
         let input_dynamic = rhai::serde::to_dynamic(input)?;
 
         let mut scope = Scope::new();
-        let result: rhai::Dynamic = match engine
-            .call_fn(&mut scope, &entry.ast, func_name, (input_dynamic,))
-        {
-            Ok(r) => r,
-            Err(e) => match *e {
-                rhai::EvalAltResult::ErrorFunctionNotFound(_, _) => return Ok(None),
-                _ => return Err(anyhow::anyhow!("rhai call_filter error: {e}")),
-            },
-        };
+        let result: rhai::Dynamic =
+            match engine.call_fn(&mut scope, &entry.ast, func_name, (input_dynamic,)) {
+                Ok(r) => r,
+                Err(e) => match *e {
+                    rhai::EvalAltResult::ErrorFunctionNotFound(_, _) => return Ok(None),
+                    _ => return Err(anyhow::anyhow!("rhai call_filter error: {e}")),
+                },
+            };
 
         if result.is::<()>() {
             return Ok(None);
@@ -217,13 +206,14 @@ impl RhaiEngine {
         let engine = self.create_instance(&entry, plugin_id);
 
         let mut scope = Scope::new();
-        let result: String = match engine.call_fn(&mut scope, &entry.ast, func_name, (input.to_string(),)) {
-            Ok(r) => r,
-            Err(e) => match *e {
-                rhai::EvalAltResult::ErrorFunctionNotFound(_, _) => return Ok(None),
-                _ => return Err(anyhow::anyhow!("rhai call_string_filter error: {e}")),
-            },
-        };
+        let result: String =
+            match engine.call_fn(&mut scope, &entry.ast, func_name, (input.to_string(),)) {
+                Ok(r) => r,
+                Err(e) => match *e {
+                    rhai::EvalAltResult::ErrorFunctionNotFound(_, _) => return Ok(None),
+                    _ => return Err(anyhow::anyhow!("rhai call_string_filter error: {e}")),
+                },
+            };
 
         Ok(Some(result))
     }
@@ -378,9 +368,7 @@ fn filter_html(html) {
         let engine = RhaiEngine::new(&test_config(), None, None).unwrap();
 
         for i in 0..3 {
-            let code = format!(
-                r#"fn on_post_creating(m) {{ m.idx = {i}; m }}"#
-            );
+            let code = format!(r#"fn on_post_creating(m) {{ m.idx = {i}; m }}"#);
             engine
                 .load_plugin_default(&format!("plugin-{i}"), &code)
                 .await
@@ -470,10 +458,7 @@ fn on_post_creating(input) {
     async fn rhai_call_after_unload_returns_none() {
         let engine = RhaiEngine::new(&test_config(), None, None).unwrap();
         engine
-            .load_plugin_default(
-                "test-gone",
-                r#"fn on_post_creating(m) { m }"#,
-            )
+            .load_plugin_default("test-gone", r#"fn on_post_creating(m) { m }"#)
             .await
             .unwrap();
 

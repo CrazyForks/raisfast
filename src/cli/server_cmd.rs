@@ -1,6 +1,6 @@
 //! `server` 子命令：启动、停止、重启、查看状态。
 //!
-//! 通过 PID 文件（`hello-axum.pid`）管理服务器进程生命周期。
+//! 通过 PID 文件（`{STORAGE_ROOT_DIR}/raisfast.pid`）管理服务器进程生命周期。
 
 use std::path::PathBuf;
 
@@ -8,12 +8,12 @@ use raisfast::config::app::AppConfig;
 
 use raisfast::server as srv;
 
-fn pid_file_path() -> PathBuf {
-    PathBuf::from("./hello-axum.pid")
+fn pid_file_path(storage_root: &str) -> PathBuf {
+    PathBuf::from(format!("{storage_root}/raisfast.pid"))
 }
 
-fn write_pid(pid: u32) -> anyhow::Result<()> {
-    let path = pid_file_path();
+fn write_pid(storage_root: &str, pid: u32) -> anyhow::Result<()> {
+    let path = pid_file_path(storage_root);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -21,15 +21,15 @@ fn write_pid(pid: u32) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn read_pid() -> Option<u32> {
-    let path = pid_file_path();
+pub fn read_pid(storage_root: &str) -> Option<u32> {
+    let path = pid_file_path(storage_root);
     std::fs::read_to_string(&path)
         .ok()
         .and_then(|s| s.trim().parse().ok())
 }
 
-pub fn remove_pid() {
-    let _ = std::fs::remove_file(pid_file_path());
+pub fn remove_pid(storage_root: &str) {
+    let _ = std::fs::remove_file(pid_file_path(storage_root));
 }
 
 fn is_process_running(pid: u32) -> bool {
@@ -87,20 +87,21 @@ fn send_kill(pid: u32) -> bool {
 /// 写入 PID 文件并检查是否已有实例在运行。
 pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
     let pid = std::process::id();
-    write_pid(pid)?;
+    let storage_root = &config.storage_root_dir;
+    write_pid(storage_root, pid)?;
 
-    if let Some(old_pid) = read_pid()
+    if let Some(old_pid) = read_pid(storage_root)
         && old_pid != pid
         && is_process_running(old_pid)
     {
         anyhow::bail!(
-            "server already running (pid={}). Stop it first: hello-axum server stop",
+            "server already running (pid={}). Stop it first: raisfast server stop",
             old_pid
         );
     }
 
     srv::start(config).await?;
-    remove_pid();
+    remove_pid(storage_root);
     Ok(())
 }
 
@@ -108,21 +109,22 @@ pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
 ///
 /// 发送 SIGTERM，等待 3 秒后若仍未退出则 SIGKILL。
 pub fn stop() {
-    match read_pid() {
+    let storage_root = AppConfig::init().storage_root_dir;
+    match read_pid(&storage_root) {
         Some(pid) if is_process_running(pid) => {
             if send_terminate(pid) {
                 println!("sent SIGTERM to process {}", pid);
                 for _ in 0..30 {
                     std::thread::sleep(std::time::Duration::from_millis(100));
                     if !is_process_running(pid) {
-                        remove_pid();
+                        remove_pid(&storage_root);
                         println!("server stopped");
                         return;
                     }
                 }
                 println!("server did not stop within 3 seconds, killing...");
                 send_kill(pid);
-                remove_pid();
+                remove_pid(&storage_root);
                 println!("server killed");
             } else {
                 println!("failed to send signal to process {}", pid);
@@ -130,7 +132,7 @@ pub fn stop() {
         }
         Some(pid) => {
             println!("server is not running (stale pid={})", pid);
-            remove_pid();
+            remove_pid(&storage_root);
         }
         None => {
             println!("server is not running (no pid file)");
@@ -147,7 +149,8 @@ pub async fn restart(config: &AppConfig) -> anyhow::Result<()> {
 
 /// `server status` — 查看服务器运行状态。
 pub fn status() {
-    match read_pid() {
+    let storage_root = AppConfig::init().storage_root_dir;
+    match read_pid(&storage_root) {
         Some(pid) if is_process_running(pid) => {
             let config = AppConfig::init();
             println!(
@@ -157,7 +160,7 @@ pub fn status() {
         }
         Some(pid) => {
             println!("server is not running (stale pid={})", pid);
-            remove_pid();
+            remove_pid(&storage_root);
         }
         None => {
             println!("server is not running (no pid file)");

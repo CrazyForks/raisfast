@@ -7,7 +7,7 @@
 //!
 //! | 变量 | 默认值 | 说明 |
 //! |------|--------|------|
-//! | `LOG_DIR` | `./logs` | 日志文件目录 |
+//! | `LOG_DIR` | `{STORAGE_ROOT_DIR}/logs` | 日志文件目录 |
 //! | `LOG_MAX_FILES` | `7` | 保留的日志文件数量 |
 //! | `RUST_LOG` | `raisfast=info,tower_http=info` | 日志级别过滤 |
 

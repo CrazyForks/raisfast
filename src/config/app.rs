@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 /// | `JWT_SECRET` | String | (内置默认值) | JWT 签名密钥 |
 /// | `JWT_ACCESS_EXPIRES` | u64 | `900` (15 分钟) | Access Token 过期时间（秒） |
 /// | `JWT_REFRESH_EXPIRES` | u64 | `604800` (7 天) | Refresh Token 过期时间（秒） |
-/// | `UPLOAD_DIR` | String | `./uploads` | 上传文件存储目录 |
+/// | `UPLOAD_DIR` | String | `{STORAGE_ROOT_DIR}/uploads` | 上传文件存储目录 |
 /// | `MAX_UPLOAD_SIZE` | usize | `104857600` (100 MB) | 上传文件大小上限（字节） |
 /// | `STATIC_DIR` | String | `./static` | 静态文件目录（favicon、robots.txt 等） |
 /// | `BASE_URL` | String | `http://{host}:{port}` | 站点完整 URL（用于生成 RSS/媒体链接） |
@@ -32,6 +32,11 @@ use serde::{Deserialize, Serialize};
 /// | `APP_TIMEZONE` | String | `UTC` | 站点时区（IANA 格式，如 `Asia/Shanghai`） |
 /// | `GRAPHQL_ENABLED` | bool | `false` | 是否启用 GraphQL API |
 /// | `WEBSOCKET_ENABLED` | bool | `false` | 是否启用 WebSocket 实时推送 |
+/// | `STORAGE_ROOT_DIR` | String | `./storage` | 本地文件存储根目录（uploads/logs/search_index/vfs/db 的父目录） |
+/// | `UPLOAD_DIR` | String | `{STORAGE_ROOT_DIR}/uploads` | 媒体上传目录 |
+/// | `LOG_DIR` | String | `{STORAGE_ROOT_DIR}/logs` | 日志文件目录 |
+/// | `SEARCH_INDEX_DIR` | String | `{STORAGE_ROOT_DIR}/search_index` | 搜索索引目录 |
+/// | `PLUGIN_VFS_ROOT` | String | `{STORAGE_ROOT_DIR}/vfs` | 插件虚拟文件系统目录 |
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub host: String,
@@ -42,6 +47,8 @@ pub struct AppConfig {
     pub jwt_secret: String,
     pub jwt_access_expires: u64,
     pub jwt_refresh_expires: u64,
+    #[serde(default = "default_storage_root_dir")]
+    pub storage_root_dir: String,
     pub upload_dir: String,
     pub max_upload_size: usize,
     pub static_dir: String,
@@ -443,12 +450,20 @@ fn default_cron_log_retention_days() -> i64 {
     30
 }
 
+fn default_storage_root_dir() -> String {
+    "./storage".into()
+}
+
+fn storage_subdir(root: &str, sub: &str) -> String {
+    format!("{root}/{sub}")
+}
+
 fn default_search_engine() -> String {
     "none".into()
 }
 
 fn default_search_index_dir() -> String {
-    "./data/search_index".into()
+    storage_subdir(&default_storage_root_dir(), "search_index")
 }
 
 fn default_content_type_dir() -> String {
@@ -484,7 +499,7 @@ pub fn default_cron_schedules() -> Vec<CronScheduleConfig> {
 }
 
 fn default_log_dir() -> String {
-    "./logs".into()
+    storage_subdir(&default_storage_root_dir(), "logs")
 }
 
 fn default_log_max_files() -> usize {
@@ -568,7 +583,7 @@ fn default_plugin_js_pool_size() -> u32 {
 }
 
 fn default_plugin_vfs_root() -> String {
-    "./plugins-data".into()
+    storage_subdir(&default_storage_root_dir(), "vfs")
 }
 
 fn default_storage_driver() -> String {
@@ -626,9 +641,27 @@ impl AppConfig {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(9898);
+        let storage_root_dir =
+            env::var("STORAGE_ROOT_DIR").unwrap_or_else(|_| default_storage_root_dir());
+        let database_url: String = env::var("DATABASE_URL").unwrap_or_else(|_| {
+            #[cfg(feature = "db-sqlite")]
+            {
+                format!("sqlite:{}/db/raisfast.db?mode=rwc", storage_root_dir)
+            }
+            #[cfg(feature = "db-postgres")]
+            {
+                "postgres://localhost/raisfast".into()
+            }
+            #[cfg(feature = "db-mysql")]
+            {
+                "mysql://root@localhost/raisfast".into()
+            }
+        });
 
-        let base_url = env::var("BASE_URL").unwrap_or_else(|_| format!("http://{host}:{port}"));
-
+        let base_url = env::var("BASE_URL")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| format!("http://{host}:{port}"));
         let cors_origins = env::var("CORS_ORIGINS").ok().filter(|s| !s.is_empty());
         let tls_cert_path = env::var("TLS_CERT_PATH").ok().filter(|s| !s.is_empty());
         let tls_key_path = env::var("TLS_KEY_PATH").ok().filter(|s| !s.is_empty());
@@ -637,20 +670,7 @@ impl AppConfig {
             host,
             port,
             env: env::var("APP_ENV").unwrap_or_else(|_| "development".into()),
-            database_url: env::var("DATABASE_URL").unwrap_or_else(|_| {
-                #[cfg(feature = "db-sqlite")]
-                {
-                    "sqlite:./data/raisfast.db?mode=rwc".into()
-                }
-                #[cfg(feature = "db-postgres")]
-                {
-                    "postgres://localhost/raisfast".into()
-                }
-                #[cfg(feature = "db-mysql")]
-                {
-                    "mysql://root@localhost/raisfast".into()
-                }
-            }),
+            database_url,
             db_pool_size: env::var("DB_POOL_SIZE")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -669,7 +689,9 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(604800),
-            upload_dir: env::var("UPLOAD_DIR").unwrap_or_else(|_| "./uploads".into()),
+            storage_root_dir: storage_root_dir.clone(),
+            upload_dir: env::var("UPLOAD_DIR")
+                .unwrap_or_else(|_| storage_subdir(&storage_root_dir, "uploads")),
             max_upload_size: env::var("MAX_UPLOAD_SIZE")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -708,7 +730,8 @@ impl AppConfig {
                 .ok()
                 .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
                 .unwrap_or_default(),
-            log_dir: env::var("LOG_DIR").unwrap_or_else(|_| default_log_dir()),
+            log_dir: env::var("LOG_DIR")
+                .unwrap_or_else(|_| storage_subdir(&storage_root_dir, "logs")),
             log_max_files: env::var("LOG_MAX_FILES")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -758,7 +781,7 @@ impl AppConfig {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default_rate_limit_api_token_window()),
             plugin_vfs_root: env::var("PLUGIN_VFS_ROOT")
-                .unwrap_or_else(|_| default_plugin_vfs_root()),
+                .unwrap_or_else(|_| storage_subdir(&storage_root_dir, "vfs")),
             plugin_vfs_max_file_size: env::var("PLUGIN_VFS_MAX_FILE_SIZE")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -801,7 +824,7 @@ impl AppConfig {
                 .unwrap_or(default_cron_log_retention_days()),
             search_engine: env::var("SEARCH_ENGINE").unwrap_or_else(|_| default_search_engine()),
             search_index_dir: env::var("SEARCH_INDEX_DIR")
-                .unwrap_or_else(|_| default_search_index_dir()),
+                .unwrap_or_else(|_| storage_subdir(&storage_root_dir, "search_index")),
             content_type_dir: env::var("CONTENT_TYPE_DIR")
                 .unwrap_or_else(|_| default_content_type_dir()),
             timezone: env::var("TIMEZONE")
@@ -934,7 +957,8 @@ impl AppConfig {
             jwt_secret: "test-secret-key-at-least-32-characters-long".into(),
             jwt_access_expires: 900,
             jwt_refresh_expires: 604800,
-            upload_dir: "./test-uploads".into(),
+            storage_root_dir: "./test-storage".into(),
+            upload_dir: "./test-storage/uploads".into(),
             max_upload_size: 104857600,
             static_dir: "./static".into(),
             base_url: "http://localhost:3000".into(),
@@ -949,10 +973,10 @@ impl AppConfig {
             plugin_lua_pool_size: default_plugin_lua_pool_size(),
             plugin_js_pool_size: default_plugin_js_pool_size(),
             plugin_disabled: vec![],
-            plugin_vfs_root: default_plugin_vfs_root(),
+            plugin_vfs_root: "./test-storage/vfs".into(),
             plugin_vfs_max_file_size: default_plugin_vfs_max_file_size(),
             plugin_vfs_max_total_size: default_plugin_vfs_max_total_size(),
-            log_dir: "./test-logs".into(),
+            log_dir: "./test-storage/logs".into(),
             log_max_files: 1,
             rate_limit_enabled: default_rate_limit_enabled(),
             rate_limit_global_max: default_rate_limit_global_max(),
@@ -974,7 +998,7 @@ impl AppConfig {
             cron_schedules: vec![],
             cron_log_retention_days: default_cron_log_retention_days(),
             search_engine: default_search_engine(),
-            search_index_dir: default_search_index_dir(),
+            search_index_dir: "./test-storage/search_index".into(),
             content_type_dir: default_content_type_dir(),
             timezone: default_timezone(),
             storage_driver: default_storage_driver(),

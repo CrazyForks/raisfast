@@ -3,13 +3,13 @@
 *.db
 data/
 backups/
-logs/
-plugins-sdk/target
-plugins-data/
-uploads/
 
 node_modules
 *.pid
+
+# storage root path
+storage/*
+!storage/.gitkeep
 
 # Admin UI 源码不公开，只提交编译产物
 frontend/admin/src/

@@ -1001,9 +1001,9 @@ impl PluginManager {
                 };
 
                 for changed in &event.paths {
-                    let is_relevant = changed
-                        .extension()
-                        .is_some_and(|ext| ext == "wasm" || ext == "js" || ext == "lua" || ext == "rhai");
+                    let is_relevant = changed.extension().is_some_and(|ext| {
+                        ext == "wasm" || ext == "js" || ext == "lua" || ext == "rhai"
+                    });
                     if !is_relevant {
                         continue;
                     }
@@ -3356,7 +3356,10 @@ fn on_post_creating(input) {
         assert_eq!(result["_seo_optimized"], true);
         assert!(result["meta_description"].is_string());
         assert!(
-            result["meta_description"].as_str().unwrap().contains("This is a test"),
+            result["meta_description"]
+                .as_str()
+                .unwrap()
+                .contains("This is a test"),
             "meta_description should contain content"
         );
     }
