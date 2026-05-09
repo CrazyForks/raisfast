@@ -22,12 +22,16 @@ CREATE TABLE IF NOT EXISTS users (
     website TEXT,
     phone TEXT,
     email_verified INTEGER NOT NULL DEFAULT 0,
+    display_name TEXT,
+    slug TEXT UNIQUE,
+    locale TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_slug ON users(slug) WHERE slug IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS NOT NULL;
 
 -- Refresh Tokens
@@ -336,6 +340,12 @@ CREATE TABLE IF NOT EXISTS categories (
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_by INTEGER,
     updated_by INTEGER,
+    cover_image TEXT,
+    meta_title TEXT,
+    meta_description TEXT,
+    og_title TEXT,
+    og_description TEXT,
+    og_image TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
@@ -348,6 +358,13 @@ CREATE TABLE IF NOT EXISTS tags (
     slug TEXT UNIQUE NOT NULL,
     created_by INTEGER,
     updated_by INTEGER,
+    description TEXT,
+    cover_image TEXT,
+    meta_title TEXT,
+    meta_description TEXT,
+    og_title TEXT,
+    og_description TEXT,
+    og_image TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
@@ -367,6 +384,17 @@ CREATE TABLE IF NOT EXISTS posts (
     category_id INTEGER REFERENCES categories(id),
     view_count INTEGER NOT NULL DEFAULT 0,
     is_pinned INTEGER NOT NULL DEFAULT 0,
+    password TEXT,
+    comment_status TEXT NOT NULL DEFAULT 'open',
+    format TEXT NOT NULL DEFAULT 'standard',
+    template TEXT NOT NULL DEFAULT 'default',
+    meta_title TEXT,
+    meta_description TEXT,
+    og_title TEXT,
+    og_description TEXT,
+    og_image TEXT,
+    canonical_url TEXT,
+    reading_time INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     published_at TEXT
@@ -405,6 +433,8 @@ CREATE TABLE IF NOT EXISTS comments (
     content TEXT NOT NULL,
     parent_id INTEGER REFERENCES comments(id),
     status TEXT NOT NULL DEFAULT 'pending',
+    author_ip TEXT,
+    author_url TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
@@ -436,6 +466,11 @@ CREATE TABLE IF NOT EXISTS pages (
     updated_by       INTEGER,
     cover_image      TEXT,
     published_at     TEXT,
+    password TEXT,
+    comment_status TEXT NOT NULL DEFAULT 'closed',
+    og_title TEXT,
+    og_description TEXT,
+    canonical_url TEXT,
     created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
@@ -470,6 +505,11 @@ CREATE TABLE IF NOT EXISTS media (
     size INTEGER NOT NULL,
     width INTEGER,
     height INTEGER,
+    title TEXT,
+    alt_text TEXT,
+    caption TEXT,
+    description TEXT,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 

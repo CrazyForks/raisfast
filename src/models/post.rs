@@ -33,14 +33,25 @@ pub struct Post {
     pub category_id: Option<i64>,
     pub view_count: i64,
     pub is_pinned: bool,
+    pub password: Option<String>,
+    pub comment_status: String,
+    pub format: String,
+    pub template: String,
+    pub meta_title: Option<String>,
+    pub meta_description: Option<String>,
+    pub og_title: Option<String>,
+    pub og_description: Option<String>,
+    pub og_image: Option<String>,
+    pub canonical_url: Option<String>,
+    pub reading_time: i64,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
     pub published_at: Option<Timestamp>,
 }
 
 crate::impl_from_row_opt_tenant!(Post {
-    required { id, document_id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, created_at, updated_at }
-    optional { excerpt, cover_image, category_id, published_at }
+    required { id, document_id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, comment_status, format, template, reading_time, created_at, updated_at }
+    optional { excerpt, cover_image, category_id, published_at, password, meta_title, meta_description, og_title, og_description, og_image, canonical_url }
 });
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -326,6 +337,17 @@ pub async fn update_tx(
         category_id,
         view_count: existing.view_count,
         is_pinned: existing.is_pinned,
+        password: existing.password,
+        comment_status: existing.comment_status,
+        format: existing.format,
+        template: existing.template,
+        meta_title: existing.meta_title,
+        meta_description: existing.meta_description,
+        og_title: existing.og_title,
+        og_description: existing.og_description,
+        og_image: existing.og_image,
+        canonical_url: existing.canonical_url,
+        reading_time: existing.reading_time,
         created_at: existing.created_at,
         updated_at: now,
         published_at,
@@ -884,6 +906,17 @@ pub struct PostJoinedRow {
     pub category_id: Option<i64>,
     pub view_count: i64,
     pub is_pinned: bool,
+    pub password: Option<String>,
+    pub comment_status: String,
+    pub format: String,
+    pub template: String,
+    pub meta_title: Option<String>,
+    pub meta_description: Option<String>,
+    pub og_title: Option<String>,
+    pub og_description: Option<String>,
+    pub og_image: Option<String>,
+    pub canonical_url: Option<String>,
+    pub reading_time: i64,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
     pub published_at: Option<Timestamp>,
@@ -892,13 +925,16 @@ pub struct PostJoinedRow {
 }
 
 crate::impl_from_row_opt_tenant!(PostJoinedRow {
-    required { id, document_id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, created_at, updated_at }
-    optional { excerpt, cover_image, category_id, published_at, author_name, category_name }
+    required { id, document_id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, comment_status, format, template, reading_time, created_at, updated_at }
+    optional { excerpt, cover_image, category_id, published_at, author_name, category_name, password, meta_title, meta_description, og_title, og_description, og_image, canonical_url }
 });
 
 const JOIN_SQL: &str = "\
     SELECT p.id, p.document_id, p.title, p.slug, p.content, p.excerpt, p.cover_image, p.status, \
-    p.created_by, p.updated_by, p.category_id, p.view_count, p.is_pinned, p.created_at, p.updated_at, \
+    p.created_by, p.updated_by, p.category_id, p.view_count, p.is_pinned, \
+    p.password, p.comment_status, p.format, p.template, \
+    p.meta_title, p.meta_description, p.og_title, p.og_description, p.og_image, p.canonical_url, p.reading_time, \
+    p.created_at, p.updated_at, \
     p.published_at, u.username AS author_name, c.name AS category_name \
     FROM posts p \
     LEFT JOIN users u ON p.created_by = u.id \

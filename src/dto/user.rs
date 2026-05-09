@@ -151,6 +151,9 @@ pub struct UserResponse {
     pub avatar: Option<String>,
     pub bio: Option<String>,
     pub website: Option<String>,
+    pub display_name: Option<String>,
+    pub slug: Option<String>,
+    pub locale: Option<String>,
     #[schema(value_type = String)]
     pub created_at: Timestamp,
     #[schema(value_type = String)]
@@ -168,6 +171,9 @@ impl From<User> for UserResponse {
             avatar: user.avatar,
             bio: user.bio,
             website: user.website,
+            display_name: user.display_name,
+            slug: user.slug,
+            locale: user.locale,
             created_at: user.created_at,
             updated_at: user.updated_at,
         }
@@ -297,6 +303,9 @@ mod tests {
             avatar: None,
             bio: None,
             website: None,
+            display_name: None,
+            slug: None,
+            locale: None,
             created_at: "2025-01-01T00:00:00Z".parse().unwrap(),
             updated_at: "2025-01-01T00:00:00Z".parse().unwrap(),
         };

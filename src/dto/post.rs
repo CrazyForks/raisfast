@@ -58,6 +58,17 @@ pub struct PostResponse {
     pub tags: Vec<crate::models::post::TagBrief>,
     pub view_count: i64,
     pub is_pinned: bool,
+    pub password: Option<String>,
+    pub comment_status: String,
+    pub format: String,
+    pub template: String,
+    pub meta_title: Option<String>,
+    pub meta_description: Option<String>,
+    pub og_title: Option<String>,
+    pub og_description: Option<String>,
+    pub og_image: Option<String>,
+    pub canonical_url: Option<String>,
+    pub reading_time: i64,
     #[schema(value_type = String)]
     pub created_at: Timestamp,
     #[schema(value_type = String)]

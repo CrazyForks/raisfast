@@ -22,6 +22,12 @@ pub struct Category {
     pub name: String,
     pub slug: String,
     pub description: Option<String>,
+    pub cover_image: Option<String>,
+    pub meta_title: Option<String>,
+    pub meta_description: Option<String>,
+    pub og_title: Option<String>,
+    pub og_description: Option<String>,
+    pub og_image: Option<String>,
     pub parent_id: Option<i64>,
     pub sort_order: i64,
     pub updated_by: Option<i64>,
@@ -31,7 +37,7 @@ pub struct Category {
 
 crate::impl_from_row_opt_tenant!(Category {
     required { id, document_id, name, slug, sort_order, created_at }
-    optional { description, parent_id, updated_by, updated_at }
+    optional { description, cover_image, meta_title, meta_description, og_title, og_description, og_image, parent_id, updated_by, updated_at }
 });
 
 pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppResult<Vec<Category>> {

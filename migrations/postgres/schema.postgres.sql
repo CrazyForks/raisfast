@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS users (
     website VARCHAR(500),
     phone VARCHAR(50),
     email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    display_name VARCHAR(100),
+    slug VARCHAR(100) UNIQUE,
+    locale VARCHAR(10),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -334,6 +337,12 @@ CREATE TABLE IF NOT EXISTS categories (
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_by BIGINT,
     updated_by BIGINT,
+    cover_image VARCHAR(500),
+    meta_title VARCHAR(255),
+    meta_description VARCHAR(500),
+    og_title VARCHAR(255),
+    og_description VARCHAR(500),
+    og_image VARCHAR(500),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -344,6 +353,13 @@ CREATE TABLE IF NOT EXISTS tags (
     document_id VARCHAR(36) NOT NULL UNIQUE,
     name VARCHAR(255) UNIQUE NOT NULL,
     slug VARCHAR(255) UNIQUE NOT NULL,
+    description TEXT,
+    cover_image VARCHAR(500),
+    meta_title VARCHAR(255),
+    meta_description VARCHAR(500),
+    og_title VARCHAR(255),
+    og_description VARCHAR(500),
+    og_image VARCHAR(500),
     created_by BIGINT,
     updated_by BIGINT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -365,6 +381,17 @@ CREATE TABLE IF NOT EXISTS posts (
     category_id BIGINT REFERENCES categories(id),
     view_count INTEGER NOT NULL DEFAULT 0,
     is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
+    password VARCHAR(255),
+    comment_status VARCHAR(20) NOT NULL DEFAULT 'open',
+    format VARCHAR(20) NOT NULL DEFAULT 'standard',
+    template VARCHAR(100) NOT NULL DEFAULT 'default',
+    meta_title VARCHAR(255),
+    meta_description VARCHAR(500),
+    og_title VARCHAR(255),
+    og_description VARCHAR(500),
+    og_image VARCHAR(500),
+    canonical_url VARCHAR(1024),
+    reading_time INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     published_at TIMESTAMPTZ
@@ -403,6 +430,8 @@ CREATE TABLE IF NOT EXISTS comments (
     content TEXT NOT NULL,
     parent_id BIGINT REFERENCES comments(id),
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    author_ip VARCHAR(45),
+    author_url VARCHAR(500),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -434,6 +463,11 @@ CREATE TABLE IF NOT EXISTS pages (
     updated_by       BIGINT,
     cover_image      VARCHAR(500),
     published_at     TIMESTAMPTZ,
+    password VARCHAR(255),
+    comment_status VARCHAR(20) NOT NULL DEFAULT 'closed',
+    og_title VARCHAR(255),
+    og_description VARCHAR(500),
+    canonical_url VARCHAR(1024),
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -468,6 +502,11 @@ CREATE TABLE IF NOT EXISTS media (
     size INTEGER NOT NULL,
     width INTEGER,
     height INTEGER,
+    title VARCHAR(255),
+    alt_text VARCHAR(255),
+    caption TEXT,
+    description TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

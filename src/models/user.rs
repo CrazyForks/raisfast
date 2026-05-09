@@ -29,6 +29,9 @@ pub struct User {
     pub avatar: Option<String>,
     pub bio: Option<String>,
     pub website: Option<String>,
+    pub display_name: Option<String>,
+    pub slug: Option<String>,
+    pub locale: Option<String>,
     pub email_verified: i64,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -36,7 +39,7 @@ pub struct User {
 
 crate::impl_from_row_opt_tenant!(User {
     required { id, document_id, email, username, password_hash, role, email_verified, created_at, updated_at }
-    optional { phone, avatar, bio, website }
+    optional { phone, avatar, bio, website, display_name, slug, locale }
 });
 
 /// 根据邮箱查找用户

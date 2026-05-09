@@ -24,12 +24,17 @@ pub struct Media {
     pub size: i64,
     pub width: Option<i32>,
     pub height: Option<i32>,
+    pub title: Option<String>,
+    pub alt_text: Option<String>,
+    pub caption: Option<String>,
+    pub description: Option<String>,
     pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 crate::impl_from_row_opt_tenant!(Media {
-    required { id, document_id, user_id, filename, filepath, mimetype, size, created_at }
-    optional { width, height }
+    required { id, document_id, user_id, filename, filepath, mimetype, size, created_at, updated_at }
+    optional { width, height, title, alt_text, caption, description }
 });
 
 pub async fn create(

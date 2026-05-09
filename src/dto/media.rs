@@ -18,8 +18,14 @@ pub struct MediaResponse {
     pub size: i64,
     pub width: Option<i32>,
     pub height: Option<i32>,
+    pub title: Option<String>,
+    pub alt_text: Option<String>,
+    pub caption: Option<String>,
+    pub description: Option<String>,
     #[schema(value_type = String)]
     pub created_at: Timestamp,
+    #[schema(value_type = String)]
+    pub updated_at: Timestamp,
 }
 
 /// 将 Media 数据库模型转换为 API 响应
@@ -34,7 +40,12 @@ pub fn media_to_response(media: &Media, base_url: &str) -> MediaResponse {
         size: media.size,
         width: media.width,
         height: media.height,
+        title: media.title.clone(),
+        alt_text: media.alt_text.clone(),
+        caption: media.caption.clone(),
+        description: media.description.clone(),
         created_at: media.created_at,
+        updated_at: media.updated_at,
     }
 }
 
@@ -50,7 +61,12 @@ pub fn media_to_response_with_url(media: &Media, url: &str) -> MediaResponse {
         size: media.size,
         width: media.width,
         height: media.height,
+        title: media.title.clone(),
+        alt_text: media.alt_text.clone(),
+        caption: media.caption.clone(),
+        description: media.description.clone(),
         created_at: media.created_at,
+        updated_at: media.updated_at,
     }
 }
 

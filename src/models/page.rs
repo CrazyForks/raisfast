@@ -29,14 +29,19 @@ pub struct Page {
     pub created_by: i64,
     pub updated_by: Option<i64>,
     pub cover_image: Option<String>,
+    pub password: Option<String>,
+    pub comment_status: String,
+    pub og_title: Option<String>,
+    pub og_description: Option<String>,
+    pub canonical_url: Option<String>,
     pub published_at: Option<Timestamp>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
 
 crate::impl_from_row_opt_tenant!(Page {
-    required { id, document_id, title, slug, template, sort_order, status, created_by, created_at, updated_at }
-    optional { content, blocks, meta_title, meta_description, og_image, parent_id, updated_by, cover_image, published_at }
+    required { id, document_id, title, slug, template, sort_order, status, created_by, comment_status, created_at, updated_at }
+    optional { content, blocks, meta_title, meta_description, og_image, parent_id, updated_by, cover_image, password, og_title, og_description, canonical_url, published_at }
 });
 
 #[cfg_attr(feature = "export-types", derive(TS))]
