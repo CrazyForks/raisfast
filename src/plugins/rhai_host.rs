@@ -170,20 +170,6 @@ pub fn register_host_functions(
     engine.register_fn("remove", |map: &mut rhai::Map, key: &str| {
         map.remove(key);
     });
-
-    engine.register_fn("substring", |s: &str, start: i64, end: i64| -> String {
-        let start = start.max(0) as usize;
-        let end = end.max(0) as usize;
-        if start >= s.len() || end <= start {
-            return String::new();
-        }
-        let end = end.min(s.len());
-        s[start..end].to_string()
-    });
-
-    engine.register_fn("parse_int", |s: &str| -> i64 {
-        s.parse::<i64>().unwrap_or(0)
-    });
 }
 
 #[cfg(test)]

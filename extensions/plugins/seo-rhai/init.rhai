@@ -5,20 +5,18 @@
 //   2. action hook — on_post_created: 写入 VFS 缓存
 //   3. string filter — render_markdown: 向 <head> 注入 og:meta
 //   4. custom route — seo_stats / seo_health
-//   5. host API — getConfig / log / vfsWrite / vfsRead / vfsExists / newId / parse_int / substring
+//   5. host API — getConfig / log / vfsWrite / vfsRead / vfsExists / newId
 
 // ── filter hook: 自动生成 slug 和 meta_description ──────────────
-fn on_post_creating(input_json) {
-    let input = parse_json(input_json);
-
+fn on_post_creating(input) {
     // 自动生成 slug
     let title = input.title;
-    input.slug = to_lower(replace(title, " ", "-")) + "-" + newId().substring(0, 8);
+    input.slug = to_lower(replace(title, " ", "-")) + "-" + newId().sub_string(0, 8);
 
     // 自动生成 meta_description（截取 content 前 120 字符）
     let content = input.content;
     if content.len() > 120 {
-        input.meta_description = substring(content, 0, 120) + "...";
+        input.meta_description = content.sub_string(0, 120) + "...";
     } else {
         input.meta_description = content;
     }
@@ -27,15 +25,12 @@ fn on_post_creating(input_json) {
     input._seo_optimized = true;
     log("info", "[seo-rhai] on_post_creating: optimized");
 
-    to_json(input)
+    input
 }
 
 // ── action hook: 文章创建后写入 VFS 缓存 ────────────────────────
-fn on_post_created(data_json) {
-    let data = parse_json(data_json);
+fn on_post_created(data) {
     let slug = data.slug;
-    let title = data.title;
-
     let cache_key = "cache/posts/" + slug + ".json";
     vfsWrite(cache_key, to_json(data));
 

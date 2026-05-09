@@ -3133,10 +3133,9 @@ priority = 10
         std::fs::write(
             plugin_dir.join("init.rhai"),
             r#"
-fn on_post_creating(input_json) {
-    let input = parse_json(input_json);
+fn on_post_creating(input) {
     input.title = to_upper(input.title);
-    to_json(input)
+    input
 }
 "#,
         )
@@ -3325,17 +3324,16 @@ priority = 10
         std::fs::write(
             plugin_dir.join("init.rhai"),
             r#"
-fn on_post_creating(input_json) {
-    let input = parse_json(input_json);
+fn on_post_creating(input) {
     input.slug = to_lower(replace(input.title, " ", "-"));
     input._seo_optimized = true;
     let content = input.content;
     if content.len() > 120 {
-        input.meta_description = content.substring(0, 120) + "...";
+        input.meta_description = content.sub_string(0, 120) + "...";
     } else {
         input.meta_description = content;
     }
-    to_json(input)
+    input
 }
 "#,
         )
@@ -3459,17 +3457,13 @@ priority = 10
         std::fs::write(
             plugin_dir.join("init.rhai"),
             r#"
-fn on_post_creating(input_json) {
-    let post = parse_json(input_json);
-    let title = post["title"];
-    post["slug"] = to_lower(replace(title, " ", "-"));
-    to_json(post)
+fn on_post_creating(input) {
+    input.slug = to_lower(replace(input.title, " ", "-"));
+    input
 }
 
-fn on_post_created(data_json) {
-    let data = parse_json(data_json);
-    let slug = data["slug"];
-    let title = data["title"];
+fn on_post_created(data) {
+    let slug = data.slug;
     let cache_key = "cache/posts/" + slug + ".json";
     vfsWrite(cache_key, to_json(data));
 

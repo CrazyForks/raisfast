@@ -160,13 +160,11 @@ impl RhaiEngine {
         };
 
         let engine = self.create_instance(&entry, plugin_id);
-        let input_json = serde_json::to_string(input)?;
+        let input_dynamic = rhai::serde::to_dynamic(input)?;
 
         let mut scope = Scope::new();
-        scope.push("input", input_json.clone());
-
         let result: rhai::Dynamic = match engine
-            .call_fn(&mut scope, &entry.ast, func_name, (input_json,))
+            .call_fn(&mut scope, &entry.ast, func_name, (input_dynamic,))
         {
             Ok(r) => r,
             Err(e) => match *e {
@@ -179,12 +177,7 @@ impl RhaiEngine {
             return Ok(None);
         }
 
-        let result_json = if result.is::<String>() {
-            result.cast::<String>()
-        } else {
-            result.to_string()
-        };
-        let output: T = serde_json::from_str(&result_json)?;
+        let output: T = rhai::serde::from_dynamic(&result)?;
         Ok(Some(output))
     }
 
@@ -199,10 +192,10 @@ impl RhaiEngine {
         };
 
         let engine = self.create_instance(&entry, plugin_id);
-        let data_json = serde_json::to_string(data)?;
+        let data_dynamic = rhai::serde::to_dynamic(data)?;
 
         let mut scope = Scope::new();
-        match engine.call_fn::<()>(&mut scope, &entry.ast, func_name, (data_json,)) {
+        match engine.call_fn::<()>(&mut scope, &entry.ast, func_name, (data_dynamic,)) {
             Ok(_) => Ok(()),
             Err(e) => match *e {
                 rhai::EvalAltResult::ErrorFunctionNotFound(_, _) => Ok(()),
@@ -265,10 +258,9 @@ mod tests {
         let engine = RhaiEngine::new(&test_config(), None, None).unwrap();
 
         let code = r#"
-fn on_post_creating(input_json) {
-    let input = parse_json(input_json);
+fn on_post_creating(input) {
     input.title = to_upper(input.title);
-    to_json(input)
+    input
 }
 "#;
         engine
@@ -320,8 +312,8 @@ fn on_post_creating(input_json) {
         let engine = RhaiEngine::new(&test_config(), None, None).unwrap();
 
         let code = r#"
-fn on_post_created(data_json) {
-    log("info", "post created: " + data_json);
+fn on_post_created(data) {
+    log("info", "post created");
 }
 "#;
         engine
@@ -387,7 +379,7 @@ fn filter_html(html) {
 
         for i in 0..3 {
             let code = format!(
-                r#"fn on_post_creating(j) {{ let m = parse_json(j); m.idx = {i}; to_json(m) }}"#
+                r#"fn on_post_creating(m) {{ m.idx = {i}; m }}"#
             );
             engine
                 .load_plugin_default(&format!("plugin-{i}"), &code)
@@ -412,10 +404,9 @@ fn filter_html(html) {
         let engine = RhaiEngine::new(&test_config(), None, None).unwrap();
 
         let code = r#"
-fn on_post_creating(input_json) {
-    let input = parse_json(input_json);
+fn on_post_creating(input) {
     input.counter = 1;
-    to_json(input)
+    input
 }
 "#;
         engine
@@ -445,10 +436,9 @@ fn on_post_creating(input_json) {
         let engine = Arc::new(RhaiEngine::new(&test_config(), None, None).unwrap());
 
         let code = r#"
-fn on_post_creating(input_json) {
-    let input = parse_json(input_json);
+fn on_post_creating(input) {
     input.processed = true;
-    to_json(input)
+    input
 }
 "#;
         engine
@@ -482,7 +472,7 @@ fn on_post_creating(input_json) {
         engine
             .load_plugin_default(
                 "test-gone",
-                r#"fn on_post_creating(j) { j }"#,
+                r#"fn on_post_creating(m) { m }"#,
             )
             .await
             .unwrap();
@@ -518,10 +508,9 @@ fn on_post_creating(input_json) {
         let engine = RhaiEngine::new(&test_config(), None, None).unwrap();
 
         let code_v1 = r#"
-fn on_post_creating(input_json) {
-    let input = parse_json(input_json);
+fn on_post_creating(input) {
     input.version = 1;
-    to_json(input)
+    input
 }
 "#;
         engine
@@ -536,10 +525,9 @@ fn on_post_creating(input_json) {
         assert_eq!(r1.as_ref().unwrap()["version"], 1);
 
         let code_v2 = r#"
-fn on_post_creating(input_json) {
-    let input = parse_json(input_json);
+fn on_post_creating(input) {
     input.version = 2;
-    to_json(input)
+    input
 }
 "#;
         engine
@@ -559,13 +547,12 @@ fn on_post_creating(input_json) {
         let engine = RhaiEngine::new(&test_config(), None, None).unwrap();
 
         let code = r#"
-fn on_post_creating(input_json) {
-    let input = parse_json(input_json);
+fn on_post_creating(input) {
     input.title = to_upper(input.title);
     input.slug = replace(to_lower(input.title), " ", "-");
     input.processed = true;
     remove(input, "removable");
-    to_json(input)
+    input
 }
 "#;
         engine
@@ -599,7 +586,7 @@ fn on_post_creating(input_json) {
         let engine = RhaiEngine::new(&test_config(), None, None).unwrap();
 
         let code = r#"
-fn on_post_creating(input_json) {
+fn on_post_creating(input) {
     throw "filter error";
 }
 "#;
@@ -644,17 +631,15 @@ fn filter_html(html) {
         let engine = RhaiEngine::new(&test_config(), None, None).unwrap();
 
         let code_a = r#"
-fn on_post_creating(input_json) {
-    let input = parse_json(input_json);
+fn on_post_creating(input) {
     input.tags = ["a"];
-    to_json(input)
+    input
 }
 "#;
         let code_b = r#"
-fn on_post_creating(input_json) {
-    let input = parse_json(input_json);
+fn on_post_creating(input) {
     input.tags = ["a", "b"];
-    to_json(input)
+    input
 }
 "#;
         engine.load_plugin_default("chain-a", code_a).await.unwrap();
