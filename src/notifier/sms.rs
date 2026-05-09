@@ -55,7 +55,7 @@ impl SmsSender for AliyunSender {
             .template_params
             .as_ref()
             .map(|v| v.to_string())
-            .unwrap_or_else(|| r#"{"code":""#.to_string() + &msg.content + r#""}"#);
+            .unwrap_or_else(|| format!(r#"{{"code":"{}"}}"#, msg.content));
 
         let client = reqwest::Client::new();
 

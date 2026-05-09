@@ -15,6 +15,7 @@ pub fn get_sdk_source(runtime: &str, version: &str) -> Option<&'static str> {
     match (runtime, version) {
         ("js", "v1") => Some(JS_SDK_V1),
         ("lua", "v1") => Some(LUA_SDK_V1),
+        ("rhai", _) => Some(""),
         _ => None,
     }
 }

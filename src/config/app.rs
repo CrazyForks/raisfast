@@ -941,7 +941,7 @@ impl AppConfig {
             cors_origins: None,
             tls_cert_path: None,
             tls_key_path: None,
-            plugin_dir: default_plugin_dir(),
+            plugin_dir: None,
             plugin_hot_reload: false,
             plugin_max_memory_mb: default_plugin_max_memory(),
             plugin_default_timeout_ms: default_plugin_timeout(),

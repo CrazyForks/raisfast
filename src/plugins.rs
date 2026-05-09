@@ -23,6 +23,8 @@ mod engine;
 mod engine_js;
 #[cfg(feature = "plugin-lua")]
 mod engine_lua;
+#[cfg(feature = "plugin-rhai")]
+mod engine_rhai;
 #[cfg(feature = "plugin-wasm")]
 mod host;
 pub mod host_common;
@@ -30,6 +32,8 @@ pub mod host_common;
 mod js_host;
 #[cfg(feature = "plugin-lua")]
 mod lua_host;
+#[cfg(feature = "plugin-rhai")]
+mod rhai_host;
 
 pub mod http_client;
 mod manifest;
@@ -59,6 +63,8 @@ use engine::WasmInstancePool;
 use engine_js::JsEngine;
 #[cfg(feature = "plugin-lua")]
 use engine_lua::LuaEngine;
+#[cfg(feature = "plugin-rhai")]
+use engine_rhai::RhaiEngine;
 
 use crate::config::app::AppConfig;
 use crate::db::Pool;
@@ -205,6 +211,8 @@ enum LoadedPluginInstance {
     Js(String),
     #[cfg(feature = "plugin-lua")]
     Lua(String),
+    #[cfg(feature = "plugin-rhai")]
+    Rhai(String),
 }
 
 /// 插件健康状态与性能指标
@@ -245,6 +253,8 @@ pub struct PluginManager {
     js_engine: JsEngine,
     #[cfg(feature = "plugin-lua")]
     lua_engine: LuaEngine,
+    #[cfg(feature = "plugin-rhai")]
+    rhai_engine: RhaiEngine,
     plugins: RwLock<HashMap<String, LoadedPlugin>>,
     route_index: DashMap<String, Vec<RouteIndexEntry>>,
     hook_index: DashMap<String, Vec<HookIndexEntry>>,
@@ -383,8 +393,12 @@ impl PluginManager {
             .expect("failed to create js engine");
 
         #[cfg(feature = "plugin-lua")]
-        let lua_engine = LuaEngine::new(&config, opts.pool.clone(), opts.event_bus)
+        let lua_engine = LuaEngine::new(&config, opts.pool.clone(), opts.event_bus.clone())
             .expect("failed to create lua engine");
+
+        #[cfg(feature = "plugin-rhai")]
+        let rhai_engine = RhaiEngine::new(&config, opts.pool.clone(), opts.event_bus.clone())
+            .expect("failed to create rhai engine");
 
         let (reload_tx, reload_rx) = tokio::sync::mpsc::channel::<PathBuf>(32);
         let (event_tx, _) = tokio::sync::broadcast::channel::<Arc<PluginEvent>>(256);
@@ -396,6 +410,8 @@ impl PluginManager {
             js_engine,
             #[cfg(feature = "plugin-lua")]
             lua_engine,
+            #[cfg(feature = "plugin-rhai")]
+            rhai_engine,
             plugins: RwLock::new(HashMap::new()),
             route_index: DashMap::new(),
             hook_index: DashMap::new(),
@@ -453,7 +469,7 @@ impl PluginManager {
                 continue;
             }
 
-            let manifest_path = entry.path().join("plugin.toml");
+            let manifest_path = entry.path().join("manifest.toml");
             if !manifest_path.exists() {
                 continue;
             }
@@ -510,7 +526,7 @@ impl PluginManager {
         }
     }
 
-    /// 从 plugin.toml 所在目录加载插件，根据 runtime 字段选择引擎
+    /// 从 manifest.toml 所在目录加载插件，根据 runtime 字段选择引擎
     pub async fn load_plugin_from_dir(&self, manifest_path: &Path) -> AppResult<String> {
         let dir = manifest_path.parent().ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!("manifest has no parent directory"))
@@ -564,6 +580,22 @@ impl PluginManager {
                     )));
                 }
                 self.load_lua_plugin(manifest, &entry_path).await
+            }
+            #[cfg(feature = "plugin-rhai")]
+            "rhai" => {
+                let entry_file = if manifest.plugin.entry == "index.js" {
+                    "init.rhai"
+                } else {
+                    &manifest.plugin.entry
+                };
+                let entry_path = dir.join(entry_file);
+                if !entry_path.exists() {
+                    return Err(AppError::Internal(anyhow::anyhow!(
+                        "rhai entry file not found: {}",
+                        entry_path.display()
+                    )));
+                }
+                self.load_rhai_plugin(manifest, &entry_path).await
             }
             runtime => {
                 tracing::warn!(
@@ -759,6 +791,56 @@ impl PluginManager {
         Ok(id)
     }
 
+    /// 加载 Rhai 插件
+    #[cfg(feature = "plugin-rhai")]
+    async fn load_rhai_plugin(
+        &self,
+        manifest: PluginManifest,
+        entry_path: &Path,
+    ) -> AppResult<String> {
+        let id = manifest.plugin.id.clone();
+        let name = manifest.plugin.name.clone();
+
+        let code = std::fs::read_to_string(entry_path)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("read rhai entry: {e}")))?;
+
+        let plugin_dir = entry_path
+            .parent()
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("entry has no parent directory")))?;
+
+        let permissions = manifest.permissions.clone();
+        self.rhai_engine
+            .load_plugin(&id, &code, permissions, plugin_dir, "")
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("load rhai plugin: {e}")))?;
+
+        let mut plugins = self.plugins.write().await;
+        plugins.insert(
+            id.clone(),
+            LoadedPlugin {
+                manifest,
+                instance: LoadedPluginInstance::Rhai(id.clone()),
+                health: RwLock::new(PluginHealth::default()),
+                metrics: RwLock::new(HashMap::new()),
+            },
+        );
+        let cron_entries = plugins
+            .get(&id)
+            .map(|p| p.manifest.cron.clone())
+            .unwrap_or_default();
+        drop(plugins);
+        self.rebuild_route_index();
+        self.rebuild_hook_index();
+
+        self.sync_crons_for_plugin(&id, &cron_entries).await;
+
+        self.emit_event(PluginEvent::PluginLoaded {
+            id: id.clone(),
+            name,
+        });
+        Ok(id)
+    }
+
     /// 卸载指定插件
     /// 从所有已加载插件重建路由索引。
     fn rebuild_route_index(&self) {
@@ -830,6 +912,11 @@ impl PluginManager {
                     drop(removed);
                     self.lua_engine.unload_plugin(id).await;
                 }
+                #[cfg(feature = "plugin-rhai")]
+                LoadedPluginInstance::Rhai(_) => {
+                    drop(removed);
+                    self.rhai_engine.unload_plugin(id).await;
+                }
                 #[cfg(feature = "plugin-wasm")]
                 LoadedPluginInstance::Wasm(_) => {}
             }
@@ -863,7 +950,7 @@ impl PluginManager {
 
     /// 重新加载指定插件（热更新）
     pub async fn reload_plugin(&self, plugin_dir: &Path) {
-        let manifest_path = plugin_dir.join("plugin.toml");
+        let manifest_path = plugin_dir.join("manifest.toml");
         if !manifest_path.exists() {
             return;
         }
@@ -916,7 +1003,7 @@ impl PluginManager {
                 for changed in &event.paths {
                     let is_relevant = changed
                         .extension()
-                        .is_some_and(|ext| ext == "wasm" || ext == "js" || ext == "lua");
+                        .is_some_and(|ext| ext == "wasm" || ext == "js" || ext == "lua" || ext == "rhai");
                     if !is_relevant {
                         continue;
                     }
@@ -974,7 +1061,7 @@ impl PluginManager {
                 continue;
             }
 
-            let manifest_path = entry.path().join("plugin.toml");
+            let manifest_path = entry.path().join("manifest.toml");
             if !manifest_path.exists() {
                 continue;
             }
@@ -1090,6 +1177,12 @@ impl PluginManager {
                     .call_filter(pid, func_name, &current)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}")),
+                #[cfg(feature = "plugin-rhai")]
+                LoadedPluginInstance::Rhai(pid) => self
+                    .rhai_engine
+                    .call_filter(pid, func_name, &current)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}")),
             };
 
             let elapsed = start.elapsed().as_micros() as u64;
@@ -1200,6 +1293,12 @@ impl PluginManager {
                     .call_action(pid, func_name, data)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}")),
+                #[cfg(feature = "plugin-rhai")]
+                LoadedPluginInstance::Rhai(pid) => self
+                    .rhai_engine
+                    .call_action(pid, func_name, data)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}")),
             };
 
             let elapsed = start.elapsed().as_micros() as u64;
@@ -1272,6 +1371,12 @@ impl PluginManager {
                 #[cfg(feature = "plugin-lua")]
                 LoadedPluginInstance::Lua(pid) => self
                     .lua_engine
+                    .call_string_filter(pid, func_name, content)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}")),
+                #[cfg(feature = "plugin-rhai")]
+                LoadedPluginInstance::Rhai(pid) => self
+                    .rhai_engine
                     .call_string_filter(pid, func_name, content)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}")),
@@ -1654,6 +1759,12 @@ impl PluginManager {
                 .call_filter::<serde_json::Value>(pid, handler, input)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?,
+            #[cfg(feature = "plugin-rhai")]
+            LoadedPluginInstance::Rhai(pid) => self
+                .rhai_engine
+                .call_filter::<serde_json::Value>(pid, handler, input)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?,
         };
 
         match result {
@@ -1938,7 +2049,7 @@ runtime = "js"
 [hooks.on-post-creating]
 priority = 10
 "#;
-        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
         std::fs::write(
             plugin_dir.join("index.js"),
             r#"export function on_post_creating(j) { return j; }"#,
@@ -1971,7 +2082,7 @@ runtime = "js"
 [hooks.on-post-creating]
 priority = 10
 "#;
-        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
         std::fs::write(
             plugin_dir.join("index.js"),
             r#"
@@ -2013,7 +2124,7 @@ runtime = "js"
 [hooks.render_markdown]
 priority = 5
 "#;
-        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
         std::fs::write(
             plugin_dir.join("index.js"),
             r#"
@@ -2054,7 +2165,7 @@ runtime = "js"
 [hooks.on_post_created]
 priority = 10
 "#;
-        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
         std::fs::write(
             plugin_dir.join("index.js"),
             r#"
@@ -2094,7 +2205,7 @@ method = "GET"
 path = "/api/v1/custom/test"
 handler = "handle_test"
 "#;
-        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
         std::fs::write(
             plugin_dir.join("index.js"),
             r#"
@@ -2129,7 +2240,7 @@ export function handle_test(input) {
         std::fs::create_dir_all(&plugin_dir).unwrap();
 
         std::fs::write(
-            plugin_dir.join("plugin.toml"),
+            plugin_dir.join("manifest.toml"),
             "[plugin]\nid=\"com.test.js-unload\"\nname=\"JSU\"\nversion=\"1.0.0\"\nruntime=\"js\"",
         )
         .unwrap();
@@ -2152,7 +2263,7 @@ export function handle_test(input) {
         std::fs::create_dir_all(&plugin_dir).unwrap();
 
         std::fs::write(
-            plugin_dir.join("plugin.toml"),
+            plugin_dir.join("manifest.toml"),
             "[plugin]\nid=\"com.test.noentry\"\nname=\"NE\"\nversion=\"1.0.0\"\nruntime=\"js\"",
         )
         .unwrap();
@@ -2185,7 +2296,7 @@ config = ["app.*"]
 [hooks.on-post-creating]
 priority = 10
 "#;
-        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
         std::fs::write(
             plugin_dir.join("index.js"),
             r#"
@@ -2235,7 +2346,7 @@ entry = "init.lua"
 [hooks.on_post_creating]
 priority = 10
 "#;
-        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
         std::fs::write(
             plugin_dir.join("init.lua"),
             r#"Plugin = { on_post_creating = function(input) return input end }"#,
@@ -2269,7 +2380,7 @@ entry = "init.lua"
 [hooks.on_post_creating]
 priority = 10
 "#;
-        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
         std::fs::write(
             plugin_dir.join("init.lua"),
             r#"
@@ -2313,7 +2424,7 @@ entry = "init.lua"
 [hooks.render_markdown]
 priority = 5
 "#;
-        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
         std::fs::write(
             plugin_dir.join("init.lua"),
             r#"
@@ -2355,7 +2466,7 @@ entry = "init.lua"
 [hooks.on_post_created]
 priority = 10
 "#;
-        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
         std::fs::write(
             plugin_dir.join("init.lua"),
             r#"
@@ -2384,7 +2495,7 @@ Plugin = {
         std::fs::create_dir_all(&plugin_dir).unwrap();
 
         std::fs::write(
-            plugin_dir.join("plugin.toml"),
+            plugin_dir.join("manifest.toml"),
             "[plugin]\nid=\"com.test.lua-unload\"\nname=\"LU\"\nversion=\"1.0.0\"\nruntime=\"lua\"\nentry=\"init.lua\"",
         )
         .unwrap();
@@ -2407,7 +2518,7 @@ Plugin = {
         std::fs::create_dir_all(&plugin_dir).unwrap();
 
         std::fs::write(
-            plugin_dir.join("plugin.toml"),
+            plugin_dir.join("manifest.toml"),
             "[plugin]\nid=\"com.test.noentry\"\nname=\"NE\"\nversion=\"1.0.0\"\nruntime=\"lua\"\nentry=\"init.lua\"",
         )
         .unwrap();
@@ -2440,7 +2551,7 @@ config = ["app.*"]
 [hooks.on-post-creating]
 priority = 10
 "#;
-        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
         std::fs::write(
             plugin_dir.join("init.lua"),
             r#"
@@ -2523,7 +2634,7 @@ description = "test plugin"
 [hooks.on-post-creating]
 priority = 10
 "#;
-        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
         std::fs::write(
             plugin_dir.join("index.js"),
             r#"export function on_post_creating(j) { return j; }"#,
@@ -2549,7 +2660,7 @@ priority = 10
         std::fs::create_dir_all(&plugin_dir).unwrap();
 
         std::fs::write(
-            plugin_dir.join("plugin.toml"),
+            plugin_dir.join("manifest.toml"),
             "[plugin]\nid=\"com.test.toggle\"\nname=\"T\"\nversion=\"1.0.0\"\nruntime=\"js\"",
         )
         .unwrap();
@@ -2664,7 +2775,7 @@ priority = 10
 [hooks.on_post_deleted]
 priority = 10
 "#;
-        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
 
         let lua_code = r#"
 Plugin = {
@@ -2806,7 +2917,7 @@ method = "GET"
 path = "/api/v1/plugins/stats/count"
 handler = "count"
 "#;
-        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
 
         let lua_code = r#"
 Plugin = {}
@@ -2903,7 +3014,7 @@ end
             "cron_expr = \"0 0 3 * * *\"\n",
             "enabled = false\n",
         );
-        std::fs::write(plugin_dir.join("plugin.toml"), manifest).unwrap();
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
 
         let lua_code = "Plugin = { on_cron_tick = function(data) RaisFastHost.setData(\"last_job\", data.job_type or \"\") end }";
         std::fs::write(plugin_dir.join("init.lua"), lua_code).unwrap();
@@ -2962,5 +3073,577 @@ end
             after_unload.is_empty(),
             "cron schedules should be removed after plugin unload"
         );
+    }
+
+    // ── Rhai plugin tests ─────────────────────────────────────────
+
+    #[cfg(feature = "plugin-rhai")]
+    #[tokio::test]
+    async fn manager_load_rhai_plugin_from_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("rhai-test-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.rhai-plugin"
+name = "Rhai Test"
+version = "1.0.0"
+runtime = "rhai"
+entry = "init.rhai"
+
+[hooks.on_post_creating]
+priority = 10
+"#;
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
+        std::fs::write(
+            plugin_dir.join("init.rhai"),
+            r#"fn on_post_creating(j) { j }"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        assert_eq!(mgr.plugin_count().await, 1);
+        let plugins = mgr.list_plugins().await;
+        assert_eq!(plugins[0].0, "com.test.rhai-plugin");
+    }
+
+    #[cfg(feature = "plugin-rhai")]
+    #[tokio::test]
+    async fn manager_rhai_plugin_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("rhai-filter-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.rhai-filter"
+name = "Rhai Filter"
+version = "1.0.0"
+runtime = "rhai"
+entry = "init.rhai"
+
+[hooks.on_post_creating]
+priority = 10
+"#;
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
+        std::fs::write(
+            plugin_dir.join("init.rhai"),
+            r#"
+fn on_post_creating(input_json) {
+    let input = parse_json(input_json);
+    input.title = to_upper(input.title);
+    to_json(input)
+}
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        let input = serde_json::json!({"title": "hello", "content": "world"});
+        let result: serde_json::Value = mgr
+            .dispatch_filter(HookPoint::PostCreating, input)
+            .await
+            .unwrap();
+        assert_eq!(result["title"], "HELLO");
+    }
+
+    #[cfg(feature = "plugin-rhai")]
+    #[tokio::test]
+    async fn manager_rhai_plugin_string_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("rhai-strfilter-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.rhai-strfilter"
+name = "Rhai String Filter"
+version = "1.0.0"
+runtime = "rhai"
+entry = "init.rhai"
+
+[hooks.render_markdown]
+priority = 5
+"#;
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
+        std::fs::write(
+            plugin_dir.join("init.rhai"),
+            r#"
+fn render_markdown(content) {
+    replace(content, "<head>", `<head><meta property="og:type" content="article">`)
+}
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        let result = mgr
+            .dispatch_render_override("<head><title>Test</title></head>")
+            .await;
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("og:type"));
+    }
+
+    #[cfg(feature = "plugin-rhai")]
+    #[tokio::test]
+    async fn manager_rhai_plugin_action_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("rhai-action-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.rhai-action"
+name = "Rhai Action"
+version = "1.0.0"
+runtime = "rhai"
+entry = "init.rhai"
+
+[hooks.on_post_created]
+priority = 10
+"#;
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
+        std::fs::write(
+            plugin_dir.join("init.rhai"),
+            r#"
+fn on_post_created(data_json) {
+    log("info", "post created");
+}
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        mgr.dispatch_action(HookPoint::PostCreated, &serde_json::json!({"id": "abc"}))
+            .await;
+    }
+
+    #[cfg(feature = "plugin-rhai")]
+    #[tokio::test]
+    async fn manager_rhai_plugin_unload() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("rhai-unload");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        std::fs::write(
+            plugin_dir.join("manifest.toml"),
+            "[plugin]\nid=\"com.test.rhai-unload\"\nname=\"RU\"\nversion=\"1.0.0\"\nruntime=\"rhai\"\nentry=\"init.rhai\"",
+        )
+        .unwrap();
+        std::fs::write(plugin_dir.join("init.rhai"), "fn noop() { 42 }").unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        assert_eq!(mgr.plugin_count().await, 1);
+        mgr.unload_plugin("com.test.rhai-unload").await;
+        assert_eq!(mgr.plugin_count().await, 0);
+    }
+
+    #[cfg(feature = "plugin-rhai")]
+    #[tokio::test]
+    async fn manager_rhai_plugin_route_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("rhai-route-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.rhai-route"
+name = "Rhai Route"
+version = "1.0.0"
+runtime = "rhai"
+entry = "init.rhai"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/custom/rhai-test"
+handler = "handle_test"
+"#;
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
+        std::fs::write(
+            plugin_dir.join("init.rhai"),
+            r#"
+fn handle_test(input) {
+    `{"hello":"world"}`
+}
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        let result = mgr
+            .dispatch_route(
+                "/api/v1/custom/rhai-test",
+                "GET",
+                None,
+                None,
+                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+            )
+            .await;
+        assert!(result.is_some());
+    }
+
+    // ── Rhai 真实插件集成测试（seo-rhai）──────────────────────────
+
+    #[cfg(feature = "plugin-rhai")]
+    #[tokio::test]
+    async fn rhai_seo_plugin_filter_auto_slug_and_meta() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("rhai-filter-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        let manifest = r#"
+[plugin]
+id = "com.test.rhai-seo"
+name = "SEO"
+version = "1.0.0"
+runtime = "rhai"
+entry = "init.rhai"
+
+[hooks.on-post-creating]
+priority = 10
+"#;
+        std::fs::write(plugin_dir.join("manifest.toml"), manifest).unwrap();
+        std::fs::write(
+            plugin_dir.join("init.rhai"),
+            r#"
+fn on_post_creating(input_json) {
+    let input = parse_json(input_json);
+    input.slug = to_lower(replace(input.title, " ", "-"));
+    input._seo_optimized = true;
+    let content = input.content;
+    if content.len() > 120 {
+        input.meta_description = content.substring(0, 120) + "...";
+    } else {
+        input.meta_description = content;
+    }
+    to_json(input)
+}
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        let input = serde_json::json!({
+            "title": "Hello World from Rhai",
+            "content": "This is a test post to verify the Rhai plugin engine works correctly with the full plugin lifecycle."
+        });
+        let result: serde_json::Value = mgr
+            .dispatch_filter(HookPoint::PostCreating, input)
+            .await
+            .unwrap();
+
+        assert_eq!(result["slug"], "hello-world-from-rhai");
+        assert_eq!(result["_seo_optimized"], true);
+        assert!(result["meta_description"].is_string());
+        assert!(
+            result["meta_description"].as_str().unwrap().contains("This is a test"),
+            "meta_description should contain content"
+        );
+    }
+
+    #[cfg(feature = "plugin-rhai")]
+    #[tokio::test]
+    async fn rhai_seo_plugin_render_markdown_injects_og() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("seo-rhai");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        std::fs::write(
+            plugin_dir.join("manifest.toml"),
+            r#"
+[plugin]
+id = "com.raisfast.seo-rhai"
+name = "SEO Rhai"
+version = "1.0.0"
+runtime = "rhai"
+entry = "init.rhai"
+
+[permissions]
+config = ["app.*", "seo.*"]
+
+[hooks.render_markdown]
+priority = 5
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            plugin_dir.join("init.rhai"),
+            r#"
+fn render_markdown(html) {
+    let og_type = getConfig("seo.og_type");
+    let og_str = "" + og_type;
+    if og_str == "" || og_str == "()" {
+        og_str = "article";
+    }
+    let injection = `<meta property="og:type" content="` + og_str + `">` +
+        `<meta name="generator" content="raisfast-seo-rhai/1.0.0">`;
+    replace(html, "<head>", "<head>" + injection)
+}
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        let html = "<head><title>Test Post</title></head><body><h1>Hello</h1></body>";
+        let result = mgr.dispatch_render_override(html).await;
+
+        assert!(result.is_some(), "should modify HTML");
+        let modified = result.unwrap();
+        assert!(
+            modified.contains(r#"property="og:type""#),
+            "should inject og:type meta, got: {modified}"
+        );
+        assert!(
+            modified.contains(r#"content="article""#),
+            "default og_type should be article, got: {modified}"
+        );
+        assert!(
+            modified.contains(r#"name="generator""#),
+            "should inject generator meta, got: {modified}"
+        );
+    }
+
+    #[cfg(feature = "plugin-rhai")]
+    #[tokio::test]
+    async fn rhai_seo_plugin_action_vfs_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("seo-rhai");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        std::fs::write(
+            plugin_dir.join("manifest.toml"),
+            r#"
+[plugin]
+id = "com.raisfast.seo-vfs"
+name = "SEO VFS"
+version = "1.0.0"
+runtime = "rhai"
+entry = "init.rhai"
+
+[permissions]
+filesystem = ["read-write"]
+
+[hooks.on-post-created]
+priority = 10
+
+[hooks.on-post-creating]
+priority = 10
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            plugin_dir.join("init.rhai"),
+            r#"
+fn on_post_creating(input_json) {
+    let post = parse_json(input_json);
+    let title = post["title"];
+    post["slug"] = to_lower(replace(title, " ", "-"));
+    to_json(post)
+}
+
+fn on_post_created(data_json) {
+    let data = parse_json(data_json);
+    let slug = data["slug"];
+    let title = data["title"];
+    let cache_key = "cache/posts/" + slug + ".json";
+    vfsWrite(cache_key, to_json(data));
+
+    let stats_key = "cache/seo_stats.json";
+    let existing = "0";
+    if vfsExists(stats_key) {
+        existing = vfsRead(stats_key);
+    }
+    let count = parse_int(existing) + 1;
+    vfsWrite(stats_key, count.to_string());
+}
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        let vfs_root = dir.path().join("vfs");
+        std::fs::create_dir_all(&vfs_root).unwrap();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        config.plugin_vfs_root = vfs_root.to_string_lossy().to_string();
+        config.plugin_vfs_max_file_size = 65536;
+        config.plugin_vfs_max_total_size = 1048576;
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        // 创建第一篇文章
+        let input1 = serde_json::json!({
+            "title": "First Post",
+            "content": "Hello world"
+        });
+        let created1: serde_json::Value = mgr
+            .dispatch_filter(HookPoint::PostCreating, input1)
+            .await
+            .unwrap();
+        mgr.dispatch_action(HookPoint::PostCreated, &created1).await;
+
+        // 验证 VFS 缓存文件已写入
+        let vfs_plugin = vfs_root.join("com.raisfast.seo-vfs");
+        let cache_file = vfs_plugin.join("cache/posts/first-post.json");
+        assert!(cache_file.exists(), "cache file should exist");
+        let cached: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cache_file).unwrap()).unwrap();
+        assert_eq!(cached["title"], "First Post");
+
+        let stats_file = vfs_plugin.join("cache/seo_stats.json");
+        assert!(stats_file.exists(), "stats file should exist");
+        assert_eq!(std::fs::read_to_string(&stats_file).unwrap(), "1");
+
+        // 创建第二篇文章
+        let input2 = serde_json::json!({
+            "title": "Second Post",
+            "content": "Another post"
+        });
+        let created2: serde_json::Value = mgr
+            .dispatch_filter(HookPoint::PostCreating, input2)
+            .await
+            .unwrap();
+        mgr.dispatch_action(HookPoint::PostCreated, &created2).await;
+
+        // 验证计数器递增
+        assert_eq!(
+            std::fs::read_to_string(&stats_file).unwrap(),
+            "2",
+            "counter should increment to 2"
+        );
+
+        // 验证 filter 输出 slug
+        assert_eq!(created2["slug"], "second-post");
+    }
+
+    #[cfg(feature = "plugin-rhai")]
+    #[tokio::test]
+    async fn rhai_seo_plugin_custom_routes() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("seo-rhai");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        std::fs::write(
+            plugin_dir.join("manifest.toml"),
+            r#"
+[plugin]
+id = "com.raisfast.seo-routes"
+name = "SEO Routes"
+version = "1.0.0"
+runtime = "rhai"
+entry = "init.rhai"
+
+[permissions]
+filesystem = ["read-write"]
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/seo/stats"
+handler = "seo_stats"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/seo/health"
+handler = "seo_health"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            plugin_dir.join("init.rhai"),
+            r#"
+fn seo_stats(input) {
+    let count = "0";
+    if vfsExists("cache/seo_stats.json") {
+        count = vfsRead("cache/seo_stats.json");
+    }
+    `{"total_optimized":${count},"engine":"rhai","version":"1.0.0"}`
+}
+
+fn seo_health(input) {
+    `{"status":"ok","engine":"rhai"}`
+}
+"#,
+        )
+        .unwrap();
+
+        let mut config = (*test_config()).clone();
+        let vfs_root = dir.path().join("vfs");
+        std::fs::create_dir_all(&vfs_root).unwrap();
+        config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
+        config.plugin_vfs_root = vfs_root.to_string_lossy().to_string();
+        config.plugin_vfs_max_file_size = 65536;
+        config.plugin_vfs_max_total_size = 1048576;
+        let mgr = PluginManager::new(Arc::new(config)).await;
+
+        // health 路由
+        let health = mgr
+            .dispatch_route(
+                "/api/v1/plugins/seo/health",
+                "GET",
+                None,
+                None,
+                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+            )
+            .await;
+        assert!(health.is_some(), "health route should match");
+
+        // stats 路由（无缓存时 count=0）
+        let stats = mgr
+            .dispatch_route(
+                "/api/v1/plugins/seo/stats",
+                "GET",
+                None,
+                None,
+                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+            )
+            .await;
+        assert!(stats.is_some(), "stats route should match");
+
+        // 不存在的路由
+        let none = mgr
+            .dispatch_route(
+                "/api/v1/plugins/seo/nonexistent",
+                "GET",
+                None,
+                None,
+                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+            )
+            .await;
+        assert!(none.is_none(), "unknown route should not match");
+
+        // 错误的 method
+        let wrong_method = mgr
+            .dispatch_route(
+                "/api/v1/plugins/seo/health",
+                "POST",
+                None,
+                None,
+                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+            )
+            .await;
+        assert!(wrong_method.is_none(), "wrong method should not match");
     }
 }

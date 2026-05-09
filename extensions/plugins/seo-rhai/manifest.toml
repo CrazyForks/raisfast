@@ -1,0 +1,36 @@
+[plugin]
+id = "com.raisfast.seo-rhai"
+name = "SEO Optimizer (Rhai)"
+version = "1.0.0"
+description = "Rhai 插件引擎验证：自动生成 SEO meta、HTML 注入、缓存预热、统计路由"
+author = "raisfast"
+license = "MIT"
+runtime = "rhai"
+language = "rhai"
+entry = "init.rhai"
+
+[permissions]
+config = ["app.*", "seo.*"]
+database = ["read:posts"]
+filesystem = ["read-write"]
+max_memory_mb = 8
+timeout_ms = 3000
+
+[hooks.on-post-creating]
+priority = 10
+
+[hooks.on-post-created]
+priority = 10
+
+[hooks.render-markdown]
+priority = 5
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/seo/stats"
+handler = "seo_stats"
+
+[[routes]]
+method = "GET"
+path = "/api/v1/plugins/seo/health"
+handler = "seo_health"
