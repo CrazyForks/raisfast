@@ -10,6 +10,7 @@ use ts_rs::TS;
 use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -20,8 +21,8 @@ pub struct Tag {
     pub name: String,
     pub slug: String,
     pub updated_by: Option<i64>,
-    pub updated_at: Option<String>,
-    pub created_at: String,
+    pub updated_at: Option<Timestamp>,
+    pub created_at: Timestamp,
 }
 
 crate::impl_from_row_opt_tenant!(Tag {
@@ -139,7 +140,7 @@ pub async fn create(
                 .bind(slug)
                 .bind(created_by)
                 .bind(created_by)
-                .bind(&now)
+                .bind(now)
                 .execute(pool)
                 .await?;
         }
@@ -159,7 +160,7 @@ pub async fn create(
                 .bind(slug)
                 .bind(created_by)
                 .bind(created_by)
-                .bind(&now)
+                .bind(now)
                 .execute(pool)
                 .await?;
         }
@@ -190,7 +191,7 @@ pub async fn update(
     slug: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Tag> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "UPDATE tags SET name = {}, slug = {}, updated_at = {} WHERE id = {}{}",
         ph(1),
@@ -199,7 +200,7 @@ pub async fn update(
         ph(4),
         tenant_filter_ph(tenant_id, 5)
     );
-    let mut q = sqlx::query(&sql).bind(name).bind(slug).bind(&now).bind(id);
+    let mut q = sqlx::query(&sql).bind(name).bind(slug).bind(now).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }

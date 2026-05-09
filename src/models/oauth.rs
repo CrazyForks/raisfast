@@ -7,6 +7,7 @@ use sqlx::FromRow;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
+use crate::utils::tz::Timestamp;
 
 /// OAuth 账号绑定记录
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
@@ -21,10 +22,10 @@ pub struct OAuthAccount {
     pub avatar_url: Option<String>,
     pub access_token: Option<String>,
     pub refresh_token: Option<String>,
-    pub token_expires_at: Option<String>,
+    pub token_expires_at: Option<Timestamp>,
     pub profile: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 /// OAuth 短期 state 记录
@@ -35,8 +36,8 @@ pub struct OAuthState {
     pub provider: String,
     pub code_verifier: String,
     pub user_id: Option<i64>,
-    pub created_at: String,
-    pub expires_at: String,
+    pub created_at: Timestamp,
+    pub expires_at: Timestamp,
 }
 
 /// 创建 OAuth state 记录
@@ -48,7 +49,7 @@ pub async fn create_state(
     expires_at: &str,
 ) -> AppResult<String> {
     let document_id = crate::utils::id::new_document_id();
-    let now = crate::utils::tz::now_str();
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "INSERT INTO oauth_states (document_id, provider, code_verifier, user_id, created_at, expires_at) VALUES ({}, {}, {}, {}, {}, {})",
         ph(1),
@@ -188,8 +189,8 @@ pub async fn create_account(
         .bind(params.refresh_token)
         .bind(params.token_expires_at)
         .bind(params.profile)
-        .bind(&now)
-        .bind(&now)
+        .bind(now)
+        .bind(now)
         .execute(pool)
         .await?;
 
@@ -219,7 +220,7 @@ pub async fn update_account(
     pool: &crate::db::Pool,
     params: UpdateOAuthAccountParams<'_>,
 ) -> AppResult<()> {
-    let now = crate::utils::tz::now_str();
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "UPDATE oauth_accounts SET email = {}, display_name = {}, avatar_url = {}, access_token = {}, refresh_token = {}, token_expires_at = {}, profile = {}, updated_at = {} WHERE id = {}",
         ph(1),

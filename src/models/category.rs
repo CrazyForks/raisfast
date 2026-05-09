@@ -11,6 +11,7 @@ use ts_rs::TS;
 use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -24,8 +25,8 @@ pub struct Category {
     pub parent_id: Option<i64>,
     pub sort_order: i64,
     pub updated_by: Option<i64>,
-    pub updated_at: Option<String>,
-    pub created_at: String,
+    pub updated_at: Option<Timestamp>,
+    pub created_at: Timestamp,
 }
 
 crate::impl_from_row_opt_tenant!(Category {
@@ -148,7 +149,7 @@ pub async fn create(
                 .bind(cmd.sort_order)
                 .bind(created_by)
                 .bind(created_by)
-                .bind(&now)
+                .bind(now)
                 .execute(pool)
                 .await?;
         }
@@ -174,7 +175,7 @@ pub async fn create(
                 .bind(cmd.sort_order)
                 .bind(created_by)
                 .bind(created_by)
-                .bind(&now)
+                .bind(now)
                 .execute(pool)
                 .await?;
         }
@@ -193,7 +194,7 @@ pub async fn update(
 ) -> AppResult<Category> {
     let cat_id: i64 = cmd.id;
     let existing = find_by_id(pool, cat_id, tenant_id).await?;
-    let now = crate::utils::tz::now_str();
+    let now = crate::utils::tz::now_utc();
 
     let name = cmd.name.as_deref().unwrap_or(&existing.name);
     let slug = cmd.slug.as_deref().unwrap_or(&existing.slug);
@@ -224,7 +225,7 @@ pub async fn update(
         .bind(parent)
         .bind(sort)
         .bind(updated_by)
-        .bind(&now)
+        .bind(now)
         .bind(cat_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);

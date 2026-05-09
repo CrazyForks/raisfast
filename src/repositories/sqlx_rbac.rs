@@ -3,6 +3,7 @@
 use crate::errors::app_error::AppResult;
 use crate::models::rbac::{self, Permission, Role};
 use crate::repositories::define_sqlx_repo;
+use crate::utils::tz::Timestamp;
 
 define_sqlx_repo!(SqlxRbacRepository);
 
@@ -24,7 +25,7 @@ pub trait RbacRepository: Send + Sync {
         id: &str,
         name: &str,
         description: Option<&str>,
-        created_at: &str,
+        created_at: Timestamp,
     ) -> AppResult<Role>;
 
     /// 更新角色
@@ -33,7 +34,7 @@ pub trait RbacRepository: Send + Sync {
         id: &str,
         name: Option<&str>,
         description: Option<&str>,
-        updated_at: &str,
+        updated_at: Timestamp,
     ) -> AppResult<Role>;
 
     /// 删除角色
@@ -55,7 +56,7 @@ pub trait RbacRepository: Send + Sync {
         subject: &str,
         fields: Option<&str>,
         conditions: Option<&str>,
-        created_at: &str,
+        created_at: Timestamp,
     ) -> AppResult<()>;
 }
 
@@ -78,7 +79,7 @@ impl RbacRepository for SqlxRbacRepository {
         id: &str,
         name: &str,
         description: Option<&str>,
-        created_at: &str,
+        created_at: Timestamp,
     ) -> AppResult<rbac::Role> {
         rbac::create_role(&self.pool, id, name, description, created_at).await
     }
@@ -88,7 +89,7 @@ impl RbacRepository for SqlxRbacRepository {
         id: &str,
         name: Option<&str>,
         description: Option<&str>,
-        updated_at: &str,
+        updated_at: Timestamp,
     ) -> AppResult<rbac::Role> {
         rbac::update_role(&self.pool, id, name, description, updated_at).await
     }
@@ -113,7 +114,7 @@ impl RbacRepository for SqlxRbacRepository {
         subject: &str,
         fields: Option<&str>,
         conditions: Option<&str>,
-        created_at: &str,
+        created_at: Timestamp,
     ) -> AppResult<()> {
         rbac::insert_permission(
             &self.pool,

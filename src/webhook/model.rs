@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::tz::Timestamp;
 
 /// Webhook 订阅完整数据库行
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -18,8 +19,8 @@ pub struct WebhookSubscription {
     pub events: String,
     pub enabled: bool,
     pub description: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 crate::impl_from_row_opt_tenant!(WebhookSubscription {
@@ -52,7 +53,7 @@ pub struct WebhookPayload {
     pub event: String,
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub data: serde_json::Value,
-    pub timestamp: String,
+    pub timestamp: Timestamp,
 }
 
 /// 插入一条 webhook 订阅
@@ -79,8 +80,8 @@ pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
                 .bind(&sub.events)
                 .bind(sub.enabled)
                 .bind(&sub.description)
-                .bind(&sub.created_at)
-                .bind(&sub.updated_at)
+                .bind(sub.created_at)
+                .bind(sub.updated_at)
                 .execute(pool)
                 .await?;
         }
@@ -103,8 +104,8 @@ pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
                 .bind(&sub.events)
                 .bind(sub.enabled)
                 .bind(&sub.description)
-                .bind(&sub.created_at)
-                .bind(&sub.updated_at)
+                .bind(sub.created_at)
+                .bind(sub.updated_at)
                 .execute(pool)
                 .await?;
         }
@@ -182,8 +183,8 @@ pub async fn update(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
         .bind(&sub.events)
         .bind(sub.enabled)
         .bind(&sub.description)
-        .bind(&sub.updated_at)
-        .bind(&sub.document_id)
+.bind(sub.updated_at)
+                .bind(&sub.document_id)
         .execute(pool)
         .await?;
     AppError::expect_affected(&result, "webhook_subscription")?;

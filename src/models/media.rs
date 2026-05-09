@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::tz::Timestamp;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Media {
@@ -23,7 +24,7 @@ pub struct Media {
     pub size: i64,
     pub width: Option<i32>,
     pub height: Option<i32>,
-    pub created_at: String,
+    pub created_at: Timestamp,
 }
 
 crate::impl_from_row_opt_tenant!(Media {
@@ -63,7 +64,7 @@ pub async fn create(
                 .bind(cmd.size)
                 .bind(cmd.width)
                 .bind(cmd.height)
-                .bind(&now)
+                .bind(now)
                 .execute(pool)
                 .await?;
         }
@@ -89,7 +90,7 @@ pub async fn create(
                 .bind(cmd.size)
                 .bind(cmd.width)
                 .bind(cmd.height)
-                .bind(&now)
+                .bind(now)
                 .execute(pool)
                 .await?;
         }

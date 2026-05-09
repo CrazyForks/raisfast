@@ -50,10 +50,7 @@ pub async fn reset_password(
         .await?
         .ok_or_else(|| AppError::BadRequest("invalid_or_expired_token".into()))?;
 
-    let expires_at = chrono::DateTime::parse_from_rfc3339(&reset_token.expires_at)
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid token expiry")))?;
-
-    if expires_at < Utc::now() {
+    if reset_token.expires_at < Utc::now() {
         return Err(AppError::BadRequest("invalid_or_expired_token".into()));
     }
 
@@ -68,10 +65,10 @@ pub async fn reset_password(
         crate::db::dialect::ph(2),
         crate::db::dialect::ph(3)
     );
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     sqlx::query(&sql)
         .bind(&new_hash)
-        .bind(&now)
+        .bind(now)
         .bind(reset_token.user_id)
         .execute(&mut *tx)
         .await?;
@@ -82,7 +79,7 @@ pub async fn reset_password(
         crate::db::dialect::ph(2)
     );
     sqlx::query(&sql)
-        .bind(&now)
+        .bind(now)
         .bind(reset_token.id)
         .execute(&mut *tx)
         .await?;

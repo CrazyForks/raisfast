@@ -11,6 +11,7 @@ use ts_rs::TS;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, FromRow, Serialize, Deserialize)]
@@ -22,7 +23,7 @@ pub struct ContentRevision {
     pub revision_number: i64,
     pub snapshot: String,
     pub created_by: Option<i64>,
-    pub created_at: String,
+    pub created_at: Timestamp,
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -31,7 +32,7 @@ pub struct RevisionSummary {
     pub id: i64,
     pub revision_number: i64,
     pub created_by: Option<i64>,
-    pub created_at: String,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, FromRow)]
@@ -39,7 +40,7 @@ struct RevisionSummaryRow {
     id: i64,
     revision_number: i64,
     created_by: Option<i64>,
-    created_at: String,
+    created_at: Timestamp,
 }
 
 pub async fn create_revision(
@@ -50,7 +51,7 @@ pub async fn create_revision(
     created_by: Option<i64>,
 ) -> AppResult<ContentRevision> {
     let document_id = uuid::Uuid::now_v7().to_string();
-    let now = crate::utils::tz::now_str();
+    let now = crate::utils::tz::now_utc();
 
     let next_rev = next_revision_number(pool, content_type, record_id).await?;
 
@@ -74,7 +75,7 @@ pub async fn create_revision(
         .bind(next_rev)
         .bind(&snapshot_str)
         .bind(created_by)
-        .bind(&now)
+        .bind(now)
         .execute(pool)
         .await?;
 

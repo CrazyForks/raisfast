@@ -9,6 +9,7 @@ use ts_rs::TS;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::tz::Timestamp;
 
 /// roles 表行模型
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -19,8 +20,8 @@ pub struct Role {
     pub name: String,
     pub description: Option<String>,
     pub is_system: bool,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 /// permissions 表行模型
@@ -34,7 +35,7 @@ pub struct Permission {
     pub subject: String,
     pub fields: Option<String>,
     pub conditions: Option<String>,
-    pub created_at: String,
+    pub created_at: Timestamp,
 }
 
 /// 查询所有角色
@@ -76,7 +77,7 @@ pub async fn create_role(
     document_id: &str,
     name: &str,
     description: Option<&str>,
-    created_at: &str,
+    created_at: Timestamp,
 ) -> AppResult<Role> {
     let sql = format!(
         "INSERT INTO roles (document_id, name, description, is_system, created_at, updated_at) VALUES ({}, {}, {}, 0, {}, {})",
@@ -107,7 +108,7 @@ pub async fn update_role(
     document_id: &str,
     name: Option<&str>,
     description: Option<&str>,
-    updated_at: &str,
+    updated_at: Timestamp,
 ) -> AppResult<Role> {
     let mut sets = Vec::new();
     let mut idx = 1;
@@ -182,7 +183,7 @@ pub async fn insert_permission(
     subject: &str,
     fields: Option<&str>,
     conditions: Option<&str>,
-    created_at: &str,
+    created_at: Timestamp,
 ) -> AppResult<()> {
     let sql = format!(
         "INSERT INTO permissions (document_id, role_id, action, subject, fields, conditions, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
@@ -220,15 +221,15 @@ mod tests {
         pool
     }
 
-    fn now() -> String {
-        chrono::Utc::now().to_rfc3339()
+    fn now() -> Timestamp {
+        crate::utils::tz::now_utc()
     }
 
     #[sqlx::test]
     async fn create_and_find_role_by_id() {
         let pool = setup_pool().await;
         let doc_id = crate::utils::id::new_document_id();
-        let role = create_role(&pool, &doc_id, "admin_test", Some("desc"), &now())
+        let role = create_role(&pool, &doc_id, "admin_test", Some("desc"), now())
             .await
             .unwrap();
         assert_eq!(role.document_id, doc_id);
@@ -243,7 +244,7 @@ mod tests {
         let pool = setup_pool().await;
         for i in 0..3 {
             let doc_id = crate::utils::id::new_document_id();
-            create_role(&pool, &doc_id, &format!("role_{i}"), None, &now())
+            create_role(&pool, &doc_id, &format!("role_{i}"), None, now())
                 .await
                 .unwrap();
         }
@@ -255,11 +256,11 @@ mod tests {
     async fn update_role_changes_name() {
         let pool = setup_pool().await;
         let doc_id = crate::utils::id::new_document_id();
-        create_role(&pool, &doc_id, "original", None, &now())
+        create_role(&pool, &doc_id, "original", None, now())
             .await
             .unwrap();
 
-        let updated = update_role(&pool, &doc_id, Some("new_name"), None, &now())
+        let updated = update_role(&pool, &doc_id, Some("new_name"), None, now())
             .await
             .unwrap();
         assert_eq!(updated.name, "new_name");
@@ -269,7 +270,7 @@ mod tests {
     async fn delete_role_test() {
         let pool = setup_pool().await;
         let doc_id = crate::utils::id::new_document_id();
-        create_role(&pool, &doc_id, "to_delete", None, &now())
+        create_role(&pool, &doc_id, "to_delete", None, now())
             .await
             .unwrap();
 
@@ -282,7 +283,7 @@ mod tests {
     async fn permissions_crud() {
         let pool = setup_pool().await;
         let doc_id = crate::utils::id::new_document_id();
-        let role = create_role(&pool, &doc_id, "perm_role", None, &now())
+        let role = create_role(&pool, &doc_id, "perm_role", None, now())
             .await
             .unwrap();
 
@@ -295,7 +296,7 @@ mod tests {
             "posts",
             None,
             None,
-            &t,
+            t,
         )
         .await
         .unwrap();
@@ -307,7 +308,7 @@ mod tests {
             "posts",
             None,
             None,
-            &t,
+            t,
         )
         .await
         .unwrap();
@@ -324,7 +325,7 @@ mod tests {
     async fn find_role_id_by_name_test() {
         let pool = setup_pool().await;
         let doc_id = crate::utils::id::new_document_id();
-        let role = create_role(&pool, &doc_id, "lookup_name", None, &now())
+        let role = create_role(&pool, &doc_id, "lookup_name", None, now())
             .await
             .unwrap();
 

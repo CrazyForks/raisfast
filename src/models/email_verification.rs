@@ -1,11 +1,11 @@
 //! 邮箱验证令牌模型与数据库查询
 
-use chrono::Utc;
 use sqlx::FromRow;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::id;
+use crate::utils::tz::Timestamp;
 
 /// 邮箱验证令牌数据库行模型
 #[derive(Debug, FromRow)]
@@ -16,9 +16,9 @@ pub struct EmailVerificationToken {
     pub user_id: i64,
     pub token: String,
     pub email: String,
-    pub expires_at: String,
-    pub verified_at: Option<String>,
-    pub created_at: String,
+    pub expires_at: Timestamp,
+    pub verified_at: Option<Timestamp>,
+    pub created_at: Timestamp,
 }
 
 /// 创建新的邮箱验证令牌
@@ -38,7 +38,7 @@ pub async fn create(
     })?;
     let token = hex::encode(token_bytes);
 
-    let expires_at = (Utc::now() + chrono::Duration::seconds(expires_in_secs)).to_rfc3339();
+    let expires_at = crate::utils::tz::now_utc() + chrono::Duration::seconds(expires_in_secs);
 
     let sql = format!(
         "INSERT INTO email_verification_tokens (document_id, user_id, token, email, expires_at, created_at) VALUES ({}, {}, {}, {}, {}, {})",
@@ -54,8 +54,8 @@ pub async fn create(
         .bind(user_id)
         .bind(&token)
         .bind(email)
-        .bind(&expires_at)
-        .bind(&now)
+        .bind(expires_at)
+        .bind(now)
         .execute(pool)
         .await?;
 
@@ -84,7 +84,7 @@ pub async fn find_by_token(
 
 /// 标记令牌为已验证
 pub async fn mark_verified(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "UPDATE email_verification_tokens SET verified_at = {} WHERE id = {}",
         ph(1),
@@ -106,7 +106,7 @@ pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: i64) -> AppR
 
 /// 清理过期的验证令牌
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "DELETE FROM email_verification_tokens WHERE expires_at < {} AND verified_at IS NULL",
         ph(1),

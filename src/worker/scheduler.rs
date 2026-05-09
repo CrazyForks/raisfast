@@ -40,6 +40,7 @@ use crate::db::Pool;
 use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::plugins::CronEntry;
+use crate::utils::tz::Timestamp;
 
 use super::{Job, JobQueue, NewJob};
 
@@ -90,11 +91,11 @@ struct CronScheduleRow {
     payload: Option<String>,
     cron_expr: String,
     enabled: i64,
-    last_run_at: Option<String>,
-    next_run_at: String,
+    last_run_at: Option<Timestamp>,
+    next_run_at: Timestamp,
     plugin_id: Option<String>,
-    created_at: String,
-    updated_at: String,
+    created_at: Timestamp,
+    updated_at: Timestamp,
 }
 
 #[derive(sqlx::FromRow)]
@@ -107,8 +108,8 @@ struct CronExecLogRow {
     status: String,
     duration_ms: Option<i64>,
     error: Option<String>,
-    started_at: String,
-    finished_at: Option<String>,
+    started_at: Timestamp,
+    finished_at: Option<Timestamp>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -128,11 +129,11 @@ pub struct CronSchedule {
     pub payload: Option<String>,
     pub cron_expr: String,
     pub enabled: bool,
-    pub last_run_at: Option<String>,
-    pub next_run_at: String,
+    pub last_run_at: Option<Timestamp>,
+    pub next_run_at: Timestamp,
     pub plugin_id: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 /// 计算下一个执行时间
@@ -176,10 +177,8 @@ pub async fn create_schedule_with_plugin(
     plugin_id: Option<&str>,
 ) -> AppResult<CronSchedule> {
     let document_id = uuid::Uuid::now_v7().to_string();
-    let now = Utc::now();
+    let now = crate::utils::tz::now_utc();
     let next = next_run(cron_expr, now)?;
-    let now_str = now.to_rfc3339();
-    let next_str = next.to_rfc3339();
 
     let (int_id,): (i64,) = sqlx::query_as(&format!(
         "INSERT INTO cron_schedules (document_id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
@@ -193,10 +192,10 @@ pub async fn create_schedule_with_plugin(
     .bind(payload)
     .bind(cron_expr)
     .bind(enabled)
-    .bind(&next_str)
+    .bind(next)
     .bind(plugin_id)
-    .bind(&now_str)
-    .bind(&now_str)
+    .bind(now)
+    .bind(now)
     .fetch_one(pool)
     .await?;
 
@@ -209,10 +208,10 @@ pub async fn create_schedule_with_plugin(
         cron_expr: cron_expr.to_string(),
         enabled,
         last_run_at: None,
-        next_run_at: next_str,
+        next_run_at: next,
         plugin_id: plugin_id.map(|s| s.to_string()),
-        created_at: now_str.clone(),
-        updated_at: now_str,
+        created_at: now,
+        updated_at: now,
     })
 }
 
@@ -244,7 +243,7 @@ pub async fn list_schedules(pool: &Pool) -> AppResult<Vec<CronSchedule>> {
 
 /// 启用/禁用调度
 pub async fn toggle_schedule(pool: &Pool, id: &str, enabled: bool) -> AppResult<()> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     let result = sqlx::query(&format!(
         "UPDATE cron_schedules SET enabled = {}, updated_at = {} WHERE document_id = {}",
         ph(1),
@@ -252,7 +251,7 @@ pub async fn toggle_schedule(pool: &Pool, id: &str, enabled: bool) -> AppResult<
         ph(3)
     ))
     .bind(enabled)
-    .bind(&now)
+    .bind(now)
     .bind(id)
     .execute(pool)
     .await?;
@@ -295,9 +294,8 @@ pub async fn update_schedule(
         schedule.enabled = v;
     }
 
-    let next = next_run(&schedule.cron_expr, Utc::now())?;
-    let now_str = Utc::now().to_rfc3339();
-    let next_str = next.to_rfc3339();
+    let next = next_run(&schedule.cron_expr, crate::utils::tz::now_utc())?;
+    let now = crate::utils::tz::now_utc();
 
     sqlx::query(&format!(
         "UPDATE cron_schedules SET label = {}, job_type = {}, payload = {}, cron_expr = {}, enabled = {}, next_run_at = {}, updated_at = {} WHERE document_id = {}",
@@ -308,8 +306,8 @@ pub async fn update_schedule(
     .bind(&schedule.payload)
     .bind(&schedule.cron_expr)
     .bind(schedule.enabled)
-    .bind(&next_str)
-    .bind(&now_str)
+    .bind(next)
+    .bind(now)
     .bind(id)
     .execute(pool)
     .await?;
@@ -373,14 +371,14 @@ impl CronScheduler {
     }
 
     async fn tick(&self) -> AppResult<()> {
-        let now = Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_utc();
 
         let rows = sqlx::query_as::<_, CronScheduleRow>(&format!(
             "SELECT id, document_id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
              FROM cron_schedules WHERE enabled = 1 AND next_run_at <= {}",
             ph(1)
         ))
-        .bind(&now)
+        .bind(now)
         .fetch_all(&self.pool)
         .await?;
 
@@ -421,11 +419,9 @@ impl CronScheduler {
 
         let elapsed = start.elapsed().as_millis() as i64;
 
-        let now = Utc::now();
+        let now = crate::utils::tz::now_utc();
         let local_now = now.with_timezone(&crate::utils::tz::site_tz());
         let next = next_run(&schedule.cron_expr, local_now).ok();
-        let now_str = now.to_rfc3339();
-        let next_str = next.as_ref().map(chrono::DateTime::to_rfc3339);
 
         let mut tx = self.pool.begin().await?;
 
@@ -437,7 +433,7 @@ impl CronScheduler {
                         ph(1), ph(2), ph(3)
                     ))
                     .bind(elapsed)
-                    .bind(&now_str)
+                    .bind(now)
                     .bind(lid)
                     .execute(&mut *tx)
                     .await?;
@@ -452,7 +448,7 @@ impl CronScheduler {
                     ))
                     .bind(elapsed)
                     .bind(&err_str)
-                    .bind(&now_str)
+                    .bind(now)
                     .bind(lid)
                     .execute(&mut *tx)
                     .await?;
@@ -461,14 +457,14 @@ impl CronScheduler {
             }
         }
 
-        if let Some(next_str) = &next_str {
+        if let Some(next) = &next {
             sqlx::query(&format!(
                 "UPDATE cron_schedules SET last_run_at = {}, next_run_at = {}, updated_at = {} WHERE id = {}",
                 ph(1), ph(2), ph(3), ph(4)
             ))
-            .bind(&now_str)
-            .bind(next_str)
-            .bind(&now_str)
+            .bind(now)
+            .bind(next)
+            .bind(now)
             .bind(schedule.id)
             .execute(&mut *tx)
             .await?;
@@ -554,8 +550,8 @@ pub struct CronExecutionLog {
     pub status: String,
     pub duration_ms: Option<i64>,
     pub error: Option<String>,
-    pub started_at: String,
-    pub finished_at: Option<String>,
+    pub started_at: Timestamp,
+    pub finished_at: Option<Timestamp>,
 }
 
 /// 创建执行日志（状态 running）
@@ -566,7 +562,7 @@ pub async fn create_execution_log(
     label: &str,
 ) -> AppResult<String> {
     let document_id = uuid::Uuid::now_v7().to_string();
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
 
     sqlx::query(&format!(
         "INSERT INTO cron_execution_log (document_id, schedule_id, job_type, label, status, started_at)
@@ -581,7 +577,7 @@ pub async fn create_execution_log(
     .bind(schedule_id)
     .bind(job_type)
     .bind(label)
-    .bind(&now)
+    .bind(now)
     .execute(pool)
     .await?;
 
@@ -590,13 +586,13 @@ pub async fn create_execution_log(
 
 /// 标记执行日志为成功
 pub async fn complete_execution_log(pool: &Pool, log_id: &str, duration_ms: i64) -> AppResult<()> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     sqlx::query(&format!(
         "UPDATE cron_execution_log SET status = 'success', duration_ms = {}, finished_at = {} WHERE document_id = {}",
         ph(1), ph(2), ph(3)
     ))
     .bind(duration_ms)
-    .bind(&now)
+    .bind(now)
     .bind(log_id)
     .execute(pool)
     .await?;
@@ -610,14 +606,14 @@ pub async fn fail_execution_log(
     duration_ms: i64,
     error: &str,
 ) -> AppResult<()> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     sqlx::query(&format!(
         "UPDATE cron_execution_log SET status = 'failed', duration_ms = {}, error = {}, finished_at = {} WHERE document_id = {}",
         ph(1), ph(2), ph(3), ph(4)
     ))
     .bind(duration_ms)
     .bind(error)
-    .bind(&now)
+    .bind(now)
     .bind(log_id)
     .execute(pool)
     .await?;
@@ -669,13 +665,12 @@ pub async fn recent_execution_logs(pool: &Pool, limit: i64) -> AppResult<Vec<Cro
 
 /// 清理过期的执行日志
 pub async fn cleanup_execution_logs(pool: &Pool, retention_days: i64) -> AppResult<u64> {
-    let threshold = Utc::now() - chrono::Duration::days(retention_days);
-    let threshold_str = threshold.to_rfc3339();
+    let threshold = crate::utils::tz::now_utc() - chrono::Duration::days(retention_days);
     let result = sqlx::query(&format!(
         "DELETE FROM cron_execution_log WHERE started_at < {}",
         ph(1)
     ))
-    .bind(&threshold_str)
+    .bind(threshold)
     .execute(pool)
     .await?;
 
@@ -699,7 +694,7 @@ pub async fn sync_plugin_crons(
     entries: &[CronEntry],
 ) -> AppResult<()> {
     let mut tx = pool.begin().await?;
-    let now_str = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
 
     let old = sqlx::query_as::<_, PluginCronRow>(&format!(
         "SELECT id, job_type FROM cron_schedules WHERE plugin_id = {}",
@@ -736,8 +731,7 @@ pub async fn sync_plugin_crons(
         .await?;
 
         if let Some(existing_row) = existing {
-            let next = next_run(&entry.cron_expr, Utc::now())?;
-            let next_str = next.to_rfc3339();
+            let next = next_run(&entry.cron_expr, crate::utils::tz::now_utc())?;
             sqlx::query(&format!(
                 "UPDATE cron_schedules SET label = {}, payload = {}, cron_expr = {}, enabled = {}, next_run_at = {}, updated_at = {} WHERE id = {}",
                 ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7)
@@ -746,8 +740,8 @@ pub async fn sync_plugin_crons(
             .bind(&entry.payload)
             .bind(&entry.cron_expr)
             .bind(entry.enabled)
-            .bind(&next_str)
-            .bind(&now_str)
+            .bind(next)
+            .bind(now)
             .bind(existing_row.0)
             .execute(&mut *tx)
             .await?;
@@ -755,9 +749,8 @@ pub async fn sync_plugin_crons(
             tracing::debug!("updated cron '{}' for plugin {plugin_id}", entry.job_type);
         } else {
             let document_id = uuid::Uuid::now_v7().to_string();
-            let next = next_run(&entry.cron_expr, Utc::now())?;
-            let next_str = next.to_rfc3339();
-            let now = Utc::now().to_rfc3339();
+            let next = next_run(&entry.cron_expr, crate::utils::tz::now_utc())?;
+            let now = crate::utils::tz::now_utc();
             sqlx::query(&format!(
                 "INSERT INTO cron_schedules (document_id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
                  VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
@@ -769,10 +762,10 @@ pub async fn sync_plugin_crons(
             .bind(&entry.payload)
             .bind(&entry.cron_expr)
             .bind(entry.enabled)
-            .bind(&next_str)
+            .bind(next)
             .bind(plugin_id)
-            .bind(&now)
-            .bind(&now)
+            .bind(now)
+            .bind(now)
             .execute(&mut *tx)
             .await?;
 
@@ -848,7 +841,7 @@ mod tests {
 
         assert_eq!(s.label, "Test Job");
         assert!(s.enabled);
-        assert!(s.next_run_at.len() > 10);
+        assert!(s.next_run_at.to_rfc3339().len() > 10);
 
         let found = find_by_id(&pool, &s.document_id).await.unwrap().unwrap();
         assert_eq!(found.job_type, "generate_sitemap");

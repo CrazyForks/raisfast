@@ -8,6 +8,7 @@ use sqlx::FromRow;
 use crate::db::Pool;
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
+use crate::utils::tz::Timestamp;
 
 /// 插件存储行
 #[derive(Debug, FromRow)]
@@ -15,8 +16,8 @@ pub struct PluginStorageRow {
     pub plugin_id: String,
     pub storage_key: String,
     pub value: String,
-    pub expires_at: Option<String>,
-    pub updated_at: String,
+    pub expires_at: Option<Timestamp>,
+    pub updated_at: Timestamp,
 }
 
 /// 获取插件的 KV 数据
@@ -34,7 +35,7 @@ pub async fn get(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<Option<St
     match row {
         Some(r) => {
             if let Some(exp) = &r.expires_at {
-                let now = crate::utils::tz::now_str();
+                let now = crate::utils::tz::now_utc();
                 if exp < &now {
                     let _ = sqlx::query(&format!(
                         "DELETE FROM plugin_storage WHERE plugin_id = {} AND storage_key = {}",
@@ -63,10 +64,9 @@ pub async fn set(
     ttl_seconds: Option<i64>,
 ) -> AppResult<()> {
     let expires_at = ttl_seconds.map(|t| {
-        chrono::Utc::now()
+        crate::utils::tz::now_utc()
             .checked_add_signed(chrono::Duration::seconds(t))
-            .unwrap_or_else(chrono::Utc::now)
-            .to_rfc3339()
+            .unwrap_or_else(crate::utils::tz::now_utc)
     });
 
     let now = crate::db::dialect::now_fn();
@@ -88,7 +88,7 @@ pub async fn set(
         .bind(plugin_id)
         .bind(key)
         .bind(value)
-        .bind(&expires_at)
+        .bind(expires_at)
         .execute(pool)
         .await?;
 

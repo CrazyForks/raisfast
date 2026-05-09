@@ -2,13 +2,13 @@
 //!
 //! 管理密码重置令牌的创建、查找、标记已用和过期清理。
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::id;
+use crate::utils::tz::Timestamp;
 
 /// 密码重置令牌完整数据库行模型
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
@@ -18,9 +18,9 @@ pub struct PasswordResetToken {
     pub document_id: String,
     pub user_id: i64,
     pub token: String,
-    pub expires_at: String,
-    pub used_at: Option<String>,
-    pub created_at: String,
+    pub expires_at: Timestamp,
+    pub used_at: Option<Timestamp>,
+    pub created_at: Timestamp,
 }
 
 /// 创建新的密码重置令牌
@@ -41,7 +41,7 @@ pub async fn create(
     })?;
     let token = hex::encode(token_bytes);
 
-    let expires_at = (Utc::now() + chrono::Duration::seconds(expires_in_secs)).to_rfc3339();
+    let expires_at = crate::utils::tz::now_utc() + chrono::Duration::seconds(expires_in_secs);
 
     let sql = format!(
         "INSERT INTO password_reset_tokens (document_id, user_id, token, expires_at, created_at) VALUES ({}, {}, {}, {}, {})",
@@ -55,8 +55,8 @@ pub async fn create(
         .bind(&document_id)
         .bind(user_id)
         .bind(&token)
-        .bind(&expires_at)
-        .bind(&now)
+        .bind(expires_at)
+        .bind(now)
         .execute(pool)
         .await?;
 
@@ -85,7 +85,7 @@ pub async fn find_by_token(
 
 /// 标记令牌为已使用
 pub async fn mark_used(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "UPDATE password_reset_tokens SET used_at = {} WHERE id = {}",
         ph(1),
@@ -107,7 +107,7 @@ pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: i64) -> AppR
 
 /// 清理已过期且未使用的令牌
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "DELETE FROM password_reset_tokens WHERE expires_at < {} AND used_at IS NULL",
         ph(1),

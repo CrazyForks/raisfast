@@ -9,7 +9,6 @@
 -- MySQL 注意事项：
 -- - 不支持 WHERE 条件的部分索引，已移除
 -- - BOOLEAN 实际为 TINYINT(1)
--- - 所有 TEXT 列用于存储 UUID/时间戳/JSON
 -- ============================================================
 
 -- ── 平台基础层（永不禁用） ──────────────────────────────────
@@ -20,15 +19,15 @@ CREATE TABLE IF NOT EXISTS users (
     document_id VARCHAR(36) NOT NULL UNIQUE,
     email VARCHAR(255) UNIQUE NOT NULL,
     username VARCHAR(255) UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(50) NOT NULL DEFAULT 'reader',
-    avatar TEXT,
+    avatar VARCHAR(500),
     bio TEXT,
-    website TEXT,
+    website VARCHAR(500),
     phone VARCHAR(50),
     email_verified BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TEXT NOT NULL DEFAULT (NOW()),
-    updated_at TEXT NOT NULL DEFAULT (NOW())
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_users_email ON users(email);
@@ -40,9 +39,9 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,
     user_id BIGINT NOT NULL,
-    token TEXT UNIQUE NOT NULL,
-    expires_at TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (NOW()),
+    token VARCHAR(500) UNIQUE NOT NULL,
+    expires_at DATETIME(3) NOT NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -60,11 +59,11 @@ CREATE TABLE IF NOT EXISTS options (
     group_name VARCHAR(100) NOT NULL DEFAULT 'general',
     label VARCHAR(255) NOT NULL DEFAULT '',
     description TEXT,
-    validation TEXT,
+    validation JSON,
     is_public BOOLEAN NOT NULL DEFAULT FALSE,
     autoload BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order INT NOT NULL DEFAULT 0,
-    updated_at TEXT NOT NULL,
+    updated_at DATETIME(3) NOT NULL,
     UNIQUE KEY uq_options_option_key (`option_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -75,8 +74,8 @@ CREATE TABLE IF NOT EXISTS roles (
     name VARCHAR(100) NOT NULL UNIQUE,
     description TEXT,
     is_system BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    created_at DATETIME(3) NOT NULL,
+    updated_at DATETIME(3) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- RBAC 权限
@@ -86,9 +85,9 @@ CREATE TABLE IF NOT EXISTS permissions (
     role_id BIGINT NOT NULL,
     action VARCHAR(255) NOT NULL,
     subject VARCHAR(255) NOT NULL,
-    fields TEXT,
-    conditions TEXT,
-    created_at TEXT NOT NULL,
+    fields JSON,
+    conditions JSON,
+    created_at DATETIME(3) NOT NULL,
     FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -101,10 +100,10 @@ CREATE TABLE IF NOT EXISTS tenants (
     document_id VARCHAR(36) NOT NULL UNIQUE,
     name VARCHAR(255) NOT NULL,
     domain VARCHAR(255) UNIQUE,
-    config TEXT NOT NULL DEFAULT '{}',
+    config JSON NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    created_at DATETIME(3) NOT NULL,
+    updated_at DATETIME(3) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 审计日志
@@ -119,7 +118,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     detail TEXT,
     ip_address VARCHAR(45),
     user_agent TEXT,
-    created_at TEXT NOT NULL
+    created_at DATETIME(3) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_audit_log_action ON audit_log(action);
@@ -134,10 +133,10 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     name VARCHAR(255) NOT NULL,
     token_hash VARCHAR(255) UNIQUE NOT NULL,
     token_prefix VARCHAR(50) NOT NULL,
-    scopes TEXT NOT NULL DEFAULT '["read","write"]',
-    last_used_at TEXT,
-    expires_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (NOW()),
+    scopes JSON NOT NULL,
+    last_used_at DATETIME(3),
+    expires_at DATETIME(3),
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -148,13 +147,13 @@ CREATE INDEX idx_api_tokens_token_hash ON api_tokens(token_hash);
 CREATE TABLE IF NOT EXISTS webhook_subscriptions (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,
-    url TEXT NOT NULL,
+    url VARCHAR(1024) NOT NULL,
     secret VARCHAR(255) NOT NULL,
-    events TEXT NOT NULL DEFAULT '[]',
+    events JSON NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     description TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    created_at DATETIME(3) NOT NULL,
+    updated_at DATETIME(3) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_webhook_subscriptions_enabled ON webhook_subscriptions(enabled);
@@ -164,8 +163,8 @@ CREATE TABLE IF NOT EXISTS plugin_storage (
     plugin_id VARCHAR(100) NOT NULL,
     `storage_key` VARCHAR(255) NOT NULL,
     value TEXT NOT NULL,
-    expires_at TEXT,
-    updated_at TEXT NOT NULL DEFAULT (NOW()),
+    expires_at DATETIME(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     PRIMARY KEY (plugin_id, `storage_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -180,7 +179,7 @@ CREATE TABLE IF NOT EXISTS content_revisions (
     revision_number INT NOT NULL,
     snapshot TEXT NOT NULL,
     created_by BIGINT,
-    created_at TEXT NOT NULL,
+    created_at DATETIME(3) NOT NULL,
     UNIQUE KEY uq_revision (content_type, record_id, revision_number)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -198,13 +197,13 @@ CREATE TABLE IF NOT EXISTS oauth_accounts (
     provider_user_id VARCHAR(255) NOT NULL,
     email VARCHAR(255),
     display_name VARCHAR(255),
-    avatar_url TEXT,
-    access_token TEXT,
-    refresh_token TEXT,
-    token_expires_at TEXT,
+    avatar_url VARCHAR(500),
+    access_token VARCHAR(1024),
+    refresh_token VARCHAR(1024),
+    token_expires_at DATETIME(3),
     profile TEXT,
-    created_at TEXT NOT NULL DEFAULT (NOW()),
-    updated_at TEXT NOT NULL DEFAULT (NOW()),
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     UNIQUE KEY uq_oauth_provider (provider, provider_user_id),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -217,10 +216,10 @@ CREATE TABLE IF NOT EXISTS oauth_states (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,
     provider VARCHAR(50) NOT NULL,
-    code_verifier TEXT NOT NULL,
+    code_verifier VARCHAR(255) NOT NULL,
     user_id BIGINT,
-    created_at TEXT NOT NULL DEFAULT (NOW()),
-    expires_at TEXT NOT NULL
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    expires_at DATETIME(3) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_oauth_states_expires ON oauth_states(expires_at);
@@ -231,9 +230,9 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
     document_id VARCHAR(36) NOT NULL UNIQUE,
     user_id BIGINT NOT NULL,
     token VARCHAR(255) NOT NULL UNIQUE,
-    expires_at TEXT NOT NULL,
-    used_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (NOW()),
+    expires_at DATETIME(3) NOT NULL,
+    used_at DATETIME(3),
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -248,11 +247,11 @@ CREATE TABLE IF NOT EXISTS sms_codes (
     phone VARCHAR(50) NOT NULL,
     code VARCHAR(20) NOT NULL,
     purpose VARCHAR(50) NOT NULL,
-    expires_at TEXT NOT NULL,
-    verified_at TEXT,
+    expires_at DATETIME(3) NOT NULL,
+    verified_at DATETIME(3),
     attempts INT NOT NULL DEFAULT 0,
     ip_address VARCHAR(45),
-    created_at TEXT NOT NULL DEFAULT (NOW())
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_sms_codes_phone ON sms_codes(phone);
@@ -265,9 +264,9 @@ CREATE TABLE IF NOT EXISTS email_verification_tokens (
     user_id BIGINT NOT NULL,
     token VARCHAR(255) NOT NULL UNIQUE,
     email VARCHAR(255) NOT NULL,
-    expires_at TEXT NOT NULL,
-    verified_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (NOW()),
+    expires_at DATETIME(3) NOT NULL,
+    verified_at DATETIME(3),
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -284,10 +283,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     status       VARCHAR(50) NOT NULL DEFAULT 'pending',
     attempts     INT NOT NULL DEFAULT 0,
     max_attempts INT NOT NULL DEFAULT 3,
-    run_after    TEXT,
+    run_after    DATETIME(3),
     error        TEXT,
-    created_at   TEXT NOT NULL,
-    updated_at   TEXT NOT NULL
+    created_at   DATETIME(3) NOT NULL,
+    updated_at   DATETIME(3) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_jobs_status ON jobs(status);
@@ -303,11 +302,11 @@ CREATE TABLE IF NOT EXISTS cron_schedules (
     payload      TEXT,
     cron_expr    VARCHAR(100) NOT NULL,
     enabled      BOOLEAN NOT NULL DEFAULT TRUE,
-    last_run_at  TEXT,
-    next_run_at  TEXT NOT NULL,
+    last_run_at  DATETIME(3),
+    next_run_at  DATETIME(3) NOT NULL,
     plugin_id    VARCHAR(100),
-    created_at   TEXT NOT NULL,
-    updated_at   TEXT NOT NULL
+    created_at   DATETIME(3) NOT NULL,
+    updated_at   DATETIME(3) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_cron_enabled ON cron_schedules(enabled);
@@ -324,8 +323,8 @@ CREATE TABLE IF NOT EXISTS cron_execution_log (
     status       VARCHAR(50) NOT NULL DEFAULT 'running',
     duration_ms  INT,
     error        TEXT,
-    started_at   TEXT NOT NULL,
-    finished_at  TEXT
+    started_at   DATETIME(3) NOT NULL,
+    finished_at  DATETIME(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_cron_log_schedule ON cron_execution_log(schedule_id);
@@ -345,8 +344,8 @@ CREATE TABLE IF NOT EXISTS categories (
     sort_order INT NOT NULL DEFAULT 0,
     created_by BIGINT,
     updated_by BIGINT,
-    created_at TEXT NOT NULL DEFAULT (NOW()),
-    updated_at TEXT NOT NULL DEFAULT (NOW()),
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (parent_id) REFERENCES categories(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -358,8 +357,8 @@ CREATE TABLE IF NOT EXISTS tags (
     slug VARCHAR(255) UNIQUE NOT NULL,
     created_by BIGINT,
     updated_by BIGINT,
-    created_at TEXT NOT NULL DEFAULT (NOW()),
-    updated_at TEXT NOT NULL DEFAULT (NOW())
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 文章
@@ -370,16 +369,16 @@ CREATE TABLE IF NOT EXISTS posts (
     slug VARCHAR(255) UNIQUE NOT NULL,
     content LONGTEXT NOT NULL,
     excerpt TEXT,
-    cover_image TEXT,
+    cover_image VARCHAR(500),
     status VARCHAR(50) NOT NULL DEFAULT 'draft',
     created_by BIGINT NOT NULL,
     updated_by BIGINT,
     category_id BIGINT,
     view_count INT NOT NULL DEFAULT 0,
     is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TEXT NOT NULL DEFAULT (NOW()),
-    updated_at TEXT NOT NULL DEFAULT (NOW()),
-    published_at TEXT,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    published_at DATETIME(3),
     FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -419,8 +418,8 @@ CREATE TABLE IF NOT EXISTS comments (
     content TEXT NOT NULL,
     parent_id BIGINT,
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
-    created_at TEXT NOT NULL DEFAULT (NOW()),
-    updated_at TEXT NOT NULL DEFAULT (NOW()),
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
     FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
     FOREIGN KEY (parent_id) REFERENCES comments(id) ON DELETE CASCADE
@@ -441,20 +440,20 @@ CREATE TABLE IF NOT EXISTS pages (
     title            VARCHAR(500) NOT NULL,
     slug             VARCHAR(255) NOT NULL UNIQUE,
     content          LONGTEXT,
-    blocks           LONGTEXT,
+    blocks           JSON,
     meta_title       VARCHAR(255),
-    meta_description TEXT,
-    og_image         TEXT,
+    meta_description VARCHAR(500),
+    og_image         VARCHAR(500),
     template         VARCHAR(100) NOT NULL DEFAULT 'default',
     parent_id        BIGINT,
     sort_order       INT NOT NULL DEFAULT 0,
     status           VARCHAR(50) NOT NULL DEFAULT 'draft',
     created_by       BIGINT NOT NULL,
     updated_by       BIGINT,
-    cover_image      TEXT,
-    published_at     TEXT,
-    created_at       TEXT NOT NULL DEFAULT (NOW()),
-    updated_at       TEXT NOT NULL DEFAULT (NOW()),
+    cover_image      VARCHAR(500),
+    published_at     DATETIME(3),
+    created_at       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (created_by) REFERENCES users(id),
     FOREIGN KEY (parent_id) REFERENCES pages(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -473,8 +472,8 @@ CREATE TABLE IF NOT EXISTS reusable_blocks (
     description TEXT,
     created_by  BIGINT,
     updated_by  BIGINT,
-    created_at  TEXT NOT NULL DEFAULT (NOW()),
-    updated_at  TEXT NOT NULL DEFAULT (NOW())
+    created_at  DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at  DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ── 内置模块：Media（BUILTIN_MEDIA=true） ────────────────
@@ -484,12 +483,12 @@ CREATE TABLE IF NOT EXISTS media (
     document_id VARCHAR(36) NOT NULL UNIQUE,
     user_id BIGINT NOT NULL,
     filename VARCHAR(255) NOT NULL,
-    filepath TEXT NOT NULL,
+    filepath VARCHAR(500) NOT NULL,
     mimetype VARCHAR(100) NOT NULL,
     size BIGINT NOT NULL,
     width INT,
     height INT,
-    created_at TEXT NOT NULL DEFAULT (NOW()),
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -503,12 +502,12 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
     document_id VARCHAR(36) NOT NULL UNIQUE,
     name VARCHAR(255) NOT NULL,
     description TEXT,
-    steps LONGTEXT NOT NULL,
+    steps JSON NOT NULL,
     initial_step VARCHAR(100) NOT NULL,
     version INT NOT NULL DEFAULT 1,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TEXT NOT NULL DEFAULT (NOW()),
-    updated_at TEXT NOT NULL DEFAULT (NOW())
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS workflow_instances (
@@ -517,11 +516,11 @@ CREATE TABLE IF NOT EXISTS workflow_instances (
     definition_id BIGINT NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'running',
     current_step VARCHAR(100),
-    context LONGTEXT NOT NULL DEFAULT '{}',
+    context JSON NOT NULL,
     triggered_by BIGINT,
-    started_at TEXT NOT NULL DEFAULT (NOW()),
-    completed_at TEXT,
-    updated_at TEXT NOT NULL DEFAULT (NOW()),
+    started_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    completed_at DATETIME(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (definition_id) REFERENCES workflow_definitions(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -538,8 +537,8 @@ CREATE TABLE IF NOT EXISTS workflow_step_logs (
     input LONGTEXT,
     output LONGTEXT,
     error TEXT,
-    started_at TEXT NOT NULL DEFAULT (NOW()),
-    completed_at TEXT,
+    started_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    completed_at DATETIME(3),
     FOREIGN KEY (instance_id) REFERENCES workflow_instances(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

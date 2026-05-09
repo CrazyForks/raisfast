@@ -1,6 +1,5 @@
 //! 可复用块模型及数据库查询
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -8,6 +7,7 @@ use ts_rs::TS;
 use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -21,8 +21,8 @@ pub struct ReusableBlock {
     pub description: Option<String>,
     pub created_by: Option<i64>,
     pub updated_by: Option<i64>,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 crate::impl_from_row_opt_tenant!(ReusableBlock {
@@ -100,8 +100,8 @@ pub async fn create_reusable(
                 .bind(description)
                 .bind(created_by)
                 .bind(created_by)
-                .bind(&now)
-                .bind(&now)
+                .bind(now)
+                .bind(now)
                 .execute(pool)
                 .await?;
         }
@@ -118,8 +118,8 @@ pub async fn create_reusable(
                 .bind(description)
                 .bind(created_by)
                 .bind(created_by)
-                .bind(&now)
-                .bind(&now)
+                .bind(now)
+                .bind(now)
                 .execute(pool)
                 .await?;
         }
@@ -141,7 +141,7 @@ pub async fn update_reusable(
     updated_by: Option<i64>,
     tenant_id: Option<&str>,
 ) -> AppResult<ReusableBlock> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     let mut idx = 1;
     let mut sets = vec![format!("updated_at = {}", ph(idx))];
 
@@ -174,7 +174,7 @@ pub async fn update_reusable(
         sets.join(", ")
     );
 
-    let mut q = sqlx::query(&sql).bind(&now);
+    let mut q = sqlx::query(&sql).bind(now);
     if let Some(v) = updated_by {
         q = q.bind(v);
     }

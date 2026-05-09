@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::errors::app_error::AppResult;
+use crate::utils::tz::Timestamp;
 
 /// 审计日志完整数据库行
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -21,7 +22,7 @@ pub struct AuditEntry {
     pub detail: Option<String>,
     pub ip_address: Option<String>,
     pub user_agent: Option<String>,
-    pub created_at: String,
+    pub created_at: Timestamp,
 }
 
 crate::impl_from_row_opt_tenant!(AuditEntry {
@@ -58,7 +59,7 @@ pub async fn insert(pool: &crate::db::Pool, entry: &AuditEntry) -> AppResult<()>
                 .bind(&entry.detail)
                 .bind(&entry.ip_address)
                 .bind(&entry.user_agent)
-                .bind(&entry.created_at)
+                .bind(entry.created_at)
                 .execute(pool)
                 .await?;
         }
@@ -86,7 +87,7 @@ pub async fn insert(pool: &crate::db::Pool, entry: &AuditEntry) -> AppResult<()>
                 .bind(&entry.detail)
                 .bind(&entry.ip_address)
                 .bind(&entry.user_agent)
-                .bind(&entry.created_at)
+                .bind(entry.created_at)
                 .execute(pool)
                 .await?;
         }

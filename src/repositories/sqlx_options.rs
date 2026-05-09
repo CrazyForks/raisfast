@@ -4,6 +4,7 @@ use crate::errors::app_error::AppResult;
 use crate::models::options;
 
 use crate::repositories::define_sqlx_repo;
+use crate::utils::tz::Timestamp;
 
 define_sqlx_repo!(SqlxOptionsRepository);
 
@@ -32,7 +33,7 @@ pub trait OptionsRepository: Send + Sync {
         key: &str,
         value: &str,
         tenant_id: Option<i64>,
-        updated_at: &str,
+        updated_at: Timestamp,
     ) -> AppResult<()>;
 
     /// 根据 key 删除配置
@@ -65,7 +66,7 @@ impl OptionsRepository for SqlxOptionsRepository {
         key: &str,
         value: &str,
         tenant_id: Option<i64>,
-        updated_at: &str,
+        updated_at: Timestamp,
     ) -> AppResult<()> {
         options::upsert_value(&self.pool, key, value, tenant_id, updated_at).await
     }

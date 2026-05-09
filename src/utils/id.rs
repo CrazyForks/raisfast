@@ -15,14 +15,14 @@ mod tests {
     fn new_document_id_and_timestamp_returns_both() {
         let (id, ts) = new_document_id_and_timestamp();
         assert!(uuid::Uuid::parse_str(&id).is_ok());
-        assert!(!ts.is_empty());
+        assert!(!ts.to_rfc3339().is_empty());
     }
 
     #[test]
     fn new_id_and_timestamp_is_alias() {
         let (id, ts) = new_id_and_timestamp();
         assert!(uuid::Uuid::parse_str(&id).is_ok());
-        assert!(!ts.is_empty());
+        assert!(!ts.to_rfc3339().is_empty());
     }
 
     #[test]
@@ -46,14 +46,14 @@ mod tests {
     }
 }
 
-/// 生成 document_id（UUID v7）和当前站点时区时间戳。
+/// 生成 document_id（UUID v7）和当前 UTC 时间戳。
 ///
 /// 用于 model 层的 `create` 函数。`id` 由数据库自增生成，
 /// `document_id` 在应用层生成用于对外暴露。
 #[must_use]
-pub fn new_document_id_and_timestamp() -> (String, String) {
+pub fn new_document_id_and_timestamp() -> (String, super::tz::Timestamp) {
     let document_id = uuid::Uuid::now_v7().to_string();
-    let now = super::tz::now_str();
+    let now = super::tz::now_utc();
     (document_id, now)
 }
 
@@ -65,7 +65,7 @@ pub fn new_document_id() -> String {
 
 /// Backwards-compatible alias for [`new_document_id_and_timestamp`].
 #[must_use]
-pub fn new_id_and_timestamp() -> (String, String) {
+pub fn new_id_and_timestamp() -> (String, super::tz::Timestamp) {
     new_document_id_and_timestamp()
 }
 

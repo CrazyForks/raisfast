@@ -6,7 +6,7 @@
 //! 同时提供获取作者名、分类名、文章标签等关联数据的辅助查询函数，
 //! 以及按分类/标签/关键词筛选已发布文章的分页查询。
 
-use chrono::Utc;
+use crate::utils::tz::Timestamp;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 #[cfg(feature = "export-types")]
@@ -33,9 +33,9 @@ pub struct Post {
     pub category_id: Option<i64>,
     pub view_count: i64,
     pub is_pinned: bool,
-    pub created_at: String,
-    pub updated_at: String,
-    pub published_at: Option<String>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+    pub published_at: Option<Timestamp>,
 }
 
 crate::impl_from_row_opt_tenant!(Post {
@@ -126,7 +126,7 @@ pub async fn create_tx(
 ) -> AppResult<Post> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
     let published_at = if cmd.status == "published" {
-        Some(now.clone())
+        Some(now)
     } else {
         None
     };
@@ -161,9 +161,9 @@ pub async fn create_tx(
                 .bind(cmd.created_by)
                 .bind(cmd.updated_by)
                 .bind(cmd.category_id)
-                .bind(&published_at)
-                .bind(&now)
-                .bind(&now)
+                .bind(published_at)
+                .bind(now)
+                .bind(now)
                 .execute(&mut **tx)
                 .await?;
         }
@@ -195,9 +195,9 @@ pub async fn create_tx(
                 .bind(cmd.created_by)
                 .bind(cmd.updated_by)
                 .bind(cmd.category_id)
-                .bind(&published_at)
-                .bind(&now)
-                .bind(&now)
+                .bind(published_at)
+                .bind(now)
+                .bind(now)
                 .execute(&mut **tx)
                 .await?;
         }
@@ -255,12 +255,12 @@ pub async fn update_tx(
         .await?
         .ok_or_else(|| AppError::not_found("post"))?;
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     let new_status = cmd.status.as_deref().unwrap_or(&existing.status);
     let published_at = if new_status == "published" && existing.published_at.is_none() {
-        Some(now.clone())
+        Some(now)
     } else {
-        existing.published_at.clone()
+        existing.published_at
     };
 
     let title = cmd.title.as_deref().unwrap_or(&existing.title);
@@ -302,9 +302,9 @@ pub async fn update_tx(
         .bind(&cover_image)
         .bind(new_status)
         .bind(category_id)
-        .bind(&published_at)
+        .bind(published_at)
         .bind(updated_by)
-        .bind(&now)
+        .bind(now)
         .bind(post_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
@@ -884,9 +884,9 @@ pub struct PostJoinedRow {
     pub category_id: Option<i64>,
     pub view_count: i64,
     pub is_pinned: bool,
-    pub created_at: String,
-    pub updated_at: String,
-    pub published_at: Option<String>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+    pub published_at: Option<Timestamp>,
     pub author_name: Option<String>,
     pub category_name: Option<String>,
 }

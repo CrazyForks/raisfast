@@ -3,6 +3,7 @@
 use crate::errors::app_error::AppResult;
 use crate::models::tenant::{self, Tenant};
 use crate::repositories::define_sqlx_repo;
+use crate::utils::tz::Timestamp;
 
 define_sqlx_repo!(SqlxTenantRepository);
 
@@ -25,7 +26,7 @@ pub trait TenantRepository: Send + Sync {
         name: &str,
         domain: Option<&str>,
         config: &str,
-        created_at: &str,
+        created_at: Timestamp,
     ) -> AppResult<Tenant>;
 
     /// 更新租户
@@ -37,7 +38,7 @@ pub trait TenantRepository: Send + Sync {
         domain: Option<&str>,
         config: Option<&str>,
         status: Option<&str>,
-        updated_at: &str,
+        updated_at: Timestamp,
     ) -> AppResult<Tenant>;
 
     /// 删除租户
@@ -64,7 +65,7 @@ impl TenantRepository for SqlxTenantRepository {
         name: &str,
         domain: Option<&str>,
         config: &str,
-        created_at: &str,
+        created_at: Timestamp,
     ) -> AppResult<tenant::Tenant> {
         tenant::create(&self.pool, id, name, domain, config, created_at).await
     }
@@ -77,7 +78,7 @@ impl TenantRepository for SqlxTenantRepository {
         domain: Option<&str>,
         config: Option<&str>,
         status: Option<&str>,
-        updated_at: &str,
+        updated_at: Timestamp,
     ) -> AppResult<tenant::Tenant> {
         tenant::update(&self.pool, id, name, domain, config, status, updated_at).await
     }

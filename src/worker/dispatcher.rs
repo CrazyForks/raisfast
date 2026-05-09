@@ -33,12 +33,12 @@ impl PluginCronDispatcher {
             Job::Custom { job_type, payload } => serde_json::json!({
                 "job_type": job_type,
                 "payload": payload,
-                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "timestamp": crate::utils::tz::now_utc(),
             }),
             _ => serde_json::json!({
                 "job_type": job.job_type(),
                 "payload": serde_json::to_value(job).unwrap_or_default(),
-                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "timestamp": crate::utils::tz::now_utc(),
             }),
         };
 

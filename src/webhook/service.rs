@@ -36,7 +36,7 @@ impl WebhookService {
             events: serde_json::to_string(&events).unwrap_or_default(),
             enabled,
             description,
-            created_at: now.clone(),
+            created_at: now,
             updated_at: now,
         };
         model::insert(&self.pool, &sub).await?;

@@ -5,6 +5,7 @@ use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::models::user::User;
+use crate::utils::tz::Timestamp;
 
 use super::validate_password;
 
@@ -150,8 +151,10 @@ pub struct UserResponse {
     pub avatar: Option<String>,
     pub bio: Option<String>,
     pub website: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
+    #[schema(value_type = String)]
+    pub created_at: Timestamp,
+    #[schema(value_type = String)]
+    pub updated_at: Timestamp,
 }
 
 impl From<User> for UserResponse {
@@ -294,8 +297,8 @@ mod tests {
             avatar: None,
             bio: None,
             website: None,
-            created_at: "2025-01-01T00:00:00Z".to_string(),
-            updated_at: "2025-01-01T00:00:00Z".to_string(),
+            created_at: "2025-01-01T00:00:00Z".parse().unwrap(),
+            updated_at: "2025-01-01T00:00:00Z".parse().unwrap(),
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"id\":\"doc-123\""));

@@ -17,6 +17,9 @@ mod sqlite_queue;
 
 use serde::{Deserialize, Serialize};
 
+use crate::errors::app_error::AppResult;
+use crate::utils::tz::Timestamp;
+
 pub use dispatcher::PluginCronDispatcher;
 pub use enqueuer::JobEnqueuer;
 pub use handler::{JobHandler, JobHandlerRegistry, LogJobHandler};
@@ -29,8 +32,6 @@ pub use scheduler::{
     update_schedule,
 };
 pub use sqlite_queue::SqliteJobQueue;
-
-use crate::errors::app_error::AppResult;
 
 /// 任务类型与参数
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,7 +110,7 @@ impl Job {
 pub struct NewJob {
     pub job: Job,
     pub max_attempts: Option<u32>,
-    pub run_after: Option<String>,
+    pub run_after: Option<Timestamp>,
 }
 
 impl From<Job> for NewJob {
@@ -129,7 +130,7 @@ pub struct QueuedJob {
     pub job: Job,
     pub attempts: u32,
     pub max_attempts: u32,
-    pub created_at: String,
+    pub created_at: Timestamp,
 }
 
 /// 任务队列 trait
@@ -171,10 +172,10 @@ pub struct JobRow {
     pub status: String,
     pub attempts: u32,
     pub max_attempts: u32,
-    pub run_after: Option<String>,
+    pub run_after: Option<Timestamp>,
     pub error: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 /// 退避时间：指数退避 + 抖动

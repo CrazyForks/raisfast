@@ -59,13 +59,13 @@ impl TenantService {
             |c| serde_json::to_string(c).unwrap_or_else(|_| "{}".into()),
         );
         self.repo
-            .create(&id, &req.name, req.domain.as_deref(), &config, &now)
+            .create(&id, &req.name, req.domain.as_deref(), &config, now)
             .await
     }
 
     /// 更新租户
     pub async fn update(&self, id: &str, req: &UpdateTenantRequest) -> Result<Tenant, AppError> {
-        let now = crate::utils::tz::now_str();
+        let now = crate::utils::tz::now_utc();
         let config = req
             .config
             .as_ref()
@@ -77,7 +77,7 @@ impl TenantService {
                 req.domain.as_deref(),
                 config.as_deref(),
                 req.status.as_deref(),
-                &now,
+                now,
             )
             .await
     }

@@ -414,7 +414,7 @@ async fn token_with_expires_at() {
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(
         body["data"]["expires_at"].as_str().unwrap(),
-        "2099-12-31T00:00:00+00:00"
+        "2099-12-31T00:00:00Z"
     );
 }
 

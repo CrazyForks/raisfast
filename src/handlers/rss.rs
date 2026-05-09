@@ -33,7 +33,7 @@ pub async fn feed(State(state): State<crate::AppState>) -> AppResult<Response> {
                 .title(Some(p.title.clone()))
                 .link(Some(format!("{}/posts/{}", base_url, p.slug)))
                 .description(p.excerpt.clone())
-                .pub_date(p.published_at.clone())
+                .pub_date(p.published_at.map(|t| t.to_rfc3339()))
                 .build(),
         );
     }

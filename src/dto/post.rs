@@ -5,6 +5,7 @@ use utoipa::ToSchema;
 use validator::Validate;
 
 use super::{validate_optional_uuid, validate_post_status, validate_uuid_vec};
+use crate::utils::tz::Timestamp;
 
 /// 创建文章请求体
 #[derive(Debug, Clone, Deserialize, Serialize, Validate, ToSchema)]
@@ -57,9 +58,12 @@ pub struct PostResponse {
     pub tags: Vec<crate::models::post::TagBrief>,
     pub view_count: i64,
     pub is_pinned: bool,
-    pub created_at: String,
-    pub updated_at: String,
-    pub published_at: Option<String>,
+    #[schema(value_type = String)]
+    pub created_at: Timestamp,
+    #[schema(value_type = String)]
+    pub updated_at: Timestamp,
+    #[schema(value_type = Option<String>)]
+    pub published_at: Option<Timestamp>,
     pub title_highlight: Option<String>,
     pub excerpt_highlight: Option<String>,
 }

@@ -37,23 +37,20 @@ pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> 
         .await?
         .ok_or_else(|| AppError::BadRequest("invalid_or_expired_token".into()))?;
 
-    let expires_at = chrono::DateTime::parse_from_rfc3339(&verification.expires_at)
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid token expiry")))?;
-
-    if expires_at < Utc::now() {
+    if verification.expires_at < Utc::now() {
         return Err(AppError::BadRequest("invalid_or_expired_token".into()));
     }
 
     let mut tx = pool.begin().await?;
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "UPDATE email_verification_tokens SET verified_at = {} WHERE id = {}",
         crate::db::dialect::ph(1),
         crate::db::dialect::ph(2)
     );
     sqlx::query(&sql)
-        .bind(&now)
+        .bind(now)
         .bind(verification.id)
         .execute(&mut *tx)
         .await?;
@@ -64,7 +61,7 @@ pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> 
         crate::db::dialect::ph(2)
     );
     sqlx::query(&sql)
-        .bind(&now)
+        .bind(now)
         .bind(verification.user_id)
         .execute(&mut *tx)
         .await?;

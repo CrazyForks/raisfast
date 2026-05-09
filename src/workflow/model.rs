@@ -6,6 +6,7 @@ use ts_rs::TS;
 
 use crate::db::Pool;
 use crate::db::dialect::ph;
+use crate::utils::tz::Timestamp;
 
 /// 步骤类型
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -56,8 +57,8 @@ pub struct WorkflowDefinition {
     pub initial_step: String,
     pub version: i64,
     pub enabled: bool,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 impl WorkflowDefinition {
@@ -78,9 +79,9 @@ pub struct WorkflowInstance {
     pub current_step: Option<String>,
     pub context: String,
     pub triggered_by: Option<i64>,
-    pub started_at: String,
-    pub completed_at: Option<String>,
-    pub updated_at: String,
+    pub started_at: Timestamp,
+    pub completed_at: Option<Timestamp>,
+    pub updated_at: Timestamp,
 }
 
 impl WorkflowInstance {
@@ -103,8 +104,8 @@ pub struct StepLog {
     pub input: Option<String>,
     pub output: Option<String>,
     pub error: Option<String>,
-    pub started_at: String,
-    pub completed_at: Option<String>,
+    pub started_at: Timestamp,
+    pub completed_at: Option<Timestamp>,
 }
 
 /// 创建工作流定义
@@ -116,7 +117,7 @@ pub async fn create_definition(
     steps: &str,
     initial_step: &str,
 ) -> anyhow::Result<WorkflowDefinition> {
-    let now = crate::utils::tz::now_str();
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "INSERT INTO workflow_definitions (document_id, name, description, steps, initial_step, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
         ph(1),
@@ -133,8 +134,8 @@ pub async fn create_definition(
         .bind(description)
         .bind(steps)
         .bind(initial_step)
-        .bind(&now)
-        .bind(&now)
+        .bind(now)
+        .bind(now)
         .execute(pool)
         .await?;
     get_definition(pool, document_id)
@@ -185,7 +186,7 @@ pub async fn create_instance(
     context: &serde_json::Value,
     triggered_by: Option<i64>,
 ) -> anyhow::Result<WorkflowInstance> {
-    let now = crate::utils::tz::now_str();
+    let now = crate::utils::tz::now_utc();
     let ctx_str = serde_json::to_string(context)?;
     let sql = format!(
         "INSERT INTO workflow_instances (document_id, definition_id, status, context, triggered_by, started_at, updated_at) VALUES ({}, {}, 'running', {}, {}, {}, {})",
@@ -201,8 +202,8 @@ pub async fn create_instance(
         .bind(definition_id)
         .bind(&ctx_str)
         .bind(triggered_by)
-        .bind(&now)
-        .bind(&now)
+        .bind(now)
+        .bind(now)
         .execute(pool)
         .await?;
     get_instance(pool, document_id)
@@ -280,10 +281,10 @@ pub async fn update_instance_step(
     current_step: Option<&str>,
     context: &serde_json::Value,
 ) -> anyhow::Result<()> {
-    let now = crate::utils::tz::now_str();
+    let now = crate::utils::tz::now_utc();
     let ctx_str = serde_json::to_string(context)?;
     let completed_at = if status == "completed" || status == "failed" || status == "cancelled" {
-        Some(now.clone())
+        Some(now)
     } else {
         None
     };
@@ -300,8 +301,8 @@ pub async fn update_instance_step(
         .bind(status)
         .bind(current_step)
         .bind(&ctx_str)
-        .bind(&completed_at)
-        .bind(&now)
+        .bind(completed_at)
+        .bind(now)
         .bind(document_id)
         .execute(pool)
         .await?;
@@ -317,7 +318,7 @@ pub async fn create_step_log(
     step_name: &str,
     input: Option<&serde_json::Value>,
 ) -> anyhow::Result<StepLog> {
-    let now = crate::utils::tz::now_str();
+    let now = crate::utils::tz::now_utc();
     let input_str = input.map(|v| serde_json::to_string(v).unwrap_or_default());
     let sql = format!(
         "INSERT INTO workflow_step_logs (document_id, instance_id, step_id, step_name, status, input, started_at) VALUES ({}, {}, {}, {}, 'running', {}, {})",
@@ -334,7 +335,7 @@ pub async fn create_step_log(
         .bind(step_id)
         .bind(step_name)
         .bind(&input_str)
-        .bind(&now)
+        .bind(now)
         .execute(pool)
         .await?;
     let fetch_sql = format!(
@@ -354,7 +355,7 @@ pub async fn complete_step_log(
     document_id: &str,
     output: Option<&serde_json::Value>,
 ) -> anyhow::Result<()> {
-    let now = crate::utils::tz::now_str();
+    let now = crate::utils::tz::now_utc();
     let output_str = output.map(|v| serde_json::to_string(v).unwrap_or_default());
     let sql = format!(
         "UPDATE workflow_step_logs SET status = 'completed', output = {}, completed_at = {} WHERE document_id = {}",
@@ -364,7 +365,7 @@ pub async fn complete_step_log(
     );
     sqlx::query(&sql)
         .bind(&output_str)
-        .bind(&now)
+        .bind(now)
         .bind(document_id)
         .execute(pool)
         .await?;
@@ -373,7 +374,7 @@ pub async fn complete_step_log(
 
 /// 标记步骤执行失败
 pub async fn fail_step_log(pool: &Pool, document_id: &str, error: &str) -> anyhow::Result<()> {
-    let now = crate::utils::tz::now_str();
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "UPDATE workflow_step_logs SET status = 'failed', error = {}, completed_at = {} WHERE document_id = {}",
         ph(1),
@@ -382,7 +383,7 @@ pub async fn fail_step_log(pool: &Pool, document_id: &str, error: &str) -> anyho
     );
     sqlx::query(&sql)
         .bind(error)
-        .bind(&now)
+        .bind(now)
         .bind(document_id)
         .execute(pool)
         .await?;

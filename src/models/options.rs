@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::constants::COL_TENANT_ID;
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
+use crate::utils::tz::Timestamp;
 
 /// options 表行模型（含完整元数据）
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -26,7 +27,7 @@ pub struct OptionRow {
     pub is_public: bool,
     pub autoload: bool,
     pub sort_order: i64,
-    pub updated_at: String,
+    pub updated_at: Timestamp,
 }
 
 #[cfg(feature = "db-sqlite")]
@@ -162,7 +163,7 @@ pub async fn upsert_value(
     key: &str,
     value: &str,
     tenant_id: Option<i64>,
-    updated_at: &str,
+    updated_at: Timestamp,
 ) -> AppResult<()> {
     match tenant_id {
         Some(tid) => {
@@ -260,10 +261,11 @@ mod tests {
     async fn upsert_and_find_by_key() {
         let pool = setup_pool().await;
         let key = format!("test.{}", crate::utils::id::new_document_id());
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_utc();
+        let now_str = now.to_rfc3339();
 
-        insert_test_option(&pool, &key, "initial", true, &now).await;
-        upsert_value(&pool, &key, "updated", None, &now)
+        insert_test_option(&pool, &key, "initial", true, &now_str).await;
+        upsert_value(&pool, &key, "updated", None, now)
             .await
             .unwrap();
 
@@ -277,14 +279,15 @@ mod tests {
     #[tokio::test]
     async fn find_all_returns_all() {
         let pool = setup_pool().await;
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_utc();
+        let now_str = now.to_rfc3339();
 
         let k1 = format!("test.{}", crate::utils::id::new_document_id());
         let k2 = format!("test.{}", crate::utils::id::new_document_id());
         let k3 = format!("test.{}", crate::utils::id::new_document_id());
-        insert_test_option(&pool, &k1, "v1", true, &now).await;
-        insert_test_option(&pool, &k2, "v2", true, &now).await;
-        insert_test_option(&pool, &k3, "v3", true, &now).await;
+        insert_test_option(&pool, &k1, "v1", true, &now_str).await;
+        insert_test_option(&pool, &k2, "v2", true, &now_str).await;
+        insert_test_option(&pool, &k3, "v3", true, &now_str).await;
 
         let all = find_all(&pool, None).await.unwrap();
         assert!(all.len() >= 3);
@@ -294,10 +297,11 @@ mod tests {
     async fn upsert_overwrites() {
         let pool = setup_pool().await;
         let key = format!("test.{}", crate::utils::id::new_document_id());
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_utc();
+        let now_str = now.to_rfc3339();
 
-        insert_test_option(&pool, &key, "v1", true, &now).await;
-        upsert_value(&pool, &key, "v2", None, &now).await.unwrap();
+        insert_test_option(&pool, &key, "v1", true, &now_str).await;
+        upsert_value(&pool, &key, "v2", None, now).await.unwrap();
 
         let found = find_by_key(&pool, &key, None).await.unwrap().unwrap();
         assert_eq!(found.value, "v2");
@@ -307,9 +311,9 @@ mod tests {
     async fn delete_by_key_removes() {
         let pool = setup_pool().await;
         let key = format!("test.{}", crate::utils::id::new_document_id());
-        let now = chrono::Utc::now().to_rfc3339();
+        let now_str = crate::utils::tz::now_utc().to_rfc3339();
 
-        insert_test_option(&pool, &key, "val", true, &now).await;
+        insert_test_option(&pool, &key, "val", true, &now_str).await;
         delete_by_key(&pool, &key, None).await.unwrap();
 
         let found = find_by_key(&pool, &key, None).await.unwrap();
@@ -319,14 +323,14 @@ mod tests {
     #[tokio::test]
     async fn find_autoload_test() {
         let pool = setup_pool().await;
-        let now = chrono::Utc::now().to_rfc3339();
+        let now_str = crate::utils::tz::now_utc().to_rfc3339();
 
         let k1 = format!("test.{}", crate::utils::id::new_document_id());
         let k2 = format!("test.{}", crate::utils::id::new_document_id());
         let k3 = format!("test.{}", crate::utils::id::new_document_id());
-        insert_test_option(&pool, &k1, "v1", true, &now).await;
-        insert_test_option(&pool, &k2, "v2", true, &now).await;
-        insert_test_option(&pool, &k3, "v3", false, &now).await;
+        insert_test_option(&pool, &k1, "v1", true, &now_str).await;
+        insert_test_option(&pool, &k2, "v2", true, &now_str).await;
+        insert_test_option(&pool, &k3, "v3", false, &now_str).await;
 
         let autoloaded = find_autoload(&pool).await.unwrap();
         assert!(autoloaded.iter().any(|r| r.option_key == k1));

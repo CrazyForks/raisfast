@@ -4,12 +4,12 @@
 //! 以及对 `users` 表的增删改查操作。所有密码字段使用 bcrypt 哈希存储，
 //! API 响应中不会泄露 `password_hash`。
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::tz::Timestamp;
 
 /// 用户完整数据库行模型
 ///
@@ -30,8 +30,8 @@ pub struct User {
     pub bio: Option<String>,
     pub website: Option<String>,
     pub email_verified: i64,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 crate::impl_from_row_opt_tenant!(User {
@@ -136,8 +136,8 @@ pub async fn create(
                 .bind(&cmd.email)
                 .bind(&cmd.username)
                 .bind(&cmd.password_hash)
-                .bind(&now)
-                .bind(&now)
+                .bind(now)
+                .bind(now)
                 .execute(pool)
                 .await?;
         }
@@ -152,8 +152,8 @@ pub async fn create(
                 .bind(&cmd.email)
                 .bind(&cmd.username)
                 .bind(&cmd.password_hash)
-                .bind(&now)
-                .bind(&now)
+                .bind(now)
+                .bind(now)
                 .execute(pool)
                 .await?;
         }
@@ -181,7 +181,7 @@ pub async fn update_profile(
     cmd: &crate::commands::UpdateProfileCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     let user = find_by_pk(pool, cmd.id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
@@ -239,7 +239,7 @@ pub async fn update_password(
     new_password_hash: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     let filter = tenant_filter_ph(tenant_id, 4);
     let sql = format!(
         "UPDATE users SET password_hash = {}, updated_at = {} WHERE document_id = {}{filter}",
@@ -265,7 +265,7 @@ pub async fn update_phone(
     phone: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     let filter = tenant_filter_ph(tenant_id, 4);
     let sql = format!(
         "UPDATE users SET phone = {}, updated_at = {} WHERE document_id = {}{filter}",
@@ -322,7 +322,7 @@ pub async fn update_role(
     role: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     let filter = tenant_filter_ph(tenant_id, 4);
     let sql = format!(
         "UPDATE users SET role = {}, updated_at = {} WHERE document_id = {}{filter}",

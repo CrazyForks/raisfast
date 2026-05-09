@@ -1,11 +1,11 @@
 //! 短信验证码模型与数据库查询
 
-use chrono::Utc;
 use sqlx::FromRow;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::id;
+use crate::utils::tz::Timestamp;
 
 /// 短信验证码数据库行模型
 #[derive(Debug, FromRow)]
@@ -16,11 +16,11 @@ pub struct SmsCode {
     pub phone: String,
     pub code: String,
     pub purpose: String,
-    pub expires_at: String,
-    pub verified_at: Option<String>,
+    pub expires_at: Timestamp,
+    pub verified_at: Option<Timestamp>,
     pub attempts: i64,
     pub ip_address: Option<String>,
-    pub created_at: String,
+    pub created_at: Timestamp,
 }
 
 /// 生成指定位数的随机数字验证码
@@ -50,7 +50,8 @@ pub async fn create(
     ip_address: Option<&str>,
 ) -> AppResult<SmsCode> {
     let (document_id, now) = id::new_document_id_and_timestamp();
-    let expires_at = (Utc::now() + chrono::Duration::seconds(expires_in_secs as i64)).to_rfc3339();
+    let expires_at =
+        crate::utils::tz::now_utc() + chrono::Duration::seconds(expires_in_secs as i64);
 
     let sql = format!(
         "INSERT INTO sms_codes (document_id, phone, code, purpose, expires_at, ip_address, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
@@ -67,9 +68,9 @@ pub async fn create(
         .bind(phone)
         .bind(code)
         .bind(purpose)
-        .bind(&expires_at)
+        .bind(expires_at)
         .bind(ip_address)
-        .bind(&now)
+        .bind(now)
         .execute(pool)
         .await?;
 
@@ -121,7 +122,7 @@ pub async fn is_rate_limited(
     purpose: &str,
     within_secs: u64,
 ) -> AppResult<bool> {
-    let cutoff = (Utc::now() - chrono::Duration::seconds(within_secs as i64)).to_rfc3339();
+    let cutoff = crate::utils::tz::now_utc() - chrono::Duration::seconds(within_secs as i64);
     let sql = format!(
         "SELECT COUNT(*) as cnt FROM sms_codes WHERE phone = {} AND purpose = {} AND created_at > {}",
         ph(1),
@@ -131,7 +132,7 @@ pub async fn is_rate_limited(
     let row: (i64,) = sqlx::query_as(&sql)
         .bind(phone)
         .bind(purpose)
-        .bind(&cutoff)
+        .bind(cutoff)
         .fetch_one(pool)
         .await?;
     Ok(row.0 > 0)
@@ -151,11 +152,7 @@ pub async fn verify_code(
         return Ok(VerifyResult::AlreadyUsed);
     }
 
-    let expires_at = chrono::DateTime::parse_from_rfc3339(&sms.expires_at).map_err(|_| {
-        crate::errors::app_error::AppError::Internal(anyhow::anyhow!("invalid expiry"))
-    })?;
-
-    if expires_at < Utc::now() {
+    if sms.expires_at < crate::utils::tz::now_utc() {
         return Ok(VerifyResult::Expired);
     }
 
@@ -172,13 +169,13 @@ pub async fn verify_code(
         return Ok(VerifyResult::WrongCode);
     }
 
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "UPDATE sms_codes SET verified_at = {} WHERE id = {}",
         ph(1),
         ph(2),
     );
-    sqlx::query(&sql).bind(&now).bind(id).execute(pool).await?;
+    sqlx::query(&sql).bind(now).bind(id).execute(pool).await?;
 
     Ok(VerifyResult::Verified)
 }
@@ -195,7 +192,7 @@ pub enum VerifyResult {
 
 /// 清理过期的验证码记录
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     let sql = format!("DELETE FROM sms_codes WHERE expires_at < {}", ph(1));
     let result = sqlx::query(&sql).bind(now).execute(pool).await?;
     Ok(result.rows_affected())

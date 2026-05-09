@@ -12,6 +12,7 @@ use serde_json::Value;
 use crate::errors::app_error::AppError;
 use crate::models::rbac::{Permission, Role};
 use crate::repositories::RbacRepository;
+use crate::utils::tz::Timestamp;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateRoleRequest {
@@ -48,7 +49,7 @@ pub struct PermissionView {
     pub subject: String,
     pub fields: Option<Vec<String>>,
     pub conditions: Option<HashMap<String, String>>,
-    pub created_at: String,
+    pub created_at: Timestamp,
 }
 
 fn perm_to_view(p: &Permission) -> PermissionView {
@@ -63,7 +64,7 @@ fn perm_to_view(p: &Permission) -> PermissionView {
             .conditions
             .as_ref()
             .and_then(|c| serde_json::from_str(c).ok()),
-        created_at: p.created_at.clone(),
+        created_at: p.created_at,
     }
 }
 
@@ -92,15 +93,15 @@ impl RbacService {
     pub async fn create_role(&self, req: &CreateRoleRequest) -> Result<Role, AppError> {
         let (id, now) = crate::utils::id::new_id_and_timestamp();
         self.repo
-            .create_role(&id, &req.name, req.description.as_deref(), &now)
+            .create_role(&id, &req.name, req.description.as_deref(), now)
             .await
     }
 
     /// 更新角色
     pub async fn update_role(&self, id: &str, req: &UpdateRoleRequest) -> Result<Role, AppError> {
-        let now = crate::utils::tz::now_str();
+        let now = crate::utils::tz::now_utc();
         self.repo
-            .update_role(id, req.name.as_deref(), req.description.as_deref(), &now)
+            .update_role(id, req.name.as_deref(), req.description.as_deref(), now)
             .await
     }
 
@@ -159,7 +160,7 @@ impl RbacService {
                     &entry.subject,
                     fields_json.as_deref(),
                     conditions_json.as_deref(),
-                    &now,
+                    now,
                 )
                 .await?;
         }

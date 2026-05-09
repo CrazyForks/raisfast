@@ -101,9 +101,9 @@ async fn build_response_from_post(
         tags,
         view_count: post.view_count,
         is_pinned: post.is_pinned,
-        created_at: post.created_at.clone(),
-        updated_at: post.updated_at.clone(),
-        published_at: post.published_at.clone(),
+        created_at: post.created_at,
+        updated_at: post.updated_at,
+        published_at: post.published_at,
         title_highlight: None,
         excerpt_highlight: None,
     }

@@ -15,6 +15,7 @@ use ts_rs::TS;
 use crate::db::dialect::ph;
 use crate::db::tenant::{tenant_filter_aliased_ph, tenant_filter_ph};
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::tz::Timestamp;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
@@ -30,8 +31,8 @@ pub struct Comment {
     pub content: String,
     pub parent_id: Option<i64>,
     pub status: String,
-    pub created_at: String,
-    pub updated_at: Option<String>,
+    pub created_at: Timestamp,
+    pub updated_at: Option<Timestamp>,
 }
 
 crate::impl_from_row_opt_tenant!(Comment {
@@ -52,7 +53,7 @@ pub struct CommentResponse {
     pub parent_id: Option<i64>,
     pub depth: i32,
     pub replies: Vec<CommentResponse>,
-    pub created_at: String,
+    pub created_at: Timestamp,
 }
 
 pub async fn find_by_id(
@@ -112,8 +113,8 @@ pub async fn create(
                 .bind(&cmd.email)
                 .bind(&cmd.content)
                 .bind(cmd.parent_id)
-                .bind(&now)
-                .bind(&now)
+                .bind(now)
+                .bind(now)
                 .execute(pool)
                 .await?;
         }
@@ -132,8 +133,8 @@ pub async fn create(
                 .bind(&cmd.email)
                 .bind(&cmd.content)
                 .bind(cmd.parent_id)
-                .bind(&now)
-                .bind(&now)
+                .bind(now)
+                .bind(now)
                 .execute(pool)
                 .await?;
         }
@@ -229,7 +230,7 @@ pub struct AdminCommentRow {
     pub content: String,
     pub parent_id: Option<i64>,
     pub status: String,
-    pub created_at: String,
+    pub created_at: Timestamp,
 }
 
 pub async fn find_all_paginated(
@@ -278,7 +279,7 @@ pub async fn update_status(
         ph(2),
         ph(3)
     );
-    let mut q = sqlx::query(&sql).bind(status).bind(&now).bind(id);
+    let mut q = sqlx::query(&sql).bind(status).bind(now).bind(id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -350,7 +351,7 @@ pub fn build_tree(comments: &[Comment]) -> Vec<CommentResponse> {
                             parent_id: c.parent_id,
                             depth,
                             replies,
-                            created_at: c.created_at.clone(),
+                            created_at: c.created_at,
                         }
                     })
                     .collect()
@@ -393,7 +394,7 @@ mod tests {
             content: "test".to_string(),
             parent_id,
             status: "approved".to_string(),
-            created_at: "2025-01-01T00:00:00Z".to_string(),
+            created_at: "2025-01-01T00:00:00Z".parse().unwrap(),
             updated_at: None,
         }
     }

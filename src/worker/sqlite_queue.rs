@@ -1,6 +1,5 @@
 //! `SQLite` 持久化任务队列
 
-use chrono::Utc;
 use sqlx::Row;
 use uuid::Uuid;
 
@@ -8,6 +7,7 @@ use crate::constants::{COL_DOCUMENT_ID, COL_ID};
 use crate::db::Pool;
 use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::tz::Timestamp;
 
 use super::{
     JobQueue, JobRow, JobStats, NewJob, QueuedJob, backoff_duration, parse_job, serialize_job,
@@ -32,7 +32,7 @@ impl JobQueue for SqliteJobQueue {
         let job_type = new_job.job.job_type();
         let payload = serialize_job(&new_job.job);
         let max_attempts = new_job.max_attempts.unwrap_or(3);
-        let now = Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_utc();
 
         sqlx::query(&format!(
             "INSERT INTO jobs ({COL_DOCUMENT_ID}, job_type, payload, status, max_attempts, run_after, created_at, updated_at)
@@ -43,9 +43,9 @@ impl JobQueue for SqliteJobQueue {
         .bind(job_type)
         .bind(&payload)
         .bind(max_attempts)
-        .bind(&new_job.run_after)
-        .bind(&now)
-        .bind(&now)
+        .bind(new_job.run_after)
+        .bind(now)
+        .bind(now)
         .execute(&self.pool)
         .await?;
 
@@ -54,7 +54,7 @@ impl JobQueue for SqliteJobQueue {
     }
 
     async fn dequeue(&self, limit: usize) -> AppResult<Vec<QueuedJob>> {
-        let now = Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_utc();
         let limit_i64 = limit as i64;
 
         let returning = crate::db::dialect::returning_col(&format!(
@@ -74,8 +74,8 @@ impl JobQueue for SqliteJobQueue {
         );
 
         let rows = sqlx::query(&sql)
-            .bind(&now)
-            .bind(&now)
+            .bind(now)
+            .bind(now)
             .bind(limit_i64)
             .fetch_all(&self.pool)
             .await?;
@@ -87,7 +87,7 @@ impl JobQueue for SqliteJobQueue {
             let payload: String = row.get("payload");
             let attempts: i32 = row.get("attempts");
             let max_attempts: i32 = row.get("max_attempts");
-            let created_at: String = row.get("created_at");
+            let created_at: Timestamp = row.get("created_at");
             match parse_job(&job_type, &payload) {
                 Ok(job) => jobs.push(QueuedJob {
                     document_id: id,
@@ -107,13 +107,13 @@ impl JobQueue for SqliteJobQueue {
     }
 
     async fn complete(&self, id: &str) -> AppResult<()> {
-        let now = Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_utc();
         sqlx::query(&format!(
             "UPDATE jobs SET status = 'completed', updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
             ph(1),
             ph(2)
         ))
-        .bind(&now)
+        .bind(now)
         .bind(id)
         .execute(&self.pool)
         .await?;
@@ -122,7 +122,7 @@ impl JobQueue for SqliteJobQueue {
     }
 
     async fn fail(&self, id: &str, error: &str) -> AppResult<()> {
-        let now = Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_utc();
 
         let mut tx = self.pool.begin().await?;
 
@@ -149,7 +149,7 @@ impl JobQueue for SqliteJobQueue {
             ph(3)
         ))
         .bind(error)
-        .bind(&now)
+        .bind(now)
         .bind(id)
         .execute(&mut *tx)
         .await?;
@@ -160,15 +160,15 @@ impl JobQueue for SqliteJobQueue {
 
         let delay = backoff_duration(attempts as u32);
         let run_after =
-            (Utc::now() + chrono::Duration::from_std(delay).unwrap_or_default()).to_rfc3339();
+            crate::utils::tz::now_utc() + chrono::Duration::from_std(delay).unwrap_or_default();
 
         sqlx::query(&format!(
             "UPDATE jobs SET status = 'pending', error = {}, run_after = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
             ph(1), ph(2), ph(3), ph(4)
         ))
         .bind(error)
-        .bind(&run_after)
-        .bind(&now)
+        .bind(run_after)
+        .bind(now)
         .bind(id)
         .execute(&mut *tx)
         .await?;
@@ -182,7 +182,7 @@ impl JobQueue for SqliteJobQueue {
     }
 
     async fn dead(&self, id: &str, error: &str) -> AppResult<()> {
-        let now = Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_utc();
         sqlx::query(&format!(
             "UPDATE jobs SET status = 'dead', error = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
             ph(1),
@@ -190,7 +190,7 @@ impl JobQueue for SqliteJobQueue {
             ph(3)
         ))
         .bind(error)
-        .bind(&now)
+        .bind(now)
         .bind(id)
         .execute(&self.pool)
         .await?;
@@ -305,13 +305,13 @@ impl JobQueue for SqliteJobQueue {
     }
 
     async fn retry(&self, id: &str) -> AppResult<()> {
-        let now = Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_utc();
         let result = sqlx::query(&format!(
             "UPDATE jobs SET status = 'pending', attempts = 0, error = NULL, run_after = NULL, updated_at = {}
              WHERE {COL_DOCUMENT_ID} = {} AND status = 'dead'",
             ph(1), ph(2)
         ))
-        .bind(&now)
+        .bind(now)
         .bind(id)
         .execute(&self.pool)
         .await?;
@@ -628,7 +628,7 @@ mod tests {
     #[tokio::test]
     async fn dequeue_skips_future_run_after() {
         let q = setup().await;
-        let future = (Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+        let future = crate::utils::tz::now_utc() + chrono::Duration::hours(1);
         q.enqueue(NewJob {
             job: Job::GenerateSitemap,
             max_attempts: Some(3),

@@ -10,6 +10,7 @@ use ts_rs::TS;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
+use crate::utils::tz::Timestamp;
 
 /// API Token 完整数据库行模型
 #[derive(Debug, FromRow, Serialize, Deserialize)]
@@ -21,9 +22,9 @@ pub struct ApiToken {
     pub token_hash: String,
     pub token_prefix: String,
     pub scopes: String,
-    pub last_used_at: Option<String>,
-    pub expires_at: Option<String>,
-    pub created_at: String,
+    pub last_used_at: Option<Timestamp>,
+    pub expires_at: Option<Timestamp>,
+    pub created_at: Timestamp,
 }
 
 /// API Token 列表项（脱敏，不含 token_hash）
@@ -35,9 +36,9 @@ pub struct ApiTokenListItem {
     pub name: String,
     pub token_prefix: String,
     pub scopes: String,
-    pub last_used_at: Option<String>,
-    pub expires_at: Option<String>,
-    pub created_at: String,
+    pub last_used_at: Option<Timestamp>,
+    pub expires_at: Option<Timestamp>,
+    pub created_at: Timestamp,
 }
 
 /// 创建新的 API Token 记录
@@ -70,7 +71,7 @@ pub async fn create(
         .bind(token_prefix)
         .bind(scopes)
         .bind(expires_at)
-        .bind(&now)
+        .bind(now)
         .execute(pool)
         .await?;
     let sql = format!("SELECT * FROM api_tokens WHERE document_id = {}", ph(1));
@@ -126,13 +127,13 @@ pub async fn delete_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResul
 
 /// 更新 last_used_at（按整数主键）
 pub async fn touch_last_used(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::utils::tz::now_utc();
     let sql = format!(
         "UPDATE api_tokens SET last_used_at = {} WHERE id = {}",
         ph(1),
         ph(2)
     );
-    sqlx::query(&sql).bind(&now).bind(id).execute(pool).await?;
+    sqlx::query(&sql).bind(now).bind(id).execute(pool).await?;
     Ok(())
 }
 
@@ -281,7 +282,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(row.expires_at.unwrap(), "2099-12-31T00:00:00+00:00");
+        assert_eq!(
+            row.expires_at.unwrap(),
+            "2099-12-31T00:00:00+00:00".parse::<Timestamp>().unwrap()
+        );
     }
 
     #[tokio::test]

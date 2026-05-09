@@ -1605,7 +1605,7 @@ pub fn spawn_webhook_subscriber(
                     };
 
                     let payload_value = serde_json::to_value(event.as_ref()).unwrap_or_default();
-                    let timestamp = chrono::Utc::now().to_rfc3339();
+                    let timestamp = crate::utils::tz::now_utc();
                     let webhook_payload = crate::webhook::model::WebhookPayload {
                         event: event_type.to_string(),
                         data: payload_value,

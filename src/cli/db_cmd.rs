@@ -234,8 +234,8 @@ pub async fn seed(
             .bind(email)
             .bind(username)
             .bind(&password_hash)
-            .bind(&now)
-            .bind(&now)
+            .bind(now)
+            .bind(now)
             .execute(&pool)
             .await?;
         }
@@ -253,8 +253,8 @@ pub async fn seed(
             .bind(email)
             .bind(username)
             .bind(&password_hash)
-            .bind(&now)
-            .bind(&now)
+            .bind(now)
+            .bind(now)
             .execute(&pool)
             .await?;
         }

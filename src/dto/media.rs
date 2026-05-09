@@ -4,6 +4,7 @@ use ts_rs::TS;
 use utoipa::ToSchema;
 
 use crate::models::media::Media;
+use crate::utils::tz::Timestamp;
 
 /// 媒体文件 API 响应
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -17,7 +18,8 @@ pub struct MediaResponse {
     pub size: i64,
     pub width: Option<i32>,
     pub height: Option<i32>,
-    pub created_at: String,
+    #[schema(value_type = String)]
+    pub created_at: Timestamp,
 }
 
 /// 将 Media 数据库模型转换为 API 响应
@@ -32,7 +34,7 @@ pub fn media_to_response(media: &Media, base_url: &str) -> MediaResponse {
         size: media.size,
         width: media.width,
         height: media.height,
-        created_at: media.created_at.clone(),
+        created_at: media.created_at,
     }
 }
 
@@ -48,7 +50,7 @@ pub fn media_to_response_with_url(media: &Media, url: &str) -> MediaResponse {
         size: media.size,
         width: media.width,
         height: media.height,
-        created_at: media.created_at.clone(),
+        created_at: media.created_at,
     }
 }
 

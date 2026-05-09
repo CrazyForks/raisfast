@@ -16,6 +16,7 @@ use crate::middleware::auth::AuthUser;
 use crate::models::oauth;
 use crate::oauth::{OAuthProviderRegistry, OAuthUserInfo};
 use crate::repositories::{RefreshTokenRepository, UserRepository};
+use crate::utils::tz::Timestamp;
 
 /// 发起 OAuth 授权
 ///
@@ -246,7 +247,7 @@ pub struct OAuthBindingInfo {
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
     pub email: Option<String>,
-    pub created_at: String,
+    pub created_at: Timestamp,
 }
 
 /// 用完整用户数据生成 JWT + refresh token

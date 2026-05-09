@@ -5,11 +5,16 @@
 //!
 //! - `set_site_tz()` 在服务启动时调用一次
 //! - `site_tz()` 返回全局时区实例
-//! - `now_str()` 返回当前时间的 RFC 3339 字符串（带时区偏移）
+//! - `now_utc()` 返回当前 UTC 时间（数据库存储）
+//! - `now_str()` 返回当前时间的 RFC 3339 字符串（带时区偏移，用于 Aspect/动态表）
 //!
-//! 数据库存储统一使用站点时区，API 原样返回。
+//! 内置表使用原生时间戳类型（MySQL DATETIME / PostgreSQL TIMESTAMPTZ / SQLite TEXT），
+//! Rust 侧统一以 `Timestamp`（即 `DateTime<Utc>`）表示。
 
 use std::sync::OnceLock;
+
+/// 数据库时间戳类型，所有内置表的时间字段统一使用此类型
+pub type Timestamp = chrono::DateTime<chrono::Utc>;
 
 static SITE_TZ: OnceLock<chrono_tz::Tz> = OnceLock::new();
 
@@ -43,7 +48,15 @@ pub fn site_tz() -> chrono_tz::Tz {
     *SITE_TZ.get().unwrap_or(&chrono_tz::UTC)
 }
 
+/// 返回当前 UTC 时间，用于内置表的 `created_at` / `updated_at` 等字段
+pub fn now_utc() -> Timestamp {
+    chrono::Utc::now()
+}
+
 /// 返回当前时间在站点时区下的 RFC 3339 字符串
+///
+/// 仅用于 Aspect 系统（动态 Content Type 表的 TEXT 字段注入）。
+/// 内置表请使用 [`now_utc`]。
 ///
 /// 示例输出：
 /// - UTC: `2026-04-16T10:30:00+00:00`

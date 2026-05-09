@@ -7,6 +7,7 @@ use crate::cache::CacheStore;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::api_token;
+use crate::utils::tz::Timestamp;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
@@ -37,7 +38,7 @@ struct CachedTokenAuth {
     user_int_id: i64,
     role: String,
     tenant_id: Option<String>,
-    expires_at: Option<String>,
+    expires_at: Option<Timestamp>,
 }
 
 /// 生成明文 token 和 SHA-256 hash
@@ -79,8 +80,8 @@ pub struct CreateTokenResult {
     pub token: String,
     pub token_prefix: String,
     pub scopes: Vec<String>,
-    pub expires_at: Option<String>,
-    pub created_at: String,
+    pub expires_at: Option<Timestamp>,
+    pub created_at: Timestamp,
 }
 
 /// 创建 API Token
@@ -187,8 +188,7 @@ pub async fn verify_api_token(
         && let Ok(auth) = serde_json::from_str::<CachedTokenAuth>(&cached)
     {
         if let Some(ref exp) = auth.expires_at
-            && let Ok(exp_time) = chrono::DateTime::parse_from_rfc3339(exp)
-            && exp_time < chrono::Utc::now()
+            && exp < &chrono::Utc::now()
         {
             let _ = cache.delete(&cache_key).await;
             return Err(AppError::Unauthorized);
@@ -201,8 +201,7 @@ pub async fn verify_api_token(
         .ok_or(AppError::Unauthorized)?;
 
     if let Some(ref exp) = token.expires_at
-        && let Ok(exp_time) = chrono::DateTime::parse_from_rfc3339(exp)
-        && exp_time < chrono::Utc::now()
+        && exp < &chrono::Utc::now()
     {
         let _ = api_token::delete_by_id(pool, &token.document_id).await;
         let _ = cache.delete(&cache_key).await;
@@ -665,7 +664,7 @@ mod tests {
             user_int_id: 0,
             role: "reader".into(),
             tenant_id: Some("default".to_string()),
-            expires_at: Some(past.into()),
+            expires_at: Some(past.parse().unwrap()),
         })
         .unwrap();
         cache

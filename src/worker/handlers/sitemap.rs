@@ -29,8 +29,8 @@ impl GenerateSitemapHandler {
         urls.push(xml_url(base_url, None, None));
         for p in posts {
             let loc = format!("{}/posts/{}", base_url, p.slug);
-            let lastmod = p.updated_at.as_str();
-            urls.push(xml_url(&loc, Some(lastmod), None));
+            let lastmod = p.updated_at.to_rfc3339();
+            urls.push(xml_url(&loc, Some(&lastmod), None));
         }
 
         format!(
@@ -117,13 +117,13 @@ mod tests {
             category_id: None,
             view_count: 0,
             is_pinned: false,
-            created_at: "2025-01-01T00:00:00Z".into(),
-            updated_at: "2025-01-02T00:00:00Z".into(),
-            published_at: Some("2025-01-01T00:00:00Z".into()),
+            created_at: "2025-01-01T00:00:00Z".parse().unwrap(),
+            updated_at: "2025-01-02T00:00:00Z".parse().unwrap(),
+            published_at: Some("2025-01-01T00:00:00Z".parse().unwrap()),
         }];
         let xml = GenerateSitemapHandler::build_xml("http://example.com", &posts);
         assert!(xml.contains("<loc>http://example.com/posts/hello</loc>"));
-        assert!(xml.contains("<lastmod>2025-01-02T00:00:00Z</lastmod>"));
+        assert!(xml.contains("<lastmod>2025-01-02T00:00:00+00:00</lastmod>"));
     }
 
     #[tokio::test]

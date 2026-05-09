@@ -308,10 +308,7 @@ pub async fn refresh(
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
 
-    let expires_at = chrono::DateTime::parse_from_rfc3339(&stored.expires_at)
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid token expiry")))?;
-
-    if expires_at < Utc::now() {
+    if stored.expires_at < Utc::now() {
         let _ = refresh_token_repo.delete_by_token(refresh_token_str).await;
         return Err(AppError::Unauthorized);
     }

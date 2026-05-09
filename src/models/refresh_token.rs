@@ -9,6 +9,7 @@ use sqlx::FromRow;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
+use crate::utils::tz::Timestamp;
 
 /// 刷新令牌完整数据库行模型
 ///
@@ -20,8 +21,8 @@ pub struct RefreshToken {
     pub document_id: String,
     pub user_id: i64,
     pub token: String,
-    pub expires_at: String,
-    pub created_at: String,
+    pub expires_at: Timestamp,
+    pub created_at: Timestamp,
 }
 
 /// 创建新的刷新令牌记录
@@ -126,7 +127,10 @@ mod tests {
         let found = find_by_token(&pool, &token).await.unwrap().unwrap();
         assert_eq!(found.token, token);
         assert_eq!(found.user_id, user_id);
-        assert_eq!(found.expires_at, "2099-12-31T00:00:00Z");
+        assert_eq!(
+            found.expires_at,
+            "2099-12-31T00:00:00Z".parse::<Timestamp>().unwrap()
+        );
     }
 
     #[tokio::test]

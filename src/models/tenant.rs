@@ -9,6 +9,7 @@ use ts_rs::TS;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::tz::Timestamp;
 
 /// tenants 表行模型
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -20,8 +21,8 @@ pub struct Tenant {
     pub domain: Option<String>,
     pub config: String,
     pub status: String,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 /// 查询所有租户
@@ -59,7 +60,7 @@ pub async fn create(
     name: &str,
     domain: Option<&str>,
     config: &str,
-    created_at: &str,
+    created_at: Timestamp,
 ) -> AppResult<Tenant> {
     let sql = format!(
         "INSERT INTO tenants (document_id, name, domain, config, status, created_at, updated_at) VALUES ({}, {}, {}, {}, 'active', {}, {})",
@@ -94,7 +95,7 @@ pub async fn update(
     domain: Option<&str>,
     config: Option<&str>,
     status: Option<&str>,
-    updated_at: &str,
+    updated_at: Timestamp,
 ) -> AppResult<Tenant> {
     let mut sets = Vec::new();
     let mut idx = 1usize;
@@ -167,14 +168,14 @@ mod tests {
     async fn create_and_find_by_id() {
         let pool = setup_pool().await;
         let doc_id = "tenant-001";
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_utc();
         let row = create(
             &pool,
             doc_id,
             "Test Tenant",
             Some("test.example.com"),
             "{}",
-            &now,
+            now,
         )
         .await
         .unwrap();
@@ -190,14 +191,14 @@ mod tests {
     #[tokio::test]
     async fn find_by_domain_returns_match() {
         let pool = setup_pool().await;
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_utc();
         create(
             &pool,
             "tenant-002",
             "Dom Tenant",
             Some("dom.example.com"),
             "{}",
-            &now,
+            now,
         )
         .await
         .unwrap();
@@ -216,14 +217,14 @@ mod tests {
     #[tokio::test]
     async fn find_all_returns_all() {
         let pool = setup_pool().await;
-        let now = chrono::Utc::now().to_rfc3339();
-        create(&pool, "tenant-a", "Alpha", None, "{}", &now)
+        let now = crate::utils::tz::now_utc();
+        create(&pool, "tenant-a", "Alpha", None, "{}", now)
             .await
             .unwrap();
-        create(&pool, "tenant-b", "Bravo", None, "{}", &now)
+        create(&pool, "tenant-b", "Bravo", None, "{}", now)
             .await
             .unwrap();
-        create(&pool, "tenant-c", "Charlie", None, "{}", &now)
+        create(&pool, "tenant-c", "Charlie", None, "{}", now)
             .await
             .unwrap();
 
@@ -235,30 +236,22 @@ mod tests {
     async fn update_changes_name() {
         let pool = setup_pool().await;
         let doc_id = "tenant-003";
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::utils::tz::now_utc();
         create(
             &pool,
             doc_id,
             "Original",
             Some("orig.example.com"),
             "{}",
-            &now,
+            now,
         )
         .await
         .unwrap();
 
-        let later = chrono::Utc::now().to_rfc3339();
-        let updated = update(
-            &pool,
-            doc_id,
-            Some("Updated Name"),
-            None,
-            None,
-            None,
-            &later,
-        )
-        .await
-        .unwrap();
+        let later = crate::utils::tz::now_utc();
+        let updated = update(&pool, doc_id, Some("Updated Name"), None, None, None, later)
+            .await
+            .unwrap();
         assert_eq!(updated.name, "Updated Name");
         assert_eq!(updated.domain.unwrap(), "orig.example.com");
     }
@@ -267,8 +260,8 @@ mod tests {
     async fn delete_removes_tenant() {
         let pool = setup_pool().await;
         let doc_id = "tenant-004";
-        let now = chrono::Utc::now().to_rfc3339();
-        create(&pool, doc_id, "ToDelete", None, "{}", &now)
+        let now = crate::utils::tz::now_utc();
+        create(&pool, doc_id, "ToDelete", None, "{}", now)
             .await
             .unwrap();
 
