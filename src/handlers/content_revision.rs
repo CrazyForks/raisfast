@@ -6,21 +6,20 @@
 //! - 回滚到指定版本
 //! - 比较两个版本的差异
 
-use axum::Json;
 use axum::extract::{Path, State};
-use axum::response::IntoResponse;
 use serde_json::json;
 
 use crate::AppState;
 use crate::constants::COL_ID;
 use crate::content_type::repository::ContentRepository;
-use crate::errors::app_error::AppError;
+use crate::errors::app_error::{AppError, AppResult};
+use crate::errors::response::ApiResponse;
 
 /// GET /admin/cms/{plural}/{id}/revisions — 列出某条记录的所有版本
 pub async fn list_revisions(
     State(state): State<AppState>,
     Path((plural, id)): Path<(String, String)>,
-) -> Result<impl IntoResponse, AppError> {
+) -> AppResult<ApiResponse<serde_json::Value>> {
     let ct = state
         .content_type_registry
         .get_by_plural(&plural)
@@ -35,7 +34,7 @@ pub async fn list_revisions(
     let summaries =
         crate::models::content_revision::list_revisions(&state.pool, &ct.singular, &id).await?;
 
-    Ok(Json(json!({
+    Ok(ApiResponse::success(json!({
         "items": summaries,
         "total": summaries.len(),
     })))
@@ -45,7 +44,7 @@ pub async fn list_revisions(
 pub async fn get_revision(
     State(state): State<AppState>,
     Path((plural, id, revision_id)): Path<(String, String, String)>,
-) -> Result<impl IntoResponse, AppError> {
+) -> AppResult<ApiResponse<serde_json::Value>> {
     let ct = state
         .content_type_registry
         .get_by_plural(&plural)
@@ -69,7 +68,7 @@ pub async fn get_revision(
     let snapshot: serde_json::Value = serde_json::from_str(&revision.snapshot)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("snapshot parse: {e}")))?;
 
-    Ok(Json(json!({
+    Ok(ApiResponse::success(json!({
         "id": revision.id,
         "revision_number": revision.revision_number,
         "snapshot": snapshot,
@@ -82,7 +81,7 @@ pub async fn get_revision(
 pub async fn restore_revision(
     State(state): State<AppState>,
     Path((plural, id, revision_id)): Path<(String, String, String)>,
-) -> Result<impl IntoResponse, AppError> {
+) -> AppResult<ApiResponse<serde_json::Value>> {
     let ct = state
         .content_type_registry
         .get_by_plural(&plural)
@@ -117,14 +116,16 @@ pub async fn restore_revision(
         .update(&ct, &id, snapshot, None, &Default::default())
         .await?;
 
-    Ok(Json(result))
+    let value = serde_json::to_value(result)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("serialize result: {e}")))?;
+    Ok(ApiResponse::success(value))
 }
 
 /// GET /admin/cms/{plural}/{id}/revisions/{rev_a}/diff/{rev_b} — 比较两个版本
 pub async fn diff_revisions(
     State(state): State<AppState>,
     Path((plural, id, rev_a, rev_b)): Path<(String, String, String, String)>,
-) -> Result<impl IntoResponse, AppError> {
+) -> AppResult<ApiResponse<serde_json::Value>> {
     let ct = state
         .content_type_registry
         .get_by_plural(&plural)
@@ -158,7 +159,7 @@ pub async fn diff_revisions(
 
     let diff = crate::models::content_revision::compute_diff(&snap_a, &snap_b);
 
-    Ok(Json(json!({
+    Ok(ApiResponse::success(json!({
         "revision_a": {
             "id": a.id,
             "revision_number": a.revision_number,

@@ -17,12 +17,43 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     use axum::routing::{get, post as http_post, put};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/admin/rbac/roles", get(list_roles).post(create_role), "system admin", "admin/rbac", ["GET", "POST"]);
-    let r = reg_route!(r, registry, "/admin/rbac/roles/{id}", put(update_role).delete(delete_role), "system admin", "admin/rbac", ["PUT", "DELETE"]);
-    let r = reg_route!(r, registry, "/admin/rbac/roles/{id}/permissions", get(get_permissions).put(set_permissions), "system admin", "admin/rbac", ["GET", "PUT"]);
-    reg_route!(r, registry, "/admin/rbac/roles/batch", http_post(admin_batch), "system admin", "admin/rbac", ["POST"])
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/rbac/roles",
+        get(list_roles).post(create_role),
+        "system admin",
+        "admin/rbac",
+        ["GET", "POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/rbac/roles/{id}",
+        put(update_role).delete(delete_role),
+        "system admin",
+        "admin/rbac",
+        ["PUT", "DELETE"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/rbac/roles/{id}/permissions",
+        get(get_permissions).put(set_permissions),
+        "system admin",
+        "admin/rbac",
+        ["GET", "PUT"]
+    );
+    reg_route!(
+        r,
+        registry,
+        "/admin/rbac/roles/batch",
+        http_post(admin_batch),
+        "system admin",
+        "admin/rbac",
+        ["POST"]
+    )
 }
-
 
 /// GET /admin/rbac/roles — 列出所有角色（分页）
 pub async fn list_roles(
@@ -97,5 +128,8 @@ pub async fn admin_batch(
             }
         }
     }
-    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
+    Ok(ApiResponse::success(BatchResponse::new(
+        &req.action,
+        affected,
+    )))
 }

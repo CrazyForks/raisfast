@@ -15,11 +15,34 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     use axum::routing::get;
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/options/public", get(get_public_options), "system public", "options", ["GET"]);
-    let r = reg_route!(r, registry, "/admin/options", get(list_options).put(update_options), "system admin", "options", ["GET", "PUT"]);
-    reg_route!(r, registry, "/admin/options/{key}", get(get_option).put(set_option).delete(delete_option), "system admin", "options", ["GET", "PUT", "DELETE"])
+    let r = reg_route!(
+        r,
+        registry,
+        "/options/public",
+        get(get_public_options),
+        "system public",
+        "options",
+        ["GET"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/options",
+        get(list_options).put(update_options),
+        "system admin",
+        "admin/options",
+        ["GET", "PUT"]
+    );
+    reg_route!(
+        r,
+        registry,
+        "/admin/options/{key}",
+        get(get_option).put(set_option).delete(delete_option),
+        "system admin",
+        "admin/options",
+        ["GET", "PUT", "DELETE"]
+    )
 }
-
 
 /// GET /options/public — 公开配置（仅值）+ 系统特性标志
 pub async fn get_public_options(

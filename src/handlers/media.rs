@@ -10,21 +10,87 @@ use crate::middleware::auth::AuthUser;
 use crate::services::media as media_service;
 use crate::utils::pagination::PaginationParams;
 
-pub fn routes(max_upload: usize, registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+pub fn routes(
+    max_upload: usize,
+    registry: &mut crate::server::RouteRegistry,
+) -> axum::Router<crate::AppState> {
     use axum::routing::{delete, get, post as http_post};
     use tower_http::limit::RequestBodyLimitLayer;
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/media/upload", http_post(upload).layer(RequestBodyLimitLayer::new(max_upload)), "system public", "media", ["POST"]);
-    let r = reg_route!(r, registry, "/media", get(self::list), "system public", "media", ["GET"]);
-    let r = reg_route!(r, registry, "/media/stats", get(stats), "system public", "media", ["GET"]);
-    let r = reg_route!(r, registry, "/media/{id}", delete(self::delete), "system public", "media", ["DELETE"]);
-    let r = reg_route!(r, registry, "/admin/media/upload", http_post(admin_upload).layer(RequestBodyLimitLayer::new(max_upload)), "system admin", "admin/media", ["POST"]);
-    let r = reg_route!(r, registry, "/admin/media", get(admin_list), "system admin", "admin/media", ["GET"]);
-    let r = reg_route!(r, registry, "/admin/media/{id}", delete(admin_delete), "system admin", "admin/media", ["DELETE"]);
-    reg_route!(r, registry, "/admin/media/batch", http_post(admin_batch), "system admin", "admin/media", ["POST"])
+    let r = reg_route!(
+        r,
+        registry,
+        "/media/upload",
+        http_post(upload).layer(RequestBodyLimitLayer::new(max_upload)),
+        "system public",
+        "media",
+        ["POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/media",
+        get(self::list),
+        "system public",
+        "media",
+        ["GET"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/media/stats",
+        get(stats),
+        "system public",
+        "media",
+        ["GET"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/media/{id}",
+        delete(self::delete),
+        "system public",
+        "media",
+        ["DELETE"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/media/upload",
+        http_post(admin_upload).layer(RequestBodyLimitLayer::new(max_upload)),
+        "system admin",
+        "admin/media",
+        ["POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/media",
+        get(admin_list),
+        "system admin",
+        "admin/media",
+        ["GET"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/media/{id}",
+        delete(admin_delete),
+        "system admin",
+        "admin/media",
+        ["DELETE"]
+    );
+    reg_route!(
+        r,
+        registry,
+        "/admin/media/batch",
+        http_post(admin_batch),
+        "system admin",
+        "admin/media",
+        ["POST"]
+    )
 }
-
 
 /// 上传媒体文件
 pub async fn upload(
@@ -231,5 +297,8 @@ pub async fn admin_batch(
             }
         }
     }
-    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
+    Ok(ApiResponse::success(BatchResponse::new(
+        &req.action,
+        affected,
+    )))
 }

@@ -19,13 +19,52 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     use axum::routing::{get, post as http_post};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/posts", get(self::list).post(create), "system public", "posts", ["GET", "POST"]);
-    let r = reg_route!(r, registry, "/posts/{slug}", get(self::get).put(update).delete(self::delete), "system public", "posts", ["GET", "PUT", "DELETE"]);
-    let r = reg_route!(r, registry, "/admin/posts", get(admin_list).post(admin_create), "system admin", "admin/posts", ["GET", "POST"]);
-    let r = reg_route!(r, registry, "/admin/posts/{id}", get(admin_get).put(admin_update).delete(admin_delete), "system admin", "admin/posts", ["GET", "PUT", "DELETE"]);
-    reg_route!(r, registry, "/admin/posts/batch", http_post(admin_batch), "system admin", "admin/posts", ["POST"])
+    let r = reg_route!(
+        r,
+        registry,
+        "/posts",
+        get(self::list).post(create),
+        "system public",
+        "posts",
+        ["GET", "POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/posts/{slug}",
+        get(self::get).put(update).delete(self::delete),
+        "system public",
+        "posts",
+        ["GET", "PUT", "DELETE"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/posts",
+        get(admin_list).post(admin_create),
+        "system admin",
+        "admin/posts",
+        ["GET", "POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/posts/{id}",
+        get(admin_get).put(admin_update).delete(admin_delete),
+        "system admin",
+        "admin/posts",
+        ["GET", "PUT", "DELETE"]
+    );
+    reg_route!(
+        r,
+        registry,
+        "/admin/posts/batch",
+        http_post(admin_batch),
+        "system admin",
+        "admin/posts",
+        ["POST"]
+    )
 }
-
 
 /// 文章列表查询参数
 ///
@@ -325,5 +364,8 @@ pub async fn admin_batch(
         &auth,
     )
     .await?;
-    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
+    Ok(ApiResponse::success(BatchResponse::new(
+        &req.action,
+        affected,
+    )))
 }

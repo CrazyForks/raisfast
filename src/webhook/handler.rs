@@ -14,9 +14,33 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     use axum::routing::{get, post as http_post};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/admin/webhooks", get(list).post(create), "system admin", "admin/webhooks", ["GET", "POST"]);
-    let r = reg_route!(r, registry, "/admin/webhooks/{id}", get(self::get).put(update).delete(self::delete), "system admin", "admin/webhooks", ["GET", "PUT", "DELETE"]);
-    reg_route!(r, registry, "/admin/webhooks/batch", http_post(admin_batch), "system admin", "admin/webhooks", ["POST"])
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/webhooks",
+        get(list).post(create),
+        "system admin",
+        "admin/webhooks",
+        ["GET", "POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/webhooks/{id}",
+        get(self::get).put(update).delete(self::delete),
+        "system admin",
+        "admin/webhooks",
+        ["GET", "PUT", "DELETE"]
+    );
+    reg_route!(
+        r,
+        registry,
+        "/admin/webhooks/batch",
+        http_post(admin_batch),
+        "system admin",
+        "admin/webhooks",
+        ["POST"]
+    )
 }
 
 /// GET /admin/webhooks — 分页查询 webhook 订阅
@@ -133,5 +157,8 @@ pub async fn admin_batch(
             _ => {}
         }
     }
-    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
+    Ok(ApiResponse::success(BatchResponse::new(
+        &req.action,
+        affected,
+    )))
 }

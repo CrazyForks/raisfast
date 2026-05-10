@@ -15,11 +15,34 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     use axum::routing::{get, post as http_post};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/admin/tenants", get(list_tenants).post(create_tenant), "system admin", "admin/tenants", ["GET", "POST"]);
-    let r = reg_route!(r, registry, "/admin/tenants/{id}", get(get_tenant).put(update_tenant).delete(delete_tenant), "system admin", "admin/tenants", ["GET", "PUT", "DELETE"]);
-    reg_route!(r, registry, "/admin/tenants/batch", http_post(admin_batch), "system admin", "admin/tenants", ["POST"])
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/tenants",
+        get(list_tenants).post(create_tenant),
+        "system admin",
+        "admin/tenants",
+        ["GET", "POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/tenants/{id}",
+        get(get_tenant).put(update_tenant).delete(delete_tenant),
+        "system admin",
+        "admin/tenants",
+        ["GET", "PUT", "DELETE"]
+    );
+    reg_route!(
+        r,
+        registry,
+        "/admin/tenants/batch",
+        http_post(admin_batch),
+        "system admin",
+        "admin/tenants",
+        ["POST"]
+    )
 }
-
 
 /// GET /admin/tenants — 列出所有租户（分页）
 pub async fn list_tenants(
@@ -113,5 +136,8 @@ pub async fn admin_batch(
             _ => {}
         }
     }
-    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
+    Ok(ApiResponse::success(BatchResponse::new(
+        &req.action,
+        affected,
+    )))
 }

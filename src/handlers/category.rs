@@ -15,13 +15,52 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     use axum::routing::{get, post as http_post, put};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/categories", get(self::list).post(create), "system public", "categories", ["GET", "POST"]);
-    let r = reg_route!(r, registry, "/categories/{id}", put(update).delete(self::delete), "system public", "categories", ["PUT", "DELETE"]);
-    let r = reg_route!(r, registry, "/admin/categories", get(admin_list).post(admin_create), "system admin", "admin/categories", ["GET", "POST"]);
-    let r = reg_route!(r, registry, "/admin/categories/{id}", put(admin_update).delete(admin_delete), "system admin", "admin/categories", ["PUT", "DELETE"]);
-    reg_route!(r, registry, "/admin/categories/batch", http_post(admin_batch), "system admin", "admin/categories", ["POST"])
+    let r = reg_route!(
+        r,
+        registry,
+        "/categories",
+        get(self::list).post(create),
+        "system public",
+        "categories",
+        ["GET", "POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/categories/{id}",
+        put(update).delete(self::delete),
+        "system public",
+        "categories",
+        ["PUT", "DELETE"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/categories",
+        get(admin_list).post(admin_create),
+        "system admin",
+        "admin/categories",
+        ["GET", "POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/categories/{id}",
+        put(admin_update).delete(admin_delete),
+        "system admin",
+        "admin/categories",
+        ["PUT", "DELETE"]
+    );
+    reg_route!(
+        r,
+        registry,
+        "/admin/categories/batch",
+        http_post(admin_batch),
+        "system admin",
+        "admin/categories",
+        ["POST"]
+    )
 }
-
 
 /// 获取分类列表（分页）
 #[utoipa::path(get, path = "/categories", tag = "categories",
@@ -166,5 +205,8 @@ pub async fn admin_batch(
             }
         }
     }
-    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
+    Ok(ApiResponse::success(BatchResponse::new(
+        &req.action,
+        affected,
+    )))
 }

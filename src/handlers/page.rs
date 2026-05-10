@@ -22,16 +22,79 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     use axum::routing::{get, post as http_post, put};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/pages", get(self::list).post(create), "system public", "pages", ["GET", "POST"]);
-    let r = reg_route!(r, registry, "/pages/sitemap", get(sitemap), "system public", "pages", ["GET"]);
-    let r = reg_route!(r, registry, "/pages/{slug}", get(get_by_slug), "system public", "pages", ["GET"]);
-    let r = reg_route!(r, registry, "/admin/pages", get(admin_list).post(create), "system admin", "admin/pages", ["GET", "POST"]);
-    let r = reg_route!(r, registry, "/admin/pages/{id}", get(admin_get).put(update).delete(self::delete), "system admin", "admin/pages", ["GET", "PUT", "DELETE"]);
-    let r = reg_route!(r, registry, "/admin/pages/{id}/status", put(update_status), "system admin", "admin/pages", ["PUT"]);
-    let r = reg_route!(r, registry, "/admin/pages/reorder", put(reorder), "system admin", "admin/pages", ["PUT"]);
-    reg_route!(r, registry, "/admin/pages/batch", http_post(admin_batch), "system admin", "admin/pages", ["POST"])
+    let r = reg_route!(
+        r,
+        registry,
+        "/pages",
+        get(self::list).post(create),
+        "system public",
+        "pages",
+        ["GET", "POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/pages/sitemap",
+        get(sitemap),
+        "system public",
+        "pages",
+        ["GET"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/pages/{slug}",
+        get(get_by_slug),
+        "system public",
+        "pages",
+        ["GET"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/pages",
+        get(admin_list).post(create),
+        "system admin",
+        "admin/pages",
+        ["GET", "POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/pages/{id}",
+        get(admin_get).put(update).delete(self::delete),
+        "system admin",
+        "admin/pages",
+        ["GET", "PUT", "DELETE"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/pages/{id}/status",
+        put(update_status),
+        "system admin",
+        "admin/pages",
+        ["PUT"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/pages/reorder",
+        put(reorder),
+        "system admin",
+        "admin/pages",
+        ["PUT"]
+    );
+    reg_route!(
+        r,
+        registry,
+        "/admin/pages/batch",
+        http_post(admin_batch),
+        "system admin",
+        "admin/pages",
+        ["POST"]
+    )
 }
-
 
 async fn resolve_page_parent_id(
     pool: &crate::db::Pool,
@@ -298,7 +361,10 @@ pub async fn admin_batch(
     for id in &req.ids {
         match req.action.as_str() {
             "delete" => {
-                if page_service::delete_page(&state.pool, id, &auth).await.is_ok() {
+                if page_service::delete_page(&state.pool, id, &auth)
+                    .await
+                    .is_ok()
+                {
                     affected += 1;
                 }
             }
@@ -318,5 +384,8 @@ pub async fn admin_batch(
             _ => {}
         }
     }
-    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
+    Ok(ApiResponse::success(BatchResponse::new(
+        &req.action,
+        affected,
+    )))
 }

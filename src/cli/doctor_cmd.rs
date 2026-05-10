@@ -69,7 +69,10 @@ fn check_env_files() -> Vec<CheckResult> {
         });
     }
 
-    let env_profile = format!(".env.{}", std::env::var("APP_ENV").unwrap_or_else(|_| "development".into()));
+    let env_profile = format!(
+        ".env.{}",
+        std::env::var("APP_ENV").unwrap_or_else(|_| "development".into())
+    );
     if Path::new(&env_profile).exists() {
         results.push(CheckResult {
             name: format!("{env_profile} file"),
@@ -268,31 +271,29 @@ fn check_writable(path: &Path) -> bool {
 
 async fn check_database(config: &AppConfig) -> CheckResult {
     match raisfast::db::connection::init_pool(&config.database_url, 1).await {
-        Ok(pool) => {
-            match sqlx::query("SELECT 1").execute(&pool).await {
-                Ok(_) => {
-                    let table_check = check_core_tables(&pool).await;
-                    CheckResult {
-                        name: "database".into(),
-                        status: if table_check.is_empty() {
-                            CheckStatus::Ok
-                        } else {
-                            CheckStatus::Warn
-                        },
-                        message: if table_check.is_empty() {
-                            "connected, schema OK".into()
-                        } else {
-                            format!("connected, missing tables: {}", table_check.join(", "))
-                        },
-                    }
-                }
-                Err(e) => CheckResult {
+        Ok(pool) => match sqlx::query("SELECT 1").execute(&pool).await {
+            Ok(_) => {
+                let table_check = check_core_tables(&pool).await;
+                CheckResult {
                     name: "database".into(),
-                    status: CheckStatus::Fail,
-                    message: format!("connection failed: {e}"),
-                },
+                    status: if table_check.is_empty() {
+                        CheckStatus::Ok
+                    } else {
+                        CheckStatus::Warn
+                    },
+                    message: if table_check.is_empty() {
+                        "connected, schema OK".into()
+                    } else {
+                        format!("connected, missing tables: {}", table_check.join(", "))
+                    },
+                }
             }
-        }
+            Err(e) => CheckResult {
+                name: "database".into(),
+                status: CheckStatus::Fail,
+                message: format!("connection failed: {e}"),
+            },
+        },
         Err(e) => CheckResult {
             name: "database".into(),
             status: CheckStatus::Fail,
@@ -364,7 +365,10 @@ fn check_search(config: &AppConfig) -> CheckResult {
         CheckResult {
             name: "search engine".into(),
             status: CheckStatus::Ok,
-            message: format!("{} (index: {})", config.search_engine, config.search_index_dir),
+            message: format!(
+                "{} (index: {})",
+                config.search_engine, config.search_index_dir
+            ),
         }
     } else {
         CheckResult {
@@ -391,13 +395,15 @@ fn print_result(result: &CheckResult) {
     let color = status_color(&result.status);
     println!(
         "  {icon} {color}{:<25}{RESET} {}",
-        result.name,
-        result.message,
+        result.name, result.message,
     );
 }
 
 fn print_summary(results: &[CheckResult]) {
-    let ok_count = results.iter().filter(|r| matches!(r.status, CheckStatus::Ok)).count();
+    let ok_count = results
+        .iter()
+        .filter(|r| matches!(r.status, CheckStatus::Ok))
+        .count();
     let warn_count = results
         .iter()
         .filter(|r| matches!(r.status, CheckStatus::Warn))

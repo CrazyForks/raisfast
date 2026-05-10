@@ -16,21 +16,101 @@ use crate::services::comment as comment_service;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use crate::middleware::rate_limit::comment_rate_limit;
     use axum::middleware::from_fn;
     use axum::routing::{delete, get, post as http_post, put};
-    use crate::middleware::rate_limit::comment_rate_limit;
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/posts/{slug}/comments", get(self::list), "system public", "comments", ["GET"]);
-    let r = reg_route!(r, registry, "/posts/{slug}/comments", http_post(create_guest).layer(from_fn(comment_rate_limit)), "system public", "comments", ["POST"]);
-    let r = reg_route!(r, registry, "/posts/{slug}/comments/authed", http_post(create), "system public", "comments", ["POST"]);
-    let r = reg_route!(r, registry, "/comments/{id}", delete(self::delete), "system public", "comments", ["DELETE"]);
-    let r = reg_route!(r, registry, "/comments/{id}/status", put(update_status), "system public", "comments", ["PUT"]);
-    let r = reg_route!(r, registry, "/comments", get(list_all), "system public", "comments", ["GET"]);
-    let r = reg_route!(r, registry, "/admin/comments", get(admin_list), "system admin", "admin/comments", ["GET"]);
-    let r = reg_route!(r, registry, "/admin/comments/{id}/status", put(admin_update_status), "system admin", "admin/comments", ["PUT"]);
-    let r = reg_route!(r, registry, "/admin/comments/{id}", delete(admin_delete), "system admin", "admin/comments", ["DELETE"]);
-    reg_route!(r, registry, "/admin/comments/batch", http_post(admin_batch), "system admin", "admin/comments", ["POST"])
+    let r = reg_route!(
+        r,
+        registry,
+        "/posts/{slug}/comments",
+        get(self::list),
+        "system public",
+        "comments",
+        ["GET"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/posts/{slug}/comments",
+        http_post(create_guest).layer(from_fn(comment_rate_limit)),
+        "system public",
+        "comments",
+        ["POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/posts/{slug}/comments/authed",
+        http_post(create),
+        "system public",
+        "comments",
+        ["POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/comments/{id}",
+        delete(self::delete),
+        "system public",
+        "comments",
+        ["DELETE"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/comments/{id}/status",
+        put(update_status),
+        "system public",
+        "comments",
+        ["PUT"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/comments",
+        get(list_all),
+        "system public",
+        "comments",
+        ["GET"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/comments",
+        get(admin_list),
+        "system admin",
+        "admin/comments",
+        ["GET"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/comments/{id}/status",
+        put(admin_update_status),
+        "system admin",
+        "admin/comments",
+        ["PUT"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/comments/{id}",
+        delete(admin_delete),
+        "system admin",
+        "admin/comments",
+        ["DELETE"]
+    );
+    reg_route!(
+        r,
+        registry,
+        "/admin/comments/batch",
+        http_post(admin_batch),
+        "system admin",
+        "admin/comments",
+        ["POST"]
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -239,5 +319,8 @@ pub async fn admin_batch(
             _ => {}
         }
     }
-    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
+    Ok(ApiResponse::success(BatchResponse::new(
+        &req.action,
+        affected,
+    )))
 }

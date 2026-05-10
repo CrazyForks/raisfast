@@ -5,7 +5,9 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 
-use crate::dto::{BatchRequestWithRole, UpdatePasswordRequest, UpdateRoleRequest, UpdateUserRequest, UserResponse};
+use crate::dto::{
+    BatchRequestWithRole, UpdatePasswordRequest, UpdateRoleRequest, UpdateUserRequest, UserResponse,
+};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
@@ -17,16 +19,81 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     use axum::routing::{get, post as http_post, put};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/users/me", get(get_me).put(update_me), "system public", "users", ["GET", "PUT"]);
-    let r = reg_route!(r, registry, "/users/me/password", put(change_password), "system public", "users", ["PUT"]);
-    let r = reg_route!(r, registry, "/users/{id}", get(get_user), "system public", "users", ["GET"]);
-    let r = reg_route!(r, registry, "/users/{id}/role", put(update_role), "system public", "users", ["PUT"]);
-    let r = reg_route!(r, registry, "/users", get(list_users), "system public", "users", ["GET"]);
-    let r = reg_route!(r, registry, "/admin/users", get(admin_list_users), "system admin", "admin/users", ["GET"]);
-    let r = reg_route!(r, registry, "/admin/users/{id}", get(admin_get_user).put(admin_update_user).delete(admin_delete_user), "system admin", "admin/users", ["GET", "PUT", "DELETE"]);
-    reg_route!(r, registry, "/admin/users/batch", http_post(admin_batch_users), "system admin", "admin/users", ["POST"])
+    let r = reg_route!(
+        r,
+        registry,
+        "/users/me",
+        get(get_me).put(update_me),
+        "system public",
+        "users",
+        ["GET", "PUT"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/users/me/password",
+        put(change_password),
+        "system public",
+        "users",
+        ["PUT"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/users/{id}",
+        get(get_user),
+        "system public",
+        "users",
+        ["GET"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/users/{id}/role",
+        put(update_role),
+        "system public",
+        "users",
+        ["PUT"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/users",
+        get(list_users),
+        "system public",
+        "users",
+        ["GET"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/users",
+        get(admin_list_users),
+        "system admin",
+        "admin/users",
+        ["GET"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/users/{id}",
+        get(admin_get_user)
+            .put(admin_update_user)
+            .delete(admin_delete_user),
+        "system admin",
+        "admin/users",
+        ["GET", "PUT", "DELETE"]
+    );
+    reg_route!(
+        r,
+        registry,
+        "/admin/users/batch",
+        http_post(admin_batch_users),
+        "system admin",
+        "admin/users",
+        ["POST"]
+    )
 }
-
 
 /// 获取当前登录用户资料
 #[utoipa::path(get, path = "/users/me", tag = "users",
@@ -184,7 +251,10 @@ pub async fn admin_update_user(
         website: req.website,
         avatar: req.avatar,
     };
-    let u = state.user_repo.update_profile(cmd, auth.tenant_id()).await?;
+    let u = state
+        .user_repo
+        .update_profile(cmd, auth.tenant_id())
+        .await?;
     Ok(ApiResponse::success(u.into()))
 }
 

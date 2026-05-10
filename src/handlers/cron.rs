@@ -22,12 +22,60 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     use axum::routing::{get, post as http_post};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/admin/crons", get(self::list).post(create), "system admin", "admin/crons", ["GET", "POST"]);
-    let r = reg_route!(r, registry, "/admin/crons/{id}", get(self::get).put(update).delete(self::delete), "system admin", "admin/crons", ["GET", "PUT", "DELETE"]);
-    let r = reg_route!(r, registry, "/admin/crons/{id}/toggle", http_post(toggle), "system admin", "admin/crons", ["POST"]);
-    let r = reg_route!(r, registry, "/admin/crons/logs", get(logs), "system admin", "admin/crons", ["GET"]);
-    let r = reg_route!(r, registry, "/admin/crons/logs/cleanup", http_post(cleanup_logs), "system admin", "admin/crons", ["POST"]);
-    reg_route!(r, registry, "/admin/crons/batch", http_post(admin_batch), "system admin", "admin/crons", ["POST"])
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/crons",
+        get(self::list).post(create),
+        "system admin",
+        "admin/crons",
+        ["GET", "POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/crons/{id}",
+        get(self::get).put(update).delete(self::delete),
+        "system admin",
+        "admin/crons",
+        ["GET", "PUT", "DELETE"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/crons/{id}/toggle",
+        http_post(toggle),
+        "system admin",
+        "admin/crons",
+        ["POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/crons/logs",
+        get(logs),
+        "system admin",
+        "admin/crons",
+        ["GET"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/crons/logs/cleanup",
+        http_post(cleanup_logs),
+        "system admin",
+        "admin/crons",
+        ["POST"]
+    );
+    reg_route!(
+        r,
+        registry,
+        "/admin/crons/batch",
+        http_post(admin_batch),
+        "system admin",
+        "admin/crons",
+        ["POST"]
+    )
 }
 
 /// 创建调度请求体
@@ -233,5 +281,8 @@ pub async fn admin_batch(
             _ => {}
         }
     }
-    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
+    Ok(ApiResponse::success(BatchResponse::new(
+        &req.action,
+        affected,
+    )))
 }

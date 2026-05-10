@@ -2,7 +2,6 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::response::IntoResponse;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -10,22 +9,86 @@ use super::model::StepDef;
 use crate::AppState;
 use crate::db::dialect;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::errors::response::ApiResponse;
 
 pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
     use axum::routing::{get, post as http_post};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/admin/workflows", get(list).post(create), "system admin", "admin/workflows", ["GET", "POST"]);
-    let r = reg_route!(r, registry, "/admin/workflows/{id}", get(self::get).delete(self::delete), "system admin", "admin/workflows", ["GET", "DELETE"]);
-    let r = reg_route!(r, registry, "/admin/workflows/{id}/start", http_post(start), "system admin", "admin/workflows", ["POST"]);
-    let r = reg_route!(r, registry, "/admin/workflows/instances", get(list_instances), "system admin", "admin/workflows", ["GET"]);
-    let r = reg_route!(r, registry, "/admin/workflows/instances/{id}", get(get_instance), "system admin", "admin/workflows", ["GET"]);
-    let r = reg_route!(r, registry, "/admin/workflows/instances/{id}/execute", http_post(execute_step), "system admin", "admin/workflows", ["POST"]);
-    let r = reg_route!(r, registry, "/admin/workflows/instances/{id}/cancel", http_post(cancel_instance), "system admin", "admin/workflows", ["POST"]);
-    reg_route!(r, registry, "/admin/workflows/instances/{id}/logs", get(get_step_logs), "system admin", "admin/workflows", ["GET"])
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/workflows",
+        get(list).post(create),
+        "system admin",
+        "admin/workflows",
+        ["GET", "POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/workflows/{id}",
+        get(self::get).delete(self::delete),
+        "system admin",
+        "admin/workflows",
+        ["GET", "DELETE"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/workflows/{id}/start",
+        http_post(start),
+        "system admin",
+        "admin/workflows",
+        ["POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/workflows/instances",
+        get(list_instances),
+        "system admin",
+        "admin/workflows",
+        ["GET"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/workflows/instances/{id}",
+        get(get_instance),
+        "system admin",
+        "admin/workflows",
+        ["GET"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/workflows/instances/{id}/execute",
+        http_post(execute_step),
+        "system admin",
+        "admin/workflows",
+        ["POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/workflows/instances/{id}/cancel",
+        http_post(cancel_instance),
+        "system admin",
+        "admin/workflows",
+        ["POST"]
+    );
+    reg_route!(
+        r,
+        registry,
+        "/admin/workflows/instances/{id}/logs",
+        get(get_step_logs),
+        "system admin",
+        "admin/workflows",
+        ["GET"]
+    )
 }
 
-/// 创建工作流定义请求
 #[derive(Debug, Deserialize)]
 pub struct CreateWorkflowRequest {
     pub id: String,
@@ -34,20 +97,17 @@ pub struct CreateWorkflowRequest {
     pub steps: Vec<StepDef>,
 }
 
-/// 启动工作流实例请求
 #[derive(Debug, Deserialize)]
 pub struct StartWorkflowRequest {
     pub context: serde_json::Value,
     pub triggered_by: Option<String>,
 }
 
-/// 执行步骤请求
 #[derive(Debug, Deserialize)]
 pub struct ExecuteStepRequest {
     pub output: serde_json::Value,
 }
 
-/// 实例列表查询参数
 #[derive(Debug, Deserialize)]
 pub struct InstanceQuery {
     pub definition_id: Option<String>,
@@ -56,11 +116,10 @@ pub struct InstanceQuery {
     pub page_size: Option<i64>,
 }
 
-/// POST /admin/workflows — 创建工作流定义
 pub async fn create(
     State(state): State<AppState>,
     Json(body): Json<CreateWorkflowRequest>,
-) -> AppResult<impl IntoResponse> {
+) -> AppResult<ApiResponse<serde_json::Value>> {
     let wf = state
         .workflow
         .create_workflow(
@@ -70,39 +129,41 @@ pub async fn create(
             &body.steps,
         )
         .await?;
-    Ok(Json(json!({"code": 0, "message": "created", "data": wf})))
+    Ok(ApiResponse::success(
+        serde_json::to_value(wf).unwrap_or_default(),
+    ))
 }
 
-/// GET /admin/workflows — 列出所有工作流定义
-pub async fn list(State(state): State<AppState>) -> AppResult<impl IntoResponse> {
+pub async fn list(State(state): State<AppState>) -> AppResult<ApiResponse<serde_json::Value>> {
     let workflows = state.workflow.list_workflows().await?;
-    Ok(Json(json!({"code": 0, "message": "ok", "data": workflows})))
+    Ok(ApiResponse::success(
+        serde_json::to_value(workflows).unwrap_or_default(),
+    ))
 }
 
-/// GET /admin/workflows/{id} — 获取工作流定义
 pub async fn get(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> AppResult<impl IntoResponse> {
+) -> AppResult<ApiResponse<serde_json::Value>> {
     let wf = state.workflow.get_workflow(&id).await?;
-    Ok(Json(json!({"code": 0, "message": "ok", "data": wf})))
+    Ok(ApiResponse::success(
+        serde_json::to_value(wf).unwrap_or_default(),
+    ))
 }
 
-/// DELETE /admin/workflows/{id} — 删除工作流定义
 pub async fn delete(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> AppResult<impl IntoResponse> {
+) -> AppResult<ApiResponse<()>> {
     state.workflow.delete_workflow(&id).await?;
-    Ok(Json(json!({"code": 0, "message": "deleted"})))
+    Ok(ApiResponse::success(()))
 }
 
-/// POST /admin/workflows/{id}/start — 启动工作流实例
 pub async fn start(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<StartWorkflowRequest>,
-) -> AppResult<impl IntoResponse> {
+) -> AppResult<ApiResponse<serde_json::Value>> {
     let triggered_by_int: Option<i64> = match &body.triggered_by {
         Some(doc_id) if !doc_id.is_empty() => {
             let sql = format!(
@@ -122,16 +183,15 @@ pub async fn start(
         .workflow
         .start_workflow(&id, &body.context, triggered_by_int)
         .await?;
-    Ok(Json(
-        json!({"code": 0, "message": "started", "data": instance}),
+    Ok(ApiResponse::success(
+        serde_json::to_value(instance).unwrap_or_default(),
     ))
 }
 
-/// GET /admin/workflows/instances — 列出工作流实例
 pub async fn list_instances(
     State(state): State<AppState>,
     Query(query): Query<InstanceQuery>,
-) -> AppResult<impl IntoResponse> {
+) -> AppResult<ApiResponse<serde_json::Value>> {
     let page = query.page.unwrap_or(1).max(1);
     let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
     let (items, total) = state
@@ -143,50 +203,53 @@ pub async fn list_instances(
             page_size,
         )
         .await?;
-    Ok(Json(json!({
-        "code": 0,
-        "message": "ok",
-        "data": {"items": items, "total": total, "page": page, "page_size": page_size}
+    Ok(ApiResponse::success(json!({
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size
     })))
 }
 
-/// GET /admin/workflows/instances/{id} — 获取工作流实例
 pub async fn get_instance(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> AppResult<impl IntoResponse> {
+) -> AppResult<ApiResponse<serde_json::Value>> {
     let instance = state
         .workflow
         .get_instance(&id)
         .await?
         .ok_or_else(|| AppError::not_found("workflow instance"))?;
-    Ok(Json(json!({"code": 0, "message": "ok", "data": instance})))
+    Ok(ApiResponse::success(
+        serde_json::to_value(instance).unwrap_or_default(),
+    ))
 }
 
-/// POST /admin/workflows/instances/{id}/execute — 执行当前步骤
 pub async fn execute_step(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<ExecuteStepRequest>,
-) -> AppResult<impl IntoResponse> {
+) -> AppResult<ApiResponse<serde_json::Value>> {
     let instance = state.workflow.execute_step(&id, &body.output).await?;
-    Ok(Json(json!({"code": 0, "message": "ok", "data": instance})))
+    Ok(ApiResponse::success(
+        serde_json::to_value(instance).unwrap_or_default(),
+    ))
 }
 
-/// POST /admin/workflows/instances/{id}/cancel — 取消工作流实例
 pub async fn cancel_instance(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> AppResult<impl IntoResponse> {
+) -> AppResult<ApiResponse<()>> {
     state.workflow.cancel_instance(&id).await?;
-    Ok(Json(json!({"code": 0, "message": "cancelled"})))
+    Ok(ApiResponse::success(()))
 }
 
-/// GET /admin/workflows/instances/{id}/logs — 获取步骤执行日志
 pub async fn get_step_logs(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> AppResult<impl IntoResponse> {
+) -> AppResult<ApiResponse<serde_json::Value>> {
     let logs = state.workflow.get_step_logs(&id).await?;
-    Ok(Json(json!({"code": 0, "message": "ok", "data": logs})))
+    Ok(ApiResponse::success(
+        serde_json::to_value(logs).unwrap_or_default(),
+    ))
 }

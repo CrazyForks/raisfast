@@ -8,9 +8,9 @@
 
 use std::collections::HashMap;
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -47,7 +47,9 @@ pub enum HealthStatus {
 /// A component that can report its health status.
 pub trait HealthIndicator: Send + Sync {
     fn name(&self) -> &str;
-    fn check(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ComponentHealth> + Send + '_>>;
+    fn check(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ComponentHealth> + Send + '_>>;
 }
 
 // ── Built-in indicators ────────────────────────────────────
@@ -60,7 +62,9 @@ impl HealthIndicator for DatabaseIndicator {
     fn name(&self) -> &str {
         "database"
     }
-    fn check(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ComponentHealth> + Send + '_>> {
+    fn check(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ComponentHealth> + Send + '_>> {
         Box::pin(async {
             match sqlx::query("SELECT 1").execute(&self.pool).await {
                 Ok(_) => ComponentHealth {
@@ -84,17 +88,18 @@ impl HealthIndicator for StorageIndicator {
     fn name(&self) -> &str {
         "storage"
     }
-    fn check(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ComponentHealth> + Send + '_>> {
+    fn check(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ComponentHealth> + Send + '_>> {
         let root = self.storage_root.clone();
         Box::pin(async move {
             let path = std::path::Path::new(&root);
-            let writable = std::fs::create_dir_all(path).is_ok()
-                && {
-                    let test_file = path.join(".health_check");
-                    let can_write = std::fs::write(&test_file, b"ok").is_ok();
-                    let _ = std::fs::remove_file(&test_file);
-                    can_write
-                };
+            let writable = std::fs::create_dir_all(path).is_ok() && {
+                let test_file = path.join(".health_check");
+                let can_write = std::fs::write(&test_file, b"ok").is_ok();
+                let _ = std::fs::remove_file(&test_file);
+                can_write
+            };
 
             if writable {
                 ComponentHealth {
@@ -119,7 +124,9 @@ impl HealthIndicator for SearchIndicator {
     fn name(&self) -> &str {
         "search"
     }
-    fn check(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ComponentHealth> + Send + '_>> {
+    fn check(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ComponentHealth> + Send + '_>> {
         Box::pin(async {
             ComponentHealth {
                 status: HealthStatus::Up,
@@ -137,9 +144,15 @@ impl HealthIndicator for CacheIndicator {
     fn name(&self) -> &str {
         "cache"
     }
-    fn check(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ComponentHealth> + Send + '_>> {
+    fn check(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ComponentHealth> + Send + '_>> {
         Box::pin(async {
-            match self.cache.set("__health__", "ok", Some(std::time::Duration::from_secs(1))).await {
+            match self
+                .cache
+                .set("__health__", "ok", Some(std::time::Duration::from_secs(1)))
+                .await
+            {
                 Ok(_) => {
                     let _ = self.cache.delete("__health__").await;
                     ComponentHealth {
@@ -233,7 +246,9 @@ pub async fn readiness(
             })),
         ))
     } else {
-        Ok(Json(ApiResponse::success(serde_json::to_value(&report).unwrap_or_default())))
+        Ok(Json(ApiResponse::success(
+            serde_json::to_value(&report).unwrap_or_default(),
+        )))
     }
 }
 

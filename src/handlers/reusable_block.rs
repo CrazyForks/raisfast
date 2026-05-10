@@ -16,11 +16,36 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     use axum::routing::{get, post as http_post};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/admin/reusable-blocks", get(list_reusable).post(create_reusable), "system admin", "admin/pages", ["GET", "POST"]);
-    let r = reg_route!(r, registry, "/admin/reusable-blocks/{id}", get(get_reusable).put(update_reusable).delete(delete_reusable), "system admin", "admin/pages", ["GET", "PUT", "DELETE"]);
-    reg_route!(r, registry, "/admin/reusable-blocks/batch", http_post(admin_batch), "system admin", "admin/pages", ["POST"])
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/reusable-blocks",
+        get(list_reusable).post(create_reusable),
+        "system admin",
+        "admin/pages",
+        ["GET", "POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/admin/reusable-blocks/{id}",
+        get(get_reusable)
+            .put(update_reusable)
+            .delete(delete_reusable),
+        "system admin",
+        "admin/pages",
+        ["GET", "PUT", "DELETE"]
+    );
+    reg_route!(
+        r,
+        registry,
+        "/admin/reusable-blocks/batch",
+        http_post(admin_batch),
+        "system admin",
+        "admin/pages",
+        ["POST"]
+    )
 }
-
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct CreateReusableRequest {
@@ -133,5 +158,8 @@ pub async fn admin_batch(
             }
         }
     }
-    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
+    Ok(ApiResponse::success(BatchResponse::new(
+        &req.action,
+        affected,
+    )))
 }
