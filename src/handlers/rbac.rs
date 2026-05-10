@@ -12,6 +12,16 @@ use crate::services::rbac::{
 };
 use crate::utils::pagination::PaginationParams;
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::{get, put};
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/admin/rbac/roles", get(list_roles).post(create_role), "system", "admin/rbac", ["GET", "POST"]);
+    let r = reg_route!(r, registry, "/admin/rbac/roles/{id}", put(update_role).delete(delete_role), "system", "admin/rbac", ["PUT", "DELETE"]);
+    reg_route!(r, registry, "/admin/rbac/roles/{id}/permissions", get(get_permissions).put(set_permissions), "system", "admin/rbac", ["GET", "PUT"])
+}
+
+
 /// GET /admin/rbac/roles — 列出所有角色（分页）
 pub async fn list_roles(
     State(state): State<AppState>,

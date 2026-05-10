@@ -17,6 +17,13 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::eventbus::Event;
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+
+    reg_route!(axum::Router::new(), registry, "/events", get(subscribe), "system", "sse", ["GET"])
+}
+
+
 /// SSE 订阅查询参数
 #[derive(Debug, Deserialize, Default)]
 pub struct SubscribeQuery {

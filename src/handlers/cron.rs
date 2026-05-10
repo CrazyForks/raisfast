@@ -17,6 +17,17 @@ use crate::worker::{
     list_execution_logs, list_schedules, recent_execution_logs, toggle_schedule, update_schedule,
 };
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post as http_post};
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/admin/crons", get(self::list).post(create), "system", "admin/crons", ["GET", "POST"]);
+    let r = reg_route!(r, registry, "/admin/crons/{id}", get(self::get).put(update).delete(self::delete), "system", "admin/crons", ["GET", "PUT", "DELETE"]);
+    let r = reg_route!(r, registry, "/admin/crons/{id}/toggle", http_post(toggle), "system", "admin/crons", ["POST"]);
+    let r = reg_route!(r, registry, "/admin/crons/logs", get(logs), "system", "admin/crons", ["GET"]);
+    reg_route!(r, registry, "/admin/crons/logs/cleanup", http_post(cleanup_logs), "system", "admin/crons", ["POST"])
+}
+
 /// 创建调度请求体
 #[derive(Debug, Deserialize, validator::Validate)]
 pub struct CreateCronRequest {

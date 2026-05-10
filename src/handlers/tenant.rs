@@ -10,6 +10,15 @@ use crate::models::tenant::Tenant;
 use crate::services::tenant::{CreateTenantRequest, UpdateTenantRequest};
 use crate::utils::pagination::PaginationParams;
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/admin/tenants", get(list_tenants).post(create_tenant), "system", "admin/tenants", ["GET", "POST"]);
+    reg_route!(r, registry, "/admin/tenants/{id}", get(get_tenant).put(update_tenant).delete(delete_tenant), "system", "admin/tenants", ["GET", "PUT", "DELETE"])
+}
+
+
 /// GET /admin/tenants — 列出所有租户（分页）
 pub async fn list_tenants(
     State(state): State<AppState>,

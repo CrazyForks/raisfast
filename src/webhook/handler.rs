@@ -9,6 +9,14 @@ use crate::middleware::auth::AuthUser;
 use crate::utils::pagination::PaginationParams;
 use crate::webhook::model::{CreateWebhookRequest, UpdateWebhookRequest};
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/admin/webhooks", get(list).post(create), "system", "admin/webhooks", ["GET", "POST"]);
+    reg_route!(r, registry, "/admin/webhooks/{id}", get(self::get).put(update).delete(self::delete), "system", "admin/webhooks", ["GET", "PUT", "DELETE"])
+}
+
 /// GET /admin/webhooks — 分页查询 webhook 订阅
 pub async fn list(
     auth: AuthUser,

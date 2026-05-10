@@ -15,6 +15,15 @@ use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
 use crate::services::api_token;
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::{delete, get};
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/tokens", get(self::list).post(create), "system", "tokens", ["GET", "POST"]);
+    reg_route!(r, registry, "/tokens/{id}", delete(self::delete), "system", "tokens", ["DELETE"])
+}
+
+
 /// 创建 API Token 请求体
 #[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
 pub struct CreateTokenRequest {

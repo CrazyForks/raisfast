@@ -1,4 +1,13 @@
 #[macro_export]
+macro_rules! reg_route {
+    ($router:expr, $registry:expr, $path:literal, $handler:expr, $source:expr, $name:expr, [$($method:literal),+ $(,)?]) => {{
+        let r = $router.route($path, $handler);
+        $($registry.record($method, concat!("/api/v1", $path), $source, $name);)+
+        r
+    }};
+}
+
+#[macro_export]
 macro_rules! impl_from_row_opt_tenant {
     ($t:ident { required { $($req:ident),* $(,)? } optional { $($opt:ident),* $(,)? } }) => {
         #[cfg(feature = "db-sqlite")]

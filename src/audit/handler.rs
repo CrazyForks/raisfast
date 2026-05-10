@@ -9,6 +9,14 @@ use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
 use crate::utils::pagination::PaginationParams;
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/admin/audit", get(list), "system", "admin/audit", ["GET"]);
+    reg_route!(r, registry, "/admin/audit/{id}", get(self::get), "system", "admin/audit", ["GET"])
+}
+
 /// GET /admin/audit — 查询审计日志（分页）
 pub async fn list(
     auth: AuthUser,

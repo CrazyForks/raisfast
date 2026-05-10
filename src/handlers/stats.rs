@@ -13,6 +13,16 @@ use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::services::stats::StatsService;
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/admin/stats", get(overview), "system", "admin/stats", ["GET"]);
+    let r = reg_route!(r, registry, "/admin/stats/content/{table}", get(content_stats), "system", "admin/stats", ["GET"]);
+    reg_route!(r, registry, "/admin/stats/trends", get(trends), "system", "admin/stats", ["GET"])
+}
+
+
 #[derive(Debug, Deserialize)]
 pub struct TrendsQuery {
     pub table: Option<String>,

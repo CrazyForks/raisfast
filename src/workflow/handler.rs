@@ -11,6 +11,20 @@ use crate::AppState;
 use crate::db::dialect;
 use crate::errors::app_error::{AppError, AppResult};
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post as http_post};
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/admin/workflows", get(list).post(create), "system", "admin/workflows", ["GET", "POST"]);
+    let r = reg_route!(r, registry, "/admin/workflows/{id}", get(self::get).delete(self::delete), "system", "admin/workflows", ["GET", "DELETE"]);
+    let r = reg_route!(r, registry, "/admin/workflows/{id}/start", http_post(start), "system", "admin/workflows", ["POST"]);
+    let r = reg_route!(r, registry, "/admin/workflows/instances", get(list_instances), "system", "admin/workflows", ["GET"]);
+    let r = reg_route!(r, registry, "/admin/workflows/instances/{id}", get(get_instance), "system", "admin/workflows", ["GET"]);
+    let r = reg_route!(r, registry, "/admin/workflows/instances/{id}/execute", http_post(execute_step), "system", "admin/workflows", ["POST"]);
+    let r = reg_route!(r, registry, "/admin/workflows/instances/{id}/cancel", http_post(cancel_instance), "system", "admin/workflows", ["POST"]);
+    reg_route!(r, registry, "/admin/workflows/instances/{id}/logs", get(get_step_logs), "system", "admin/workflows", ["GET"])
+}
+
 /// 创建工作流定义请求
 #[derive(Debug, Deserialize)]
 pub struct CreateWorkflowRequest {

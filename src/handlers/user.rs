@@ -13,6 +13,18 @@ use crate::middleware::auth::AuthUser;
 use crate::services::{auth, user};
 use crate::utils::pagination::PaginationParams;
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::{get, put};
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/users/me", get(get_me).put(update_me), "system", "users", ["GET", "PUT"]);
+    let r = reg_route!(r, registry, "/users/me/password", put(change_password), "system", "users", ["PUT"]);
+    let r = reg_route!(r, registry, "/users/{id}", get(get_user), "system", "users", ["GET"]);
+    let r = reg_route!(r, registry, "/users/{id}/role", put(update_role), "system", "users", ["PUT"]);
+    reg_route!(r, registry, "/users", get(list_users), "system", "users", ["GET"])
+}
+
+
 /// 获取当前登录用户资料
 #[utoipa::path(get, path = "/users/me", tag = "users",
     security(("bearer_auth" = [])),

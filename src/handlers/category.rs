@@ -11,6 +11,15 @@ use crate::middleware::auth::AuthUser;
 use crate::services::category;
 use crate::utils::pagination::PaginationParams;
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::{get, put};
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/categories", get(self::list).post(create), "system", "categories", ["GET", "POST"]);
+    reg_route!(r, registry, "/categories/{id}", put(update).delete(self::delete), "system", "categories", ["PUT", "DELETE"])
+}
+
+
 /// 获取分类列表（分页）
 #[utoipa::path(get, path = "/categories", tag = "categories",
     responses((status = 200, description = "分类列表"))

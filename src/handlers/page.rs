@@ -17,6 +17,20 @@ use crate::middleware::auth::AuthUser;
 use crate::services::{page as page_service, post::resolve_doc_id_to_int};
 use crate::utils::pagination::PaginationParams;
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::{get, put};
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/pages", get(self::list).post(create), "system", "pages", ["GET", "POST"]);
+    let r = reg_route!(r, registry, "/pages/sitemap", get(sitemap), "system", "pages", ["GET"]);
+    let r = reg_route!(r, registry, "/pages/{slug}", get(get_by_slug), "system", "pages", ["GET"]);
+    let r = reg_route!(r, registry, "/admin/pages", get(admin_list), "system", "admin/pages", ["GET"]);
+    let r = reg_route!(r, registry, "/admin/pages/{id}", get(admin_get).put(update).delete(self::delete), "system", "admin/pages", ["GET", "PUT", "DELETE"]);
+    let r = reg_route!(r, registry, "/admin/pages/{id}/status", put(update_status), "system", "admin/pages", ["PUT"]);
+    reg_route!(r, registry, "/admin/pages/reorder", put(reorder), "system", "admin/pages", ["PUT"])
+}
+
+
 async fn resolve_page_parent_id(
     pool: &crate::db::Pool,
     parent_id: Option<String>,

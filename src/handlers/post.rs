@@ -15,6 +15,17 @@ use crate::middleware::auth::AuthUser;
 use crate::services::post as post_service;
 use crate::utils::pagination::PaginationParams;
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/posts", get(self::list).post(create), "system", "posts", ["GET", "POST"]);
+    let r = reg_route!(r, registry, "/posts/{slug}", get(self::get).put(update).delete(self::delete), "system", "posts", ["GET", "PUT", "DELETE"]);
+    let r = reg_route!(r, registry, "/admin/posts", get(admin_list), "system", "admin/posts", ["GET"]);
+    reg_route!(r, registry, "/admin/posts/{slug}", get(admin_get), "system", "admin/posts", ["GET"])
+}
+
+
 /// 文章列表查询参数
 ///
 /// 支持分页、按分类/标签筛选、关键词搜索。

@@ -6,6 +6,7 @@ mod app_cmd;
 mod ct_cmd;
 mod db_cmd;
 mod plugin_cmd;
+mod route_cmd;
 mod server_cmd;
 
 use raisfast::config::app::AppConfig;
@@ -45,6 +46,11 @@ enum Commands {
     Plugin {
         #[command(subcommand)]
         action: PluginAction,
+    },
+    /// Route inspection
+    Route {
+        #[command(subcommand)]
+        action: route_cmd::RouteAction,
     },
 }
 
@@ -270,6 +276,10 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
             action: PluginAction::Check { path },
         }) => {
             plugin_cmd::check(config, path.as_deref())?;
+        }
+
+        Some(Commands::Route { action }) => {
+            route_cmd::run(action, config);
         }
     }
 

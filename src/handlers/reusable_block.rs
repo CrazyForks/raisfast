@@ -11,6 +11,15 @@ use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::services::reusable_block as reusable_service;
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/admin/reusable-blocks", get(list_reusable).post(create_reusable), "system", "admin/pages", ["GET", "POST"]);
+    reg_route!(r, registry, "/admin/reusable-blocks/{id}", get(get_reusable).put(update_reusable).delete(delete_reusable), "system", "admin/pages", ["GET", "PUT", "DELETE"])
+}
+
+
 #[derive(Debug, Deserialize, Validate)]
 pub struct CreateReusableRequest {
     #[validate(length(min = 1, max = 200))]

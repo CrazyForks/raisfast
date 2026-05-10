@@ -8,6 +8,18 @@ use crate::middleware::auth::AuthUser;
 use crate::services::media as media_service;
 use crate::utils::pagination::PaginationParams;
 
+pub fn routes(max_upload: usize, registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::{delete, get, post as http_post};
+    use tower_http::limit::RequestBodyLimitLayer;
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/media/upload", http_post(upload).layer(RequestBodyLimitLayer::new(max_upload)), "system", "media", ["POST"]);
+    let r = reg_route!(r, registry, "/media", get(self::list), "system", "media", ["GET"]);
+    let r = reg_route!(r, registry, "/media/stats", get(stats), "system", "media", ["GET"]);
+    reg_route!(r, registry, "/media/{id}", delete(self::delete), "system", "media", ["DELETE"])
+}
+
+
 /// 上传媒体文件
 pub async fn upload(
     auth: AuthUser,

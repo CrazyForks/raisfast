@@ -11,6 +11,16 @@ use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/options/public", get(get_public_options), "system", "options", ["GET"]);
+    let r = reg_route!(r, registry, "/admin/options", get(list_options).put(update_options), "system", "options", ["GET", "PUT"]);
+    reg_route!(r, registry, "/admin/options/{key}", get(get_option).put(set_option).delete(delete_option), "system", "options", ["GET", "PUT", "DELETE"])
+}
+
+
 /// GET /options/public — 公开配置（仅值）+ 系统特性标志
 pub async fn get_public_options(
     State(state): State<AppState>,

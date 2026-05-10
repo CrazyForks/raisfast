@@ -14,6 +14,21 @@ use crate::middleware::auth::AuthUser;
 use crate::services::comment as comment_service;
 use crate::utils::pagination::PaginationParams;
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::middleware::from_fn;
+    use axum::routing::{delete, get, post as http_post, put};
+    use crate::middleware::rate_limit::comment_rate_limit;
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/posts/{slug}/comments", get(self::list), "system", "comments", ["GET"]);
+    let r = reg_route!(r, registry, "/posts/{slug}/comments", http_post(create_guest).layer(from_fn(comment_rate_limit)), "system", "comments", ["POST"]);
+    let r = reg_route!(r, registry, "/posts/{slug}/comments/authed", http_post(create), "system", "comments", ["POST"]);
+    let r = reg_route!(r, registry, "/comments/{id}", delete(self::delete), "system", "comments", ["DELETE"]);
+    let r = reg_route!(r, registry, "/comments/{id}/status", put(update_status), "system", "comments", ["PUT"]);
+    reg_route!(r, registry, "/comments", get(list_all), "system", "comments", ["GET"])
+}
+
+
 /// 获取指定文章的评论列表（树形结构，分页）
 pub async fn list(
     auth: AuthUser,

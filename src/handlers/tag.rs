@@ -11,6 +11,15 @@ use crate::middleware::auth::AuthUser;
 use crate::services::tag;
 use crate::utils::pagination::PaginationParams;
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::{get, put};
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/tags", get(self::list).post(create), "system", "tags", ["GET", "POST"]);
+    reg_route!(r, registry, "/tags/{id}", put(update).delete(self::delete), "system", "tags", ["PUT", "DELETE"])
+}
+
+
 /// 获取标签列表（分页）
 #[utoipa::path(get, path = "/tags", tag = "tags",
     responses((status = 200, description = "标签列表"))

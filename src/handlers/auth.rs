@@ -17,6 +17,28 @@ use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::services::{auth, email_verification, password_reset, sms};
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::middleware::from_fn;
+    use axum::routing::{get, post as http_post};
+    use crate::middleware::rate_limit::{register_rate_limit, login_rate_limit};
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/auth/register", http_post(register).layer(from_fn(register_rate_limit)), "system", "auth", ["POST"]);
+    let r = reg_route!(r, registry, "/auth/login", http_post(login).layer(from_fn(login_rate_limit)), "system", "auth", ["POST"]);
+    let r = reg_route!(r, registry, "/auth/refresh", http_post(refresh), "system", "auth", ["POST"]);
+    let r = reg_route!(r, registry, "/auth/logout", http_post(logout), "system", "auth", ["POST"]);
+    let r = reg_route!(r, registry, "/auth/forgot-password", http_post(forgot_password), "system", "auth", ["POST"]);
+    let r = reg_route!(r, registry, "/auth/reset-password", http_post(reset_password), "system", "auth", ["POST"]);
+    let r = reg_route!(r, registry, "/auth/set-password", http_post(set_password), "system", "auth", ["POST"]);
+    let r = reg_route!(r, registry, "/auth/config", get(auth_config), "system", "auth", ["GET"]);
+    let r = reg_route!(r, registry, "/auth/sms/send", http_post(send_sms_code), "system", "auth", ["POST"]);
+    let r = reg_route!(r, registry, "/auth/sms/verify", http_post(verify_sms), "system", "auth", ["POST"]);
+    let r = reg_route!(r, registry, "/auth/phone/bind", http_post(bind_phone), "system", "auth", ["POST"]);
+    let r = reg_route!(r, registry, "/auth/verify-email", http_post(verify_email), "system", "auth", ["POST"]);
+    reg_route!(r, registry, "/auth/resend-verification", http_post(resend_verification), "system", "auth", ["POST"])
+}
+
+
 /// 用户注册
 #[utoipa::path(post, path = "/auth/register", tag = "auth",
     request_body = RegisterRequest,

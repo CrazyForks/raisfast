@@ -11,6 +11,18 @@ use crate::middleware::auth::AuthUser;
 use crate::plugins::PluginInfoResponse;
 use crate::utils::pagination::PaginationParams;
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post as http_post};
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/admin/plugins", get(self::list), "system", "admin/plugins", ["GET"]);
+    let r = reg_route!(r, registry, "/admin/plugins/{id}", get(self::get).delete(remove), "system", "admin/plugins", ["GET", "DELETE"]);
+    let r = reg_route!(r, registry, "/admin/plugins/{id}/enable", http_post(enable), "system", "admin/plugins", ["POST"]);
+    let r = reg_route!(r, registry, "/admin/plugins/{id}/disable", http_post(disable), "system", "admin/plugins", ["POST"]);
+    reg_route!(r, registry, "/admin/plugins/{id}/reload", http_post(reload), "system", "admin/plugins", ["POST"])
+}
+
+
 /// GET /api/v1/admin/plugins — 列出所有插件及状态（分页）
 pub async fn list(
     auth: AuthUser,

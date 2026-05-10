@@ -23,6 +23,16 @@ use crate::constants::*;
 use crate::errors::app_error::AppError;
 use crate::middleware::auth::AuthUser;
 
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+
+    let r = axum::Router::new();
+    let r = reg_route!(r, registry, "/admin/content-types", get(list_schemas).post(create_schema), "system", "admin/content-types", ["GET", "POST"]);
+    let r = reg_route!(r, registry, "/admin/content-types/{singular}", get(get_schema).put(update_schema).delete(delete_schema), "system", "admin/content-types", ["GET", "PUT", "DELETE"]);
+    let r = reg_route!(r, registry, "/cms/{*path}", axum::routing::any(dynamic_cms_handler), "content_type", "cms", ["GET", "POST", "PUT", "DELETE", "PATCH"]);
+    reg_route!(r, registry, "/admin/cms/{*path}", axum::routing::any(dynamic_admin_cms_handler), "content_type", "admin/cms", ["GET", "POST", "PUT", "DELETE", "PATCH"])
+}
+
 fn make_base_ctx_from_auth(
     auth: &AuthUser,
     pool: &crate::db::pool::Pool,
