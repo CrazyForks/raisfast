@@ -10,6 +10,7 @@ use ts_rs::TS;
 use validator::Validate;
 
 use crate::commands::{CreatePageCmd, UpdatePageCmd};
+use crate::dto::{BatchRequest, BatchResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
@@ -18,16 +19,17 @@ use crate::services::{page as page_service, post::resolve_doc_id_to_int};
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
-    use axum::routing::{get, put};
+    use axum::routing::{get, post as http_post, put};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/pages", get(self::list).post(create), "system", "pages", ["GET", "POST"]);
-    let r = reg_route!(r, registry, "/pages/sitemap", get(sitemap), "system", "pages", ["GET"]);
-    let r = reg_route!(r, registry, "/pages/{slug}", get(get_by_slug), "system", "pages", ["GET"]);
-    let r = reg_route!(r, registry, "/admin/pages", get(admin_list), "system", "admin/pages", ["GET"]);
-    let r = reg_route!(r, registry, "/admin/pages/{id}", get(admin_get).put(update).delete(self::delete), "system", "admin/pages", ["GET", "PUT", "DELETE"]);
-    let r = reg_route!(r, registry, "/admin/pages/{id}/status", put(update_status), "system", "admin/pages", ["PUT"]);
-    reg_route!(r, registry, "/admin/pages/reorder", put(reorder), "system", "admin/pages", ["PUT"])
+    let r = reg_route!(r, registry, "/pages", get(self::list).post(create), "system public", "pages", ["GET", "POST"]);
+    let r = reg_route!(r, registry, "/pages/sitemap", get(sitemap), "system public", "pages", ["GET"]);
+    let r = reg_route!(r, registry, "/pages/{slug}", get(get_by_slug), "system public", "pages", ["GET"]);
+    let r = reg_route!(r, registry, "/admin/pages", get(admin_list).post(create), "system admin", "admin/pages", ["GET", "POST"]);
+    let r = reg_route!(r, registry, "/admin/pages/{id}", get(admin_get).put(update).delete(self::delete), "system admin", "admin/pages", ["GET", "PUT", "DELETE"]);
+    let r = reg_route!(r, registry, "/admin/pages/{id}/status", put(update_status), "system admin", "admin/pages", ["PUT"]);
+    let r = reg_route!(r, registry, "/admin/pages/reorder", put(reorder), "system admin", "admin/pages", ["PUT"]);
+    reg_route!(r, registry, "/admin/pages/batch", http_post(admin_batch), "system admin", "admin/pages", ["POST"])
 }
 
 
@@ -283,4 +285,38 @@ pub async fn reorder(
         .collect();
     page_service::reorder(&state.pool, items, &auth).await?;
     Ok(ApiResponse::success(()))
+}
+
+pub async fn admin_batch(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Json(req): Json<BatchRequest>,
+) -> AppResult<ApiResponse<BatchResponse>> {
+    auth.ensure_admin()?;
+    validation::validate(&req)?;
+    let mut affected = 0usize;
+    for id in &req.ids {
+        match req.action.as_str() {
+            "delete" => {
+                if page_service::delete_page(&state.pool, id, &auth).await.is_ok() {
+                    affected += 1;
+                }
+            }
+            "publish" | "unpublish" => {
+                let status = if req.action == "publish" {
+                    "published"
+                } else {
+                    "draft"
+                };
+                if page_service::update_status(&state.pool, id, status, &auth)
+                    .await
+                    .is_ok()
+                {
+                    affected += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
 }

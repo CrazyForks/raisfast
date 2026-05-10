@@ -19,8 +19,8 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     use axum::routing::{delete, get};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/tokens", get(self::list).post(create), "system", "tokens", ["GET", "POST"]);
-    reg_route!(r, registry, "/tokens/{id}", delete(self::delete), "system", "tokens", ["DELETE"])
+    let r = reg_route!(r, registry, "/tokens", get(self::list).post(create), "system public", "tokens", ["GET", "POST"]);
+    reg_route!(r, registry, "/tokens/{id}", delete(self::delete), "system public", "tokens", ["DELETE"])
 }
 
 

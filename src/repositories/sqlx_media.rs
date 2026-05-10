@@ -22,6 +22,14 @@ pub trait MediaRepository: Send + Sync {
         tenant_id: Option<&str>,
     ) -> AppResult<(Vec<Media>, i64)>;
 
+    /// 管理员分页查询所有用户的媒体文件
+    async fn find_all_admin(
+        &self,
+        page: i64,
+        page_size: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<(Vec<Media>, i64)>;
+
     /// 根据媒体文件 ID 查找
     async fn find_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<Option<Media>>;
 
@@ -46,6 +54,15 @@ impl MediaRepository for SqlxMediaRepository {
         tenant_id: Option<&str>,
     ) -> AppResult<(Vec<Media>, i64)> {
         media::find_all(&self.pool, user_id, page, page_size, tenant_id).await
+    }
+
+    async fn find_all_admin(
+        &self,
+        page: i64,
+        page_size: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<(Vec<Media>, i64)> {
+        media::find_all_admin(&self.pool, page, page_size, tenant_id).await
     }
 
     async fn find_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<Option<Media>> {

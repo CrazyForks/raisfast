@@ -249,6 +249,101 @@ pub async fn create_post(
     Ok(resp)
 }
 
+pub async fn admin_update_post(
+    repo: &dyn PostRepository,
+    plugins: &PluginManager,
+    eventbus: &EventBus,
+    id: &str,
+    auth: &AuthUser,
+    req: UpdatePostRequest,
+) -> AppResult<PostResponse> {
+    let int_id = resolve_doc_id_to_int(repo.pool(), "posts", id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("post"))?;
+
+    let resp = update_post_inner(repo, plugins, int_id, req, auth).await?;
+    eventbus.emit(Event::PostUpdated {
+        id: id.to_string(),
+        slug: resp.slug.clone(),
+    });
+    Ok(resp)
+}
+
+pub async fn admin_delete_post(
+    repo: &dyn PostRepository,
+    _plugins: &PluginManager,
+    eventbus: &EventBus,
+    id: &str,
+    auth: &AuthUser,
+) -> AppResult<()> {
+    let int_id = resolve_doc_id_to_int(repo.pool(), "posts", id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("post"))?;
+
+    delete_post_inner(repo, int_id, auth).await?;
+    eventbus.emit(Event::PostDeleted {
+        id: id.to_string(),
+        slug: String::new(),
+    });
+    Ok(())
+}
+
+pub async fn batch_posts(
+    repo: &dyn PostRepository,
+    _plugins: &PluginManager,
+    eventbus: &EventBus,
+    action: &str,
+    ids: &[String],
+    auth: &AuthUser,
+) -> AppResult<usize> {
+    let mut affected = 0usize;
+    for doc_id in ids {
+        let Some(int_id) =
+            resolve_doc_id_to_int(repo.pool(), "posts", doc_id, auth.tenant_id()).await?
+        else {
+            continue;
+        };
+
+        match action {
+            "delete" => {
+                if delete_post_inner(repo, int_id, auth).await.is_ok() {
+                    eventbus.emit(Event::PostDeleted {
+                        id: doc_id.clone(),
+                        slug: String::new(),
+                    });
+                    affected += 1;
+                }
+            }
+            "publish" | "unpublish" => {
+                let status = if action == "publish" {
+                    "published"
+                } else {
+                    "draft"
+                };
+                if let Some(post) = repo.find_by_id(int_id, auth.tenant_id()).await? {
+                    let cmd = UpdatePostCmd {
+                        id: post.id,
+                        title: None,
+                        slug: None,
+                        content: None,
+                        excerpt: None,
+                        cover_image: None,
+                        status: Some(status.to_string()),
+                        category_id: None,
+                        tag_ids: None,
+                        updated_by: auth.user_int_id(),
+                    };
+                    if repo.update(cmd, auth.tenant_id()).await.is_ok() {
+                        affected += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(affected)
+}
+
 async fn update_post_inner(
     repo: &dyn PostRepository,
     plugins: &PluginManager,

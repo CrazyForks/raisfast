@@ -152,6 +152,40 @@ pub async fn find_all(
     Ok((items, total.0))
 }
 
+pub async fn find_all_admin(
+    pool: &crate::db::Pool,
+    page: i64,
+    page_size: i64,
+    tenant_id: Option<&str>,
+) -> AppResult<(Vec<Media>, i64)> {
+    let offset = (page - 1) * page_size;
+    let base = usize::from(tenant_id.is_some()) + 1;
+    let sql = format!(
+        "SELECT * FROM media WHERE 1=1{} ORDER BY created_at DESC LIMIT {} OFFSET {}",
+        tenant_filter_ph(tenant_id, 1),
+        ph(base),
+        ph(base + 1)
+    );
+    let mut q = sqlx::query_as::<_, Media>(&sql);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    q = q.bind(page_size).bind(offset);
+    let items = q.fetch_all(pool).await?;
+
+    let sql2 = format!(
+        "SELECT COUNT(*) FROM media WHERE 1=1{}",
+        tenant_filter_ph(tenant_id, 1)
+    );
+    let mut q2 = sqlx::query_as::<_, (i64,)>(&sql2);
+    if let Some(tid) = tenant_id {
+        q2 = q2.bind(tid);
+    }
+    let total: (i64,) = q2.fetch_one(pool).await?;
+
+    Ok((items, total.0))
+}
+
 pub async fn find_by_id(
     pool: &crate::db::Pool,
     id: i64,

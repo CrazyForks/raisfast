@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 
 use crate::AppState;
+use crate::dto::{BatchRequest, BatchResponse};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::models::rbac::Role;
@@ -13,12 +14,13 @@ use crate::services::rbac::{
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
-    use axum::routing::{get, put};
+    use axum::routing::{get, post as http_post, put};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/admin/rbac/roles", get(list_roles).post(create_role), "system", "admin/rbac", ["GET", "POST"]);
-    let r = reg_route!(r, registry, "/admin/rbac/roles/{id}", put(update_role).delete(delete_role), "system", "admin/rbac", ["PUT", "DELETE"]);
-    reg_route!(r, registry, "/admin/rbac/roles/{id}/permissions", get(get_permissions).put(set_permissions), "system", "admin/rbac", ["GET", "PUT"])
+    let r = reg_route!(r, registry, "/admin/rbac/roles", get(list_roles).post(create_role), "system admin", "admin/rbac", ["GET", "POST"]);
+    let r = reg_route!(r, registry, "/admin/rbac/roles/{id}", put(update_role).delete(delete_role), "system admin", "admin/rbac", ["PUT", "DELETE"]);
+    let r = reg_route!(r, registry, "/admin/rbac/roles/{id}/permissions", get(get_permissions).put(set_permissions), "system admin", "admin/rbac", ["GET", "PUT"]);
+    reg_route!(r, registry, "/admin/rbac/roles/batch", http_post(admin_batch), "system admin", "admin/rbac", ["POST"])
 }
 
 
@@ -80,4 +82,20 @@ pub async fn set_permissions(
         .set_permissions(&role_id, &req.permissions)
         .await?;
     Ok(ApiResponse::success(perms))
+}
+
+pub async fn admin_batch(
+    State(state): State<AppState>,
+    Json(req): Json<BatchRequest>,
+) -> AppResult<ApiResponse<BatchResponse>> {
+    crate::errors::validation::validate(&req)?;
+    let mut affected = 0usize;
+    if req.action == "delete" {
+        for id in &req.ids {
+            if state.rbac.delete_role(id).await.is_ok() {
+                affected += 1;
+            }
+        }
+    }
+    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
 }

@@ -7,7 +7,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 
-use crate::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
+use crate::dto::{BatchRequest, BatchResponse, CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
@@ -16,13 +16,14 @@ use crate::services::post as post_service;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
-    use axum::routing::get;
+    use axum::routing::{get, post as http_post};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/posts", get(self::list).post(create), "system", "posts", ["GET", "POST"]);
-    let r = reg_route!(r, registry, "/posts/{slug}", get(self::get).put(update).delete(self::delete), "system", "posts", ["GET", "PUT", "DELETE"]);
-    let r = reg_route!(r, registry, "/admin/posts", get(admin_list), "system", "admin/posts", ["GET"]);
-    reg_route!(r, registry, "/admin/posts/{slug}", get(admin_get), "system", "admin/posts", ["GET"])
+    let r = reg_route!(r, registry, "/posts", get(self::list).post(create), "system public", "posts", ["GET", "POST"]);
+    let r = reg_route!(r, registry, "/posts/{slug}", get(self::get).put(update).delete(self::delete), "system public", "posts", ["GET", "PUT", "DELETE"]);
+    let r = reg_route!(r, registry, "/admin/posts", get(admin_list).post(admin_create), "system admin", "admin/posts", ["GET", "POST"]);
+    let r = reg_route!(r, registry, "/admin/posts/{id}", get(admin_get).put(admin_update).delete(admin_delete), "system admin", "admin/posts", ["GET", "PUT", "DELETE"]);
+    reg_route!(r, registry, "/admin/posts/batch", http_post(admin_batch), "system admin", "admin/posts", ["POST"])
 }
 
 
@@ -199,6 +200,66 @@ pub async fn delete(
     Ok(ApiResponse::success(()))
 }
 
+// ── Admin handlers ──
+
+/// 后台管理：创建文章（admin，可指定作者、强制发布）
+pub async fn admin_create(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Json(req): Json<CreatePostRequest>,
+) -> AppResult<ApiResponse<PostResponse>> {
+    auth.ensure_admin()?;
+    validation::validate(&req)?;
+    let post = post_service::create_post(
+        state.post_repo.as_ref(),
+        &state.plugins,
+        &state.eventbus,
+        &auth,
+        req,
+    )
+    .await?;
+    Ok(ApiResponse::success(post))
+}
+
+/// 后台管理：编辑任意文章（admin，可改作者/状态）
+pub async fn admin_update(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdatePostRequest>,
+) -> AppResult<ApiResponse<PostResponse>> {
+    auth.ensure_admin()?;
+    validation::validate(&req)?;
+    let post = post_service::admin_update_post(
+        state.post_repo.as_ref(),
+        &state.plugins,
+        &state.eventbus,
+        &id,
+        &auth,
+        req,
+    )
+    .await?;
+    Ok(ApiResponse::success(post))
+}
+
+/// 后台管理：删除任意文章（admin）
+pub async fn admin_delete(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
+    post_service::admin_delete_post(
+        state.post_repo.as_ref(),
+        &state.plugins,
+        &state.eventbus,
+        &id,
+        &auth,
+    )
+    .await?;
+    Ok(ApiResponse::success(()))
+}
+
 /// 后台管理：按 slug 获取文章详情（含所有状态）
 ///
 /// - **方法/路径：** `GET /api/v1/admin/posts/{slug}`
@@ -245,4 +306,24 @@ pub async fn admin_list(
     .await?;
 
     Ok(pagination.paginate(posts, total))
+}
+
+/// 后台管理：批量操作（delete / publish / unpublish）
+pub async fn admin_batch(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Json(req): Json<BatchRequest>,
+) -> AppResult<ApiResponse<BatchResponse>> {
+    auth.ensure_admin()?;
+    validation::validate(&req)?;
+    let affected = post_service::batch_posts(
+        state.post_repo.as_ref(),
+        &state.plugins,
+        &state.eventbus,
+        &req.action,
+        &req.ids,
+        &auth,
+    )
+    .await?;
+    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
 }

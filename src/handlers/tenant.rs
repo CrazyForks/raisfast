@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 
 use crate::AppState;
+use crate::dto::{BatchRequest, BatchResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::models::tenant::Tenant;
@@ -11,11 +12,12 @@ use crate::services::tenant::{CreateTenantRequest, UpdateTenantRequest};
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
-    use axum::routing::get;
+    use axum::routing::{get, post as http_post};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/admin/tenants", get(list_tenants).post(create_tenant), "system", "admin/tenants", ["GET", "POST"]);
-    reg_route!(r, registry, "/admin/tenants/{id}", get(get_tenant).put(update_tenant).delete(delete_tenant), "system", "admin/tenants", ["GET", "PUT", "DELETE"])
+    let r = reg_route!(r, registry, "/admin/tenants", get(list_tenants).post(create_tenant), "system admin", "admin/tenants", ["GET", "POST"]);
+    let r = reg_route!(r, registry, "/admin/tenants/{id}", get(get_tenant).put(update_tenant).delete(delete_tenant), "system admin", "admin/tenants", ["GET", "PUT", "DELETE"]);
+    reg_route!(r, registry, "/admin/tenants/batch", http_post(admin_batch), "system admin", "admin/tenants", ["POST"])
 }
 
 
@@ -70,4 +72,46 @@ pub async fn delete_tenant(
     Ok(ApiResponse::success(serde_json::json!({
         "deleted": true,
     })))
+}
+
+pub async fn admin_batch(
+    State(state): State<AppState>,
+    Json(req): Json<BatchRequest>,
+) -> AppResult<ApiResponse<BatchResponse>> {
+    crate::errors::validation::validate(&req)?;
+    let mut affected = 0usize;
+    for id in &req.ids {
+        match req.action.as_str() {
+            "delete" => {
+                if state.tenant.delete(id).await.is_ok() {
+                    affected += 1;
+                }
+            }
+            "suspend" | "activate" => {
+                let status = if req.action == "suspend" {
+                    "suspended"
+                } else {
+                    "active"
+                };
+                if state
+                    .tenant
+                    .update(
+                        id,
+                        &UpdateTenantRequest {
+                            name: None,
+                            domain: None,
+                            config: None,
+                            status: Some(status.to_string()),
+                        },
+                    )
+                    .await
+                    .is_ok()
+                {
+                    affected += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
 }

@@ -17,11 +17,11 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     use axum::routing::{delete, get};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/auth/oauth/{provider}", get(redirect_to_provider), "system", "oauth", ["GET"]);
-    let r = reg_route!(r, registry, "/auth/oauth/{provider}/callback", get(callback), "system", "oauth", ["GET"]);
-    let r = reg_route!(r, registry, "/auth/oauth/providers", get(list_providers), "system", "oauth", ["GET"]);
-    let r = reg_route!(r, registry, "/auth/oauth/bindings", get(list_bindings), "system", "oauth", ["GET"]);
-    reg_route!(r, registry, "/auth/oauth/{provider}/unbind", delete(unbind), "system", "oauth", ["DELETE"])
+    let r = reg_route!(r, registry, "/auth/oauth/{provider}", get(redirect_to_provider), "system public", "oauth", ["GET"]);
+    let r = reg_route!(r, registry, "/auth/oauth/{provider}/callback", get(callback), "system public", "oauth", ["GET"]);
+    let r = reg_route!(r, registry, "/auth/oauth/providers", get(list_providers), "system public", "oauth", ["GET"]);
+    let r = reg_route!(r, registry, "/auth/oauth/bindings", get(list_bindings), "system public", "oauth", ["GET"]);
+    reg_route!(r, registry, "/auth/oauth/{provider}/unbind", delete(unbind), "system public", "oauth", ["DELETE"])
 }
 
 

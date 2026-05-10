@@ -219,6 +219,52 @@ pub async fn list(
         .await
 }
 
+pub async fn admin_list(
+    media_repo: &dyn MediaRepository,
+    page: i64,
+    page_size: i64,
+    auth: &AuthUser,
+) -> AppResult<(Vec<media::Media>, i64)> {
+    media_repo
+        .find_all_admin(page, page_size, auth.tenant_id())
+        .await
+}
+
+pub async fn admin_delete_media(
+    storage: &dyn Storage,
+    media_repo: &dyn MediaRepository,
+    pool: &crate::db::Pool,
+    media_id: &str,
+    auth: &AuthUser,
+) -> AppResult<()> {
+    let sql = format!(
+        "SELECT id FROM media WHERE document_id = {}{}",
+        crate::db::dialect::ph(1),
+        crate::db::tenant::tenant_filter_ph(auth.tenant_id(), 2)
+    );
+    let mut q = sqlx::query_as::<_, (i64,)>(&sql).bind(media_id);
+    if let Some(tid) = auth.tenant_id() {
+        q = q.bind(tid);
+    }
+    let (media_pk,): (i64,) = q
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
+        .ok_or_else(|| AppError::not_found("media"))?;
+
+    let m = crate::models::media::find_by_id(pool, media_pk, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("media"))?;
+
+    media_repo.delete(media_pk, auth.tenant_id()).await?;
+
+    if let Err(e) = storage.delete(&m.filepath).await {
+        tracing::warn!(key = %m.filepath, error = %e, "failed to delete file from storage");
+    }
+
+    Ok(())
+}
+
 /// 删除媒体文件。
 ///
 /// 仅文件所有者或管理员可执行。先删除数据库记录，再通过 [`Storage`] 删除文件。

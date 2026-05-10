@@ -5,6 +5,7 @@
 use axum::extract::{Path, Query, State};
 
 use crate::AppState;
+use crate::dto::{BatchRequest, BatchResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
@@ -15,11 +16,12 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     use axum::routing::{get, post as http_post};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/admin/plugins", get(self::list), "system", "admin/plugins", ["GET"]);
-    let r = reg_route!(r, registry, "/admin/plugins/{id}", get(self::get).delete(remove), "system", "admin/plugins", ["GET", "DELETE"]);
-    let r = reg_route!(r, registry, "/admin/plugins/{id}/enable", http_post(enable), "system", "admin/plugins", ["POST"]);
-    let r = reg_route!(r, registry, "/admin/plugins/{id}/disable", http_post(disable), "system", "admin/plugins", ["POST"]);
-    reg_route!(r, registry, "/admin/plugins/{id}/reload", http_post(reload), "system", "admin/plugins", ["POST"])
+    let r = reg_route!(r, registry, "/admin/plugins", get(self::list), "system admin", "admin/plugins", ["GET"]);
+    let r = reg_route!(r, registry, "/admin/plugins/{id}", get(self::get).delete(remove), "system admin", "admin/plugins", ["GET", "DELETE"]);
+    let r = reg_route!(r, registry, "/admin/plugins/{id}/enable", http_post(enable), "system admin", "admin/plugins", ["POST"]);
+    let r = reg_route!(r, registry, "/admin/plugins/{id}/disable", http_post(disable), "system admin", "admin/plugins", ["POST"]);
+    let r = reg_route!(r, registry, "/admin/plugins/{id}/reload", http_post(reload), "system admin", "admin/plugins", ["POST"]);
+    reg_route!(r, registry, "/admin/plugins/batch", http_post(admin_batch), "system admin", "admin/plugins", ["POST"])
 }
 
 
@@ -99,4 +101,30 @@ pub async fn remove(
     auth.ensure_admin()?;
     state.plugins.unload_plugin(&id).await;
     Ok(ApiResponse::success(()))
+}
+
+pub async fn admin_batch(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    axum::Json(req): axum::Json<BatchRequest>,
+) -> AppResult<ApiResponse<BatchResponse>> {
+    auth.ensure_admin()?;
+    crate::errors::validation::validate(&req)?;
+    let mut affected = 0usize;
+    for id in &req.ids {
+        match req.action.as_str() {
+            "enable" => {
+                if state.plugins.enable_plugin(id).await.is_ok() {
+                    affected += 1;
+                }
+            }
+            "disable" => {
+                if state.plugins.disable_plugin(id).await.is_ok() {
+                    affected += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
 }

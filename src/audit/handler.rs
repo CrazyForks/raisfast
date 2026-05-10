@@ -13,8 +13,8 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     use axum::routing::get;
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/admin/audit", get(list), "system", "admin/audit", ["GET"]);
-    reg_route!(r, registry, "/admin/audit/{id}", get(self::get), "system", "admin/audit", ["GET"])
+    let r = reg_route!(r, registry, "/admin/audit", get(list), "system admin", "admin/audit", ["GET"]);
+    reg_route!(r, registry, "/admin/audit/{id}", get(self::get), "system admin", "admin/audit", ["GET"])
 }
 
 /// GET /admin/audit — 查询审计日志（分页）

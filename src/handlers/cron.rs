@@ -8,6 +8,7 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 
 use crate::AppState;
+use crate::dto::{BatchRequest, BatchResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
@@ -21,11 +22,12 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     use axum::routing::{get, post as http_post};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/admin/crons", get(self::list).post(create), "system", "admin/crons", ["GET", "POST"]);
-    let r = reg_route!(r, registry, "/admin/crons/{id}", get(self::get).put(update).delete(self::delete), "system", "admin/crons", ["GET", "PUT", "DELETE"]);
-    let r = reg_route!(r, registry, "/admin/crons/{id}/toggle", http_post(toggle), "system", "admin/crons", ["POST"]);
-    let r = reg_route!(r, registry, "/admin/crons/logs", get(logs), "system", "admin/crons", ["GET"]);
-    reg_route!(r, registry, "/admin/crons/logs/cleanup", http_post(cleanup_logs), "system", "admin/crons", ["POST"])
+    let r = reg_route!(r, registry, "/admin/crons", get(self::list).post(create), "system admin", "admin/crons", ["GET", "POST"]);
+    let r = reg_route!(r, registry, "/admin/crons/{id}", get(self::get).put(update).delete(self::delete), "system admin", "admin/crons", ["GET", "PUT", "DELETE"]);
+    let r = reg_route!(r, registry, "/admin/crons/{id}/toggle", http_post(toggle), "system admin", "admin/crons", ["POST"]);
+    let r = reg_route!(r, registry, "/admin/crons/logs", get(logs), "system admin", "admin/crons", ["GET"]);
+    let r = reg_route!(r, registry, "/admin/crons/logs/cleanup", http_post(cleanup_logs), "system admin", "admin/crons", ["POST"]);
+    reg_route!(r, registry, "/admin/crons/batch", http_post(admin_batch), "system admin", "admin/crons", ["POST"])
 }
 
 /// 创建调度请求体
@@ -201,4 +203,35 @@ pub async fn cleanup_logs(
 #[derive(Debug, Deserialize)]
 pub struct ToggleBody {
     pub enabled: bool,
+}
+
+pub async fn admin_batch(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(req): Json<BatchRequest>,
+) -> AppResult<ApiResponse<BatchResponse>> {
+    auth.ensure_admin()?;
+    crate::errors::validation::validate(&req)?;
+    let mut affected = 0usize;
+    for id in &req.ids {
+        match req.action.as_str() {
+            "delete" => {
+                if delete_schedule(&state.pool, id).await.is_ok() {
+                    affected += 1;
+                }
+            }
+            "enable" => {
+                if toggle_schedule(&state.pool, id, true).await.is_ok() {
+                    affected += 1;
+                }
+            }
+            "disable" => {
+                if toggle_schedule(&state.pool, id, false).await.is_ok() {
+                    affected += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
 }

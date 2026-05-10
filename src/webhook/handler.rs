@@ -3,6 +3,7 @@
 use axum::extract::{Path, Query, State};
 
 use crate::AppState;
+use crate::dto::{BatchRequest, BatchResponse};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
@@ -10,11 +11,12 @@ use crate::utils::pagination::PaginationParams;
 use crate::webhook::model::{CreateWebhookRequest, UpdateWebhookRequest};
 
 pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
-    use axum::routing::get;
+    use axum::routing::{get, post as http_post};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/admin/webhooks", get(list).post(create), "system", "admin/webhooks", ["GET", "POST"]);
-    reg_route!(r, registry, "/admin/webhooks/{id}", get(self::get).put(update).delete(self::delete), "system", "admin/webhooks", ["GET", "PUT", "DELETE"])
+    let r = reg_route!(r, registry, "/admin/webhooks", get(list).post(create), "system admin", "admin/webhooks", ["GET", "POST"]);
+    let r = reg_route!(r, registry, "/admin/webhooks/{id}", get(self::get).put(update).delete(self::delete), "system admin", "admin/webhooks", ["GET", "PUT", "DELETE"]);
+    reg_route!(r, registry, "/admin/webhooks/batch", http_post(admin_batch), "system admin", "admin/webhooks", ["POST"])
 }
 
 /// GET /admin/webhooks — 分页查询 webhook 订阅
@@ -100,4 +102,36 @@ pub async fn delete(
     auth.ensure_admin()?;
     state.webhook.delete(&id).await?;
     Ok(ApiResponse::success(()))
+}
+
+pub async fn admin_batch(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    axum::Json(req): axum::Json<BatchRequest>,
+) -> AppResult<ApiResponse<BatchResponse>> {
+    auth.ensure_admin()?;
+    crate::errors::validation::validate(&req)?;
+    let mut affected = 0usize;
+    for id in &req.ids {
+        match req.action.as_str() {
+            "delete" => {
+                if state.webhook.delete(id).await.is_ok() {
+                    affected += 1;
+                }
+            }
+            "enable" | "disable" => {
+                let enabled = req.action == "enable";
+                if state
+                    .webhook
+                    .update(id, None, None, None, Some(enabled))
+                    .await
+                    .is_ok()
+                {
+                    affected += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
 }

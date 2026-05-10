@@ -14,7 +14,7 @@ use std::sync::Arc;
 pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
     use axum::routing::get;
 
-    reg_route!(axum::Router::new(), registry, "/graphql", get(graphiql_handler).post(graphql_handler), "system", "graphql", ["GET", "POST"])
+    reg_route!(axum::Router::new(), registry, "/graphql", get(graphiql_handler).post(graphql_handler), "system public", "graphql", ["GET", "POST"])
 }
 
 /// POST /api/v1/graphql

@@ -344,6 +344,24 @@ pub async fn update_role(
         .ok_or_else(|| AppError::not_found("user"))
 }
 
+pub async fn delete_by_document_id(
+    pool: &crate::db::Pool,
+    document_id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    let sql = format!(
+        "DELETE FROM users WHERE document_id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
+    );
+    let mut q = sqlx::query(&sql).bind(document_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    q.execute(pool).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

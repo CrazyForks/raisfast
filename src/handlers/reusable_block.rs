@@ -5,6 +5,7 @@ use axum::extract::{Path, State};
 use serde::Deserialize;
 use validator::Validate;
 
+use crate::dto::{BatchRequest, BatchResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
@@ -12,11 +13,12 @@ use crate::middleware::auth::AuthUser;
 use crate::services::reusable_block as reusable_service;
 
 pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
-    use axum::routing::get;
+    use axum::routing::{get, post as http_post};
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/admin/reusable-blocks", get(list_reusable).post(create_reusable), "system", "admin/pages", ["GET", "POST"]);
-    reg_route!(r, registry, "/admin/reusable-blocks/{id}", get(get_reusable).put(update_reusable).delete(delete_reusable), "system", "admin/pages", ["GET", "PUT", "DELETE"])
+    let r = reg_route!(r, registry, "/admin/reusable-blocks", get(list_reusable).post(create_reusable), "system admin", "admin/pages", ["GET", "POST"]);
+    let r = reg_route!(r, registry, "/admin/reusable-blocks/{id}", get(get_reusable).put(update_reusable).delete(delete_reusable), "system admin", "admin/pages", ["GET", "PUT", "DELETE"]);
+    reg_route!(r, registry, "/admin/reusable-blocks/batch", http_post(admin_batch), "system admin", "admin/pages", ["POST"])
 }
 
 
@@ -111,4 +113,25 @@ pub async fn delete_reusable(
     auth.ensure_author()?;
     reusable_service::delete_reusable(&state.pool, &id, &auth).await?;
     Ok(ApiResponse::success(()))
+}
+
+pub async fn admin_batch(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Json(req): Json<BatchRequest>,
+) -> AppResult<ApiResponse<BatchResponse>> {
+    auth.ensure_admin()?;
+    validation::validate(&req)?;
+    let mut affected = 0usize;
+    if req.action == "delete" {
+        for id in &req.ids {
+            if reusable_service::delete_reusable(&state.pool, id, &auth)
+                .await
+                .is_ok()
+            {
+                affected += 1;
+            }
+        }
+    }
+    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
 }

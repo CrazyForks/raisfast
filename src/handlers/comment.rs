@@ -4,9 +4,10 @@
 //! 评论支持多级嵌套回复，树形结构在 service 层构建。
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
+use serde::Deserialize;
 
-use crate::dto::{CreateCommentRequest, UpdateCommentStatusRequest};
+use crate::dto::{BatchRequest, BatchResponse, CreateCommentRequest, UpdateCommentStatusRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
@@ -20,14 +21,24 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     use crate::middleware::rate_limit::comment_rate_limit;
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/posts/{slug}/comments", get(self::list), "system", "comments", ["GET"]);
-    let r = reg_route!(r, registry, "/posts/{slug}/comments", http_post(create_guest).layer(from_fn(comment_rate_limit)), "system", "comments", ["POST"]);
-    let r = reg_route!(r, registry, "/posts/{slug}/comments/authed", http_post(create), "system", "comments", ["POST"]);
-    let r = reg_route!(r, registry, "/comments/{id}", delete(self::delete), "system", "comments", ["DELETE"]);
-    let r = reg_route!(r, registry, "/comments/{id}/status", put(update_status), "system", "comments", ["PUT"]);
-    reg_route!(r, registry, "/comments", get(list_all), "system", "comments", ["GET"])
+    let r = reg_route!(r, registry, "/posts/{slug}/comments", get(self::list), "system public", "comments", ["GET"]);
+    let r = reg_route!(r, registry, "/posts/{slug}/comments", http_post(create_guest).layer(from_fn(comment_rate_limit)), "system public", "comments", ["POST"]);
+    let r = reg_route!(r, registry, "/posts/{slug}/comments/authed", http_post(create), "system public", "comments", ["POST"]);
+    let r = reg_route!(r, registry, "/comments/{id}", delete(self::delete), "system public", "comments", ["DELETE"]);
+    let r = reg_route!(r, registry, "/comments/{id}/status", put(update_status), "system public", "comments", ["PUT"]);
+    let r = reg_route!(r, registry, "/comments", get(list_all), "system public", "comments", ["GET"]);
+    let r = reg_route!(r, registry, "/admin/comments", get(admin_list), "system admin", "admin/comments", ["GET"]);
+    let r = reg_route!(r, registry, "/admin/comments/{id}/status", put(admin_update_status), "system admin", "admin/comments", ["PUT"]);
+    let r = reg_route!(r, registry, "/admin/comments/{id}", delete(admin_delete), "system admin", "admin/comments", ["DELETE"]);
+    reg_route!(r, registry, "/admin/comments/batch", http_post(admin_batch), "system admin", "admin/comments", ["POST"])
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AdminCommentListQuery {
+    pub page: Option<i64>,
+    pub page_size: Option<i64>,
+    pub status: Option<String>,
+}
 
 /// 获取指定文章的评论列表（树形结构，分页）
 pub async fn list(
@@ -147,4 +158,86 @@ pub async fn update_status(
     comment_service::update_comment_status(state.comment_repo.as_ref(), &id, &req.status, &auth)
         .await?;
     Ok(ApiResponse::success(()))
+}
+
+// ── Admin handlers ──
+
+pub async fn admin_list(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Query(query): Query<AdminCommentListQuery>,
+) -> AppResult<ApiResponse<PaginatedData<crate::models::comment::AdminCommentRow>>> {
+    auth.ensure_admin()?;
+    let pagination = PaginationParams::from_options(query.page, query.page_size);
+    let (comments, total) = state
+        .comment_repo
+        .find_all_paginated(pagination.page, pagination.page_size, auth.tenant_id())
+        .await?;
+    Ok(pagination.paginate(comments, total))
+}
+
+pub async fn admin_update_status(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateCommentStatusRequest>,
+) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
+    validation::validate(&req)?;
+    comment_service::update_comment_status(state.comment_repo.as_ref(), &id, &req.status, &auth)
+        .await?;
+    Ok(ApiResponse::success(()))
+}
+
+pub async fn admin_delete(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
+    comment_service::delete_comment(state.comment_repo.as_ref(), &id, &auth).await?;
+    Ok(ApiResponse::success(()))
+}
+
+pub async fn admin_batch(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Json(req): Json<BatchRequest>,
+) -> AppResult<ApiResponse<BatchResponse>> {
+    auth.ensure_admin()?;
+    validation::validate(&req)?;
+    let mut affected = 0usize;
+    for id in &req.ids {
+        match req.action.as_str() {
+            "delete" => {
+                if comment_service::delete_comment(state.comment_repo.as_ref(), id, &auth)
+                    .await
+                    .is_ok()
+                {
+                    affected += 1;
+                }
+            }
+            "approve" | "reject" | "spam" => {
+                let status = match req.action.as_str() {
+                    "approve" => "approved",
+                    "reject" => "pending",
+                    "spam" => "spam",
+                    _ => unreachable!(),
+                };
+                if comment_service::update_comment_status(
+                    state.comment_repo.as_ref(),
+                    id,
+                    status,
+                    &auth,
+                )
+                .await
+                .is_ok()
+                {
+                    affected += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(ApiResponse::success(BatchResponse::new(&req.action, affected)))
 }

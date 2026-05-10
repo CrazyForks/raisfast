@@ -17,9 +17,9 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     use axum::routing::get;
 
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, "/admin/stats", get(overview), "system", "admin/stats", ["GET"]);
-    let r = reg_route!(r, registry, "/admin/stats/content/{table}", get(content_stats), "system", "admin/stats", ["GET"]);
-    reg_route!(r, registry, "/admin/stats/trends", get(trends), "system", "admin/stats", ["GET"])
+    let r = reg_route!(r, registry, "/admin/stats", get(overview), "system admin", "admin/stats", ["GET"]);
+    let r = reg_route!(r, registry, "/admin/stats/content/{table}", get(content_stats), "system admin", "admin/stats", ["GET"]);
+    reg_route!(r, registry, "/admin/stats/trends", get(trends), "system admin", "admin/stats", ["GET"])
 }
 
 

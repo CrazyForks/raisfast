@@ -41,7 +41,7 @@ use crate::handlers::sse::event_type_name;
 pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
     use axum::routing::get;
 
-    reg_route!(axum::Router::new(), registry, "/ws", get(ws_handler), "system", "ws", ["GET"])
+    reg_route!(axum::Router::new(), registry, "/ws", get(ws_handler), "system public", "ws", ["GET"])
 }
 
 /// WS 连接查询参数
