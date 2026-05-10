@@ -423,57 +423,57 @@ impl CronScheduler {
         let local_now = now.with_timezone(&crate::utils::tz::site_tz());
         let next = next_run(&schedule.cron_expr, local_now).ok();
 
-        let mut tx = self.pool.begin().await?;
-
-        match &dispatch_result {
-            Ok(()) => {
-                if let Some(ref lid) = log_id {
-                    sqlx::query(&format!(
-                        "UPDATE cron_execution_log SET status = 'success', duration_ms = {}, finished_at = {} WHERE document_id = {}",
-                        ph(1), ph(2), ph(3)
-                    ))
-                    .bind(elapsed)
-                    .bind(now)
-                    .bind(lid)
-                    .execute(&mut *tx)
-                    .await?;
+        in_transaction!(&self.pool, tx, {
+            match &dispatch_result {
+                Ok(()) => {
+                    if let Some(ref lid) = log_id {
+                        sqlx::query(&format!(
+                            "UPDATE cron_execution_log SET status = 'success', duration_ms = {}, finished_at = {} WHERE document_id = {}",
+                            ph(1), ph(2), ph(3)
+                        ))
+                        .bind(elapsed)
+                        .bind(now)
+                        .bind(lid)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                }
+                Err(e) => {
+                    if let Some(ref lid) = log_id {
+                        let err_str = e.to_string();
+                        sqlx::query(&format!(
+                            "UPDATE cron_execution_log SET status = 'failed', duration_ms = {}, error = {}, finished_at = {} WHERE document_id = {}",
+                            ph(1), ph(2), ph(3), ph(4)
+                        ))
+                        .bind(elapsed)
+                        .bind(&err_str)
+                        .bind(now)
+                        .bind(lid)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                    tracing::error!("cron dispatch failed for '{}': {e}", schedule.label);
                 }
             }
-            Err(e) => {
-                if let Some(ref lid) = log_id {
-                    let err_str = e.to_string();
-                    sqlx::query(&format!(
-                        "UPDATE cron_execution_log SET status = 'failed', duration_ms = {}, error = {}, finished_at = {} WHERE document_id = {}",
-                        ph(1), ph(2), ph(3), ph(4)
-                    ))
-                    .bind(elapsed)
-                    .bind(&err_str)
-                    .bind(now)
-                    .bind(lid)
-                    .execute(&mut *tx)
-                    .await?;
-                }
-                tracing::error!("cron dispatch failed for '{}': {e}", schedule.label);
+
+            if let Some(next) = &next {
+                sqlx::query(&format!(
+                    "UPDATE cron_schedules SET last_run_at = {}, next_run_at = {}, updated_at = {} WHERE id = {}",
+                    ph(1),
+                    ph(2),
+                    ph(3),
+                    ph(4)
+                ))
+                .bind(now)
+                .bind(next)
+                .bind(now)
+                .bind(schedule.id)
+                .execute(&mut *tx)
+                .await?;
             }
-        }
 
-        if let Some(next) = &next {
-            sqlx::query(&format!(
-                "UPDATE cron_schedules SET last_run_at = {}, next_run_at = {}, updated_at = {} WHERE id = {}",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4)
-            ))
-            .bind(now)
-            .bind(next)
-            .bind(now)
-            .bind(schedule.id)
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        tx.commit().await?;
+            Ok::<_, crate::errors::app_error::AppError>(())
+        })?;
 
         dispatch_result
     }
@@ -696,88 +696,87 @@ pub async fn sync_plugin_crons(
     plugin_id: &str,
     entries: &[CronEntry],
 ) -> AppResult<()> {
-    let mut tx = pool.begin().await?;
-
-    let old = sqlx::query_as::<_, PluginCronRow>(&format!(
-        "SELECT id, job_type FROM cron_schedules WHERE plugin_id = {}",
-        ph(1)
-    ))
-    .bind(plugin_id)
-    .fetch_all(&mut *tx)
-    .await?;
-
-    let new_types: Vec<&str> = entries.iter().map(|e| e.job_type.as_str()).collect();
-
-    for row in &old {
-        if !new_types.contains(&row.job_type.as_str()) {
-            sqlx::query(&format!("DELETE FROM cron_schedules WHERE id = {}", ph(1)))
-                .bind(row.id)
-                .execute(&mut *tx)
-                .await?;
-            tracing::info!(
-                "removed stale cron '{}' for plugin {plugin_id}",
-                row.job_type
-            );
-        }
-    }
-
-    for entry in entries {
-        let existing: Option<(i64,)> = sqlx::query_as(&format!(
-            "SELECT id FROM cron_schedules WHERE plugin_id = {} AND job_type = {}",
-            ph(1),
-            ph(2)
+    in_transaction!(pool, tx, {
+        let old = sqlx::query_as::<_, PluginCronRow>(&format!(
+            "SELECT id, job_type FROM cron_schedules WHERE plugin_id = {}",
+            ph(1)
         ))
         .bind(plugin_id)
-        .bind(&entry.job_type)
-        .fetch_optional(&mut *tx)
+        .fetch_all(&mut *tx)
         .await?;
 
-        if let Some(existing_row) = existing {
-            let now = crate::utils::tz::now_utc();
-            let next = next_run(&entry.cron_expr, crate::utils::tz::now_utc())?;
-            sqlx::query(&format!(
-                "UPDATE cron_schedules SET label = {}, payload = {}, cron_expr = {}, enabled = {}, next_run_at = {}, updated_at = {} WHERE id = {}",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7)
-            ))
-            .bind(&entry.label)
-            .bind(&entry.payload)
-            .bind(&entry.cron_expr)
-            .bind(entry.enabled)
-            .bind(next)
-            .bind(now)
-            .bind(existing_row.0)
-            .execute(&mut *tx)
-            .await?;
+        let new_types: Vec<&str> = entries.iter().map(|e| e.job_type.as_str()).collect();
 
-            tracing::debug!("updated cron '{}' for plugin {plugin_id}", entry.job_type);
-        } else {
-            let document_id = uuid::Uuid::now_v7().to_string();
-            let now = crate::utils::tz::now_utc();
-            let next = next_run(&entry.cron_expr, crate::utils::tz::now_utc())?;
-            sqlx::query(&format!(
-                "INSERT INTO cron_schedules (document_id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
-                 VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
-            ))
-            .bind(&document_id)
-            .bind(&entry.label)
-            .bind(&entry.job_type)
-            .bind(&entry.payload)
-            .bind(&entry.cron_expr)
-            .bind(entry.enabled)
-            .bind(next)
-            .bind(plugin_id)
-            .bind(now)
-            .bind(now)
-            .execute(&mut *tx)
-            .await?;
-
-            tracing::info!("created cron '{}' for plugin {plugin_id}", entry.job_type);
+        for row in &old {
+            if !new_types.contains(&row.job_type.as_str()) {
+                sqlx::query(&format!("DELETE FROM cron_schedules WHERE id = {}", ph(1)))
+                    .bind(row.id)
+                    .execute(&mut *tx)
+                    .await?;
+                tracing::info!(
+                    "removed stale cron '{}' for plugin {plugin_id}",
+                    row.job_type
+                );
+            }
         }
-    }
 
-    tx.commit().await?;
-    Ok(())
+        for entry in entries {
+            let existing: Option<(i64,)> = sqlx::query_as(&format!(
+                "SELECT id FROM cron_schedules WHERE plugin_id = {} AND job_type = {}",
+                ph(1),
+                ph(2)
+            ))
+            .bind(plugin_id)
+            .bind(&entry.job_type)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+            if let Some(existing_row) = existing {
+                let now = crate::utils::tz::now_utc();
+                let next = next_run(&entry.cron_expr, crate::utils::tz::now_utc())?;
+                sqlx::query(&format!(
+                    "UPDATE cron_schedules SET label = {}, payload = {}, cron_expr = {}, enabled = {}, next_run_at = {}, updated_at = {} WHERE id = {}",
+                    ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7)
+                ))
+                .bind(&entry.label)
+                .bind(&entry.payload)
+                .bind(&entry.cron_expr)
+                .bind(entry.enabled)
+                .bind(next)
+                .bind(now)
+                .bind(existing_row.0)
+                .execute(&mut *tx)
+                .await?;
+
+                tracing::debug!("updated cron '{}' for plugin {plugin_id}", entry.job_type);
+            } else {
+                let document_id = uuid::Uuid::now_v7().to_string();
+                let now = crate::utils::tz::now_utc();
+                let next = next_run(&entry.cron_expr, crate::utils::tz::now_utc())?;
+                sqlx::query(&format!(
+                    "INSERT INTO cron_schedules (document_id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
+                     VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                    ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
+                ))
+                .bind(&document_id)
+                .bind(&entry.label)
+                .bind(&entry.job_type)
+                .bind(&entry.payload)
+                .bind(&entry.cron_expr)
+                .bind(entry.enabled)
+                .bind(next)
+                .bind(plugin_id)
+                .bind(now)
+                .bind(now)
+                .execute(&mut *tx)
+                .await?;
+
+                tracing::info!("created cron '{}' for plugin {plugin_id}", entry.job_type);
+            }
+        }
+
+        Ok::<_, crate::errors::app_error::AppError>(())
+    })
 }
 
 /// 删除插件关联的所有 Cron 调度

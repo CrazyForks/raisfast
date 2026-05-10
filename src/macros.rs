@@ -45,3 +45,19 @@ macro_rules! impl_from_row_opt_tenant {
         }
     };
 }
+
+#[macro_export]
+macro_rules! in_transaction {
+    ($pool:expr, $tx:ident, $body:block) => {{
+        let mut $tx = $pool.begin().await.map_err(|e| {
+            $crate::errors::app_error::AppError::Internal(anyhow::anyhow!("begin tx: {e}"))
+        })?;
+        let __tx_result: Result<_, $crate::errors::app_error::AppError> = async { $body }.await;
+        if __tx_result.is_ok() {
+            $tx.commit().await.map_err(|e| {
+                $crate::errors::app_error::AppError::Internal(anyhow::anyhow!("commit tx: {e}"))
+            })?;
+        }
+        __tx_result
+    }};
+}

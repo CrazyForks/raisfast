@@ -57,43 +57,42 @@ pub async fn reset_password(
     crate::services::auth::validate_password_strength(new_password)?;
     let new_hash = crate::services::auth::hash_password(new_password)?;
 
-    let mut tx = pool.begin().await?;
+    in_transaction!(pool, tx, {
+        let now = crate::utils::tz::now_utc();
+        let sql = format!(
+            "UPDATE users SET password_hash = {}, updated_at = {} WHERE id = {}",
+            crate::db::dialect::ph(1),
+            crate::db::dialect::ph(2),
+            crate::db::dialect::ph(3)
+        );
+        sqlx::query(&sql)
+            .bind(&new_hash)
+            .bind(now)
+            .bind(reset_token.user_id)
+            .execute(&mut *tx)
+            .await?;
 
-    let now = crate::utils::tz::now_utc();
-    let sql = format!(
-        "UPDATE users SET password_hash = {}, updated_at = {} WHERE id = {}",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2),
-        crate::db::dialect::ph(3)
-    );
-    sqlx::query(&sql)
-        .bind(&new_hash)
-        .bind(now)
-        .bind(reset_token.user_id)
-        .execute(&mut *tx)
-        .await?;
+        let sql = format!(
+            "UPDATE password_reset_tokens SET used_at = {} WHERE id = {}",
+            crate::db::dialect::ph(1),
+            crate::db::dialect::ph(2)
+        );
+        sqlx::query(&sql)
+            .bind(now)
+            .bind(reset_token.id)
+            .execute(&mut *tx)
+            .await?;
 
-    let sql = format!(
-        "UPDATE password_reset_tokens SET used_at = {} WHERE id = {}",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2)
-    );
-    sqlx::query(&sql)
-        .bind(now)
-        .bind(reset_token.id)
-        .execute(&mut *tx)
-        .await?;
-
-    let del_sql = format!(
-        "DELETE FROM refresh_tokens WHERE user_id = {}",
-        crate::db::dialect::ph(1)
-    );
-    sqlx::query(&del_sql)
-        .bind(reset_token.user_id)
-        .execute(&mut *tx)
-        .await?;
-
-    tx.commit().await?;
+        let del_sql = format!(
+            "DELETE FROM refresh_tokens WHERE user_id = {}",
+            crate::db::dialect::ph(1)
+        );
+        sqlx::query(&del_sql)
+            .bind(reset_token.user_id)
+            .execute(&mut *tx)
+            .await?;
+        Ok::<_, crate::errors::app_error::AppError>(())
+    })?;
 
     let _ = user_repo;
     let _ = tenant_id;

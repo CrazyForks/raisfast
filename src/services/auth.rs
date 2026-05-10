@@ -333,33 +333,32 @@ pub async fn refresh(
     let new_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_str();
 
-    let mut tx = pool.begin().await?;
+    in_transaction!(pool, tx, {
+        sqlx::query(&format!(
+            "DELETE FROM refresh_tokens WHERE token = {}",
+            crate::db::dialect::ph(1)
+        ))
+        .bind(refresh_token_str)
+        .execute(&mut *tx)
+        .await?;
 
-    sqlx::query(&format!(
-        "DELETE FROM refresh_tokens WHERE token = {}",
-        crate::db::dialect::ph(1)
-    ))
-    .bind(refresh_token_str)
-    .execute(&mut *tx)
-    .await?;
-
-    sqlx::query(&format!(
-        "INSERT INTO refresh_tokens (document_id, user_id, token, expires_at, created_at) VALUES ({}, {}, {}, {}, {})",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2),
-        crate::db::dialect::ph(3),
-        crate::db::dialect::ph(4),
-        crate::db::dialect::ph(5)
-    ))
-    .bind(&new_id)
-    .bind(user.id)
-    .bind(&new_refresh_token)
-    .bind(&new_expires_str)
-    .bind(&now)
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
+        sqlx::query(&format!(
+            "INSERT INTO refresh_tokens (document_id, user_id, token, expires_at, created_at) VALUES ({}, {}, {}, {}, {})",
+            crate::db::dialect::ph(1),
+            crate::db::dialect::ph(2),
+            crate::db::dialect::ph(3),
+            crate::db::dialect::ph(4),
+            crate::db::dialect::ph(5)
+        ))
+        .bind(&new_id)
+        .bind(user.id)
+        .bind(&new_refresh_token)
+        .bind(&new_expires_str)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+        Ok::<_, crate::errors::app_error::AppError>(())
+    })?;
 
     Ok(LoginResponse {
         access_token,

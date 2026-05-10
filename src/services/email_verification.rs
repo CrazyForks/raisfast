@@ -41,32 +41,31 @@ pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> 
         return Err(AppError::BadRequest("invalid_or_expired_token".into()));
     }
 
-    let mut tx = pool.begin().await?;
+    in_transaction!(pool, tx, {
+        let now = crate::utils::tz::now_utc();
+        let sql = format!(
+            "UPDATE email_verification_tokens SET verified_at = {} WHERE id = {}",
+            crate::db::dialect::ph(1),
+            crate::db::dialect::ph(2)
+        );
+        sqlx::query(&sql)
+            .bind(now)
+            .bind(verification.id)
+            .execute(&mut *tx)
+            .await?;
 
-    let now = crate::utils::tz::now_utc();
-    let sql = format!(
-        "UPDATE email_verification_tokens SET verified_at = {} WHERE id = {}",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2)
-    );
-    sqlx::query(&sql)
-        .bind(now)
-        .bind(verification.id)
-        .execute(&mut *tx)
-        .await?;
-
-    let sql = format!(
-        "UPDATE users SET email_verified = 1, updated_at = {} WHERE id = {}",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2)
-    );
-    sqlx::query(&sql)
-        .bind(now)
-        .bind(verification.user_id)
-        .execute(&mut *tx)
-        .await?;
-
-    tx.commit().await?;
+        let sql = format!(
+            "UPDATE users SET email_verified = 1, updated_at = {} WHERE id = {}",
+            crate::db::dialect::ph(1),
+            crate::db::dialect::ph(2)
+        );
+        sqlx::query(&sql)
+            .bind(now)
+            .bind(verification.user_id)
+            .execute(&mut *tx)
+            .await?;
+        Ok::<_, crate::errors::app_error::AppError>(())
+    })?;
     Ok(())
 }
 

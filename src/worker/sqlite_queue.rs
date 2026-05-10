@@ -123,61 +123,59 @@ impl JobQueue for SqliteJobQueue {
 
     async fn fail(&self, id: &str, error: &str) -> AppResult<()> {
         let now = crate::utils::tz::now_utc();
-        let mut tx = self.pool.begin().await?;
 
-        let row = sqlx::query(&format!(
-            "SELECT attempts, max_attempts FROM jobs WHERE {COL_DOCUMENT_ID} = {}",
-            ph(1)
-        ))
-        .bind(id)
-        .fetch_optional(&mut *tx)
-        .await?;
+        in_transaction!(&self.pool, tx, {
+            let row = sqlx::query(&format!(
+                "SELECT attempts, max_attempts FROM jobs WHERE {COL_DOCUMENT_ID} = {}",
+                ph(1)
+            ))
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
 
-        let Some(r) = row else {
-            return Err(AppError::not_found("job"));
-        };
+            let Some(r) = row else {
+                return Err(AppError::not_found("job"));
+            };
 
-        let attempts: i32 = r.get("attempts");
-        let max_attempts: i32 = r.get("max_attempts");
+            let attempts: i32 = r.get("attempts");
+            let max_attempts: i32 = r.get("max_attempts");
 
-        if attempts >= max_attempts {
+            if attempts >= max_attempts {
+                sqlx::query(&format!(
+                    "UPDATE jobs SET status = 'dead', error = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
+                    ph(1),
+                    ph(2),
+                    ph(3)
+                ))
+                .bind(error)
+                .bind(now)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+                tracing::error!("job {id} dead: {error}");
+                return Ok::<_, AppError>(());
+            }
+
+            let delay = backoff_duration(attempts as u32);
+            let run_after =
+                crate::utils::tz::now_utc() + chrono::Duration::from_std(delay).unwrap_or_default();
+
             sqlx::query(&format!(
-                "UPDATE jobs SET status = 'dead', error = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
-                ph(1),
-                ph(2),
-                ph(3)
+                "UPDATE jobs SET status = 'pending', error = {}, run_after = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
+                ph(1), ph(2), ph(3), ph(4)
             ))
             .bind(error)
+            .bind(run_after)
             .bind(now)
             .bind(id)
             .execute(&mut *tx)
             .await?;
-            tx.commit().await?;
-            tracing::error!("job {id} dead: {error}");
-            return Ok(());
-        }
 
-        let delay = backoff_duration(attempts as u32);
-        let run_after =
-            crate::utils::tz::now_utc() + chrono::Duration::from_std(delay).unwrap_or_default();
-
-        sqlx::query(&format!(
-            "UPDATE jobs SET status = 'pending', error = {}, run_after = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
-            ph(1), ph(2), ph(3), ph(4)
-        ))
-        .bind(error)
-        .bind(run_after)
-        .bind(now)
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-
-        tracing::warn!(
-            "job {id} failed (attempt {attempts}/{max_attempts}), retry after {run_after}"
-        );
-        Ok(())
+            tracing::warn!(
+                "job {id} failed (attempt {attempts}/{max_attempts}), retry after {run_after}"
+            );
+            Ok(())
+        })
     }
 
     async fn dead(&self, id: &str, error: &str) -> AppResult<()> {
