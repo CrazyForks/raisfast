@@ -11,6 +11,7 @@
 //! - `RefreshTokenRepository` / `SqlxRefreshTokenRepository`
 //! - `OptionsRepository` / `SqlxOptionsRepository`
 //! - `RbacRepository` / `SqlxRbacRepository`
+//! - `WalletRepository` / `SqlxWalletRepository`
 
 pub mod cached_post;
 pub mod sqlx_category;
@@ -23,6 +24,7 @@ pub mod sqlx_refresh_token;
 pub mod sqlx_tag;
 pub mod sqlx_tenant;
 pub mod sqlx_user;
+pub mod sqlx_wallet;
 
 pub use crate::commands::*;
 pub use cached_post::CachedPostRepository;
@@ -36,6 +38,7 @@ pub use sqlx_refresh_token::{RefreshTokenRepository, SqlxRefreshTokenRepository}
 pub use sqlx_tag::{SqlxTagRepository, TagRepository};
 pub use sqlx_tenant::{SqlxTenantRepository, TenantRepository};
 pub use sqlx_user::{SqlxUserRepository, UserRepository};
+pub use sqlx_wallet::{SqlxWalletRepository, WalletRepository};
 
 /// 定义 sqlx Repository 的 struct 和 `new()` 构造函数。
 ///

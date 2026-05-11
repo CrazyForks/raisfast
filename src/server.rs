@@ -11,8 +11,8 @@ use crate::cache::MemoryCache;
 use crate::config::app::AppConfig;
 use crate::constants::DEFAULT_TENANT;
 use crate::handlers::{
-    api_token, auth, category, comment, cron, health, media, options, page, plugin, post, rbac,
-    reusable_block, rss, sse, stats, tag, tenant, user, ws,
+    api_token, auth, category, comment, cron, health, media, options, page, plugin,
+    post, rbac, reusable_block, rss, sse, stats, tag, tenant, user, wallet, ws,
 };
 use crate::middleware::locale::locale_middleware;
 use crate::middleware::metrics;
@@ -115,7 +115,8 @@ async fn build_app(
         .merge(auth::routes(&mut registry))
         .merge(crate::handlers::oauth::routes(&mut registry))
         .merge(api_token::routes(&mut registry))
-        .merge(user::routes(&mut registry));
+        .merge(user::routes(&mut registry))
+        .merge(wallet::routes(&mut registry));
 
     if config.builtins.blog {
         api_v1 = api_v1

@@ -85,6 +85,48 @@ CREATE TABLE IF NOT EXISTS oauth_states (
 
 CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
 
+CREATE TABLE IF NOT EXISTS wallets (
+    id BIGSERIAL PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    currency VARCHAR(50) NOT NULL,
+    balance BIGINT NOT NULL DEFAULT 0,
+    version BIGINT NOT NULL DEFAULT 1,
+    status VARCHAR(50) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, currency)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallets_user ON wallets(user_id);
+CREATE INDEX IF NOT EXISTS idx_wallets_currency ON wallets(currency);
+
+CREATE TABLE IF NOT EXISTS wallet_transactions (
+    id BIGSERIAL PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    wallet_id BIGINT NOT NULL REFERENCES wallets(id),
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    entry_type VARCHAR(10) NOT NULL,
+    amount BIGINT NOT NULL,
+    balance_after BIGINT NOT NULL,
+    tx_type VARCHAR(50) NOT NULL,
+    currency VARCHAR(50) NOT NULL,
+    transaction_no VARCHAR(255) NOT NULL UNIQUE,
+    related_tx_id BIGINT,
+    reference_type VARCHAR(100),
+    reference_id VARCHAR(255),
+    counterparty_wallet_id BIGINT,
+    metadata JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_tx_wallet ON wallet_transactions(wallet_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_tx_user ON wallet_transactions(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_wallet_tx_transaction_no ON wallet_transactions(transaction_no);
+CREATE INDEX IF NOT EXISTS idx_wallet_tx_tx_type ON wallet_transactions(tx_type);
+CREATE INDEX IF NOT EXISTS idx_wallet_tx_reference ON wallet_transactions(reference_type, reference_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_tx_created ON wallet_transactions(created_at);
+
 -- Refresh Tokens
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     id BIGSERIAL PRIMARY KEY,

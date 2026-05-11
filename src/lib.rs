@@ -59,7 +59,7 @@ use oauth::OAuthProviderRegistry;
 use plugins::PluginManager;
 use repositories::{
     CategoryRepository, CommentRepository, MediaRepository, PostRepository, RefreshTokenRepository,
-    TagRepository, UserRepository,
+    TagRepository, UserRepository, WalletRepository,
 };
 use search::SearchEngine;
 use services::options::OptionsService;
@@ -92,6 +92,7 @@ pub struct AppState {
     pub comment_repo: Arc<dyn CommentRepository>,
     pub media_repo: Arc<dyn MediaRepository>,
     pub refresh_token_repo: Arc<dyn RefreshTokenRepository>,
+    pub wallet_repo: Arc<dyn WalletRepository>,
     pub search: Arc<dyn SearchEngine>,
     pub content_type_registry: Arc<ContentTypeRegistry>,
     pub aspect_engine: Arc<crate::aspects::engine::AspectEngine>,
@@ -142,6 +143,9 @@ pub async fn build_app_state(
     let refresh_token_repo: Arc<dyn crate::repositories::RefreshTokenRepository> = Arc::new(
         crate::repositories::SqlxRefreshTokenRepository::new(pool.clone()),
     );
+
+    let wallet_repo: Arc<dyn crate::repositories::WalletRepository> =
+        Arc::new(crate::repositories::SqlxWalletRepository::new(pool.clone()));
 
     let search: Arc<dyn SearchEngine> = build_search_engine(config);
 
@@ -210,6 +214,7 @@ pub async fn build_app_state(
     services.insert(comment_repo.clone());
     services.insert(media_repo.clone());
     services.insert(refresh_token_repo.clone());
+    services.insert(wallet_repo.clone());
     services.insert(search.clone());
     services.insert(aspect_engine.clone());
     services.insert(protocol_registry.clone());
@@ -235,6 +240,7 @@ pub async fn build_app_state(
         comment_repo,
         media_repo,
         refresh_token_repo,
+        wallet_repo,
         search,
         content_type_registry: ct_registry,
         aspect_engine,

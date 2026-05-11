@@ -5,6 +5,7 @@ pub mod media;
 pub mod post;
 pub mod tag;
 pub mod user;
+pub mod wallet;
 
 pub use batch::*;
 pub use category::*;
@@ -13,6 +14,7 @@ pub use media::*;
 pub use post::*;
 pub use tag::*;
 pub use user::*;
+pub use wallet::*;
 
 fn validate_password(pwd: &str) -> Result<(), validator::ValidationError> {
     let has_letter = pwd.chars().any(|c| c.is_ascii_alphabetic());
@@ -128,13 +130,11 @@ mod tests {
 
     #[test]
     fn validate_uuid_vec_valid() {
-        assert!(
-            validate_uuid_vec(&[
-                "01901234-5678-7000-8000-000000000000".to_string(),
-                "1".to_string()
-            ])
-            .is_ok()
-        );
+        assert!(validate_uuid_vec(&[
+            "01901234-5678-7000-8000-000000000000".to_string(),
+            "1".to_string()
+        ])
+        .is_ok());
     }
 
     #[test]

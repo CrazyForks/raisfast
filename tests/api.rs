@@ -85,6 +85,7 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
         comment_repo: Arc::new(SqlxCommentRepository::new(pool.clone())),
         media_repo: Arc::new(SqlxMediaRepository::new(pool.clone())),
         refresh_token_repo: Arc::new(SqlxRefreshTokenRepository::new(pool.clone())),
+        wallet_repo: Arc::new(raisfast::repositories::SqlxWalletRepository::new(pool.clone())),
         search: Arc::new(NoopSearchEngine),
         content_type_registry: Arc::new(raisfast::content_type::ContentTypeRegistry::new()),
         aspect_engine: {
