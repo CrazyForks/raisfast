@@ -128,30 +128,24 @@ mod tests {
         pool
     }
 
-    async fn insert_user(pool: &crate::db::Pool, document_id: &str) -> i64 {
-        let hash = "$argon2id$v=19$m=19456,t=2,p=1$test$test".to_string();
-        let sql = format!(
-            "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'admin') RETURNING id",
-            ph(1),
-            ph(2),
-            ph(3),
-            ph(4)
-        );
-        let (id,): (i64,) = sqlx::query_as(&sql)
-            .bind(document_id)
-            .bind("ev-test@test.com")
-            .bind("evtestuser")
-            .bind(&hash)
-            .fetch_one(pool)
-            .await
-            .unwrap();
-        id
+    async fn insert_user(pool: &crate::db::Pool) -> i64 {
+        let user = crate::models::user::create(
+            pool,
+            &crate::commands::user::CreateUserCmd {
+                username: crate::utils::id::new_document_id(),
+                registered_via: "test".to_string(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        user.id
     }
 
     #[tokio::test]
     async fn create_and_find_by_token() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "ev-user-1-doc").await;
+        let user_id = insert_user(&pool).await;
         let row = create(&pool, user_id, "ev1@test.com", 3600).await.unwrap();
         let found = find_by_token(&pool, &row.token).await.unwrap().unwrap();
         assert_eq!(found.id, row.id);
@@ -163,7 +157,7 @@ mod tests {
     #[tokio::test]
     async fn mark_verified() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "ev-user-2-doc").await;
+        let user_id = insert_user(&pool).await;
         let row = create(&pool, user_id, "ev2@test.com", 3600).await.unwrap();
         assert!(row.verified_at.is_none());
         super::mark_verified(&pool, row.id).await.unwrap();
@@ -174,7 +168,7 @@ mod tests {
     #[tokio::test]
     async fn delete_unused_by_user() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "ev-user-3-doc").await;
+        let user_id = insert_user(&pool).await;
         create(&pool, user_id, "ev3a@test.com", 3600).await.unwrap();
         create(&pool, user_id, "ev3b@test.com", 3600).await.unwrap();
         super::delete_unused_by_user(&pool, user_id).await.unwrap();
@@ -193,7 +187,7 @@ mod tests {
     #[tokio::test]
     async fn cleanup_expired() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "ev-user-4-doc").await;
+        let user_id = insert_user(&pool).await;
         create(&pool, user_id, "ev4@test.com", -1).await.unwrap();
         let removed = super::cleanup_expired(&pool).await.unwrap();
         assert_eq!(removed, 1);

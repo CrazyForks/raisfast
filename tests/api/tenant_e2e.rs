@@ -43,27 +43,39 @@ async fn create_user_in_tenant(
     tenant_id: &str,
 ) {
     let hash = raisfast::services::auth::hash_password("TestPass123!").unwrap();
-    let now = chrono::Utc::now().to_rfc3339();
     let sql = format!(
-        "INSERT INTO users (document_id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
+        "INSERT INTO users (document_id, tenant_id, username, role, status, registered_via) VALUES ({}, {}, {}, {}, 'active', 'email') RETURNING id",
+        raisfast::db::dialect::ph(1),
+        raisfast::db::dialect::ph(2),
+        raisfast::db::dialect::ph(3),
+        raisfast::db::dialect::ph(4)
+    );
+    let int_id: i64 = sqlx::query_scalar(&sql)
+        .bind(document_id)
+        .bind(tenant_id)
+        .bind(username)
+        .bind(role)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let cred_data = serde_json::json!({"password_hash": hash}).to_string();
+    let (cred_doc_id, cred_now) = raisfast::utils::id::new_document_id_and_timestamp();
+    let cred_sql = format!(
+        "INSERT INTO user_credentials (document_id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
         raisfast::db::dialect::ph(1),
         raisfast::db::dialect::ph(2),
         raisfast::db::dialect::ph(3),
         raisfast::db::dialect::ph(4),
         raisfast::db::dialect::ph(5),
-        raisfast::db::dialect::ph(6),
-        raisfast::db::dialect::ph(7),
-        raisfast::db::dialect::ph(8)
+        raisfast::db::dialect::ph(6)
     );
-    sqlx::query(&sql)
-        .bind(document_id)
-        .bind(tenant_id)
+    sqlx::query(&cred_sql)
+        .bind(&cred_doc_id)
+        .bind(int_id)
         .bind(email)
-        .bind(username)
-        .bind(&hash)
-        .bind(role)
-        .bind(&now)
-        .bind(&now)
+        .bind(&cred_data)
+        .bind(&cred_now)
+        .bind(&cred_now)
         .execute(pool)
         .await
         .unwrap();

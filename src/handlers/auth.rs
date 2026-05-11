@@ -7,9 +7,10 @@ use axum::Json;
 use axum::extract::State;
 
 use crate::dto::{
-    AuthConfigResponse, BindPhoneRequest, ForgotPasswordRequest, LoginRequest, RefreshRequest,
-    RegisterRequest, ResendVerificationRequest, ResetPasswordRequest, SendSmsCodeRequest,
-    SetPasswordRequest, VerifyEmailRequest, VerifySmsRequest,
+    AuthConfigResponse, BindEmailRequest, BindPhoneRequest, CredentialResponse,
+    ForgotPasswordRequest, LoginRequest, RefreshRequest, RegisterRequest,
+    ResendVerificationRequest, ResetPasswordRequest, SendSmsCodeRequest, SetPasswordRequest,
+    VerifyEmailRequest, VerifySmsRequest,
 };
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
@@ -20,7 +21,7 @@ use crate::services::{auth, email_verification, password_reset, sms};
 pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
     use crate::middleware::rate_limit::{login_rate_limit, register_rate_limit};
     use axum::middleware::from_fn;
-    use axum::routing::{get, post as http_post};
+    use axum::routing::{delete, get, post as http_post};
 
     let r = axum::Router::new();
     let r = reg_route!(
@@ -131,7 +132,7 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
         "auth",
         ["POST"]
     );
-    reg_route!(
+    let r = reg_route!(
         r,
         registry,
         "/auth/resend-verification",
@@ -139,6 +140,33 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
         "system public",
         "auth",
         ["POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/auth/credentials/bind-email",
+        http_post(bind_email_credential),
+        "system public",
+        "auth",
+        ["POST"]
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        "/auth/credentials",
+        get(list_credentials),
+        "system public",
+        "auth",
+        ["GET"]
+    );
+    reg_route!(
+        r,
+        registry,
+        "/auth/credentials/{id}",
+        delete(delete_credential),
+        "system public",
+        "auth",
+        ["DELETE"]
     )
 }
 
@@ -186,6 +214,7 @@ pub async fn login(
         state.refresh_token_repo.as_ref(),
         &state.plugins,
         &state.eventbus,
+        &state.pool,
         &req,
         &state.config.jwt_secret,
         state.config.jwt_access_expires,
@@ -319,6 +348,7 @@ pub async fn set_password(
         state.user_repo.as_ref(),
         &state.pool,
         &auth,
+        &req.email,
         &req.new_password,
     )
     .await?;
@@ -393,5 +423,37 @@ pub async fn bind_phone(
         &req.code,
     )
     .await?;
+    Ok(ApiResponse::success(()))
+}
+
+/// 绑定邮箱密码凭证
+pub async fn bind_email_credential(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Json(req): Json<BindEmailRequest>,
+) -> AppResult<ApiResponse<()>> {
+    validation::validate(&req)?;
+    auth::bind_email_credential(&state.pool, &auth, &req.email, &req.password).await?;
+    Ok(ApiResponse::success(()))
+}
+
+/// 列出当前用户所有凭证
+pub async fn list_credentials(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+) -> AppResult<ApiResponse<Vec<CredentialResponse>>> {
+    let creds = auth::list_credentials(&state.pool, &auth).await?;
+    Ok(ApiResponse::success(
+        creds.into_iter().map(CredentialResponse::from).collect(),
+    ))
+}
+
+/// 删除指定凭证
+pub async fn delete_credential(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> AppResult<ApiResponse<()>> {
+    auth::delete_credential(&state.pool, &auth, id).await?;
     Ok(ApiResponse::success(()))
 }

@@ -1,8 +1,7 @@
 //! 用户模型与数据库查询
 //!
 //! 定义用户相关的数据结构（完整行模型、API 响应模型、请求验证结构体）
-//! 以及对 `users` 表的增删改查操作。所有密码字段使用 bcrypt 哈希存储，
-//! API 响应中不会泄露 `password_hash`。
+//! 以及对 `users` 表的增删改查操作。
 
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +12,7 @@ use crate::utils::tz::Timestamp;
 
 /// 用户完整数据库行模型
 ///
-/// 直接映射 `users` 表的所有字段，包含 `password_hash`。
+/// 直接映射 `users` 表的所有字段。
 /// 该结构体仅在内部使用，不应直接返回给前端。
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
@@ -21,61 +20,30 @@ pub struct User {
     pub id: i64,
     pub document_id: String,
     pub tenant_id: Option<String>,
-    pub email: String,
     pub username: String,
-    pub password_hash: String,
     pub role: String,
-    pub phone: Option<String>,
+    pub status: String,
+    pub registered_via: String,
     pub avatar: Option<String>,
     pub bio: Option<String>,
     pub website: Option<String>,
     pub display_name: Option<String>,
     pub slug: Option<String>,
     pub locale: Option<String>,
-    pub email_verified: i64,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
 
 crate::impl_from_row_opt_tenant!(User {
-    required { id, document_id, email, username, password_hash, role, email_verified, created_at, updated_at }
-    optional { phone, avatar, bio, website, display_name, slug, locale }
+    required { id, document_id, username, role, status, registered_via, created_at, updated_at }
+    optional { avatar, bio, website, display_name, slug, locale }
 });
-
-/// 根据邮箱查找用户
-///
-/// 返回 `Ok(Some(user))` 或 `Ok(None)`（未找到时）。
-/// `tenant_id` 为 `None` 时（超管）不过滤租户。
-pub async fn find_by_email(
-    pool: &crate::db::Pool,
-    email: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<Option<User>> {
-    let filter = tenant_filter_ph(tenant_id, 2);
-    let sql = format!("SELECT * FROM users WHERE email = {}{filter}", ph(1));
-    let mut q = sqlx::query_as::<_, User>(&sql).bind(email);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let user = q.fetch_optional(pool).await?;
-    Ok(user)
-}
 
 /// 根据用户名查找用户
 pub async fn find_by_username(pool: &crate::db::Pool, username: &str) -> AppResult<Option<User>> {
     let sql = format!("SELECT * FROM users WHERE username = {}", ph(1));
     let user = sqlx::query_as::<_, User>(&sql)
         .bind(username)
-        .fetch_optional(pool)
-        .await?;
-    Ok(user)
-}
-
-/// 根据手机号查找用户
-pub async fn find_by_phone(pool: &crate::db::Pool, phone: &str) -> AppResult<Option<User>> {
-    let sql = format!("SELECT * FROM users WHERE phone = {}", ph(1));
-    let user = sqlx::query_as::<_, User>(&sql)
-        .bind(phone)
         .fetch_optional(pool)
         .await?;
     Ok(user)
@@ -117,7 +85,7 @@ pub async fn find_by_pk(
 
 /// 创建新用户
 ///
-/// 自动生成 document_id，默认角色为 `reader`。
+/// 自动生成 document_id，默认角色为 `reader`，默认状态为 `active`。
 /// 创建完成后重新查询并返回完整用户记录。
 pub async fn create(
     pool: &crate::db::Pool,
@@ -128,33 +96,33 @@ pub async fn create(
 
     match tenant_id {
         Some(tid) => {
-            let vals = (1..=7).map(ph).collect::<Vec<_>>().join(", ");
+            let vals = (1..=5).map(ph).collect::<Vec<_>>().join(", ");
             let sql = format!(
-                "INSERT INTO users (document_id, tenant_id, email, username, password_hash, created_at, updated_at, role) VALUES ({vals}, 'reader')"
+                "INSERT INTO users (document_id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, 'reader', 'active', {})",
+                ph(6)
             );
             sqlx::query(&sql)
                 .bind(&document_id)
                 .bind(tid)
-                .bind(&cmd.email)
                 .bind(&cmd.username)
-                .bind(&cmd.password_hash)
                 .bind(now)
                 .bind(now)
+                .bind(&cmd.registered_via)
                 .execute(pool)
                 .await?;
         }
         None => {
-            let vals = (1..=6).map(ph).collect::<Vec<_>>().join(", ");
+            let vals = (1..=4).map(ph).collect::<Vec<_>>().join(", ");
             let sql = format!(
-                "INSERT INTO users (document_id, email, username, password_hash, created_at, updated_at, role) VALUES ({vals}, 'reader')"
+                "INSERT INTO users (document_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, 'reader', 'active', {})",
+                ph(5)
             );
             sqlx::query(&sql)
                 .bind(&document_id)
-                .bind(&cmd.email)
                 .bind(&cmd.username)
-                .bind(&cmd.password_hash)
                 .bind(now)
                 .bind(now)
+                .bind(&cmd.registered_via)
                 .execute(pool)
                 .await?;
         }
@@ -229,57 +197,6 @@ pub async fn update_profile(
     find_by_pk(pool, cmd.id, tenant_id)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch updated user")))
-}
-
-/// 更新用户密码
-///
-/// 直接用新的哈希值覆盖 `password_hash`，并更新 `updated_at`。
-pub async fn update_password(
-    pool: &crate::db::Pool,
-    document_id: &str,
-    new_password_hash: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<()> {
-    let now = crate::utils::tz::now_utc();
-    let filter = tenant_filter_ph(tenant_id, 3);
-    let sql = format!(
-        "UPDATE users SET password_hash = {}, updated_at = {} WHERE document_id = {}{filter}",
-        ph(1),
-        ph(2),
-        ph(3)
-    );
-    let mut q = sqlx::query(&sql)
-        .bind(new_password_hash)
-        .bind(now)
-        .bind(document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.execute(pool).await?;
-    Ok(())
-}
-
-/// 绑定手机号
-pub async fn update_phone(
-    pool: &crate::db::Pool,
-    document_id: &str,
-    phone: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<()> {
-    let now = crate::utils::tz::now_utc();
-    let filter = tenant_filter_ph(tenant_id, 3);
-    let sql = format!(
-        "UPDATE users SET phone = {}, updated_at = {} WHERE document_id = {}{filter}",
-        ph(1),
-        ph(2),
-        ph(3)
-    );
-    let mut q = sqlx::query(&sql).bind(phone).bind(now).bind(document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.execute(pool).await?;
-    Ok(())
 }
 
 /// 分页查询所有用户
@@ -375,34 +292,17 @@ mod tests {
         pool
     }
 
-    fn new_cmd(email: &str, username: &str) -> crate::commands::user::CreateUserCmd {
+    fn new_cmd(username: &str) -> crate::commands::user::CreateUserCmd {
         crate::commands::user::CreateUserCmd {
-            email: email.to_string(),
             username: username.to_string(),
-            password_hash: "$argon2id$v=19$m=19456,t=2,p=1$test$test".to_string(),
+            registered_via: "email".to_string(),
         }
-    }
-
-    #[tokio::test]
-    async fn create_and_find_by_email() {
-        let pool = setup_pool().await;
-        let user = create(&pool, &new_cmd("a@b.com", "alice"), None)
-            .await
-            .unwrap();
-        let found = find_by_email(&pool, "a@b.com", None)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(found.id, user.id);
-        assert_eq!(found.email, "a@b.com");
     }
 
     #[tokio::test]
     async fn find_by_id() {
         let pool = setup_pool().await;
-        let user = create(&pool, &new_cmd("id@b.com", "iduser"), None)
-            .await
-            .unwrap();
+        let user = create(&pool, &new_cmd("iduser"), None).await.unwrap();
         let found = super::find_by_id(&pool, &user.document_id, None)
             .await
             .unwrap()
@@ -414,23 +314,18 @@ mod tests {
     #[tokio::test]
     async fn find_by_pk() {
         let pool = setup_pool().await;
-        let user = create(&pool, &new_cmd("pk@b.com", "pkuser"), None)
-            .await
-            .unwrap();
+        let user = create(&pool, &new_cmd("pkuser"), None).await.unwrap();
         let found = super::find_by_pk(&pool, user.id, None)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(found.document_id, user.document_id);
-        assert_eq!(found.email, "pk@b.com");
     }
 
     #[tokio::test]
     async fn update_profile() {
         let pool = setup_pool().await;
-        let user = create(&pool, &new_cmd("prof@b.com", "profuser"), None)
-            .await
-            .unwrap();
+        let user = create(&pool, &new_cmd("profuser"), None).await.unwrap();
         let updated = super::update_profile(
             &pool,
             &crate::commands::user::UpdateProfileCmd {
@@ -449,34 +344,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_password() {
-        let pool = setup_pool().await;
-        let user = create(&pool, &new_cmd("pw@b.com", "pwuser"), None)
-            .await
-            .unwrap();
-        let old_hash = user.password_hash.clone();
-        super::update_password(&pool, &user.document_id, "$new_hash", None)
-            .await
-            .unwrap();
-        let found = super::find_by_id(&pool, &user.document_id, None)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_ne!(found.password_hash, old_hash);
-        assert_eq!(found.password_hash, "$new_hash");
-    }
-
-    #[tokio::test]
     async fn find_all_paginated() {
         let pool = setup_pool().await;
         for i in 0..5 {
-            create(
-                &pool,
-                &new_cmd(&format!("page{i}@b.com"), &format!("user{i}")),
-                None,
-            )
-            .await
-            .unwrap();
+            create(&pool, &new_cmd(&format!("user{i}")), None)
+                .await
+                .unwrap();
         }
         let (users, total) = find_all(&pool, 1, 3, None).await.unwrap();
         assert_eq!(users.len(), 3);
@@ -486,9 +359,7 @@ mod tests {
     #[tokio::test]
     async fn update_role() {
         let pool = setup_pool().await;
-        let user = create(&pool, &new_cmd("role@b.com", "roleuser"), None)
-            .await
-            .unwrap();
+        let user = create(&pool, &new_cmd("roleuser"), None).await.unwrap();
         assert_eq!(user.role, "reader");
         let updated = super::update_role(&pool, &user.document_id, "author", None)
             .await

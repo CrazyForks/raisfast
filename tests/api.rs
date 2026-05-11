@@ -418,18 +418,33 @@ pub(crate) async fn create_admin(pool: &raisfast::db::Pool) -> (i64, String) {
     let hash = raisfast::services::auth::hash_password("AdminPass123!").unwrap();
     let doc_id = uuid::Uuid::now_v7().to_string();
     let sql = format!(
-        "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'admin') RETURNING id",
-        raisfast::db::dialect::ph(1),
-        raisfast::db::dialect::ph(2),
-        raisfast::db::dialect::ph(3),
-        raisfast::db::dialect::ph(4)
+        "INSERT INTO users (document_id, username, role, status, registered_via) VALUES ({}, 'testadmin', 'admin', 'active', 'email') RETURNING id",
+        raisfast::db::dialect::ph(1)
     );
     let int_id: i64 = sqlx::query_scalar(&sql)
         .bind(&doc_id)
-        .bind("admin@test.com")
-        .bind("testadmin")
-        .bind(&hash)
         .fetch_one(pool)
+        .await
+        .unwrap();
+    let cred_data = serde_json::json!({"password_hash": hash}).to_string();
+    let (cred_doc_id, cred_now) = raisfast::utils::id::new_document_id_and_timestamp();
+    let cred_sql = format!(
+        "INSERT INTO user_credentials (document_id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
+        raisfast::db::dialect::ph(1),
+        raisfast::db::dialect::ph(2),
+        raisfast::db::dialect::ph(3),
+        raisfast::db::dialect::ph(4),
+        raisfast::db::dialect::ph(5),
+        raisfast::db::dialect::ph(6)
+    );
+    sqlx::query(&cred_sql)
+        .bind(&cred_doc_id)
+        .bind(int_id)
+        .bind("admin@test.com")
+        .bind(&cred_data)
+        .bind(&cred_now)
+        .bind(&cred_now)
+        .execute(pool)
         .await
         .unwrap();
     (int_id, doc_id)
@@ -439,18 +454,33 @@ pub(crate) async fn create_author(pool: &raisfast::db::Pool) -> (i64, String) {
     let hash = raisfast::services::auth::hash_password("AuthorPass123!").unwrap();
     let doc_id = uuid::Uuid::now_v7().to_string();
     let sql = format!(
-        "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'author') RETURNING id",
-        raisfast::db::dialect::ph(1),
-        raisfast::db::dialect::ph(2),
-        raisfast::db::dialect::ph(3),
-        raisfast::db::dialect::ph(4)
+        "INSERT INTO users (document_id, username, role, status, registered_via) VALUES ({}, 'testauthor', 'author', 'active', 'email') RETURNING id",
+        raisfast::db::dialect::ph(1)
     );
     let int_id: i64 = sqlx::query_scalar(&sql)
         .bind(&doc_id)
-        .bind("author@test.com")
-        .bind("testauthor")
-        .bind(&hash)
         .fetch_one(pool)
+        .await
+        .unwrap();
+    let cred_data = serde_json::json!({"password_hash": hash}).to_string();
+    let (cred_doc_id, cred_now) = raisfast::utils::id::new_document_id_and_timestamp();
+    let cred_sql = format!(
+        "INSERT INTO user_credentials (document_id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
+        raisfast::db::dialect::ph(1),
+        raisfast::db::dialect::ph(2),
+        raisfast::db::dialect::ph(3),
+        raisfast::db::dialect::ph(4),
+        raisfast::db::dialect::ph(5),
+        raisfast::db::dialect::ph(6)
+    );
+    sqlx::query(&cred_sql)
+        .bind(&cred_doc_id)
+        .bind(int_id)
+        .bind("author@test.com")
+        .bind(&cred_data)
+        .bind(&cred_now)
+        .bind(&cred_now)
+        .execute(pool)
         .await
         .unwrap();
     (int_id, doc_id)

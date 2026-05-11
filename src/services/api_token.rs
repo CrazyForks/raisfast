@@ -248,26 +248,20 @@ mod tests {
         std::sync::Arc::new(crate::cache::MemoryCache::new())
     }
 
-    async fn insert_user(pool: &crate::db::Pool, document_id: &str, role: &str) -> i64 {
-        let hash = "$argon2id$v=19$m=19456,t=2,p=1$test$test".to_string();
-        let sql = format!(
-            "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, {}) RETURNING id",
-            crate::db::dialect::ph(1),
-            crate::db::dialect::ph(2),
-            crate::db::dialect::ph(3),
-            crate::db::dialect::ph(4),
-            crate::db::dialect::ph(5)
-        );
-        let (id,): (i64,) = sqlx::query_as(&sql)
-            .bind(document_id)
-            .bind(format!("{document_id}@test.com"))
-            .bind(format!("{document_id}user"))
-            .bind(&hash)
-            .bind(role)
-            .fetch_one(pool)
+    async fn insert_user(pool: &crate::db::Pool, role: &str) -> crate::models::user::User {
+        let user = crate::models::user::create(
+            pool,
+            &crate::commands::user::CreateUserCmd {
+                username: crate::utils::id::new_document_id(),
+                registered_via: "test".to_string(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        crate::models::user::update_role(pool, &user.document_id, role, None)
             .await
-            .unwrap();
-        id
+            .unwrap()
     }
 
     #[test]
@@ -396,10 +390,10 @@ mod tests {
     #[tokio::test]
     async fn create_token_success_with_valid_scopes() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "u1", "author").await;
+        let user = insert_user(&pool, "author").await;
         let auth = crate::middleware::auth::AuthUser::from_parts(
-            Some("u1".to_string()),
-            Some(user_id),
+            Some(user.document_id.clone()),
+            Some(user.id),
             "author".to_string(),
             Some("default".to_string()),
         );
@@ -422,13 +416,13 @@ mod tests {
     #[tokio::test]
     async fn verify_api_token_expired_is_deleted() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "u-exp", "reader").await;
+        let user = insert_user(&pool, "reader").await;
         let plain = "rblog_expired_token_for_test";
         let token_hash = hash_token(plain);
         let past = "2000-01-01T00:00:00+00:00";
         crate::models::api_token::create(
             &pool,
-            user_id,
+            user.id,
             "Expired",
             &token_hash,
             &plain[..8],
@@ -450,13 +444,13 @@ mod tests {
     #[tokio::test]
     async fn verify_api_token_not_expired_succeeds() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "u-fut", "admin").await;
+        let user = insert_user(&pool, "admin").await;
         let plain = "rblog_valid_future_token_test";
         let token_hash = hash_token(plain);
         let future = "2099-12-31T23:59:59+00:00";
         crate::models::api_token::create(
             &pool,
-            user_id,
+            user.id,
             "Valid",
             &token_hash,
             &plain[..8],
@@ -466,9 +460,9 @@ mod tests {
         .await
         .unwrap();
         let cache = test_cache();
-        let (user_id, _user_int_id, role, tenant_id) =
+        let (uid, _user_int_id, role, tenant_id) =
             verify_api_token(&pool, &*cache, plain).await.unwrap();
-        assert_eq!(user_id, "u-fut");
+        assert_eq!(uid, user.document_id);
         assert_eq!(role, "admin");
         assert!(tenant_id.is_none());
         assert!(tenant_id.is_none());
@@ -477,12 +471,12 @@ mod tests {
     #[tokio::test]
     async fn verify_api_token_updates_last_used() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "u-lu", "reader").await;
+        let user = insert_user(&pool, "reader").await;
         let plain = "rblog_last_used_test_token";
         let token_hash = hash_token(plain);
         crate::models::api_token::create(
             &pool,
-            user_id,
+            user.id,
             "TouchTest",
             &token_hash,
             &plain[..8],
@@ -514,10 +508,10 @@ mod tests {
     #[tokio::test]
     async fn delete_token_by_owner_succeeds() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "u-del", "reader").await;
+        let user = insert_user(&pool, "reader").await;
         let row = crate::models::api_token::create(
             &pool,
-            user_id,
+            user.id,
             "Own",
             "h-del",
             "rblog_d",
@@ -526,7 +520,8 @@ mod tests {
         )
         .await
         .unwrap();
-        let auth = crate::middleware::auth::AuthUser::new_test("u-del", "reader", "default");
+        let auth =
+            crate::middleware::auth::AuthUser::new_test(&user.document_id, "reader", "default");
         let cache = test_cache();
         delete_token(&pool, &*cache, &row.document_id, &auth)
             .await
@@ -542,11 +537,11 @@ mod tests {
     #[tokio::test]
     async fn delete_token_by_admin_succeeds() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "u-other", "reader").await;
-        let _admin_id = insert_user(&pool, "admin-user", "admin").await;
+        let user = insert_user(&pool, "reader").await;
+        let admin = insert_user(&pool, "admin").await;
         let row = crate::models::api_token::create(
             &pool,
-            user_id,
+            user.id,
             "Target",
             "h-adm",
             "rblog_a",
@@ -555,7 +550,8 @@ mod tests {
         )
         .await
         .unwrap();
-        let auth = crate::middleware::auth::AuthUser::new_test("admin-user", "admin", "default");
+        let auth =
+            crate::middleware::auth::AuthUser::new_test(&admin.document_id, "admin", "default");
         let cache = test_cache();
         delete_token(&pool, &*cache, &row.document_id, &auth)
             .await
@@ -565,10 +561,10 @@ mod tests {
     #[tokio::test]
     async fn delete_token_non_owner_non_admin_forbidden() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "u-fb", "reader").await;
+        let user = insert_user(&pool, "reader").await;
         let row = crate::models::api_token::create(
             &pool,
-            user_id,
+            user.id,
             "FB",
             "h-fb",
             "rblog_f",
@@ -601,12 +597,12 @@ mod tests {
     #[tokio::test]
     async fn verify_api_token_cache_hit_skips_db() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "u-cache", "reader").await;
+        let user = insert_user(&pool, "reader").await;
         let plain = "rblog_cache_hit_test_token";
         let token_hash = hash_token(plain);
         crate::models::api_token::create(
             &pool,
-            user_id,
+            user.id,
             "Cached",
             &token_hash,
             &plain[..8],
@@ -618,7 +614,7 @@ mod tests {
 
         let cache = test_cache();
         let (uid1, _, _, _) = verify_api_token(&pool, &*cache, plain).await.unwrap();
-        assert_eq!(uid1, "u-cache");
+        assert_eq!(uid1, user.document_id);
 
         let cache_key = format!("{CACHE_PREFIX}{token_hash}");
         assert!(cache.get(&cache_key).await.is_some());
@@ -635,19 +631,19 @@ mod tests {
         .unwrap();
 
         let (uid2, _, _, _) = verify_api_token(&pool, &*cache, plain).await.unwrap();
-        assert_eq!(uid2, "u-cache");
+        assert_eq!(uid2, user.document_id);
     }
 
     #[tokio::test]
     async fn verify_api_token_expired_cache_clears() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "u-cexp", "reader").await;
+        let user = insert_user(&pool, "reader").await;
         let plain = "rblog_cache_expired_test";
         let token_hash = hash_token(plain);
         let past = "2000-01-01T00:00:00+00:00";
         crate::models::api_token::create(
             &pool,
-            user_id,
+            user.id,
             "CacheExp",
             &token_hash,
             &plain[..8],
@@ -660,8 +656,8 @@ mod tests {
         let cache = test_cache();
         let cache_key = format!("{CACHE_PREFIX}{token_hash}");
         let cached = serde_json::to_string(&CachedTokenAuth {
-            user_id: "u-cexp".into(),
-            user_int_id: 0,
+            user_id: user.document_id.clone(),
+            user_int_id: user.id,
             role: "reader".into(),
             tenant_id: Some("default".to_string()),
             expires_at: Some(past.parse().unwrap()),

@@ -17,15 +17,13 @@
 CREATE TABLE IF NOT EXISTS users (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,
-    email VARCHAR(255) UNIQUE NOT NULL,
     username VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(50) NOT NULL DEFAULT 'reader',
     avatar VARCHAR(500),
     bio TEXT,
     website VARCHAR(500),
-    phone VARCHAR(50),
-    email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    status VARCHAR(50) NOT NULL DEFAULT 'active',
+    registered_via VARCHAR(100) NOT NULL,
     display_name VARCHAR(100),
     slug VARCHAR(100) UNIQUE,
     locale VARCHAR(10),
@@ -33,9 +31,63 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_username ON users(username);
-CREATE UNIQUE INDEX idx_users_phone ON users(phone);
+CREATE UNIQUE INDEX idx_users_slug ON users(slug);
+
+-- 用户凭据
+CREATE TABLE IF NOT EXISTS user_credentials (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    user_id BIGINT NOT NULL,
+    auth_type VARCHAR(100) NOT NULL,
+    identifier VARCHAR(500) NOT NULL,
+    credential_data TEXT NOT NULL,
+    verified BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    UNIQUE KEY uq_credential_type_id (auth_type, identifier),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_user_credentials_user ON user_credentials(user_id);
+CREATE INDEX idx_user_credentials_type_id ON user_credentials(auth_type, identifier);
+CREATE INDEX idx_user_credentials_type ON user_credentials(auth_type);
+
+-- OAuth 账号绑定
+CREATE TABLE IF NOT EXISTS oauth_accounts (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    user_id BIGINT NOT NULL,
+    provider VARCHAR(50) NOT NULL,
+    provider_user_id VARCHAR(255) NOT NULL,
+    email VARCHAR(255),
+    display_name VARCHAR(255),
+    avatar_url VARCHAR(500),
+    access_token VARCHAR(1024),
+    refresh_token VARCHAR(1024),
+    token_expires_at DATETIME(3),
+    profile TEXT,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    UNIQUE KEY uq_oauth_provider (provider, provider_user_id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_oauth_accounts_user ON oauth_accounts(user_id);
+CREATE INDEX idx_oauth_accounts_provider ON oauth_accounts(provider, provider_user_id);
+
+-- OAuth 短期 state 存储（PKCE）
+CREATE TABLE IF NOT EXISTS oauth_states (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    provider VARCHAR(50) NOT NULL,
+    code_verifier VARCHAR(255) NOT NULL,
+    user_id BIGINT,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    expires_at DATETIME(3) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_oauth_states_expires ON oauth_states(expires_at);
 
 -- Refresh Tokens
 CREATE TABLE IF NOT EXISTS refresh_tokens (
@@ -190,42 +242,6 @@ CREATE INDEX idx_revisions_ct_record
     ON content_revisions(content_type, record_id);
 CREATE INDEX idx_revisions_ct_record_rev
     ON content_revisions(content_type, record_id, revision_number DESC);
-
--- OAuth 账号绑定
-CREATE TABLE IF NOT EXISTS oauth_accounts (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    document_id VARCHAR(36) NOT NULL UNIQUE,
-    user_id BIGINT NOT NULL,
-    provider VARCHAR(50) NOT NULL,
-    provider_user_id VARCHAR(255) NOT NULL,
-    email VARCHAR(255),
-    display_name VARCHAR(255),
-    avatar_url VARCHAR(500),
-    access_token VARCHAR(1024),
-    refresh_token VARCHAR(1024),
-    token_expires_at DATETIME(3),
-    profile TEXT,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    UNIQUE KEY uq_oauth_provider (provider, provider_user_id),
-    FOREIGN KEY (user_id) REFERENCES users(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_oauth_accounts_user ON oauth_accounts(user_id);
-CREATE INDEX idx_oauth_accounts_provider ON oauth_accounts(provider, provider_user_id);
-
--- OAuth 短期 state 存储（PKCE）
-CREATE TABLE IF NOT EXISTS oauth_states (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    document_id VARCHAR(36) NOT NULL UNIQUE,
-    provider VARCHAR(50) NOT NULL,
-    code_verifier VARCHAR(255) NOT NULL,
-    user_id BIGINT,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    expires_at DATETIME(3) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE INDEX idx_oauth_states_expires ON oauth_states(expires_at);
 
 -- 密码重置令牌
 CREATE TABLE IF NOT EXISTS password_reset_tokens (

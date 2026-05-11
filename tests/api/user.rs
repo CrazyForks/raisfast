@@ -7,7 +7,7 @@ async fn get_me_success() {
     let (status, body): (StatusCode, Value) =
         send(&mut app, get_auth("/api/v1/users/me", &access)).await;
     assert!(status.is_success());
-    assert_eq!(body["data"]["email"], "me@test.com");
+    assert_eq!(body["data"]["username"], "meuser");
 }
 
 #[tokio::test]
@@ -83,14 +83,14 @@ async fn get_user_by_id() {
     let (mut app, state) = test_app().await;
     let _ = register_and_login(&mut app, "pub@test.com", "pubuser", "Password123").await;
     let user_id: String =
-        sqlx::query_scalar("SELECT document_id FROM users WHERE email = 'pub@test.com'")
+        sqlx::query_scalar("SELECT document_id FROM users WHERE username = 'pubuser'")
             .fetch_one(&state.pool)
             .await
             .unwrap();
     let (status, body): (StatusCode, Value) =
         send(&mut app, get_req(&format!("/api/v1/users/{user_id}"))).await;
     assert!(status.is_success());
-    assert_eq!(body["data"]["email"], "pub@test.com");
+    assert_eq!(body["data"]["username"], "pubuser");
 }
 
 #[tokio::test]
@@ -163,7 +163,7 @@ async fn admin_can_update_role() {
     let admin_token = make_token(&admin_id.1, admin_id.0, "admin");
     let _ = register_and_login(&mut app, "roleuser@test.com", "roleuser", "Password123").await;
     let reader_id: String =
-        sqlx::query_scalar("SELECT document_id FROM users WHERE email = 'roleuser@test.com'")
+        sqlx::query_scalar("SELECT document_id FROM users WHERE username = 'roleuser'")
             .fetch_one(&state.pool)
             .await
             .unwrap();
@@ -185,7 +185,7 @@ async fn get_user_by_id_returns_public_info() {
     let (mut app, state) = test_app().await;
     let _ = register_and_login(&mut app, "pubinfo@test.com", "pubinfouser", "Password123").await;
     let user_id: String =
-        sqlx::query_scalar("SELECT document_id FROM users WHERE email = 'pubinfo@test.com'")
+        sqlx::query_scalar("SELECT document_id FROM users WHERE username = 'pubinfouser'")
             .fetch_one(&state.pool)
             .await
             .unwrap();
@@ -193,7 +193,6 @@ async fn get_user_by_id_returns_public_info() {
         send(&mut app, get_req(&format!("/api/v1/users/{user_id}"))).await;
     assert!(status.is_success());
     assert_eq!(body["data"]["id"], user_id);
-    assert_eq!(body["data"]["email"], "pubinfo@test.com");
     assert_eq!(body["data"]["username"], "pubinfouser");
     assert!(body["data"]["created_at"].is_string());
     assert!(body["data"]["updated_at"].is_string());

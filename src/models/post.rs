@@ -699,7 +699,7 @@ mod tests {
     async fn create_user(pool: &crate::db::Pool) -> i64 {
         let uid = uuid::Uuid::now_v7().to_string();
         sqlx::query(
-            "INSERT INTO users (document_id, username, email, password_hash, role) VALUES (?, 'testuser', 'test@test.com', 'hash', 'author')",
+            "INSERT INTO users (document_id, username, role, status, registered_via) VALUES (?, 'testuser', 'author', 'active', 'email')",
         )
         .bind(&uid)
         .execute(pool)

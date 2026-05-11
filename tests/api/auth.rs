@@ -13,7 +13,6 @@ async fn register_success() {
     .await;
     assert!(status.is_success(), "{status} {body:?}");
     assert_eq!(body["code"], 0);
-    assert_eq!(body["data"]["email"], "reg@test.com");
     assert_eq!(body["data"]["username"], "reguser");
     assert_eq!(body["data"]["role"], "reader");
 }
@@ -185,7 +184,6 @@ async fn register_then_login_and_access_me() {
 
     let (status, body) = send(&mut app, get_auth("/api/v1/users/me", &access)).await;
     assert!(status.is_success(), "{status} {body:?}");
-    assert_eq!(body["data"]["email"], "lifecycle@test.com");
     assert_eq!(body["data"]["username"], "lifecycleuser");
 }
 

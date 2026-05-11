@@ -150,30 +150,24 @@ mod tests {
         pool
     }
 
-    async fn insert_user(pool: &crate::db::Pool, document_id: &str) -> i64 {
-        let hash = "$argon2id$v=19$m=19456,t=2,p=1$test$test".to_string();
-        let sql = format!(
-            "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'admin') RETURNING id",
-            ph(1),
-            ph(2),
-            ph(3),
-            ph(4)
-        );
-        let (id,): (i64,) = sqlx::query_as(&sql)
-            .bind(document_id)
-            .bind("model-test@test.com")
-            .bind("modeltestuser")
-            .bind(&hash)
-            .fetch_one(pool)
-            .await
-            .unwrap();
-        id
+    async fn insert_user(pool: &crate::db::Pool) -> i64 {
+        let user = crate::models::user::create(
+            pool,
+            &crate::commands::user::CreateUserCmd {
+                username: crate::utils::id::new_document_id(),
+                registered_via: "test".to_string(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        user.id
     }
 
     #[tokio::test]
     async fn create_and_find_by_hash() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "user-1-doc").await;
+        let user_id = insert_user(&pool).await;
         let row = create(
             &pool,
             user_id,
@@ -212,7 +206,7 @@ mod tests {
     #[tokio::test]
     async fn list_by_user_returns_tokens() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "user-2-doc").await;
+        let user_id = insert_user(&pool).await;
         create(&pool, user_id, "First", "h1", "rblog_a", "[\"read\"]", None)
             .await
             .unwrap();
@@ -245,7 +239,7 @@ mod tests {
     #[tokio::test]
     async fn delete_by_id_removes_token() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "user-3-doc").await;
+        let user_id = insert_user(&pool).await;
         let row = create(&pool, user_id, "Del", "h3", "rblog_c", "[\"read\"]", None)
             .await
             .unwrap();
@@ -257,7 +251,7 @@ mod tests {
     #[tokio::test]
     async fn touch_last_used_updates_field() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "user-4-doc").await;
+        let user_id = insert_user(&pool).await;
         let row = create(&pool, user_id, "Touch", "h4", "rblog_d", "[\"read\"]", None)
             .await
             .unwrap();
@@ -271,7 +265,7 @@ mod tests {
     #[tokio::test]
     async fn create_with_expires_at() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "user-5-doc").await;
+        let user_id = insert_user(&pool).await;
         let row = create(
             &pool,
             user_id,
@@ -292,7 +286,7 @@ mod tests {
     #[tokio::test]
     async fn list_by_user_does_not_include_hash() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool, "user-6-doc").await;
+        let user_id = insert_user(&pool).await;
         create(
             &pool,
             user_id,

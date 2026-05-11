@@ -31,7 +31,7 @@ pub async fn trigger_email_verification(
 
 /// 验证邮箱。
 ///
-/// 校验令牌有效性，标记令牌已使用，更新 users.email_verified = 1。
+/// 校验令牌有效性，标记令牌已使用，更新 user_credentials.verified = 1。
 pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> {
     let verification = crate::models::email_verification::find_by_token(pool, token)
         .await?
@@ -55,7 +55,7 @@ pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> 
             .await?;
 
         let sql = format!(
-            "UPDATE users SET email_verified = 1, updated_at = {} WHERE id = {}",
+            "UPDATE user_credentials SET verified = 1, updated_at = {} WHERE user_id = {} AND auth_type = 'email'",
             crate::db::dialect::ph(1),
             crate::db::dialect::ph(2)
         );
@@ -74,20 +74,20 @@ pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> 
 /// 只有未验证的用户才能重新发送。限流由 sms_codes 的 rate_limit 逻辑类似处理。
 pub async fn resend_verification(
     pool: &crate::db::Pool,
-    user_repo: &dyn UserRepository,
+    _user_repo: &dyn UserRepository,
     eventbus: &EventBus,
     email: &str,
 ) -> AppResult<()> {
-    let user = user_repo
-        .find_by_email(email, None)
-        .await?
-        .ok_or_else(|| AppError::not_found("user"))?;
+    let cred =
+        crate::models::user_credential::find_by_auth_type_and_identifier(pool, "email", email)
+            .await?
+            .ok_or_else(|| AppError::not_found("user"))?;
 
-    if user.email_verified == 1 {
+    if cred.verified == 1 {
         return Err(AppError::BadRequest("email_already_verified".into()));
     }
 
-    trigger_email_verification(pool, eventbus, user.id, &user.email).await
+    trigger_email_verification(pool, eventbus, cred.user_id, &cred.identifier).await
 }
 
 #[cfg(test)]
@@ -111,16 +111,20 @@ mod tests {
 
     async fn insert_user(pool: &crate::db::Pool, email: &str) -> crate::models::user::User {
         let repo = SqlxUserRepository::new(pool.clone());
-        repo.create(
-            CreateUserCmd {
-                email: email.to_string(),
-                username: email.to_string(),
-                password_hash: "$argon2id$v=19$m=19456,t=2,p=1$test$test".into(),
-            },
-            None,
-        )
-        .await
-        .unwrap()
+        let user = repo
+            .create(
+                CreateUserCmd {
+                    username: email.to_string(),
+                    registered_via: "email".to_string(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        crate::models::user_credential::create(pool, user.id, "email", email, &crate::models::user_credential::wrap_password_hash("hash"), false)
+            .await
+            .unwrap();
+        user
     }
 
     #[tokio::test]
@@ -128,7 +132,7 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "verify@test.com").await;
         let eb = eventbus();
-        super::trigger_email_verification(&pool, &eb, user.id, &user.email)
+        super::trigger_email_verification(&pool, &eb, user.id, "verify@test.com")
             .await
             .unwrap();
         let row =
@@ -146,7 +150,7 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "replace@test.com").await;
         let eb = eventbus();
-        super::trigger_email_verification(&pool, &eb, user.id, &user.email)
+        super::trigger_email_verification(&pool, &eb, user.id, "replace@test.com")
             .await
             .unwrap();
         let sql = format!(
@@ -159,7 +163,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count_before, 1);
-        super::trigger_email_verification(&pool, &eb, user.id, &user.email)
+        super::trigger_email_verification(&pool, &eb, user.id, "replace@test.com")
             .await
             .unwrap();
         let (count_after,): (i64,) = sqlx::query_as(&sql)
@@ -175,7 +179,7 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "v@test.com").await;
         let eb = eventbus();
-        super::trigger_email_verification(&pool, &eb, user.id, &user.email)
+        super::trigger_email_verification(&pool, &eb, user.id, "v@test.com")
             .await
             .unwrap();
         let sql = format!(
@@ -188,12 +192,15 @@ mod tests {
             .await
             .unwrap();
         super::verify_email(&pool, &token_str).await.unwrap();
-        let updated = SqlxUserRepository::new(pool.clone())
-            .find_by_id(&user.document_id, None)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(updated.email_verified, 1);
+        let cred = crate::models::user_credential::find_by_auth_type_and_identifier(
+            &pool,
+            "email",
+            "v@test.com",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(cred.verified, 1);
     }
 
     #[tokio::test]
@@ -212,7 +219,7 @@ mod tests {
         let user = insert_user(&pool, "resend@test.com").await;
         let eb = eventbus();
         let repo = SqlxUserRepository::new(pool.clone());
-        super::resend_verification(&pool, &repo, &eb, &user.email)
+        super::resend_verification(&pool, &repo, &eb, "resend@test.com")
             .await
             .unwrap();
         let sql = format!(
@@ -232,7 +239,7 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "verified@test.com").await;
         let eb = eventbus();
-        super::trigger_email_verification(&pool, &eb, user.id, &user.email)
+        super::trigger_email_verification(&pool, &eb, user.id, "verified@test.com")
             .await
             .unwrap();
         let sql = format!(
@@ -246,7 +253,7 @@ mod tests {
             .unwrap();
         super::verify_email(&pool, &token_str).await.unwrap();
         let repo = SqlxUserRepository::new(pool.clone());
-        let err = super::resend_verification(&pool, &repo, &eb, &user.email)
+        let err = super::resend_verification(&pool, &repo, &eb, "verified@test.com")
             .await
             .unwrap_err();
         let msg = err.to_string();

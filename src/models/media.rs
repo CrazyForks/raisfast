@@ -291,23 +291,17 @@ mod tests {
     }
 
     async fn insert_user(pool: &crate::db::Pool) -> i64 {
-        let doc_id = crate::utils::id::new_document_id();
-        let sql = format!(
-            "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'admin') RETURNING id",
-            crate::db::dialect::ph(1),
-            crate::db::dialect::ph(2),
-            crate::db::dialect::ph(3),
-            crate::db::dialect::ph(4)
-        );
-        let (id,): (i64,) = sqlx::query_as(&sql)
-            .bind(&doc_id)
-            .bind("media-test@test.com")
-            .bind("mediauser")
-            .bind("$argon2id$v=19$m=19456,t=2,p=1$test$test")
-            .fetch_one(pool)
-            .await
-            .unwrap();
-        id
+        let user = crate::models::user::create(
+            pool,
+            &crate::commands::user::CreateUserCmd {
+                username: "mediauser".to_string(),
+                registered_via: "test".to_string(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        user.id
     }
 
     fn make_cmd(user_id: i64, filename: &str) -> CreateMediaCmd {

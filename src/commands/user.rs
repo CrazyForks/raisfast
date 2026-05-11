@@ -2,9 +2,8 @@
 
 /// 创建用户
 pub struct CreateUserCmd {
-    pub email: String,
     pub username: String,
-    pub password_hash: String,
+    pub registered_via: String,
 }
 
 /// 更新用户资料

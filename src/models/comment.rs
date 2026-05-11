@@ -476,21 +476,17 @@ mod tests {
         }
 
         async fn insert_user(pool: &crate::db::Pool) -> i64 {
-            let doc_id = crate::utils::id::new_document_id();
-            sqlx::query(
-                "INSERT INTO users (document_id, username, email, password_hash, role) VALUES (?, 'testuser', 'test@test.com', 'hash', 'author')",
+            let user = crate::models::user::create(
+                pool,
+                &crate::commands::user::CreateUserCmd {
+                    username: "testuser".to_string(),
+                    registered_via: "test".to_string(),
+                },
+                None,
             )
-            .bind(&doc_id)
-            .execute(pool)
             .await
             .unwrap();
-
-            let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
-                .bind(&doc_id)
-                .fetch_one(pool)
-                .await
-                .unwrap();
-            id
+            user.id
         }
 
         async fn insert_post(pool: &crate::db::Pool, user_id: i64) -> i64 {

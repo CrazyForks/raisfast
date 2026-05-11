@@ -104,7 +104,7 @@ mod tests {
     async fn create_user(pool: &crate::db::Pool) -> i64 {
         let document_id = uuid::Uuid::now_v7().to_string();
         let (user_id,): (i64,) = sqlx::query_as(
-            "INSERT INTO users (document_id, username, email, password_hash, role) VALUES (?, 'testuser', 't@t.com', 'hash', 'author') RETURNING id",
+            "INSERT INTO users (document_id, username, role, status, registered_via) VALUES (?, 'testuser', 'author', 'active', 'email') RETURNING id",
         )
         .bind(&document_id)
         .fetch_one(pool)

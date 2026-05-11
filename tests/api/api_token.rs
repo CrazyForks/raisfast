@@ -108,7 +108,7 @@ async fn api_token_authenticates_as_user() {
         status.is_success(),
         "api token auth failed: {status} {body:?}"
     );
-    assert_eq!(body["data"]["email"].as_str().unwrap(), "admin@test.com");
+    assert_eq!(body["data"]["username"].as_str().unwrap(), "testadmin");
 }
 
 #[tokio::test]
@@ -183,18 +183,33 @@ async fn delete_token_non_owner_forbidden() {
     let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
     let reader_doc_id = uuid::Uuid::now_v7().to_string();
     let sql = format!(
-        "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'reader') RETURNING id",
-        raisfast::db::dialect::ph(1),
-        raisfast::db::dialect::ph(2),
-        raisfast::db::dialect::ph(3),
-        raisfast::db::dialect::ph(4)
+        "INSERT INTO users (document_id, username, role, status, registered_via) VALUES ({}, 'tokenreader', 'reader', 'active', 'email') RETURNING id",
+        raisfast::db::dialect::ph(1)
     );
     let reader_int_id: i64 = sqlx::query_scalar(&sql)
         .bind(&reader_doc_id)
-        .bind("reader-token@test.com")
-        .bind("tokenreader")
-        .bind(&reader_hash)
         .fetch_one(&pool)
+        .await
+        .unwrap();
+    let cred_data = serde_json::json!({"password_hash": reader_hash}).to_string();
+    let (cred_doc_id, cred_now) = raisfast::utils::id::new_document_id_and_timestamp();
+    let cred_sql = format!(
+        "INSERT INTO user_credentials (document_id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
+        raisfast::db::dialect::ph(1),
+        raisfast::db::dialect::ph(2),
+        raisfast::db::dialect::ph(3),
+        raisfast::db::dialect::ph(4),
+        raisfast::db::dialect::ph(5),
+        raisfast::db::dialect::ph(6)
+    );
+    sqlx::query(&cred_sql)
+        .bind(&cred_doc_id)
+        .bind(reader_int_id)
+        .bind("reader-token@test.com")
+        .bind(&cred_data)
+        .bind(&cred_now)
+        .bind(&cred_now)
+        .execute(&pool)
         .await
         .unwrap();
     let reader_tok = make_token(&reader_doc_id, reader_int_id, "reader");
@@ -213,18 +228,33 @@ async fn admin_can_delete_other_users_token() {
     let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
     let reader_doc_id = uuid::Uuid::now_v7().to_string();
     let sql = format!(
-        "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'reader') RETURNING id",
-        raisfast::db::dialect::ph(1),
-        raisfast::db::dialect::ph(2),
-        raisfast::db::dialect::ph(3),
-        raisfast::db::dialect::ph(4)
+        "INSERT INTO users (document_id, username, role, status, registered_via) VALUES ({}, 'readeradmindel', 'reader', 'active', 'email') RETURNING id",
+        raisfast::db::dialect::ph(1)
     );
     let reader_int_id: i64 = sqlx::query_scalar(&sql)
         .bind(&reader_doc_id)
-        .bind("reader-admin-del@test.com")
-        .bind("readeradmindel")
-        .bind(&reader_hash)
         .fetch_one(&pool)
+        .await
+        .unwrap();
+    let cred_data = serde_json::json!({"password_hash": reader_hash}).to_string();
+    let (cred_doc_id, cred_now) = raisfast::utils::id::new_document_id_and_timestamp();
+    let cred_sql = format!(
+        "INSERT INTO user_credentials (document_id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
+        raisfast::db::dialect::ph(1),
+        raisfast::db::dialect::ph(2),
+        raisfast::db::dialect::ph(3),
+        raisfast::db::dialect::ph(4),
+        raisfast::db::dialect::ph(5),
+        raisfast::db::dialect::ph(6)
+    );
+    sqlx::query(&cred_sql)
+        .bind(&cred_doc_id)
+        .bind(reader_int_id)
+        .bind("reader-admin-del@test.com")
+        .bind(&cred_data)
+        .bind(&cred_now)
+        .bind(&cred_now)
+        .execute(&pool)
         .await
         .unwrap();
     let reader_tok = make_token(&reader_doc_id, reader_int_id, "reader");
@@ -467,18 +497,33 @@ async fn each_user_sees_only_own_tokens() {
     let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
     let reader_doc_id = uuid::Uuid::now_v7().to_string();
     let sql = format!(
-        "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, 'reader') RETURNING id",
-        raisfast::db::dialect::ph(1),
-        raisfast::db::dialect::ph(2),
-        raisfast::db::dialect::ph(3),
-        raisfast::db::dialect::ph(4)
+        "INSERT INTO users (document_id, username, role, status, registered_via) VALUES ({}, 'isolationreader', 'reader', 'active', 'email') RETURNING id",
+        raisfast::db::dialect::ph(1)
     );
     let reader_int_id: i64 = sqlx::query_scalar(&sql)
         .bind(&reader_doc_id)
-        .bind("isolation@test.com")
-        .bind("isolationreader")
-        .bind(&reader_hash)
         .fetch_one(&pool)
+        .await
+        .unwrap();
+    let cred_data = serde_json::json!({"password_hash": reader_hash}).to_string();
+    let (cred_doc_id, cred_now) = raisfast::utils::id::new_document_id_and_timestamp();
+    let cred_sql = format!(
+        "INSERT INTO user_credentials (document_id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
+        raisfast::db::dialect::ph(1),
+        raisfast::db::dialect::ph(2),
+        raisfast::db::dialect::ph(3),
+        raisfast::db::dialect::ph(4),
+        raisfast::db::dialect::ph(5),
+        raisfast::db::dialect::ph(6)
+    );
+    sqlx::query(&cred_sql)
+        .bind(&cred_doc_id)
+        .bind(reader_int_id)
+        .bind("isolation@test.com")
+        .bind(&cred_data)
+        .bind(&cred_now)
+        .bind(&cred_now)
+        .execute(&pool)
         .await
         .unwrap();
     let reader_tok = make_token(&reader_doc_id, reader_int_id, "reader");

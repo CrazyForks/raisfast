@@ -36,3 +36,4 @@ pub mod sms_code;
 pub mod tag;
 pub mod tenant;
 pub mod user;
+pub mod user_credential;

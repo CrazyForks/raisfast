@@ -134,7 +134,6 @@ async fn tauri_auth_register_service() {
     );
     let user = result.unwrap();
     assert_eq!(user.username, "testuser");
-    assert_eq!(user.email, "test@example.com");
 }
 
 #[tokio::test]
@@ -190,6 +189,7 @@ async fn tauri_auth_login_service() {
         &refresh_repo,
         &plugin_mgr,
         &eventbus2,
+        &pool,
         &login_req,
         &config.jwt_secret,
         config.jwt_access_expires,
@@ -233,6 +233,7 @@ async fn tauri_auth_login_wrong_password() {
         &refresh_repo,
         &plugin_mgr,
         &eventbus2,
+        &pool,
         &login_req,
         &config.jwt_secret,
         config.jwt_access_expires,

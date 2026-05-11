@@ -13,15 +13,13 @@
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id TEXT NOT NULL UNIQUE,
-    email TEXT UNIQUE NOT NULL,
     username TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'reader',
     avatar TEXT,
     bio TEXT,
     website TEXT,
-    phone TEXT,
-    email_verified INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    registered_via TEXT NOT NULL,
     display_name TEXT,
     slug TEXT UNIQUE,
     locale TEXT,
@@ -29,10 +27,61 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_slug ON users(slug) WHERE slug IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS NOT NULL;
+
+-- 用户凭据
+CREATE TABLE IF NOT EXISTS user_credentials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    auth_type TEXT NOT NULL,
+    identifier TEXT NOT NULL,
+    credential_data TEXT NOT NULL,
+    verified INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(auth_type, identifier)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_credentials_user ON user_credentials(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_credentials_type_id ON user_credentials(auth_type, identifier);
+CREATE INDEX IF NOT EXISTS idx_user_credentials_type ON user_credentials(auth_type);
+
+-- OAuth 账号绑定
+CREATE TABLE IF NOT EXISTS oauth_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    provider TEXT NOT NULL,
+    provider_user_id TEXT NOT NULL,
+    email TEXT,
+    display_name TEXT,
+    avatar_url TEXT,
+    access_token TEXT,
+    refresh_token TEXT,
+    token_expires_at TEXT,
+    profile TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(provider, provider_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user ON oauth_accounts(user_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_accounts_provider ON oauth_accounts(provider, provider_user_id);
+
+-- OAuth 短期 state 存储（PKCE）
+CREATE TABLE IF NOT EXISTS oauth_states (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    provider TEXT NOT NULL,
+    code_verifier TEXT NOT NULL,
+    user_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
 
 -- Refresh Tokens
 CREATE TABLE IF NOT EXISTS refresh_tokens (
@@ -186,41 +235,6 @@ CREATE INDEX IF NOT EXISTS idx_revisions_ct_record
     ON content_revisions(content_type, record_id);
 CREATE INDEX IF NOT EXISTS idx_revisions_ct_record_rev
     ON content_revisions(content_type, record_id, revision_number DESC);
-
--- OAuth 账号绑定
-CREATE TABLE IF NOT EXISTS oauth_accounts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
-    user_id INTEGER NOT NULL REFERENCES users(id),
-    provider TEXT NOT NULL,
-    provider_user_id TEXT NOT NULL,
-    email TEXT,
-    display_name TEXT,
-    avatar_url TEXT,
-    access_token TEXT,
-    refresh_token TEXT,
-    token_expires_at TEXT,
-    profile TEXT,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    UNIQUE(provider, provider_user_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user ON oauth_accounts(user_id);
-CREATE INDEX IF NOT EXISTS idx_oauth_accounts_provider ON oauth_accounts(provider, provider_user_id);
-
--- OAuth 短期 state 存储（PKCE）
-CREATE TABLE IF NOT EXISTS oauth_states (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
-    provider TEXT NOT NULL,
-    code_verifier TEXT NOT NULL,
-    user_id INTEGER,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    expires_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
 
 -- 密码重置令牌
 CREATE TABLE IF NOT EXISTS password_reset_tokens (

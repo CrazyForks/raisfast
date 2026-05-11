@@ -800,7 +800,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO users (id, document_id, email, username, password_hash, role) VALUES (1, 'u1', 'a@b.com', 'user1', 'hash', 'user')")
+        sqlx::query("INSERT INTO users (id, document_id, username, role, status, registered_via) VALUES (1, 'u1', 'user1', 'user', 'active', 'email')")
             .execute(&pool)
             .await
             .unwrap();
@@ -825,7 +825,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO users (id, document_id, email, username, password_hash, role) VALUES (1, 'u1', 'a@b.com', 'user1', 'hash', 'user')")
+        sqlx::query("INSERT INTO users (id, document_id, username, role, status, registered_via) VALUES (1, 'u1', 'user1', 'user', 'active', 'email')")
             .execute(&pool)
             .await
             .unwrap();

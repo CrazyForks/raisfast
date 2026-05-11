@@ -189,16 +189,16 @@ pub async fn seed(
     let pool = init_pool(&config.database_url, 1).await?;
 
     let existing: i64 = sqlx::query_scalar(&format!(
-        "SELECT COUNT(*) FROM users WHERE email = {}",
+        "SELECT COUNT(*) FROM users WHERE username = {}",
         dialect::ph(1)
     ))
-    .bind(email)
+    .bind(username)
     .fetch_one(&pool)
     .await
     .unwrap_or(0);
 
     if existing > 0 {
-        println!("seed: admin user already exists ({email}), skipping");
+        println!("seed: admin user already exists ({username}), skipping");
         return Ok(());
     }
 
@@ -220,20 +220,16 @@ pub async fn seed(
     match tid {
         Some(tid) => {
             sqlx::query(&format!(
-                "INSERT INTO users (document_id, tenant_id, email, username, password_hash, role, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, 'admin', {}, {})",
+                "INSERT INTO users (document_id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({}, {}, {}, {}, {}, 'admin', 'active', 'email')",
                 dialect::ph(1),
                 dialect::ph(2),
                 dialect::ph(3),
                 dialect::ph(4),
                 dialect::ph(5),
-                dialect::ph(6),
-                dialect::ph(7),
             ))
             .bind(&document_id)
             .bind(&tid)
-            .bind(email)
             .bind(username)
-            .bind(&password_hash)
             .bind(now)
             .bind(now)
             .execute(&pool)
@@ -241,24 +237,50 @@ pub async fn seed(
         }
         None => {
             sqlx::query(&format!(
-                "INSERT INTO users (document_id, email, username, password_hash, role, created_at, updated_at) VALUES ({}, {}, {}, {}, 'admin', {}, {})",
+                "INSERT INTO users (document_id, username, created_at, updated_at, role, status, registered_via) VALUES ({}, {}, {}, {}, 'admin', 'active', 'email')",
                 dialect::ph(1),
                 dialect::ph(2),
                 dialect::ph(3),
                 dialect::ph(4),
-                dialect::ph(5),
-                dialect::ph(6),
             ))
             .bind(&document_id)
-            .bind(email)
             .bind(username)
-            .bind(&password_hash)
             .bind(now)
             .bind(now)
             .execute(&pool)
             .await?;
         }
     }
+
+    let (user_id,): (i64,) = sqlx::query_as(&format!(
+        "SELECT id FROM users WHERE document_id = {}",
+        dialect::ph(1)
+    ))
+    .bind(&document_id)
+    .fetch_one(&pool)
+    .await?;
+
+    let cred_data = serde_json::json!({"password_hash": password_hash}).to_string();
+    let (cred_doc_id, cred_now) = raisfast::utils::id::new_document_id_and_timestamp();
+    sqlx::query(&format!(
+        "INSERT INTO user_credentials (document_id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, 1, {}, {})",
+        dialect::ph(1),
+        dialect::ph(2),
+        dialect::ph(3),
+        dialect::ph(4),
+        dialect::ph(5),
+        dialect::ph(6),
+        dialect::ph(7),
+    ))
+    .bind(&cred_doc_id)
+    .bind(user_id)
+    .bind("email")
+    .bind(email)
+    .bind(&cred_data)
+    .bind(cred_now)
+    .bind(cred_now)
+    .execute(&pool)
+    .await?;
 
     println!("seed: admin user created");
     println!("  email:    {email}");

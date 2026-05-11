@@ -66,7 +66,6 @@ pub async fn list_users(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::CreateUserCmd;
     use crate::dto::UpdateUserRequest;
     use crate::repositories::sqlx_user::SqlxUserRepository;
 
@@ -83,13 +82,12 @@ mod tests {
         AuthUser::from_parts(Some(doc_id.to_string()), Some(1), "admin".to_string(), None)
     }
 
-    async fn insert_user(pool: &crate::db::Pool, email: &str) -> crate::models::user::User {
+    async fn insert_user(pool: &crate::db::Pool, username: &str) -> crate::models::user::User {
         let repo = SqlxUserRepository::new(pool.clone());
         repo.create(
-            CreateUserCmd {
-                email: email.to_string(),
-                username: email.to_string(),
-                password_hash: "$argon2id$v=19$m=19456,t=2,p=1$test$test".into(),
+            crate::commands::CreateUserCmd {
+                username: username.to_string(),
+                registered_via: "email".to_string(),
             },
             None,
         )
@@ -100,7 +98,7 @@ mod tests {
     #[tokio::test]
     async fn get_me_returns_user() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "me@test.com").await;
+        let user = insert_user(&pool, "meuser").await;
         let repo = SqlxUserRepository::new(pool.clone());
         let a = AuthUser::from_parts(
             Some(user.document_id.clone()),
@@ -109,7 +107,7 @@ mod tests {
             None,
         );
         let resp = super::get_me(&repo, &a).await.unwrap();
-        assert_eq!(resp.email, "me@test.com");
+        assert_eq!(resp.username, "meuser");
     }
 
     #[tokio::test]
@@ -123,7 +121,7 @@ mod tests {
     #[tokio::test]
     async fn update_me_changes_bio() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "upd@test.com").await;
+        let user = insert_user(&pool, "upduser").await;
         let repo = SqlxUserRepository::new(pool.clone());
         let a = AuthUser::from_parts(
             Some(user.document_id.clone()),
@@ -149,12 +147,12 @@ mod tests {
     #[tokio::test]
     async fn get_public_user_found() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "pub@test.com").await;
+        let user = insert_user(&pool, "pubuser").await;
         let repo = SqlxUserRepository::new(pool.clone());
         let resp = super::get_public_user(&repo, &user.document_id, None)
             .await
             .unwrap();
-        assert_eq!(resp.email, "pub@test.com");
+        assert_eq!(resp.username, "pubuser");
     }
 
     #[tokio::test]
@@ -171,8 +169,8 @@ mod tests {
     #[tokio::test]
     async fn list_users_paginated() {
         let pool = setup_pool().await;
-        insert_user(&pool, "a@test.com").await;
-        insert_user(&pool, "b@test.com").await;
+        insert_user(&pool, "user_a").await;
+        insert_user(&pool, "user_b").await;
         let repo = SqlxUserRepository::new(pool.clone());
         let (users, total) = super::list_users(&repo, 1, 10, None).await.unwrap();
         assert_eq!(total, 2);

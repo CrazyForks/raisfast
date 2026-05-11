@@ -43,7 +43,7 @@ pub async fn send_sms_code(
 
 /// 验证短信验证码并自动注册/登录。
 ///
-/// 验证通过后：若手机号已注册则直接登录，否则自动创建用户（无密码）并登录。
+/// 验证通过后：若手机号已注册则直接登录，否则自动创建用户并登录。
 #[allow(clippy::too_many_arguments)]
 pub async fn verify_sms_and_auth(
     user_repo: &dyn UserRepository,
@@ -78,24 +78,30 @@ pub async fn verify_sms_and_auth(
         }
     }
 
-    let user = match user_repo.find_by_phone(phone).await? {
-        Some(u) => u,
+    let cred =
+        crate::models::user_credential::find_by_auth_type_and_identifier(pool, "phone", phone)
+            .await?;
+
+    let user = match cred {
+        Some(c) => crate::models::user::find_by_pk(pool, c.user_id, None)
+            .await?
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("user not found")))?,
         None => {
             let username = format!(
                 "user_{}",
                 &phone.replace(|c: char| !c.is_ascii_alphanumeric(), "")
             );
-            let password_hash = format!("!sms:{phone}");
-            user_repo
+            let user = user_repo
                 .create(
                     crate::commands::CreateUserCmd {
-                        email: format!("!sms:{phone}"),
                         username,
-                        password_hash,
+                        registered_via: "sms".to_string(),
                     },
                     None,
                 )
-                .await?
+                .await?;
+            crate::models::user_credential::create(pool, user.id, "phone", phone, "", true).await?;
+            user
         }
     };
 
@@ -126,7 +132,7 @@ pub async fn verify_sms_and_auth(
 
 /// 已登录用户绑定手机号。
 pub async fn bind_phone(
-    user_repo: &dyn UserRepository,
+    _user_repo: &dyn UserRepository,
     pool: &crate::db::Pool,
     auth: &AuthUser,
     phone: &str,
@@ -134,7 +140,14 @@ pub async fn bind_phone(
 ) -> AppResult<()> {
     let user_id = auth.ensure_authenticated()?;
     let tenant_id = auth.tenant_id();
-    if user_repo.find_by_phone(phone).await?.is_some() {
+    let _user = crate::models::user::find_by_id(pool, user_id, tenant_id)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+
+    if crate::models::user_credential::find_by_auth_type_and_identifier(pool, "phone", phone)
+        .await?
+        .is_some()
+    {
         return Err(AppError::Conflict("phone_already_bound".into()));
     }
 
@@ -160,7 +173,8 @@ pub async fn bind_phone(
         }
     }
 
-    user_repo.update_phone(user_id, phone, tenant_id).await
+    crate::models::user_credential::create(pool, _user.id, "phone", phone, "", true).await?;
+    Ok(())
 }
 
 #[cfg(test)]

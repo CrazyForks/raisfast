@@ -13,15 +13,13 @@
 CREATE TABLE IF NOT EXISTS users (
     id BIGSERIAL PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,
-    email VARCHAR(255) UNIQUE NOT NULL,
     username VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(50) NOT NULL DEFAULT 'reader',
     avatar VARCHAR(500),
     bio TEXT,
     website VARCHAR(500),
-    phone VARCHAR(50),
-    email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    status VARCHAR(50) NOT NULL DEFAULT 'active',
+    registered_via VARCHAR(100) NOT NULL,
     display_name VARCHAR(100),
     slug VARCHAR(100) UNIQUE,
     locale VARCHAR(10),
@@ -29,9 +27,61 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_slug ON users(slug) WHERE slug IS NOT NULL;
+
+-- 用户凭据
+CREATE TABLE IF NOT EXISTS user_credentials (
+    id BIGSERIAL PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    auth_type VARCHAR(100) NOT NULL,
+    identifier VARCHAR(500) NOT NULL,
+    credential_data TEXT NOT NULL,
+    verified BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(auth_type, identifier)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_credentials_user ON user_credentials(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_credentials_type_id ON user_credentials(auth_type, identifier);
+CREATE INDEX IF NOT EXISTS idx_user_credentials_type ON user_credentials(auth_type);
+
+-- OAuth 账号绑定
+CREATE TABLE IF NOT EXISTS oauth_accounts (
+    id BIGSERIAL PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    provider VARCHAR(50) NOT NULL,
+    provider_user_id VARCHAR(255) NOT NULL,
+    email VARCHAR(255),
+    display_name VARCHAR(255),
+    avatar_url VARCHAR(500),
+    access_token VARCHAR(1024),
+    refresh_token VARCHAR(1024),
+    token_expires_at TIMESTAMPTZ,
+    profile JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(provider, provider_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user ON oauth_accounts(user_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_accounts_provider ON oauth_accounts(provider, provider_user_id);
+
+-- OAuth 短期 state 存储（PKCE）
+CREATE TABLE IF NOT EXISTS oauth_states (
+    id BIGSERIAL PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    provider VARCHAR(50) NOT NULL,
+    code_verifier VARCHAR(255) NOT NULL,
+    user_id BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
 
 -- Refresh Tokens
 CREATE TABLE IF NOT EXISTS refresh_tokens (
@@ -183,41 +233,6 @@ CREATE INDEX IF NOT EXISTS idx_revisions_ct_record
     ON content_revisions(content_type, record_id);
 CREATE INDEX IF NOT EXISTS idx_revisions_ct_record_rev
     ON content_revisions(content_type, record_id, revision_number DESC);
-
--- OAuth 账号绑定
-CREATE TABLE IF NOT EXISTS oauth_accounts (
-    id BIGSERIAL PRIMARY KEY,
-    document_id VARCHAR(36) NOT NULL UNIQUE,
-    user_id BIGINT NOT NULL REFERENCES users(id),
-    provider VARCHAR(50) NOT NULL,
-    provider_user_id VARCHAR(255) NOT NULL,
-    email VARCHAR(255),
-    display_name VARCHAR(255),
-    avatar_url VARCHAR(500),
-    access_token VARCHAR(1024),
-    refresh_token VARCHAR(1024),
-    token_expires_at TIMESTAMPTZ,
-    profile JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(provider, provider_user_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user ON oauth_accounts(user_id);
-CREATE INDEX IF NOT EXISTS idx_oauth_accounts_provider ON oauth_accounts(provider, provider_user_id);
-
--- OAuth 短期 state 存储（PKCE）
-CREATE TABLE IF NOT EXISTS oauth_states (
-    id BIGSERIAL PRIMARY KEY,
-    document_id VARCHAR(36) NOT NULL UNIQUE,
-    provider VARCHAR(50) NOT NULL,
-    code_verifier VARCHAR(255) NOT NULL,
-    user_id BIGINT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at TIMESTAMPTZ NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
 
 -- 密码重置令牌
 CREATE TABLE IF NOT EXISTS password_reset_tokens (

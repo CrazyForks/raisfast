@@ -81,6 +81,8 @@ pub struct ResetPasswordRequest {
 /// OAuth 用户设置密码
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct SetPasswordRequest {
+    #[validate(email)]
+    pub email: String,
     #[validate(length(min = 8, max = 128), custom(function = "validate_password"))]
     pub new_password: String,
 }
@@ -114,6 +116,42 @@ pub struct BindPhoneRequest {
     pub code: String,
 }
 
+/// 绑定邮箱密码
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct BindEmailRequest {
+    #[validate(email)]
+    pub email: String,
+    #[validate(length(min = 8, max = 128), custom(function = "validate_password"))]
+    pub password: String,
+}
+
+/// 凭证信息响应
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CredentialResponse {
+    pub id: i64,
+    pub auth_type: String,
+    pub identifier: String,
+    pub verified: bool,
+    #[schema(value_type = String)]
+    pub created_at: Timestamp,
+    #[schema(value_type = String)]
+    pub updated_at: Timestamp,
+}
+
+impl From<crate::models::user_credential::UserCredential> for CredentialResponse {
+    fn from(c: crate::models::user_credential::UserCredential) -> Self {
+        Self {
+            id: c.id,
+            auth_type: c.auth_type,
+            identifier: c.identifier,
+            verified: c.verified == 1,
+            created_at: c.created_at,
+            updated_at: c.updated_at,
+        }
+    }
+}
+
 /// 认证配置响应
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
@@ -144,10 +182,10 @@ pub struct ResendVerificationRequest {
 #[non_exhaustive]
 pub struct UserResponse {
     pub id: String,
-    pub email: String,
     pub username: String,
     pub role: String,
-    pub phone: Option<String>,
+    pub status: String,
+    pub registered_via: String,
     pub avatar: Option<String>,
     pub bio: Option<String>,
     pub website: Option<String>,
@@ -164,10 +202,10 @@ impl From<User> for UserResponse {
     fn from(user: User) -> Self {
         Self {
             id: user.document_id,
-            email: user.email,
             username: user.username,
             role: user.role,
-            phone: user.phone,
+            status: user.status,
+            registered_via: user.registered_via,
             avatar: user.avatar,
             bio: user.bio,
             website: user.website,
@@ -296,10 +334,10 @@ mod tests {
     fn user_response_from_user_serializes() {
         let resp = UserResponse {
             id: "doc-123".to_string(),
-            email: "a@b.com".to_string(),
             username: "test".to_string(),
             role: "reader".to_string(),
-            phone: None,
+            status: "active".to_string(),
+            registered_via: "email".to_string(),
             avatar: None,
             bio: None,
             website: None,

@@ -151,26 +151,32 @@ pub async fn handle_callback(
         return Ok(OAuthCallbackResult::LoginSuccess(login_resp));
     }
 
-    if let Some(email) = &user_info.email
-        && let Some(user) = user_repo.find_by_email(email, None).await?
-    {
-        do_bind_oauth(pool, user.id, provider_name, &token_resp, &user_info).await?;
+    if let Some(email) = &user_info.email {
+        let cred =
+            crate::models::user_credential::find_by_auth_type_and_identifier(pool, "email", email)
+                .await?;
+        if let Some(cred) = cred {
+            let user = crate::models::user::find_by_pk(pool, cred.user_id, None)
+                .await?
+                .ok_or_else(|| AppError::Internal(anyhow::anyhow!("user not found")))?;
+            do_bind_oauth(pool, user.id, provider_name, &token_resp, &user_info).await?;
 
-        let login_resp = create_login_response_for_user(
-            &user,
-            refresh_token_repo,
-            jwt_secret,
-            jwt_access_expires,
-            jwt_refresh_expires,
-        )
-        .await?;
+            let login_resp = create_login_response_for_user(
+                &user,
+                refresh_token_repo,
+                jwt_secret,
+                jwt_access_expires,
+                jwt_refresh_expires,
+            )
+            .await?;
 
-        eventbus.emit(crate::eventbus::Event::UserLoggedIn {
-            id: user.document_id.clone(),
-            success: true,
-        });
+            eventbus.emit(crate::eventbus::Event::UserLoggedIn {
+                id: user.document_id.clone(),
+                success: true,
+            });
 
-        return Ok(OAuthCallbackResult::LoginSuccess(login_resp));
+            return Ok(OAuthCallbackResult::LoginSuccess(login_resp));
+        }
     }
 
     let user = auto_register_user(pool, user_repo, provider_name, &user_info, eventbus).await?;
@@ -200,18 +206,24 @@ pub async fn unbind_oauth(
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
 
-    if user.password_hash.is_empty() {
-        let count = oauth::count_by_user(pool, user.id).await?;
-        if count <= 1 {
-            return Err(AppError::BadRequest(
-                "cannot unbind: user has no password and this is the only login method".into(),
-            ));
-        }
+    let cred_count = crate::models::user_credential::count_by_user(pool, user.id).await?;
+    if cred_count <= 1 {
+        return Err(AppError::BadRequest(
+            "cannot unbind: this is the only login method".into(),
+        ));
     }
 
     let deleted = oauth::delete_account(pool, user.id, provider_name).await?;
     if !deleted {
         return Err(AppError::not_found("oauth binding"));
+    }
+
+    let creds = crate::models::user_credential::find_by_user_id(pool, user.id).await?;
+    for cred in creds {
+        if cred.auth_type == format!("oauth_{provider_name}") {
+            crate::models::user_credential::delete_by_id(pool, cred.id).await?;
+            break;
+        }
     }
 
     Ok(())
@@ -301,14 +313,12 @@ async fn auto_register_user(
 
     let username = ensure_unique_username(pool, &base_username).await?;
     let email = user_info.email.clone().unwrap_or_default();
-    let password_hash = format!("!oauth:{provider_name}:{}", user_info.provider_user_id);
 
     let user = user_repo
         .create(
             CreateUserCmd {
-                email,
                 username,
-                password_hash,
+                registered_via: format!("oauth_{provider_name}"),
             },
             None,
         )
@@ -317,7 +327,7 @@ async fn auto_register_user(
     if let Some(avatar) = &user_info.avatar_url {
         let now = crate::utils::tz::now_utc();
         let sql = format!(
-            "UPDATE users SET avatar = {}, email_verified = 1, updated_at = {} WHERE id = {}",
+            "UPDATE users SET avatar = {}, updated_at = {} WHERE id = {}",
             crate::db::dialect::ph(1),
             crate::db::dialect::ph(2),
             crate::db::dialect::ph(3)
@@ -328,18 +338,10 @@ async fn auto_register_user(
             .bind(user.id)
             .execute(pool)
             .await?;
-    } else {
-        let now = crate::utils::tz::now_utc();
-        let sql = format!(
-            "UPDATE users SET email_verified = 1, updated_at = {} WHERE id = {}",
-            crate::db::dialect::ph(1),
-            crate::db::dialect::ph(2)
-        );
-        sqlx::query(&sql)
-            .bind(now)
-            .bind(user.id)
-            .execute(pool)
-            .await?;
+    }
+
+    if !email.is_empty() {
+        crate::models::user_credential::create(pool, user.id, "email", &email, "", true).await?;
     }
 
     let user = crate::models::user::find_by_pk(pool, user.id, None)
@@ -349,7 +351,7 @@ async fn auto_register_user(
     eventbus.emit(crate::eventbus::Event::UserRegistered {
         id: user.document_id.clone(),
         username: user.username.clone(),
-        email: user.email.clone(),
+        email,
     });
 
     Ok(user)
@@ -439,6 +441,22 @@ async fn do_bind_oauth(
                 token_expires_at: token_expires.as_deref(),
                 profile: Some(&profile_str),
             },
+        )
+        .await?;
+
+        let oauth_identifier = format!("{provider_name}:{}", user_info.provider_user_id);
+        let oauth_data = serde_json::json!({
+            "email": user_info.email,
+            "display_name": user_info.display_name,
+        })
+        .to_string();
+        crate::models::user_credential::create(
+            pool,
+            user_id,
+            &format!("oauth_{provider_name}"),
+            &oauth_identifier,
+            &oauth_data,
+            true,
         )
         .await?;
     }

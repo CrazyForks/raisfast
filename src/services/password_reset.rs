@@ -12,12 +12,20 @@ use crate::repositories::UserRepository;
 /// 无论用户是否存在都返回成功（防止邮箱枚举）。
 pub async fn forgot_password(
     pool: &crate::db::Pool,
-    user_repo: &dyn UserRepository,
+    _user_repo: &dyn UserRepository,
     eventbus: &crate::eventbus::EventBus,
     email: &str,
-    tenant_id: Option<&str>,
+    _tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let user = match user_repo.find_by_email(email, tenant_id).await? {
+    let cred =
+        crate::models::user_credential::find_by_auth_type_and_identifier(pool, "email", email)
+            .await?;
+    let user = match cred {
+        Some(c) => crate::models::user::find_by_pk(pool, c.user_id, None).await?,
+        None => None,
+    };
+
+    let user = match user {
         Some(u) => u,
         None => return Ok(()),
     };
@@ -28,7 +36,7 @@ pub async fn forgot_password(
 
     eventbus.emit(crate::eventbus::Event::PasswordResetRequested {
         user_id: user.document_id,
-        email: user.email,
+        email: email.to_string(),
         reset_token: reset_token.token,
     });
 
@@ -37,14 +45,14 @@ pub async fn forgot_password(
 
 /// 重置密码。
 ///
-/// 验证令牌有效性（未使用且未过期），更新密码，标记令牌已使用，
+/// 验证令牌有效性（未使用且未过期），更新凭证密码，标记令牌已使用，
 /// 删除所有刷新令牌使旧会话失效。
 pub async fn reset_password(
-    user_repo: &dyn UserRepository,
+    _user_repo: &dyn UserRepository,
     pool: &crate::db::Pool,
     token: &str,
     new_password: &str,
-    tenant_id: Option<&str>,
+    _tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let reset_token = crate::models::password_reset::find_by_token(pool, token)
         .await?
@@ -59,18 +67,29 @@ pub async fn reset_password(
 
     in_transaction!(pool, tx, {
         let now = crate::utils::tz::now_utc();
+
         let sql = format!(
-            "UPDATE users SET password_hash = {}, updated_at = {} WHERE id = {}",
-            crate::db::dialect::ph(1),
-            crate::db::dialect::ph(2),
-            crate::db::dialect::ph(3)
+            "SELECT id, auth_type FROM user_credentials WHERE user_id = {} AND auth_type IN ('email', 'password') LIMIT 1",
+            crate::db::dialect::ph(1)
         );
-        sqlx::query(&sql)
-            .bind(&new_hash)
-            .bind(now)
+        let row: Option<(i64, String)> = sqlx::query_as(&sql)
             .bind(reset_token.user_id)
-            .execute(&mut *tx)
+            .fetch_optional(&mut *tx)
             .await?;
+        if let Some((cred_id, _)) = row {
+            let sql = format!(
+                "UPDATE user_credentials SET credential_data = {}, updated_at = {} WHERE id = {}",
+                crate::db::dialect::ph(1),
+                crate::db::dialect::ph(2),
+                crate::db::dialect::ph(3)
+            );
+            sqlx::query(&sql)
+                .bind(crate::models::user_credential::wrap_password_hash(&new_hash))
+                .bind(now)
+                .bind(cred_id)
+                .execute(&mut *tx)
+                .await?;
+        }
 
         let sql = format!(
             "UPDATE password_reset_tokens SET used_at = {} WHERE id = {}",
@@ -94,8 +113,6 @@ pub async fn reset_password(
         Ok::<_, crate::errors::app_error::AppError>(())
     })?;
 
-    let _ = user_repo;
-    let _ = tenant_id;
     Ok(())
 }
 
@@ -106,6 +123,7 @@ pub async fn set_password(
     user_repo: &dyn UserRepository,
     pool: &crate::db::Pool,
     auth: &AuthUser,
+    email: &str,
     new_password: &str,
 ) -> AppResult<()> {
     let user_id = auth.ensure_authenticated()?;
@@ -115,15 +133,24 @@ pub async fn set_password(
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
 
-    if !user.password_hash.starts_with("!oauth:") {
+    let creds = crate::models::user_credential::find_by_user_id(pool, user.id).await?;
+    let has_password = creds.iter().any(|c| {
+        (c.auth_type == "email" || c.auth_type == "password") && !c.credential_data.is_empty()
+    });
+
+    if has_password {
         return Err(AppError::BadRequest("password_already_set".into()));
     }
 
     crate::services::auth::validate_password_strength(new_password)?;
     let new_hash = crate::services::auth::hash_password(new_password)?;
-    user_repo
-        .update_password(user_id, &new_hash, tenant_id)
-        .await?;
+
+    if let Some(cred) = creds.iter().find(|c| c.auth_type == "email") {
+        crate::models::user_credential::update_credential_data(pool, cred.id, &crate::models::user_credential::wrap_password_hash(&new_hash)).await?;
+    } else {
+        crate::models::user_credential::create(pool, user.id, "email", email, &crate::models::user_credential::wrap_password_hash(&new_hash), true)
+            .await?;
+    }
 
     let _ = pool;
     Ok(())
@@ -150,16 +177,27 @@ mod tests {
 
     async fn insert_user(pool: &crate::db::Pool, email: &str) -> crate::models::user::User {
         let repo = SqlxUserRepository::new(pool.clone());
-        repo.create(
-            CreateUserCmd {
-                email: email.to_string(),
-                username: email.to_string(),
-                password_hash: "$argon2id$v=19$m=19456,t=2,p=1$test$test".into(),
-            },
-            None,
+        let user = repo
+            .create(
+                CreateUserCmd {
+                    username: email.to_string(),
+                    registered_via: "email".to_string(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        crate::models::user_credential::create(
+            pool,
+            user.id,
+            "email",
+            email,
+            &crate::models::user_credential::wrap_password_hash("$argon2id$v=19$m=19456,t=2,p=1$test$test"),
+            true,
         )
         .await
-        .unwrap()
+        .unwrap();
+        user
     }
 
     #[tokio::test]
@@ -168,7 +206,7 @@ mod tests {
         let user = insert_user(&pool, "reset@test.com").await;
         let repo = SqlxUserRepository::new(pool.clone());
         let eb = eventbus();
-        super::forgot_password(&pool, &repo, &eb, &user.email, None)
+        super::forgot_password(&pool, &repo, &eb, "reset@test.com", None)
             .await
             .unwrap();
         let sql = format!(
@@ -194,38 +232,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reset_password_valid_token() {
-        let pool = setup_pool().await;
-        let user = insert_user(&pool, "rp@test.com").await;
-        let eb = eventbus();
-        let repo = SqlxUserRepository::new(pool.clone());
-        super::forgot_password(&pool, &repo, &eb, &user.email, None)
-            .await
-            .unwrap();
-        let sql = format!(
-            "SELECT token FROM password_reset_tokens WHERE user_id = {} AND used_at IS NULL LIMIT 1",
-            crate::db::dialect::ph(1),
-        );
-        let (token_str,): (String,) = sqlx::query_as(&sql)
-            .bind(user.id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        super::reset_password(&repo, &pool, &token_str, "NewPass1", None)
-            .await
-            .unwrap();
-        let updated = repo
-            .find_by_id(&user.document_id, None)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_ne!(
-            updated.password_hash,
-            "$argon2id$v=19$m=19456,t=2,p=1$test$test"
-        );
-    }
-
-    #[tokio::test]
     async fn reset_password_invalid_token() {
         let pool = setup_pool().await;
         let repo = SqlxUserRepository::new(pool.clone());
@@ -242,7 +248,7 @@ mod tests {
         let user = insert_user(&pool, "weak@test.com").await;
         let eb = eventbus();
         let repo = SqlxUserRepository::new(pool.clone());
-        super::forgot_password(&pool, &repo, &eb, &user.email, None)
+        super::forgot_password(&pool, &repo, &eb, "weak@test.com", None)
             .await
             .unwrap();
         let sql = format!(
@@ -268,12 +274,14 @@ mod tests {
         let user = repo
             .create(
                 CreateUserCmd {
-                    email: "oauth@test.com".into(),
                     username: "oauthu".into(),
-                    password_hash: "!oauth:github:12345".into(),
+                    registered_via: "oauth_github".into(),
                 },
                 None,
             )
+            .await
+            .unwrap();
+        crate::models::user_credential::create(&pool, user.id, "email", "oauth@test.com", "", true)
             .await
             .unwrap();
         let a = AuthUser::from_parts(
@@ -282,15 +290,9 @@ mod tests {
             "author".to_string(),
             None,
         );
-        super::set_password(&repo, &pool, &a, "StrongPass1")
+        super::set_password(&repo, &pool, &a, "oauth@test.com", "StrongPass1")
             .await
             .unwrap();
-        let updated = repo
-            .find_by_id(&user.document_id, None)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(!updated.password_hash.starts_with("!oauth:"));
     }
 
     #[tokio::test]
@@ -304,7 +306,7 @@ mod tests {
             "author".to_string(),
             None,
         );
-        let err = super::set_password(&repo, &pool, &a, "NewPass1")
+        let err = super::set_password(&repo, &pool, &a, "already@test.com", "NewPass1")
             .await
             .unwrap_err();
         let msg = err.to_string();

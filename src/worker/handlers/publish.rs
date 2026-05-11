@@ -80,9 +80,8 @@ mod tests {
         let u = user::create(
             pool,
             &crate::commands::CreateUserCmd {
-                email: "author@test.com".to_string(),
                 username: "author".to_string(),
-                password_hash: "hash".to_string(),
+                registered_via: "test".to_string(),
             },
             None,
         )

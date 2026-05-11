@@ -13,7 +13,6 @@ use chrono::Utc;
 use jsonwebtoken::{EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 
-use crate::commands::CreateUserCmd;
 use crate::dto::{LoginResponse, RegisterRequest, UpdatePasswordRequest, UserResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::eventbus::{Event, EventBus};
@@ -166,18 +165,17 @@ pub fn generate_access_token_for_test(user_id: &str, user_int_id: i64, role: &st
 
 /// 用户注册。
 ///
-/// 检查邮箱是否已被注册，若唯一则哈希密码并创建用户记录。
-#[tracing::instrument(skip(user_repo, eventbus), fields(username = tracing::field::Empty))]
+/// 检查邮箱是否已被注册，若唯一则哈希密码、在事务中创建用户记录和邮箱凭证。
+#[tracing::instrument(skip(_user_repo, eventbus), fields(username = tracing::field::Empty))]
 pub async fn register(
-    user_repo: &dyn UserRepository,
+    _user_repo: &dyn UserRepository,
     eventbus: &EventBus,
     req: RegisterRequest,
     tenant_id: Option<&str>,
     require_email_verification: bool,
     pool: &crate::db::Pool,
 ) -> AppResult<UserResponse> {
-    if user_repo
-        .find_by_email(&req.email, tenant_id)
+    if crate::models::user_credential::find_by_auth_type_and_identifier(pool, "email", &req.email)
         .await?
         .is_some()
     {
@@ -186,28 +184,102 @@ pub async fn register(
 
     validate_password_strength(&req.password)?;
     let password_hash = hash_password(&req.password)?;
-    let user = user_repo
-        .create(
-            CreateUserCmd {
-                email: req.email,
-                username: req.username,
-                password_hash,
-            },
-            tenant_id,
-        )
-        .await?;
+    let cred_data = crate::models::user_credential::wrap_password_hash(&password_hash);
+    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let registered_via = "email".to_string();
+
+    let user = in_transaction!(pool, tx, {
+        match tenant_id {
+            Some(tid) => {
+                let vals = (1..=5)
+                    .map(crate::db::dialect::ph)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let sql = format!(
+                    "INSERT INTO users (document_id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, 'reader', 'active', {})",
+                    crate::db::dialect::ph(6)
+                );
+                sqlx::query(&sql)
+                    .bind(&document_id)
+                    .bind(tid)
+                    .bind(&req.username)
+                    .bind(now)
+                    .bind(now)
+                    .bind(&registered_via)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            None => {
+                let vals = (1..=4)
+                    .map(crate::db::dialect::ph)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let sql = format!(
+                    "INSERT INTO users (document_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, 'reader', 'active', {})",
+                    crate::db::dialect::ph(5)
+                );
+                sqlx::query(&sql)
+                    .bind(&document_id)
+                    .bind(&req.username)
+                    .bind(now)
+                    .bind(now)
+                    .bind(&registered_via)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+
+        let filter = crate::db::tenant::tenant_filter_ph(tenant_id, 2);
+        let sql = format!(
+            "SELECT * FROM users WHERE document_id = {}{filter}",
+            crate::db::dialect::ph(1)
+        );
+        let mut q = sqlx::query_as::<_, crate::models::user::User>(&sql).bind(&document_id);
+        if let Some(tid) = tenant_id {
+            q = q.bind(tid);
+        }
+        let user = q
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch newly created user")))?;
+
+        let (cred_doc_id, cred_now) = crate::utils::id::new_document_id_and_timestamp();
+        let verified = if !require_email_verification { 1 } else { 0 };
+        let cred_sql = format!(
+            "INSERT INTO user_credentials (document_id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
+            crate::db::dialect::ph(1),
+            crate::db::dialect::ph(2),
+            crate::db::dialect::ph(3),
+            crate::db::dialect::ph(4),
+            crate::db::dialect::ph(5),
+            crate::db::dialect::ph(6),
+            crate::db::dialect::ph(7),
+            crate::db::dialect::ph(8)
+        );
+        sqlx::query(&cred_sql)
+            .bind(&cred_doc_id)
+            .bind(user.id)
+            .bind("email")
+            .bind(&req.email)
+            .bind(&cred_data)
+            .bind(verified)
+            .bind(cred_now)
+            .bind(cred_now)
+            .execute(&mut *tx)
+            .await?;
+
+        Ok::<_, crate::errors::app_error::AppError>(user)
+    })?;
+
     eventbus.emit(Event::UserRegistered {
         id: user.document_id.clone(),
         username: user.username.clone(),
-        email: user.email.clone(),
+        email: req.email.clone(),
     });
 
     if require_email_verification {
         let _ = crate::services::email_verification::trigger_email_verification(
-            pool,
-            eventbus,
-            user.id,
-            &user.email,
+            pool, eventbus, user.id, &req.email,
         )
         .await;
     }
@@ -217,14 +289,15 @@ pub async fn register(
 
 /// 用户登录。
 ///
-/// 验证邮箱和密码，成功后生成访问令牌和刷新令牌，将刷新令牌存入数据库。
+/// 通过邮箱凭证查找用户，验证密码，成功后生成访问令牌和刷新令牌。
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(user_repo, refresh_token_repo, plugins, eventbus), fields(email = %req.email))]
+#[tracing::instrument(skip(_user_repo, refresh_token_repo, plugins, eventbus), fields(email = %req.email))]
 pub async fn login(
-    user_repo: &dyn UserRepository,
+    _user_repo: &dyn UserRepository,
     refresh_token_repo: &dyn RefreshTokenRepository,
     plugins: &PluginManager,
     eventbus: &EventBus,
+    pool: &crate::db::Pool,
     req: &crate::dto::LoginRequest,
     jwt_secret: &str,
     jwt_access_expires: u64,
@@ -232,12 +305,12 @@ pub async fn login(
     tenant_id: Option<&str>,
     require_email_verification: bool,
 ) -> AppResult<LoginResponse> {
-    let user = user_repo
-        .find_by_email(&req.email, tenant_id)
-        .await?
-        .ok_or_else(|| AppError::Unauthorized)?;
+    let cred =
+        crate::models::user_credential::find_by_auth_type_and_identifier(pool, "email", &req.email)
+            .await?
+            .ok_or_else(|| AppError::Unauthorized)?;
 
-    if !verify_password(&req.password, &user.password_hash)? {
+    if !verify_password(&req.password, &crate::models::user_credential::extract_password_hash(&cred.credential_data)?)? {
         plugins
             .dispatch_action(
                 HookPoint::OnLogin,
@@ -247,9 +320,13 @@ pub async fn login(
         return Err(AppError::Unauthorized);
     }
 
-    if require_email_verification && user.email_verified == 0 {
+    if require_email_verification && cred.verified == 0 {
         return Err(AppError::BadRequest("email_not_verified".into()));
     }
+
+    let user = crate::models::user::find_by_pk(pool, cred.user_id, tenant_id)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized)?;
 
     let access_token = generate_access_token_internal(
         &user.document_id,
@@ -385,7 +462,7 @@ pub async fn logout(
 
 /// 修改密码。
 ///
-/// 验证旧密码正确后，在事务中用新密码的哈希替换旧哈希，
+/// 验证旧密码正确后，用新密码的哈希替换旧哈希，
 /// 并删除所有刷新令牌，确保旧会话全部失效。
 pub async fn change_password(
     user_repo: &dyn UserRepository,
@@ -395,29 +472,112 @@ pub async fn change_password(
 ) -> AppResult<()> {
     let user_id = auth.ensure_authenticated()?;
     let tenant_id = auth.tenant_id();
-    let user = user_repo
+    let _user = user_repo
         .find_by_id(user_id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
 
-    if !verify_password(&req.old_password, &user.password_hash)? {
+    let creds = crate::models::user_credential::find_by_user_id(pool, _user.id).await?;
+    let password_cred = creds
+        .iter()
+        .find(|c| c.auth_type == "email" || c.auth_type == "password")
+        .ok_or_else(|| AppError::BadRequest("no_password_credential".into()))?;
+
+    if !verify_password(&req.old_password, &crate::models::user_credential::extract_password_hash(&password_cred.credential_data)?)? {
         return Err(AppError::BadRequest("incorrect_password".into()));
     }
 
     validate_password_strength(&req.new_password)?;
     let new_hash = hash_password(&req.new_password)?;
-    user_repo
-        .update_password(user_id, &new_hash, tenant_id)
+    crate::models::user_credential::update_credential_data(pool, password_cred.id, &crate::models::user_credential::wrap_password_hash(&new_hash))
         .await?;
 
     sqlx::query(&format!(
         "DELETE FROM refresh_tokens WHERE user_id = {}",
         crate::db::dialect::ph(1)
     ))
-    .bind(user.id)
+    .bind(_user.id)
     .execute(pool)
     .await?;
     Ok(())
+}
+
+/// 绑定邮箱密码凭证
+pub async fn bind_email_credential(
+    pool: &crate::db::Pool,
+    auth: &AuthUser,
+    email: &str,
+    password: &str,
+) -> AppResult<()> {
+    let user_id = auth.ensure_authenticated()?;
+    let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+
+    if crate::models::user_credential::find_by_auth_type_and_identifier(pool, "email", email)
+        .await?
+        .is_some()
+    {
+        return Err(AppError::Conflict("email_registered".into()));
+    }
+
+    validate_password_strength(password)?;
+    let hash = hash_password(password)?;
+
+    crate::models::user_credential::create(
+        pool,
+        user.id,
+        "email",
+        email,
+        &crate::models::user_credential::wrap_password_hash(&hash),
+        false,
+    )
+    .await?;
+
+    Ok(())
+}
+
+/// 删除凭证
+pub async fn delete_credential(
+    pool: &crate::db::Pool,
+    auth: &AuthUser,
+    credential_id: i64,
+) -> AppResult<()> {
+    let user_id = auth.ensure_authenticated()?;
+    let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+
+    let cred = crate::models::user_credential::find_by_id(pool, credential_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("credential"))?;
+
+    if cred.user_id != user.id {
+        return Err(AppError::Forbidden);
+    }
+
+    let count = crate::models::user_credential::count_by_user(pool, user.id).await?;
+    if count <= 1 {
+        return Err(AppError::BadRequest(
+            "cannot_remove_last_credential".into(),
+        ));
+    }
+
+    crate::models::user_credential::delete_by_id(pool, credential_id).await?;
+    Ok(())
+}
+
+/// 列出当前用户所有凭证
+pub async fn list_credentials(
+    pool: &crate::db::Pool,
+    auth: &AuthUser,
+) -> AppResult<Vec<crate::models::user_credential::UserCredential>> {
+    let user_id = auth.ensure_authenticated()?;
+    let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+
+    crate::models::user_credential::find_by_user_id(pool, user.id).await
 }
 
 #[cfg(test)]

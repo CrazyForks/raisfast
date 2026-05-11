@@ -405,7 +405,7 @@ mod tests {
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL DEFAULT 'default', username TEXT NOT NULL, role TEXT NOT NULL, status TEXT NOT NULL, registered_via TEXT NOT NULL)",
         )
         .execute(&pool)
         .await
@@ -458,7 +458,7 @@ mod tests {
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL DEFAULT 'default', username TEXT NOT NULL, role TEXT NOT NULL, status TEXT NOT NULL, registered_via TEXT NOT NULL)",
         )
         .execute(&pool)
         .await
@@ -494,7 +494,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO users (document_id) VALUES ('u1')")
+        sqlx::query("INSERT INTO users (document_id, username, role, status, registered_via) VALUES ('u1', 'user1', 'reader', 'active', 'email')")
             .execute(&pool)
             .await
             .unwrap();

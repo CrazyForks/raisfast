@@ -190,29 +190,29 @@ mod tests {
         pool
     }
 
-    fn auth() -> AuthUser {
-        AuthUser::from_parts(Some("u1".to_string()), Some(1), "admin".to_string(), None)
+    fn auth(user: &crate::models::user::User) -> AuthUser {
+        AuthUser::from_parts(
+            Some(user.document_id.clone()),
+            Some(user.id),
+            "admin".to_string(),
+            None,
+        )
     }
 
-    async fn insert_user(pool: &crate::db::Pool) -> i64 {
-        let sql = format!(
-            "INSERT INTO users (document_id, email, username, password_hash, role) VALUES ({}, {}, {}, {}, {}) RETURNING id",
-            crate::db::dialect::ph(1),
-            crate::db::dialect::ph(2),
-            crate::db::dialect::ph(3),
-            crate::db::dialect::ph(4),
-            crate::db::dialect::ph(5)
-        );
-        let (id,): (i64,) = sqlx::query_as(&sql)
-            .bind("u1")
-            .bind("u1@test.com")
-            .bind("u1user")
-            .bind("$argon2id$v=19$m=19456,t=2,p=1$test$test")
-            .bind("admin")
-            .fetch_one(pool)
+    async fn insert_user(pool: &crate::db::Pool) -> crate::models::user::User {
+        let user = crate::models::user::create(
+            pool,
+            &crate::commands::user::CreateUserCmd {
+                username: crate::utils::id::new_document_id(),
+                registered_via: "test".to_string(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        crate::models::user::update_role(pool, &user.document_id, "admin", None)
             .await
-            .unwrap();
-        id
+            .unwrap()
     }
 
     async fn insert_post(pool: &crate::db::Pool, user_id: i64) -> i64 {
@@ -261,11 +261,11 @@ mod tests {
     #[tokio::test]
     async fn update_comment_status_valid() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool).await;
-        let post_id = insert_post(&pool, user_id).await;
-        let c = insert_comment(&pool, post_id, user_id).await;
+        let user = insert_user(&pool).await;
+        let post_id = insert_post(&pool, user.id).await;
+        let c = insert_comment(&pool, post_id, user.id).await;
         let repo = SqlxCommentRepository::new(pool.clone());
-        super::update_comment_status(&repo, &c.document_id, "approved", &auth())
+        super::update_comment_status(&repo, &c.document_id, "approved", &auth(&user))
             .await
             .unwrap();
         let updated = repo.find_by_id(c.id, None).await.unwrap().unwrap();
@@ -276,7 +276,8 @@ mod tests {
     async fn update_comment_status_invalid() {
         let pool = setup_pool().await;
         let repo = SqlxCommentRepository::new(pool.clone());
-        let err = super::update_comment_status(&repo, "x", "invalid", &auth())
+        let a = AuthUser::new_test("any", "admin", "");
+        let err = super::update_comment_status(&repo, "x", "invalid", &a)
             .await
             .unwrap_err();
         let msg = err.to_string();
@@ -287,8 +288,9 @@ mod tests {
     async fn update_comment_status_not_found() {
         let pool = setup_pool().await;
         let repo = SqlxCommentRepository::new(pool.clone());
+        let a = AuthUser::new_test("any", "admin", "");
         assert!(
-            super::update_comment_status(&repo, "missing", "approved", &auth())
+            super::update_comment_status(&repo, "missing", "approved", &a)
                 .await
                 .is_err()
         );
@@ -297,13 +299,13 @@ mod tests {
     #[tokio::test]
     async fn delete_comment_by_owner() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool).await;
-        let post_id = insert_post(&pool, user_id).await;
-        let c = insert_comment(&pool, post_id, user_id).await;
+        let user = insert_user(&pool).await;
+        let post_id = insert_post(&pool, user.id).await;
+        let c = insert_comment(&pool, post_id, user.id).await;
         let repo = SqlxCommentRepository::new(pool.clone());
         let a = AuthUser::from_parts(
-            Some("u1".to_string()),
-            Some(user_id),
+            Some(user.document_id.clone()),
+            Some(user.id),
             "admin".to_string(),
             None,
         );
@@ -317,21 +319,18 @@ mod tests {
     async fn delete_comment_not_found() {
         let pool = setup_pool().await;
         let repo = SqlxCommentRepository::new(pool.clone());
-        assert!(
-            super::delete_comment(&repo, "missing", &auth())
-                .await
-                .is_err()
-        );
+        let a = AuthUser::new_test("any", "admin", "");
+        assert!(super::delete_comment(&repo, "missing", &a).await.is_err());
     }
 
     #[tokio::test]
     async fn update_comment_status_spam() {
         let pool = setup_pool().await;
-        let user_id = insert_user(&pool).await;
-        let post_id = insert_post(&pool, user_id).await;
-        let c = insert_comment(&pool, post_id, user_id).await;
+        let user = insert_user(&pool).await;
+        let post_id = insert_post(&pool, user.id).await;
+        let c = insert_comment(&pool, post_id, user.id).await;
         let repo = SqlxCommentRepository::new(pool.clone());
-        super::update_comment_status(&repo, &c.document_id, "spam", &auth())
+        super::update_comment_status(&repo, &c.document_id, "spam", &auth(&user))
             .await
             .unwrap();
         let updated = repo.find_by_id(c.id, None).await.unwrap().unwrap();
