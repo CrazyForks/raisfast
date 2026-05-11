@@ -46,32 +46,29 @@ pub struct WalletTransactionResponse {
     pub tx_type: String,
     pub currency: String,
     pub transaction_no: String,
-    pub related_tx_id: Option<i64>,
+    pub related_tx_id: Option<String>,
     pub reference_type: Option<String>,
     pub reference_id: Option<String>,
-    pub counterparty_wallet_id: Option<i64>,
-    #[schema(value_type = Option<String>)]
     pub metadata: Option<String>,
     #[schema(value_type = String)]
     pub created_at: Timestamp,
 }
 
-impl From<WalletTransaction> for WalletTransactionResponse {
-    fn from(t: WalletTransaction) -> Self {
+impl WalletTransactionResponse {
+    pub fn from_tx(tx: WalletTransaction) -> Self {
         Self {
-            id: t.document_id,
-            entry_type: t.entry_type,
-            amount: t.amount,
-            balance_after: t.balance_after,
-            tx_type: t.tx_type,
-            currency: t.currency,
-            transaction_no: t.transaction_no,
-            related_tx_id: t.related_tx_id,
-            reference_type: t.reference_type,
-            reference_id: t.reference_id,
-            counterparty_wallet_id: t.counterparty_wallet_id,
-            metadata: t.metadata,
-            created_at: t.created_at,
+            id: tx.document_id,
+            entry_type: tx.entry_type,
+            amount: tx.amount,
+            balance_after: tx.balance_after,
+            tx_type: tx.tx_type,
+            currency: tx.currency,
+            transaction_no: tx.transaction_no,
+            related_tx_id: None,
+            reference_type: tx.reference_type,
+            reference_id: tx.reference_id,
+            metadata: tx.metadata,
+            created_at: tx.created_at,
         }
     }
 }

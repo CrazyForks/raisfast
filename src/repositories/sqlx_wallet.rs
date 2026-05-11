@@ -48,7 +48,14 @@ pub trait WalletRepository: Send + Sync {
 
     async fn find_tx_by_id(&self, id: i64) -> AppResult<Option<WalletTransaction>>;
 
+    async fn find_tx_by_document_id(&self, document_id: &str) -> AppResult<Option<WalletTransaction>>;
+
     async fn has_reversal_for(&self, related_tx_id: i64) -> AppResult<bool>;
+
+    async fn find_document_ids_by_ids(
+        &self,
+        ids: &[i64],
+    ) -> AppResult<std::collections::HashMap<i64, String>>;
 }
 
 #[async_trait::async_trait]
@@ -114,8 +121,19 @@ impl WalletRepository for SqlxWalletRepository {
         wallet_transaction::find_tx_by_id(&self.pool, id).await
     }
 
+    async fn find_tx_by_document_id(&self, document_id: &str) -> AppResult<Option<WalletTransaction>> {
+        wallet_transaction::find_tx_by_document_id(&self.pool, document_id).await
+    }
+
     async fn has_reversal_for(&self, related_tx_id: i64) -> AppResult<bool> {
         wallet_transaction::has_reversal_for(&self.pool, related_tx_id).await
+    }
+
+    async fn find_document_ids_by_ids(
+        &self,
+        ids: &[i64],
+    ) -> AppResult<std::collections::HashMap<i64, String>> {
+        wallet_transaction::find_document_ids_by_ids(&self.pool, ids).await
     }
 }
 

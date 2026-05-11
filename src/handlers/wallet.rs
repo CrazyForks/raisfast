@@ -79,7 +79,7 @@ pub fn routes(
     crate::reg_route!(
         r,
         registry,
-        "/admin/wallets/{tx_id}/reversal",
+        "/admin/wallets/{tx_doc_id}/reversal",
         http_post(admin_reversal),
         "admin wallet",
         "admin/wallet",
@@ -143,10 +143,9 @@ pub async fn list_transactions(
         .wallet_repo
         .find_transactions_by_wallet(w.id, params.page, params.page_size)
         .await?;
-    Ok(params.paginate(
-        rows.into_iter().map(dto::WalletTransactionResponse::from).collect(),
-        total,
-    ))
+
+    let items = crate::services::wallet::tx_list_to_response(state.wallet_repo.as_ref(), rows).await?;
+    Ok(params.paginate(items, total))
 }
 
 // ── Admin ──
@@ -188,7 +187,9 @@ pub async fn admin_credit(
         req.metadata.as_deref(),
     )
     .await?;
-    Ok(ApiResponse::success(dto::WalletTransactionResponse::from(tx)))
+
+    let resp = crate::services::wallet::tx_to_response(state.wallet_repo.as_ref(), tx).await?;
+    Ok(ApiResponse::success(resp))
 }
 
 pub async fn admin_debit(
@@ -215,7 +216,9 @@ pub async fn admin_debit(
         req.metadata.as_deref(),
     )
     .await?;
-    Ok(ApiResponse::success(dto::WalletTransactionResponse::from(tx)))
+
+    let resp = crate::services::wallet::tx_to_response(state.wallet_repo.as_ref(), tx).await?;
+    Ok(ApiResponse::success(resp))
 }
 
 pub async fn list_user_transactions(
@@ -239,26 +242,34 @@ pub async fn list_user_transactions(
         .wallet_repo
         .find_transactions_by_wallet(w.id, params.page, params.page_size)
         .await?;
-    Ok(params.paginate(
-        rows.into_iter().map(dto::WalletTransactionResponse::from).collect(),
-        total,
-    ))
+
+    let items = crate::services::wallet::tx_list_to_response(state.wallet_repo.as_ref(), rows).await?;
+    Ok(params.paginate(items, total))
 }
 
 pub async fn admin_reversal(
     auth: AuthUser,
     State(state): State<crate::AppState>,
-    Path(tx_id): Path<i64>,
+    Path(tx_doc_id): Path<String>,
     Json(req): Json<dto::ReversalRequest>,
 ) -> Result<ApiResponse<dto::WalletTransactionResponse>, AppError> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
+
+    let original = state
+        .wallet_repo
+        .find_tx_by_document_id(&tx_doc_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("transaction"))?;
+
     let tx = crate::services::wallet::reverse_transaction(
         state.wallet_repo.as_ref(),
         &state.pool,
-        tx_id,
+        original.id,
         &req.transaction_no,
     )
     .await?;
-    Ok(ApiResponse::success(dto::WalletTransactionResponse::from(tx)))
+
+    let resp = crate::services::wallet::tx_to_response(state.wallet_repo.as_ref(), tx).await?;
+    Ok(ApiResponse::success(resp))
 }

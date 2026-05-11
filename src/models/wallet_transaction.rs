@@ -110,6 +110,21 @@ pub async fn find_tx_by_id(
         .map_err(Into::into)
 }
 
+pub async fn find_tx_by_document_id(
+    pool: &crate::db::Pool,
+    document_id: &str,
+) -> AppResult<Option<WalletTransaction>> {
+    let sql = format!(
+        "SELECT * FROM wallet_transactions WHERE document_id = {}",
+        ph(1)
+    );
+    sqlx::query_as::<_, WalletTransaction>(&sql)
+        .bind(document_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(Into::into)
+}
+
 pub async fn has_reversal_for(
     pool: &crate::db::Pool,
     related_tx_id: i64,
@@ -123,6 +138,26 @@ pub async fn has_reversal_for(
         .fetch_one(pool)
         .await?;
     Ok(count > 0)
+}
+
+pub async fn find_document_ids_by_ids(
+    pool: &crate::db::Pool,
+    ids: &[i64],
+) -> AppResult<std::collections::HashMap<i64, String>> {
+    if ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| ph(i + 1)).collect();
+    let sql = format!(
+        "SELECT id, document_id FROM wallet_transactions WHERE id IN ({})",
+        placeholders.join(", ")
+    );
+    let mut query = sqlx::query_as::<_, (i64, String)>(&sql);
+    for &id in ids {
+        query = query.bind(id);
+    }
+    let rows = query.fetch_all(pool).await?;
+    Ok(rows.into_iter().collect())
 }
 
 #[cfg(test)]
