@@ -41,6 +41,12 @@ pub trait WalletRepository: Send + Sync {
         page_size: i64,
     ) -> AppResult<(Vec<WalletTransaction>, i64)>;
 
+    async fn find_all_transactions(
+        &self,
+        page: i64,
+        page_size: i64,
+    ) -> AppResult<(Vec<WalletTransaction>, i64)>;
+
     async fn find_tx_by_transaction_no(
         &self,
         transaction_no: &str,
@@ -108,6 +114,14 @@ impl WalletRepository for SqlxWalletRepository {
         page_size: i64,
     ) -> AppResult<(Vec<WalletTransaction>, i64)> {
         wallet_transaction::find_transactions_by_user(&self.pool, user_id, page, page_size).await
+    }
+
+    async fn find_all_transactions(
+        &self,
+        page: i64,
+        page_size: i64,
+    ) -> AppResult<(Vec<WalletTransaction>, i64)> {
+        wallet_transaction::find_all_transactions(&self.pool, page, page_size).await
     }
 
     async fn find_tx_by_transaction_no(

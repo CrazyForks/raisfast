@@ -83,6 +83,26 @@ pub async fn find_transactions_by_user(
     Ok((rows, total))
 }
 
+pub async fn find_all_transactions(
+    pool: &crate::db::Pool,
+    page: i64,
+    page_size: i64,
+) -> AppResult<(Vec<WalletTransaction>, i64)> {
+    let offset = (page - 1) * page_size;
+    let (total,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) as count FROM wallet_transactions").fetch_one(pool).await?;
+    let sql = format!(
+        "SELECT * FROM wallet_transactions ORDER BY created_at DESC LIMIT {} OFFSET {}",
+        ph(1), ph(2)
+    );
+    let rows = sqlx::query_as::<_, WalletTransaction>(&sql)
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+    Ok((rows, total))
+}
+
 pub async fn find_tx_by_transaction_no(
     pool: &crate::db::Pool,
     transaction_no: &str,
