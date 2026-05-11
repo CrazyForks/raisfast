@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS users (
     display_name VARCHAR(100),
     slug VARCHAR(100) UNIQUE,
     locale VARCHAR(10),
+    social_links JSONB,
+    metadata JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

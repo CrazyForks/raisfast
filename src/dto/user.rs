@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 use utoipa::ToSchema;
@@ -8,6 +9,9 @@ use crate::models::user::User;
 use crate::utils::tz::Timestamp;
 
 use super::validate_password;
+
+pub type SocialLinks = HashMap<String, String>;
+pub type UserMetadata = serde_json::Value;
 
 /// 注册请求体
 #[derive(Debug, Deserialize, Validate, ToSchema)]
@@ -44,6 +48,8 @@ pub struct UpdateUserRequest {
     pub bio: Option<String>,
     pub website: Option<String>,
     pub avatar: Option<String>,
+    pub social_links: Option<SocialLinks>,
+    pub metadata: Option<UserMetadata>,
 }
 
 /// 修改密码请求体
@@ -192,6 +198,8 @@ pub struct UserResponse {
     pub display_name: Option<String>,
     pub slug: Option<String>,
     pub locale: Option<String>,
+    pub social_links: Option<SocialLinks>,
+    pub metadata: Option<UserMetadata>,
     #[schema(value_type = String)]
     pub created_at: Timestamp,
     #[schema(value_type = String)]
@@ -212,6 +220,8 @@ impl From<User> for UserResponse {
             display_name: user.display_name,
             slug: user.slug,
             locale: user.locale,
+            social_links: crate::models::user::parse_social_links(&user.social_links),
+            metadata: crate::models::user::parse_metadata(&user.metadata),
             created_at: user.created_at,
             updated_at: user.updated_at,
         }
@@ -308,6 +318,8 @@ mod tests {
             bio: None,
             website: None,
             avatar: None,
+            social_links: None,
+            metadata: None,
         };
         assert!(req.validate().is_ok());
     }
@@ -344,6 +356,8 @@ mod tests {
             display_name: None,
             slug: None,
             locale: None,
+            social_links: None,
+            metadata: None,
             created_at: "2025-01-01T00:00:00Z".parse().unwrap(),
             updated_at: "2025-01-01T00:00:00Z".parse().unwrap(),
         };

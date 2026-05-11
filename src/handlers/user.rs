@@ -250,6 +250,8 @@ pub async fn admin_update_user(
         bio: req.bio,
         website: req.website,
         avatar: req.avatar,
+        social_links: req.social_links,
+        metadata: req.metadata,
     };
     let u = state
         .user_repo

@@ -4,6 +4,10 @@
 //! 以及对 `users` 表的增删改查操作。
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+pub type SocialLinks = HashMap<String, String>;
+pub type UserMetadata = serde_json::Value;
 
 use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
@@ -30,14 +34,32 @@ pub struct User {
     pub display_name: Option<String>,
     pub slug: Option<String>,
     pub locale: Option<String>,
+    pub social_links: Option<String>,
+    pub metadata: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
 
 crate::impl_from_row_opt_tenant!(User {
     required { id, document_id, username, role, status, registered_via, created_at, updated_at }
-    optional { avatar, bio, website, display_name, slug, locale }
+    optional { avatar, bio, website, display_name, slug, locale, social_links, metadata }
 });
+
+pub fn parse_social_links(raw: &Option<String>) -> Option<SocialLinks> {
+    raw.as_ref().and_then(|s| serde_json::from_str(s).ok())
+}
+
+pub fn encode_social_links(links: &Option<SocialLinks>) -> Option<String> {
+    links.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default())
+}
+
+pub fn parse_metadata(raw: &Option<String>) -> Option<UserMetadata> {
+    raw.as_ref().and_then(|s| serde_json::from_str(s).ok())
+}
+
+pub fn encode_metadata(meta: &Option<UserMetadata>) -> Option<String> {
+    meta.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default())
+}
 
 /// 根据用户名查找用户
 pub async fn find_by_username(pool: &crate::db::Pool, username: &str) -> AppResult<Option<User>> {
@@ -170,23 +192,37 @@ pub async fn update_profile(
         .as_deref()
         .map(std::string::ToString::to_string)
         .or(user.avatar);
+    let social_links = cmd
+        .social_links
+        .as_ref()
+        .map(|m| serde_json::to_string(m).unwrap_or_default())
+        .or_else(|| user.social_links.clone());
+    let metadata = cmd
+        .metadata
+        .as_ref()
+        .map(|v| serde_json::to_string(v).unwrap_or_default())
+        .or_else(|| user.metadata.clone());
 
     let now = crate::utils::tz::now_utc();
-    let filter = tenant_filter_ph(tenant_id, 6);
+    let filter = tenant_filter_ph(tenant_id, 9);
     let sql = format!(
-        "UPDATE users SET username = {}, bio = {}, website = {}, avatar = {}, updated_at = {} WHERE id = {}{filter}",
+        "UPDATE users SET username = {}, bio = {}, website = {}, avatar = {}, social_links = {}, metadata = {}, updated_at = {} WHERE id = {}{filter}",
         ph(1),
         ph(2),
         ph(3),
         ph(4),
         ph(5),
-        ph(6)
+        ph(6),
+        ph(7),
+        ph(8)
     );
     let mut q = sqlx::query(&sql)
         .bind(username)
         .bind(bio)
         .bind(website)
         .bind(avatar)
+        .bind(social_links)
+        .bind(metadata)
         .bind(now)
         .bind(user.id);
     if let Some(tid) = tenant_id {
@@ -334,6 +370,8 @@ mod tests {
                 bio: Some("hello world".to_string()),
                 website: None,
                 avatar: None,
+                social_links: None,
+                metadata: None,
             },
             None,
         )

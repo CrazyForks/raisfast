@@ -135,6 +135,7 @@ pub async fn callback(
 
     match result {
         oauth::OAuthCallbackResult::LoginSuccess(resp) => {
+            let resp = *resp;
             let redirect_url = format!(
                 "{}?access_token={}&refresh_token={}&expires_in={}",
                 state.config.oauth.redirect_url,

@@ -29,6 +29,8 @@ pub async fn update_me(
                 bio: req.bio,
                 website: req.website,
                 avatar: req.avatar,
+                social_links: req.social_links,
+                metadata: req.metadata,
             },
             auth.tenant_id(),
         )
@@ -137,6 +139,8 @@ mod tests {
                 bio: Some("new bio".into()),
                 website: None,
                 avatar: None,
+                social_links: None,
+                metadata: None,
             },
         )
         .await

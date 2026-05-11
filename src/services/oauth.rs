@@ -60,7 +60,7 @@ pub async fn initiate_oauth(
 /// OAuth 回调处理结果
 pub enum OAuthCallbackResult {
     /// 登录成功（自动重定向到前端）
-    LoginSuccess(LoginResponse),
+    LoginSuccess(Box<LoginResponse>),
     /// 需要绑定到已有账号（返回待绑定信息）
     BindingRequired {
         state: String,
@@ -129,7 +129,7 @@ pub async fn handle_callback(
 
         update_oauth_account(pool, account.id, &token_resp, &user_info).await?;
 
-        return Ok(OAuthCallbackResult::LoginSuccess(login_resp));
+        return Ok(OAuthCallbackResult::LoginSuccess(Box::new(login_resp)));
     }
 
     if let Some(bind_user_id) = oauth_state.user_id {
@@ -148,7 +148,7 @@ pub async fn handle_callback(
         )
         .await?;
 
-        return Ok(OAuthCallbackResult::LoginSuccess(login_resp));
+        return Ok(OAuthCallbackResult::LoginSuccess(Box::new(login_resp)));
     }
 
     if let Some(email) = &user_info.email {
@@ -175,7 +175,7 @@ pub async fn handle_callback(
                 success: true,
             });
 
-            return Ok(OAuthCallbackResult::LoginSuccess(login_resp));
+        return Ok(OAuthCallbackResult::LoginSuccess(Box::new(login_resp)));
         }
     }
 
@@ -192,7 +192,7 @@ pub async fn handle_callback(
     )
     .await?;
 
-    Ok(OAuthCallbackResult::LoginSuccess(login_resp))
+    Ok(OAuthCallbackResult::LoginSuccess(Box::new(login_resp)))
 }
 
 /// 解绑 OAuth 账号

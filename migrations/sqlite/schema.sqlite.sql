@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS users (
     display_name TEXT,
     slug TEXT UNIQUE,
     locale TEXT,
+    social_links TEXT,
+    metadata TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
