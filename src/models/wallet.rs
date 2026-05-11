@@ -5,6 +5,13 @@ use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
+define_enum!(
+    WalletStatus {
+        Active = "active",
+        Frozen = "frozen",
+    }
+);
+
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct Wallet {
     pub id: i64,
@@ -16,6 +23,12 @@ pub struct Wallet {
     pub status: String,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+}
+
+impl Wallet {
+    pub fn status_enum(&self) -> Result<WalletStatus, String> {
+        self.status.parse()
+    }
 }
 
 pub async fn find_by_user_and_currency(
@@ -150,7 +163,7 @@ mod tests {
         assert_eq!(w.currency, "CNY");
         assert_eq!(w.balance, 0);
         assert_eq!(w.version, 1);
-        assert_eq!(w.status, "active");
+        assert_eq!(w.status, WalletStatus::Active.as_str());
     }
 
     #[tokio::test]

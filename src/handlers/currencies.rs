@@ -1,0 +1,107 @@
+use axum::extract::{Path, State};
+use axum::routing::{get, post as http_post};
+use axum::Json;
+
+use crate::dto::currencies::{CreateCurrencyRequest, CurrencyResponse, UpdateCurrencyRequest};
+use crate::errors::app_error::AppError;
+use crate::errors::response::ApiResponse;
+use crate::errors::validation;
+use crate::middleware::auth::AuthUser;
+use crate::models::currencies;
+
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+) -> axum::Router<crate::AppState> {
+    let r = axum::Router::new();
+    let r = crate::reg_route!(
+        r,
+        registry,
+        "/admin/currencies",
+        get(list_currencies),
+        "admin currencies",
+        "admin/currencies",
+        ["GET"]
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        "/admin/currencies",
+        http_post(create_currency),
+        "admin currencies",
+        "admin/currencies",
+        ["POST"]
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
+        "/admin/currencies/{code}",
+        get(get_currency),
+        "admin currencies",
+        "admin/currencies",
+        ["GET"]
+    );
+    crate::reg_route!(
+        r,
+        registry,
+        "/admin/currencies/{code}",
+        get(update_currency),
+        "admin currencies",
+        "admin/currencies",
+        ["PUT"]
+    )
+}
+
+pub async fn list_currencies(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+) -> Result<ApiResponse<Vec<CurrencyResponse>>, AppError> {
+    auth.ensure_admin()?;
+    let rows = currencies::find_all(&state.pool).await?;
+    Ok(ApiResponse::success(rows.into_iter().map(CurrencyResponse::from).collect()))
+}
+
+pub async fn get_currency(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Path(code): Path<String>,
+) -> Result<ApiResponse<CurrencyResponse>, AppError> {
+    auth.ensure_admin()?;
+    let c = currencies::find_by_code(&state.pool, &code)
+        .await?
+        .ok_or_else(|| AppError::not_found("currency"))?;
+    Ok(ApiResponse::success(CurrencyResponse::from(c)))
+}
+
+pub async fn create_currency(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Json(req): Json<CreateCurrencyRequest>,
+) -> Result<ApiResponse<CurrencyResponse>, AppError> {
+    auth.ensure_admin()?;
+    validation::validate(&req)?;
+    let decimals = req.decimals.unwrap_or(2);
+    if !(0..=18).contains(&decimals) {
+        return Err(AppError::BadRequest("decimals must be between 0 and 18".into()));
+    }
+    let c = currencies::create(&state.pool, &req.code, &req.name, decimals).await?;
+    Ok(ApiResponse::success(CurrencyResponse::from(c)))
+}
+
+pub async fn update_currency(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Path(code): Path<String>,
+    Json(req): Json<UpdateCurrencyRequest>,
+) -> Result<ApiResponse<CurrencyResponse>, AppError> {
+    auth.ensure_admin()?;
+    validation::validate(&req)?;
+    let c = currencies::update(
+        &state.pool,
+        &code,
+        req.name.as_deref(),
+        req.is_active,
+    )
+    .await?
+    .ok_or_else(|| AppError::not_found("currency"))?;
+    Ok(ApiResponse::success(CurrencyResponse::from(c)))
+}

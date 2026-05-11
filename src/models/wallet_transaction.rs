@@ -5,6 +5,35 @@ use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
+define_enum!(
+    WalletEntryType {
+        Credit = "credit",
+        Debit = "debit",
+    }
+);
+
+define_enum!(
+    WalletTxType {
+        Recharge = "recharge",
+        Payment = "payment",
+        Refund = "refund",
+        TransferOut = "transfer_out",
+        TransferIn = "transfer_in",
+    }
+);
+
+define_enum!(
+    WalletReferenceType {
+        Admin = "admin",
+        Checkin = "checkin",
+        OrderReward = "order_reward",
+        ApiUsage = "api_usage",
+        PointsMall = "points_mall",
+        Order = "order",
+        Expiry = "expiry",
+    }
+);
+
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct WalletTransaction {
     pub id: i64,
@@ -23,6 +52,23 @@ pub struct WalletTransaction {
     pub counterparty_wallet_id: Option<i64>,
     pub metadata: Option<String>,
     pub created_at: Timestamp,
+}
+
+impl WalletTransaction {
+    pub fn entry_type_enum(&self) -> Result<WalletEntryType, String> {
+        self.entry_type.parse()
+    }
+
+    pub fn tx_type_enum(&self) -> Result<WalletTxType, String> {
+        self.tx_type.parse()
+    }
+
+    pub fn reference_type_enum(&self) -> Result<Option<WalletReferenceType>, String> {
+        match &self.reference_type {
+            None => Ok(None),
+            Some(s) => s.parse().map(Some),
+        }
+    }
 }
 
 pub async fn find_transactions_by_wallet(
@@ -150,11 +196,13 @@ pub async fn has_reversal_for(
     related_tx_id: i64,
 ) -> AppResult<bool> {
     let sql = format!(
-        "SELECT COUNT(*) as count FROM wallet_transactions WHERE related_tx_id = {} AND tx_type = 'refund'",
-        ph(1)
+        "SELECT COUNT(*) as count FROM wallet_transactions WHERE related_tx_id = {} AND tx_type = {}",
+        ph(1),
+        ph(2)
     );
     let (count,): (i64,) = sqlx::query_as(&sql)
         .bind(related_tx_id)
+        .bind(WalletTxType::Refund.as_str())
         .fetch_one(pool)
         .await?;
     Ok(count > 0)
@@ -226,10 +274,10 @@ mod tests {
         .bind(&doc_id)
         .bind(w.id)
         .bind(user.id)
-        .bind("credit")
+        .bind(WalletEntryType::Credit.as_str())
         .bind(1000_i64)
         .bind(1000_i64)
-        .bind("recharge")
+        .bind(WalletTxType::Recharge.as_str())
         .bind("CNY")
         .bind(&tx_no)
         .bind(now)
@@ -253,7 +301,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(found.amount, 1000);
-        assert_eq!(found.entry_type, "credit");
+        assert_eq!(found.entry_type, WalletEntryType::Credit.as_str());
     }
 
     #[tokio::test]
@@ -288,7 +336,7 @@ mod tests {
             .unwrap();
         assert_eq!(total, 1);
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].entry_type, "credit");
+        assert_eq!(rows[0].entry_type, WalletEntryType::Credit.as_str());
     }
 
     #[tokio::test]
@@ -336,10 +384,10 @@ mod tests {
         .bind(&rev_doc_id)
         .bind(tx.wallet_id)
         .bind(tx.user_id)
-        .bind("debit")
+        .bind(WalletEntryType::Debit.as_str())
         .bind(1000_i64)
         .bind(0_i64)
-        .bind("refund")
+        .bind(WalletTxType::Refund.as_str())
         .bind("CNY")
         .bind(&rev_no)
         .bind(tx.id)

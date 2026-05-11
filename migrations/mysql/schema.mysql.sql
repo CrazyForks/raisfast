@@ -91,12 +91,30 @@ CREATE TABLE IF NOT EXISTS oauth_states (
 
 CREATE INDEX idx_oauth_states_expires ON oauth_states(expires_at);
 
+-- 币种配置
+CREATE TABLE IF NOT EXISTS currencies (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    code VARCHAR(10) NOT NULL UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    decimals INT NOT NULL DEFAULT 0,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    version INT NOT NULL DEFAULT 1,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT chk_currencies_code CHECK (code = UPPER(code) AND CHAR_LENGTH(code) BETWEEN 1 AND 10),
+    CONSTRAINT chk_currencies_decimals CHECK (decimals BETWEEN 0 AND 18),
+    CONSTRAINT chk_currencies_is_active CHECK (is_active IN (0, 1))
+);
+
+CREATE UNIQUE INDEX idx_currencies_code ON currencies(code);
+
 CREATE TABLE IF NOT EXISTS wallets (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,
     user_id BIGINT NOT NULL,
     currency VARCHAR(50) NOT NULL,
-    balance BIGINT NOT NULL DEFAULT 0,
+    balance BIGINT NOT NULL DEFAULT 0 CHECK(balance >= 0),
     version BIGINT NOT NULL DEFAULT 1,
     status VARCHAR(50) NOT NULL DEFAULT 'active',
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -114,8 +132,8 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
     wallet_id BIGINT NOT NULL,
     user_id BIGINT NOT NULL,
     entry_type VARCHAR(10) NOT NULL,
-    amount BIGINT NOT NULL,
-    balance_after BIGINT NOT NULL,
+    amount BIGINT NOT NULL CHECK(amount > 0),
+    balance_after BIGINT NOT NULL CHECK(balance_after >= 0),
     tx_type VARCHAR(50) NOT NULL,
     currency VARCHAR(50) NOT NULL,
     transaction_no VARCHAR(255) NOT NULL UNIQUE,

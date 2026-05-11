@@ -61,3 +61,61 @@ macro_rules! in_transaction {
         __tx_result
     }};
 }
+
+#[macro_export]
+macro_rules! define_enum {
+    (
+        $(#[$meta:meta])*
+        $name:ident { $($variant:ident = $value:literal),+ $(,)? }
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[derive(serde::Serialize, serde::Deserialize)]
+        #[derive(utoipa::ToSchema)]
+        pub enum $name {
+            $(
+                #[serde(rename = $value)]
+                $variant,
+            )+
+        }
+
+        impl $name {
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $($name::$variant => $value),+
+                }
+            }
+
+            pub fn all_values() -> &'static [&'static str] {
+                &[$($value),+]
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(self.as_str())
+            }
+        }
+
+        impl std::str::FromStr for $name {
+            type Err = String;
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                match s {
+                    $($value => Ok($name::$variant)),+,
+                    _ => Err(format!(
+                        "invalid {}: '{}', expected one of [{}]",
+                        stringify!($name),
+                        s,
+                        Self::all_values().join(", ")
+                    )),
+                }
+            }
+        }
+
+        impl From<$name> for String {
+            fn from(val: $name) -> String {
+                val.as_str().to_string()
+            }
+        }
+    };
+}

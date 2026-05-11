@@ -85,13 +85,28 @@ CREATE TABLE IF NOT EXISTS oauth_states (
 
 CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
 
+-- 币种配置
+CREATE TABLE IF NOT EXISTS currencies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    code TEXT NOT NULL UNIQUE CHECK(code = UPPER(code) AND LENGTH(code) BETWEEN 1 AND 10),
+    name TEXT NOT NULL,
+    decimals INTEGER NOT NULL DEFAULT 0 CHECK(decimals BETWEEN 0 AND 18),
+    is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_currencies_code ON currencies(code);
+
 -- 用户钱包（每用户每币种一个）
 CREATE TABLE IF NOT EXISTS wallets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id TEXT NOT NULL UNIQUE,
     user_id INTEGER NOT NULL REFERENCES users(id),
     currency TEXT NOT NULL,
-    balance INTEGER NOT NULL DEFAULT 0,
+    balance INTEGER NOT NULL DEFAULT 0 CHECK(balance >= 0),
     version INTEGER NOT NULL DEFAULT 1,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
@@ -109,8 +124,8 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
     wallet_id INTEGER NOT NULL REFERENCES wallets(id),
     user_id INTEGER NOT NULL REFERENCES users(id),
     entry_type TEXT NOT NULL,
-    amount INTEGER NOT NULL,
-    balance_after INTEGER NOT NULL,
+    amount INTEGER NOT NULL CHECK(amount > 0),
+    balance_after INTEGER NOT NULL CHECK(balance_after >= 0),
     tx_type TEXT NOT NULL,
     currency TEXT NOT NULL,
     transaction_no TEXT NOT NULL UNIQUE,

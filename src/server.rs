@@ -116,7 +116,8 @@ async fn build_app(
         .merge(crate::handlers::oauth::routes(&mut registry))
         .merge(api_token::routes(&mut registry))
         .merge(user::routes(&mut registry))
-        .merge(wallet::routes(&mut registry));
+        .merge(wallet::routes(&mut registry))
+        .merge(crate::handlers::currencies::routes(&mut registry));
 
     if config.builtins.blog {
         api_v1 = api_v1

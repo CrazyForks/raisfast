@@ -22,6 +22,7 @@ pub mod category;
 pub mod comment;
 pub mod content_revision;
 pub mod cron;
+pub mod currencies;
 pub mod health;
 pub mod media;
 pub mod oauth;

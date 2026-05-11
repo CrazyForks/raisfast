@@ -85,12 +85,27 @@ CREATE TABLE IF NOT EXISTS oauth_states (
 
 CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
 
+-- 币种配置
+CREATE TABLE IF NOT EXISTS currencies (
+    id BIGSERIAL PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    code VARCHAR(10) NOT NULL UNIQUE CHECK(code = UPPER(code) AND LENGTH(code) BETWEEN 1 AND 10),
+    name TEXT NOT NULL,
+    decimals INTEGER NOT NULL DEFAULT 0 CHECK(decimals BETWEEN 0 AND 18),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_currencies_code ON currencies(code);
+
 CREATE TABLE IF NOT EXISTS wallets (
     id BIGSERIAL PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,
     user_id BIGINT NOT NULL REFERENCES users(id),
     currency VARCHAR(50) NOT NULL,
-    balance BIGINT NOT NULL DEFAULT 0,
+    balance BIGINT NOT NULL DEFAULT 0 CHECK(balance >= 0),
     version BIGINT NOT NULL DEFAULT 1,
     status VARCHAR(50) NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -107,8 +122,8 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
     wallet_id BIGINT NOT NULL REFERENCES wallets(id),
     user_id BIGINT NOT NULL REFERENCES users(id),
     entry_type VARCHAR(10) NOT NULL,
-    amount BIGINT NOT NULL,
-    balance_after BIGINT NOT NULL,
+    amount BIGINT NOT NULL CHECK(amount > 0),
+    balance_after BIGINT NOT NULL CHECK(balance_after >= 0),
     tx_type VARCHAR(50) NOT NULL,
     currency VARCHAR(50) NOT NULL,
     transaction_no VARCHAR(255) NOT NULL UNIQUE,

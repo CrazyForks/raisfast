@@ -7,6 +7,7 @@ use crate::errors::app_error::AppError;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
+use crate::models::wallet_transaction::{WalletReferenceType, WalletTxType};
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -126,9 +127,10 @@ pub async fn list_wallets(
         .ok_or(AppError::Unauthorized)?;
 
     let wallets = state.wallet_repo.find_wallets_by_user(user.id).await?;
-    Ok(ApiResponse::success(
-        wallets.into_iter().map(dto::WalletResponse::from).collect(),
-    ))
+    let items: Vec<dto::WalletResponse> = wallets.into_iter()
+        .map(dto::WalletResponse::from_wallet)
+        .collect::<Result<_, _>>()?;
+    Ok(ApiResponse::success(items))
 }
 
 pub async fn get_wallet(
@@ -146,7 +148,7 @@ pub async fn get_wallet(
         .find_wallet_by_user_and_currency(user.id, &currency)
         .await?
         .ok_or_else(|| AppError::not_found("wallet"))?;
-    Ok(ApiResponse::success(dto::WalletResponse::from(w)))
+    Ok(ApiResponse::success(dto::WalletResponse::from_wallet(w)?))
 }
 
 pub async fn list_transactions(
@@ -203,10 +205,10 @@ pub async fn list_all_wallets(
 ) -> Result<ApiResponse<crate::errors::response::PaginatedData<dto::WalletResponse>>, AppError> {
     auth.ensure_admin()?;
     let (rows, total) = state.wallet_repo.find_all_wallets(params.page, params.page_size).await?;
-    Ok(params.paginate(
-        rows.into_iter().map(dto::WalletResponse::from).collect(),
-        total,
-    ))
+    let items: Vec<dto::WalletResponse> = rows.into_iter()
+        .map(dto::WalletResponse::from_wallet)
+        .collect::<Result<_, _>>()?;
+    Ok(params.paginate(items, total))
 }
 
 pub async fn list_all_transactions_admin(
@@ -237,9 +239,10 @@ pub async fn admin_credit(
         user.id,
         &req.currency,
         req.amount,
-        "recharge",
+        WalletTxType::Recharge,
         &req.transaction_no,
-        req.reference_type.as_deref().or(Some("admin")),
+        req.reference_type.map(|s| s.parse()).transpose().map_err(|e: String| AppError::BadRequest(e))?
+            .or(Some(WalletReferenceType::Admin)),
         req.reference_id.as_deref(),
         req.metadata.as_deref(),
     )
@@ -266,9 +269,10 @@ pub async fn admin_debit(
         user.id,
         &req.currency,
         req.amount,
-        "payment",
+        WalletTxType::Payment,
         &req.transaction_no,
-        req.reference_type.as_deref().or(Some("admin")),
+        req.reference_type.map(|s| s.parse()).transpose().map_err(|e: String| AppError::BadRequest(e))?
+            .or(Some(WalletReferenceType::Admin)),
         req.reference_id.as_deref(),
         req.metadata.as_deref(),
     )

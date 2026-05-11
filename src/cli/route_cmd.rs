@@ -12,6 +12,7 @@ fn collect_routes(config: &AppConfig) -> Vec<RouteInfo> {
     let _ = raisfast::handlers::api_token::routes(&mut registry);
     let _ = raisfast::handlers::user::routes(&mut registry);
     let _ = raisfast::handlers::wallet::routes(&mut registry);
+    let _ = raisfast::handlers::currencies::routes(&mut registry);
 
     if config.builtins.blog {
         let _ = raisfast::handlers::category::routes(&mut registry);

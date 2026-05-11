@@ -21,6 +21,7 @@ pub mod api_token;
 pub mod category;
 pub mod comment;
 pub mod content_revision;
+pub mod currencies;
 pub mod email_verification;
 pub mod media;
 pub mod oauth;

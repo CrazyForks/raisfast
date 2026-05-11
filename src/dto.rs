@@ -1,6 +1,7 @@
 pub mod batch;
 pub mod category;
 pub mod comment;
+pub mod currencies;
 pub mod media;
 pub mod post;
 pub mod tag;
@@ -68,6 +69,18 @@ fn validate_uuid_vec(ids: &[String]) -> Result<(), validator::ValidationError> {
         }
     }
     Ok(())
+}
+
+fn validate_currency_code(code: &str) -> Result<(), validator::ValidationError> {
+    let valid =
+        !code.is_empty() && code.len() <= 10 && code.chars().all(|c| c.is_ascii_uppercase());
+    if valid {
+        Ok(())
+    } else {
+        let mut err = validator::ValidationError::new("invalid_currency_code");
+        err.message = Some("currency must be 1-10 uppercase ASCII letters".into());
+        Err(err)
+    }
 }
 
 #[cfg(test)]
