@@ -469,37 +469,13 @@ async fn insert_tx(
         .execute(&mut *tx)
         .await?;
 
-    #[cfg(feature = "db-sqlite")]
-    let (row_id,): (i64,) = sqlx::query_as("SELECT last_insert_rowid()")
-        .fetch_one(&mut *tx)
-        .await?;
-    #[cfg(feature = "db-postgres")]
-    let (row_id,): (i64,) = sqlx::query_as("SELECT lastval()")
-        .fetch_one(&mut *tx)
-        .await?;
-    #[cfg(feature = "db-mysql")]
-    let (row_id,): (i64,) = sqlx::query_as("SELECT LAST_INSERT_ID()")
+    let sql = format!("SELECT * FROM wallet_transactions WHERE document_id = {}", ph(1));
+    let row = sqlx::query_as::<_, WalletTransaction>(&sql)
+        .bind(&document_id)
         .fetch_one(&mut *tx)
         .await?;
 
-    Ok(WalletTransaction {
-        id: row_id,
-        document_id,
-        wallet_id,
-        user_id,
-        entry_type: entry_type.to_string(),
-        amount,
-        balance_after,
-        tx_type: tx_type.to_string(),
-        currency: currency.to_string(),
-        transaction_no: transaction_no.to_string(),
-        related_tx_id,
-        reference_type: reference_type.map(|s| s.to_string()),
-        reference_id: reference_id.map(|s| s.to_string()),
-        counterparty_wallet_id,
-        metadata: metadata.map(|s| s.to_string()),
-        created_at: now,
-    })
+    Ok(row)
 }
 
 async fn enrich_related_id(
