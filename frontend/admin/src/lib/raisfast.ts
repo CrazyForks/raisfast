@@ -1,5 +1,4 @@
-import { BaseAuthStore } from "@raisfast/sdk";
-import { RaisFast } from "@raisfast/sdk";
+import { BaseAuthStore, RaisFast, UserRole } from "@raisfast/sdk";
 import { useAuthStore } from "@/stores/auth";
 import { useTenantStore } from "@/stores/tenant";
 
@@ -15,20 +14,6 @@ class ZustandAuthStore extends BaseAuthStore {
       if (auth.accessToken) {
         this._token = auth.accessToken;
         this._refreshToken = auth.refreshToken;
-        this._user = auth.user
-          ? {
-              id: auth.user.id,
-              email: auth.user.email,
-              username: auth.user.username,
-              role: auth.user.role,
-              phone: null,
-              avatar: auth.user.avatar,
-              bio: auth.user.bio ?? null,
-              website: null,
-              created_at: "",
-              updated_at: "",
-            }
-          : null;
       }
     }
   }
@@ -37,17 +22,17 @@ class ZustandAuthStore extends BaseAuthStore {
     access_token: string;
     refresh_token: string;
     expires_in?: number;
-    user: { id: string; email: string; username: string; role: string; phone: string | null; avatar: string | null; bio: string | null; website: string | null; created_at: string; updated_at: string };
+    user: { id: string; username: string; role: string; avatar: string | null; bio: string | null; website: string | null; created_at: string; updated_at: string; status?: string; registered_via?: string };
   }): void {
     super.save({ ...auth, expires_in: auth.expires_in ?? 0 } as never);
     const store = useAuthStore.getState();
     store.setTokens(auth.access_token, auth.refresh_token);
     if (auth.user) {
-      store.setUser({
+        store.setUser({
         id: auth.user.id,
-        email: auth.user.email,
+        email: null,
         username: auth.user.username,
-        role: auth.user.role,
+        role: auth.user.role as UserRole,
         avatar: auth.user.avatar,
         bio: auth.user.bio,
       });

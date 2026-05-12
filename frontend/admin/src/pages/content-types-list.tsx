@@ -19,7 +19,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { client } from "@/lib/raisfast";
-import { SDKError } from "@raisfast/sdk";
+import { SDKError, PostStatus } from "@raisfast/sdk";
 import {
   type ContentTypeSchema,
   type PaginatedCmsResponse,
@@ -200,7 +200,7 @@ export default function ContentTypeListPage() {
 
       {schema.draft_publish && (
         <div className="flex gap-1 bg-muted rounded-lg p-[3px] w-fit">
-          {(["all", "draft", "published", "archived"] as const).map(
+          {(["all", PostStatus.draft, PostStatus.published] as const).map(
             (status) => {
               const isActive =
                 status === "all"

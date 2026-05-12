@@ -1,4 +1,4 @@
-import { HttpClient } from "./client";
+import { HttpClient, toQueryString } from "../client";
 import type {
   BatchRequest,
   BatchResponse,
@@ -6,8 +6,7 @@ import type {
   PageStatus,
   PaginatedData,
   RequestOptions,
-  SitemapEntry,
-} from "./types";
+} from "../types";
 
 export interface CreatePageBody {
   title: string;
@@ -39,7 +38,7 @@ export interface UpdatePageBody {
   cover_image?: string;
 }
 
-export class Pages {
+export class AdminPages {
   private readonly http: HttpClient;
 
   constructor(http: HttpClient) {
@@ -47,43 +46,21 @@ export class Pages {
   }
 
   async list(
-    page = 1,
-    pageSize = 25,
-    options?: RequestOptions,
-  ): Promise<PaginatedData<Page>> {
-    return this.http.get<PaginatedData<Page>>("/pages", {
-      ...options,
-      query: { page: String(page), page_size: String(pageSize) },
-    });
-  }
-
-  async get(slug: string, options?: RequestOptions): Promise<Page> {
-    return this.http.get<Page>(`/pages/${slug}`, options);
-  }
-
-  async sitemap(options?: RequestOptions): Promise<SitemapEntry[]> {
-    return this.http.get<SitemapEntry[]>("/pages/sitemap", options);
-  }
-
-  async create(
-    body: CreatePageBody,
-    options?: RequestOptions,
-  ): Promise<Page> {
-    return this.http.post<Page>("/admin/pages", body, options);
-  }
-
-  async adminList(
     query?: { page?: number; page_size?: number; status?: PageStatus },
     options?: RequestOptions,
   ): Promise<PaginatedData<Page>> {
     return this.http.get<PaginatedData<Page>>("/admin/pages", {
       ...options,
-      query: query as Record<string, string>,
+      query: toQueryString(query as Record<string, string | number | undefined>),
     });
   }
 
-  async adminGet(id: string, options?: RequestOptions): Promise<Page> {
+  async get(id: string, options?: RequestOptions): Promise<Page> {
     return this.http.get<Page>(`/admin/pages/${id}`, options);
+  }
+
+  async create(body: CreatePageBody, options?: RequestOptions): Promise<Page> {
+    return this.http.post<Page>("/admin/pages", body, options);
   }
 
   async update(
@@ -113,7 +90,7 @@ export class Pages {
     await this.http.put("/admin/pages/reorder", { items }, options);
   }
 
-  async adminBatch(
+  async batch(
     data: BatchRequest,
     options?: RequestOptions,
   ): Promise<BatchResponse> {

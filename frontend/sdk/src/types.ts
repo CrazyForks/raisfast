@@ -366,5 +366,5 @@ export interface RouteInfo {
   method: string;
   path: string;
   source: string;
-  name: string;
+  source_name: string;
 }

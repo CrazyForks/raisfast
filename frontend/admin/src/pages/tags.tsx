@@ -31,7 +31,7 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { client } from "@/lib/raisfast";
 import { SDKError } from "@raisfast/sdk";
-import type { Tag, PaginatedData } from "@raisfast/sdk";
+import type { PaginatedData } from "@raisfast/sdk";
 import { useT } from "@/lib/i18n";
 
 const tagSchema = z.object({
@@ -44,14 +44,17 @@ export default function TagsPage() {
   const { t } = useT();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editTag, setEditTag] = useState<Tag | null>(null);
+  const [editTag, setEditTag] = useState<{ id: string; name: string } | null>(null);
   const [editName, setEditName] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = 20;
 
   const tagsQuery = useQuery({
     queryKey: ["tags", page],
-    queryFn: () => client.tags.list(page, pageSize),
+    queryFn: async () => {
+      const res = await client.admin.tags.list(page, pageSize);
+      return { ...res, items: res.items.map((t) => ({ ...t, id: String(t.id) })) };
+    },
   });
 
   type FormValues = z.infer<typeof tagSchema>;
@@ -67,7 +70,7 @@ export default function TagsPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: TagForm) => client.tags.create(data),
+    mutationFn: (data: TagForm) => client.admin.tags.create(data),
     onSuccess: () => {
       toast.success(t("tags.tagCreated"));
       queryClient.invalidateQueries({ queryKey: ["tags"] });
@@ -85,7 +88,7 @@ export default function TagsPage() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: { name: string } }) =>
-      client.tags.update(id, data),
+      client.admin.tags.update(id, data),
     onSuccess: () => {
       toast.success(t("tags.tagUpdated"));
       queryClient.invalidateQueries({ queryKey: ["tags"] });
@@ -101,7 +104,7 @@ export default function TagsPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => client.tags.delete(id),
+    mutationFn: (id: string) => client.admin.tags.delete(id),
     onSuccess: () => {
       toast.success(t("tags.tagDeleted"));
       queryClient.invalidateQueries({ queryKey: ["tags"] });
@@ -121,7 +124,7 @@ export default function TagsPage() {
     }
   }
 
-  function startEdit(tag: Tag) {
+  function startEdit(tag: { id: string; name: string }) {
     setEditTag(tag);
     setEditName(tag.name);
   }

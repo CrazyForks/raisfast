@@ -43,7 +43,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { client } from "@/lib/raisfast";
-import { SDKError } from "@raisfast/sdk";
+import { SDKError, CronExecStatus } from "@raisfast/sdk";
 
 interface CronSchedule {
   id: string;
@@ -104,14 +104,14 @@ function statusBadge(status: string, t: (key: string) => string) {
           {t("cron.success")}
         </Badge>
       );
-    case "failed":
+    case CronExecStatus.failed:
       return (
         <Badge variant="destructive" className="gap-1">
           <XCircle className="size-3" />
           {t("cron.failedStatus")}
         </Badge>
       );
-    case "running":
+    case CronExecStatus.running:
       return (
         <Badge variant="secondary" className="gap-1">
           <Loader2 className="size-3 animate-spin" />
@@ -149,7 +149,7 @@ export default function CronDetailPage() {
 
   const toggleMutation = useMutation({
     mutationFn: (enabled: boolean) =>
-      client.admin.crons.toggle(encodeURIComponent(id)),
+      client.admin.crons.toggle(encodeURIComponent(id), enabled),
     onSuccess: () => {
       toast.success(t("cron.scheduleToggled"));
       queryClient.invalidateQueries({ queryKey: ["cron", id] });

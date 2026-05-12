@@ -42,7 +42,13 @@ export type AdminWalletOperationRequest = {
   metadata: string | null;
 };
 
-export type ApiAccess = "none" | "public" | "member" | "admin";
+export const ApiAccess = {
+  none: "none",
+  public: "public",
+  member: "member",
+  admin: "admin"
+} as const;
+export type ApiAccess = typeof ApiAccess[keyof typeof ApiAccess];
 
 export type ApiConfig = {
   /**
@@ -124,7 +130,12 @@ export type AuthConfigResponse = {
   require_email_verification: boolean;
 };
 
-export type AuthType = "email" | "phone" | "oauth";
+export const AuthType = {
+  email: "email",
+  phone: "phone",
+  oauth: "oauth"
+} as const;
+export type AuthType = typeof AuthType[keyof typeof AuthType];
 
 export type BatchRequest = {
   action: string;
@@ -178,7 +189,11 @@ export type ColumnDef = {
   blocks: Array<PageBlock>;
 };
 
-export type CommentOpenStatus = "open" | "closed";
+export const CommentOpenStatus = {
+  open: "open",
+  closed: "closed"
+} as const;
+export type CommentOpenStatus = typeof CommentOpenStatus[keyof typeof CommentOpenStatus];
 
 export type CommentResponse = {
   id: bigint;
@@ -193,9 +208,18 @@ export type CommentResponse = {
   created_at: string;
 };
 
-export type CommentStatus = "pending" | "approved" | "spam";
+export const CommentStatus = {
+  pending: "pending",
+  approved: "approved",
+  spam: "spam"
+} as const;
+export type CommentStatus = typeof CommentStatus[keyof typeof CommentStatus];
 
-export type ContentKind = "collection" | "single";
+export const ContentKind = {
+  collection: "collection",
+  single: "single"
+} as const;
+export type ContentKind = typeof ContentKind[keyof typeof ContentKind];
 
 export type ContentRevision = {
   id: bigint;
@@ -335,7 +359,12 @@ export type CredentialResponse = {
   updated_at: string;
 };
 
-export type CronExecStatus = "running" | "completed" | "failed";
+export const CronExecStatus = {
+  running: "running",
+  completed: "completed",
+  failed: "failed"
+} as const;
+export type CronExecStatus = typeof CronExecStatus[keyof typeof CronExecStatus];
 
 export type CronExecutionLog = {
   id: bigint;
@@ -450,7 +479,26 @@ export type FieldSchema = {
   enum_values: Array<string> | null;
 };
 
-export type FieldType = "text" | "rich_text" | "integer" | "big_int" | "decimal" | "float" | "boolean" | "date" | "date_time" | "time" | "email" | "password" | "enum" | "uid" | "json" | "media" | "relation";
+export const FieldType = {
+  text: "text",
+  rich_text: "rich_text",
+  integer: "integer",
+  big_int: "big_int",
+  decimal: "decimal",
+  float: "float",
+  boolean: "boolean",
+  date: "date",
+  date_time: "date_time",
+  time: "time",
+  email: "email",
+  password: "password",
+  enum: "enum",
+  uid: "uid",
+  json: "json",
+  media: "media",
+  relation: "relation"
+} as const;
+export type FieldType = typeof FieldType[keyof typeof FieldType];
 
 export type ForgotPasswordRequest = {
   email: string;
@@ -489,7 +537,14 @@ export type InstanceQuery = {
   page_size: bigint | null;
 };
 
-export type JobStatus = "pending" | "running" | "completed" | "failed" | "dead";
+export const JobStatus = {
+  pending: "pending",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+  dead: "dead"
+} as const;
+export type JobStatus = typeof JobStatus[keyof typeof JobStatus];
 
 export type LoginRequest = {
   email: string;
@@ -567,7 +622,15 @@ export type OptionGroup = {
   options: Array<OptionEntry>;
 };
 
-export type OptionType = "text" | "url" | "email" | "select" | "integer" | "boolean";
+export const OptionType = {
+  text: "text",
+  url: "url",
+  email: "email",
+  select: "select",
+  integer: "integer",
+  boolean: "boolean"
+} as const;
+export type OptionType = typeof OptionType[keyof typeof OptionType];
 
 export type Page = {
   id: bigint;
@@ -724,7 +787,11 @@ export type PageListQuery = {
   page_size: bigint | null;
 };
 
-export type PageStatus = "draft" | "published";
+export const PageStatus = {
+  draft: "draft",
+  published: "published"
+} as const;
+export type PageStatus = typeof PageStatus[keyof typeof PageStatus];
 
 export type Permission = {
   id: bigint;
@@ -830,7 +897,11 @@ export type PostResponse = {
   excerpt_highlight: string | null;
 };
 
-export type PostStatus = "draft" | "published";
+export const PostStatus = {
+  draft: "draft",
+  published: "published"
+} as const;
+export type PostStatus = typeof PostStatus[keyof typeof PostStatus];
 
 export type PricingPlan = {
   name: string;
@@ -857,7 +928,12 @@ export type RegisterRequest = {
   password: string;
 };
 
-export type RegisteredVia = "email" | "phone" | "oauth";
+export const RegisteredVia = {
+  email: "email",
+  phone: "phone",
+  oauth: "oauth"
+} as const;
+export type RegisteredVia = typeof RegisteredVia[keyof typeof RegisteredVia];
 
 export type RelationConfig = {
   relation_type: RelationType;
@@ -875,7 +951,15 @@ export type RelationConfig = {
   foreign_key: string | null;
 };
 
-export type RelationType = "one_to_one" | "one_to_many" | "many_to_one" | "many_to_many" | "one_way" | "many_way";
+export const RelationType = {
+  one_to_one: "one_to_one",
+  one_to_many: "one_to_many",
+  many_to_one: "many_to_one",
+  many_to_many: "many_to_many",
+  one_way: "one_way",
+  many_way: "many_way"
+} as const;
+export type RelationType = typeof RelationType[keyof typeof RelationType];
 
 export type ReorderItem = {
   id: string;
@@ -986,7 +1070,14 @@ export type StepLog = {
   completed_at: string | null;
 };
 
-export type StepType = "task" | "await" | "branch" | "parallel" | "delay";
+export const StepType = {
+  task: "task",
+  await: "await",
+  branch: "branch",
+  parallel: "parallel",
+  delay: "delay"
+} as const;
+export type StepType = typeof StepType[keyof typeof StepType];
 
 export type Tag = {
   id: bigint;
@@ -1032,7 +1123,11 @@ export type Tenant = {
   updated_at: string;
 };
 
-export type TenantStatus = "active" | "inactive";
+export const TenantStatus = {
+  active: "active",
+  inactive: "inactive"
+} as const;
+export type TenantStatus = typeof TenantStatus[keyof typeof TenantStatus];
 
 export type TestimonialItem = {
   quote: string;
@@ -1135,9 +1230,20 @@ export type UserResponse = {
   updated_at: string;
 };
 
-export type UserRole = "admin" | "editor" | "author" | "reader";
+export const UserRole = {
+  admin: "admin",
+  editor: "editor",
+  author: "author",
+  reader: "reader"
+} as const;
+export type UserRole = typeof UserRole[keyof typeof UserRole];
 
-export type UserStatus = "active" | "suspended" | "banned";
+export const UserStatus = {
+  active: "active",
+  suspended: "suspended",
+  banned: "banned"
+} as const;
+export type UserStatus = typeof UserStatus[keyof typeof UserStatus];
 
 export type VerifyEmailRequest = {
   token: string;
@@ -1149,9 +1255,22 @@ export type VerifySmsRequest = {
   purpose: string;
 };
 
-export type WalletEntryType = "credit" | "debit";
+export const WalletEntryType = {
+  credit: "credit",
+  debit: "debit"
+} as const;
+export type WalletEntryType = typeof WalletEntryType[keyof typeof WalletEntryType];
 
-export type WalletReferenceType = "admin" | "checkin" | "order_reward" | "api_usage" | "points_mall" | "order" | "expiry";
+export const WalletReferenceType = {
+  admin: "admin",
+  checkin: "checkin",
+  order_reward: "order_reward",
+  api_usage: "api_usage",
+  points_mall: "points_mall",
+  order: "order",
+  expiry: "expiry"
+} as const;
+export type WalletReferenceType = typeof WalletReferenceType[keyof typeof WalletReferenceType];
 
 export type WalletResponse = {
   id: string;
@@ -1162,7 +1281,11 @@ export type WalletResponse = {
   updated_at: string;
 };
 
-export type WalletStatus = "active" | "frozen";
+export const WalletStatus = {
+  active: "active",
+  frozen: "frozen"
+} as const;
+export type WalletStatus = typeof WalletStatus[keyof typeof WalletStatus];
 
 export type WalletTransactionResponse = {
   id: string;
@@ -1179,7 +1302,14 @@ export type WalletTransactionResponse = {
   created_at: string;
 };
 
-export type WalletTxType = "recharge" | "payment" | "refund" | "transfer_out" | "transfer_in";
+export const WalletTxType = {
+  recharge: "recharge",
+  payment: "payment",
+  refund: "refund",
+  transfer_out: "transfer_out",
+  transfer_in: "transfer_in"
+} as const;
+export type WalletTxType = typeof WalletTxType[keyof typeof WalletTxType];
 
 export type WebhookSubscription = {
   id: bigint;
@@ -1220,7 +1350,19 @@ export type WorkflowInstance = {
   updated_at: string;
 };
 
-export type WorkflowInstanceStatus = "running" | "completed" | "failed" | "cancelled" | "paused";
+export const WorkflowInstanceStatus = {
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+  cancelled: "cancelled",
+  paused: "paused"
+} as const;
+export type WorkflowInstanceStatus = typeof WorkflowInstanceStatus[keyof typeof WorkflowInstanceStatus];
 
-export type WorkflowStepStatus = "running" | "completed" | "failed";
+export const WorkflowStepStatus = {
+  running: "running",
+  completed: "completed",
+  failed: "failed"
+} as const;
+export type WorkflowStepStatus = typeof WorkflowStepStatus[keyof typeof WorkflowStepStatus];
 

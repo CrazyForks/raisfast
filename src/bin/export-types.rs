@@ -188,7 +188,20 @@ fn format_type_decl(decl: &str) -> String {
     if variants.len() > 1 {
         let all_strings = variants.iter().all(|v: &&str| v.trim().starts_with('"'));
         if all_strings {
-            format!("export type {name_part} = {body_raw};")
+            let keys: Vec<String> = variants
+                .iter()
+                .map(|v: &&str| {
+                    let v = v.trim();
+                    let key = v.trim_matches('"');
+                    let key = key.replace('-', "_");
+                    format!("  {key}: {v}")
+                })
+                .collect();
+            let const_name = name_part.replace(" ", "");
+            format!(
+                "export const {const_name} = {{\n{}\n}} as const;\nexport type {const_name} = typeof {const_name}[keyof typeof {const_name}];",
+                keys.join(",\n")
+            )
         } else {
             let fmt: Vec<String> = variants
                 .iter()

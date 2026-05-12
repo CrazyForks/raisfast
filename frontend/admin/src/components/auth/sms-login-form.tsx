@@ -67,7 +67,7 @@ export function SmsLoginForm() {
       });
       const u = data.user;
       store.login(
-        { id: u.id, email: u.email, username: u.username, role: u.role, avatar: u.avatar, bio: u.bio },
+        { id: u.id, username: u.username, role: u.role, avatar: u.avatar, bio: u.bio, email: null },
         data.access_token,
         data.refresh_token,
       );

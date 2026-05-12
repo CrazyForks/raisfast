@@ -1,11 +1,12 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { UserRole } from "@raisfast/sdk";
 
 interface User {
   id: string;
-  email: string;
+  email: string | null;
   username: string;
-  role: string;
+  role: UserRole;
   avatar: string | null;
   bio: string | null;
 }
@@ -57,11 +58,11 @@ export const useAuthStore = create<AuthState>()(
 
       isLoggedIn: () => get().accessToken !== null,
 
-      isAdmin: () => get().user?.role === "admin",
+      isAdmin: () => get().user?.role === UserRole.admin,
 
       isAuthor: () => {
         const role = get().user?.role;
-        return role === "admin" || role === "author";
+        return role === UserRole.admin || role === UserRole.author;
       },
     }),
     { name: "auth-storage" },

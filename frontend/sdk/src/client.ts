@@ -8,6 +8,17 @@ import type {
   SendOptions,
 } from "./types";
 
+export function toQueryString(query?: Record<string, string | number | boolean | undefined>): Record<string, string> | undefined {
+  if (!query) return undefined;
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null) {
+      result[key] = String(value);
+    }
+  }
+  return result;
+}
+
 export class HttpClient {
   readonly baseUrl: string;
   readonly authStore: IAuthStore;

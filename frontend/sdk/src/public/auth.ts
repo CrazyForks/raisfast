@@ -1,4 +1,4 @@
-import { HttpClient } from "./client";
+import { HttpClient } from "../client";
 import type {
   AuthConfig,
   AuthResult,
@@ -8,7 +8,7 @@ import type {
   OAuthProvider,
   RequestOptions,
   User,
-} from "./types";
+} from "../types";
 
 export class Auth {
   private readonly http: HttpClient;
@@ -88,7 +88,14 @@ export class Auth {
   }
 
   async updateMe(
-    data: { username?: string; bio?: string; website?: string; avatar?: string; social_links?: Record<string, string>; metadata?: unknown },
+    data: {
+      username?: string;
+      bio?: string;
+      website?: string;
+      avatar?: string;
+      social_links?: Record<string, string>;
+      metadata?: unknown;
+    },
     options?: RequestOptions,
   ): Promise<User> {
     return this.http.put<User>("/users/me", data, options);
@@ -164,13 +171,13 @@ export class Auth {
     await this.http.post("/auth/phone/bind", data, options);
   }
 
-  // ─── OAuth2 ───
-
   getOAuthRedirectURL(provider: string): string {
     return `${this.http.baseUrl}/auth/oauth/${provider}`;
   }
 
-  async listOAuthProviders(options?: RequestOptions): Promise<OAuthProvider[]> {
+  async listOAuthProviders(
+    options?: RequestOptions,
+  ): Promise<OAuthProvider[]> {
     return this.http.get<OAuthProvider[]>(
       "/auth/oauth/providers",
       options,
@@ -206,7 +213,9 @@ export class Auth {
     await this.http.del(`/auth/oauth/${provider}/unbind`, options);
   }
 
-  async listCredentials(options?: RequestOptions): Promise<CredentialResponse[]> {
+  async listCredentials(
+    options?: RequestOptions,
+  ): Promise<CredentialResponse[]> {
     return this.http.get<CredentialResponse[]>("/auth/credentials", options);
   }
 

@@ -24,13 +24,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { client } from "@/lib/raisfast";
-import { SDKError } from "@raisfast/sdk";
+import { SDKError, WorkflowInstanceStatus, WorkflowStepStatus } from "@raisfast/sdk";
 import { useT } from "@/lib/i18n";
 
 interface WorkflowInstance {
   id: string;
   definition_id: string;
-  status: string;
+  status: WorkflowInstanceStatus;
   current_step: string | null;
   context: string;
   triggered_by: string | null;
@@ -44,7 +44,7 @@ interface StepLog {
   instance_id: string;
   step_id: string;
   step_name: string;
-  status: string;
+  status: WorkflowStepStatus;
   input: string | null;
   output: string | null;
   error: string | null;
@@ -59,13 +59,13 @@ interface PaginatedData<T> {
   page_size: number;
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status }: { status: WorkflowInstanceStatus }) {
   const variant =
-    status === "completed"
+    status === WorkflowInstanceStatus.completed
       ? "default"
-      : status === "running"
+      : status === WorkflowInstanceStatus.running
         ? "secondary"
-        : status === "failed"
+        : status === WorkflowInstanceStatus.failed
           ? "destructive"
           : "outline";
   return <Badge variant={variant}>{status}</Badge>;
@@ -103,7 +103,7 @@ function InstanceDetail({ instance }: { instance: WorkflowInstance }) {
           {expanded ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
           {expanded ? t("workflows.instances.hideLogs") : t("workflows.instances.showLogs")}
         </Button>
-        {instance.status === "running" && (
+        {instance.status === WorkflowInstanceStatus.running && (
           <Button
             variant="ghost"
             size="sm"
@@ -223,10 +223,10 @@ export default function WorkflowInstancesPage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">{t("common.all")}</SelectItem>
-            <SelectItem value="running">Running</SelectItem>
-            <SelectItem value="completed">Completed</SelectItem>
-            <SelectItem value="failed">Failed</SelectItem>
-            <SelectItem value="cancelled">Cancelled</SelectItem>
+            <SelectItem value={WorkflowInstanceStatus.running}>Running</SelectItem>
+            <SelectItem value={WorkflowInstanceStatus.completed}>Completed</SelectItem>
+            <SelectItem value={WorkflowInstanceStatus.failed}>Failed</SelectItem>
+            <SelectItem value={WorkflowInstanceStatus.cancelled}>Cancelled</SelectItem>
           </SelectContent>
         </Select>
         <span className="text-sm text-muted-foreground">

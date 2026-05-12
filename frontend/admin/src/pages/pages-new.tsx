@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { page as pageApi } from "@/lib/page";
+import { PageStatus, type CreatePageBody } from "@raisfast/sdk";
 import { useT } from "@/lib/i18n";
 import { BlockEditor } from "@/components/admin/block-editor";
 
@@ -22,7 +23,7 @@ export default function NewPagePage() {
 
   const [title, setTitle] = useState("");
   const [slug, setSlug] = useState("");
-  const [status, setStatus] = useState("draft");
+  const [status, setStatus] = useState<PageStatus>(PageStatus.draft);
   const [template, setTemplate] = useState("default");
   const [metaTitle, setMetaTitle] = useState("");
   const [metaDescription, setMetaDescription] = useState("");
@@ -43,10 +44,10 @@ export default function NewPagePage() {
   }, [slug, title]);
 
   const createMutation = useMutation({
-    mutationFn: (data: Record<string, unknown>) => pageApi.create(data),
+    mutationFn: (data: CreatePageBody) => pageApi.create(data),
     onSuccess: (res) => {
       toast.success(t("pages.pageCreated"));
-      router.push(`/admin/pages/${res.id}/edit`);
+      router.push(`/admin/pages/${String(res.id)}/edit`);
     },
     onError: () => toast.error(t("pages.failedToCreate")),
   });
@@ -59,7 +60,7 @@ export default function NewPagePage() {
     createMutation.mutate({
       title,
       slug: slug || slugify(title),
-      status: publish ? "published" : status,
+      status: publish ? PageStatus.published : status,
       template,
       meta_title: metaTitle || undefined,
       meta_description: metaDescription || undefined,
@@ -88,9 +89,9 @@ export default function NewPagePage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>{t("common.status")}</Label>
-              <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" value={status} onChange={(e) => setStatus(e.target.value)}>
-                <option value="draft">Draft</option>
-                <option value="published">Published</option>
+              <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" value={status} onChange={(e) => setStatus(e.target.value as PageStatus)}>
+                <option value={PageStatus.draft}>Draft</option>
+                <option value={PageStatus.published}>Published</option>
               </select>
             </div>
             <div>

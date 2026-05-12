@@ -39,7 +39,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { client } from "@/lib/raisfast";
-import { SDKError } from "@raisfast/sdk";
+import { SDKError, UserRole } from "@raisfast/sdk";
 import { useAuthStore } from "@/stores/auth";
 import { useT } from "@/lib/i18n";
 
@@ -47,7 +47,7 @@ interface UserItem {
   id: string;
   email: string;
   username: string;
-  role: string;
+  role: UserRole;
   avatar: string | null;
   bio: string | null;
   created_at: string;
@@ -60,11 +60,11 @@ interface PaginatedData<T> {
   page_size: number;
 }
 
-function roleBadgeVariant(role: string) {
+function roleBadgeVariant(role: UserRole) {
   switch (role) {
-    case "admin":
+    case UserRole.admin:
       return "default" as const;
-    case "author":
+    case UserRole.author:
       return "secondary" as const;
     default:
       return "outline" as const;
@@ -72,7 +72,7 @@ function roleBadgeVariant(role: string) {
 }
 
 const roleSchema = z.object({
-  role: z.enum(["reader", "author", "admin"]),
+  role: z.enum([UserRole.reader, UserRole.author, UserRole.admin] as [UserRole, ...UserRole[]]),
 });
 
 export default function UsersPage() {
@@ -97,14 +97,14 @@ export default function UsersPage() {
 
   const { handleSubmit, setValue, watch } = useForm<RoleForm>({
     resolver: zodResolver(roleSchema as never),
-    defaultValues: { role: "reader" },
+    defaultValues: { role: UserRole.reader },
   });
 
   const roleValue = watch("role");
 
   const updateMutation = useMutation({
     mutationFn: ({ id, role }: { id: string; role: string }) =>
-      client.users.updateUserRole(id, role),
+      client.users.updateUserRole(id, role as UserRole),
     onSuccess: () => {
       toast.success(t("users.userRoleUpdated"));
       queryClient.invalidateQueries({ queryKey: ["users"] });
@@ -126,7 +126,7 @@ export default function UsersPage() {
 
   const createMutation = useMutation({
     mutationFn: (data: { email: string; username: string; password: string }) =>
-      client.auth.register({ email: data.email, password: data.password, nickname: data.username }),
+      client.auth.register({ email: data.email, password: data.password, username: data.username }),
     onSuccess: () => {
       toast.success(t("users.userCreated"));
       queryClient.invalidateQueries({ queryKey: ["users"] });
@@ -354,9 +354,9 @@ export default function UsersPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="reader">{t("users.reader")}</SelectItem>
-                  <SelectItem value="author">{t("users.author")}</SelectItem>
-                  <SelectItem value="admin">{t("users.admin")}</SelectItem>
+                  <SelectItem value={UserRole.reader}>{t("users.reader")}</SelectItem>
+                  <SelectItem value={UserRole.author}>{t("users.author")}</SelectItem>
+                  <SelectItem value={UserRole.admin}>{t("users.admin")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>

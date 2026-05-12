@@ -1,19 +1,18 @@
 import { HttpClient } from "./client";
 import { LocalAuthStore } from "./auth";
-import { Auth } from "./auth-api";
+import { Auth } from "./public/auth";
+import { Users } from "./public/users";
+import { Posts } from "./public/posts";
+import { Pages } from "./public/pages";
+import { Comments } from "./public/comments";
+import { Categories } from "./public/categories";
+import { Tags } from "./public/tags";
+import { Media } from "./public/media";
+import { Health } from "./public/health";
+import { Wallets } from "./public/wallets";
+import { Events } from "./public/events";
 import { Admin } from "./admin";
 import { Collection } from "./collection";
-import { Users } from "./users";
-import { Media } from "./media";
-import { Health } from "./health";
-import { Posts } from "./posts";
-import { Categories } from "./categories";
-import { Tags } from "./tags";
-import { Comments } from "./comments";
-import { Pages } from "./pages";
-import { ReusableBlocks } from "./reusable-blocks";
-import { Wallets } from "./wallets";
-import { Currencies } from "./currencies";
 import { SDKError } from "./errors";
 import type {
   AfterSendHook,
@@ -35,8 +34,7 @@ export class RaisFast {
   readonly comments: Comments;
   readonly pages: Pages;
   readonly wallets: Wallets;
-  readonly currencies: Currencies;
-  readonly reusableBlocks: ReusableBlocks;
+  readonly events: Events;
   readonly authStore: IAuthStore;
   private readonly http: HttpClient;
 
@@ -57,8 +55,7 @@ export class RaisFast {
     this.comments = new Comments(this.http);
     this.pages = new Pages(this.http);
     this.wallets = new Wallets(this.http);
-    this.currencies = new Currencies(this.http);
-    this.reusableBlocks = new ReusableBlocks(this.http);
+    this.events = new Events(this.http.baseUrl);
   }
 
   collection<T = Record<string, unknown>>(name: string): Collection<T> {
@@ -107,14 +104,6 @@ export class RaisFast {
       );
     }
     return result.items[0];
-  }
-
-  subscribeToEvents(filter?: string): EventSource {
-    const base = this.http.baseUrl;
-    const url = filter
-      ? `${base}/events?filter=${encodeURIComponent(filter)}`
-      : `${base}/events`;
-    return new EventSource(url);
   }
 
   getRssFeedURL(): string {

@@ -46,7 +46,9 @@ import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
 import { client } from "@/lib/raisfast";
-import { SDKError, type CronJob, type PaginatedData } from "@raisfast/sdk";
+import { SDKError, type CronJob as CronJobSDK, type PaginatedData } from "@raisfast/sdk";
+
+type CronJob = Omit<CronJobSDK, "id"> & { id: string };
 
 function formatTime(iso: string | null): string {
   if (!iso) return "-";
@@ -90,8 +92,11 @@ export default function CronsPage() {
 
   const cronsQuery = useQuery({
     queryKey: ["crons", page],
-    queryFn: () =>
-      client.send<PaginatedData<CronJob>>("/admin/crons", { query: { page: String(page), page_size: String(pageSize) } }),
+    queryFn: async () => {
+      const res = await client.admin.crons.list();
+      const mapped: CronJob[] = res.map((c) => ({ ...c, id: String(c.id) }));
+      return { items: mapped, total: mapped.length, page: 1, page_size: pageSize } as PaginatedData<CronJob>;
+    },
   });
 
   const createMutation = useMutation({
@@ -110,7 +115,7 @@ export default function CronsPage() {
 
   const toggleMutation = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      client.admin.crons.toggle(id),
+      client.admin.crons.toggle(id, enabled),
     onSuccess: () => {
       toast.success(t("cron.scheduleToggled"));
       queryClient.invalidateQueries({ queryKey: ["crons"] });
@@ -138,7 +143,7 @@ export default function CronsPage() {
     }: {
       id: string;
       data: { label?: string; cron_expr?: string; payload?: string };
-    }) => client.admin.crons.update(id, data as Partial<CronJob>),
+    }) => client.admin.crons.update(id, data as never),
     onSuccess: () => {
       toast.success(t("cron.scheduleUpdated"));
       queryClient.invalidateQueries({ queryKey: ["crons"] });

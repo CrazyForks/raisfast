@@ -18,7 +18,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { client } from "@/lib/raisfast";
-import { SDKError } from "@raisfast/sdk";
+import { SDKError, PostStatus } from "@raisfast/sdk";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useT } from "@/lib/i18n";
 
@@ -50,10 +50,10 @@ export default function PostsPage() {
   const postsQuery = useQuery({
     queryKey: ["admin-posts", page, statusFilter],
     queryFn: () =>
-      client.posts.adminList({
+      client.admin.posts.list({
         page,
         page_size: pageSize,
-        status: statusFilter || undefined,
+        status: (statusFilter || undefined) as PostStatus | undefined,
       }),
   });
 
@@ -92,15 +92,9 @@ export default function PostsPage() {
             onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
           >
             <option value="">{t("posts.allStatus")}</option>
-            <option value="published">{t("common.published")}</option>
-            <option value="draft">{t("common.draft")}</option>
+            <option value={PostStatus.published}>{t("common.published")}</option>
+            <option value={PostStatus.draft}>{t("common.draft")}</option>
           </select>
-          <Link href="/posts/new">
-            <Button>
-              <Plus className="size-4" />
-              {t("posts.newPost")}
-            </Button>
-          </Link>
         </div>
       </div>
 
@@ -133,13 +127,23 @@ export default function PostsPage() {
               ) : (
                 posts.map((post) => (
                   <TableRow key={post.id}>
-                    <TableCell className="font-medium max-w-[300px] truncate">
-                      {post.title}
+                    <TableCell>
+                      <Link
+                        href={`/admin/posts/${post.slug}/edit`}
+                        className="block group"
+                      >
+                        <div className="font-medium group-hover:underline">
+                          {post.title}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {post.slug}
+                        </div>
+                      </Link>
                     </TableCell>
                     <TableCell>
                       <Badge
                         variant={
-                          post.status === "published"
+                          post.status === PostStatus.published
                             ? "default"
                             : "secondary"
                         }

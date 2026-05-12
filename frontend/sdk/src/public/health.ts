@@ -1,5 +1,5 @@
-import { HttpClient } from "./client";
-import type { HealthStatus, RequestOptions } from "./types";
+import { HttpClient } from "../client";
+import type { HealthStatus, RequestOptions } from "../types";
 
 export class Health {
   private readonly http: HttpClient;

@@ -1,12 +1,12 @@
-import { HttpClient } from "./client";
+import { HttpClient } from "../client";
 import type {
-  CurrencyResponse,
   CreateCurrencyRequest,
-  UpdateCurrencyRequest,
+  CurrencyResponse,
   RequestOptions,
-} from "./types";
+  UpdateCurrencyRequest,
+} from "../types";
 
-export class Currencies {
+export class AdminCurrencies {
   private readonly http: HttpClient;
 
   constructor(http: HttpClient) {
@@ -17,8 +17,14 @@ export class Currencies {
     return this.http.get<CurrencyResponse[]>("/admin/currencies", options);
   }
 
-  async get(code: string, options?: RequestOptions): Promise<CurrencyResponse> {
-    return this.http.get<CurrencyResponse>(`/admin/currencies/${code}`, options);
+  async get(
+    code: string,
+    options?: RequestOptions,
+  ): Promise<CurrencyResponse> {
+    return this.http.get<CurrencyResponse>(
+      `/admin/currencies/${code}`,
+      options,
+    );
   }
 
   async create(
@@ -33,6 +39,10 @@ export class Currencies {
     body: UpdateCurrencyRequest,
     options?: RequestOptions,
   ): Promise<CurrencyResponse> {
-    return this.http.put<CurrencyResponse>(`/admin/currencies/${code}`, body, options);
+    return this.http.put<CurrencyResponse>(
+      `/admin/currencies/${code}`,
+      body,
+      options,
+    );
   }
 }

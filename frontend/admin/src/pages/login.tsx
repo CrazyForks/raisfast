@@ -53,7 +53,7 @@ export default function LoginPage() {
     try {
       const data = await client.auth.login(values.email, values.password);
       store.login(
-        { id: data.user.id, email: data.user.email, username: data.user.username, role: data.user.role, avatar: data.user.avatar, bio: data.user.bio ?? null },
+        { id: data.user.id, username: data.user.username, role: data.user.role, avatar: data.user.avatar, bio: data.user.bio ?? null, email: null },
         data.access_token,
         data.refresh_token,
       );

@@ -22,7 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { client } from "@/lib/raisfast";
-import { SDKError } from "@raisfast/sdk";
+import { SDKError, PostStatus } from "@raisfast/sdk";
 import { useT } from "@/lib/i18n";
 
 interface Category {
@@ -41,7 +41,7 @@ const postSchema = z.object({
   title: z.string().min(1, "Title is required").max(200, "Title must be 200 characters or less"),
   content: z.string().min(1, "Content is required"),
   excerpt: z.string().optional(),
-  status: z.enum(["draft", "published"]),
+  status: z.enum([PostStatus.draft, PostStatus.published] as [PostStatus, ...PostStatus[]]),
   category_id: z.string().optional(),
   tag_ids: z.string().optional(),
 });
@@ -76,7 +76,7 @@ export default function NewPostPage() {
       title: "",
       content: "",
       excerpt: "",
-      status: "draft",
+      status: PostStatus.draft,
       category_id: "",
     },
   });
@@ -174,15 +174,15 @@ export default function NewPostPage() {
                 <Select
                   value={statusValue}
                   onValueChange={(val) =>
-                    val && setValue("status", val as "draft" | "published")
+                    val && setValue("status", val as PostStatus)
                   }
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder={t("common.selectStatus")} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="draft">{t("common.draft")}</SelectItem>
-                    <SelectItem value="published">{t("common.published")}</SelectItem>
+                    <SelectItem value={PostStatus.draft}>{t("common.draft")}</SelectItem>
+                    <SelectItem value={PostStatus.published}>{t("common.published")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

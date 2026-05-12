@@ -158,7 +158,7 @@ export default function WebhooksPage() {
       .map((e) => e.trim())
       .filter(Boolean);
     updateMutation.mutate({
-      id: editWebhook.id,
+      id: String(editWebhook.id),
       data: {
         url: editUrl,
         events: eventsArr,
@@ -374,7 +374,7 @@ export default function WebhooksPage() {
                               {t("common.edit")}
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              onClick={() => handleDelete(w.id)}
+                              onClick={() => handleDelete(String(w.id))}
                               disabled={deleteMutation.isPending}
                               className="text-destructive"
                             >

@@ -1,85 +1,60 @@
 import { client } from "./raisfast";
-import type { PaginatedData } from "@raisfast/sdk";
+import type { Page as PageType, ReusableBlock, PageStatus, CreatePageBody, UpdatePageBody } from "@raisfast/sdk";
 
-export interface Page {
-  id: string;
-  title: string;
-  slug: string;
-  content: string | null;
-  blocks: string | null;
-  meta_title: string | null;
-  meta_description: string | null;
-  og_image: string | null;
-  template: string;
-  parent_id: string | null;
-  sort_order: number;
-  status: string;
-  created_by: string;
-  updated_by: string | null;
-  cover_image: string | null;
-  published_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ReusableBlock {
-  id: string;
-  name: string;
-  block_type: string;
-  content: string;
-  description: string | null;
-  created_at: string;
-  updated_at: string;
-}
+export type Page = Omit<PageType, "id"> & { id: string };
+export type { ReusableBlock };
 
 export const page = {
   list: (p = 1, pageSize = 50) =>
-    client.send<PaginatedData<Page>>("/pages", {
-      query: { page: String(p), page_size: String(pageSize) },
-    }),
+    client.pages.list(p, pageSize),
 
   getBySlug: (slug: string) =>
-    client.send<Page>(`/pages/${slug}`),
+    client.pages.get(slug),
 
   sitemap: () =>
-    client.send<{ slug: string; updated_at: string | null }[]>("/pages/sitemap"),
+    client.pages.sitemap(),
 
-  adminList: (p = 1, pageSize = 50, status?: string) => {
-    const query: Record<string, string> = { page: String(p), page_size: String(pageSize) };
-    if (status) query.status = status;
-    return client.send<PaginatedData<Page>>("/admin/pages", { query });
+  adminList: async (p = 1, pageSize = 50, status?: string) => {
+    const res = await client.admin.pages.list({ page: p, page_size: pageSize, status: status as PageStatus | undefined });
+    return { ...res, items: res.items.map((pg) => ({ ...pg, id: String(pg.id) })) };
   },
 
-  adminGet: (id: string) =>
-    client.send<Page>(`/admin/pages/${id}`),
+  adminGet: async (id: string) => {
+    const res = await client.admin.pages.get(id);
+    return { ...res, id: String(res.id) };
+  },
 
-  create: (data: Partial<Page>) =>
-    client.send<Page>("/pages", { method: "POST", body: data }),
+  create: (data: CreatePageBody) =>
+    client.admin.pages.create(data),
 
-  update: (id: string, data: Partial<Page>) =>
-    client.send<Page>(`/admin/pages/${id}`, { method: "PUT", body: data }),
+  update: (id: string, data: UpdatePageBody) =>
+    client.admin.pages.update(id, data),
 
   delete: (id: string) =>
-    client.send<void>(`/admin/pages/${id}`, { method: "DELETE" }),
+    client.admin.pages.delete(id),
 
   updateStatus: (id: string, status: string) =>
-    client.send<Page>(`/admin/pages/${id}/status`, { method: "PUT", body: { status } }),
+    client.admin.pages.updateStatus(id, status as PageStatus),
 
   reorder: (items: { id: string; sort_order: number }[]) =>
-    client.send<void>("/admin/pages/reorder", { method: "PUT", body: { items } }),
+    client.admin.pages.reorder(items),
 
-  listReusable: () =>
-    client.send<ReusableBlock[]>("/admin/reusable-blocks"),
+  listReusable: async () => {
+    const res = await client.admin.reusableBlocks.list();
+    return res.map((rb) => ({ ...rb, id: String(rb.id) }));
+  },
 
-  getReusable: (id: string) =>
-    client.send<ReusableBlock>(`/admin/reusable-blocks/${id}`),
+  getReusable: async (id: string) => {
+    const res = await client.admin.reusableBlocks.get(id);
+    return { ...res, id: String(res.id) };
+  },
 
   createReusable: (data: { name: string; block_type: string; content: string; description?: string }) =>
-    client.send<ReusableBlock>("/admin/reusable-blocks", { method: "POST", body: data }),
+    client.admin.reusableBlocks.create(data),
 
-  updateReusable: (id: string, data: Partial<ReusableBlock>) =>
-    client.send<ReusableBlock>(`/admin/reusable-blocks/${id}`, { method: "PUT", body: data }),
+  updateReusable: (id: string, data: Record<string, unknown>) =>
+    client.admin.reusableBlocks.update(id, data as Parameters<typeof client.admin.reusableBlocks.update>[1]),
 
   deleteReusable: (id: string) =>
-    client.send<void>(`/admin/reusable-blocks/${id}`, { method: "DELETE" }),
+    client.admin.reusableBlocks.delete(id),
 };

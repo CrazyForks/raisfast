@@ -27,12 +27,12 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { page as pageApi } from "@/lib/page";
+import { PageStatus } from "@raisfast/sdk";
 import { useT } from "@/lib/i18n";
 
-const STATUS_COLORS: Record<string, string> = {
-  draft: "bg-yellow-500",
-  published: "bg-green-500",
-  archived: "bg-gray-400",
+const STATUS_COLORS: Record<PageStatus | string, string> = {
+  [PageStatus.draft]: "bg-yellow-500",
+  [PageStatus.published]: "bg-green-500",
 };
 
 export default function PagesListPage() {
@@ -82,7 +82,7 @@ export default function PagesListPage() {
       </div>
 
       <div className="flex gap-1 bg-muted rounded-lg p-[3px] w-fit">
-        {["", "draft", "published", "archived"].map((s) => (
+        {["", PageStatus.draft, PageStatus.published].map((s) => (
           <button
             key={s}
             type="button"
@@ -145,13 +145,14 @@ export default function PagesListPage() {
                           <DropdownMenuItem onClick={() => window.open(`/pages/${p.slug}`, "_blank")}>
                             <Eye className="size-4 mr-2" />{t("pages.preview")}
                           </DropdownMenuItem>
-                          {p.status === "draft" && (
-                            <DropdownMenuItem onClick={() => statusMutation.mutate({ id: p.id, status: "published" })}>
-                              <Globe className="size-4 mr-2" />{t("pages.publish")}
+                          {p.status === PageStatus.draft && (
+                            <DropdownMenuItem onClick={() => statusMutation.mutate({ id: p.id, status: PageStatus.published })}>
+                              <Eye className="size-4 mr-2" />
+                              {t("common.publish")}
                             </DropdownMenuItem>
                           )}
-                          {p.status === "published" && (
-                            <DropdownMenuItem onClick={() => statusMutation.mutate({ id: p.id, status: "draft" })}>
+                          {p.status === PageStatus.published && (
+                            <DropdownMenuItem onClick={() => statusMutation.mutate({ id: p.id, status: PageStatus.draft })}>
                               {t("pages.unpublish")}
                             </DropdownMenuItem>
                           )}

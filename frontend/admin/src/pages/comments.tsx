@@ -32,23 +32,16 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { client } from "@/lib/raisfast";
-import { SDKError } from "@raisfast/sdk";
+import { SDKError, type AdminCommentRow, CommentStatus } from "@raisfast/sdk";
 import { useAuthStore } from "@/stores/auth";
 import { useT } from "@/lib/i18n";
 
-interface AdminComment {
+type Comment = Omit<AdminCommentRow, "id" | "post_id" | "created_by" | "parent_id"> & {
   id: string;
   post_id: string;
-  post_title: string;
   created_by: string | null;
-  updated_by: string | null;
-  nickname: string | null;
-  email: string | null;
-  content: string;
   parent_id: string | null;
-  status: string;
-  created_at: string;
-}
+};
 
 interface PaginatedData<T> {
   items: T[];
@@ -59,20 +52,21 @@ interface PaginatedData<T> {
 
 function statusBadgeVariant(status: string) {
   switch (status) {
-    case "approved":
+    case CommentStatus.approved:
       return "default" as const;
-    case "rejected":
-    case "spam":
+    case CommentStatus.pending:
+      return "secondary" as const;
+    case CommentStatus.spam:
       return "destructive" as const;
     default:
       return "secondary" as const;
   }
 }
 
-const STATUS_OPTIONS = [
-  { value: "pending", label: "Pending" },
-  { value: "approved", label: "Approved" },
-  { value: "rejected", label: "Rejected" },
+const STATUS_OPTIONS: { value: CommentStatus; label: string }[] = [
+  { value: CommentStatus.pending, label: "Pending" },
+  { value: CommentStatus.approved, label: "Approved" },
+  { value: CommentStatus.spam, label: "Spam" },
 ];
 
 export default function CommentsPage() {
@@ -86,13 +80,25 @@ export default function CommentsPage() {
 
   const commentsQuery = useQuery({
     queryKey: ["admin-comments", page],
-    queryFn: () => client.comments.listAll(page, pageSize),
+    queryFn: async () => {
+      const res = await client.admin.comments.list({ page, page_size: pageSize });
+      return {
+        ...res,
+        items: res.items.map((c): Comment => ({
+          ...c,
+          id: String(c.id),
+          post_id: String(c.post_id),
+          created_by: c.created_by != null ? String(c.created_by) : null,
+          parent_id: c.parent_id != null ? String(c.parent_id) : null,
+        })),
+      };
+    },
     enabled: isAdmin(),
   });
 
   const statusMutation = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: string }) =>
-      client.comments.updateStatus(id, status),
+    mutationFn: ({ id, status }: { id: string; status: CommentStatus }) =>
+      client.admin.comments.updateStatus(id, status),
     onSuccess: () => {
       toast.success(t("comments.commentStatusUpdated"));
       queryClient.invalidateQueries({ queryKey: ["admin-comments"] });
@@ -107,7 +113,7 @@ export default function CommentsPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => client.comments.delete(id),
+    mutationFn: (id: string) => client.admin.comments.delete(id),
     onSuccess: () => {
       toast.success(t("comments.commentDeleted"));
       queryClient.invalidateQueries({ queryKey: ["admin-comments"] });
@@ -123,8 +129,8 @@ export default function CommentsPage() {
   });
 
   const bulkStatusMutation = useMutation({
-    mutationFn: ({ ids, status }: { ids: string[]; status: string }) =>
-      Promise.all(ids.map((id) => client.comments.updateStatus(id, status))),
+    mutationFn: ({ ids, status }: { ids: string[]; status: CommentStatus }) =>
+      Promise.all(ids.map((id) => client.admin.comments.updateStatus(id, status))),
     onSuccess: (_data, vars) => {
       toast.success(t("comments.bulkActionDone", { count: vars.ids.length, status: vars.status }));
       queryClient.invalidateQueries({ queryKey: ["admin-comments"] });
@@ -141,7 +147,7 @@ export default function CommentsPage() {
 
   const bulkDeleteMutation = useMutation({
     mutationFn: (ids: string[]) =>
-      Promise.all(ids.map((id) => client.comments.delete(id))),
+      Promise.all(ids.map((id) => client.admin.comments.delete(id))),
     onSuccess: (_data, ids) => {
       toast.success(t("comments.bulkDeleted", { count: ids.length }));
       queryClient.invalidateQueries({ queryKey: ["admin-comments"] });
@@ -184,7 +190,7 @@ export default function CommentsPage() {
     });
   }
 
-  function handleBulkStatus(status: string) {
+  function handleBulkStatus(status: CommentStatus) {
     if (selected.size === 0) return;
     bulkStatusMutation.mutate({ ids: Array.from(selected), status });
   }
@@ -240,7 +246,7 @@ export default function CommentsPage() {
             size="sm"
             onClick={() => setStatusFilter(val)}
           >
-            {val === "all" ? t("comments.all") : val === "pending" ? t("comments.pending") : val === "approved" ? t("comments.approved") : t("comments.rejected")}
+            {val === "all" ? t("comments.all") : val === CommentStatus.pending ? t("comments.pending") : val === CommentStatus.approved ? t("comments.approved") : t("comments.spam")}
           </Button>
         ))}
       </div>
@@ -252,7 +258,7 @@ export default function CommentsPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => handleBulkStatus("approved")}
+            onClick={() => handleBulkStatus(CommentStatus.approved)}
             disabled={bulkStatusMutation.isPending}
           >
             {t("comments.approve")}
@@ -260,7 +266,7 @@ export default function CommentsPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => handleBulkStatus("rejected")}
+            onClick={() => handleBulkStatus(CommentStatus.spam)}
             disabled={bulkStatusMutation.isPending}
           >
             {t("comments.reject")}
@@ -345,20 +351,20 @@ export default function CommentsPage() {
                           <MoreVertical className="size-4" />
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          {c.status !== "approved" && (
+                          {c.status !== CommentStatus.approved && (
                             <DropdownMenuItem
                               onClick={() =>
-                                statusMutation.mutate({ id: c.id, status: "approved" })
+                                statusMutation.mutate({ id: c.id, status: CommentStatus.approved })
                               }
                             >
                               <CheckCircle className="size-4 text-green-600" />
                               {t("comments.approve")}
                             </DropdownMenuItem>
                           )}
-                          {c.status !== "rejected" && (
+                          {c.status !== CommentStatus.spam && (
                             <DropdownMenuItem
                               onClick={() =>
-                                statusMutation.mutate({ id: c.id, status: "rejected" })
+                                statusMutation.mutate({ id: c.id, status: CommentStatus.spam })
                               }
                             >
                               <XCircle className="size-4 text-red-500" />

@@ -1,15 +1,11 @@
-import { HttpClient } from "./client";
+import { HttpClient, toQueryString } from "../client";
 import type {
-  BatchRequest,
-  BatchResponse,
   PaginatedData,
   PostListQuery,
   PostResponse,
   PostStatus,
   RequestOptions,
-} from "./types";
-
-export type { PostListQuery };
+} from "../types";
 
 export interface CreatePostBody {
   title: string;
@@ -44,7 +40,7 @@ export class Posts {
   ): Promise<PaginatedData<PostResponse>> {
     return this.http.get<PaginatedData<PostResponse>>("/posts", {
       ...options,
-      query: query as unknown as Record<string, string>,
+      query: toQueryString(query as unknown as Record<string, string | number | undefined>),
     });
   }
 
@@ -69,48 +65,5 @@ export class Posts {
 
   async delete(slug: string, options?: RequestOptions): Promise<void> {
     await this.http.del(`/posts/${slug}`, options);
-  }
-
-  async adminList(
-    query?: { page?: number; page_size?: number; status?: PostStatus },
-    options?: RequestOptions,
-  ): Promise<PaginatedData<PostResponse>> {
-    return this.http.get<PaginatedData<PostResponse>>("/admin/posts", {
-      ...options,
-      query: query as Record<string, string>,
-    });
-  }
-
-  async adminGet(
-    slug: string,
-    options?: RequestOptions,
-  ): Promise<PostResponse> {
-    return this.http.get<PostResponse>(`/admin/posts/${slug}`, options);
-  }
-
-  async adminCreate(
-    body: CreatePostBody,
-    options?: RequestOptions,
-  ): Promise<PostResponse> {
-    return this.http.post<PostResponse>("/admin/posts", body, options);
-  }
-
-  async adminUpdate(
-    id: string,
-    body: UpdatePostBody,
-    options?: RequestOptions,
-  ): Promise<PostResponse> {
-    return this.http.put<PostResponse>(`/admin/posts/${id}`, body, options);
-  }
-
-  async adminDelete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/admin/posts/${id}`, options);
-  }
-
-  async adminBatch(
-    data: BatchRequest,
-    options?: RequestOptions,
-  ): Promise<BatchResponse> {
-    return this.http.post<BatchResponse>("/admin/posts/batch", data, options);
   }
 }

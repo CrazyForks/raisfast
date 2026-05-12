@@ -32,14 +32,14 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { client } from "@/lib/raisfast";
-import { SDKError } from "@raisfast/sdk";
+import { SDKError, TenantStatus } from "@raisfast/sdk";
 
 interface Tenant {
   id: string;
   name: string;
   domain: string | null;
   config: string;
-  status: string;
+  status: TenantStatus;
   created_at: string;
   updated_at: string;
 }
@@ -66,7 +66,7 @@ export default function TenantsPage() {
   const [editTenant, setEditTenant] = useState<Tenant | null>(null);
   const [editName, setEditName] = useState("");
   const [editDomain, setEditDomain] = useState("");
-  const [editStatus, setEditStatus] = useState("");
+  const [editStatus, setEditStatus] = useState<TenantStatus>(TenantStatus.active);
   const [page, setPage] = useState(1);
   const pageSize = 20;
 
@@ -113,7 +113,7 @@ export default function TenantsPage() {
       data,
     }: {
       id: string;
-      data: { name?: string; domain?: string; status?: string };
+      data: { name?: string; domain?: string; status?: TenantStatus };
     }) => client.admin.tenants.update(id, data),
     onSuccess: () => {
       toast.success(t("tenants.tenantUpdated"));
@@ -154,11 +154,11 @@ export default function TenantsPage() {
     }
   }
 
-  function startEdit(t: Tenant) {
-    setEditTenant(t);
-    setEditName(t.name);
-    setEditDomain(t.domain ?? "");
-    setEditStatus(t.status);
+  function startEdit(tn: Tenant) {
+    setEditTenant(tn);
+    setEditName(tn.name);
+    setEditDomain(tn.domain ?? "");
+    setEditStatus(tn.status);
   }
 
   function saveEdit() {
@@ -297,13 +297,13 @@ export default function TenantsPage() {
                       {editTenant?.id === t.id ? (
                         <select
                           value={editStatus}
-                          onChange={(e) => setEditStatus(e.target.value)}
+                          onChange={(e) => setEditStatus(e.target.value as TenantStatus)}
                           className="h-8 rounded-md border border-input bg-background px-2 text-sm"
                         >
-                          <option value="active">active</option>
-                          <option value="suspended">suspended</option>
+                          <option value={TenantStatus.active}>active</option>
+                          <option value={TenantStatus.inactive}>inactive</option>
                         </select>
-                      ) : t.status === "active" ? (
+                      ) : t.status === TenantStatus.active ? (
                         <Badge variant="default" className="gap-1">
                           <ShieldCheck className="size-3" />
                           active

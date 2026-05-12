@@ -1,60 +1,32 @@
-import { HttpClient } from "./client";
+import { HttpClient, toQueryString } from "../client";
 import type {
   AdminWalletOperationRequest,
+  BatchResponse,
   PaginatedData,
-  ReversalRequest,
   RequestOptions,
+  ReversalRequest,
   WalletResponse,
   WalletTransactionResponse,
-} from "./types";
+} from "../types";
 
-export class Wallets {
+export class AdminWallets {
   private readonly http: HttpClient;
 
   constructor(http: HttpClient) {
     this.http = http;
   }
 
-  async list(options?: RequestOptions): Promise<WalletResponse[]> {
-    return this.http.get<WalletResponse[]>("/wallets", options);
-  }
-
-  async get(currency: string, options?: RequestOptions): Promise<WalletResponse> {
-    return this.http.get<WalletResponse>(`/wallets/${currency}`, options);
-  }
-
-  async listTransactions(
-    currency: string,
-    query?: { page?: number; page_size?: number },
-    options?: RequestOptions,
-  ): Promise<PaginatedData<WalletTransactionResponse>> {
-    return this.http.get<PaginatedData<WalletTransactionResponse>>(
-      `/wallets/${currency}/transactions`,
-      { ...options, query: query as unknown as Record<string, string> },
-    );
-  }
-
-  async listAllTransactions(
-    query?: { page?: number; page_size?: number },
-    options?: RequestOptions,
-  ): Promise<PaginatedData<WalletTransactionResponse>> {
-    return this.http.get<PaginatedData<WalletTransactionResponse>>(
-      "/wallets/transactions",
-      { ...options, query: query as unknown as Record<string, string> },
-    );
-  }
-
-  async adminListWallets(
+  async listWallets(
     query?: { page?: number; page_size?: number },
     options?: RequestOptions,
   ): Promise<PaginatedData<WalletResponse>> {
-    return this.http.get<PaginatedData<WalletResponse>>(
-      "/admin/wallets",
-      { ...options, query: query as unknown as Record<string, string> },
-    );
+    return this.http.get<PaginatedData<WalletResponse>>("/admin/wallets", {
+      ...options,
+      query: toQueryString(query),
+    });
   }
 
-  async adminListTransactions(
+  async listTransactions(
     query?: { page?: number; page_size?: number },
     options?: RequestOptions,
   ): Promise<PaginatedData<WalletTransactionResponse>> {
@@ -64,7 +36,7 @@ export class Wallets {
     );
   }
 
-  async adminCredit(
+  async credit(
     body: AdminWalletOperationRequest,
     options?: RequestOptions,
   ): Promise<WalletTransactionResponse> {
@@ -75,7 +47,7 @@ export class Wallets {
     );
   }
 
-  async adminDebit(
+  async debit(
     body: AdminWalletOperationRequest,
     options?: RequestOptions,
   ): Promise<WalletTransactionResponse> {
@@ -86,7 +58,7 @@ export class Wallets {
     );
   }
 
-  async adminUserTransactions(
+  async userTransactions(
     userId: string,
     query?: { page?: number; page_size?: number },
     options?: RequestOptions,
@@ -97,7 +69,7 @@ export class Wallets {
     );
   }
 
-  async adminUserCurrencyTransactions(
+  async userCurrencyTransactions(
     userId: string,
     currency: string,
     query?: { page?: number; page_size?: number },
@@ -109,7 +81,7 @@ export class Wallets {
     );
   }
 
-  async adminReversal(
+  async reversal(
     txDocId: string,
     body?: ReversalRequest,
     options?: RequestOptions,

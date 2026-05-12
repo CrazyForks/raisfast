@@ -1,10 +1,10 @@
-import { HttpClient } from "./client";
+import { HttpClient } from "../client";
 import type {
   BatchRequest,
   BatchResponse,
   RequestOptions,
   ReusableBlock,
-} from "./types";
+} from "../types";
 
 export interface CreateReusableBlockBody {
   name: string;
@@ -20,7 +20,7 @@ export interface UpdateReusableBlockBody {
   description?: string;
 }
 
-export class ReusableBlocks {
+export class AdminReusableBlocks {
   private readonly http: HttpClient;
 
   constructor(http: HttpClient) {
@@ -32,14 +32,21 @@ export class ReusableBlocks {
   }
 
   async get(id: string, options?: RequestOptions): Promise<ReusableBlock> {
-    return this.http.get<ReusableBlock>(`/admin/reusable-blocks/${id}`, options);
+    return this.http.get<ReusableBlock>(
+      `/admin/reusable-blocks/${id}`,
+      options,
+    );
   }
 
   async create(
     body: CreateReusableBlockBody,
     options?: RequestOptions,
   ): Promise<ReusableBlock> {
-    return this.http.post<ReusableBlock>("/admin/reusable-blocks", body, options);
+    return this.http.post<ReusableBlock>(
+      "/admin/reusable-blocks",
+      body,
+      options,
+    );
   }
 
   async update(
@@ -47,7 +54,11 @@ export class ReusableBlocks {
     body: UpdateReusableBlockBody,
     options?: RequestOptions,
   ): Promise<ReusableBlock> {
-    return this.http.put<ReusableBlock>(`/admin/reusable-blocks/${id}`, body, options);
+    return this.http.put<ReusableBlock>(
+      `/admin/reusable-blocks/${id}`,
+      body,
+      options,
+    );
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
@@ -58,6 +69,10 @@ export class ReusableBlocks {
     data: BatchRequest,
     options?: RequestOptions,
   ): Promise<BatchResponse> {
-    return this.http.post<BatchResponse>("/admin/reusable-blocks/batch", data, options);
+    return this.http.post<BatchResponse>(
+      "/admin/reusable-blocks/batch",
+      data,
+      options,
+    );
   }
 }

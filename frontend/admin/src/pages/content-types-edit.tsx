@@ -26,6 +26,7 @@ import {
   getFieldLabel,
 } from "@/components/admin/field-renderer";
 import { useT } from "@/lib/i18n";
+import { PostStatus } from "@raisfast/sdk";
 
 function getFormFields(schema: ContentTypeSchema): FieldSchema[] {
   return schema.fields.filter((f) => {
@@ -206,7 +207,7 @@ export default function EditCmsItemPage() {
                   <div className="space-y-2">
                     <Label>{t("common.status")}</Label>
                     <Select
-                      value={(formData["status"] as string) || "draft"}
+                      value={(formData["status"] as string) || PostStatus.draft}
                       onValueChange={(val) => {
                         if (val) handleChange("status", val);
                       }}
@@ -215,8 +216,8 @@ export default function EditCmsItemPage() {
                         <SelectValue placeholder={t("common.selectStatus")} />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="draft">{t("common.draft")}</SelectItem>
-                        <SelectItem value="published">{t("common.published")}</SelectItem>
+                        <SelectItem value={PostStatus.draft}>{t("common.draft")}</SelectItem>
+                        <SelectItem value={PostStatus.published}>{t("common.published")}</SelectItem>
                         <SelectItem value="archived">{t("common.archived")}</SelectItem>
                       </SelectContent>
                     </Select>

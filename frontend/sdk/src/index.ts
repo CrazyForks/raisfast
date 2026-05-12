@@ -1,35 +1,42 @@
 export { RaisFast } from "./raisfast";
 export { Collection } from "./collection";
-export { Auth } from "./auth-api";
+export { Auth } from "./public/auth";
 export { Admin } from "./admin";
-export { Users } from "./users";
-export { Media } from "./media";
-export { Health } from "./health";
-export { Posts } from "./posts";
-export { Categories } from "./categories";
-export { Tags } from "./tags";
-export { Comments } from "./comments";
-export { Pages } from "./pages";
-export { Wallets } from "./wallets";
-export { Currencies } from "./currencies";
-export { ReusableBlocks } from "./reusable-blocks";
+export { Users } from "./public/users";
+export { Media } from "./public/media";
+export { Health } from "./public/health";
+export { Posts } from "./public/posts";
+export { Categories } from "./public/categories";
+export { Tags } from "./public/tags";
+export { Comments } from "./public/comments";
+export { Pages } from "./public/pages";
+export { Wallets } from "./public/wallets";
+export { Events } from "./public/events";
 export { BaseAuthStore, LocalAuthStore } from "./auth";
 export { HttpClient } from "./client";
 export { SDKError } from "./errors";
 export type {
   CreatePostBody,
   UpdatePostBody,
-} from "./posts";
-export type { CreateCategoryBody, UpdateCategoryBody } from "./categories";
-export type { CreateCommentBody } from "./comments";
-export type { CreatePageBody, UpdatePageBody } from "./pages";
-export type { CreateReusableBlockBody, UpdateReusableBlockBody } from "./reusable-blocks";
+} from "./public/posts";
+export type {
+  CreatePageBody,
+  UpdatePageBody,
+} from "./admin/pages";
+export type { CreateCommentBody } from "./public/comments";
+export type {
+  CreateCategoryBody,
+  UpdateCategoryBody,
+} from "./public/categories";
+export type {
+  CreateReusableBlockBody,
+  UpdateReusableBlockBody,
+} from "./admin/reusable-blocks";
 export type {
   AdminCommentListQuery,
   AdminCommentRow,
   AdminPageListQuery,
   AdminPostListQuery,
-  AdminStats,
   AdminWalletOperationRequest,
   ApiAccess,
   ApiConfig,
