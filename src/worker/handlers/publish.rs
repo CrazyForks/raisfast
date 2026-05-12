@@ -1,20 +1,20 @@
-//! 定时发布 Handler
+//! Scheduled publish Handler
 //!
-//! 将 `status = 'draft'` 的文章状态更新为 `published`。
-//! `run_after` 字段控制执行时间，由 Worker 系统自动延迟。
+//! Updates post status from `status = 'draft'` to `published`.
+//! The `run_after` field controls execution timing, handled automatically by the Worker system.
 
 use crate::db::Pool;
 use crate::errors::app_error::AppResult;
 use crate::models::post::PostStatus;
 use crate::worker::{Job, JobHandler};
 
-/// 定时发布处理器
+/// Scheduled publish handler
 pub struct ScheduledPublishHandler {
     pool: Pool,
 }
 
 impl ScheduledPublishHandler {
-    /// 创建新的定时发布处理器
+    /// Creates a new scheduled publish handler
     #[must_use]
     pub fn new(pool: Pool) -> Self {
         Self { pool }

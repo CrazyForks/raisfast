@@ -1,8 +1,8 @@
-//! 全局事件总线
+//! Global event bus
 //!
-//! 基于 `tokio::sync::broadcast` 的发布-订阅事件系统。
-//! 所有业务事件通过 `EventBus` 广播，各子系统订阅感兴趣的事件。
-//! `emit_with_aspects()` 在发布前/后经过 AOP Event Layer 拦截。
+//! A publish-subscribe event system based on `tokio::sync::broadcast`.
+//! All business events are broadcast via `EventBus`, with each subsystem subscribing to events of interest.
+//! `emit_with_aspects()` goes through AOP Event Layer interception before/after publishing.
 
 use std::sync::Arc;
 
@@ -12,12 +12,12 @@ use tokio::sync::broadcast;
 use crate::aspects::engine::AspectEngine;
 use crate::aspects::{BaseContext, EventContext};
 
-/// 业务事件
+/// Business events
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 #[serde(tag = "type", content = "data")]
 pub enum Event {
-    // ── 内容生命周期（泛化，兼容旧事件） ──
+    // ── Content lifecycle (generalized, compatible with legacy events) ──
     PostCreating {
         id: String,
         title: String,
@@ -45,7 +45,7 @@ pub enum Event {
         id: String,
     },
 
-    // ── 通用内容事件（Phase 10 新增） ──
+    // ── Generic content events (added in Phase 10) ──
     ContentCreating {
         content_type: String,
         id: String,
@@ -70,7 +70,7 @@ pub enum Event {
         id: String,
     },
 
-    // ── 用户/媒体 ──
+    // ── User/Media ──
     UserRegistered {
         id: String,
         username: String,
@@ -89,7 +89,7 @@ pub enum Event {
         id: String,
     },
 
-    // ── 认证 ──
+    // ── Authentication ──
     PasswordResetRequested {
         user_id: String,
         email: String,
@@ -101,7 +101,7 @@ pub enum Event {
         verify_token: String,
     },
 
-    // ── 插件自定义事件 ──
+    // ── Plugin custom events ──
     Custom {
         source: String,
         event_type: String,
@@ -109,37 +109,37 @@ pub enum Event {
     },
 }
 
-/// 事件订阅者
+/// Event subscriber
 ///
-/// 每个 subscriber 独立消费事件，慢消费者会收到 `RecvError::Lagged`。
+/// Each subscriber independently consumes events. Slow consumers will receive `RecvError::Lagged`.
 pub type EventReceiver = broadcast::Receiver<Arc<Event>>;
 
-/// 事件总线
+/// Event bus
 ///
-/// 线程安全，可在 `AppState` 中通过 `Arc` 共享。
+/// Thread-safe, can be shared via `Arc` in `AppState`.
 #[derive(Clone)]
 pub struct EventBus {
     tx: broadcast::Sender<Arc<Event>>,
 }
 
 impl EventBus {
-    /// 创建指定容量的 `EventBus`
+    /// Create an `EventBus` with the specified capacity
     #[must_use]
     pub fn new(capacity: usize) -> Self {
         let (tx, _) = broadcast::channel(capacity);
         Self { tx }
     }
 
-    /// 发布事件，所有订阅者都会收到
+    /// Publish an event; all subscribers will receive it
     pub fn emit(&self, event: Event) {
         let _ = self.tx.send(Arc::new(event));
     }
 
-    /// 带 AOP Event Layer 拦截的事件发布
+    /// Publish event with AOP Event Layer interception
     ///
-    /// 流程：dispatch_before → 广播 → dispatch_after
-    /// 如果 before 返回 false（被 aspect 阻止），事件不会发布。
-    /// dispatch_after 的错误仅记录日志，不影响发布结果。
+    /// Flow: dispatch_before → broadcast → dispatch_after
+    /// If before returns false (blocked by aspect), the event is not published.
+    /// Errors from dispatch_after are only logged and do not affect the publish result.
     pub async fn emit_with_aspects(
         &self,
         event: Event,
@@ -186,13 +186,13 @@ impl EventBus {
         }
     }
 
-    /// 订阅事件流
+    /// Subscribe to the event stream
     #[must_use]
     pub fn subscribe(&self) -> EventReceiver {
         self.tx.subscribe()
     }
 
-    /// 当前订阅者数量
+    /// Current subscriber count
     #[must_use]
     pub fn subscriber_count(&self) -> usize {
         self.tx.receiver_count()

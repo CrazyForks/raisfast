@@ -1,42 +1,42 @@
-//! 应用配置结构体与加载逻辑。
+//! Application configuration structs and loading logic.
 //!
-//! 所有配置项通过环境变量传入，支持 `.env` 文件。
-//! 缺失的可选变量会使用合理的默认值。
+//! All configuration items are provided via environment variables, with `.env` file support.
+//! Missing optional variables fall back to sensible defaults.
 
 use std::env;
 
 use serde::{Deserialize, Serialize};
 
-/// 应用全局配置。
+/// Application global configuration.
 ///
-/// | 环境变量 | 类型 | 默认值 | 说明 |
+/// | Environment Variable | Type | Default | Description |
 /// |----------|------|--------|------|
-/// | `APP_HOST` | String | `0.0.0.0` | 监听地址 |
-/// | `APP_PORT` | u16 | `9898` | 监听端口 |
-/// | `APP_ENV` | String | `development` | 运行环境 |
-/// | `DATABASE_URL` | String | (按数据库后端不同) | 数据库连接字符串 |
-/// | `DB_POOL_SIZE` | u32 | `5` | 连接池大小 |
-/// | `JWT_SECRET` | String | (内置默认值) | JWT 签名密钥 |
-/// | `JWT_ACCESS_EXPIRES` | u64 | `900` (15 分钟) | Access Token 过期时间（秒） |
-/// | `JWT_REFRESH_EXPIRES` | u64 | `604800` (7 天) | Refresh Token 过期时间（秒） |
-/// | `UPLOAD_DIR` | String | `{STORAGE_ROOT_DIR}/uploads` | 上传文件存储目录 |
-/// | `MAX_UPLOAD_SIZE` | usize | `104857600` (100 MB) | 上传文件大小上限（字节） |
-/// | `STATIC_DIR` | String | `./static` | 静态文件目录（favicon、robots.txt 等） |
-/// | `BASE_URL` | String | `http://{host}:{port}` | 站点完整 URL（用于生成 RSS/媒体链接） |
-/// | `CORS_ORIGINS` | String | (空=允许所有) | CORS 允许的来源，多个用逗号分隔 |
-/// | `TLS_CERT_PATH` | String | (空=HTTP) | TLS 证书文件路径（PEM 格式） |
-/// | `TLS_KEY_PATH` | String | (空=HTTP) | TLS 私钥文件路径（PEM 格式） |
-/// | `PLUGIN_WASM_POOL_SIZE` | u32 | `4` | WASM 实例池大小 |
-/// | `PLUGIN_LUA_POOL_SIZE` | u32 | `4` | Lua 实例池大小 |
-/// | `PLUGIN_JS_POOL_SIZE` | u32 | `4` | JS 实例池大小 |
-/// | `APP_TIMEZONE` | String | `UTC` | 站点时区（IANA 格式，如 `Asia/Shanghai`） |
-/// | `GRAPHQL_ENABLED` | bool | `false` | 是否启用 GraphQL API |
-/// | `WEBSOCKET_ENABLED` | bool | `false` | 是否启用 WebSocket 实时推送 |
-/// | `STORAGE_ROOT_DIR` | String | `./storage` | 本地文件存储根目录（uploads/logs/search_index/vfs/db 的父目录） |
-/// | `UPLOAD_DIR` | String | `{STORAGE_ROOT_DIR}/uploads` | 媒体上传目录 |
-/// | `LOG_DIR` | String | `{STORAGE_ROOT_DIR}/logs` | 日志文件目录 |
-/// | `SEARCH_INDEX_DIR` | String | `{STORAGE_ROOT_DIR}/search_index` | 搜索索引目录 |
-/// | `PLUGIN_VFS_ROOT` | String | `{STORAGE_ROOT_DIR}/vfs` | 插件虚拟文件系统目录 |
+/// | `APP_HOST` | String | `0.0.0.0` | Listen address |
+/// | `APP_PORT` | u16 | `9898` | Listen port |
+/// | `APP_ENV` | String | `development` | Runtime environment |
+/// | `DATABASE_URL` | String | (varies by DB backend) | Database connection string |
+/// | `DB_POOL_SIZE` | u32 | `5` | Connection pool size |
+/// | `JWT_SECRET` | String | (built-in default) | JWT signing secret |
+/// | `JWT_ACCESS_EXPIRES` | u64 | `900` (15 minutes) | Access Token expiration time (seconds) |
+/// | `JWT_REFRESH_EXPIRES` | u64 | `604800` (7 days) | Refresh Token expiration time (seconds) |
+/// | `UPLOAD_DIR` | String | `{STORAGE_ROOT_DIR}/uploads` | Upload file storage directory |
+/// | `MAX_UPLOAD_SIZE` | usize | `104857600` (100 MB) | Upload file size limit (bytes) |
+/// | `STATIC_DIR` | String | `./static` | Static files directory (favicon, robots.txt, etc.) |
+/// | `BASE_URL` | String | `http://{host}:{port}` | Full site URL (for RSS/media links) |
+/// | `CORS_ORIGINS` | String | (empty=all allowed) | CORS allowed origins, comma-separated |
+/// | `TLS_CERT_PATH` | String | (empty=HTTP) | TLS certificate file path (PEM format) |
+/// | `TLS_KEY_PATH` | String | (empty=HTTP) | TLS private key file path (PEM format) |
+/// | `PLUGIN_WASM_POOL_SIZE` | u32 | `4` | WASM instance pool size |
+/// | `PLUGIN_LUA_POOL_SIZE` | u32 | `4` | Lua instance pool size |
+/// | `PLUGIN_JS_POOL_SIZE` | u32 | `4` | JS instance pool size |
+/// | `APP_TIMEZONE` | String | `UTC` | Site timezone (IANA format, e.g., `Asia/Shanghai`) |
+/// | `GRAPHQL_ENABLED` | bool | `false` | Whether to enable GraphQL API |
+/// | `WEBSOCKET_ENABLED` | bool | `false` | Whether to enable WebSocket real-time push |
+/// | `STORAGE_ROOT_DIR` | String | `./storage` | Local file storage root directory (parent of uploads/logs/search_index/vfs/db) |
+/// | `UPLOAD_DIR` | String | `{STORAGE_ROOT_DIR}/uploads` | Media upload directory |
+/// | `LOG_DIR` | String | `{STORAGE_ROOT_DIR}/logs` | Log file directory |
+/// | `SEARCH_INDEX_DIR` | String | `{STORAGE_ROOT_DIR}/search_index` | Search index directory |
+/// | `PLUGIN_VFS_ROOT` | String | `{STORAGE_ROOT_DIR}/vfs` | Plugin virtual filesystem directory |
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub host: String,
@@ -142,10 +142,10 @@ pub struct AppConfig {
     pub s3_public_url: Option<String>,
     #[serde(default)]
     pub rule_engine: RuleEngineConfig,
-    /// 是否启用 GraphQL API（默认 false）
+    /// Whether to enable GraphQL API (default false)
     #[serde(default)]
     pub graphql_enabled: bool,
-    /// 是否启用 WebSocket 实时推送（默认 false）
+    /// Whether to enable WebSocket real-time push (default false)
     #[serde(default)]
     pub websocket_enabled: bool,
     #[serde(default)]
@@ -194,10 +194,11 @@ pub struct AppConfig {
     pub sms_twilio_from: Option<String>,
 }
 
-/// 内置模块开关
+/// Built-in module switches
 ///
-/// 控制哪些内置功能模块启用。禁用后对应路由不注册、
-/// 保护表和保留路由段自动释放（可被 Content Type 占用）。
+/// Controls which built-in feature modules are enabled. When disabled, corresponding
+/// routes are not registered, and protected tables and reserved route segments are
+/// automatically released (available for Content Type use).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuiltinsConfig {
     #[serde(default = "default_true")]
@@ -250,12 +251,12 @@ impl BuiltinsConfig {
         }
     }
 
-    /// 是否全部禁用（纯 Headless CMS 模式）
+    /// Whether all built-in modules are disabled (pure Headless CMS mode)
     pub fn is_all_disabled(&self) -> bool {
         !self.blog && !self.pages && !self.media && !self.fulltext && !self.workflow
     }
 
-    /// 根据启用的模块返回保护表列表
+    /// Returns the list of protected tables based on enabled modules
     pub fn protected_tables(&self) -> Vec<String> {
         let mut tables = vec![
             "users".into(),
@@ -292,7 +293,7 @@ impl BuiltinsConfig {
         tables
     }
 
-    /// 根据启用的模块返回保留路由段
+    /// Returns the list of reserved route segments based on enabled modules
     pub fn reserved_route_segments(&self) -> Vec<&'static str> {
         let mut segments: Vec<&'static str> = vec![
             "auth",
@@ -329,43 +330,43 @@ impl BuiltinsConfig {
     }
 }
 
-/// API Rule 引擎配置
+/// API Rule engine configuration
 ///
-/// 所有规则引擎中的硬编码值均可通过环境变量覆盖，便于：
-/// - 适配不同数据库后端（SQLite / PostgreSQL / MySQL）
-/// - 调整缓存策略
-/// - 自定义表达式前缀
+/// All hardcoded values in the rule engine can be overridden via environment variables for:
+/// - Adapting to different database backends (SQLite / PostgreSQL / MySQL)
+/// - Adjusting cache strategies
+/// - Customizing expression prefixes
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleEngineConfig {
-    /// 表达式前缀：认证用户 ID（默认 `@request.auth.id`）
+    /// Expression prefix: authenticated user ID (default `@request.auth.id`)
     pub prefix_auth_id: String,
-    /// 表达式前缀：认证用户角色（默认 `@request.auth.role`）
+    /// Expression prefix: authenticated user role (default `@request.auth.role`)
     pub prefix_auth_role: String,
-    /// 表达式前缀：请求体字段（默认 `@request.body.`）
+    /// Expression prefix: request body field (default `@request.body.`)
     pub prefix_request_body: String,
-    /// 表达式前缀：URL 查询参数（默认 `@request.query.`）
+    /// Expression prefix: URL query parameter (default `@request.query.`)
     pub prefix_request_query: String,
-    /// 表达式前缀：当前时间（默认 `@now`）
+    /// Expression prefix: current time (default `@now`)
     pub prefix_now: String,
-    /// 表达式前缀：跨表引用（默认 `@table.`，Phase 3 使用）
+    /// Expression prefix: cross-table reference (default `@table.`, used in Phase 3)
     pub prefix_cross_table: String,
-    /// SQL 中 @now 编译为的函数（默认 `datetime('now')`，PG 可改为 `NOW()`）
+    /// SQL function that @now compiles to (default `datetime('now')`, can be `NOW()` for PG)
     pub sql_now_fn: String,
-    /// SQL 中 :isset 编译为的操作符（默认 `IS NOT NULL`）
+    /// SQL operator that :isset compiles to (default `IS NOT NULL`)
     pub sql_isset_op: String,
-    /// SQL 中 :length 编译为的函数名（默认 `LENGTH`，PG 可改为 `CHAR_LENGTH`）
+    /// SQL function name that :length compiles to (default `LENGTH`, can be `CHAR_LENGTH` for PG)
     pub sql_length_fn: String,
-    /// SQL LIKE 通配符（默认 `%`）
+    /// SQL LIKE wildcard (default `%`)
     pub sql_like_wildcard: String,
-    /// SQL LIKE 单字符通配符（默认 `_`）
+    /// SQL LIKE single character wildcard (default `_`)
     pub sql_like_single_char: String,
-    /// LIKE 通配符对应的正则（默认 `.*`）
+    /// Regex equivalent of LIKE wildcard (default `.*`)
     pub regex_like_wildcard: String,
-    /// LIKE 单字符对应的正则（默认 `.`）
+    /// Regex equivalent of LIKE single character (default `.`)
     pub regex_like_single_char: String,
-    /// CMS 列表缓存 TTL（秒，默认 30）
+    /// CMS list cache TTL (seconds, default 30)
     pub cms_cache_ttl_secs: u64,
-    /// CMS 列表单页最大条数（默认 100）
+    /// CMS list max items per page (default 100)
     pub cms_max_page_size: u64,
 }
 
@@ -392,7 +393,7 @@ impl Default for RuleEngineConfig {
 }
 
 impl RuleEngineConfig {
-    /// 从环境变量加载，缺失项使用默认值
+    /// Load from environment variables, using defaults for missing items
     pub fn from_env() -> Self {
         let defaults = Self::default();
         Self {
@@ -429,7 +430,7 @@ impl RuleEngineConfig {
     }
 }
 
-/// 单条 Cron 调度配置
+/// Single Cron schedule configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CronScheduleConfig {
     pub label: String,
@@ -635,7 +636,7 @@ fn default_sms_provider() -> String {
 const DEFAULT_JWT_SECRET: &str = "change-me-in-production-at-least-32-chars";
 
 impl AppConfig {
-    /// 从环境变量构建配置，缺失变量使用默认值。
+    /// Build configuration from environment variables, using defaults for missing variables.
     #[must_use]
     pub fn from_env() -> Self {
         let host = env::var("APP_HOST").unwrap_or_else(|_| "0.0.0.0".into());
@@ -946,9 +947,9 @@ impl AppConfig {
         }
     }
 
-    /// 创建用于测试的最小配置实例。
+    /// Create a minimal configuration instance for testing.
     ///
-    /// 所有字段使用默认值，调用者可按需覆盖。
+    /// All fields use default values; callers can override as needed.
     #[must_use]
     pub fn test_defaults() -> Self {
         Self {

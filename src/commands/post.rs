@@ -1,8 +1,8 @@
-//! 文章相关 Command
+//! Post-related commands
 
 use crate::models::post::PostStatus;
 
-/// 创建文章
+/// Create a post
 pub struct CreatePostCmd {
     pub title: String,
     pub slug: String,
@@ -16,7 +16,7 @@ pub struct CreatePostCmd {
     pub tag_ids: Option<Vec<i64>>,
 }
 
-/// 更新文章
+/// Update a post
 pub struct UpdatePostCmd {
     pub id: i64,
     pub title: Option<String>,
@@ -30,7 +30,7 @@ pub struct UpdatePostCmd {
     pub updated_by: Option<i64>,
 }
 
-/// 查询已发布文章
+/// Query published posts
 pub struct FindPublishedQuery {
     pub page: i64,
     pub page_size: i64,

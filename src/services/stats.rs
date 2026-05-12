@@ -1,29 +1,29 @@
-//! 仪表盘统计服务
+//! Dashboard statistics service.
 //!
-//! 提供 Admin Dashboard 所需的聚合统计数据：
-//! - 总览统计（各实体总数、内容类型分布、近期活动）
-//! - 单个内容类型统计（状态分布）
-//! - 趋势数据（近 N 天的创建量）
+//! Provides aggregated statistics for the admin dashboard:
+//! - Overview (total counts per entity, content type distribution, recent activity)
+//! - Per-content-type statistics (status distribution)
+//! - Trend data (daily creation counts over the last N days)
 
 use serde_json::{Value, json};
 
 use crate::db::Pool;
 use crate::errors::app_error::AppError;
 
-/// 仪表盘统计服务
+/// Dashboard statistics service
 pub struct StatsService {
     pool: Pool,
 }
 
 impl StatsService {
-    /// 创建统计服务实例
+    /// Create a new statistics service instance
     pub fn new(pool: Pool) -> Self {
         Self { pool }
     }
 
-    /// 总览统计
+    /// Overview statistics.
     ///
-    /// 返回各实体总数、content type 分布、近期活动
+    /// Returns total counts per entity, content type distribution, and recent activity.
     pub async fn overview(&self, tenant_id: Option<&str>) -> Result<Value, AppError> {
         let tf = crate::db::tenant::tenant_filter_ph(tenant_id, 1);
         let tf_aliased = crate::db::tenant::tenant_filter_aliased_ph("p", tenant_id, 1);
@@ -57,7 +57,7 @@ impl StatsService {
         }))
     }
 
-    /// 单个内容类型统计（状态分布）
+    /// Per-content-type statistics (status distribution)
     pub async fn content_stats(
         &self,
         table: &str,
@@ -109,7 +109,7 @@ impl StatsService {
         Ok(result)
     }
 
-    /// 趋势数据（近 N 天每天创建量）
+    /// Trend data (daily creation counts over the last N days)
     pub async fn trends(
         &self,
         table: &str,
@@ -169,7 +169,7 @@ impl StatsService {
         }))
     }
 
-    /// 统计各 content type 的记录数
+    /// Count records per content type
     async fn count_content_types(
         &self,
         tenant_id: Option<&str>,
@@ -186,7 +186,7 @@ impl StatsService {
         Ok(result)
     }
 
-    /// 按状态分组计数
+    /// Count records grouped by status
     async fn count_by_status(
         &self,
         table: &str,
@@ -225,7 +225,7 @@ impl StatsService {
         Ok(map)
     }
 
-    /// 近期活动（最近创建的 posts + comments）
+    /// Recent activity (most recently created posts + comments)
     async fn recent_activity(
         &self,
         tenant_id: Option<&str>,
@@ -292,7 +292,7 @@ impl StatsService {
     }
 }
 
-/// COUNT 某张表的记录数
+/// Count records in a table
 async fn count_table(
     pool: &Pool,
     table: &str,
@@ -313,7 +313,7 @@ async fn count_table(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))
 }
 
-/// 检查表是否有某列
+/// Check if a table has a specific column
 async fn has_column(pool: &Pool, table: &str, column: &str) -> bool {
     #[cfg(feature = "db-sqlite")]
     {
@@ -346,7 +346,7 @@ async fn has_column(pool: &Pool, table: &str, column: &str) -> bool {
     }
 }
 
-/// 获取数据库中所有 content type 相关的表名
+/// Get all content-type-related table names from the database
 async fn get_content_tables(pool: &Pool) -> Result<Vec<String>, AppError> {
     let excluded_tables = "'users','refresh_tokens','media','plugin_storage','roles','permissions','options','tenants','pending_jobs','cron_schedules','cron_execution_log'";
     #[cfg(feature = "db-sqlite")]
@@ -384,7 +384,7 @@ async fn get_content_tables(pool: &Pool) -> Result<Vec<String>, AppError> {
     }
 }
 
-/// 日期截断表达式（截断到天）
+/// Date truncation expression (truncate to day)
 fn date_trunc_day_expr(col: &str) -> String {
     crate::db::dialect::date_trunc_day(col)
 }

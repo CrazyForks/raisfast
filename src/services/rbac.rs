@@ -1,7 +1,7 @@
-//! RBAC 服务层 — 角色/权限 CRUD + 权限检查
+//! RBAC service layer — role/permission CRUD + permission checking
 //!
-//! 所有数据库操作委托给 [`RbacRepository`] trait 实现，
-//! 本层仅包含业务逻辑（权限匹配、条件校验等）。
+//! All database operations are delegated to the [`RbacRepository`] trait implementation;
+//! this layer only contains business logic (permission matching, condition validation, etc.).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -39,7 +39,7 @@ pub struct PermissionEntry {
     pub conditions: Option<HashMap<String, String>>,
 }
 
-/// 面向 handler 的 Permission 视图（fields/conditions 已反序列化）
+/// Handler-facing Permission view (fields/conditions already deserialized)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionView {
     pub id: i64,
@@ -68,28 +68,28 @@ fn perm_to_view(p: &Permission) -> PermissionView {
     }
 }
 
-/// RBAC 服务
+/// RBAC service
 pub struct RbacService {
     repo: Arc<dyn RbacRepository>,
 }
 
 impl RbacService {
-    /// 创建 `RbacService` 实例
+    /// Create a `RbacService` instance
     pub fn new(repo: Arc<dyn RbacRepository>) -> Self {
         Self { repo }
     }
 
-    /// 列出所有角色
+    /// List all roles
     pub async fn list_roles(&self) -> Result<Vec<Role>, AppError> {
         self.repo.list_roles().await
     }
 
-    /// 根据 ID 获取角色
+    /// Get a role by ID
     pub async fn get_role(&self, id: &str) -> Result<Option<Role>, AppError> {
         self.repo.find_role_by_id(id).await
     }
 
-    /// 创建角色
+    /// Create a role
     pub async fn create_role(&self, req: &CreateRoleRequest) -> Result<Role, AppError> {
         let (id, _now) = crate::utils::id::new_document_id_and_timestamp();
         self.repo
@@ -97,14 +97,14 @@ impl RbacService {
             .await
     }
 
-    /// 更新角色
+    /// Update a role
     pub async fn update_role(&self, id: &str, req: &UpdateRoleRequest) -> Result<Role, AppError> {
         self.repo
             .update_role(id, req.name.as_deref(), req.description.as_deref())
             .await
     }
 
-    /// 删除角色（系统角色不可删除）
+    /// Delete a role (system roles cannot be deleted)
     pub async fn delete_role(&self, id: &str) -> Result<(), AppError> {
         let role = self
             .repo
@@ -117,7 +117,7 @@ impl RbacService {
         self.repo.delete_role(id).await
     }
 
-    /// 获取角色的所有权限（fields/conditions 从 JSON 反序列化）
+    /// Get all permissions for a role (fields/conditions deserialized from JSON)
     pub async fn get_permissions(&self, role_id: &str) -> Result<Vec<PermissionView>, AppError> {
         let role = self
             .repo
@@ -165,7 +165,7 @@ impl RbacService {
         self.get_permissions(role_id).await
     }
 
-    /// 检查权限
+    /// Check permission
     pub async fn check_permission(
         &self,
         role_id: &str,
@@ -191,13 +191,13 @@ impl RbacService {
         Err(AppError::Forbidden)
     }
 
-    /// 根据角色名获取角色 ID
+    /// Get role ID by role name
     pub async fn get_role_id_by_name(&self, name: &str) -> Result<Option<i64>, AppError> {
         self.repo.find_role_id_by_name(name).await
     }
 }
 
-/// 权限 action 匹配（支持 `*` 通配符和 `::` 命名空间）
+/// Permission action matching (supports `*` wildcard and `::` namespace)
 #[must_use]
 pub fn matches_action(pattern: &str, action: &str) -> bool {
     if pattern == "*" || pattern == action {
@@ -232,7 +232,7 @@ fn ns_matches(pattern: &str, action: &str) -> bool {
     pp.iter().zip(ap.iter()).all(|(p, a)| *p == "*" || *p == *a)
 }
 
-/// 权限 subject 匹配（支持 `*` 通配符和 `::` 命名空间）
+/// Permission subject matching (supports `*` wildcard and `::` namespace)
 #[must_use]
 pub fn matches_subject(pattern: &str, subject: &str) -> bool {
     if pattern == "*" || pattern == subject {

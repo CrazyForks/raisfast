@@ -1,9 +1,9 @@
-//! 工具模块
+//! Utility modules
 //!
-//! 提供项目中通用的工具函数和类型，包括：
+//! Provides common utility functions and types used throughout the project, including:
 //!
-//! - **pagination** — 分页参数的提取与校验
-//! - **markdown** — Markdown 转 HTML 的渲染管线（含 XSS 防护）
+//! - **pagination** — Pagination parameter extraction and validation
+//! - **markdown** — Markdown to HTML rendering pipeline (with XSS protection)
 
 pub mod auth;
 pub mod crypto;

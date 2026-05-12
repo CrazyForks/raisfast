@@ -1,11 +1,11 @@
-//! 插件清单 (plugin.toml) 解析
+//! Plugin manifest (plugin.toml) parsing
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-/// 插件清单顶层结构
+/// Plugin manifest top-level structure
 #[derive(Debug, Clone, Deserialize)]
 pub struct PluginManifest {
     pub plugin: PluginInfo,
@@ -17,24 +17,24 @@ pub struct PluginManifest {
     pub dependencies: HashMap<String, String>,
     #[serde(default)]
     pub cron: Vec<CronEntry>,
-    /// 插件声明的内容类型文件（Phase 10 新增）
+    /// Content type files declared by the plugin (added in Phase 10)
     #[serde(default)]
     pub content_types: Vec<ContentTypeRef>,
-    /// 插件注册的自定义路由（Phase 10 新增）
+    /// Custom routes registered by the plugin (added in Phase 10)
     #[serde(default)]
     pub routes: Vec<RouteDef>,
-    /// 插件注册的 Admin 页面（Phase 10 新增）
+    /// Admin pages registered by the plugin (added in Phase 10)
     #[serde(default)]
     pub admin_pages: Vec<AdminPageDef>,
 }
 
-/// 内容类型引用
+/// Content type reference
 #[derive(Debug, Clone, Deserialize)]
 pub struct ContentTypeRef {
     pub file: String,
 }
 
-/// 路由定义
+/// Route definition
 #[derive(Debug, Clone, Deserialize)]
 pub struct RouteDef {
     pub method: String,
@@ -51,7 +51,7 @@ pub struct RouteDef {
     pub output: RouteOutput,
 }
 
-/// 路由参数定义
+/// Route parameter definition
 #[derive(Debug, Clone, Deserialize)]
 pub struct RouteParam {
     pub name: String,
@@ -71,7 +71,7 @@ fn default_query() -> String {
     "query".into()
 }
 
-/// 路由输出定义
+/// Route output definition
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RouteOutput {
     #[serde(default)]
@@ -82,7 +82,7 @@ pub struct RouteOutput {
     pub fields: Vec<RouteOutputField>,
 }
 
-/// 输出字段定义
+/// Output field definition
 #[derive(Debug, Clone, Deserialize)]
 pub struct RouteOutputField {
     pub name: String,
@@ -92,7 +92,7 @@ pub struct RouteOutputField {
     pub description: Option<String>,
 }
 
-/// Admin 页面定义
+/// Admin page definition
 #[derive(Debug, Clone, Deserialize)]
 pub struct AdminPageDef {
     pub path: String,
@@ -101,19 +101,19 @@ pub struct AdminPageDef {
     pub component: Option<String>,
 }
 
-/// 插件声明的 Cron 定时任务条目
+/// Cron scheduled task entry declared by the plugin
 #[derive(Debug, Clone, Deserialize)]
 pub struct CronEntry {
-    /// 可读标签
+    /// Human-readable label
     pub label: String,
-    /// 自定义 `job_type` 字符串（任意值，不要求匹配内置枚举）
+    /// Custom `job_type` string (any value, not required to match built-in enums)
     pub job_type: String,
-    /// JSON payload（可选）
+    /// JSON payload (optional)
     #[serde(default)]
     pub payload: Option<String>,
-    /// 七段式 Cron 表达式（含秒）
+    /// Seven-segment cron expression (including seconds)
     pub cron_expr: String,
-    /// 是否启用（默认 true）
+    /// Whether enabled (default true)
     #[serde(default = "cron_default_true")]
     pub enabled: bool,
 }
@@ -133,7 +133,7 @@ where
         .collect())
 }
 
-/// 插件基本信息
+/// Plugin basic information
 #[derive(Debug, Clone, Deserialize)]
 pub struct PluginInfo {
     pub id: String,
@@ -151,7 +151,7 @@ pub struct PluginInfo {
     pub wasm: String,
     #[serde(default = "default_entry")]
     pub entry: String,
-    /// SDK 版本（默认 "v1"）
+    /// SDK version (default "v1")
     #[serde(default = "default_sdk_version")]
     pub sdk_version: String,
 }
@@ -176,7 +176,7 @@ fn default_sdk_version() -> String {
     "v1".into()
 }
 
-/// 插件权限声明
+/// Plugin permission declaration
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Permissions {
@@ -192,21 +192,21 @@ pub struct Permissions {
     pub timeout_ms: Option<u64>,
 }
 
-/// Hook 注册配置
+/// Hook registration configuration
 #[derive(Debug, Clone, Deserialize)]
 pub struct HookConfig {
     pub priority: Option<i32>,
     #[serde(rename = "match")]
     pub match_pattern: Option<String>,
-    /// 只接收指定 content_type 的事件（为空或不声明则接收所有）
+    /// Only receive events for the specified content_type (empty or omitted = receive all)
     #[serde(default)]
     pub content_types: Vec<String>,
 }
 
-/// Hook 点枚举
+/// Hook point enum
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HookPoint {
-    // ── 内容生命周期（旧，兼容） ──
+    // ── Content lifecycle (legacy, compatible) ──
     PostCreating,
     PostCreated,
     PostUpdating,
@@ -215,29 +215,29 @@ pub enum HookPoint {
     CommentCreating,
     CommentCreated,
 
-    // ── 通用 CMS 事件（Phase 10 新增） ──
+    // ── Generic CMS events (added in Phase 10) ──
     ContentCreating,
     ContentCreated,
     ContentUpdating,
     ContentUpdated,
     ContentDeleted,
 
-    // ── 内容访问 ──
+    // ── Content access ──
     ContentViewed,
 
-    // ── 字段级 ──
+    // ── Field-level ──
     RenderMarkdown,
     FilterHtml,
 
-    // ── 路由/认证 ──
+    // ── Route/auth ──
     OnLogin,
 
-    // ── 定时任务 ──
+    // ── Scheduled tasks ──
     CronTick,
 }
 
 impl HookPoint {
-    /// 返回对应的 WASM 导出函数名
+    /// Returns the corresponding WASM export function name
     #[must_use]
     pub fn wasm_func_name(self) -> &'static str {
         match self {
@@ -261,7 +261,7 @@ impl HookPoint {
         }
     }
 
-    /// 返回所有 Hook 点，用于遍历测试
+    /// Returns all hook points for iteration/testing
     #[must_use]
     pub fn all() -> &'static [HookPoint] {
         &[
@@ -550,59 +550,59 @@ version = "0.1.0"
 method = "GET"
 path = "/api/v1/plugins/ecommerce/products"
 handler = "listProducts"
-description = "获取商品列表"
+description = "Get product list"
 
 [[routes.input]]
 name = "page"
 in = "query"
 type = "integer"
-description = "页码"
+description = "Page number"
 
 [[routes.input]]
 name = "page_size"
 in = "query"
 type = "integer"
-description = "每页数量"
+description = "Items per page"
 default = 20
 
 [[routes.input]]
 name = "category_id"
 in = "query"
 type = "string"
-description = "按分类筛选"
+description = "Filter by category"
 
 [routes.output]
-description = "商品分页列表"
+description = "Paginated product list"
 
 [[routes.output.fields]]
 name = "data"
 type = "array"
-description = "商品列表"
+description = "Product list"
 
 [[routes.output.fields]]
 name = "total"
 type = "integer"
-description = "总数"
+description = "Total count"
 
 [[routes]]
 method = "POST"
 path = "/api/v1/plugins/ecommerce/cart"
 handler = "addToCart"
-description = "添加到购物车"
+description = "Add to cart"
 
 [[routes.input]]
 name = "product_id"
 in = "body"
 type = "string"
 required = true
-description = "商品ID"
+description = "Product ID"
 
 [[routes.input]]
 name = "quantity"
 in = "body"
 type = "integer"
 required = true
-description = "数量"
+description = "Quantity"
 default = 1
 "#;
         let m: PluginManifest = toml::from_str(toml).unwrap();

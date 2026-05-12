@@ -1,4 +1,4 @@
-//! 站点配置 API Handler
+//! Site options API handler
 
 use std::collections::HashMap;
 
@@ -44,7 +44,7 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
-/// GET /options/public — 公开配置（仅值）+ 系统特性标志
+/// GET /options/public — Public options (values only) + system feature flags
 pub async fn get_public_options(
     State(state): State<AppState>,
 ) -> AppResult<ApiResponse<HashMap<String, Value>>> {
@@ -56,7 +56,7 @@ pub async fn get_public_options(
     Ok(ApiResponse::success(options))
 }
 
-/// GET /admin/options — 所有配置（按分组，含元数据）
+/// GET /admin/options — All options (grouped, with metadata)
 pub async fn list_options(
     State(state): State<AppState>,
 ) -> AppResult<ApiResponse<Vec<crate::services::options::OptionGroup>>> {
@@ -64,7 +64,7 @@ pub async fn list_options(
     Ok(ApiResponse::success(groups))
 }
 
-/// GET /admin/options/:key — 获取单个配置
+/// GET /admin/options/:key — Get a single option
 pub async fn get_option(
     State(state): State<AppState>,
     Path(key): Path<String>,
@@ -79,13 +79,13 @@ pub async fn get_option(
     ))
 }
 
-/// 批量更新请求体
+/// Batch update request body
 #[derive(Debug, Deserialize)]
 pub struct UpdateOptionsRequest {
     pub options: HashMap<String, Value>,
 }
 
-/// PUT /admin/options — 批量更新配置
+/// PUT /admin/options — Batch update options
 pub async fn update_options(
     State(state): State<AppState>,
     Json(body): Json<UpdateOptionsRequest>,
@@ -95,13 +95,13 @@ pub async fn update_options(
     Ok(ApiResponse::success(groups))
 }
 
-/// 更新单个配置请求体
+/// Update single option request body
 #[derive(Debug, Deserialize)]
 pub struct UpdateOptionRequest {
     pub value: Value,
 }
 
-/// PUT /admin/options/:key — 设置单个配置
+/// PUT /admin/options/:key — Set a single option
 pub async fn set_option(
     State(state): State<AppState>,
     Path(key): Path<String>,
@@ -114,7 +114,7 @@ pub async fn set_option(
     })))
 }
 
-/// DELETE /admin/options/:key — 删除配置
+/// DELETE /admin/options/:key — Delete an option
 pub async fn delete_option(
     State(state): State<AppState>,
     Path(key): Path<String>,

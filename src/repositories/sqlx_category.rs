@@ -1,4 +1,4 @@
-//! 基于 sqlx 的 `CategoryRepository` 实现
+//! sqlx-based `CategoryRepository` implementation
 
 use crate::errors::app_error::AppResult;
 use crate::models::category::{self, Category};
@@ -8,13 +8,13 @@ use crate::repositories::define_sqlx_repo;
 
 define_sqlx_repo!(SqlxCategoryRepository);
 
-/// 分类 Repository 接口
+/// Category Repository interface
 #[async_trait::async_trait]
 pub trait CategoryRepository: Send + Sync {
-    /// 查询所有分类
+    /// Find all categories
     async fn find_all(&self, tenant_id: Option<&str>) -> AppResult<Vec<Category>>;
 
-    /// 分页查询分类
+    /// Find categories with pagination
     async fn find_paginated(
         &self,
         tenant_id: Option<&str>,
@@ -22,17 +22,17 @@ pub trait CategoryRepository: Send + Sync {
         page_size: i64,
     ) -> AppResult<(Vec<Category>, i64)>;
 
-    /// 根据 ID 查找分类
+    /// Find a category by ID
     async fn find_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<Category>;
 
-    /// 根据 document_id 查找分类
+    /// Find a category by document_id
     async fn find_by_document_id(
         &self,
         document_id: &str,
         tenant_id: Option<&str>,
     ) -> AppResult<Option<Category>>;
 
-    /// 创建新分类
+    /// Create a new category
     async fn create(
         &self,
         cmd: CreateCategoryCmd,
@@ -47,7 +47,7 @@ pub trait CategoryRepository: Send + Sync {
         updated_by: Option<i64>,
     ) -> AppResult<Category>;
 
-    /// 删除分类
+    /// Delete a category
     async fn delete(&self, id: i64, tenant_id: Option<&str>) -> AppResult<()>;
 }
 

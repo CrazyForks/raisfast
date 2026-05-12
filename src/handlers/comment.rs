@@ -1,7 +1,7 @@
-//! 评论相关处理器
+//! Comment handlers
 //!
-//! 处理评论的创建（登录用户和访客）、列表、审核状态更新和删除请求。
-//! 评论支持多级嵌套回复，树形结构在 service 层构建。
+//! Handles comment creation (logged-in users and guests), listing, review status updates, and deletion.
+//! Comments support multi-level nested replies; tree structure is built in the service layer.
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -124,7 +124,7 @@ pub struct AdminCommentListQuery {
     pub status: Option<CommentStatus>,
 }
 
-/// 获取指定文章的评论列表（树形结构，分页）
+/// Get the comment list for a specific post (tree structure, paginated)
 pub async fn list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -147,7 +147,7 @@ pub async fn list(
     Ok(p.paginate(comments, total))
 }
 
-/// 管理员获取全局评论列表（分页）
+/// Admin gets global comment list (paginated)
 pub async fn list_all(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -163,7 +163,7 @@ pub async fn list_all(
     Ok(p.paginate(comments, total))
 }
 
-/// 创建评论（已登录用户）
+/// Create a comment (logged-in user)
 pub async fn create(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -189,7 +189,7 @@ pub async fn create(
     Ok(ApiResponse::success(comment))
 }
 
-/// 创建评论（访客）
+/// Create a comment (guest)
 pub async fn create_guest(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -220,7 +220,7 @@ pub async fn create_guest(
     Ok(ApiResponse::success(comment))
 }
 
-/// 删除评论
+/// Delete a comment
 pub async fn delete(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -230,7 +230,7 @@ pub async fn delete(
     Ok(ApiResponse::success(()))
 }
 
-/// 更新评论审核状态（管理员）
+/// Update comment review status (admin)
 pub async fn update_status(
     auth: AuthUser,
     State(state): State<crate::AppState>,

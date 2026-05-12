@@ -1,7 +1,7 @@
-//! SSE（Server-Sent Events）实时推送处理器
+//! SSE (Server-Sent Events) real-time push handler
 //!
-//! 将 `EventBus` 的事件流转换为 HTTP SSE 推送，供前端实时接收业务事件。
-//! 支持按事件类型过滤和心跳保活。
+//! Converts `EventBus` event streams into HTTP SSE pushes for frontend real-time event reception.
+//! Supports filtering by event type and keep-alive heartbeats.
 
 use std::borrow::Cow;
 use std::convert::Infallible;
@@ -31,15 +31,15 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
-/// SSE 订阅查询参数
+/// SSE subscription query parameters
 #[derive(Debug, Deserialize, Default)]
 pub struct SubscribeQuery {
-    /// 逗号分隔的事件类型过滤，如 `PostCreated,CommentCreated`
-    /// 为空时订阅所有事件
+    /// Comma-separated event type filter, e.g. `PostCreated,CommentCreated`
+    /// When empty, subscribes to all events
     pub filter: Option<String>,
 }
 
-/// 提取事件类型名称
+/// Extract event type name
 pub fn event_type_name(event: &Event) -> Cow<'static, str> {
     match event {
         Event::PostCreating { .. } => Cow::Borrowed("PostCreating"),
@@ -63,13 +63,13 @@ pub fn event_type_name(event: &Event) -> Cow<'static, str> {
     }
 }
 
-/// SSE 事件订阅端点
+/// SSE event subscription endpoint
 ///
-/// - **方法/路径：** `GET /api/v1/events`
-/// - **认证：** 无需认证（后续可加）
-/// - **说明：** 返回 SSE 事件流，客户端通过 `EventSource` API 订阅。
-///   支持通过 `?filter=PostCreated,CommentCreated` 按事件类型过滤。
-///   每 30 秒发送心跳保活。
+/// - **Method/Path:** `GET /api/v1/events`
+/// - **Auth:** Not required (may be added later)
+/// - **Description:** Returns an SSE event stream; clients subscribe via the `EventSource` API.
+///   Supports filtering by event type via `?filter=PostCreated,CommentCreated`.
+///   Sends a keep-alive heartbeat every 30 seconds.
 pub async fn subscribe(
     State(state): State<crate::AppState>,
     Query(query): Query<SubscribeQuery>,
@@ -196,7 +196,7 @@ mod tests {
             ),
         ];
 
-        assert_eq!(cases.len(), 11, "所有 Event 变体都应有对应名称");
+        assert_eq!(cases.len(), 11, "all Event variants should have a corresponding name");
         for (event, expected_name) in &cases {
             assert_eq!(event_type_name(event), *expected_name);
         }

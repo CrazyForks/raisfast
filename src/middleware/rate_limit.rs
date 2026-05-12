@@ -1,8 +1,8 @@
-//! IP 限流中间件
+//! IP rate limiting middleware
 //!
-//! 基于 sliding window 的请求限流，支持多命名限流器（全局、注册、登录、评论）。
-//! 存储后端通过 [`RateLimitStore`] trait 抽象，当前提供 [`MemoryStore`] 实现，
-//! 未来可扩展 Redis 后端以支持多实例水平扩展。
+//! Sliding window request rate limiting, supporting multiple named limiters (global, register, login, comment).
+//! Storage backend is abstracted via the [`RateLimitStore`] trait; currently provides a [`MemoryStore`]
+//! implementation, with a Redis backend to be added in the future for multi-instance horizontal scaling.
 
 use crate::config::app::AppConfig;
 
@@ -16,47 +16,48 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use dashmap::DashMap;
 
-/// 限流窗口配置。
+/// Rate limit window configuration.
 #[derive(Debug, Clone)]
 pub struct RateLimitConfig {
     pub max_requests: u32,
     pub window_secs: u64,
 }
 
-/// 单个限流键的计数窗口条目。
+/// Counting window entry for a single rate limit key.
 #[derive(Debug)]
 struct Entry {
     count: u32,
     window_start: Instant,
 }
 
-/// 限流存储后端 trait。
+/// Rate limit storage backend trait.
 ///
-/// 抽象限流计数器的读写接口，便于切换不同存储后端。
-/// 当前仅实现 [`MemoryStore`]，未来可添加 Redis 实现。
+/// Abstracts the rate limit counter read/write interface for switching between storage backends.
+/// Currently only [`MemoryStore`] is implemented; a Redis implementation can be added later.
 #[async_trait::async_trait]
 pub trait RateLimitStore: Send + Sync {
-    /// 对指定键进行一次计数检查。
+    /// Perform a counting check for the specified key.
     ///
-    /// 若当前窗口内未超过 `max_requests`，计数 +1 并返回 `true`；
-    /// 否则返回 `false` 表示被限流。
+    /// If the current window has not exceeded `max_requests`, increments the count and returns `true`;
+    /// otherwise returns `false` indicating rate limited.
     async fn check(&self, key: &str, config: &RateLimitConfig) -> bool;
 
-    /// 清理过期的计数条目，释放内存。
+    /// Clean up expired count entries to release memory.
     async fn cleanup_expired(&self, window_secs: u64);
 }
 
-/// 基于 `DashMap` 的分片锁内存存储实现。
+/// DashMap-based sharded lock memory store implementation.
 ///
-/// 使用 `DashMap` 替代 `Mutex<HashMap>`，消除全局锁竞争。
-/// 适用于高并发单实例部署；多实例部署应切换为 Redis 后端。
+/// Uses `DashMap` instead of `Mutex<HashMap>` to eliminate global lock contention.
+/// Suitable for high-concurrency single-instance deployments; multi-instance deployments
+/// should switch to a Redis backend.
 #[derive(Debug)]
 pub struct MemoryStore {
     entries: DashMap<String, Entry>,
 }
 
 impl MemoryStore {
-    /// 创建空的内存存储。
+    /// Create an empty memory store.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -101,9 +102,9 @@ impl RateLimitStore for MemoryStore {
     }
 }
 
-/// 限流器，组合存储后端与配置。
+/// Rate limiter, combining a storage backend with configuration.
 ///
-/// 通过泛型 [`RateLimitStore`] 支持不同存储后端。
+/// Supports different storage backends via the generic [`RateLimitStore`].
 #[derive(Debug)]
 pub struct RateLimiter<S: RateLimitStore> {
     store: Arc<S>,
@@ -120,26 +121,26 @@ impl<S: RateLimitStore> Clone for RateLimiter<S> {
 }
 
 impl<S: RateLimitStore> RateLimiter<S> {
-    /// 创建新的限流器。
+    /// Create a new rate limiter.
     pub fn new(store: Arc<S>, config: RateLimitConfig) -> Self {
         Self { store, config }
     }
 
-    /// 对指定键执行限流检查。
+    /// Perform a rate limit check for the specified key.
     pub async fn check(&self, key: &str) -> bool {
         self.store.check(key, &self.config).await
     }
 
-    /// 清理过期条目。
+    /// Clean up expired entries.
     pub async fn cleanup_expired(&self) {
         self.store.cleanup_expired(self.config.window_secs).await;
     }
 }
 
-/// 命名限流器集合，通过 Extension 在路由间共享。
+/// Named rate limiter set, shared across routes via Extension.
 ///
-/// 每个限流器独立配置 `max_requests` / `window_secs`，
-/// 共享同一个存储后端实例。
+/// Each limiter has independent `max_requests` / `window_secs` configuration,
+/// sharing the same storage backend instance.
 #[derive(Debug, Clone)]
 pub struct RateLimiterSet {
     pub enabled: bool,
@@ -151,7 +152,7 @@ pub struct RateLimiterSet {
 }
 
 impl RateLimiterSet {
-    /// 根据应用配置创建限流器集合。
+    /// Create a rate limiter set from application configuration.
     #[must_use]
     pub fn from_config(config: &AppConfig) -> Self {
         Self {
@@ -194,7 +195,7 @@ impl RateLimiterSet {
         }
     }
 
-    /// 创建包含默认配置的限流器集合（用于测试）。
+    /// Create a rate limiter set with default configuration (for testing).
     #[must_use]
     pub fn new_default() -> Self {
         Self {

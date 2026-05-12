@@ -1,9 +1,9 @@
-//! OAuth2 社交登录业务逻辑
+//! OAuth2 social login business logic
 //!
-//! 处理 OAuth 授权流程的核心业务：
-//! - 发起授权（生成 state + PKCE verifier）
-//! - 处理回调（code exchange → 用户信息 → 查找/创建/绑定用户 → 签发 JWT）
-//! - 绑定/解绑 OAuth 账号
+//! Handles the core OAuth authorization flow:
+//! - Initiate authorization (generate state + PKCE verifier)
+//! - Handle callback (code exchange → user info → find/create/bind user → issue JWT)
+//! - Bind/unbind OAuth accounts
 
 use chrono::Utc;
 #[cfg(feature = "export-types")]
@@ -18,9 +18,9 @@ use crate::oauth::{OAuthProviderRegistry, OAuthUserInfo};
 use crate::repositories::{RefreshTokenRepository, UserRepository};
 use crate::utils::tz::Timestamp;
 
-/// 发起 OAuth 授权
+/// Initiate OAuth authorization
 ///
-/// 生成 state 和 PKCE code_verifier，存入数据库，返回 Provider 授权 URL。
+/// Generates state and PKCE code_verifier, stores them in the database, and returns the Provider authorization URL.
 pub async fn initiate_oauth(
     pool: &crate::db::Pool,
     registry: &OAuthProviderRegistry,
@@ -57,11 +57,11 @@ pub async fn initiate_oauth(
     Ok(provider.authorize_url(&state_doc_id, &code_challenge))
 }
 
-/// OAuth 回调处理结果
+/// OAuth callback result
 pub enum OAuthCallbackResult {
-    /// 登录成功（自动重定向到前端）
+    /// Login successful (auto-redirect to frontend)
     LoginSuccess(Box<LoginResponse>),
-    /// 需要绑定到已有账号（返回待绑定信息）
+    /// Needs binding to an existing account (returns pending binding info)
     BindingRequired {
         state: String,
         provider: String,
@@ -69,14 +69,14 @@ pub enum OAuthCallbackResult {
     },
 }
 
-/// 处理 OAuth 回调
+/// Handle OAuth callback
 ///
-/// 1. 校验 state，获取 code_verifier
-/// 2. 用 code 换 access_token
-/// 3. 获取 Provider 用户信息
-/// 4. 查找已有绑定 → 直接签发 JWT
-/// 5. 若无绑定且有绑定用户 ID → 执行绑定
-/// 6. 若无绑定 → 自动注册新用户
+/// 1. Validate state, retrieve code_verifier
+/// 2. Exchange code for access_token
+/// 3. Fetch Provider user info
+/// 4. Find existing binding → directly issue JWT
+/// 5. If no binding but has binding user ID → perform binding
+/// 6. If no binding → auto-register new user
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_callback(
     pool: &crate::db::Pool,
@@ -198,7 +198,7 @@ pub async fn handle_callback(
     Ok(OAuthCallbackResult::LoginSuccess(Box::new(login_resp)))
 }
 
-/// 解绑 OAuth 账号
+/// Unbind an OAuth account
 pub async fn unbind_oauth(
     pool: &crate::db::Pool,
     auth: &AuthUser,
@@ -232,7 +232,7 @@ pub async fn unbind_oauth(
     Ok(())
 }
 
-/// 获取用户已绑定的 Provider 列表
+/// Get the list of OAuth providers bound to the user
 pub async fn list_bindings(
     pool: &crate::db::Pool,
     auth: &AuthUser,
@@ -254,7 +254,7 @@ pub async fn list_bindings(
         .collect())
 }
 
-/// 绑定信息
+/// Binding info
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, serde::Serialize)]
 pub struct OAuthBindingInfo {
@@ -265,7 +265,7 @@ pub struct OAuthBindingInfo {
     pub created_at: Timestamp,
 }
 
-/// 用完整用户数据生成 JWT + refresh token
+/// Generate JWT + refresh token with full user data
 async fn create_login_response_for_user(
     user: &crate::models::user::User,
     refresh_token_repo: &dyn RefreshTokenRepository,
@@ -300,7 +300,7 @@ async fn create_login_response_for_user(
     })
 }
 
-/// 自动注册新用户
+/// Auto-register a new user
 async fn auto_register_user(
     pool: &crate::db::Pool,
     user_repo: &dyn UserRepository,
@@ -369,7 +369,7 @@ async fn auto_register_user(
     Ok(user)
 }
 
-/// 确保用户名唯一，冲突时追加后缀
+/// Ensure username is unique, appending a suffix on collision
 async fn ensure_unique_username(pool: &crate::db::Pool, base: &str) -> AppResult<String> {
     let username = sanitize_username(base);
 
@@ -393,7 +393,7 @@ async fn ensure_unique_username(pool: &crate::db::Pool, base: &str) -> AppResult
     Ok(final_name)
 }
 
-/// 清理用户名（只保留字母数字和下划线）
+/// Sanitize username (keep only alphanumeric and underscore)
 fn sanitize_username(name: &str) -> String {
     let cleaned: String = name
         .chars()
@@ -407,7 +407,7 @@ fn sanitize_username(name: &str) -> String {
     }
 }
 
-/// 执行 OAuth 绑定（upsert）
+/// Perform OAuth binding (upsert)
 async fn do_bind_oauth(
     pool: &crate::db::Pool,
     user_id: i64,
@@ -476,7 +476,7 @@ async fn do_bind_oauth(
     Ok(())
 }
 
-/// 更新已有的 OAuth 绑定信息
+/// Update an existing OAuth binding
 async fn update_oauth_account(
     pool: &crate::db::Pool,
     account_id: i64,

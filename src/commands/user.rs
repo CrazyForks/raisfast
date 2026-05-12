@@ -1,14 +1,14 @@
-//! 用户相关 Command
+//! User-related commands
 
 use crate::models::user::{RegisteredVia, SocialLinks, UserMetadata};
 
-/// 创建用户
+/// Create a user
 pub struct CreateUserCmd {
     pub username: String,
     pub registered_via: RegisteredVia,
 }
 
-/// 更新用户资料
+/// Update user profile
 pub struct UpdateProfileCmd {
     pub id: i64,
     pub username: Option<String>,

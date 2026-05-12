@@ -1,10 +1,10 @@
-//! Lua 引擎封装（per-request 模式）
+//! Lua engine wrapper (per-request mode)
 //!
-//! 基于 mlua 的 Lua 5.4 运行时，支持 Send+Sync（send feature），
-//! 原生 serde 集成（Rust struct ↔ Lua table 零序列化映射）。
+//! Based on mlua's Lua 5.4 runtime with Send+Sync support (send feature),
+//! native serde integration (Rust struct ↔ Lua table zero-serialization mapping).
 //!
-//! 采用方案 D（per-request）：每次调用创建全新 Lua VM，用完销毁。
-//! Lua context 创建成本约 0.1ms，零竞争、无限并发、完美隔离。
+//! Uses scheme D (per-request): a fresh Lua VM is created for each call and destroyed after use.
+//! Lua context creation cost is ~0.1ms, with zero contention, unlimited concurrency, and perfect isolation.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -29,9 +29,9 @@ struct LuaPluginEntry {
     sdk_source: &'static str,
 }
 
-/// Lua 插件引擎（per-request 模式）
+/// Lua plugin engine (per-request mode)
 ///
-/// 存储所有 Lua 插件的源码和元数据，每次调用时创建全新 context。
+/// Stores source code and metadata for all Lua plugins; creates a fresh context for each call.
 pub struct LuaEngine {
     plugins: DashMap<String, LuaPluginEntry>,
     config: Arc<AppConfig>,
@@ -262,7 +262,7 @@ impl LuaEngine {
     }
 }
 
-/// 带超时执行 Lua 代码（指令计数 hook）
+/// Execute Lua code with timeout (instruction count hook)
 fn exec_with_timeout<R>(lua: &Lua, f: impl FnOnce() -> anyhow::Result<R>) -> anyhow::Result<R> {
     let remaining = Arc::new(AtomicI64::new(DEFAULT_TIMEOUT_INSTRUCTIONS));
     let remaining_clone = remaining.clone();

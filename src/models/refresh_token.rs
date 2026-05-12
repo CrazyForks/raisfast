@@ -1,8 +1,8 @@
-//! 刷新令牌模型与数据库查询
+//! Refresh token model and database queries
 //!
-//! 定义刷新令牌（RefreshToken）的数据结构以及对 `refresh_tokens` 表的
-//! 创建、查找、删除操作。刷新令牌用于在访问令牌过期后获取新的令牌对，
-//! 存储在数据库中支持主动吊销。
+//! Defines the data structure for refresh tokens and create, find, delete operations
+//! on the `refresh_tokens` table. Refresh tokens are used to obtain new token pairs
+//! after access tokens expire, and are stored in the database to support active revocation.
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -11,10 +11,10 @@ use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
-/// 刷新令牌完整数据库行模型
+/// Refresh token full database row model
 ///
-/// 直接映射 `refresh_tokens` 表的所有字段。
-/// `expires_at` 为 ISO 8601 格式的过期时间。
+/// Directly maps all fields of the `refresh_tokens` table.
+/// `expires_at` is the expiration time in ISO 8601 format.
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct RefreshToken {
     pub id: i64,
@@ -25,9 +25,9 @@ pub struct RefreshToken {
     pub created_at: Timestamp,
 }
 
-/// 创建新的刷新令牌记录
+/// Create a new refresh token record
 ///
-/// 自动生成 UUID v7 作为 document_id。
+/// Automatically generates a UUID v7 as the document_id.
 pub async fn create_token(
     pool: &crate::db::Pool,
     user_id: i64,
@@ -53,9 +53,9 @@ pub async fn create_token(
     Ok(())
 }
 
-/// 根据令牌字符串查找刷新令牌
+/// Find a refresh token by token string
 ///
-/// 返回 `Ok(Some(token))` 或 `Ok(None)`（未找到时）。
+/// Returns `Ok(Some(token))` or `Ok(None)` when not found.
 pub async fn find_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<Option<RefreshToken>> {
     let sql = format!("SELECT * FROM refresh_tokens WHERE token = {}", ph(1));
     let row = sqlx::query_as::<_, RefreshToken>(&sql)
@@ -65,9 +65,9 @@ pub async fn find_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<Opt
     Ok(row)
 }
 
-/// 根据令牌字符串删除刷新令牌
+/// Delete a refresh token by token string
 ///
-/// 用于登出时吊销指定的刷新令牌。
+/// Used to revoke a specific refresh token on logout.
 pub async fn delete_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<()> {
     sqlx::query(&format!(
         "DELETE FROM refresh_tokens WHERE token = {}",
@@ -79,9 +79,9 @@ pub async fn delete_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<(
     Ok(())
 }
 
-/// 删除指定用户的所有刷新令牌
+/// Delete all refresh tokens for a given user
 ///
-/// 用于登出所有设备或修改密码后强制重新登录。
+/// Used for logging out all devices or forcing re-login after a password change.
 pub async fn delete_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<()> {
     sqlx::query(&format!(
         "DELETE FROM refresh_tokens WHERE user_id = {}",

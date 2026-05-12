@@ -1,12 +1,12 @@
-//! Rhai 引擎封装（per-request 模式）
+//! Rhai engine wrapper (per-request mode)
 //!
-//! 基于 Rhai 纯 Rust 脚本语言，零 C 依赖，编译到 wasm32 无障碍。
-//! 原生沙箱（限制循环次数、表达式深度），冷启动 <1ms。
+//! Based on Rhai, a pure Rust scripting language with zero C dependencies, compiles to wasm32 without issues.
+//! Native sandboxing (limited loop count, expression depth), cold start <1ms.
 //!
-//! 采用方案 D（per-request）：每次调用创建全新 Scope + Engine，用完销毁。
-//! Rhai AST 预编译复用，Scope 创建成本极低，零竞争、无限并发、完美隔离。
+//! Uses scheme D (per-request): a fresh Scope + Engine is created for each call and destroyed after use.
+//! Rhai AST is pre-compiled and reused; Scope creation cost is minimal, with zero contention, unlimited concurrency, and perfect isolation.
 //!
-//! 插件约定：脚本在全局注册 `Plugin` map，键为 hook 函数名，值为闭包。
+//! Plugin convention: scripts register a global `Plugin` map with hook function names as keys and closures as values.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -27,10 +27,10 @@ struct RhaiPluginEntry {
     plugin_dir: PathBuf,
 }
 
-/// Rhai 插件引擎（per-request 模式）
+/// Rhai plugin engine (per-request mode)
 ///
-/// 存储所有 Rhai 插件的预编译 AST，每次调用时创建全新 Engine + Scope。
-/// 超时通过 `Engine::on_progress` 实现。
+/// Stores pre-compiled ASTs for all Rhai plugins; creates a fresh Engine + Scope for each call.
+/// Timeout is implemented via `Engine::on_progress`.
 pub struct RhaiEngine {
     plugins: DashMap<String, RhaiPluginEntry>,
     config: Arc<AppConfig>,

@@ -1,10 +1,10 @@
-//! 空实现搜索引擎（feature 关闭时的降级方案）
+//! No-op search engine (fallback when the feature is disabled)
 
 use crate::errors::app_error::AppResult;
 
 use super::{SearchEngine, SearchResult};
 
-/// 空实现搜索引擎，所有操作为 no-op，搜索始终返回空结果
+/// No-op search engine — all operations are no-ops, search always returns empty results
 pub struct NoopSearchEngine;
 
 #[async_trait::async_trait]

@@ -1,6 +1,6 @@
-//! 用户相关处理器
+//! User-related handlers
 //!
-//! 处理当前用户资料查看/修改、密码变更、公开用户查询、用户列表等请求。
+//! Handles current user profile viewing/editing, password changes, public user queries, user listing, etc.
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -95,10 +95,10 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
-/// 获取当前登录用户资料
+/// Get the current logged-in user's profile
 #[utoipa::path(get, path = "/users/me", tag = "users",
     security(("bearer_auth" = [])),
-    responses((status = 200, description = "当前用户资料"))
+    responses((status = 200, description = "Current user profile"))
 )]
 pub async fn get_me(
     auth: AuthUser,
@@ -108,11 +108,11 @@ pub async fn get_me(
     Ok(ApiResponse::success(u))
 }
 
-/// 更新当前用户资料
+/// Update the current user's profile
 #[utoipa::path(put, path = "/users/me", tag = "users",
     security(("bearer_auth" = [])),
     request_body = UpdateUserRequest,
-    responses((status = 200, description = "用户资料已更新"))
+    responses((status = 200, description = "User profile updated"))
 )]
 pub async fn update_me(
     auth: AuthUser,
@@ -124,11 +124,11 @@ pub async fn update_me(
     Ok(ApiResponse::success(u))
 }
 
-/// 修改当前用户密码
+/// Change the current user's password
 #[utoipa::path(put, path = "/users/me/password", tag = "users",
     security(("bearer_auth" = [])),
     request_body = UpdatePasswordRequest,
-    responses((status = 200, description = "密码已修改"))
+    responses((status = 200, description = "Password changed"))
 )]
 pub async fn change_password(
     auth: AuthUser,
@@ -140,11 +140,11 @@ pub async fn change_password(
     Ok(ApiResponse::success(()))
 }
 
-/// 获取指定用户的公开资料
+/// Get a specific user's public profile
 #[utoipa::path(get, path = "/users/{id}", tag = "users",
     security(("bearer_auth" = [])),
-    params(("id" = String, Path, description = "用户 ID")),
-    responses((status = 200, description = "用户公开资料"))
+    params(("id" = String, Path, description = "User ID")),
+    responses((status = 200, description = "User public profile"))
 )]
 pub async fn get_user(
     auth: AuthUser,
@@ -155,10 +155,10 @@ pub async fn get_user(
     Ok(ApiResponse::success(u))
 }
 
-/// 获取用户列表（管理员）
+/// Get user list (admin)
 #[utoipa::path(get, path = "/users", tag = "users",
     security(("bearer_auth" = [])),
-    responses((status = 200, description = "用户列表"))
+    responses((status = 200, description = "User list"))
 )]
 pub async fn list_users(
     auth: AuthUser,
@@ -177,12 +177,12 @@ pub async fn list_users(
     Ok(params.paginate(users, total))
 }
 
-/// 管理员更新用户角色
+/// Admin updates user role
 #[utoipa::path(put, path = "/users/{id}/role", tag = "users",
     security(("bearer_auth" = [])),
-    params(("id" = String, Path, description = "用户 ID")),
+    params(("id" = String, Path, description = "User ID")),
     request_body = UpdateRoleRequest,
-    responses((status = 200, description = "用户角色已更新"))
+    responses((status = 200, description = "User role updated"))
 )]
 pub async fn update_role(
     auth: AuthUser,

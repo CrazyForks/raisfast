@@ -1,4 +1,4 @@
-//! 媒体文件相关处理器
+//! Media file handlers
 
 use axum::Json;
 use axum::extract::{Multipart, Path, Query, State};
@@ -92,7 +92,7 @@ pub fn routes(
     )
 }
 
-/// 上传媒体文件
+/// Upload a media file
 pub async fn upload(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -136,7 +136,7 @@ pub async fn upload(
     ))
 }
 
-/// 获取当前用户的媒体文件列表（分页）
+/// Get the current user's media file list (paginated)
 pub async fn list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -162,7 +162,7 @@ pub async fn list(
     Ok(params.paginate(responses, total))
 }
 
-/// 删除媒体文件
+/// Delete a media file
 pub async fn delete(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -179,7 +179,7 @@ pub async fn delete(
     Ok(ApiResponse::success(()))
 }
 
-/// 获取存储统计
+/// Get storage statistics
 pub async fn stats(
     auth: AuthUser,
     State(state): State<crate::AppState>,

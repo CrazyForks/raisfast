@@ -1,14 +1,14 @@
-//! Content Type 字段校验
+//! Content Type field validation
 //!
-//! 在 create / update 操作前，根据 schema 定义校验输入数据：
-//! - `required` — 创建时必须存在且非空
-//! - `immutable` — 更新时不可修改
-//! - `unique` — 数据库唯一性检查
-//! - `enum_values` — 枚举值合法性
-//! - `min` / `max` — 数值范围
-//! - `max_length` — 文本长度
-//! - `pattern` — 正则匹配
-//! - 类型兼容性 — 字段值类型与 `FieldType` 一致
+//! Validates input data against schema definitions before create/update operations:
+//! - `required` — must exist and be non-empty on create
+//! - `immutable` — cannot be modified on update
+//! - `unique` — database uniqueness check
+//! - `enum_values` — enum value validity
+//! - `min` / `max` — numeric range
+//! - `max_length` — text length
+//! - `pattern` — regex matching
+//! - Type compatibility — field value type must match `FieldType`
 
 use serde_json::Value;
 use sqlx::Row;
@@ -18,7 +18,7 @@ use crate::constants::COL_DOCUMENT_ID;
 use crate::db::Pool;
 use crate::errors::app_error::AppError;
 
-/// 校验创建数据
+/// Validate create data
 pub async fn validate_create(
     pool: &Pool,
     ct: &ContentTypeSchema,
@@ -27,7 +27,7 @@ pub async fn validate_create(
     do_validate_create(pool, ct, data).await
 }
 
-/// 校验创建数据（事务内）
+/// Validate create data (within transaction)
 pub async fn validate_create_tx(
     pool: &Pool,
     ct: &ContentTypeSchema,
@@ -156,7 +156,7 @@ async fn do_validate_create(
     finish_validation(errors)
 }
 
-/// 校验更新数据
+/// Validate update data
 pub async fn validate_update(
     pool: &Pool,
     ct: &ContentTypeSchema,
@@ -166,7 +166,7 @@ pub async fn validate_update(
     do_validate_update(pool, ct, id, data).await
 }
 
-/// 校验更新数据（事务内）
+/// Validate update data (within transaction)
 pub async fn validate_update_tx(
     pool: &Pool,
     ct: &ContentTypeSchema,

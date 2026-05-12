@@ -1,10 +1,10 @@
-//! statusable Protocol — 可配置状态字段
+//! statusable Protocol — configurable status field
 //!
-//! 支持 2 种存储模式：
-//! - 字符串模式（默认）：DB 存 `"draft"` / `"published"`
-//! - 数字映射模式：DB 存 `1` / `10` / `99`，API 用字符串交互
+//! Supports 2 storage modes:
+//! - String mode (default): DB stores `"draft"` / `"published"`
+//! - Numeric mapping mode: DB stores `1` / `10` / `99`, API interacts with strings
 //!
-//! 查询过滤不由协议处理，由 API rule engine 控制（`[api.list] filter = 'status = "published"'`）。
+//! Query filtering is not handled by the protocol but by the API rule engine (`[api.list] filter = 'status = "published"'`).
 
 use std::sync::Arc;
 
@@ -144,7 +144,7 @@ impl Protocol for StatusableProtocol {
     }
 
     fn description(&self) -> &str {
-        "可配置状态字段，支持字符串和数字映射两种存储模式"
+        "Configurable status field supporting string and numeric mapping storage modes"
     }
 
     fn aspects(&self) -> Vec<Arc<dyn Aspect>> {

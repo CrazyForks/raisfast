@@ -1,6 +1,6 @@
-//! S3 兼容对象存储后端。
+//! S3-compatible object storage backend.
 //!
-//! 支持 RustFS、MinIO、AWS S3、Cloudflare R2 等 S3 兼容存储。
+//! Supports RustFS, MinIO, AWS S3, Cloudflare R2, and other S3-compatible storage.
 
 use async_trait::async_trait;
 use std::time::Duration;
@@ -11,7 +11,7 @@ use aws_sdk_s3::primitives::ByteStream;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::storage::Storage;
 
-/// S3 兼容对象存储。
+/// S3-compatible object storage.
 #[derive(Debug)]
 pub struct S3Storage {
     client: S3Client,
@@ -20,7 +20,7 @@ pub struct S3Storage {
 }
 
 impl S3Storage {
-    /// 从 AppConfig 创建 S3 客户端。
+    /// Create an S3 client from AppConfig.
     pub fn from_config(config: &crate::config::app::AppConfig) -> AppResult<Self> {
         let endpoint = config
             .s3_endpoint

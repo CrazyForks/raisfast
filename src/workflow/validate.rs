@@ -1,9 +1,9 @@
-//! 步骤定义校验 + 条件表达式评估
+//! Step definition validation + condition expression evaluation
 
 use super::model::{StepDef, StepType};
 use crate::errors::app_error::{AppError, AppResult};
 
-/// 验证步骤定义的合法性
+/// Validates the legality of step definitions
 pub fn validate_steps(steps: &[StepDef]) -> AppResult<()> {
     let ids: Vec<&str> = steps.iter().map(|s| s.id.as_str()).collect();
     for step in steps {
@@ -53,7 +53,7 @@ pub fn validate_steps(steps: &[StepDef]) -> AppResult<()> {
     Ok(())
 }
 
-/// 根据步骤类型和 context 解析下一步（Parallel 步骤由 execute_parallel_step 单独处理）
+/// Resolves the next step based on step type and context (Parallel steps are handled separately by execute_parallel_step)
 pub fn resolve_next_step(step: &StepDef, context: &serde_json::Value) -> Option<String> {
     match &step.step_type {
         StepType::Branch => {
@@ -81,7 +81,7 @@ pub fn resolve_next_step(step: &StepDef, context: &serde_json::Value) -> Option<
     }
 }
 
-/// 评估条件表达式（简化版：支持字段等值比较）
+/// Evaluates a condition expression (simplified: supports field equality comparison)
 pub fn evaluate_condition(condition: &serde_json::Value, context: &serde_json::Value) -> bool {
     if let Some(obj) = condition.as_object() {
         for (key, expected) in obj {

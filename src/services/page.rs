@@ -1,6 +1,6 @@
-//! 页面服务层
+//! Page service layer.
 //!
-//! 提供页面的完整 CRUD 业务逻辑，包括 slug 生成、状态管理和 block 校验。
+//! Provides full CRUD business logic for pages, including slug generation, status management, and block validation.
 
 use slug::slugify;
 

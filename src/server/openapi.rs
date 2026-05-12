@@ -1,8 +1,8 @@
-//! OpenAPI 规范与 Swagger UI 配置
+//! OpenAPI specification and Swagger UI configuration
 //!
-//! 使用 `utoipa` 从 handler 注解自动生成 OpenAPI 3.0 规范，
-//! 通过 `/api/docs/openapi.json` 提供 JSON spec，
-//! `/api/docs` 重定向到在线 Swagger UI。
+//! Uses `utoipa` to auto-generate OpenAPI 3.0 specs from handler annotations,
+//! served via `/api/docs/openapi.json` as JSON spec,
+//! and `/api/docs` redirects to the online Swagger UI.
 
 use axum::http::StatusCode;
 #[cfg(feature = "openapi")]
@@ -12,9 +12,9 @@ use utoipa::OpenApi;
 
 use crate::dto;
 
-/// OpenAPI 规范定义
+/// OpenAPI specification definition
 ///
-/// 从 handler 的 `#[utoipa::path]` 注解和 DTO 的 `ToSchema` 自动收集。
+/// Auto-collected from handler `#[utoipa::path]` annotations and DTO `ToSchema` implementations.
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -76,20 +76,20 @@ use crate::dto;
     ),
     modifiers(&SecurityAddon),
     tags(
-        (name = "health", description = "健康检查"),
-        (name = "auth", description = "认证"),
-        (name = "tokens", description = "API Token 管理"),
-        (name = "users", description = "用户"),
-        (name = "posts", description = "文章"),
-        (name = "categories", description = "分类"),
-        (name = "tags", description = "标签"),
-        (name = "comments", description = "评论"),
-        (name = "media", description = "媒体"),
+        (name = "health", description = "Health Check"),
+        (name = "auth", description = "Authentication"),
+        (name = "tokens", description = "API Token Management"),
+        (name = "users", description = "Users"),
+        (name = "posts", description = "Posts"),
+        (name = "categories", description = "Categories"),
+        (name = "tags", description = "Tags"),
+        (name = "comments", description = "Comments"),
+        (name = "media", description = "Media"),
     )
 )]
 pub struct ApiDoc;
 
-/// JWT Bearer Auth 安全方案
+/// JWT Bearer Auth security scheme
 struct SecurityAddon;
 
 impl utoipa::Modify for SecurityAddon {
@@ -107,14 +107,14 @@ impl utoipa::Modify for SecurityAddon {
     }
 }
 
-/// 提供 OpenAPI JSON 规范
+/// Serve the OpenAPI JSON specification
 pub async fn serve_openapi_json() -> Response {
     let spec = ApiDoc::openapi();
     let json = serde_json::to_string_pretty(&spec).unwrap_or_default();
     (StatusCode::OK, [("Content-Type", "application/json")], json).into_response()
 }
 
-/// 重定向到在线 Swagger UI（仅在 `openapi` feature 启用时编译）
+/// Redirect to the online Swagger UI (only compiled when `openapi` feature is enabled)
 #[cfg(feature = "openapi")]
 pub async fn redirect_to_swagger() -> Redirect {
     let spec_url = "http://localhost:9898/api/docs/openapi.json";

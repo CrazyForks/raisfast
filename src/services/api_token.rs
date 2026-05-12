@@ -1,7 +1,7 @@
-//! API Token 业务逻辑
+//! API Token business logic
 //!
-//! 提供创建、列表、删除、验证 API Token 的服务。
-//! Token 格式为 `rblog_` + 64 字符 hex，创建时只返回一次明文。
+//! Provides services for creating, listing, deleting, and verifying API tokens.
+//! Token format is `rblog_` + 64 hex characters; the plaintext is returned only once at creation time.
 
 use crate::cache::CacheStore;
 use crate::errors::app_error::{AppError, AppResult};
@@ -11,16 +11,16 @@ use crate::utils::tz::Timestamp;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-/// API Token 前缀
+/// API Token prefix
 const TOKEN_PREFIX: &str = "rblog_";
 
-/// 缓存 key 前缀
+/// Cache key prefix
 const CACHE_PREFIX: &str = "api_token:";
 
-/// 缓存 TTL（秒）
+/// Cache TTL (seconds)
 const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
 
-/// scope → 角色映射
+/// scope → role mapping
 fn scope_to_role(scopes: &[String]) -> String {
     use crate::models::user::UserRole;
     if scopes.iter().any(|s| s == "admin") {
@@ -32,7 +32,7 @@ fn scope_to_role(scopes: &[String]) -> String {
     }
 }
 
-/// 缓存的 Token 认证结果
+/// Cached token authentication result
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CachedTokenAuth {
     user_id: String,
@@ -42,7 +42,7 @@ struct CachedTokenAuth {
     expires_at: Option<Timestamp>,
 }
 
-/// 生成明文 token 和 SHA-256 hash
+/// Generate a plaintext token and its SHA-256 hash
 fn generate_token() -> (String, String) {
     let raw = crate::utils::id::random_hex(32);
     let plain = format!("{TOKEN_PREFIX}{raw}");
@@ -50,7 +50,7 @@ fn generate_token() -> (String, String) {
     (plain, hash)
 }
 
-/// SHA-256 hex 摘要
+/// SHA-256 hex digest
 fn sha256_hex(data: &[u8]) -> String {
     use std::fmt::Write;
     let hash = <sha2::Sha256 as sha2::Digest>::digest(data);
@@ -61,17 +61,17 @@ fn sha256_hex(data: &[u8]) -> String {
     hex
 }
 
-/// 计算明文 token 的 SHA-256 hash
+/// Compute the SHA-256 hash of a plaintext token
 pub fn hash_token(plain: &str) -> String {
     sha256_hex(plain.as_bytes())
 }
 
-/// 判断是否为 API Token（以 `rblog_` 开头）
+/// Check whether a string is an API token (starts with `rblog_`)
 pub fn is_api_token(token: &str) -> bool {
     token.starts_with(TOKEN_PREFIX)
 }
 
-/// 创建 API Token 返回结果
+/// Result returned when creating an API token
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, serde::Serialize)]
 pub struct CreateTokenResult {
@@ -85,7 +85,7 @@ pub struct CreateTokenResult {
     pub created_at: Timestamp,
 }
 
-/// 创建 API Token
+/// Create an API token
 pub async fn create_token(
     pool: &crate::db::Pool,
     auth: &AuthUser,
@@ -137,7 +137,7 @@ pub async fn create_token(
     })
 }
 
-/// 列出指定用户的 API Token（脱敏）
+/// List API tokens for the given user (masked)
 pub async fn list_tokens(
     pool: &crate::db::Pool,
     auth: &AuthUser,
@@ -149,7 +149,7 @@ pub async fn list_tokens(
     api_token::list_by_user(pool, user.id).await
 }
 
-/// 删除 API Token（仅本人或管理员）
+/// Delete an API token (only the owner or an admin can do this)
 pub async fn delete_token(
     pool: &crate::db::Pool,
     cache: &dyn CacheStore,
@@ -173,10 +173,10 @@ pub async fn delete_token(
     api_token::delete_by_id(pool, token_id).await
 }
 
-/// 验证 API Token 并返回 (user_id, role, tenant_id)
+/// Verify an API token and return (user_id, role, tenant_id)
 ///
-/// 使用 cache-aside 模式：缓存命中时跳过全部 3 次 DB 操作。
-/// 缓存 key 为 `api_token:{sha256_hash}`，TTL 300s。
+/// Uses a cache-aside pattern: when the cache hits, all 3 DB operations are skipped.
+/// Cache key is `api_token:{sha256_hash}`, TTL 300s.
 pub async fn verify_api_token(
     pool: &crate::db::Pool,
     cache: &dyn CacheStore,

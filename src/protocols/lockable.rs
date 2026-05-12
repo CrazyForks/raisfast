@@ -1,8 +1,8 @@
-//! lockable Protocol — 乐观锁
+//! lockable Protocol — optimistic locking
 //!
-//! 提供版本列 `version`，UPDATE 时追加 WHERE version = ? 条件，
-//! 受影响行数为 0 时返回 409 Conflict。
-//! Aspect 在 create 时注入 version = 1。
+//! Provides a version column `version`; appends WHERE version = ? on UPDATE,
+//! returns 409 Conflict when affected rows is 0.
+//! The Aspect injects version = 1 on create.
 
 use std::sync::Arc;
 
@@ -65,7 +65,7 @@ impl Protocol for LockableProtocol {
     }
 
     fn description(&self) -> &str {
-        "乐观锁，更新时检查 version 列防止并发覆盖"
+        "Optimistic locking; checks the version column on update to prevent concurrent overwrites"
     }
 
     fn aspects(&self) -> Vec<Arc<dyn Aspect>> {

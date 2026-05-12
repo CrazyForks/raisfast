@@ -1,7 +1,7 @@
-//! 数据库 Schema 常量。
+//! Database schema constants.
 //!
-//! 由 `migrations/{db}/schema.{db}.sql` 编译时嵌入，供测试和初始化使用。
-//! 按编译 feature flag 选择对应数据库的 schema 文件。
+//! Embedded at compile time from `migrations/{db}/schema.{db}.sql`, used for testing and initialization.
+//! The appropriate schema file is selected based on the compile-time feature flag.
 
 #[cfg(feature = "db-sqlite")]
 pub const SCHEMA_SQL: &str = include_str!("../../migrations/sqlite/schema.sqlite.sql");

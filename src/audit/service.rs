@@ -1,21 +1,21 @@
-//! 审计日志服务
+//! Audit log service
 
 use crate::audit::model::{self, AuditEntry};
 use crate::db::Pool;
 use crate::errors::app_error::AppResult;
 
-/// 审计日志服务
+/// Audit log service
 pub struct AuditService {
     pool: Pool,
 }
 
 impl AuditService {
-    /// 创建审计日志服务实例
+    /// Create a new audit service instance
     pub fn new(pool: Pool) -> Self {
         Self { pool }
     }
 
-    /// 记录一条审计日志
+    /// Record an audit log entry
     #[allow(clippy::too_many_arguments)]
     pub async fn log(
         &self,

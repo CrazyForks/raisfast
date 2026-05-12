@@ -1,7 +1,8 @@
-//! API Token 模型与数据库查询
+//! API Token model and database queries
 //!
-//! 定义 API Token（长期访问令牌）的数据结构以及对 `api_tokens` 表的
-//! 创建、查找、删除操作。令牌以 SHA-256 哈希存储，创建时只返回一次明文。
+//! Defines the data structure for API Tokens (long-lived access tokens) and
+//! create, find, delete operations on the `api_tokens` table. Tokens are stored
+//! as SHA-256 hashes; the plaintext is returned only once at creation time.
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -12,7 +13,7 @@ use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
-/// API Token 完整数据库行模型
+/// API Token full database row model
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct ApiToken {
     pub id: i64,
@@ -27,7 +28,7 @@ pub struct ApiToken {
     pub created_at: Timestamp,
 }
 
-/// API Token 列表项（脱敏，不含 token_hash）
+/// API Token list item (sanitized, without token_hash)
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct ApiTokenListItem {
@@ -41,7 +42,7 @@ pub struct ApiTokenListItem {
     pub created_at: Timestamp,
 }
 
-/// 创建新的 API Token 记录
+/// Create a new API Token record
 pub async fn create(
     pool: &crate::db::Pool,
     user_id: i64,
@@ -82,7 +83,7 @@ pub async fn create(
     Ok(row)
 }
 
-/// 根据 token_hash 查找 API Token
+/// Find API Token by token_hash
 pub async fn find_by_hash(pool: &crate::db::Pool, token_hash: &str) -> AppResult<Option<ApiToken>> {
     let sql = format!("SELECT * FROM api_tokens WHERE token_hash = {}", ph(1));
     let row = sqlx::query_as::<_, ApiToken>(&sql)
@@ -92,7 +93,7 @@ pub async fn find_by_hash(pool: &crate::db::Pool, token_hash: &str) -> AppResult
     Ok(row)
 }
 
-/// 列出指定用户的所有 API Token（脱敏）
+/// List all API Tokens for a given user (sanitized)
 pub async fn list_by_user(
     pool: &crate::db::Pool,
     user_id: i64,
@@ -108,7 +109,7 @@ pub async fn list_by_user(
     Ok(rows)
 }
 
-/// 根据 document_id 查找 API Token
+/// Find API Token by document_id
 pub async fn find_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<Option<ApiToken>> {
     let sql = format!("SELECT * FROM api_tokens WHERE document_id = {}", ph(1));
     let row = sqlx::query_as::<_, ApiToken>(&sql)
@@ -118,14 +119,14 @@ pub async fn find_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<
     Ok(row)
 }
 
-/// 根据 document_id 删除 API Token
+/// Delete API Token by document_id
 pub async fn delete_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<()> {
     let sql = format!("DELETE FROM api_tokens WHERE document_id = {}", ph(1));
     sqlx::query(&sql).bind(document_id).execute(pool).await?;
     Ok(())
 }
 
-/// 更新 last_used_at（按整数主键）
+/// Update last_used_at (by integer primary key)
 pub async fn touch_last_used(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     let sql = format!(

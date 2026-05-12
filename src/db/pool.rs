@@ -1,13 +1,13 @@
-//! 数据库连接池与事务类型别名。
+//! Database connection pool and transaction type aliases.
 //!
-//! 根据编译时选定的 feature（`db-sqlite`、`db-postgres`、`db-mysql`），
-//! 导出对应的连接池类型 [`Pool`] 和事务类型 [`Transaction`]。
+//! Based on the compile-time selected feature (`db-sqlite`, `db-postgres`, `db-mysql`),
+//! exports the corresponding connection pool type [`Pool`] and transaction type [`Transaction`].
 //!
-//! # 编译时校验
+//! # Compile-time Validation
 //!
-//! 必须恰好启用一个数据库 feature，否则编译失败：
-//! - 未启用任何数据库 feature → 编译错误
-//! - 同时启用多个数据库 feature → 编译错误
+//! Exactly one database feature must be enabled, otherwise compilation fails:
+//! - No database feature enabled → compile error
+//! - Multiple database features enabled → compile error
 
 #[cfg(all(
     feature = "db-sqlite",

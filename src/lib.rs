@@ -1,11 +1,12 @@
-//! raisfast 全栈开发底座核心库 (raisfast)
+//! raisfast full-stack development platform core library
 //!
-//! 基于 Rust + Axum 构建的高性能全栈开发底座，支持 `SQLite` / `PostgreSQL` / `MySQL`。
-//! 架构分层：Handler → Service → Repository → Model → DB。
+//! A high-performance full-stack development platform built with Rust + Axum,
+//! supporting `SQLite` / `PostgreSQL` / `MySQL`.
+//! Architecture layers: Handler → Service → Repository → Model → DB.
 //!
-//! 同时支持两种运行模式：
-//! - **server** — 独立 HTTP 服务器（Axum）
-//! - **tauri** — Tauri 桌面应用后端（共享 Service 层）
+//! Supports two runtime modes:
+//! - **server** — Standalone HTTP server (Axum)
+//! - **tauri** — Tauri desktop application backend (shared Service layer)
 
 #![deny(unsafe_code)]
 #![allow(clippy::missing_errors_doc)]
@@ -90,10 +91,10 @@ pub use cache::CacheStore;
 
 rust_i18n::i18n!("locales", fallback = "en");
 
-/// 应用全局共享状态
+/// Application global shared state
 ///
-/// 通过 axum `State` 注入到所有 handler。所有 Repository 以 trait object 形式存储，
-/// 支持运行时替换实现（缓存装饰器、mock 等）。
+/// Injected into all handlers via axum `State`. All Repositories are stored as trait objects,
+/// supporting runtime implementation replacement (cache decorators, mocks, etc.).
 #[derive(Clone)]
 pub struct AppState {
     pub pool: Pool,
@@ -129,7 +130,7 @@ pub struct AppState {
     pub services: ServiceRegistry,
 }
 
-/// 构建 AppState（HTTP 服务器和 Tauri 共享）
+/// Build AppState (shared by HTTP server and Tauri)
 pub async fn build_app_state(
     config: &AppConfig,
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
@@ -293,7 +294,7 @@ pub async fn build_app_state(
     Ok(state)
 }
 
-/// 构建搜索引擎实例
+/// Build search engine instance
 pub fn build_search_engine(config: &AppConfig) -> Arc<dyn SearchEngine> {
     match config.search_engine.as_str() {
         #[cfg(feature = "search-tantivy")]
@@ -314,7 +315,7 @@ pub fn build_search_engine(config: &AppConfig) -> Arc<dyn SearchEngine> {
     }
 }
 
-/// 构建 OAuth Provider 注册表
+/// Build OAuth Provider registry
 pub fn build_oauth_registry(config: &AppConfig) -> OAuthProviderRegistry {
     let mut registry = OAuthProviderRegistry::new();
     if let Some(gh) = &config.oauth.github {

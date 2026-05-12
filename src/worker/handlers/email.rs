@@ -1,6 +1,6 @@
-//! 邮件 Handler
+//! Email Handlers
 //!
-//! 使用 [`EmailSender`] trait 发送邮件，通过 Tera 模板引擎渲染 HTML 内容。
+//! Uses the [`EmailSender`] trait to send emails, rendering HTML content via the Tera template engine.
 
 use std::sync::Arc;
 
@@ -9,7 +9,7 @@ use crate::errors::app_error::AppResult;
 use crate::notifier::{EmailMessage, EmailSender};
 use crate::worker::{Job, JobHandler};
 
-/// 欢迎邮件处理器
+/// Welcome email handler
 pub struct SendWelcomeEmailHandler {
     config: Arc<AppConfig>,
     email_sender: Arc<dyn EmailSender>,
@@ -68,7 +68,7 @@ impl JobHandler for SendWelcomeEmailHandler {
     }
 }
 
-/// 密码重置邮件处理器
+/// Password reset email handler
 pub struct SendPasswordResetEmailHandler {
     config: Arc<AppConfig>,
     email_sender: Arc<dyn EmailSender>,

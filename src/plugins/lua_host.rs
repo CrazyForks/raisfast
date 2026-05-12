@@ -1,7 +1,8 @@
-//! Lua 宿主函数 — 引擎绑定层
+//! Lua host functions — engine binding layer
 //!
-//! 仅负责将 [`HostContext`](super::host_common::HostContext) 的公共业务逻辑
-//! 绑定到 Lua 全局 table 的 `PLUGIN_HOST_GLOBAL` 属性上。
+//! Only responsible for binding the shared business logic of
+//! [`HostContext`](super::host_common::HostContext) to the `PLUGIN_HOST_GLOBAL` property
+//! of the Lua global table.
 
 use std::sync::Arc;
 
@@ -10,10 +11,10 @@ use mlua::{Lua, LuaSerdeExt};
 use crate::config::app::AppConfig;
 use crate::constants::PLUGIN_HOST_GLOBAL;
 use crate::db::Pool;
-use crate::plugins::Permissions;
 use crate::plugins::host_common::HostContext;
+use crate::plugins::Permissions;
 
-/// 注册宿主函数到 Lua 全局作用域。
+/// Register host functions into the Lua global scope.
 pub fn register_host_functions(
     lua: &Lua,
     config: Arc<AppConfig>,

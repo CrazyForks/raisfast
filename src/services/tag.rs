@@ -1,4 +1,4 @@
-//! 标签服务。
+//! Tag service.
 
 use slug::slugify;
 

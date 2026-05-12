@@ -1,35 +1,35 @@
-//! 统一 JSON 响应格式定义
+//! Unified JSON response format definitions
 //!
-//! 本模块定义了应用所有 API 接口的统一响应结构，确保客户端收到的
-//! JSON 格式始终一致：
+//! This module defines the unified response structure for all API endpoints, ensuring
+//! clients always receive a consistent JSON format:
 //!
 //! ```json
-//! { "code": 0, "message": "操作成功", "data": { ... } }
+//! { "code": 0, "message": "Operation successful", "data": { ... } }
 //! ```
 //!
-//! 包含以下核心类型：
+//! Includes the following core types:
 //!
-//! - [`ApiResponse`]：通用响应包装器，支持成功和错误响应
-//! - [`PaginatedData`]：分页数据信封，用于列表接口
+//! - [`ApiResponse`]: Generic response wrapper supporting success and error responses
+//! - [`PaginatedData`]: Pagination data envelope for list endpoints
 
-use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use axum::Json;
 use serde::Serialize;
 
-/// 统一 API 响应结构
+/// Unified API response structure
 ///
-/// 所有 API 接口均使用此结构包装返回数据，保证响应格式一致。
+/// All API endpoints use this structure to wrap return data, ensuring consistent response format.
 ///
-/// # 字段说明
+/// # Fields
 ///
-/// - `code` — 业务状态码（`0` 表示成功，`40000`–`50000` 表示各类错误）
-/// - `message` — 可读的状态描述（支持 i18n 多语言翻译）
-/// - `data` — 响应负载数据，错误响应时为 `None`
+/// - `code` — Business status code (`0` for success, `40000`–`50000` for various errors)
+/// - `message` — Human-readable status description (supports i18n multi-language translation)
+/// - `data` — Response payload data; `None` for error responses
 ///
-/// # 泛型参数
+/// # Type Parameters
 ///
-/// - `T` — 响应数据的序列化类型，必须实现 [`Serialize`]
+/// - `T` — Serialization type for response data, must implement [`Serialize`]
 #[derive(Debug, Serialize)]
 #[non_exhaustive]
 pub struct ApiResponse<T: Serialize> {
@@ -39,19 +39,20 @@ pub struct ApiResponse<T: Serialize> {
 }
 
 impl<T: Serialize> ApiResponse<T> {
-    /// 构造成功响应
+    /// Construct a success response
     ///
-    /// 创建一个 `code` 为 `0` 的成功响应，`data` 字段包含传入的数据，
-    /// `message` 通过 i18n 键 `messages.success` 翻译为当前 locale 的"成功"消息。
+    /// Creates a success response with `code` set to `0`, the `data` field containing
+    /// the provided data, and `message` translated via the i18n key `messages.success`
+    /// to the current locale's "success" message.
     ///
-    /// # 参数
+    /// # Parameters
     ///
-    /// - `data` — 要返回给客户端的业务数据
+    /// - `data` — Business data to return to the client
     ///
-    /// # 返回值
+    /// # Returns
     ///
-    /// 返回完整的 [`ApiResponse`] 实例，可直接作为 Axum handler 的返回值
-    /// （通过 [`IntoResponse`] 实现）。
+    /// Returns a complete [`ApiResponse`] instance that can be used directly as an Axum handler
+    /// return value (via the [`IntoResponse`] implementation).
     pub fn success(data: T) -> Self {
         let locale = crate::middleware::locale::current_locale();
         rust_i18n::set_locale(&locale);
@@ -65,25 +66,25 @@ impl<T: Serialize> ApiResponse<T> {
 }
 
 impl ApiResponse<()> {
-    /// 构造错误响应
+    /// Construct an error response
     ///
-    /// 创建一个业务错误响应。HTTP 状态码固定为 `200 OK`，实际错误通过
-    /// JSON body 中的 `code` 字段区分（遵循 40000–50000 范围约定）。
+    /// Creates a business error response. The HTTP status code is fixed at `200 OK`; the actual
+    /// error is distinguished via the `code` field in the JSON body (following the 40000–50000 range convention).
     ///
-    /// # 参数
+    /// # Parameters
     ///
-    /// - `code` — 业务错误码（如 `40000`、`40400`）
-    /// - `message` — 错误描述消息（通常已通过 i18n 翻译）
+    /// - `code` — Business error code (e.g. `40000`, `40400`)
+    /// - `message` — Error description message (typically already i18n-translated)
     ///
-    /// # 返回值
+    /// # Returns
     ///
-    /// 返回 `axum::response::Response`，可直接从 handler 返回。
+    /// Returns an `axum::response::Response` that can be returned directly from a handler.
     ///
-    /// # 注意
+    /// # Note
     ///
-    /// 此方法定义在 `ApiResponse<()>` 上，仅用于构造无数据的错误响应。
-    /// 正常的错误处理流程应优先使用 [`AppError`](crate::errors::AppError)
-    /// 及其 [`IntoResponse`] 实现，它会自动设置正确的 HTTP 状态码。
+    /// This method is defined on `ApiResponse<()>` and is only used to construct error responses without data.
+    /// The normal error handling flow should prefer [`AppError`](crate::errors::AppError)
+    /// and its [`IntoResponse`] implementation, which automatically sets the correct HTTP status code.
     #[must_use]
     pub fn error(code: i32, message: String) -> Response {
         let body = Self {
@@ -95,19 +96,20 @@ impl ApiResponse<()> {
     }
 }
 
-/// 分页数据信封
+/// Pagination data envelope
 ///
-/// 用于列表接口的响应数据包装，包含分页元信息和当前页数据列表。
-/// 客户端可据此实现翻页、计算总页数等功能。
+/// Used as response data wrapper for list endpoints, containing pagination metadata
+/// and the current page's data list. Clients can use this to implement pagination,
+/// calculate total pages, etc.
 ///
-/// # 字段说明
+/// # Fields
 ///
-/// - `items` — 当前页的数据列表
-/// - `total` — 符合查询条件的总记录数
-/// - `page` — 当前页码（从 1 开始）
-/// - `page_size` — 每页记录数
+/// - `items` — Data list for the current page
+/// - `total` — Total number of records matching the query
+/// - `page` — Current page number (1-based)
+/// - `page_size` — Number of records per page
 ///
-/// # 使用示例
+/// # Example
 ///
 /// ```ignore
 /// let paginated = PaginatedData {
@@ -127,10 +129,10 @@ pub struct PaginatedData<T: Serialize> {
     pub page_size: i64,
 }
 
-/// 将 `ApiResponse` 转换为 Axum HTTP 响应
+/// Converts `ApiResponse` into an Axum HTTP response
 ///
-/// 序列化为 JSON 并设置 `Content-Type: application/json`。
-/// 成功响应的 HTTP 状态码默认为 `200 OK`。
+/// Serializes to JSON and sets `Content-Type: application/json`.
+/// The HTTP status code for success responses defaults to `200 OK`.
 impl<T: Serialize> IntoResponse for ApiResponse<T> {
     fn into_response(self) -> Response {
         Json(self).into_response()

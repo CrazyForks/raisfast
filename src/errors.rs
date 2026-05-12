@@ -1,13 +1,14 @@
-//! 统一错误处理模块
+//! Unified error handling module
 //!
-//! 本模块为整个应用提供统一的错误处理基础设施，包含以下子模块：
+//! This module provides the unified error handling infrastructure for the entire application,
+//! including the following sub-modules:
 //!
-//! - [`app_error`]：定义 `AppError` 枚举及其 HTTP 响应转换逻辑
-//! - [`response`]：定义统一的 JSON 响应格式（`ApiResponse`、`PaginatedData`）
-//! - [`validation`]：桥接 `validator` crate 与 i18n 翻译的输入校验工具
+//! - [`app_error`]: Defines the `AppError` enum and its HTTP response conversion logic
+//! - [`response`]: Defines the unified JSON response format (`ApiResponse`, `PaginatedData`)
+//! - [`validation`]: Bridges the `validator` crate with i18n translation for input validation
 //!
-//! 所有 handler 层的错误均通过 `AppError` 统一转换为 HTTP 响应，
-//! 确保客户端收到一致的 JSON 错误结构。
+//! All handler-layer errors are uniformly converted to HTTP responses via `AppError`,
+//! ensuring clients receive a consistent JSON error structure.
 
 pub mod app_error;
 pub mod response;

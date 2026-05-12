@@ -1,11 +1,12 @@
-//! 评论模型与数据库查询
+//! Comment model and database queries
 //!
-//! 定义评论（Comment）相关的数据结构，包括完整行模型、支持嵌套树结构的响应模型、
-//! 请求验证结构体，以及对 `comments` 表的增删改查操作。
+//! Defines data structures related to comments, including the full row model,
+//! response models supporting nested tree structures, request validation structs,
+//! and CRUD operations on the `comments` table.
 //!
-//! 评论支持多级嵌套回复，通过 `parent_id` 构建父子关系。
-//! 树结构由 [`build_tree`] 函数从扁平列表转换而来，
-//! 嵌套深度由 [`validate_depth`] 限制为最多 3 层。
+//! Comments support multi-level nested replies via `parent_id` to build parent-child
+//! relationships. The tree structure is converted from a flat list by the [`build_tree`]
+//! function, and nesting depth is limited to a maximum of 3 levels by [`validate_depth`].
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;

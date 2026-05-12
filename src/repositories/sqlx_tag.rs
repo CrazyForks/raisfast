@@ -1,4 +1,4 @@
-//! 基于 sqlx 的 `TagRepository` 实现
+//! sqlx-based `TagRepository` implementation
 
 use crate::errors::app_error::AppResult;
 use crate::models::tag::{self, Tag};
@@ -7,20 +7,20 @@ use crate::repositories::define_sqlx_repo;
 
 define_sqlx_repo!(SqlxTagRepository);
 
-/// 标签 Repository 接口
+/// Tag Repository interface
 #[async_trait::async_trait]
 pub trait TagRepository: Send + Sync {
-    /// 查询所有标签
+    /// Find all tags
     async fn find_all(&self, tenant_id: Option<&str>) -> AppResult<Vec<Tag>>;
 
-    /// 根据 document_id 查找标签
+    /// Find a tag by document_id
     async fn find_by_document_id(
         &self,
         document_id: &str,
         tenant_id: Option<&str>,
     ) -> AppResult<Option<Tag>>;
 
-    /// 分页查询标签
+    /// Find tags with pagination
     async fn find_paginated(
         &self,
         tenant_id: Option<&str>,
@@ -28,7 +28,7 @@ pub trait TagRepository: Send + Sync {
         page_size: i64,
     ) -> AppResult<(Vec<Tag>, i64)>;
 
-    /// 创建新标签
+    /// Create a new tag
     async fn create(
         &self,
         name: &str,
@@ -37,10 +37,10 @@ pub trait TagRepository: Send + Sync {
         created_by: Option<i64>,
     ) -> AppResult<Tag>;
 
-    /// 删除标签
+    /// Delete a tag
     async fn delete(&self, id: i64, tenant_id: Option<&str>) -> AppResult<()>;
 
-    /// 更新标签
+    /// Update a tag
     async fn update(
         &self,
         id: i64,

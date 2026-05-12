@@ -134,7 +134,7 @@ pub struct BindEmailRequest {
     pub password: String,
 }
 
-/// 凭证信息响应
+/// Credential information response
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CredentialResponse {
@@ -161,7 +161,7 @@ impl CredentialResponse {
     }
 }
 
-/// 认证配置响应
+/// Authentication configuration response
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AuthConfigResponse {
@@ -185,7 +185,7 @@ pub struct ResendVerificationRequest {
     pub email: String,
 }
 
-/// 用户公开信息响应
+/// User public profile response
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 #[non_exhaustive]
@@ -236,7 +236,7 @@ impl UserResponse {
     }
 }
 
-/// 登录成功响应
+/// Login success response
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 #[non_exhaustive]

@@ -1,4 +1,4 @@
-//! 基于 sqlx 的 `CommentRepository` 实现
+//! sqlx-based `CommentRepository` implementation
 
 use crate::errors::app_error::AppResult;
 use crate::models::comment::{self, AdminCommentRow, Comment, CommentStatus};
@@ -8,30 +8,30 @@ use crate::repositories::define_sqlx_repo;
 
 define_sqlx_repo!(SqlxCommentRepository);
 
-/// 评论 Repository 接口
+/// Comment Repository interface
 #[async_trait::async_trait]
 pub trait CommentRepository: Send + Sync {
-    /// 根据评论 ID 查找评论
+    /// Find a comment by ID
     async fn find_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<Option<Comment>>;
 
-    /// 根据评论 document_id 查找评论
+    /// Find a comment by document_id
     async fn find_by_document_id(
         &self,
         document_id: &str,
         tenant_id: Option<&str>,
     ) -> AppResult<Option<Comment>>;
 
-    /// 创建新评论
+    /// Create a new comment
     async fn create(&self, cmd: CreateCommentCmd, tenant_id: Option<&str>) -> AppResult<Comment>;
 
-    /// 查询指定文章下已审核通过的评论
+    /// Find approved comments for a given post
     async fn find_approved_by_post(
         &self,
         post_id: i64,
         tenant_id: Option<&str>,
     ) -> AppResult<Vec<Comment>>;
 
-    /// 分页查询指定文章下已审核通过的评论
+    /// Find approved comments for a given post with pagination
     async fn find_approved_by_post_paginated(
         &self,
         post_id: i64,
@@ -40,7 +40,7 @@ pub trait CommentRepository: Send + Sync {
         tenant_id: Option<&str>,
     ) -> AppResult<(Vec<Comment>, i64)>;
 
-    /// 分页查询全局所有评论（管理员）
+    /// Find all comments with pagination (admin)
     async fn find_all_paginated(
         &self,
         page: i64,
@@ -48,7 +48,7 @@ pub trait CommentRepository: Send + Sync {
         tenant_id: Option<&str>,
     ) -> AppResult<(Vec<AdminCommentRow>, i64)>;
 
-    /// 更新评论审核状态
+    /// Update comment moderation status
     async fn update_status(
         &self,
         id: i64,
@@ -56,7 +56,7 @@ pub trait CommentRepository: Send + Sync {
         tenant_id: Option<&str>,
     ) -> AppResult<()>;
 
-    /// 删除评论
+    /// Delete a comment
     async fn delete(&self, id: i64, tenant_id: Option<&str>) -> AppResult<()>;
 }
 

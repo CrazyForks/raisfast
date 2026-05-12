@@ -1,4 +1,4 @@
-//! 加密工具函数。
+//! Cryptographic utility functions.
 
 #[cfg(test)]
 mod tests {
@@ -29,17 +29,15 @@ mod tests {
     fn hmac_sha1_is_base64() {
         let result = hmac_sha1_sign("secret", "message");
         use base64::Engine;
-        assert!(
-            base64::engine::general_purpose::STANDARD
-                .decode(&result)
-                .is_ok()
-        );
+        assert!(base64::engine::general_purpose::STANDARD
+            .decode(&result)
+            .is_ok());
     }
 }
 
-/// 使用 HMAC-SHA1 签名（Base64 编码）。
+/// Signs using HMAC-SHA1 (Base64 encoded).
 ///
-/// key 会自动追加 `&` 后缀（OAuth 1.0 签名规范）。
+/// The key is automatically appended with a `&` suffix (OAuth 1.0 signing spec).
 pub fn hmac_sha1_sign(key: &str, data: &str) -> String {
     use base64::Engine;
     use hmac::{Hmac, Mac};

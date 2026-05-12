@@ -1,6 +1,6 @@
-//! `EventBus` → `JobQueue` 桥接
+//! `EventBus` → `JobQueue` bridge
 //!
-//! 订阅 `EventBus` 事件，自动创建对应的异步任务。
+//! Subscribes to `EventBus` events and automatically creates corresponding async jobs.
 
 use std::sync::Arc;
 
@@ -10,13 +10,13 @@ use crate::eventbus::{Event, EventBus};
 
 use super::{Job, JobQueue, NewJob};
 
-/// `EventBus` 事件到任务的桥接器
+/// Bridges `EventBus` events to jobs
 pub struct JobEnqueuer {
     queue: Arc<dyn JobQueue>,
 }
 
 impl JobEnqueuer {
-    /// 启动后台订阅者
+    /// Spawns a background subscriber
     pub fn spawn(eventbus: &EventBus, queue: Arc<dyn JobQueue>) {
         let mut rx = eventbus.subscribe();
         let enqueuer = Self { queue };

@@ -1,7 +1,7 @@
-//! AspectEngine — Aspect 注册表和调度器
+//! AspectEngine — Aspect registry and dispatcher
 //!
-//! 注册时预计算 dispatch table（JoinPointId → 有序 Aspect 列表），
-//! 运行时 O(1) 查找 + 按 priority 顺序执行。
+//! Pre-computes dispatch table on registration (JoinPointId → ordered Aspect list),
+//! O(1) lookup at runtime + execution in priority order.
 
 use std::sync::Arc;
 
@@ -325,9 +325,9 @@ impl AspectEngine {
         Ok(())
     }
 
-    /// Event Layer: 事件发布前拦截
+    /// Event Layer: pre-publish interception
     ///
-    /// 返回 `Ok(true)` 表示继续发布，`Ok(false)` 表示被 aspect 阻止。
+    /// Returns `Ok(true)` to continue publishing, `Ok(false)` if blocked by an aspect.
     pub async fn dispatch_event_before_publish(
         &self,
         event_type: &str,
@@ -350,7 +350,7 @@ impl AspectEngine {
         Ok(true)
     }
 
-    /// Event Layer: 事件发布后通知
+    /// Event Layer: post-publish notification
     pub async fn dispatch_event_after_publish(
         &self,
         event_type: &str,
@@ -371,9 +371,9 @@ impl AspectEngine {
         Ok(())
     }
 
-    /// HTTP Layer: 请求处理前拦截
+    /// HTTP Layer: pre-request interception
     ///
-    /// 返回 `Ok(None)` 继续处理，`Ok(Some(body))` 短路返回。
+    /// Returns `Ok(None)` to continue processing, `Ok(Some(body))` to short-circuit.
     pub async fn dispatch_http_before(
         &self,
         path: &str,
@@ -396,7 +396,7 @@ impl AspectEngine {
         Ok(None)
     }
 
-    /// HTTP Layer: 响应返回后通知
+    /// HTTP Layer: post-response notification
     pub async fn dispatch_http_after(
         &self,
         path: &str,
@@ -417,9 +417,9 @@ impl AspectEngine {
         Ok(())
     }
 
-    /// Access Layer: 权限检查拦截
+    /// Access Layer: permission check interception
     ///
-    /// 返回 `Ok(true)` 表示通过，`Ok(false)` 表示拒绝。
+    /// Returns `Ok(true)` to allow, `Ok(false)` to deny.
     pub async fn dispatch_access_check(
         &self,
         subject: &str,
@@ -442,7 +442,7 @@ impl AspectEngine {
         Ok(true)
     }
 
-    /// Access Layer: 数据过滤（查询条件注入）
+    /// Access Layer: data filtering (query condition injection)
     pub async fn dispatch_access_filter(
         &self,
         table: &str,

@@ -1,6 +1,6 @@
-//! API Token 管理端点
+//! API Token management endpoints
 //!
-//! 提供创建、列表、删除 API Token 的 HTTP handler。
+//! Provides HTTP handlers for creating, listing, and deleting API tokens.
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -39,7 +39,7 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
-/// 创建 API Token 请求体
+/// Create API Token request body
 #[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
 pub struct CreateTokenRequest {
     #[validate(length(min = 1, max = 100))]
@@ -49,13 +49,13 @@ pub struct CreateTokenRequest {
     pub expires_at: Option<String>,
 }
 
-/// 创建 API Token
+/// Create API Token
 ///
 /// `POST /api/v1/tokens`
 #[utoipa::path(post, path = "/tokens", tag = "tokens",
     security(("bearer_auth" = [])),
     request_body = CreateTokenRequest,
-    responses((status = 201, description = "Token 创建成功"))
+    responses((status = 201, description = "Token created successfully"))
 )]
 pub async fn create(
     auth: AuthUser,
@@ -74,25 +74,25 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(ApiResponse::success(result))))
 }
 
-/// 列出当前用户的 API Token
+/// List current user's API Tokens
 ///
 /// `GET /api/v1/tokens`
 #[utoipa::path(get, path = "/tokens", tag = "tokens",
     security(("bearer_auth" = [])),
-    responses((status = 200, description = "Token 列表"))
+    responses((status = 200, description = "Token list"))
 )]
 pub async fn list(auth: AuthUser, State(state): State<AppState>) -> AppResult<impl IntoResponse> {
     let tokens = api_token::list_tokens(&state.pool, &auth).await?;
     Ok(Json(ApiResponse::success(tokens)))
 }
 
-/// 删除 API Token
+/// Delete API Token
 ///
 /// `DELETE /api/v1/tokens/:id`
 #[utoipa::path(delete, path = "/tokens/{id}", tag = "tokens",
     security(("bearer_auth" = [])),
     params(("id" = String, Path, description = "Token ID")),
-    responses((status = 200, description = "Token 已删除"))
+    responses((status = 200, description = "Token deleted"))
 )]
 pub async fn delete(
     auth: AuthUser,

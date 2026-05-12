@@ -1,22 +1,22 @@
-//! Webhook 订阅服务
+//! Webhook subscription service
 
 use crate::db::Pool;
 use crate::errors::app_error::AppResult;
 use crate::utils::id::new_id_and_timestamp;
 use crate::webhook::model;
 
-/// Webhook 订阅服务
+/// Webhook subscription service
 pub struct WebhookService {
     pool: Pool,
 }
 
 impl WebhookService {
-    /// 创建服务实例
+    /// Creates a new service instance
     pub fn new(pool: Pool) -> Self {
         Self { pool }
     }
 
-    /// 创建 webhook 订阅
+    /// Creates a webhook subscription
     pub async fn create(
         &self,
         tenant_id: Option<&str>,
@@ -45,7 +45,7 @@ impl WebhookService {
         Ok(inserted)
     }
 
-    /// 分页查询订阅
+    /// Paginated query for subscriptions
     pub async fn list(
         &self,
         tenant_id: Option<&str>,
@@ -55,12 +55,12 @@ impl WebhookService {
         model::find_paginated(&self.pool, tenant_id, page, page_size).await
     }
 
-    /// 获取单个订阅
+    /// Gets a single subscription
     pub async fn get(&self, id: &str) -> AppResult<model::WebhookSubscription> {
         model::find_by_id(&self.pool, id).await
     }
 
-    /// 更新订阅
+    /// Updates a subscription
     #[allow(clippy::too_many_arguments)]
     pub async fn update(
         &self,
@@ -89,12 +89,12 @@ impl WebhookService {
         Ok(sub)
     }
 
-    /// 删除订阅
+    /// Deletes a subscription
     pub async fn delete(&self, id: &str) -> AppResult<()> {
         model::delete_by_id(&self.pool, id).await
     }
 
-    /// 查找启用的订阅（供事件投递使用）
+    /// Finds enabled subscriptions (used for event delivery)
     pub async fn find_enabled(
         &self,
         tenant_id: Option<&str>,
@@ -102,7 +102,7 @@ impl WebhookService {
         model::find_enabled_by_tenant(&self.pool, tenant_id).await
     }
 
-    /// 生成随机 secret（32 字节 hex）
+    /// Generates a random secret (32 bytes hex)
     fn generate_secret() -> String {
         use getrandom::getrandom;
         let mut buf = [0u8; 32];
@@ -113,7 +113,7 @@ impl WebhookService {
         hex::encode(buf)
     }
 
-    /// 用 HMAC-SHA256 对 payload 签名
+    /// Signs a payload with HMAC-SHA256
     pub fn sign_payload(secret: &str, body: &[u8]) -> String {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;

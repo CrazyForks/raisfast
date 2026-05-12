@@ -1,4 +1,4 @@
-//! 可复用块服务层
+//! Reusable block service layer
 
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;

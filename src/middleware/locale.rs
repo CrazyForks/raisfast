@@ -1,14 +1,14 @@
-//! 国际化语言区域检测中间件
+//! Locale detection middleware
 //!
-//! 本模块为每个 HTTP 请求检测并绑定语言区域（locale），用于后续的
-//! i18n 消息翻译（如错误提示）。通过 [`tokio::task_local!] 在请求生命周期内
-//! 传递 locale，避免在 handler 签名中显式注入。
+//! This module detects and binds a locale for each HTTP request, used for subsequent
+//! i18n message translation (e.g. error messages). Uses [`tokio::task_local!`] to pass
+//! the locale within the request lifecycle, avoiding explicit injection in handler signatures.
 //!
-//! # 语言检测优先级
+//! # Language detection priority
 //!
-//! 1. URL 查询参数 `?lang=`（如 `?lang=zh-CN`）
-//! 2. `Accept-Language` 请求头（遵循 RFC 7231 q 值权重）
-//! 3. 默认值 `"en"`
+//! 1. URL query parameter `?lang=` (e.g. `?lang=zh-CN`)
+//! 2. `Accept-Language` request header (follows RFC 7231 q-value weighting)
+//! 3. Default value `"en"`
 
 use std::cmp::Ordering;
 
@@ -16,19 +16,19 @@ use axum::extract::Request;
 use axum::middleware::Next;
 use axum::response::Response;
 
-// 当前请求的语言区域。
+// The locale for the current request.
 //
-// 由 [`locale_middleware`] 在请求入口处设置，可通过 [`current_locale`] 读取。
-// 使用 `tokio::task_local!` 实现，确保在同一个请求的异步调用链中
-// locale 始终可用，而无需手动传参。
+// Set by [`locale_middleware`] at the request entry point, readable via [`current_locale`].
+// Implemented with `tokio::task_local!` to ensure the locale is always available
+// within the same request's async call chain without manual parameter passing.
 tokio::task_local! {
     static CURRENT_LOCALE: String;
 }
 
-/// 获取当前请求的语言区域。
+/// Get the locale for the current request.
 ///
-/// 从 task-local 上下文中读取 locale；若在请求作用域外调用
-/// （如后台任务、测试），则回退为默认值 `"en"`。
+/// Reads the locale from the task-local context; if called outside a request scope
+/// (e.g. background tasks, tests), falls back to the default value `"en"`.
 #[must_use]
 pub fn current_locale() -> String {
     CURRENT_LOCALE
@@ -36,12 +36,12 @@ pub fn current_locale() -> String {
         .unwrap_or_else(|_| "en".to_string())
 }
 
-/// 根据请求信息检测语言区域。
+/// Detect locale based on request information.
 ///
-/// 检测优先级：
-/// 1. `?lang=` 查询参数 — 若值在支持列表中则直接使用
-/// 2. `Accept-Language` 请求头 — 按 q 值权重选择最优匹配
-/// 3. 默认 `"en"`
+/// Detection priority:
+/// 1. `?lang=` query parameter — if the value is in the supported list, use it directly
+/// 2. `Accept-Language` request header — select the best match by q-value weighting
+/// 3. Default `"en"`
 pub fn detect_locale(req: &Request) -> String {
     if let Some(lang) = req.uri().query().and_then(|q| {
         q.split('&')
@@ -62,14 +62,15 @@ pub fn detect_locale(req: &Request) -> String {
         .unwrap_or_else(|| "en".to_string())
 }
 
-/// 解析 RFC 7231 `Accept-Language` 请求头。
+/// Parse RFC 7231 `Accept-Language` request header.
 ///
-/// 将头部值按逗号分隔为多个条目，解析每项的语言标签与可选的 `q` 权重值
-/// （默认 `q=1.0`），返回权重最高的语言标签（经 [`normalize_locale`] 规范化后）。
+/// Splits the header value by comma into multiple entries, parsing each entry's
+/// language tag and optional `q` quality value (default `q=1.0`),
+/// returning the highest-quality language tag (normalized via [`normalize_locale`]).
 ///
-/// # 示例
+/// # Example
 ///
-/// 输入 `"zh-CN,zh;q=0.9,en;q=0.8"` 将返回 `"zh-CN"`。
+/// Input `"zh-CN,zh;q=0.9,en;q=0.8"` returns `"zh-CN"`.
 fn parse_accept_language(header: &str) -> Option<String> {
     header
         .split(',')
@@ -94,18 +95,18 @@ fn parse_accept_language(header: &str) -> Option<String> {
         .map(|(lang, _)| lang)
 }
 
-/// 将语言标签规范化为项目的标准形式。
+/// Normalize a language tag to the project's standard form.
 ///
-/// # 映射规则
+/// # Mapping rules
 ///
-/// | 输入 | 输出 |
+/// | Input | Output |
 /// |---|---|
-/// | `zh`、`zh-cn`、`zh-hans` | `zh-CN` |
-/// | `zh-tw`、`zh-hant` | `zh-TW` |
-/// | `en`、`en-us`、`en-gb` | `en` |
+/// | `zh`, `zh-cn`, `zh-hans` | `zh-CN` |
+/// | `zh-tw`, `zh-hant` | `zh-TW` |
+/// | `en`, `en-us`, `en-gb` | `en` |
 /// | `ja` | `ja` |
 /// | `ko` | `ko` |
-/// | 其他 | 原样返回 |
+/// | Other | Returned as-is |
 fn normalize_locale(lang: &str) -> String {
     match lang {
         "zh" | "zh-cn" | "zh-hans" => "zh-CN".to_string(),
@@ -117,11 +118,11 @@ fn normalize_locale(lang: &str) -> String {
     }
 }
 
-/// Axum 语言区域检测中间件。
+/// Axum locale detection middleware.
 ///
-/// 对每个请求调用 [`detect_locale`] 确定语言，然后通过
-/// [`CURRENT_LOCALE::scope`] 将其绑定到 task-local 上下文中，
-/// 使后续的 handler 和 service 层可通过 [`current_locale`] 获取当前 locale。
+/// Calls [`detect_locale`] for each request to determine the language, then binds it
+/// to the task-local context via [`CURRENT_LOCALE::scope`], so that subsequent handler
+/// and service layers can retrieve the current locale via [`current_locale`].
 pub async fn locale_middleware(req: Request, next: Next) -> Response {
     let locale = detect_locale(&req);
     rust_i18n::set_locale(&locale);

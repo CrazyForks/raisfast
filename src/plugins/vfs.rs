@@ -1,7 +1,7 @@
-//! 插件虚拟文件系统
+//! Plugin virtual filesystem
 //!
-//! 每个插件拥有独立的沙箱目录，虚拟路径映射到 `{vfs_root}/{plugin_id}/` 下。
-//! 提供路径逃逸防护、文件大小限制、总配额限制。
+//! Each plugin has an isolated sandbox directory; virtual paths map under `{vfs_root}/{plugin_id}/`.
+//! Provides path escape protection, file size limits, and total quota limits.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,22 +9,22 @@ use std::path::{Path, PathBuf};
 use crate::config::app::AppConfig;
 use crate::plugins::Permissions;
 
-/// 虚拟文件系统错误
+/// Virtual filesystem errors
 #[derive(Debug)]
 pub enum VfsError {
-    /// 路径包含 `..` 或其他逃逸尝试
+    /// Path contains `..` or other escape attempts
     PathEscape,
-    /// 超出单文件大小限制
+    /// Exceeds single file size limit
     FileTooLarge { max: usize },
-    /// 超出总存储配额
+    /// Exceeds total storage quota
     QuotaExceeded {
         used: usize,
         max: usize,
         need: usize,
     },
-    /// 权限不足（只读 / 无访问）
+    /// Permission denied (read-only / no access)
     PermissionDenied,
-    /// IO 错误
+    /// IO error
     Io(std::io::Error),
 }
 
@@ -50,9 +50,9 @@ impl From<std::io::Error> for VfsError {
     }
 }
 
-/// 虚拟文件系统实例
+/// Virtual filesystem instance
 ///
-/// 每个插件一个实例，绑定到 `{vfs_root}/{plugin_id}/` 目录。
+/// One instance per plugin, bound to the `{vfs_root}/{plugin_id}/` directory.
 pub struct VirtualFs {
     root: PathBuf,
     max_file_size: usize,
@@ -62,9 +62,9 @@ pub struct VirtualFs {
 }
 
 impl VirtualFs {
-    /// 从配置和权限创建 VFS 实例
+    /// Create a VFS instance from config and permissions
     ///
-    /// 会自动创建沙箱根目录。
+    /// Automatically creates the sandbox root directory.
     #[must_use]
     pub fn new(config: &AppConfig, plugin_id: &str, permissions: &Permissions) -> Self {
         let root = PathBuf::from(&config.plugin_vfs_root).join(plugin_id);
@@ -85,7 +85,7 @@ impl VirtualFs {
         }
     }
 
-    /// 将虚拟路径解析为真实路径，检测逃逸
+    /// Resolve virtual path to real path, detecting escapes
     fn resolve(&self, path: &str) -> Result<PathBuf, VfsError> {
         let cleaned = path.replace('\\', "/");
         let parts: Vec<&str> = cleaned.split('/').filter(|s| !s.is_empty()).collect();
@@ -101,12 +101,12 @@ impl VirtualFs {
         Ok(self.root.join(&virtual_path))
     }
 
-    /// 计算当前已用存储大小
+    /// Calculate current used storage size
     fn used_size(&self) -> usize {
         dir_size(&self.root).unwrap_or(0)
     }
 
-    /// 读取文件内容
+    /// Read file contents
     pub fn read_file(&self, path: &str) -> Result<String, VfsError> {
         if !self.can_read {
             return Err(VfsError::PermissionDenied);
@@ -115,7 +115,7 @@ impl VirtualFs {
         fs::read_to_string(&real).map_err(VfsError::Io)
     }
 
-    /// 写入文件（自动创建中间目录）
+    /// Write file (auto-creates intermediate directories)
     pub fn write_file(&self, path: &str, content: &str) -> Result<(), VfsError> {
         if !self.can_write {
             return Err(VfsError::PermissionDenied);
@@ -144,7 +144,7 @@ impl VirtualFs {
         Ok(())
     }
 
-    /// 删除文件
+    /// Delete file
     pub fn delete_file(&self, path: &str) -> Result<(), VfsError> {
         if !self.can_write {
             return Err(VfsError::PermissionDenied);
@@ -156,7 +156,7 @@ impl VirtualFs {
         Ok(())
     }
 
-    /// 检查文件是否存在
+    /// Check if a file exists
     pub fn exists(&self, path: &str) -> Result<bool, VfsError> {
         if !self.can_read {
             return Err(VfsError::PermissionDenied);
@@ -165,7 +165,7 @@ impl VirtualFs {
         Ok(real.exists())
     }
 
-    /// 列出目录下的文件和子目录
+    /// List files and subdirectories under a directory
     pub fn list_dir(&self, path: &str) -> Result<Vec<String>, VfsError> {
         if !self.can_read {
             return Err(VfsError::PermissionDenied);
@@ -194,7 +194,7 @@ impl VirtualFs {
         Ok(entries)
     }
 
-    /// 获取文件元信息
+    /// Get file metadata
     pub fn stat(&self, path: &str) -> Result<VfsFileInfo, VfsError> {
         if !self.can_read {
             return Err(VfsError::PermissionDenied);
@@ -212,14 +212,14 @@ impl VirtualFs {
         })
     }
 
-    /// 返回沙箱根目录路径
+    /// Return sandbox root directory path
     #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
     }
 }
 
-/// 文件元信息
+/// File metadata
 #[derive(Debug, serde::Serialize)]
 pub struct VfsFileInfo {
     pub size: usize,
@@ -227,7 +227,7 @@ pub struct VfsFileInfo {
     pub modified: Option<u64>,
 }
 
-/// 递归计算目录大小
+/// Recursively calculate directory size
 fn dir_size(path: &Path) -> Result<usize, std::io::Error> {
     if !path.exists() {
         return Ok(0);

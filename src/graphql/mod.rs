@@ -1,13 +1,13 @@
-//! GraphQL API 模块
+//! GraphQL API module
 //!
-//! 为所有已注册的 Content Type 自动提供 GraphQL 接口。
+//! Automatically provides GraphQL interfaces for all registered Content Types.
 //!
-//! # 端点
+//! # Endpoints
 //!
-//! - `POST /api/v1/graphql` — 执行查询/变更
+//! - `POST /api/v1/graphql` — Execute queries/mutations
 //! - `GET /api/v1/graphql` — GraphiQL IDE
 //!
-//! # 示例
+//! # Example
 //!
 //! ```graphql
 //! query {

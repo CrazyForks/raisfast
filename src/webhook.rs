@@ -1,7 +1,7 @@
-//! Webhook 订阅管理模块
+//! Webhook subscription management module
 //!
-//! 支持 CRUD 订阅 + HMAC-SHA256 签名投递 + 事件过滤。
-//! EventBus 订阅者根据订阅规则自动将匹配的事件 POST 到订阅者 URL。
+//! Supports CRUD subscriptions + HMAC-SHA256 signed delivery + event filtering.
+//! The EventBus subscriber automatically POSTs matching events to subscriber URLs based on subscription rules.
 
 pub mod handler;
 pub mod model;

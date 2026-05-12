@@ -1,13 +1,13 @@
-//! 工作流引擎
+//! Workflow engine
 //!
-//! 提供工作流定义管理、实例创建、步骤执行和状态转换。
+//! Provides workflow definition management, instance creation, step execution, and state transitions.
 //!
-//! ## 模块结构
+//! ## Module structure
 //!
-//! - [`model`] — 数据结构 + SQL 查询
-//! - [`engine`] — 状态机核心（WorkflowService）
-//! - [`handler`] — axum 路由处理器
-//! - [`validate`] — 步骤定义校验 + 条件表达式评估
+//! - [`model`] — Data structures + SQL queries
+//! - [`engine`] — State machine core (WorkflowService)
+//! - [`handler`] — Axum route handlers
+//! - [`validate`] — Step definition validation + condition expression evaluation
 
 pub mod engine;
 pub mod handler;

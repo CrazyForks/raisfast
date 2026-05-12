@@ -1,6 +1,6 @@
-//! App CLI 子命令。
+//! App CLI subcommand.
 //!
-//! 提供 `app new`（生成项目目录模板）。
+//! Provides `app new` (generate project directory template).
 
 use std::path::{Path, PathBuf};
 

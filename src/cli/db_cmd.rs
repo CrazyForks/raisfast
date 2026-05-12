@@ -1,4 +1,4 @@
-//! `db` 子命令：数据库迁移、备份、种子数据。
+//! `db` subcommand: database migration, backup, seed data.
 
 use std::path::Path;
 
@@ -8,12 +8,12 @@ use raisfast::db::dialect;
 
 // ── migrate ──────────────────────────────────────────────────────
 
-/// `db migrate` — 执行增量结构变更。
+/// `db migrate` — execute incremental schema changes.
 ///
-/// 使用 `_migrations` 表记录已执行的文件名，幂等安全。
+/// Uses the `_migrations` table to track executed filenames, idempotent and safe.
 ///
-/// - schema 在首次启动时由 `ensure_schema()` 自动执行，不由此命令处理
-/// - 此命令处理 `migrations/{db}/` 下的增量迁移文件（如 `tenantable.*.sql`）
+/// - Schema is auto-executed by `ensure_schema()` on first startup, not handled by this command
+/// - This command handles incremental migration files under `migrations/{db}/` (e.g. `tenantable.*.sql`)
 pub async fn migrate(config: &AppConfig) -> anyhow::Result<()> {
     println!("running migrations...");
     let pool = init_pool(&config.database_url, 1).await?;
@@ -110,10 +110,10 @@ pub async fn migrate(config: &AppConfig) -> anyhow::Result<()> {
 
 // ── backup ───────────────────────────────────────────────────────
 
-/// `db backup` — 备份数据库。
+/// `db backup` — backup the database.
 ///
-/// SQLite：复制数据库文件到指定目录，自动添加时间戳后缀，保留最近 10 个备份。
-/// PostgreSQL / MySQL：提示使用 `pg_dump` / `mysqldump`。
+/// SQLite: copies the database file to the specified directory, auto-adds timestamp suffix, keeps the latest 10 backups.
+/// PostgreSQL / MySQL: prompts to use `pg_dump` / `mysqldump`.
 pub fn backup(config: &AppConfig, output_dir: &str) -> anyhow::Result<()> {
     #[cfg(feature = "db-sqlite")]
     {
@@ -155,7 +155,7 @@ pub fn backup(config: &AppConfig, output_dir: &str) -> anyhow::Result<()> {
     }
 }
 
-/// 清理旧备份，只保留最近 10 个。
+/// Clean up old backups, keeping only the latest 10.
 fn cleanup_old_backups(output_dir: &str) {
     let mut backups: Vec<_> = std::fs::read_dir(output_dir)
         .ok()
@@ -177,9 +177,9 @@ fn cleanup_old_backups(output_dir: &str) {
 
 // ── seed ────────────────────────────────────────────────────────
 
-/// `db seed` — 创建初始管理员用户。
+/// `db seed` — create the initial admin user.
 ///
-/// 幂等：如果 email 或 username 已存在则跳过。
+/// Idempotent: skips if email or username already exists.
 pub async fn seed(
     config: &AppConfig,
     email: &str,

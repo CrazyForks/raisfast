@@ -1,4 +1,4 @@
-//! HTTP 服务器：路由组装、中间件、启动与优雅关闭。
+//! HTTP server: route assembly, middleware, startup, and graceful shutdown.
 
 mod openapi;
 
@@ -59,7 +59,7 @@ impl RouteRegistry {
     }
 }
 
-/// 构建 CORS 中间件。
+/// Build the CORS middleware.
 fn build_cors(config: &AppConfig) -> CorsLayer {
     match &config.cors_origins {
         Some(origins) => {
@@ -325,7 +325,7 @@ async fn build_app(
     Ok(app)
 }
 
-/// 启动 HTTP 服务器，监听请求直到收到关闭信号。
+/// Start the HTTP server, listening for requests until a shutdown signal is received.
 pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
     metrics::init();
     tracing::info!(
@@ -414,9 +414,9 @@ pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 监听 ctrl+c (SIGINT) 和 SIGTERM 实现优雅关闭。
+/// Listen for ctrl+c (SIGINT) and SIGTERM to perform graceful shutdown.
 ///
-/// 收到信号后通知 `shutdown_tx`，让后台任务有机会清理。
+/// On signal, notifies `shutdown_tx` so background tasks can clean up.
 async fn shutdown_signal(shutdown_tx: tokio::sync::watch::Sender<bool>) {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
@@ -447,10 +447,10 @@ async fn shutdown_signal(shutdown_tx: tokio::sync::watch::Sender<bool>) {
     let _ = shutdown_tx.send(true);
 }
 
-/// 插件路由 fallback。
+/// Plugin route fallback.
 ///
-/// 当 axum 路由未匹配时，尝试分发给插件的 `manifest.routes` 声明式路由。
-/// 若所有插件均未处理，返回 404。
+/// When no axum route matches, attempt to dispatch to plugin declarative routes from `manifest.routes`.
+/// If no plugin handles the request, returns 404.
 async fn handle_plugin_route(
     Extension(limiters): Extension<crate::middleware::rate_limit::RateLimiterSet>,
     auth: crate::middleware::auth::AuthUser,
@@ -542,7 +542,7 @@ async fn handle_plugin_route(
     }
 }
 
-/// 启动 EventBus 后台订阅者，将业务事件转发给插件系统。
+/// Spawn EventBus background subscriber to forward business events to the plugin system.
 pub fn spawn_event_subscriber(
     eventbus: crate::eventbus::EventBus,
     plugins: Arc<crate::plugins::PluginManager>,
@@ -595,7 +595,7 @@ pub fn spawn_event_subscriber(
     });
 }
 
-/// 启动审计日志订阅者，将所有业务事件写入 `audit_log` 表。
+/// Spawn audit log subscriber to write all business events to the `audit_log` table.
 pub fn spawn_audit_subscriber(
     eventbus: crate::eventbus::EventBus,
     audit: Arc<crate::audit::AuditService>,
@@ -744,7 +744,7 @@ pub fn spawn_audit_subscriber(
     });
 }
 
-/// 启动 Webhook 事件投递订阅者
+/// Spawn webhook event delivery subscriber
 pub fn spawn_webhook_subscriber(
     eventbus: crate::eventbus::EventBus,
     webhook_service: Arc<crate::webhook::WebhookService>,
@@ -877,7 +877,7 @@ pub fn spawn_webhook_subscriber(
     });
 }
 
-/// 启动 Worker 子系统（CronScheduler + JobEnqueuer + WorkerRunner）
+/// Spawn the Worker subsystem (CronScheduler + JobEnqueuer + WorkerRunner)
 async fn spawn_workers(
     pool: crate::db::Pool,
     eventbus: &crate::eventbus::EventBus,

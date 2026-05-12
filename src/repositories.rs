@@ -1,6 +1,6 @@
-//! Repository 抽象层。
+//! Repository abstraction layer.
 //!
-//! 将数据访问从 Model 层解耦。每个领域实体对应一个 Repository trait：
+//! Decouples data access from the Model layer. Each domain entity corresponds to a Repository trait:
 //!
 //! - `PostRepository` / `SqlxPostRepository` / `CachedPostRepository`
 //! - `UserRepository` / `SqlxUserRepository`
@@ -40,10 +40,10 @@ pub use sqlx_tenant::{SqlxTenantRepository, TenantRepository};
 pub use sqlx_user::{SqlxUserRepository, UserRepository};
 pub use sqlx_wallet::{SqlxWalletRepository, WalletRepository};
 
-/// 定义 sqlx Repository 的 struct 和 `new()` 构造函数。
+/// Defines a sqlx Repository struct and `new()` constructor.
 ///
-/// 每个 `Sqlx*Repository` 都有相同的 `pool: Pool` 字段和 `new(pool) -> Self` 构造函数，
-/// 用此宏消除样板代码。
+/// Every `Sqlx*Repository` has the same `pool: Pool` field and `new(pool) -> Self` constructor;
+/// this macro eliminates the boilerplate.
 macro_rules! define_sqlx_repo {
     ($name:ident) => {
         pub struct $name {

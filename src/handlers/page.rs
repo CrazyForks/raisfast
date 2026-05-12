@@ -1,6 +1,6 @@
-//! 页面处理器
+//! Page handlers
 //!
-//! 处理页面 CRUD、状态变更、排序与站点地图。
+//! Handles page CRUD, status changes, ordering, and sitemap.
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -186,7 +186,7 @@ pub struct SitemapEntry {
     pub updated_at: Option<String>,
 }
 
-// ── 公开 API ──
+// ── Public API ──
 
 pub async fn list(
     auth: AuthUser,
@@ -223,7 +223,7 @@ pub async fn sitemap(
     Ok(ApiResponse::success(entries))
 }
 
-// ── 管理 API ──
+// ── Admin API ──
 
 pub async fn admin_list(
     auth: AuthUser,

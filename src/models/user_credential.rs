@@ -1,6 +1,7 @@
-//! 用户凭证模型与数据库查询
+//! User credential model and database queries
 //!
-//! 定义用户认证凭证相关的数据结构以及对 `user_credentials` 表的增删改查操作。
+//! Defines data structures related to user authentication credentials
+//! and CRUD operations on the `user_credentials` table.
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;

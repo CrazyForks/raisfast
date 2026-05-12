@@ -1,9 +1,9 @@
-//! 仪表盘统计 API handler
+//! Dashboard statistics API handler
 //!
-//! 提供 Admin Dashboard 的三个统计端点：
-//! - 总览统计
-//! - 单个内容类型统计
-//! - 趋势数据
+//! Provides three statistics endpoints for the Admin Dashboard:
+//! - Overview statistics
+//! - Single content type statistics
+//! - Trend data
 
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
@@ -52,7 +52,7 @@ pub struct TrendsQuery {
     pub days: Option<i64>,
 }
 
-/// 总览统计
+/// Overview statistics
 ///
 /// `GET /api/v1/admin/stats`
 pub async fn overview(State(state): State<AppState>) -> AppResult<ApiResponse<serde_json::Value>> {
@@ -61,7 +61,7 @@ pub async fn overview(State(state): State<AppState>) -> AppResult<ApiResponse<se
     Ok(ApiResponse::success(data))
 }
 
-/// 单个内容类型统计
+/// Single content type statistics
 ///
 /// `GET /api/v1/admin/stats/content/:table`
 pub async fn content_stats(
@@ -73,7 +73,7 @@ pub async fn content_stats(
     Ok(ApiResponse::success(data))
 }
 
-/// 趋势数据
+/// Trend data
 ///
 /// `GET /api/v1/admin/stats/trends?table=posts&days=30`
 pub async fn trends(

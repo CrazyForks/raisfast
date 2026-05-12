@@ -1,7 +1,7 @@
-//! 评论服务。
+//! Comment service.
 //!
-//! 处理评论相关的业务逻辑，包括评论创建（含嵌套深度校验）、
-//! 评论列表获取（树形结构）、评论删除和状态管理。
+//! Handles comment-related business logic, including comment creation (with nesting depth validation),
+//! comment listing (tree structure), comment deletion, and status management.
 
 use crate::commands::CreateCommentCmd;
 use crate::errors::app_error::{AppError, AppResult};

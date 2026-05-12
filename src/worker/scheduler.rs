@@ -1,35 +1,35 @@
-//! Cron 定时调度器
+//! Cron scheduler
 //!
-//! 基于 `cron_schedules` 表持久化的定时任务调度。
-//! 后台循环扫描到期 schedule，自动入队对应 Job。
+//! Persistent scheduled task dispatch based on `cron_schedules` table.
+//! A background loop scans for due schedules and automatically enqueues corresponding Jobs.
 //!
-//! # 数据流
+//! # Data Flow
 //!
 //! ```text
-//! cron_schedules 表 → CronScheduler (后台循环) → enqueue(Job) → jobs 表 → WorkerRunner
+//! cron_schedules table → CronScheduler (background loop) → enqueue(Job) → jobs table → WorkerRunner
 //! ```
 //!
-//! # Cron 表达式格式
+//! # Cron Expression Format
 //!
-//! 七段式（含秒）：`秒 分 时 日 月 星期 年`
+//! Seven-segment (including seconds): `second minute hour day month weekday year`
 //!
 //! ```text
-//! ┌────────── 秒 (0-59)
-//! │ ┌──────── 分 (0-59)
-//! │ │ ┌────── 时 (0-23)
-//! │ │ │ ┌──── 日 (1-31)
-//! │ │ │ │ ┌── 月 (1-12)
-//! │ │ │ │ │ ┌ 星期 (0-6, 0=周日)
-//! │ │ │ │ │ │ ┌ 年 (可选)
+//! ┌────────── second (0-59)
+//! │ ┌──────── minute (0-59)
+//! │ │ ┌────── hour (0-23)
+//! │ │ │ ┌──── day (1-31)
+//! │ │ │ │ ┌── month (1-12)
+//! │ │ │ │ │ ┌ weekday (0-6, 0=Sunday)
+//! │ │ │ │ │ │ ┌ year (optional)
 //! │ │ │ │ │ │ │
 //! * * * * * * *
 //! ```
 //!
-//! 示例：
-//! - `0 */5 * * * *` — 每 5 分钟
-//! - `0 0 */2 * * *` — 每 2 小时
-//! - `0 0 3 * * *` — 每天凌晨 3 点
-//! - `0 30 4 * * 1 *` — 每周一凌晨 4:30
+//! Examples:
+//! - `0 */5 * * * *` — every 5 minutes
+//! - `0 0 */2 * * *` — every 2 hours
+//! - `0 0 3 * * *` — daily at 3:00 AM
+//! - `0 30 4 * * 1 *` — every Monday at 4:30 AM
 
 use chrono::{DateTime, Utc};
 use cron::Schedule;
@@ -118,7 +118,7 @@ struct PluginCronRow {
     job_type: String,
 }
 
-/// Cron 调度行
+/// Cron schedule row
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CronSchedule {
@@ -136,10 +136,10 @@ pub struct CronSchedule {
     pub updated_at: Timestamp,
 }
 
-/// 计算下一个执行时间
+/// Compute the next execution time
 ///
-/// 从 `after` 开始查找下一个匹配 cron 表达式的时间点。
-/// 使用 UTC 时区。
+/// Finds the next time matching the cron expression starting from `after`.
+/// Uses UTC timezone.
 pub fn next_run<Tz: chrono::TimeZone>(
     cron_expr: &str,
     after: chrono::DateTime<Tz>,
@@ -154,7 +154,7 @@ pub fn next_run<Tz: chrono::TimeZone>(
         .ok_or_else(|| AppError::BadRequest("cron schedule has no future runs".into()))
 }
 
-/// 创建新的 Cron 调度
+/// Create a new Cron schedule
 pub async fn create_schedule(
     pool: &Pool,
     label: &str,
@@ -166,7 +166,7 @@ pub async fn create_schedule(
     create_schedule_with_plugin(pool, label, job_type, payload, cron_expr, enabled, None).await
 }
 
-/// 创建新的 Cron 调度（带 `plugin_id`）
+/// Create a new Cron schedule (with `plugin_id`)
 pub async fn create_schedule_with_plugin(
     pool: &Pool,
     label: &str,
@@ -215,7 +215,7 @@ pub async fn create_schedule_with_plugin(
     })
 }
 
-/// 按 ID 查找
+/// Find by ID
 pub async fn find_by_id(pool: &Pool, id: &str) -> AppResult<Option<CronSchedule>> {
     let row = sqlx::query_as::<_, CronScheduleRow>(&format!(
         "SELECT id, document_id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
@@ -229,7 +229,7 @@ pub async fn find_by_id(pool: &Pool, id: &str) -> AppResult<Option<CronSchedule>
     Ok(row.map(|r| cron_row_to_schedule!(r)))
 }
 
-/// 列出所有调度
+/// List all schedules
 pub async fn list_schedules(pool: &Pool) -> AppResult<Vec<CronSchedule>> {
     let rows = sqlx::query_as::<_, CronScheduleRow>(
         "SELECT id, document_id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
@@ -241,7 +241,7 @@ pub async fn list_schedules(pool: &Pool) -> AppResult<Vec<CronSchedule>> {
     Ok(rows.into_iter().map(|r| cron_row_to_schedule!(r)).collect())
 }
 
-/// 启用/禁用调度
+/// Enable/disable a schedule
 pub async fn toggle_schedule(pool: &Pool, id: &str, enabled: bool) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     let result = sqlx::query(&format!(
@@ -262,9 +262,9 @@ pub async fn toggle_schedule(pool: &Pool, id: &str, enabled: bool) -> AppResult<
     Ok(())
 }
 
-/// 更新调度字段
+/// Update schedule fields
 ///
-/// 合并提供的字段，重新计算 `next_run_at`，持久化并返回更新后的调度。
+/// Merges provided fields, recalculates `next_run_at`, persists and returns the updated schedule.
 pub async fn update_schedule(
     pool: &Pool,
     id: &str,
@@ -315,7 +315,7 @@ pub async fn update_schedule(
     Ok(find_by_id(pool, id).await?.unwrap_or(schedule))
 }
 
-/// 删除调度
+/// Delete a schedule
 pub async fn delete_schedule(pool: &Pool, id: &str) -> AppResult<()> {
     let result = sqlx::query(&format!(
         "DELETE FROM cron_schedules WHERE document_id = {}",
@@ -331,10 +331,10 @@ pub async fn delete_schedule(pool: &Pool, id: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// Cron 调度器后台任务
+/// Cron scheduler background task
 ///
-/// 循环扫描到期的 `cron_schedules`，入队对应 Job，
-/// 并更新 `last_run_at` / `next_run_at`。
+/// Periodically scans due `cron_schedules`, enqueues corresponding Jobs,
+/// and updates `last_run_at` / `next_run_at`.
 pub struct CronScheduler {
     pool: Pool,
     queue: std::sync::Arc<dyn JobQueue>,
@@ -342,7 +342,7 @@ pub struct CronScheduler {
 }
 
 impl CronScheduler {
-    /// 创建新的调度器
+    /// Create a new scheduler
     pub fn new(
         pool: Pool,
         queue: std::sync::Arc<dyn JobQueue>,
@@ -355,7 +355,7 @@ impl CronScheduler {
         }
     }
 
-    /// 启动后台调度循环
+    /// Start the background scheduling loop
     pub fn spawn(self) {
         tokio::spawn(async move {
             tracing::info!("cron scheduler started (tick={:?})", self.tick_interval);
@@ -504,10 +504,10 @@ impl CronScheduler {
     }
 }
 
-/// 插入调度（首次启动时调用）
+/// Seed schedules (called on first startup)
 ///
-/// 在 `cron_schedules` 表为空时，从 `AppConfig.cron_schedules` 插入。
-/// 若配置为空则使用 `default_cron_schedules()` 内置默认值。
+/// Inserts into the `cron_schedules` table when it is empty, using `AppConfig.cron_schedules`.
+/// If the config is empty, uses `default_cron_schedules()` built-in defaults.
 pub async fn seed_defaults(
     pool: &Pool,
     schedules: &[crate::config::app::CronScheduleConfig],
@@ -543,7 +543,7 @@ pub async fn seed_defaults(
     Ok(())
 }
 
-/// Cron 执行历史记录
+/// Cron execution history record
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CronExecutionLog {
@@ -559,7 +559,7 @@ pub struct CronExecutionLog {
     pub finished_at: Option<Timestamp>,
 }
 
-/// 创建执行日志（状态 running）
+/// Create an execution log (status: running)
 pub async fn create_execution_log(
     pool: &Pool,
     schedule_id: i64,
@@ -591,7 +591,7 @@ pub async fn create_execution_log(
     Ok(document_id)
 }
 
-/// 标记执行日志为成功
+/// Mark execution log as succeeded
 pub async fn complete_execution_log(pool: &Pool, log_id: &str, duration_ms: i64) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     sqlx::query(&format!(
@@ -607,7 +607,7 @@ pub async fn complete_execution_log(pool: &Pool, log_id: &str, duration_ms: i64)
     Ok(())
 }
 
-/// 标记执行日志为失败
+/// Mark execution log as failed
 pub async fn fail_execution_log(
     pool: &Pool,
     log_id: &str,
@@ -629,7 +629,7 @@ pub async fn fail_execution_log(
     Ok(())
 }
 
-/// 查询某个 schedule 的执行历史
+/// Query execution history for a schedule
 pub async fn list_execution_logs(
     pool: &Pool,
     schedule_document_id: &str,
@@ -654,7 +654,7 @@ pub async fn list_execution_logs(
         .collect())
 }
 
-/// 查询所有 schedule 的最近执行记录
+/// Query recent execution records across all schedules
 pub async fn recent_execution_logs(pool: &Pool, limit: i64) -> AppResult<Vec<CronExecutionLog>> {
     let rows = sqlx::query_as::<_, CronExecLogRow>(&format!(
         "SELECT id, document_id, schedule_id, job_type, label, status, duration_ms, error, started_at, finished_at
@@ -672,7 +672,7 @@ pub async fn recent_execution_logs(pool: &Pool, limit: i64) -> AppResult<Vec<Cro
         .collect())
 }
 
-/// 清理过期的执行日志
+/// Clean up expired execution logs
 pub async fn cleanup_execution_logs(pool: &Pool, retention_days: i64) -> AppResult<u64> {
     let threshold = crate::utils::tz::now_utc() - chrono::Duration::days(retention_days);
     let result = sqlx::query(&format!(
@@ -690,13 +690,13 @@ pub async fn cleanup_execution_logs(pool: &Pool, retention_days: i64) -> AppResu
     Ok(count)
 }
 
-/// 同步插件的 Cron 调度到数据库
+/// Sync plugin Cron schedules to the database
 ///
-/// 插件加载/重载时调用。将 `plugin.cron` 声明写入 `cron_schedules`，
-/// 同时删除该插件之前声明但已不存在的调度条目。
-/// 全部操作在单个事务中完成，确保原子性。
+/// Called when plugins are loaded/reloaded. Writes `plugin.cron` declarations into `cron_schedules`,
+/// and removes stale schedule entries that the plugin no longer declares.
+/// All operations are performed in a single transaction for atomicity.
 ///
-/// 使用 `plugin_id` 列关联，不影响内置调度或其他插件的调度。
+/// Uses the `plugin_id` column for association; does not affect built-in or other plugins' schedules.
 pub async fn sync_plugin_crons(
     pool: &Pool,
     plugin_id: &str,
@@ -785,9 +785,9 @@ pub async fn sync_plugin_crons(
     })
 }
 
-/// 删除插件关联的所有 Cron 调度
+/// Remove all Cron schedules associated with a plugin
 ///
-/// 插件卸载时调用。
+/// Called when a plugin is unloaded.
 pub async fn remove_plugin_crons(pool: &Pool, plugin_id: &str) -> AppResult<()> {
     let result = sqlx::query(&format!(
         "DELETE FROM cron_schedules WHERE plugin_id = {}",
@@ -926,7 +926,7 @@ mod tests {
         let list = list_schedules(&pool).await.unwrap();
         assert_eq!(list.len(), 2);
 
-        // 第二次调用不会重复插入
+        // Second call does not insert duplicates
         seed_defaults(&pool, &[]).await.unwrap();
         let list2 = list_schedules(&pool).await.unwrap();
         assert_eq!(list2.len(), 2);
@@ -942,7 +942,7 @@ mod tests {
 
         let queue = std::sync::Arc::new(super::super::SqliteJobQueue::new(pool.clone()));
 
-        // 手动插入一个 next_run_at 在过去的 schedule
+        // Manually insert a schedule with next_run_at in the past
         let now = Utc::now();
         let past = (now - chrono::Duration::hours(1)).to_rfc3339();
 

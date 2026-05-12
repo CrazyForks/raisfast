@@ -1,7 +1,7 @@
-//! ownable Protocol — 创建时注入 created_by，更新时注入 updated_by
+//! ownable Protocol — inject created_by on create, updated_by on update
 //!
-//! 默认内置，所有表自动生效。
-//! 包含 1 个 Aspect：OwnableAspect（priority = -500）。
+//! Built-in by default; automatically applies to all tables.
+//! Contains 1 Aspect: OwnableAspect (priority = -500).
 
 use std::sync::Arc;
 
@@ -94,7 +94,7 @@ impl Protocol for OwnableProtocol {
     }
 
     fn description(&self) -> &str {
-        "创建和更新时自动注入操作者 ID"
+        "Automatically injects the operator ID on create and update"
     }
 
     fn aspects(&self) -> Vec<Arc<dyn Aspect>> {

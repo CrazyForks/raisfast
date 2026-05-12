@@ -11,7 +11,7 @@ use crate::models::wallet_transaction::{
 };
 use crate::utils::tz::Timestamp;
 
-/// 钱包响应
+/// Wallet response
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct WalletResponse {
@@ -38,7 +38,7 @@ impl WalletResponse {
     }
 }
 
-/// 交易流水响应
+/// Transaction record response
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct WalletTransactionResponse {

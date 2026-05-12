@@ -1,4 +1,4 @@
-//! 基于 sqlx 的 `UserRepository` 实现
+//! sqlx-based `UserRepository` implementation
 
 use crate::errors::app_error::AppResult;
 use crate::models::user::{self, User};
@@ -8,23 +8,23 @@ use crate::repositories::define_sqlx_repo;
 
 define_sqlx_repo!(SqlxUserRepository);
 
-/// 用户 Repository 接口
+/// User Repository interface
 #[async_trait::async_trait]
 pub trait UserRepository: Send + Sync {
-    /// 根据 ID 查找用户
+    /// Find a user by ID
     async fn find_by_id(&self, id: &str, tenant_id: Option<&str>) -> AppResult<Option<User>>;
 
-    /// 创建新用户
+    /// Create a new user
     async fn create(&self, cmd: CreateUserCmd, tenant_id: Option<&str>) -> AppResult<User>;
 
-    /// 更新用户资料
+    /// Update user profile
     async fn update_profile(
         &self,
         cmd: UpdateProfileCmd,
         tenant_id: Option<&str>,
     ) -> AppResult<User>;
 
-    /// 分页查询所有用户
+    /// Find all users with pagination
     async fn find_all(
         &self,
         page: i64,
@@ -32,7 +32,7 @@ pub trait UserRepository: Send + Sync {
         tenant_id: Option<&str>,
     ) -> AppResult<(Vec<User>, i64)>;
 
-    /// 管理员更新用户角色
+    /// Admin update user role
     async fn update_role(
         &self,
         id: &str,

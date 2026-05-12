@@ -1,13 +1,13 @@
-//! Worker 后台轮询执行器
+//! Worker background polling executor
 //!
-//! 调度链：内置 Handler Registry → 插件 Cron Dispatcher → 标记 dead
+//! Dispatch chain: built-in Handler Registry → plugin Cron Dispatcher → mark dead
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use super::{JobHandlerRegistry, JobQueue, PluginCronDispatcher};
 
-/// Worker 执行器
+/// Worker executor
 pub struct WorkerRunner {
     queue: Arc<dyn JobQueue>,
     handlers: Arc<JobHandlerRegistry>,
@@ -16,9 +16,9 @@ pub struct WorkerRunner {
 }
 
 impl WorkerRunner {
-    /// 创建新的 `WorkerRunner`
+    /// Creates a new `WorkerRunner`
     ///
-    /// `plugin_dispatcher` 为 `None` 时，未匹配的任务直接标记 dead。
+    /// When `plugin_dispatcher` is `None`, unmatched jobs are directly marked dead.
     pub fn new(
         queue: Arc<dyn JobQueue>,
         handlers: Arc<JobHandlerRegistry>,
@@ -32,14 +32,14 @@ impl WorkerRunner {
         }
     }
 
-    /// 设置插件 Cron 分发器
+    /// Sets the plugin Cron dispatcher
     #[must_use]
     pub fn with_plugin_dispatcher(mut self, dispatcher: Arc<PluginCronDispatcher>) -> Self {
         self.plugin_dispatcher = Some(dispatcher);
         self
     }
 
-    /// 启动 N 个 worker 并发执行
+    /// Spawns N concurrent workers
     pub fn spawn(self, concurrency: usize) {
         for i in 0..concurrency {
             let runner = self.clone_for_worker();

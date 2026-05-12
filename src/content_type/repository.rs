@@ -1,10 +1,10 @@
-//! 泛型内容 Repository — 动态 SQL CRUD
+//! Generic content repository — dynamic SQL CRUD
 //!
-//! 为所有 content type 提供统一的 CRUD 操作，动态构建 SQL。
-//! 使用 `crate::db::dialect::ph()` 支持多数据库占位符。
+//! Provides unified CRUD operations for all content types, dynamically building SQL.
+//! Uses `crate::db::dialect::ph()` to support multi-database placeholders.
 //!
-//! 查询结果通过 `Row::get()` 逐列提取，直接构建 `serde_json::Value`，
-//! 避免了 `json_object()` 双重序列化的性能开销。
+//! Query results are extracted column-by-column via `Row::get()`, building `serde_json::Value`
+//! directly, avoiding the performance overhead of `json_object()` double serialization.
 
 use std::collections::HashMap;
 
@@ -19,7 +19,7 @@ use crate::middleware::auth::AuthUser;
 use crate::protocols::ProtocolRegistry;
 use sqlx::Row;
 
-/// 保存操作上下文（从 handler 层传递到 repository 层）
+/// Save operation context (passed from handler layer to repository layer)
 #[derive(Debug, Clone, Default)]
 pub struct SaveContext {
     pub user_id: Option<String>,
@@ -39,7 +39,7 @@ impl SaveContext {
     }
 }
 
-/// 通用查询参数
+/// Common query parameters
 #[derive(Debug, Clone, Default)]
 pub struct ContentQuery {
     pub page: i64,
@@ -52,19 +52,19 @@ pub struct ContentQuery {
     pub tenant_id: Option<String>,
     pub include: Option<Vec<String>>,
     pub skip_total: bool,
-    /// API Rule 编译产生的额外 WHERE 子句
+    /// Additional WHERE clause compiled from API Rules
     pub rule_where: Option<String>,
-    /// API Rule 编译产生的额外参数
+    /// Additional parameters compiled from API Rules
     pub rule_params: Vec<String>,
-    /// 单页最大条数（由 handler 从 config 传入）
+    /// Maximum items per page (passed from handler via config)
     pub max_page_size: i64,
-    /// 是否包含 private 字段（admin API 设为 true）
+    /// Whether to include private fields (admin API sets this to true)
     pub include_private: bool,
-    /// __meta JSON path 查询条件: (json_path, value)
+    /// __meta JSON path query conditions: (json_path, value)
     pub meta_filters: Vec<(String, String)>,
 }
 
-/// 泛型内容 Repository
+/// Generic content repository
 pub struct ContentRepository {
     pub pool: Pool,
 }
@@ -83,7 +83,7 @@ impl ContentRepository {
         }
     }
 
-    /// 分页查询
+    /// Paginated query
     pub async fn find(
         &self,
         ct: &ContentTypeSchema,
@@ -210,7 +210,7 @@ impl ContentRepository {
         Ok((items, count_row))
     }
 
-    /// 按 ID 查找
+    /// Find by ID
     pub async fn find_by_id(
         &self,
         ct: &ContentTypeSchema,
@@ -258,7 +258,7 @@ impl ContentRepository {
         Ok(result)
     }
 
-    /// 确保 Single Type 的唯一记录存在（不存在则自动创建），返回该记录
+    /// Ensure the Single Type's unique record exists (auto-create if missing), returns the record
     pub async fn ensure_single(
         &self,
         ct: &ContentTypeSchema,
@@ -320,7 +320,7 @@ impl ContentRepository {
         .await
     }
 
-    /// 按 slug 查找
+    /// Find by slug
     pub async fn find_by_slug(
         &self,
         ct: &ContentTypeSchema,
@@ -374,7 +374,7 @@ impl ContentRepository {
         Ok(result)
     }
 
-    /// 创建（含字段校验，事务保护）
+    /// Create (with field validation, transaction-protected)
     pub async fn create(
         &self,
         ct: &ContentTypeSchema,
@@ -576,10 +576,10 @@ impl ContentRepository {
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created record not found")))
     }
 
-    /// 更新（含字段校验，事务保护）
+    /// Update (with field validation, transaction-protected)
     ///
-    /// 当 content type 启用 `versioning` 时，更新前自动保存当前数据快照到
-    /// `content_revisions` 表。
+    /// When the content type has `versioning` enabled, automatically saves a snapshot
+    /// of the current data to the `content_revisions` table before updating.
     pub async fn update(
         &self,
         ct: &ContentTypeSchema,
@@ -764,7 +764,7 @@ impl ContentRepository {
                 && result.rows_affected() == 0
             {
                 return Err(AppError::Conflict(format!(
-                    "记录已被他人修改（{lock_col} 冲突），请刷新后重试"
+                    "Record was modified by another user ({lock_col} conflict), please refresh and retry"
                 )));
             }
         }
@@ -824,10 +824,10 @@ impl ContentRepository {
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("updated record not found")))?
     }
 
-    /// 删除
+    /// Delete
     ///
-    /// 根据 Protocol 声明的策略执行软删除或硬删除，
-    /// 并通过 ProtocolRegistry dispatch 清理关联数据。
+    /// Performs soft delete or hard delete based on the Protocol declaration strategy,
+    /// and dispatches cleanup of related data via ProtocolRegistry.
     pub async fn delete(
         &self,
         ct: &ContentTypeSchema,
@@ -961,11 +961,11 @@ impl ContentRepository {
         Ok(())
     }
 
-    /// 执行 migration（建表 + 增量同步列）
+    /// Execute migration (create table + incremental column sync)
     ///
-    /// - 表不存在 → `CREATE TABLE`
-    /// - 表已存在 → 对比 schema 与现有列，`ALTER TABLE ADD COLUMN` 补齐缺失列
-    /// - 不删除列、不修改列类型（与 Strapi `forceMigration` 策略一致）
+    /// - Table does not exist → `CREATE TABLE`
+    /// - Table exists → compare schema with existing columns, `ALTER TABLE ADD COLUMN` for missing columns
+    /// - Does not delete columns or modify column types (consistent with Strapi `forceMigration` policy)
     pub async fn migrate(
         &self,
         ct: &ContentTypeSchema,
@@ -1029,7 +1029,7 @@ impl ContentRepository {
         Ok(())
     }
 
-    /// 查询表的现有列名
+    /// Query existing column names of a table
     async fn fetch_columns(&self, table: &str) -> Result<Vec<String>, AppError> {
         let (sql, col_index): (String, usize) = fetch_columns_sql(table);
 
@@ -1050,7 +1050,7 @@ impl ContentRepository {
     }
 }
 
-/// 构建 SELECT 列名列表（替代 json_object，用于直接 SELECT col1, col2, ...）
+/// Build SELECT column name list (replaces json_object, for direct SELECT col1, col2, ...)
 pub fn build_column_names(
     ct: &ContentTypeSchema,
     requested: Option<&[String]>,
@@ -1097,10 +1097,10 @@ pub fn build_column_names(
     cols
 }
 
-/// 从 sqlx Row 逐列提取值，构建 serde_json::Value
+/// Extract values column-by-column from an sqlx Row, building a serde_json::Value
 ///
-/// SQLite 将所有值存储为 TEXT，因此优先尝试解析为 bool/int/f64，
-/// 回退到原始字符串。
+/// SQLite stores all values as TEXT, so it tries to parse as bool/int/f64 first,
+/// falling back to the raw string.
 pub(crate) fn row_to_value(row: &DbRow, columns: &[String]) -> Value {
     let mut map = serde_json::Map::with_capacity(columns.len());
     for col in columns {
@@ -1110,12 +1110,12 @@ pub(crate) fn row_to_value(row: &DbRow, columns: &[String]) -> Value {
     Value::Object(map)
 }
 
-/// 将单个 SQLite 单元格转为 JSON Value
+/// Convert a single SQLite cell to a JSON Value
 ///
-/// 尝试顺序：i64 → f64 → bool → String → Null
+/// Try order: i64 → f64 → bool → String → Null
 ///
-/// 注意：bool 放在 i64 之后，因为 SQLite 不区分 bool 和 int，
-/// 非 0/1 的整数会被 bool 误判为 true。
+/// Note: bool is placed after i64 because SQLite does not distinguish bool from int;
+/// non-0/1 integers would be misidentified as true by bool.
 fn cell_to_json(row: &DbRow, col: &str) -> Value {
     if let Ok(Some(v)) = row.try_get::<Option<i64>, _>(col) {
         return json!(v);
@@ -1286,14 +1286,15 @@ async fn resolve_document_ids_batch(
     Ok(result)
 }
 
-/// 生成查询表列名的 SQL 和列名所在的列索引
+/// Generate SQL and column index for querying table column names
 ///
-/// - `SQLite` `PRAGMA table_info`: 列名在第 2 列 (index=1)
-/// - PostgreSQL/MySQL `information_schema`: 列名在第 1 列 (index=0)
+/// - `SQLite` `PRAGMA table_info`: column name is in column 2 (index=1)
+/// - PostgreSQL/MySQL `information_schema`: column name is in column 1 (index=0)
 ///
 /// # Panics
 ///
-/// 当表名包含非法字符时 panic（表名来自 schema 定义，应在此之前已校验）。
+/// Panics if the table name contains invalid characters (table names come from schema definitions
+/// and should have been validated before this point).
 pub(crate) fn fetch_columns_sql(table: &str) -> (String, usize) {
     assert!(
         crate::db::dialect::is_safe_identifier(table),

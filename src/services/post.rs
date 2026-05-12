@@ -1,11 +1,11 @@
-//! 文章服务。
+//! Post service.
 //!
-//! 提供文章的完整 CRUD 业务逻辑，包括：
+//! Provides full CRUD business logic for posts, including:
 //!
-//! - 文章的创建、更新、删除、发布态查询和详情查询
-//! - Slug 自动生成与去重
-//! - 内容摘要自动提取
-//! - 文章响应对象的组装（含标签和作者信息）
+//! - Post creation, update, deletion, published listing, and detail retrieval
+//! - Automatic slug generation and deduplication
+//! - Automatic excerpt extraction
+//! - Post response assembly (with tags and author info)
 
 use slug::slugify;
 

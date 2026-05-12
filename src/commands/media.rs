@@ -1,6 +1,6 @@
-//! 媒体文件相关 Command
+//! Media file-related commands
 
-/// 创建媒体文件记录
+/// Create a media file record
 pub struct CreateMediaCmd {
     pub user_id: i64,
     pub filename: String,

@@ -1,7 +1,7 @@
-//! 用户模型与数据库查询
+//! User model and database queries
 //!
-//! 定义用户相关的数据结构（完整行模型、API 响应模型、请求验证结构体）
-//! 以及对 `users` 表的增删改查操作。
+//! Defines user-related data structures (full row model, API response model, request validation structs)
+//! and CRUD operations on the `users` table.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -39,7 +39,7 @@ define_enum!(
     }
 );
 
-/// 用户完整数据库行模型
+/// Full database row model for users
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
 pub struct User {
@@ -86,7 +86,7 @@ pub fn encode_metadata(meta: &Option<UserMetadata>) -> Option<String> {
         .map(|v| serde_json::to_string(v).unwrap_or_default())
 }
 
-/// 根据用户名查找用户
+/// Find user by username
 pub async fn find_by_username(pool: &crate::db::Pool, username: &str) -> AppResult<Option<User>> {
     let sql = format!("SELECT * FROM users WHERE username = {}", ph(1));
     let user = sqlx::query_as::<_, User>(&sql)
@@ -96,7 +96,7 @@ pub async fn find_by_username(pool: &crate::db::Pool, username: &str) -> AppResu
     Ok(user)
 }
 
-/// 根据 document_id 查找用户（外部接口）
+/// Find user by document_id (external API)
 pub async fn find_by_id(
     pool: &crate::db::Pool,
     document_id: &str,
@@ -112,7 +112,7 @@ pub async fn find_by_id(
     Ok(user)
 }
 
-/// 根据整数主键查找用户（内部 FK 查询）
+/// Find user by integer primary key (internal FK lookup)
 pub async fn find_by_pk(
     pool: &crate::db::Pool,
     id: i64,
@@ -128,7 +128,7 @@ pub async fn find_by_pk(
     Ok(user)
 }
 
-/// 创建新用户
+/// Create a new user
 pub async fn create(
     pool: &crate::db::Pool,
     cmd: &crate::commands::CreateUserCmd,
@@ -191,7 +191,7 @@ pub async fn create(
     Ok(user)
 }
 
-/// 更新用户资料
+/// Update user profile
 pub async fn update_profile(
     pool: &crate::db::Pool,
     cmd: &crate::commands::UpdateProfileCmd,
@@ -257,7 +257,7 @@ pub async fn update_profile(
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch updated user")))
 }
 
-/// 分页查询所有用户
+/// Paginated query for all users
 pub async fn find_all(
     pool: &crate::db::Pool,
     page: i64,
@@ -286,7 +286,7 @@ pub async fn find_all(
     Ok((users, total.0))
 }
 
-/// 管理员更新用户角色
+/// Admin updates user role
 pub async fn update_role(
     pool: &crate::db::Pool,
     document_id: &str,

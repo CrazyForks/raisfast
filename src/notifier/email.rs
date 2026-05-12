@@ -1,21 +1,21 @@
-//! 邮件发送实现
+//! Email sending implementations
 //!
-//! 支持 6 种 Provider：
+//! Supports 6 providers:
 //!
-//! | Provider | EMAIL_PROVIDER | 说明 |
-//! |----------|---------------|------|
-//! | `log` | 日志占位（开发） |
-//! | `smtp` | lettre SMTP 中继 |
+//! | Provider | EMAIL_PROVIDER | Description |
+//! |----------|---------------|-------------|
+//! | `log` | Log placeholder (development) |
+//! | `smtp` | lettre SMTP relay |
 //! | `sendgrid` | SendGrid HTTP API |
 //! | `resend` | Resend HTTP API |
-//! | `aliyun` | 阿里云邮件推送 HTTP API |
-//! | `tencent` | 腾讯云 SES HTTP API |
+//! | `aliyun` | Alibaba Cloud DirectMail HTTP API |
+//! | `tencent` | Tencent Cloud SES HTTP API |
 
 use crate::notifier::{EmailMessage, EmailSender};
 
 // ── Log ──────────────────────────────────────────────────────
 
-/// 日志邮件发送器（开发用）
+/// Log email sender (for development)
 pub struct LogSender;
 
 #[async_trait::async_trait]
@@ -242,7 +242,7 @@ impl EmailSender for ResendSender {
     }
 }
 
-// ── 阿里云邮件推送 ───────────────────────────────────────────
+// ── Alibaba Cloud DirectMail ─────────────────────────────────
 
 pub struct AliyunDirectMailSender {
     access_key_id: String,
@@ -345,7 +345,7 @@ impl EmailSender for AliyunDirectMailSender {
     }
 }
 
-// ── 腾讯云 SES ───────────────────────────────────────────────
+// ── Tencent Cloud SES ────────────────────────────────────────
 
 pub struct TencentSesSender {
     secret_id: String,
@@ -465,7 +465,7 @@ impl EmailSender for TencentSesSender {
     }
 }
 
-// ── 工具函数 ─────────────────────────────────────────────────
+// ── Utility functions ────────────────────────────────────────
 
 fn percent_encode(input: &str) -> String {
     let mut result = String::with_capacity(input.len());

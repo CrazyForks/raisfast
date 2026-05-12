@@ -1,6 +1,6 @@
-//! RSS 订阅源处理器
+//! RSS feed handler
 //!
-//! 生成文章 RSS XML 订阅源，包含最近 20 篇已发布文章。
+//! Generates an RSS XML feed containing the 20 most recently published posts.
 
 use axum::body::Body;
 use axum::extract::State;
@@ -10,13 +10,13 @@ use crate::errors::app_error::AppResult;
 use crate::middleware::locale::current_locale;
 use crate::models::post;
 
-/// RSS 订阅源
+/// RSS feed
 ///
-/// - **方法/路径：** `GET /rss`
-/// - **认证：** 无需认证
-/// - **说明：** 生成 RSS 2.0 XML 格式的订阅源，包含最近 20 篇已发布文章。
-///   标题和描述通过 i18n 根据当前语言环境翻译。
-/// - **返回：** `application/xml` 格式的 RSS 响应
+/// - **Method/Path:** `GET /rss`
+/// - **Auth:** Not required
+/// - **Description:** Generates an RSS 2.0 XML feed containing the 20 most recently published posts.
+///   Titles and descriptions are translated via i18n based on the current locale.
+/// - **Returns:** RSS response in `application/xml` format
 pub async fn feed(State(state): State<crate::AppState>) -> AppResult<Response> {
     let locale = current_locale();
     rust_i18n::set_locale(&locale);

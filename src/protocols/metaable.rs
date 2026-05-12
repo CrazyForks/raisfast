@@ -1,7 +1,7 @@
-//! metaable Protocol — 动态 JSON 元数据
+//! metaable Protocol — dynamic JSON metadata
 //!
-//! 提供 `__meta` JSON 列，用户可自由读写任意 key-value 数据，
-//! 无需增加表字段。系统内部数据用 `_sys` 命名空间隔离。
+//! Provides a `__meta` JSON column where users can freely read/write arbitrary key-value data
+//! without adding table fields. System-internal data uses the `_sys` namespace for isolation.
 //!
 //! ```toml
 //! implements = ["metaable"]
@@ -69,7 +69,7 @@ impl Protocol for MetaableProtocol {
     }
 
     fn description(&self) -> &str {
-        "动态 JSON 元数据列，无需增加表字段即可扩展数据"
+        "Dynamic JSON metadata column; extend data without adding table fields"
     }
 
     fn aspects(&self) -> Vec<Arc<dyn Aspect>> {

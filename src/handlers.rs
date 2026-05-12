@@ -1,20 +1,21 @@
-//! HTTP 请求处理器（handlers）
+//! HTTP request handlers
 //!
-//! 本模块包含所有 Axum 路由处理函数。每个处理器遵循 **薄层** 原则：
-//! 仅负责提取请求参数、调用业务逻辑层（services）、返回 HTTP 响应。
+//! This module contains all Axum route handler functions. Each handler follows a **thin layer** principle:
+//! only responsible for extracting request parameters, calling the business logic layer (services),
+//! and returning HTTP responses.
 //!
-//! 处理器中 **不包含** 任何业务逻辑，所有业务逻辑均在 `services` 层实现。
+//! Handlers do **not** contain any business logic; all business logic is implemented in the `services` layer.
 //!
-//! # 子模块
-//! - [`auth`] — 注册、登录、登出、刷新令牌
-//! - [`user`] — 用户资料查看与修改
-//! - [`category`] — 分类增删改查
-//! - [`tag`] — 标签增删改查
-//! - [`post`] — 文章增删改查与列表
-//! - [`comment`] — 评论创建、审核、删除
-//! - [`media`] — 媒体文件上传、列表、删除
-//! - [`rss`] — RSS 订阅源
-//! - [`health`] — 健康检查
+//! # Sub-modules
+//! - [`auth`] — Register, login, logout, refresh token
+//! - [`user`] — User profile view and edit
+//! - [`category`] — Category CRUD
+//! - [`tag`] — Tag CRUD
+//! - [`post`] — Post CRUD and listing
+//! - [`comment`] — Comment creation, moderation, deletion
+//! - [`media`] — Media file upload, listing, deletion
+//! - [`rss`] — RSS feed
+//! - [`health`] — Health check
 
 pub mod api_token;
 pub mod auth;

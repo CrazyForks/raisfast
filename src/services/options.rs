@@ -1,8 +1,8 @@
-//! 站点配置服务
+//! Site options service.
 //!
-//! 启动时将 `autoload=true` 的配置预加载到内存，
-//! 后续读取优先走缓存，写入时同步更新缓存和数据库。
-//! 每条配置含完整元数据（类型、分组、标签、校验规则）。
+//! On startup, preloads options with `autoload=true` into memory.
+//! Subsequent reads prioritize the cache; writes update both the cache and the database.
+//! Each option includes full metadata (type, group, label, validation rules).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,12 +16,12 @@ use crate::errors::app_error::AppError;
 use crate::models::options::OptionRow;
 use crate::repositories::OptionsRepository;
 
-/// 将数据库中的配置值字符串解析为 `serde_json::Value`
+/// Parse a configuration value string from the database into a `serde_json::Value`
 fn parse_value(value_str: &str) -> Value {
     serde_json::from_str::<Value>(value_str).unwrap_or(Value::String(value_str.to_string()))
 }
 
-/// 分组信息
+/// Group information
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct OptionGroup {
@@ -30,7 +30,7 @@ pub struct OptionGroup {
     pub options: Vec<OptionEntry>,
 }
 
-/// 单条配置（值 + 元数据）
+/// Single option entry (value + metadata)
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct OptionEntry {
@@ -64,7 +64,7 @@ impl From<&OptionRow> for OptionEntry {
     }
 }
 
-/// 站点配置服务
+/// Site options service
 pub struct OptionsService {
     cache: Arc<RwLock<HashMap<String, OptionEntry>>>,
     repo: Arc<dyn OptionsRepository>,
@@ -100,12 +100,12 @@ impl OptionsService {
         Ok(())
     }
 
-    /// 获取配置值（优先查缓存）
+    /// Get an option value (cache-first)
     pub async fn get(&self, key: &str) -> Option<Value> {
         self.cache.read().await.get(key).map(|e| e.value.clone())
     }
 
-    /// 获取配置条目（含元数据）
+    /// Get an option entry (including metadata)
     pub async fn get_entry(&self, key: &str) -> Option<OptionEntry> {
         if let Some(entry) = self.cache.read().await.get(key).cloned() {
             return Some(entry);
@@ -124,7 +124,7 @@ impl OptionsService {
         Some(entry)
     }
 
-    /// 设置配置值（写入 DB + 更新缓存）
+    /// Set an option value (write to DB + update cache)
     pub async fn set(&self, key: &str, value: Value) -> Result<(), AppError> {
         let value_str = serde_json::to_string(&value)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("json serialize failed: {e}")))?;
@@ -155,7 +155,7 @@ impl OptionsService {
         Ok(())
     }
 
-    /// 批量设置配置（事务保证原子性）
+    /// Batch-set options (transactional for atomicity)
     pub async fn set_batch(&self, pairs: HashMap<String, Value>) -> Result<(), AppError> {
         let sorted: Vec<_> = pairs.into_iter().collect();
 
@@ -175,14 +175,14 @@ impl OptionsService {
         Ok(())
     }
 
-    /// 删除配置
+    /// Delete an option
     pub async fn delete(&self, key: &str) -> Result<(), AppError> {
         self.repo.delete_by_key(key, self.tenant_arg()).await?;
         self.cache.write().await.remove(key);
         Ok(())
     }
 
-    /// 获取所有配置（按分组组织）
+    /// Get all options (organized by group)
     pub async fn get_grouped(&self) -> Result<Vec<OptionGroup>, AppError> {
         let rows = self.repo.find_all(self.tenant_arg()).await?;
         let mut group_map: HashMap<String, Vec<OptionEntry>> = HashMap::new();
@@ -216,7 +216,7 @@ impl OptionsService {
         Ok(groups)
     }
 
-    /// 获取公开配置（前端可见，仅值）
+    /// Get public options (visible to frontend, values only)
     pub async fn get_public(&self) -> HashMap<String, Value> {
         let cache = self.cache.read().await;
         cache
@@ -226,7 +226,7 @@ impl OptionsService {
             .collect()
     }
 
-    /// 获取公开配置（含元数据，按分组）
+    /// Get public options (including metadata, organized by group)
     pub async fn get_public_grouped(&self) -> Vec<OptionGroup> {
         let rows: Vec<crate::models::options::OptionRow> = self
             .repo

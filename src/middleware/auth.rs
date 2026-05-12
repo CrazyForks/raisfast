@@ -1,38 +1,38 @@
-//! 统一身份认证提取器
+//! Unified authentication extractor
 //!
-//! 从 JWT / API Token + `X-Tenant-ID` Header 综合解析用户身份与租户。
-//! 永不 reject，未登录时 `user_id()` 返回 `None`。
+//! Resolves user identity and tenant from JWT / API Token + `X-Tenant-ID` header combined.
+//! Never rejects; when not logged in, `user_id()` returns `None`.
 //!
-//! # 用法
+//! # Usage
 //!
 //! ```ignore
-//! // 需要登录
+//! // Require authentication
 //! async fn create(auth: AuthUser, ...) {
 //!     let user_id = auth.ensure_authenticated()?;
 //!     ...
 //! }
 //!
-//! // 需要管理员
+//! // Require admin
 //! async fn cron_list(auth: AuthUser, ...) {
 //!     auth.ensure_admin()?;
 //!     ...
 //! }
 //!
-//! // 公开接口
+//! // Public endpoint
 //! async fn public_list(auth: AuthUser, ...) {
-//!     // 不调用 ensure_*，直接用 auth.tenant_id()
+//!     // Don't call ensure_*, just use auth.tenant_id()
 //! }
 //! ```
 //!
-//! # 租户解析规则
+//! # Tenant resolution rules
 //!
-//! | 场景 | tenant_id | 说明 |
+//! | Scenario | tenant_id | Description |
 //! |---|---|---|
-//! | 超管 + `X-Tenant-ID` | `Some(header)` | 超管切换到指定租户 |
-//! | 超管 + 无 Header | `None` | 超管查看所有租户数据 |
-//! | 普通用户 | `Some(jwt_tenant_id)` | 忽略 Header，使用 JWT 中的租户 |
-//! | 未登录 + `X-Tenant-ID` | `Some(header)` | 公开 API 指定租户 |
-//! | 未登录 + 无 Header | `Some("default")` | 兜底 |
+//! | Super admin + `X-Tenant-ID` | `Some(header)` | Super admin switches to specified tenant |
+//! | Super admin + no Header | `None` | Super admin views all tenant data |
+//! | Regular user | `Some(jwt_tenant_id)` | Ignores header, uses tenant from JWT |
+//! | Not logged in + `X-Tenant-ID` | `Some(header)` | Public API specifies tenant |
+//! | Not logged in + no Header | `Some("default")` | Fallback |
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
@@ -57,10 +57,10 @@ struct RequestIdentity {
     is_super_admin: bool,
 }
 
-/// 统一身份提取器。
+/// Unified identity extractor.
 ///
-/// 永远不会 reject——未登录时 `user_id()` 返回 `None`。
-/// 调用 `ensure_*` 方法进行角色/认证守卫。
+/// Never rejects — when not logged in, `user_id()` returns `None`.
+/// Call `ensure_*` methods for role/authentication guards.
 #[derive(Debug, Clone)]
 pub struct AuthUser(RequestIdentity);
 

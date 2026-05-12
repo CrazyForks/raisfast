@@ -1,8 +1,8 @@
-//! 泛型内容类型 API Handler
+//! Generic content type API handler
 //!
-//! 为所有注册的 content type 自动提供 CRUD HTTP 端点。
-//! 启动时注册已知 content type 的固定路由；启动后新增的 content type 通过
-//! catch-all 动态路由处理。两种路由共享同一套核心逻辑。
+//! Automatically provides CRUD HTTP endpoints for all registered content types.
+//! At startup, fixed routes are registered for known content types; content types added after
+//! startup are handled via catch-all dynamic routes. Both route types share the same core logic.
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -96,11 +96,11 @@ fn make_base_ctx_anon(state: &AppState) -> crate::aspects::BaseContext {
         .with_pool(state.pool.clone())
 }
 
-/// 编译 API Rule 为 SQL WHERE 子句。
+/// Compile API Rules into SQL WHERE clauses.
 ///
-/// 如果用户已登录且有 `filter_auth`，生成 `filter OR filter_auth`；
-/// 否则只用 `filter`。
-/// 如果规则需要认证但用户未登录，返回 None（调用方应拒绝请求）。
+/// If the user is authenticated and has `filter_auth`, generates `filter OR filter_auth`;
+/// otherwise uses only `filter`.
+/// Returns None if the rule requires authentication but the user is not logged in (caller should reject the request).
 fn build_rule_sql(
     endpoint: &super::schema::CachedEndpointRules,
     auth: &AuthUser,
@@ -127,7 +127,7 @@ fn build_rule_sql(
     }
 }
 
-/// 分页查询参数
+/// Pagination query parameters
 #[derive(Debug, Deserialize)]
 pub struct ListParams {
     pub page: Option<i64>,
@@ -136,17 +136,17 @@ pub struct ListParams {
     pub status: Option<String>,
     pub search: Option<String>,
     pub include: Option<String>,
-    /// 跳过 COUNT(*) 查询以提升性能，total 返回 -1
+    /// Skip COUNT(*) query for performance, total returns -1
     #[serde(default)]
     pub skip_total: Option<bool>,
-    /// 额外字段过滤（匹配 content type schema 字段名）
+    /// Additional field filters (matching content type schema field names)
     #[serde(flatten)]
     pub extra: HashMap<String, String>,
 }
 
-/// 为所有 content type 注册动态路由（启动时调用）
+/// Register dynamic routes for all content types (called at startup)
 ///
-/// 除标准 CRUD 路由外，还为启用 `versioning` 的 content type 注册版本历史端点。
+/// In addition to standard CRUD routes, also registers version history endpoints for content types with `versioning` enabled.
 pub fn register_content_routes(
     router: axum::Router<AppState>,
     registry: &crate::content_type::ContentTypeRegistry,
@@ -240,7 +240,7 @@ pub fn register_content_routes(
     api
 }
 
-/// 解析 catch-all 路径为 (plural, 可选 id_or_slug)
+/// Parse catch-all path into (plural, optional id_or_slug)
 fn parse_dynamic_path(path: &str) -> Option<(String, Option<String>)> {
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if segments.is_empty() {
@@ -251,7 +251,7 @@ fn parse_dynamic_path(path: &str) -> Option<(String, Option<String>)> {
     Some((first, id))
 }
 
-/// 根据 singular 或 plural 查找 content type
+/// Find content type by singular or plural name
 fn resolve_content_type(
     registry: &crate::content_type::ContentTypeRegistry,
     segment: &str,
@@ -267,7 +267,7 @@ fn resolve_content_type(
     None
 }
 
-/// Catch-all 动态路由 handler（启动后新增的 content type 走这里）
+/// Catch-all dynamic route handler (for content types added after startup)
 pub async fn dynamic_cms_handler(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -345,7 +345,7 @@ pub async fn dynamic_cms_handler(
     }
 }
 
-/// Catch-all admin 动态路由 handler
+/// Catch-all admin dynamic route handler
 pub async fn dynamic_admin_cms_handler(
     State(state): State<AppState>,
     method: axum::http::Method,
@@ -383,7 +383,7 @@ pub async fn dynamic_admin_cms_handler(
     }
 }
 
-// ── 核心业务逻辑（共享于固定路由和动态路由） ──────────────────────
+// ── Core business logic (shared between fixed and dynamic routes) ──────────────────────
 
 pub fn cms_list_cache_key(ct: &ContentTypeSchema, query: &ContentQuery) -> String {
     use std::collections::hash_map::DefaultHasher;
@@ -1031,7 +1031,7 @@ async fn do_admin_single_get(
     repo.ensure_single(ct, None).await
 }
 
-// ── 固定路由 handler（启动时注册的 content type） ──────────────
+// ── Fixed route handlers (for content types registered at startup) ──────────────
 
 async fn single_get_handler(
     auth: AuthUser,
@@ -1190,15 +1190,15 @@ async fn admin_get_handler(
     Ok(Json(crate::errors::response::ApiResponse::success(data)))
 }
 
-// ── Schema 管理 API ──────────────────────────────────────────
+// ── Schema Management API ──────────────────────────────────────────
 
-/// GET /admin/content-types — 列出所有已注册 content type 的 schema 定义
+/// GET /admin/content-types — List schema definitions of all registered content types
 pub async fn list_schemas(State(state): State<AppState>) -> Result<impl IntoResponse, AppError> {
     let schemas = state.content_type_registry.all();
     Ok(Json(crate::errors::response::ApiResponse::success(schemas)))
 }
 
-/// GET /admin/content-types/:singular — 获取单个 content type 的 schema 定义
+/// GET /admin/content-types/:singular — Get the schema definition of a single content type
 pub async fn get_schema(
     State(state): State<AppState>,
     Path(singular): Path<String>,
@@ -1210,12 +1210,12 @@ pub async fn get_schema(
     Ok(Json(crate::errors::response::ApiResponse::success(ct)))
 }
 
-/// POST /admin/content-types — 创建新的 content type
+/// POST /admin/content-types — Create a new content type
 ///
-/// 1. 校验 singular 唯一性
-/// 2. 写 TOML 文件
-/// 3. 执行 DB migration（建表/加列）
-/// 4. 注册到内存 ContentTypeRegistry（立即生效，无需重启）
+/// 1. Validate singular uniqueness
+/// 2. Write TOML file
+/// 3. Execute DB migration (create table / add columns)
+/// 4. Register in memory ContentTypeRegistry (takes effect immediately, no restart required)
 pub async fn create_schema(
     State(state): State<AppState>,
     Json(req): Json<super::schema::CreateContentTypeRequest>,
@@ -1288,9 +1288,9 @@ pub async fn create_schema(
     ))
 }
 
-/// DELETE /admin/content-types/:singular — 删除 content type
+/// DELETE /admin/content-types/:singular — Delete a content type
 ///
-/// 删除 TOML 文件 + 从内存注册表注销。不删除数据库表。
+/// Deletes the TOML file and unregisters from the in-memory registry. Does not drop the database table.
 pub async fn delete_schema(
     State(state): State<AppState>,
     Path(singular): Path<String>,
@@ -1315,11 +1315,12 @@ pub async fn delete_schema(
     )))
 }
 
-/// PUT /admin/content-types/:singular — 更新 content type schema
+/// PUT /admin/content-types/:singular — Update a content type schema
 ///
-/// 增量更新：只修改请求中提供的字段。如果提供了 `fields`，会与数据库对比并
-/// 自动 `ALTER TABLE ADD COLUMN` 补齐新增列（不删除列、不改列类型）。
-/// 更新后的 schema 同步写入内存注册表（立即生效，无需重启）。
+/// Incremental update: only modifies fields provided in the request. If `fields` is provided,
+/// it is compared against the database and automatically `ALTER TABLE ADD COLUMN` to add missing
+/// columns (does not delete columns or change column types).
+/// The updated schema is synced to the in-memory registry (takes effect immediately, no restart required).
 pub async fn update_schema(
     State(state): State<AppState>,
     Path(singular): Path<String>,
@@ -1381,8 +1382,8 @@ pub async fn update_schema(
     )))
 }
 
-/// 过滤 JSON 对象，只保留白名单字段 + 系统字段
-/// 白名单为空时返回原始对象（不过滤）
+/// Filter a JSON object, keeping only whitelisted fields + system fields
+/// Returns the original object when whitelist is empty (no filtering)
 fn filter_fields(
     mut value: serde_json::Value,
     fields: Option<&[String]>,

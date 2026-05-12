@@ -1,7 +1,7 @@
-//! 数据库模块。
+//! Database module.
 //!
-//! 提供多数据库支持（SQLite、PostgreSQL、MySQL），
-//! 通过 feature flag 在编译时选择后端。
+//! Provides multi-database support (SQLite, PostgreSQL, MySQL),
+//! with the backend selected at compile time via feature flags.
 
 pub mod connection;
 pub mod dialect;

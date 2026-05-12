@@ -1,19 +1,19 @@
-//! 插件权限执行模块
+//! Plugin permission enforcement module
 //!
-//! 解析 manifest 中声明的权限规则，并在运行时校验。
-//! 支持域名白名单（通配符）、配置 key 前缀匹配、DB 表只读/只写控制。
+//! Parses permission rules declared in manifest and enforces them at runtime.
+//! Supports domain whitelisting (wildcards), config key prefix matching, DB table read/write access control.
 
 use crate::plugins::Permissions;
 
-/// 运行时权限检查器
+/// Runtime permission checker
 pub struct PermissionChecker;
 
 impl PermissionChecker {
-    /// 检查 URL 是否在 HTTP 白名单中。
+    /// Check if a URL is in the HTTP whitelist.
     ///
-    /// 白名单规则支持 `*` 通配符（如 `*.example.com`、`api.example.com/*`）。
-    /// 若白名单为空，拒绝所有 HTTP 请求。
-    /// 额外拦截内部/私有 IP 段（SSRF 防护）。
+    /// Whitelist rules support `*` wildcards (e.g. `*.example.com`, `api.example.com/*`).
+    /// If the whitelist is empty, all HTTP requests are denied.
+    /// Additionally blocks internal/private IP ranges (SSRF protection).
     #[must_use]
     pub fn is_url_allowed(permissions: &Permissions, url: &str) -> bool {
         if permissions.http.is_empty() {
@@ -51,10 +51,10 @@ impl PermissionChecker {
         })
     }
 
-    /// 检查配置 key 是否在 config 白名单中。
+    /// Check if a config key is in the config whitelist.
     ///
-    /// 白名单支持前缀匹配（如 `seo.*` 匹配 `seo.title`、`seo.description`）。
-    /// 若白名单为空，拒绝所有配置访问。
+    /// Whitelist supports prefix matching (e.g. `seo.*` matches `seo.title`, `seo.description`).
+    /// If the whitelist is empty, all config access is denied.
     #[must_use]
     pub fn is_config_key_allowed(permissions: &Permissions, key: &str) -> bool {
         if permissions.config.is_empty() {
@@ -70,7 +70,7 @@ impl PermissionChecker {
         })
     }
 
-    /// 检查数据表是否允许只读访问
+    /// Check if a table allows read-only access
     #[must_use]
     pub fn is_table_readable(permissions: &Permissions, table: &str) -> bool {
         if permissions.database.is_empty() {
@@ -83,7 +83,7 @@ impl PermissionChecker {
         })
     }
 
-    /// 检查数据表是否允许写操作
+    /// Check if a table allows write operations
     #[must_use]
     pub fn is_table_writable(permissions: &Permissions, table: &str) -> bool {
         if permissions.database.is_empty() {
@@ -96,14 +96,14 @@ impl PermissionChecker {
         })
     }
 
-    /// 校验 SQL 是否为只读语句（SELECT only）
+    /// Check if SQL is a read-only statement (SELECT only)
     #[must_use]
     pub fn is_readonly_query(sql: &str) -> bool {
         let trimmed = sql.trim().to_uppercase();
         trimmed.starts_with("SELECT")
     }
 
-    /// 校验 SQL 是否为写操作（INSERT / UPDATE / DELETE）
+    /// Check if SQL is a write operation (INSERT / UPDATE / DELETE)
     #[must_use]
     pub fn is_write_query(sql: &str) -> bool {
         let trimmed = sql.trim().to_uppercase();
@@ -112,7 +112,7 @@ impl PermissionChecker {
             || trimmed.starts_with("DELETE")
     }
 
-    /// 校验 SQL 是否为 DDL（CREATE / DROP / ALTER / TRUNCATE / ATTACH / DETACH / PRAGMA / REINDEX / ANALYZE / VACUUM）
+    /// Check if SQL is a DDL statement (CREATE / DROP / ALTER / TRUNCATE / ATTACH / DETACH / PRAGMA / REINDEX / ANALYZE / VACUUM)
     #[must_use]
     pub fn is_ddl_query(sql: &str) -> bool {
         let trimmed = sql.trim().to_uppercase();
@@ -128,17 +128,17 @@ impl PermissionChecker {
             || trimmed.starts_with("VACUUM")
     }
 
-    /// 检查表名是否在保护表列表中（插件/CT 不可写入）
+    /// Check if a table name is in the protected table list (not writable by plugins/CTs)
     #[must_use]
     pub fn is_protected_table(table: &str, protected: &[String]) -> bool {
         protected.iter().any(|t| t.eq_ignore_ascii_case(table))
     }
 }
 
-/// 从 SQL 语句中提取表名（简单启发式，取 FROM 后的第一个标识符）。
+/// Extract table name from SQL statement (simple heuristic: first identifier after FROM).
 ///
-/// **安全限制：** 检测到 UNION、子查询、JOIN 等可疑模式时返回 `None`，
-/// 调用方应将 `None` 视为拒绝。
+/// **Security limitation:** Returns `None` when UNION, subqueries, JOIN or other suspicious patterns
+/// are detected. Callers should treat `None` as denied.
 #[must_use]
 pub fn extract_table_name(sql: &str) -> Option<String> {
     let trimmed = sql.trim();
@@ -167,7 +167,7 @@ pub fn extract_table_name(sql: &str) -> Option<String> {
     }
 }
 
-/// 从写 SQL（INSERT/UPDATE/DELETE）中提取目标表名
+/// Extract target table name from write SQL (INSERT/UPDATE/DELETE)
 #[must_use]
 pub fn extract_write_table_name(sql: &str) -> Option<String> {
     let upper = sql.trim().to_uppercase();
@@ -182,7 +182,7 @@ pub fn extract_write_table_name(sql: &str) -> Option<String> {
     }
 }
 
-/// 从关键字后提取第一个标识符（表名）
+/// Extract the first identifier after a keyword (table name)
 fn extract_after_keyword(sql: &str, keyword: &str) -> Option<String> {
     let pos = sql.find(keyword)?;
     let after = sql[pos + keyword.len()..].trim_start();
@@ -197,7 +197,7 @@ fn extract_after_keyword(sql: &str, keyword: &str) -> Option<String> {
     }
 }
 
-/// 从指定关键字之后提取第一个标识符（用于 UPDATE table_name SET ...）
+/// Extract the first identifier after a specified keyword (for UPDATE table_name SET ...)
 fn extract_first_identifier_after(sql: &str, keyword: &str) -> Option<String> {
     let pos = sql.find(keyword)?;
     let after = sql[pos + keyword.len()..].trim_start();

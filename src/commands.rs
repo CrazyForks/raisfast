@@ -1,7 +1,7 @@
-//! 跨层共享的写操作 Command 对象
+//! Cross-layer shared write operation Command objects
 //!
-//! Command 封装 Repository 写操作的所有参数，替代多参数函数签名。
-//! 所有层（handlers、services、repositories、models）均可引用。
+//! Commands encapsulate all parameters for Repository write operations, replacing multi-parameter function signatures.
+//! All layers (handlers, services, repositories, models) can reference them.
 
 pub mod category;
 pub mod comment;

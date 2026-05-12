@@ -1,4 +1,4 @@
-//! 审计日志 API Handler
+//! Audit log API handler
 
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
@@ -33,7 +33,7 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
-/// GET /admin/audit — 查询审计日志（分页）
+/// GET /admin/audit — query audit logs (paginated)
 pub async fn list(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -56,7 +56,7 @@ pub async fn list(
     Ok(params.paginate(items, total))
 }
 
-/// GET /admin/audit/:id — 获取单条审计日志
+/// GET /admin/audit/:id — get a single audit log entry
 pub async fn get(
     auth: AuthUser,
     State(state): State<AppState>,

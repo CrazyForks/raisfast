@@ -1,6 +1,6 @@
-//! CLI 定义与子命令分发。
+//! CLI definition and subcommand dispatch.
 //!
-//! 使用 clap derive 定义命令行结构，将每个子命令分发到对应模块执行。
+//! Uses clap derive to define the command-line structure, dispatching each subcommand to its module.
 
 mod app_cmd;
 mod ct_cmd;

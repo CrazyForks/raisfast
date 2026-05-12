@@ -1,4 +1,4 @@
-//! 工作流数据模型与数据库查询
+//! Workflow data models and database queries
 
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
@@ -26,25 +26,25 @@ define_enum!(
     }
 );
 
-/// 步骤类型
+/// Step types
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "export-types", ts(rename_all = "snake_case"))]
 pub enum StepType {
-    /// 自动执行任务
+    /// Automatically executed task
     Task,
-    /// 等待外部事件
+    /// Wait for external event
     Await,
-    /// 条件分支
+    /// Conditional branch
     Branch,
-    /// 并行执行
+    /// Parallel execution
     Parallel,
-    /// 延迟等待
+    /// Delay wait
     Delay,
 }
 
-/// 步骤定义
+/// Step definition
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepDef {
@@ -63,7 +63,7 @@ pub struct StepDef {
     pub timeout_ms: u64,
 }
 
-/// 工作流定义行
+/// Workflow definition row
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct WorkflowDefinition {
@@ -80,13 +80,13 @@ pub struct WorkflowDefinition {
 }
 
 impl WorkflowDefinition {
-    /// 解析 steps JSON
+    /// Parse steps JSON
     pub fn parse_steps(&self) -> anyhow::Result<Vec<StepDef>> {
         Ok(serde_json::from_str(&self.steps)?)
     }
 }
 
-/// 工作流实例行
+/// Workflow instance row
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct WorkflowInstance {
@@ -103,13 +103,13 @@ pub struct WorkflowInstance {
 }
 
 impl WorkflowInstance {
-    /// 解析 context JSON
+    /// Parse context JSON
     pub fn parse_context(&self) -> serde_json::Value {
         serde_json::from_str(&self.context).unwrap_or(serde_json::json!({}))
     }
 }
 
-/// 步骤执行日志行
+/// Step execution log row
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct StepLog {
@@ -126,7 +126,7 @@ pub struct StepLog {
     pub completed_at: Option<Timestamp>,
 }
 
-/// 创建工作流定义
+/// Create workflow definition
 pub async fn create_definition(
     pool: &Pool,
     document_id: &str,
@@ -161,7 +161,7 @@ pub async fn create_definition(
         .ok_or_else(|| anyhow::anyhow!("failed to fetch created workflow definition"))
 }
 
-/// 获取工作流定义
+/// Get workflow definition
 pub async fn get_definition(
     pool: &Pool,
     document_id: &str,
@@ -177,7 +177,7 @@ pub async fn get_definition(
     Ok(row)
 }
 
-/// 列出所有工作流定义
+/// List all workflow definitions
 pub async fn list_definitions(pool: &Pool) -> anyhow::Result<Vec<WorkflowDefinition>> {
     let sql = "SELECT id, document_id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions ORDER BY created_at DESC";
     let rows = sqlx::query_as::<_, WorkflowDefinition>(sql)
@@ -186,7 +186,7 @@ pub async fn list_definitions(pool: &Pool) -> anyhow::Result<Vec<WorkflowDefinit
     Ok(rows)
 }
 
-/// 删除工作流定义
+/// Delete workflow definition
 pub async fn delete_definition(pool: &Pool, document_id: &str) -> anyhow::Result<()> {
     let sql = format!(
         "DELETE FROM workflow_definitions WHERE document_id = {}",
@@ -196,7 +196,7 @@ pub async fn delete_definition(pool: &Pool, document_id: &str) -> anyhow::Result
     Ok(())
 }
 
-/// 创建工作流实例
+/// Create workflow instance
 pub async fn create_instance(
     pool: &Pool,
     document_id: &str,
@@ -231,7 +231,7 @@ pub async fn create_instance(
         .ok_or_else(|| anyhow::anyhow!("failed to fetch created workflow instance"))
 }
 
-/// 获取工作流实例
+/// Get workflow instance
 pub async fn get_instance(
     pool: &Pool,
     document_id: &str,
@@ -247,7 +247,7 @@ pub async fn get_instance(
     Ok(row)
 }
 
-/// 列出工作流实例
+/// List workflow instances
 pub async fn list_instances(
     pool: &Pool,
     definition_id: Option<i64>,
@@ -293,7 +293,7 @@ pub async fn list_instances(
     Ok((rows, count))
 }
 
-/// 更新实例状态和当前步骤
+/// Update instance status and current step
 pub async fn update_instance_step(
     pool: &Pool,
     document_id: &str,
@@ -332,7 +332,7 @@ pub async fn update_instance_step(
     Ok(())
 }
 
-/// 创建步骤执行日志
+/// Create step execution log
 pub async fn create_step_log(
     pool: &Pool,
     document_id: &str,
@@ -374,7 +374,7 @@ pub async fn create_step_log(
         .map_err(|e| anyhow::anyhow!("failed to fetch created step log: {e}"))
 }
 
-/// 完成步骤执行日志
+/// Complete step execution log
 pub async fn complete_step_log(
     pool: &Pool,
     document_id: &str,
@@ -399,7 +399,7 @@ pub async fn complete_step_log(
     Ok(())
 }
 
-/// 标记步骤执行失败
+/// Mark step execution as failed
 pub async fn fail_step_log(pool: &Pool, document_id: &str, error: &str) -> anyhow::Result<()> {
     let now = crate::utils::tz::now_utc();
     let sql = format!(
@@ -419,7 +419,7 @@ pub async fn fail_step_log(pool: &Pool, document_id: &str, error: &str) -> anyho
     Ok(())
 }
 
-/// 列出实例的步骤日志
+/// List step logs for an instance
 pub async fn list_step_logs(pool: &Pool, instance_id: i64) -> anyhow::Result<Vec<StepLog>> {
     let sql = format!(
         "SELECT id, document_id, instance_id, step_id, step_name, status, input, output, error, started_at, completed_at FROM workflow_step_logs WHERE instance_id = {} ORDER BY started_at ASC",

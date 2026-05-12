@@ -1,4 +1,4 @@
-//! RBAC 管理 API Handler
+//! RBAC management API handler
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -55,7 +55,7 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
-/// GET /admin/rbac/roles — 列出所有角色（分页）
+/// GET /admin/rbac/roles — List all roles (paginated)
 pub async fn list_roles(
     State(state): State<AppState>,
     Query(mut params): Query<PaginationParams>,
@@ -65,7 +65,7 @@ pub async fn list_roles(
     Ok(params.paginate_in_memory(all))
 }
 
-/// POST /admin/rbac/roles — 创建角色
+/// POST /admin/rbac/roles — Create a role
 pub async fn create_role(
     State(state): State<AppState>,
     Json(req): Json<CreateRoleRequest>,
@@ -74,7 +74,7 @@ pub async fn create_role(
     Ok(ApiResponse::success(role))
 }
 
-/// PUT /admin/rbac/roles/:id — 更新角色
+/// PUT /admin/rbac/roles/:id — Update a role
 pub async fn update_role(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -84,7 +84,7 @@ pub async fn update_role(
     Ok(ApiResponse::success(role))
 }
 
-/// DELETE /admin/rbac/roles/:id — 删除角色
+/// DELETE /admin/rbac/roles/:id — Delete a role
 pub async fn delete_role(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -93,7 +93,7 @@ pub async fn delete_role(
     Ok(ApiResponse::success(serde_json::json!({"deleted": true})))
 }
 
-/// GET /admin/rbac/roles/:id/permissions — 获取角色权限
+/// GET /admin/rbac/roles/:id/permissions — Get role permissions
 pub async fn get_permissions(
     State(state): State<AppState>,
     Path(role_id): Path<String>,
@@ -102,7 +102,7 @@ pub async fn get_permissions(
     Ok(ApiResponse::success(perms))
 }
 
-/// PUT /admin/rbac/roles/:id/permissions — 设置角色权限（替换所有）
+/// PUT /admin/rbac/roles/:id/permissions — Set role permissions (replace all)
 pub async fn set_permissions(
     State(state): State<AppState>,
     Path(role_id): Path<String>,

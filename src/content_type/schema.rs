@@ -1,4 +1,4 @@
-//! 内容类型 Schema 数据结构与 TOML 解析
+//! Content type Schema data structures and TOML parsing
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -11,7 +11,7 @@ use ts_rs::TS;
 use crate::config::app::RuleEngineConfig;
 use crate::errors::app_error::AppError;
 
-/// 协议引用：简单字符串或带配置的对象
+/// Protocol reference: simple string or object with configuration
 ///
 /// ```toml
 /// implements = ["sortable"]
@@ -53,79 +53,82 @@ impl std::fmt::Display for ProtocolRef {
     }
 }
 
-/// 内容类型种类
+/// Content type kind
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "export-types", ts(rename_all = "lowercase"))]
 pub enum ContentKind {
-    /// 集合类型（默认）：多条记录，完整 CRUD
+    /// Collection type (default): multiple records, full CRUD
     #[default]
     Collection,
-    /// 单条类型：只有一条记录，仅 GET/PUT，自动 upsert
+    /// Single type: only one record, GET/PUT only, auto upsert
     Single,
 }
 
-/// 内容类型定义
+/// Content type definition
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentTypeSchema {
-    /// 显示名称（如 "Post"）
+    /// Display name (e.g., "Post")
     pub name: String,
-    /// 单数标识（如 "post"），用于 API 路径和注册表 key
+    /// Singular identifier (e.g., "post"), used for API paths and registry key
     pub singular: String,
-    /// 复数标识（如 "posts"），用于 API 路径
+    /// Plural identifier (e.g., "posts"), used for API paths
     pub plural: String,
-    /// 数据库表名
+    /// Database table name
     pub table: String,
-    /// 类型：collection（多条记录）或 single（仅一条记录）
+    /// Kind: collection (multiple records) or single (only one record)
     #[serde(default)]
     pub kind: ContentKind,
-    /// 描述
+    /// Description
     #[serde(default)]
     pub description: String,
-    /// 字段列表
+    /// Field list
     pub fields: Vec<FieldSchema>,
-    /// 自动从哪个字段生成 slug
+    /// Which field to auto-generate slug from
     pub slug_field: Option<String>,
-    /// 是否为内置 content type（内置 CT 不注入默认字段，字段全部显式定义）
+    /// Whether this is a built-in content type (built-in CTs don't inject default fields; all fields are explicitly defined)
     #[serde(default)]
     pub builtin: bool,
-    /// 声明实现的 Protocol 列表（如 ["versionable", "soft_deletable"]）
+    /// Declared Protocol list (e.g., ["versionable", "soft_deletable"])
     #[serde(default)]
-    #[cfg_attr(feature = "export-types", ts(type = "Array<string | Record<string, string>>"))]
+    #[cfg_attr(
+        feature = "export-types",
+        ts(type = "Array<string | Record<string, string>>")
+    )]
     pub implements: Vec<ProtocolRef>,
-    /// 索引定义
+    /// Index definitions
     #[serde(default)]
     pub indexes: Vec<IndexDef>,
-    /// API 访问控制配置
+    /// API access control configuration
     #[serde(default)]
     pub api: ApiConfig,
-    /// 预计算 SELECT 列名列表（注册时填充，不序列化）
+    /// Pre-computed SELECT column name list (populated at registration, not serialized)
     #[serde(skip)]
     pub cached_column_names: Option<Vec<String>>,
-    /// 协议提供的列名列表（注册时填充，不序列化）
+    /// Protocol-provided column name list (populated at registration, not serialized)
     #[serde(skip)]
     pub cached_protocol_column_names: Option<Vec<String>>,
-    /// 协议提供的行为能力列表（注册时填充，不序列化）
+    /// Protocol-provided behavior capability list (populated at registration, not serialized)
     #[serde(skip)]
     pub cached_behaviors: Option<Vec<String>>,
-    /// 协议聚合声明（注册时填充，不序列化）
+    /// Protocol aggregated declaration (populated at registration, not serialized)
     #[serde(skip)]
     pub cached_declaration: Option<crate::protocols::ProtocolDeclaration>,
-    /// 预解析的 API Rule（注册时填充，不序列化）
+    /// Pre-parsed API Rules (populated at registration, not serialized)
     #[serde(skip)]
     pub cached_rules: Option<CachedRules>,
 }
 
-/// 每个 API 端点的预解析 Rule
+/// Pre-parsed Rules for each API endpoint
 #[derive(Debug, Clone)]
 pub struct CachedEndpointRules {
     pub filter: Option<super::rule_engine::Rule>,
     pub filter_auth: Option<super::rule_engine::Rule>,
 }
 
-/// 所有 API 端点的预解析 Rule
+/// Pre-parsed Rules for all API endpoints
 #[derive(Debug, Clone)]
 pub struct CachedRules {
     pub list: CachedEndpointRules,
@@ -135,51 +138,51 @@ pub struct CachedRules {
     pub delete: CachedEndpointRules,
 }
 
-/// 字段定义
+/// Field definition
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldSchema {
-    /// 字段名
+    /// Field name
     pub name: String,
-    /// 字段类型
+    /// Field type
     pub field_type: FieldType,
-    /// 是否必填
+    /// Whether required
     #[serde(default)]
     pub required: bool,
-    /// 是否唯一
+    /// Whether unique
     #[serde(default)]
     pub unique: bool,
-    /// 默认值
+    /// Default value
     #[serde(default)]
     #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub default: Option<serde_json::Value>,
-    /// 私有字段，公开 API 响应中隐藏（仅 admin API 返回）
+    /// Private field, hidden in public API responses (only returned by admin API)
     #[serde(default)]
     pub private: bool,
-    /// 创建后不可修改
+    /// Immutable after creation
     #[serde(default)]
     pub immutable: bool,
-    /// Admin UI 显示标签
+    /// Admin UI display label
     pub label: Option<String>,
-    /// 字段说明
+    /// Field description
     pub description: Option<String>,
-    /// 最大长度（text/email/password）
+    /// Maximum length (text/email/password)
     pub max_length: Option<usize>,
-    /// 最小值（数值类型）
+    /// Minimum value (numeric types)
     pub min: Option<f64>,
-    /// 最大值（数值类型）
+    /// Maximum value (numeric types)
     pub max: Option<f64>,
-    /// 正则校验（text/email）
+    /// Regex validation (text/email)
     pub pattern: Option<String>,
-    /// 关系配置（仅 relation 类型）
+    /// Relation configuration (relation type only)
     pub relation: Option<RelationConfig>,
-    /// 媒体配置（仅 media 类型）
+    /// Media configuration (media type only)
     pub media_config: Option<MediaConfig>,
-    /// 枚举值列表（仅 enum 类型）
+    /// Enum values list (enum type only)
     pub enum_values: Option<Vec<String>>,
 }
 
-/// 字段类型枚举
+/// Field type enum
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -204,7 +207,7 @@ pub enum FieldType {
     Relation,
 }
 
-/// 关系类型
+/// Relation type
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -218,27 +221,27 @@ pub enum RelationType {
     ManyWay,
 }
 
-/// 关系配置
+/// Relation configuration
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelationConfig {
     pub relation_type: RelationType,
-    /// 目标 content type 名称
+    /// Target content type name
     pub target: String,
-    /// 多对多中间表名
+    /// Many-to-many junction table name
     pub through: Option<String>,
-    /// 外键列名（默认为 "{target}_id"）
+    /// Foreign key column name (defaults to "{target}_id")
     pub foreign_key: Option<String>,
 }
 
-/// 媒体字段配置
+/// Media field configuration
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MediaConfig {
-    /// 接受的 MIME 类型
+    /// Accepted MIME types
     #[serde(default)]
     pub accept: Vec<String>,
-    /// 最大文件数量
+    /// Maximum file count
     #[serde(default = "default_media_max_count")]
     pub max_count: usize,
 }
@@ -247,37 +250,37 @@ fn default_media_max_count() -> usize {
     1
 }
 
-/// 索引定义
+/// Index definition
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexDef {
-    /// 索引包含的字段
+    /// Fields included in the index
     pub fields: Vec<String>,
-    /// 是否唯一索引
+    /// Whether this is a unique index
     #[serde(default)]
     pub unique: bool,
 }
 
-/// API 访问级别
+/// API access level
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "export-types", ts(rename_all = "lowercase"))]
 pub enum ApiAccess {
-    /// 完全禁止
+    /// Fully denied
     None,
-    /// 公开访问，无需认证
+    /// Public access, no authentication required
     #[default]
     Public,
-    /// 需要登录（任意角色）
+    /// Requires login (any role)
     Member,
-    /// 需要管理员角色
+    /// Requires admin role
     Admin,
 }
 
-/// 单个 API 端点的访问控制配置
+/// Access control configuration for a single API endpoint
 ///
-/// TOML 写法：
+/// TOML syntax:
 /// ```toml
 /// [api.list]
 /// access = "public"
@@ -288,18 +291,18 @@ pub enum ApiAccess {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiEndpointConfig {
-    /// 访问级别：none / public / member / admin
+    /// Access level: none / public / member / admin
     #[serde(default)]
     pub access: ApiAccess,
-    /// 数据过滤表达式（对所有通过 access 检查的请求生效）
+    /// Data filter expression (applies to all requests passing access check)
     pub filter: Option<String>,
-    /// 已登录用户的额外过滤（与 filter 取 OR）
+    /// Additional filter for authenticated users (ORed with filter)
     pub filter_auth: Option<String>,
-    /// 是否启用服务端缓存（默认 false）
+    /// Whether to enable server-side caching (default false)
     #[serde(default)]
     pub cache: bool,
-    /// API 返回字段白名单（默认空=返回全部非 private 字段）
-    /// 仅对 list/get 端点有效，create/update/delete 忽略此配置
+    /// API return field whitelist (default empty = return all non-private fields)
+    /// Only effective for list/get endpoints; create/update/delete ignore this setting
     #[serde(default)]
     pub fields: Option<Vec<String>>,
 }
@@ -316,23 +319,23 @@ impl Default for ApiEndpointConfig {
     }
 }
 
-/// API 端点访问配置
+/// API endpoint access configuration
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfig {
-    /// 列表查询（GET /cms/{plural}）
+    /// List query (GET /cms/{plural})
     #[serde(default)]
     pub list: ApiEndpointConfig,
-    /// 单条查询（GET /cms/{plural}/{id}）
+    /// Single query (GET /cms/{plural}/{id})
     #[serde(default)]
     pub get: ApiEndpointConfig,
-    /// 创建（POST /cms/{plural}）
+    /// Create (POST /cms/{plural})
     #[serde(default = "api_endpoint_member")]
     pub create: ApiEndpointConfig,
-    /// 更新（PUT /cms/{plural}/{id}）
+    /// Update (PUT /cms/{plural}/{id})
     #[serde(default = "api_endpoint_member")]
     pub update: ApiEndpointConfig,
-    /// 删除（DELETE /cms/{plural}/{id}）
+    /// Delete (DELETE /cms/{plural}/{id})
     #[serde(default = "api_endpoint_admin")]
     pub delete: ApiEndpointConfig,
 }
@@ -369,7 +372,7 @@ impl Default for ApiConfig {
     }
 }
 
-/// 检查指定访问级别是否允许当前请求通过
+/// Check whether the specified access level allows the current request to pass
 pub fn check_api_access(
     access: ApiAccess,
     auth: &crate::middleware::auth::AuthUser,
@@ -396,7 +399,7 @@ pub fn check_api_access(
     }
 }
 
-/// TOML 解析用的顶层结构
+/// Top-level structure for TOML parsing
 #[derive(Debug, Deserialize)]
 struct ContentTypeToml {
     content_type: ContentTypeHeader,
@@ -423,14 +426,14 @@ struct ContentTypeHeader {
 }
 
 impl ContentTypeSchema {
-    /// 从 TOML 文件解析
+    /// Parse from TOML file
     pub fn parse_from_file(path: &Path) -> Result<Self, AppError> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("cannot read {path:?}: {e}")))?;
         Self::parse_from_str(&content)
     }
 
-    /// 从 TOML 字符串解析
+    /// Parse from TOML string
     pub fn parse_from_str(content: &str) -> Result<Self, AppError> {
         let toml: ContentTypeToml = toml::from_str(content)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("TOML parse error: {e}")))?;
@@ -569,7 +572,7 @@ impl ContentTypeSchema {
         })
     }
 
-    /// 缓存协议提供的列名、行为能力、声明（需在 cache_select_columns 之前调用）
+    /// Cache protocol-provided column names, behavior capabilities, and declaration (must be called before cache_select_columns)
     pub fn cache_protocol_columns(&mut self, registry: &crate::protocols::ProtocolRegistry) {
         let names: Vec<String> = self
             .implements
@@ -604,14 +607,14 @@ impl ContentTypeSchema {
         self.cached_declaration = Some(decl);
     }
 
-    /// 预计算并缓存 SELECT 列名列表（需在 cache_protocol_columns 之后调用）
+    /// Pre-compute and cache SELECT column name list (must be called after cache_protocol_columns)
     pub fn cache_select_columns(&mut self) {
         self.cached_column_names = Some(crate::content_type::repository::build_column_names(
             self, None, true,
         ));
     }
 
-    /// 获取协议提供的列名（必须先调用 `cache_protocol_columns`）
+    /// Get protocol-provided column names (must call `cache_protocol_columns` first)
     pub fn protocol_column_names(&self) -> Vec<&str> {
         self.cached_protocol_column_names
             .as_ref()
@@ -619,27 +622,27 @@ impl ContentTypeSchema {
             .unwrap_or_default()
     }
 
-    /// 检查某个列名是否由协议提供
+    /// Check if a column name is provided by a protocol
     pub fn is_protocol_column(&self, name: &str) -> bool {
         self.protocol_column_names().contains(&name)
     }
 
-    /// 获取聚合后的协议声明（必须先调用 `cache_protocol_columns`）
+    /// Get the aggregated protocol declaration (must call `cache_protocol_columns` first)
     pub fn declaration(&self) -> crate::protocols::ProtocolDeclaration {
         self.cached_declaration.clone().unwrap_or_default()
     }
 
-    /// 获取协议声明的查询过滤条件
+    /// Get the protocol-declared query filter conditions
     pub fn query_filters(&self) -> Vec<(String, String)> {
         self.declaration().query_filters
     }
 
-    /// 是否启用软删除
+    /// Whether soft delete is enabled
     pub fn is_soft_delete(&self) -> bool {
         self.declaration().is_soft_delete()
     }
 
-    /// 是否提供版本历史路由
+    /// Whether version history routes are provided
     pub fn has_revision_routes(&self) -> bool {
         self.declaration().revision_routes
     }
@@ -659,7 +662,7 @@ impl ContentTypeSchema {
         Ok(name.to_string())
     }
 
-    /// 校验表名只含安全字符，防止 SQL 注入。
+    /// Validate that the table name only contains safe characters to prevent SQL injection.
     fn validate_table_name(name: &str) -> Result<String, AppError> {
         let name = name.trim();
         if name.is_empty() {
@@ -690,7 +693,7 @@ impl ContentTypeSchema {
         Ok(indexes)
     }
 
-    /// 预解析 API Rule 表达式，schema 注册时调用一次
+    /// Pre-parse API Rule expressions, called once during schema registration
     pub fn cache_rules(&mut self, config: &RuleEngineConfig) {
         self.cached_rules = Some(CachedRules {
             list: self.parse_endpoint_rules(&self.api.list, config),
@@ -718,10 +721,10 @@ impl ContentTypeSchema {
         }
     }
 
-    /// 获取列名列表
+    /// Get column name list
     ///
-    /// `include_private=false` 时过滤掉 `private` 字段（公开 API 用）。
-    /// `include_private=true` 时返回全部字段（admin API 用）。
+    /// When `include_private=false`, filters out `private` fields (for public API).
+    /// When `include_private=true`, returns all fields (for admin API).
     pub fn column_names(&self, requested: Option<&[String]>, include_private: bool) -> Vec<String> {
         if include_private
             && requested.is_none()
@@ -732,13 +735,13 @@ impl ContentTypeSchema {
         crate::content_type::repository::build_column_names(self, requested, include_private)
     }
 
-    /// 获取非私有字段列表
+    /// Get non-private field list
     #[must_use]
     pub fn public_fields(&self) -> Vec<&FieldSchema> {
         self.fields.iter().filter(|f| !f.private).collect()
     }
 
-    /// 获取关系字段列表
+    /// Get relation field list
     #[must_use]
     pub fn relation_fields(&self) -> Vec<&FieldSchema> {
         self.fields
@@ -747,37 +750,37 @@ impl ContentTypeSchema {
             .collect()
     }
 
-    /// 根据 field name 查找字段定义
+    /// Find field definition by field name
     #[must_use]
     pub fn get_field(&self, name: &str) -> Option<&FieldSchema> {
         self.fields.iter().find(|f| f.name == name)
     }
 
-    /// 是否为 Single Type
+    /// Whether this is a Single Type
     #[must_use]
     pub fn is_single(&self) -> bool {
         self.kind == ContentKind::Single
     }
 
-    /// 是否为 Collection Type
+    /// Whether this is a Collection Type
     #[must_use]
     pub fn is_collection(&self) -> bool {
         self.kind == ContentKind::Collection
     }
 
-    /// 是否实现了指定 Protocol
+    /// Whether it implements the specified Protocol
     #[must_use]
     pub fn implements_protocol(&self, name: &str) -> bool {
         self.implements.iter().any(|p| p.name() == name)
     }
 
-    /// 获取 UID 字段（用于 slug）
+    /// Get the UID field (used for slug)
     #[must_use]
     pub fn uid_field(&self) -> Option<&FieldSchema> {
         self.fields.iter().find(|f| f.field_type == FieldType::Uid)
     }
 
-    /// 序列化为 TOML 字符串
+    /// Serialize to TOML string
     pub fn to_toml(&self) -> Result<String, AppError> {
         let mut header = toml::Table::new();
         header.insert("name".into(), toml::Value::String(self.name.clone()));
@@ -861,7 +864,7 @@ impl ContentTypeSchema {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("TOML serialize error: {e}")))
     }
 
-    /// 保存 TOML 文件到指定目录
+    /// Save TOML file to the specified directory
     pub fn save_to_dir(&self, dir: &Path) -> Result<(), AppError> {
         std::fs::create_dir_all(dir).map_err(|e| {
             AppError::Internal(anyhow::anyhow!("cannot create content_types dir: {e}"))
@@ -1084,7 +1087,7 @@ fn toml_value_to_json(v: &toml::Value) -> serde_json::Value {
     }
 }
 
-/// 创建表单字段（用于 API）
+/// Create form fields (for API)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateContentTypeRequest {
     pub name: String,
@@ -1104,10 +1107,10 @@ pub struct CreateContentTypeRequest {
     pub fields: Vec<FieldSchema>,
 }
 
-/// 更新表单字段（用于 API）
+/// Update form fields (for API)
 ///
-/// 与 `CreateContentTypeRequest` 不同，所有字段都是可选的，
-/// 只更新请求中提供的字段。`fields` 为整字段列表替换。
+/// Unlike `CreateContentTypeRequest`, all fields are optional;
+/// only provided fields are updated. `fields` replaces the entire field list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateContentTypeRequest {
     #[serde(default)]
@@ -1165,14 +1168,14 @@ name = "Post"
 singular = "post"
 plural = "posts"
 table = "posts"
-description = "博客文章"
+description = "Blog posts"
 slug_field = "title"
 
 [fields.title]
 type = "text"
 required = true
 max_length = 200
-label = "标题"
+label = "Title"
 
 [fields.slug]
 type = "uid"

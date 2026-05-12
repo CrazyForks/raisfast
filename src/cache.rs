@@ -1,7 +1,7 @@
-//! 缓存抽象层。
+//! Cache abstraction layer.
 //!
-//! 提供 [`CacheStore`] trait 和基于 moka 的无锁并发实现 [`MemoryCache`]。
-//! 生产环境可替换为 Redis 实现。
+//! Provides [`CacheStore`] trait and a moka-based lock-free concurrent implementation [`MemoryCache`].
+//! Can be replaced with a Redis implementation in production.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -9,21 +9,21 @@ use std::time::Duration;
 
 use crate::errors::app_error::AppResult;
 
-/// 缓存存储接口
+/// Cache store interface
 ///
-/// 所有缓存后端（内存、Redis 等）实现此 trait。
+/// All cache backends (in-memory, Redis, etc.) implement this trait.
 #[async_trait::async_trait]
 pub trait CacheStore: Send + Sync {
-    /// 获取缓存值
+    /// Get a cached value
     async fn get(&self, key: &str) -> Option<String>;
 
-    /// 设置缓存值，可选 TTL
+    /// Set a cached value with optional TTL
     async fn set(&self, key: &str, value: &str, ttl: Option<Duration>) -> AppResult<()>;
 
-    /// 删除缓存值
+    /// Delete a cached value
     async fn delete(&self, key: &str) -> AppResult<()>;
 
-    /// 按前缀批量删除
+    /// Bulk delete by prefix
     async fn delete_prefix(&self, prefix: &str) -> AppResult<u64>;
 }
 
@@ -40,9 +40,9 @@ impl CacheEntry {
     }
 }
 
-/// 基于 moka 的无锁并发缓存实现
+/// moka-based lock-free concurrent cache implementation
 ///
-/// 使用 TinyLFU + LRU 淘汰策略，高并发下无锁竞争。
+/// Uses TinyLFU + LRU eviction policy, no lock contention under high concurrency.
 #[derive(Clone)]
 pub struct MemoryCache {
     inner: moka::sync::Cache<String, CacheEntry>,
@@ -106,9 +106,9 @@ impl CacheStore for MemoryCache {
     }
 }
 
-/// 缓存辅助函数
+/// Cache helper function
 ///
-/// 尝试从缓存获取，未命中则执行 `f` 并回填缓存。
+/// Attempts to get from cache; on miss, executes `f` and backfills the cache.
 pub async fn get_or<F, Fut>(
     cache: &Arc<dyn CacheStore>,
     key: &str,

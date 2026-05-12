@@ -1,12 +1,13 @@
-//! 中间件模块
+//! Middleware module
 //!
-//! 本模块包含跨切面（cross-cutting）中间件，为所有 HTTP 请求提供统一的基础设施支持：
+//! This module contains cross-cutting middlewares that provide unified infrastructure
+//! support for all HTTP requests:
 //!
-//! - **认证（auth）**：基于 JWT 的用户身份验证与角色鉴权
-//! - **国际化（locale）**：请求级别的语言区域检测，支持 i18n 错误消息
-//! - **`限流（rate_limit`）**：基于 IP 的滑动窗口速率限制，防止接口滥用
-//! - **Request ID（request_id）**：为每个请求生成唯一 ID，串联日志
-//! - **AOP HTTP（aop_http）**：请求/响应拦截，连接 AspectEngine HTTP Layer
+//! - **Auth**: JWT-based user authentication and role authorization
+//! - **Locale**: Request-level language region detection, supporting i18n error messages
+//! - **Rate limit**: IP-based sliding window rate limiting to prevent API abuse
+//! - **Request ID**: Generates a unique ID for each request, linking logs together
+//! - **AOP HTTP**: Request/response interception, connecting AspectEngine HTTP Layer
 
 pub mod aop_http;
 pub mod auth;

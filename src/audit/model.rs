@@ -1,4 +1,4 @@
-//! 审计日志数据模型与数据库查询
+//! Audit log data model and database queries
 
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
@@ -7,7 +7,7 @@ use ts_rs::TS;
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
-/// 审计日志完整数据库行
+/// Full database row for an audit log entry
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AuditEntry {
@@ -30,7 +30,7 @@ crate::impl_from_row_opt_tenant!(AuditEntry {
     optional { actor_id, actor_role, subject_id, detail, ip_address, user_agent }
 });
 
-/// 插入一条审计日志
+/// Insert an audit log entry
 pub async fn insert(pool: &crate::db::Pool, entry: &AuditEntry) -> AppResult<()> {
     match &entry.tenant_id {
         Some(tid) => {
@@ -95,7 +95,7 @@ pub async fn insert(pool: &crate::db::Pool, entry: &AuditEntry) -> AppResult<()>
     Ok(())
 }
 
-/// 分页查询审计日志
+/// Paginated query for audit logs
 pub async fn find_paginated(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
@@ -153,7 +153,7 @@ pub async fn find_paginated(
     Ok((items, total))
 }
 
-/// 根据 ID 查找审计日志
+/// Find an audit log entry by ID
 pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<AuditEntry> {
     let sql = format!(
         "SELECT * FROM audit_log WHERE id = {}",

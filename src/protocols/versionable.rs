@@ -1,7 +1,7 @@
-//! versionable Protocol — 更新时自动保存旧版本快照
+//! versionable Protocol — automatically save old version snapshots on update
 //!
-//! 声明 `snapshot_before_update` 和 `revision_routes`，
-//! repository.update() 根据 declaration 主动创建快照。
+//! Declares `snapshot_before_update` and `revision_routes`;
+//! repository.update() proactively creates snapshots based on the declaration.
 
 use std::sync::Arc;
 
@@ -56,7 +56,7 @@ impl Protocol for VersionableProtocol {
     }
 
     fn description(&self) -> &str {
-        "更新时自动保存旧版本快照"
+        "Automatically saves old version snapshots on update"
     }
 
     fn aspects(&self) -> Vec<Arc<dyn Aspect>> {

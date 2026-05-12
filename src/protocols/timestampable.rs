@@ -1,7 +1,7 @@
-//! timestampable Protocol — 自动注入 created_at / updated_at
+//! timestampable Protocol — automatically inject created_at / updated_at
 //!
-//! 默认内置，所有表自动生效。
-//! 包含 1 个 Aspect：TimestampableAspect（priority = -400）。
+//! Built-in by default; automatically applies to all tables.
+//! Contains 1 Aspect: TimestampableAspect (priority = -400).
 
 use std::sync::Arc;
 
@@ -93,7 +93,7 @@ impl Protocol for TimestampableProtocol {
     }
 
     fn description(&self) -> &str {
-        "创建和更新时自动注入时间戳"
+        "Automatically injects timestamps on create and update"
     }
 
     fn aspects(&self) -> Vec<Arc<dyn Aspect>> {

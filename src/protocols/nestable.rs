@@ -1,7 +1,7 @@
-//! nestable Protocol — 父子树形结构
+//! nestable Protocol — parent-child tree structure
 //!
-//! 提供 `parent_id`、`depth`、`position` 三列，
-//! create 时自动计算 depth（父级 depth + 1）和 position（同级最大 + 1）。
+//! Provides `parent_id`, `depth`, and `position` columns;
+//! automatically calculates depth (parent depth + 1) and position (max among siblings + 1) on create.
 
 use std::sync::Arc;
 
@@ -88,7 +88,7 @@ impl Protocol for NestableProtocol {
     }
 
     fn description(&self) -> &str {
-        "父子树形结构，支持 parent_id、层级深度、同级排序"
+        "Parent-child tree structure with parent_id, depth, and sibling ordering"
     }
 
     fn aspects(&self) -> Vec<Arc<dyn Aspect>> {

@@ -1,4 +1,4 @@
-//! GraphQL Mutation 解析器
+//! GraphQL Mutation resolvers
 
 use super::types::{ContentItem, DeleteResult, JsonScalar, MutationRoot};
 use crate::content_type::handler::cms_detail_cache_key;
@@ -27,7 +27,7 @@ fn require_auth(ctx: &Context<'_>) -> Result<AuthUser> {
 
 #[Object]
 impl MutationRoot {
-    /// 创建内容
+    /// Create content
     async fn create_content(
         &self,
         ctx: &Context<'_>,
@@ -66,7 +66,7 @@ impl MutationRoot {
         Ok(json_to_content_item(result))
     }
 
-    /// 更新内容
+    /// Update content
     async fn update_content(
         &self,
         ctx: &Context<'_>,
@@ -130,7 +130,7 @@ impl MutationRoot {
         Ok(json_to_content_item(result))
     }
 
-    /// 删除内容
+    /// Delete content
     async fn delete_content(
         &self,
         ctx: &Context<'_>,

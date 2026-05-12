@@ -1,4 +1,4 @@
-//! 页面与块模型及数据库查询
+//! Page and block models with database queries
 
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]

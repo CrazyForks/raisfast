@@ -1,6 +1,6 @@
-//! 基于 sqlx 的 `PostRepository` 实现
+//! sqlx-based `PostRepository` implementation
 //!
-//! 将 `models::post` 的函数调用封装为 `PostRepository` trait 实现。
+//! Wraps `models::post` function calls into a `PostRepository` trait implementation.
 
 use std::collections::HashMap;
 
@@ -14,37 +14,37 @@ use crate::repositories::define_sqlx_repo;
 define_sqlx_repo!(SqlxPostRepository);
 
 impl SqlxPostRepository {
-    /// 获取内部连接池引用
+    /// Get a reference to the internal connection pool
     #[must_use]
     pub fn pool(&self) -> &Pool {
         &self.pool
     }
 }
 
-/// 文章 Repository 接口
+/// Post Repository interface
 #[async_trait::async_trait]
 pub trait PostRepository: Send + Sync {
-    /// 获取内部连接池引用
+    /// Get a reference to the internal connection pool
     fn pool(&self) -> &crate::db::Pool;
 
-    /// 根据 slug 查找文章
+    /// Find a post by slug
     async fn find_by_slug(&self, slug: &str, tenant_id: Option<&str>) -> AppResult<Option<Post>>;
 
-    /// 根据 ID 查找文章
+    /// Find a post by ID
     async fn find_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<Option<Post>>;
 
-    /// 根据 ID 查找文章（JOIN 作者名和分类名）
+    /// Find a post by ID (JOIN with author name and category name)
     async fn find_joined_by_id(&self, id: i64, tenant_id: Option<&str>)
     -> AppResult<PostJoinedRow>;
 
-    /// 分页查询已发布文章（JOIN 作者名和分类名）
+    /// Find published posts with pagination (JOIN with author name and category name)
     async fn find_published_joined(
         &self,
         query: FindPublishedQuery,
         tenant_id: Option<&str>,
     ) -> AppResult<(Vec<PostJoinedRow>, i64)>;
 
-    /// 查询全部文章（含所有状态），用于后台管理
+    /// Find all posts (all statuses) for admin management
     async fn find_all_joined(
         &self,
         page: i64,
@@ -53,41 +53,41 @@ pub trait PostRepository: Send + Sync {
         tenant_id: Option<&str>,
     ) -> AppResult<(Vec<PostJoinedRow>, i64)>;
 
-    /// 原子性增加浏览量并返回 JOIN 查询结果
+    /// Atomically increment view count and return the JOIN result
     async fn increment_view_count_joined(
         &self,
         slug: &str,
         tenant_id: Option<&str>,
     ) -> AppResult<PostJoinedRow>;
 
-    /// 获取单篇文章的标签
+    /// Get tags for a single post
     async fn get_post_tags(
         &self,
         post_id: i64,
         tenant_id: Option<&str>,
     ) -> AppResult<Vec<TagBrief>>;
 
-    /// 批量获取多篇文章的标签
+    /// Batch get tags for multiple posts
     async fn get_tags_for_posts(
         &self,
         post_ids: &[i64],
         tenant_id: Option<&str>,
     ) -> AppResult<HashMap<i64, Vec<TagBrief>>>;
 
-    /// 根据 ID 列表批量查询已发布文章（JOIN 作者名和分类名）
+    /// Batch find published posts by ID list (JOIN with author name and category name)
     async fn find_joined_by_ids(
         &self,
         ids: &[i64],
         tenant_id: Option<&str>,
     ) -> AppResult<Vec<PostJoinedRow>>;
 
-    /// 创建文章，根据 `tag_ids` 是否为 Some 决定是否同步标签
+    /// Create a post; syncs tags if `tag_ids` is Some
     async fn create(&self, cmd: CreatePostCmd, tenant_id: Option<&str>) -> AppResult<Post>;
 
-    /// 更新文章，根据 `tag_ids` 是否为 Some 决定是否同步标签
+    /// Update a post; syncs tags if `tag_ids` is Some
     async fn update(&self, cmd: UpdatePostCmd, tenant_id: Option<&str>) -> AppResult<Post>;
 
-    /// 删除文章
+    /// Delete a post
     async fn delete(&self, id: i64, tenant_id: Option<&str>) -> AppResult<()>;
 }
 

@@ -1,19 +1,19 @@
-//! 插件系统
+//! Plugin system
 //!
-//! 支持三运行时：WASM (wasmtime)、JavaScript (QuickJS/rquickjs)、Lua (mlua)。
-//! 通过 feature flag `plugin-wasm` / `plugin-js` / `plugin-lua` 控制编译。
-//! 插件通过 Hook 点与宿主交互，运行在沙箱中。
+//! Supports four runtimes: WASM (wasmtime), JavaScript (QuickJS/rquickjs), Lua (mlua), Rhai.
+//! Controlled via feature flags `plugin-wasm` / `plugin-js` / `plugin-lua` / `plugin-rhai`.
+//! Plugins interact with the host through hook points and run in sandboxes.
 //!
-//! # 新增能力（v2）
+//! # New Capabilities (v2)
 //!
-//! - **Host API 扩展**: `httpGet`, `httpPost`, `getPost`, `getData`, `setData`, `dbQuery`
-//! - **权限执行**: manifest 声明的 permissions 在运行时强制校验
-//! - **生命周期 Hook**: `on_load` / `on_unload` 回调
-//! - **错误恢复**: 连续错误达到阈值自动禁用插件
-//! - **`EventBus`**: 事件驱动架构，插件可订阅内部事件
-//! - **性能指标**: 每个插件的 Hook 执行耗时、错误次数统计
-//! - **依赖管理**: manifest 可声明插件依赖，加载时检测
-//! - **管理 API**: 运行时启用/禁用/重载插件
+//! - **Host API extensions**: `httpGet`, `httpPost`, `getPost`, `getData`, `setData`, `dbQuery`
+//! - **Permission enforcement**: permissions declared in manifest are enforced at runtime
+//! - **Lifecycle hooks**: `on_load` / `on_unload` callbacks
+//! - **Error recovery**: plugins are auto-disabled after reaching consecutive error threshold
+//! - **`EventBus`**: event-driven architecture; plugins can subscribe to internal events
+//! - **Performance metrics**: per-plugin hook execution time and error count tracking
+//! - **Dependency management**: manifest can declare plugin dependencies, checked at load time
+//! - **Management API**: enable/disable/reload plugins at runtime
 
 #[cfg(feature = "plugin-wasm")]
 mod bindings;
@@ -70,9 +70,9 @@ use crate::config::app::AppConfig;
 use crate::db::Pool;
 use crate::errors::app_error::{AppError, AppResult};
 
-/// 将 sqlx 任意查询结果行转换为 JSON 数组字符串
+/// Convert sqlx arbitrary query result rows to a JSON array string
 ///
-/// 仅支持当前编译的数据库后端。
+/// Only supports the currently compiled database backend.
 #[cfg(feature = "db-sqlite")]
 pub(crate) fn rows_to_json(rows: &[sqlx::sqlite::SqliteRow]) -> String {
     use sqlx::{Column, Row};
@@ -200,10 +200,10 @@ pub(crate) fn rows_to_json(rows: &[sqlx::mysql::MySqlRow]) -> String {
     serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string())
 }
 
-/// 连续错误达到此阈值后自动禁用插件
+/// Auto-disable plugin after this many consecutive errors
 const AUTO_DISABLE_THRESHOLD: u32 = 5;
 
-/// 已加载的插件实例（WASM、JS 或 Lua）
+/// Loaded plugin instance (WASM, JS, or Lua)
 enum LoadedPluginInstance {
     #[cfg(feature = "plugin-wasm")]
     Wasm(Arc<WasmInstancePool>),
@@ -215,7 +215,7 @@ enum LoadedPluginInstance {
     Rhai(String),
 }
 
-/// 插件健康状态与性能指标
+/// Plugin health status and performance metrics
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct PluginHealth {
@@ -225,7 +225,7 @@ pub struct PluginHealth {
     pub auto_disabled: bool,
 }
 
-/// 插件 Hook 执行性能指标
+/// Plugin hook execution performance metrics
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct PluginMetrics {
@@ -234,7 +234,7 @@ pub struct PluginMetrics {
     pub total_duration_us: u64,
 }
 
-/// 已加载的插件
+/// Loaded plugin
 struct LoadedPlugin {
     manifest: PluginManifest,
     instance: LoadedPluginInstance,
@@ -242,10 +242,10 @@ struct LoadedPlugin {
     metrics: RwLock<HashMap<String, PluginMetrics>>,
 }
 
-/// 插件系统核心管理器
+/// Plugin system core manager
 ///
-/// 负责插件的加载、卸载、Hook 调度。
-/// 通过 `Arc<PluginManager>` 共享在 `AppState` 中。
+/// Responsible for plugin loading, unloading, and hook dispatch.
+/// Shared in `AppState` via `Arc<PluginManager>`.
 pub struct PluginManager {
     #[cfg(feature = "plugin-wasm")]
     engine: wasmtime::Engine,
@@ -284,7 +284,7 @@ struct HookIndexEntry {
     content_types: Vec<String>,
 }
 
-/// 插件系统内部事件
+/// Plugin system internal events
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize)]
 #[non_exhaustive]
@@ -310,7 +310,7 @@ pub enum PluginEvent {
     },
 }
 
-/// 插件列表响应项（管理 API 使用）
+/// Plugin list response item (used by management API)
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize)]
 pub struct PluginInfoResponse {
@@ -326,16 +326,16 @@ pub struct PluginInfoResponse {
     pub permissions: Permissions,
 }
 
-/// 设置 `PluginManager` 的可选依赖
+/// Optional dependencies for setting up `PluginManager`
 pub struct PluginManagerOptions {
     pub pool: Option<Pool>,
     pub event_bus: Option<crate::eventbus::EventBus>,
 }
 
 impl PluginManager {
-    /// 创建新的 `PluginManager` 并加载插件目录，返回 `Arc<Self>`。
+    /// Create a new `PluginManager` and load the plugin directory, returning `Arc<Self>`.
     ///
-    /// 返回 `Arc` 是因为热重载 watcher 需要持有自引用来执行 reload。
+    /// Returns `Arc` because the hot-reload watcher needs a self-reference to perform reloads.
     pub async fn new(config: Arc<AppConfig>) -> Arc<Self> {
         Self::new_with_options(
             config,
@@ -347,7 +347,7 @@ impl PluginManager {
         .await
     }
 
-    /// 带可选依赖创建 `PluginManager`
+    /// Create a `PluginManager` with optional dependencies
     pub async fn new_with_options(config: Arc<AppConfig>, opts: PluginManagerOptions) -> Arc<Self> {
         let manager = Self::build_instance(config, opts).await;
 
@@ -371,12 +371,12 @@ impl PluginManager {
         manager
     }
 
-    /// 创建空的 `PluginManager`（不扫描目录），需手动调用 load_plugin
+    /// Create an empty `PluginManager` (no directory scan); call load_plugin manually
     pub async fn new_empty(config: Arc<AppConfig>, opts: PluginManagerOptions) -> Arc<Self> {
         Self::build_instance(config, opts).await
     }
 
-    /// 构建 PluginManager 实例（引擎初始化，不加载插件）
+    /// Build PluginManager instance (engine initialization, no plugin loading)
     async fn build_instance(config: Arc<AppConfig>, opts: PluginManagerOptions) -> Arc<Self> {
         #[cfg(feature = "plugin-wasm")]
         let engine = {
@@ -424,22 +424,22 @@ impl PluginManager {
         })
     }
 
-    /// 设置数据库连接池（如果创建时未提供）
+    /// Set the database connection pool (if not provided at creation)
     pub fn set_pool(&mut self, pool: Pool) {
         self.pool = Some(pool);
     }
 
-    /// 订阅插件系统事件
+    /// Subscribe to plugin system events
     pub fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<Arc<PluginEvent>> {
         self.event_bus.subscribe()
     }
 
-    /// 发布插件系统事件
+    /// Emit a plugin system event
     fn emit_event(&self, event: PluginEvent) {
         let _ = self.event_bus.send(Arc::new(event));
     }
 
-    /// 扫描插件目录，加载所有有效插件
+    /// Scan the plugin directory and load all valid plugins
     pub async fn load_all(&self) {
         let plugin_dir = match &self.config.plugin_dir {
             Some(d) => d,
@@ -526,7 +526,7 @@ impl PluginManager {
         }
     }
 
-    /// 从 manifest.toml 所在目录加载插件，根据 runtime 字段选择引擎
+    /// Load plugin from the directory containing manifest.toml, selecting engine by runtime field
     pub async fn load_plugin_from_dir(&self, manifest_path: &Path) -> AppResult<String> {
         let dir = manifest_path.parent().ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!("manifest has no parent directory"))
@@ -607,7 +607,7 @@ impl PluginManager {
         }
     }
 
-    /// 加载 WASM 插件
+    /// Load a WASM plugin
     #[cfg(feature = "plugin-wasm")]
     async fn load_wasm_plugin(
         &self,
@@ -670,7 +670,7 @@ impl PluginManager {
         Ok(id)
     }
 
-    /// 加载 JS 插件
+    /// Load a JS plugin
     #[cfg(feature = "plugin-js")]
     async fn load_js_plugin(
         &self,
@@ -733,7 +733,7 @@ impl PluginManager {
         Ok(id)
     }
 
-    /// 加载 Lua 插件
+    /// Load a Lua plugin
     #[cfg(feature = "plugin-lua")]
     async fn load_lua_plugin(
         &self,
@@ -791,7 +791,7 @@ impl PluginManager {
         Ok(id)
     }
 
-    /// 加载 Rhai 插件
+    /// Load a Rhai plugin
     #[cfg(feature = "plugin-rhai")]
     async fn load_rhai_plugin(
         &self,
@@ -841,8 +841,8 @@ impl PluginManager {
         Ok(id)
     }
 
-    /// 卸载指定插件
-    /// 从所有已加载插件重建路由索引。
+    /// Unload the specified plugin
+    /// Rebuild route index from all loaded plugins.
     fn rebuild_route_index(&self) {
         let plugins = match self.plugins.try_read() {
             Ok(guard) => guard,
@@ -930,7 +930,7 @@ impl PluginManager {
         }
     }
 
-    /// 同步插件的 Cron 调度到数据库
+    /// Sync plugin Cron schedules to the database
     async fn sync_crons_for_plugin(&self, plugin_id: &str, entries: &[CronEntry]) {
         if let Some(ref pool) = self.pool
             && let Err(e) = crate::worker::sync_plugin_crons(pool, plugin_id, entries).await
@@ -939,7 +939,7 @@ impl PluginManager {
         }
     }
 
-    /// 删除插件关联的 Cron 调度
+    /// Remove Cron schedules associated with a plugin
     async fn remove_crons_for_plugin(&self, plugin_id: &str) {
         if let Some(ref pool) = self.pool
             && let Err(e) = crate::worker::remove_plugin_crons(pool, plugin_id).await
@@ -948,7 +948,7 @@ impl PluginManager {
         }
     }
 
-    /// 重新加载指定插件（热更新）
+    /// Reload a specified plugin (hot update)
     pub async fn reload_plugin(&self, plugin_dir: &Path) {
         let manifest_path = plugin_dir.join("manifest.toml");
         if !manifest_path.exists() {
@@ -973,9 +973,9 @@ impl PluginManager {
         }
     }
 
-    /// 启动文件监听器。
+    /// Start the file watcher.
     ///
-    /// 检测 `.wasm` / `.js` 文件变化，通过 channel 通知 reload task。
+    /// Detects `.wasm` / `.js` file changes and notifies the reload task via channel.
     async fn start_watcher(&self) {
         let plugin_dir = match &self.config.plugin_dir {
             Some(d) => d.clone(),
@@ -1039,7 +1039,7 @@ impl PluginManager {
         *w = Some(watcher);
     }
 
-    /// 处理文件变化事件，找到并重载对应插件目录。
+    /// Handle file change events, find and reload the corresponding plugin directory.
     async fn reload_changed_file(&self, changed_file: &Path) {
         let plugin_dir = match &self.config.plugin_dir {
             Some(d) => PathBuf::from(d),
@@ -1085,7 +1085,7 @@ impl PluginManager {
         );
     }
 
-    /// 调度 Filter 类型 Hook（链式调用）
+    /// Dispatch Filter-type hooks (chain invocation)
     pub async fn dispatch_filter<T: Clone + Serialize + DeserializeOwned + Send>(
         &self,
         hook: HookPoint,
@@ -1097,7 +1097,7 @@ impl PluginManager {
             .await
     }
 
-    /// 调度 Filter 类型 Hook，带显式 content_type
+    /// Dispatch Filter-type hooks with explicit content_type
     pub async fn dispatch_filter_with_content_type<
         T: Clone + Serialize + DeserializeOwned + Send,
     >(
@@ -1210,7 +1210,7 @@ impl PluginManager {
         Ok(current)
     }
 
-    /// 调度 Action 类型 Hook（顺序执行，忽略返回值）
+    /// Dispatch Action-type hooks (sequential execution, return value ignored)
     pub async fn dispatch_action<T: Serialize>(&self, hook: HookPoint, data: &T) {
         let func_name = hook.wasm_func_name();
         let content_type = self.extract_content_type(data);
@@ -1218,7 +1218,7 @@ impl PluginManager {
             .await
     }
 
-    /// 调度 Action 类型 Hook，带显式 content_type
+    /// Dispatch Action-type hooks with explicit content_type
     pub async fn dispatch_action_with_content_type<T: Serialize>(
         &self,
         hook: HookPoint,
@@ -1321,7 +1321,7 @@ impl PluginManager {
         }
     }
 
-    /// 调度 `render_markdown` Hook（第一个返回 Some 的插件胜出）
+    /// Dispatch `render_markdown` hook (first plugin returning Some wins)
     pub async fn dispatch_render_override(&self, content: &str) -> Option<String> {
         let func_name = "render_markdown";
         let entries = self.hook_index.get(func_name)?;
@@ -1411,12 +1411,12 @@ impl PluginManager {
         None
     }
 
-    /// 获取已加载插件数量
+    /// Get the number of loaded plugins
     pub async fn plugin_count(&self) -> usize {
         self.plugins.read().await.len()
     }
 
-    /// 获取所有插件的声明式路由（用于路由注册表）
+    /// Get all declarative routes from plugins (for route registry)
     pub async fn all_plugin_routes(&self) -> Vec<(String, String, String)> {
         let plugins = self.plugins.read().await;
         let mut routes = Vec::new();
@@ -1429,7 +1429,7 @@ impl PluginManager {
         routes
     }
 
-    /// 获取所有已加载插件的元数据
+    /// Get metadata for all loaded plugins
     pub async fn list_plugins(&self) -> Vec<(String, String, String)> {
         let plugins = self.plugins.read().await;
         plugins
@@ -1444,7 +1444,7 @@ impl PluginManager {
             .collect()
     }
 
-    /// 获取所有插件的详细信息（含健康状态、指标、Hook 列表）
+    /// Get detailed information for all plugins (including health status, metrics, hook list)
     pub async fn list_plugins_detail(&self) -> Vec<PluginInfoResponse> {
         let plugins = self.plugins.read().await;
         let mut result = Vec::new();
@@ -1468,7 +1468,7 @@ impl PluginManager {
         result
     }
 
-    /// 获取单个插件的详细信息
+    /// Get detail for a single plugin
     pub async fn get_plugin_detail(&self, id: &str) -> Option<PluginInfoResponse> {
         let plugins = self.plugins.read().await;
         let p = plugins.get(id)?;
@@ -1489,7 +1489,7 @@ impl PluginManager {
         })
     }
 
-    /// 启用被自动禁用的插件（重置错误计数）
+    /// Enable an auto-disabled plugin (reset error count)
     pub async fn enable_plugin(&self, id: &str) -> AppResult<()> {
         let plugins = self.plugins.read().await;
         let plugin = plugins
@@ -1503,7 +1503,7 @@ impl PluginManager {
         Ok(())
     }
 
-    /// 禁用插件（标记为自动禁用）
+    /// Disable a plugin (mark as auto-disabled)
     pub async fn disable_plugin(&self, id: &str) -> AppResult<()> {
         let plugins = self.plugins.read().await;
         let plugin = plugins
@@ -1514,7 +1514,7 @@ impl PluginManager {
         Ok(())
     }
 
-    /// 记录插件 Hook 错误，达到阈值自动禁用
+    /// Record a plugin hook error; auto-disable when threshold is reached
     async fn record_hook_error(&self, plugin_id: &str, hook: &str, error: &str) {
         let plugins = self.plugins.read().await;
         let Some(plugin) = plugins.get(plugin_id) else {
@@ -1548,7 +1548,7 @@ impl PluginManager {
         });
     }
 
-    /// 记录 Hook 执行性能数据
+    /// Record hook execution performance data
     async fn record_hook_metrics(
         &self,
         plugin_id: &str,
@@ -1569,7 +1569,7 @@ impl PluginManager {
         }
     }
 
-    /// 检查插件是否被自动禁用
+    /// Check if a plugin is auto-disabled
     fn extract_content_type<T: Serialize>(&self, data: &T) -> Option<String> {
         let val = serde_json::to_value(data).ok()?;
         val.get("content_type")
@@ -1586,7 +1586,7 @@ impl PluginManager {
         !health.auto_disabled
     }
 
-    /// 重置插件的错误计数（成功调用后）
+    /// Reset a plugin's error count (after successful invocation)
     async fn reset_error_count(&self, plugin_id: &str) {
         let plugins = self.plugins.read().await;
         let Some(plugin) = plugins.get(plugin_id) else {
@@ -1598,14 +1598,14 @@ impl PluginManager {
         }
     }
 
-    /// 获取数据库连接池引用（Host API 使用）
+    /// Get a reference to the database connection pool (used by Host API)
     pub fn pool(&self) -> Option<&Pool> {
         self.pool.as_ref()
     }
 
-    /// 调度自定义路由请求。
+    /// Dispatch a custom route request.
     ///
-    /// 遍历所有插件的 `manifest.routes`，按 method+path 匹配后调用对应的 handler 函数。
+    /// Iterates all plugins' `manifest.routes`, matches by method+path, and calls the corresponding handler function.
     pub async fn dispatch_route(
         &self,
         path: &str,
@@ -1710,7 +1710,7 @@ impl PluginManager {
         None
     }
 
-    /// 在 routes 列表中按 method + path 精确匹配，返回命中的 RouteDef
+    /// Find a route by exact method + path match in the routes list
     #[allow(dead_code)]
     fn match_route<'a>(routes: &'a [RouteDef], method: &str, path: &str) -> Option<&'a RouteDef> {
         routes
@@ -1718,10 +1718,10 @@ impl PluginManager {
             .find(|r| r.method.eq_ignore_ascii_case(method) && path_matches_route(path, &r.path))
     }
 
-    /// 调用插件的 JSON filter，返回统一包装的 Response。
+    /// Call a plugin's JSON filter and return a uniformly wrapped Response.
     ///
-    /// 插件返回原始数据，框架包装为 `{code, message, data}`。
-    /// 若插件返回 `{__plugin_error: true, __status, __message}` 则视为错误。
+    /// The plugin returns raw data; the framework wraps it as `{code, message, data}`.
+    /// If the plugin returns `{__plugin_error: true, __status, __message}`, it is treated as an error.
     async fn call_plugin_json(
         &self,
         plugin: &LoadedPlugin,
@@ -1811,8 +1811,8 @@ impl PluginManager {
     }
 }
 
-/// 路由路径匹配（支持 `:param` 占位段）
-/// 计算路由索引键：取前两段固定段作为前缀。
+/// Route path matching (supports `:param` placeholder segments)
+/// Compute route index key: take the first two static segments as prefix.
 fn route_index_key(pattern: &str) -> String {
     let parts: Vec<&str> = pattern.trim_end_matches('/').split('/').take(3).collect();
     parts.join("/")
@@ -1838,7 +1838,7 @@ fn path_matches_route(path: &str, pattern: &str) -> bool {
     true
 }
 
-/// 从已匹配的路由中提取命名参数
+/// Extract named parameters from a matched route
 ///
 /// ```text
 /// path:    /api/v1/plugins/crm/pipeline/deal-123
@@ -1857,7 +1857,7 @@ fn extract_route_params(path: &str, pattern: &str) -> serde_json::Map<String, se
     params
 }
 
-/// 拓扑排序：根据 dependencies 字段确定加载顺序
+/// Topological sort: determine load order based on dependencies field
 fn topological_sort(manifests: &HashMap<String, PluginManifest>) -> Vec<String> {
     let mut in_degree: HashMap<&str, u32> = HashMap::new();
     let mut dependents: HashMap<&str, Vec<&str>> = HashMap::new();
@@ -2754,7 +2754,7 @@ priority = 10
         }
     }
 
-    // ── VFS 集成测试 ──────────────────────────────────────────────
+    // ── VFS integration tests ──────────────────────────────────────────────
 
     #[cfg(feature = "plugin-lua")]
     #[tokio::test]
@@ -3324,7 +3324,7 @@ fn handle_test(input) {
         assert!(result.is_some());
     }
 
-    // ── Rhai 真实插件集成测试（seo-rhai）──────────────────────────
+    // ── Rhai real plugin integration test (seo-rhai)──────────────────────────
 
     #[cfg(feature = "plugin-rhai")]
     #[tokio::test]
@@ -3515,7 +3515,7 @@ fn on_post_created(data) {
         config.plugin_vfs_max_total_size = 1048576;
         let mgr = PluginManager::new(Arc::new(config)).await;
 
-        // 创建第一篇文章
+        // Create the first post
         let input1 = serde_json::json!({
             "title": "First Post",
             "content": "Hello world"
@@ -3526,7 +3526,7 @@ fn on_post_created(data) {
             .unwrap();
         mgr.dispatch_action(HookPoint::PostCreated, &created1).await;
 
-        // 验证 VFS 缓存文件已写入
+        // Verify VFS cache file was written
         let vfs_plugin = vfs_root.join("com.raisfast.seo-vfs");
         let cache_file = vfs_plugin.join("cache/posts/first-post.json");
         assert!(cache_file.exists(), "cache file should exist");
@@ -3538,7 +3538,7 @@ fn on_post_created(data) {
         assert!(stats_file.exists(), "stats file should exist");
         assert_eq!(std::fs::read_to_string(&stats_file).unwrap(), "1");
 
-        // 创建第二篇文章
+        // Create the second post
         let input2 = serde_json::json!({
             "title": "Second Post",
             "content": "Another post"
@@ -3549,14 +3549,14 @@ fn on_post_created(data) {
             .unwrap();
         mgr.dispatch_action(HookPoint::PostCreated, &created2).await;
 
-        // 验证计数器递增
+        // Verify counter incremented
         assert_eq!(
             std::fs::read_to_string(&stats_file).unwrap(),
             "2",
             "counter should increment to 2"
         );
 
-        // 验证 filter 输出 slug
+        // Verify filter output slug
         assert_eq!(created2["slug"], "second-post");
     }
 
@@ -3619,7 +3619,7 @@ fn seo_health(input) {
         config.plugin_vfs_max_total_size = 1048576;
         let mgr = PluginManager::new(Arc::new(config)).await;
 
-        // health 路由
+        // health route
         let health = mgr
             .dispatch_route(
                 "/api/v1/plugins/seo/health",
@@ -3635,7 +3635,7 @@ fn seo_health(input) {
             .await;
         assert!(health.is_some(), "health route should match");
 
-        // stats 路由（无缓存时 count=0）
+        // stats route (count=0 when no cache)
         let stats = mgr
             .dispatch_route(
                 "/api/v1/plugins/seo/stats",
@@ -3651,7 +3651,7 @@ fn seo_health(input) {
             .await;
         assert!(stats.is_some(), "stats route should match");
 
-        // 不存在的路由
+        // Non-existent route
         let none = mgr
             .dispatch_route(
                 "/api/v1/plugins/seo/nonexistent",
@@ -3667,7 +3667,7 @@ fn seo_health(input) {
             .await;
         assert!(none.is_none(), "unknown route should not match");
 
-        // 错误的 method
+        // Wrong method
         let wrong_method = mgr
             .dispatch_route(
                 "/api/v1/plugins/seo/health",

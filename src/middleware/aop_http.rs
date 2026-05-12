@@ -1,7 +1,7 @@
-//! HTTP AOP 中间件
+//! HTTP AOP middleware
 //!
-//! 在请求处理前后调用 AspectEngine 的 HTTP Layer dispatch，
-//! 允许 aspect 拦截/修改请求和响应。
+//! Calls AspectEngine's HTTP Layer dispatch before and after request processing,
+//! allowing aspects to intercept/modify requests and responses.
 
 use std::collections::HashMap;
 

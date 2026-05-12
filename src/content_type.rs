@@ -1,26 +1,26 @@
-//! 动态内容类型引擎
+//! Dynamic content type engine
 //!
-//! 提供 Schema-Driven 的内容管理系统核心：
-//! - 从 TOML 文件解析内容类型定义
-//! - 自动生成数据库 Migration
-//! - 泛型 CRUD Repository 和 API Handler
-//! - 字段校验与关系解析
+//! Provides the schema-driven content management system core:
+//! - Parse content type definitions from TOML files
+//! - Automatically generate database migrations
+//! - Generic CRUD Repository and API Handler
+//! - Field validation and relation resolution
 //!
-//! # 设计参考
+//! # Design Reference
 //!
 //! - Strapi v5 Content Type Builder
 //!
-//! # 使用流程
+//! # Usage Flow
 //!
-//! 1. 在 `content_types/` 目录创建 TOML 定义文件
-//! 2. 启动时 `ContentTypeRegistry::load_from_dir()` 加载所有 schema
-//! 3. `SchemaMigrator::migrate()` 自动建表/加列
-//! 4. `register_content_routes()` 自动注册 CRUD API
+//! 1. Create TOML definition files in the `content_types/` directory
+//! 2. At startup, `ContentTypeRegistry::load_from_dir()` loads all schemas
+//! 3. `SchemaMigrator::migrate()` automatically creates tables/columns
+//! 4. `register_content_routes()` automatically registers CRUD API endpoints
 //!
-//! # 运行时热更新
+//! # Runtime Hot-Reload
 //!
-//! `ContentTypeRegistry` 内部使用 `RwLock`，支持运行时增删改 schema。
-//! 新增的 content type 通过 catch-all 动态路由处理，无需重启服务。
+//! `ContentTypeRegistry` uses `RwLock` internally, supporting runtime add/remove/update of schemas.
+//! Newly added content types are handled via catch-all dynamic routes without server restart.
 
 pub mod handler;
 pub mod migration;
@@ -39,11 +39,11 @@ use schema::ContentTypeSchema;
 
 use crate::errors::app_error::AppError;
 
-/// 内容类型注册表
+/// Content type registry
 ///
-/// 管理所有已注册的 content type schema，提供按名称/表名查询能力。
-/// 内部使用 `ArcSwap` 实现无锁读、低开销写，支持运行时热更新。
-/// 所有查询返回 `Arc<ContentTypeSchema>` 避免深拷贝。
+/// Manages all registered content type schemas, providing lookup by name/table name.
+/// Uses `ArcSwap` internally for lock-free reads and low-overhead writes, supporting runtime hot-reload.
+/// All queries return `Arc<ContentTypeSchema>` to avoid deep copies.
 #[derive(Debug, Default)]
 pub struct ContentTypeRegistry {
     inner: ArcSwap<RegistryInner>,
@@ -58,15 +58,15 @@ struct RegistryInner {
 }
 
 impl ContentTypeRegistry {
-    /// 创建空注册表
+    /// Create an empty registry
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// 从目录加载所有 TOML 定义
+    /// Load all TOML definitions from a directory
     ///
-    /// 扫描 `dir` 下所有 `*.toml` 文件，解析为 `ContentTypeSchema` 并注册。
+    /// Scans all `*.toml` files under `dir`, parses them into `ContentTypeSchema`, and registers them.
     pub fn load_from_dir(
         dir: &Path,
         rule_config: &crate::config::app::RuleEngineConfig,
@@ -115,12 +115,12 @@ impl ContentTypeRegistry {
         Ok(registry)
     }
 
-    /// 注册单个 content type（线程安全）。
+    /// Register a single content type (thread-safe).
     ///
-    /// 检查 singular/plural/table 全局唯一性：
-    /// - table 不能和系统保护表冲突
-    /// - singular/plural/table 不能和其他已注册 content type 冲突
-    /// - singular/plural 不能和内置路由段冲突（posts, categories, tags 等）
+    /// Checks global uniqueness of singular/plural/table:
+    /// - table must not conflict with system protected tables
+    /// - singular/plural/table must not conflict with other registered content types
+    /// - singular/plural must not conflict with built-in route segments (posts, categories, tags, etc.)
     pub fn register(
         &self,
         schema: ContentTypeSchema,
@@ -250,7 +250,7 @@ impl ContentTypeRegistry {
         Ok(())
     }
 
-    /// 设置系统保护表列表
+    /// Set the system protected tables list
     pub fn set_protected_tables(&self, tables: Vec<String>) {
         self.inner.rcu(|inner| RegistryInner {
             types: inner.types.clone(),
@@ -260,14 +260,14 @@ impl ContentTypeRegistry {
         });
     }
 
-    /// 按 singular name 查询
+    /// Lookup by singular name
     #[must_use]
     pub fn get(&self, name: &str) -> Option<Arc<ContentTypeSchema>> {
         let guard = self.inner.load();
         guard.types.get(name).cloned()
     }
 
-    /// 按表名查询
+    /// Lookup by table name
     #[must_use]
     pub fn get_by_table(&self, table: &str) -> Option<Arc<ContentTypeSchema>> {
         let guard = self.inner.load();
@@ -277,26 +277,26 @@ impl ContentTypeRegistry {
             .and_then(|singular| guard.types.get(singular).cloned())
     }
 
-    /// 获取所有已注册 content type
+    /// Get all registered content types
     #[must_use]
     pub fn all(&self) -> Vec<Arc<ContentTypeSchema>> {
         let guard = self.inner.load();
         guard.types.values().cloned().collect()
     }
 
-    /// 已注册数量
+    /// Number of registered items
     #[must_use]
     pub fn len(&self) -> usize {
         self.inner.load().types.len()
     }
 
-    /// 是否为空
+    /// Whether the registry is empty
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// 按 plural name 查询（O(1) HashMap 查找）
+    /// Lookup by plural name (O(1) HashMap lookup)
     #[must_use]
     pub fn get_by_plural(&self, plural: &str) -> Option<Arc<ContentTypeSchema>> {
         let guard = self.inner.load();
@@ -306,7 +306,7 @@ impl ContentTypeRegistry {
             .and_then(|singular| guard.types.get(singular).cloned())
     }
 
-    /// 注销单个 content type（线程安全）
+    /// Unregister a single content type (thread-safe)
     pub fn unregister(&self, singular: &str) -> Option<Arc<ContentTypeSchema>> {
         let removed = {
             let guard = self.inner.load();

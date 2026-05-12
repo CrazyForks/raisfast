@@ -1,19 +1,19 @@
-//! 插件 HTTP 客户端
+//! Plugin HTTP client
 //!
-//! 为插件提供受限的 HTTP 请求能力。
-//! 权限校验（域名白名单）由 Host 层负责，本模块仅负责执行 HTTP 请求。
+//! Provides restricted HTTP request capabilities for plugins.
+//! Permission checking (domain whitelist) is handled by the Host layer; this module only executes HTTP requests.
 
 use std::time::Duration;
 
 use crate::errors::app_error::AppResult;
 
-/// 单次 HTTP 请求超时（秒）
+/// Single HTTP request timeout (seconds)
 const DEFAULT_TIMEOUT_SECS: u64 = 10;
 
-/// 响应体最大大小（1 MB）
+/// Maximum response body size (1 MB)
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
-/// 执行 HTTP GET 请求
+/// Execute an HTTP GET request
 pub async fn http_get(url: &str) -> AppResult<String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
@@ -48,7 +48,7 @@ pub async fn http_get(url: &str) -> AppResult<String> {
     ))
 }
 
-/// 执行 HTTP POST 请求
+/// Execute an HTTP POST request
 pub async fn http_post(url: &str, body: &str, content_type: Option<&str>) -> AppResult<String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))

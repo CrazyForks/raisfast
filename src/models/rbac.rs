@@ -1,6 +1,6 @@
-//! RBAC 模型与数据库查询
+//! RBAC model and database queries
 //!
-//! 定义 `roles` / `permissions` 表的数据结构及全部 CRUD 操作。
+//! Defines data structures for the `roles` / `permissions` tables and all CRUD operations.
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -11,7 +11,7 @@ use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
-/// roles 表行模型
+/// Row model for the roles table
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct Role {
@@ -24,7 +24,7 @@ pub struct Role {
     pub updated_at: Timestamp,
 }
 
-/// permissions 表行模型
+/// Row model for the permissions table
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct Permission {
@@ -38,7 +38,7 @@ pub struct Permission {
     pub created_at: Timestamp,
 }
 
-/// 查询所有角色
+/// List all roles
 pub async fn list_roles(pool: &crate::db::Pool) -> AppResult<Vec<Role>> {
     let roles = sqlx::query_as::<_, Role>(
         "SELECT id, document_id, name, description, is_system, created_at, updated_at FROM roles ORDER BY name",
@@ -48,7 +48,7 @@ pub async fn list_roles(pool: &crate::db::Pool) -> AppResult<Vec<Role>> {
     Ok(roles)
 }
 
-/// 根据 document_id 查找角色
+/// Find role by document_id
 pub async fn find_role_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<Option<Role>> {
     let sql = format!(
         "SELECT id, document_id, name, description, is_system, created_at, updated_at FROM roles WHERE document_id = {}",
@@ -61,7 +61,7 @@ pub async fn find_role_by_id(pool: &crate::db::Pool, document_id: &str) -> AppRe
     Ok(role)
 }
 
-/// 根据角色名查找角色 ID（返回整数 PK）
+/// Find role ID by role name (returns integer PK)
 pub async fn find_role_id_by_name(pool: &crate::db::Pool, name: &str) -> AppResult<Option<i64>> {
     let sql = format!("SELECT id FROM roles WHERE name = {}", ph(1));
     let row = sqlx::query_as::<_, (i64,)>(&sql)
@@ -71,7 +71,7 @@ pub async fn find_role_id_by_name(pool: &crate::db::Pool, name: &str) -> AppResu
     Ok(row.map(|(id,)| id))
 }
 
-/// 创建角色
+/// Create role
 pub async fn create_role(
     pool: &crate::db::Pool,
     document_id: &str,
@@ -102,7 +102,7 @@ pub async fn create_role(
         .ok_or_else(|| AppError::not_found("role"))
 }
 
-/// 更新角色（动态 SET 子句）
+/// Update role (dynamic SET clause)
 pub async fn update_role(
     pool: &crate::db::Pool,
     document_id: &str,
@@ -144,14 +144,14 @@ pub async fn update_role(
         .ok_or_else(|| AppError::not_found(&format!("role/{document_id}")))
 }
 
-/// 删除角色
+/// Delete role
 pub async fn delete_role(pool: &crate::db::Pool, document_id: &str) -> AppResult<()> {
     let sql = format!("DELETE FROM roles WHERE document_id = {}", ph(1));
     sqlx::query(&sql).bind(document_id).execute(pool).await?;
     Ok(())
 }
 
-/// 查询角色的所有权限
+/// List all permissions for a role
 pub async fn find_permissions_by_role_id(
     pool: &crate::db::Pool,
     role_id: i64,
@@ -167,14 +167,14 @@ pub async fn find_permissions_by_role_id(
     Ok(perms)
 }
 
-/// 删除角色的所有权限
+/// Delete all permissions for a role
 pub async fn delete_permissions_by_role_id(pool: &crate::db::Pool, role_id: i64) -> AppResult<()> {
     let sql = format!("DELETE FROM permissions WHERE role_id = {}", ph(1));
     sqlx::query(&sql).bind(role_id).execute(pool).await?;
     Ok(())
 }
 
-/// 插入单条权限
+/// Insert a single permission
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_permission(
     pool: &crate::db::Pool,

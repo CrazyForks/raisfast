@@ -1,7 +1,7 @@
-//! 插件 KV 存储模型
+//! Plugin KV storage model
 //!
-//! 插件通过 Host API (`setData`/`getData`) 存取持久化数据。
-//! 每个插件只能访问自己 `plugin_id` 下的键值对。
+//! Plugins persist data via the Host API (`setData`/`getData`).
+//! Each plugin can only access key-value pairs under its own `plugin_id`.
 
 use sqlx::FromRow;
 
@@ -10,7 +10,7 @@ use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
-/// 插件存储行
+/// Plugin storage row
 #[derive(Debug, FromRow)]
 pub struct PluginStorageRow {
     pub plugin_id: String,
@@ -20,7 +20,7 @@ pub struct PluginStorageRow {
     pub updated_at: Timestamp,
 }
 
-/// 获取插件的 KV 数据
+/// Get a plugin's KV data
 pub async fn get(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<Option<String>> {
     let row = sqlx::query_as::<_, PluginStorageRow>(&format!(
         "SELECT * FROM plugin_storage WHERE plugin_id = {} AND storage_key = {}",
@@ -55,7 +55,7 @@ pub async fn get(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<Option<St
     }
 }
 
-/// 设置插件的 KV 数据
+/// Set a plugin's KV data
 pub async fn set(
     pool: &Pool,
     plugin_id: &str,
@@ -95,7 +95,7 @@ pub async fn set(
     Ok(())
 }
 
-/// 删除插件的某个 key
+/// Delete a specific key for a plugin
 pub async fn delete(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<()> {
     sqlx::query(&format!(
         "DELETE FROM plugin_storage WHERE plugin_id = {} AND storage_key = {}",
@@ -109,7 +109,7 @@ pub async fn delete(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// 删除插件的所有数据
+/// Delete all data for a plugin
 pub async fn delete_all(pool: &Pool, plugin_id: &str) -> AppResult<()> {
     sqlx::query(&format!(
         "DELETE FROM plugin_storage WHERE plugin_id = {}",

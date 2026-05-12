@@ -1,4 +1,4 @@
-//! 工作流引擎 — 状态机核心
+//! Workflow engine — state machine core
 
 use super::model::{
     StepDef, StepType, WorkflowDefinition, WorkflowInstance, WorkflowInstanceStatus,
@@ -23,18 +23,18 @@ pub(crate) struct ParallelMeta {
     join_next: Option<String>,
 }
 
-/// 工作流服务
+/// Workflow service
 pub struct WorkflowService {
     pool: Pool,
 }
 
 impl WorkflowService {
-    /// 创建新的工作流服务
+    /// Create a new workflow service
     pub fn new(pool: Pool) -> Self {
         Self { pool }
     }
 
-    /// 创建工作流定义
+    /// Create workflow definition
     pub async fn create_workflow(
         &self,
         id: &str,
@@ -65,7 +65,7 @@ impl WorkflowService {
         .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))
     }
 
-    /// 获取工作流定义
+    /// Get workflow definition
     pub async fn get_workflow(&self, id: &str) -> AppResult<WorkflowDefinition> {
         get_definition(&self.pool, id)
             .await
@@ -73,7 +73,7 @@ impl WorkflowService {
             .ok_or_else(|| AppError::not_found("workflow"))
     }
 
-    /// 列出所有工作流定义
+    /// List all workflow definitions
     pub async fn list_workflows(&self) -> AppResult<Vec<WorkflowDefinition>> {
         list_definitions(&self.pool)
             .await
@@ -93,14 +93,14 @@ impl WorkflowService {
             .ok_or_else(|| AppError::not_found("workflow definition"))
     }
 
-    /// 删除工作流定义
+    /// Delete workflow definition
     pub async fn delete_workflow(&self, id: &str) -> AppResult<()> {
         super::model::delete_definition(&self.pool, id)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))
     }
 
-    /// 启动工作流实例
+    /// Start workflow instance
     pub async fn start_workflow(
         &self,
         definition_id: &str,
@@ -154,13 +154,13 @@ impl WorkflowService {
         })
     }
 
-    /// 执行工作流的当前步骤并推进状态
+    /// Execute the current step of the workflow and advance the state
     ///
-    /// 核心状态转换逻辑：根据步骤类型执行操作，
-    /// 然后根据 next 配置确定下一步。
+    /// Core state transition logic: performs actions based on step type,
+    /// then determines the next step based on the `next` configuration.
     ///
-    /// Parallel 步骤会启动所有分支，每个分支通过后续的 execute_step 调用依次完成。
-    /// 所有分支完成后自动推进到 join_next 步骤。
+    /// Parallel steps spawn all branches; each branch is completed via subsequent `execute_step` calls.
+    /// Once all branches complete, the engine automatically advances to the `join_next` step.
     pub async fn execute_step(
         &self,
         instance_id: &str,
@@ -222,7 +222,7 @@ impl WorkflowService {
         }
     }
 
-    /// 执行普通步骤（Task/Await/Delay/Branch）
+    /// Execute a normal step (Task/Await/Delay/Branch)
     async fn execute_normal_step(
         &self,
         instance: &WorkflowInstance,
@@ -302,7 +302,7 @@ impl WorkflowService {
         }
     }
 
-    /// Parallel 步骤被触发时：启动所有并行分支
+    /// When a Parallel step is triggered: start all parallel branches
     async fn execute_parallel_step(
         &self,
         instance: &WorkflowInstance,
@@ -406,7 +406,7 @@ impl WorkflowService {
             .ok_or_else(|| AppError::not_found("workflow instance"))
     }
 
-    /// 完成一个并行分支：检查是否所有分支都已完成
+    /// Complete a parallel branch: check if all branches have completed
     async fn execute_parallel_branch(
         &self,
         instance: &WorkflowInstance,
@@ -522,7 +522,7 @@ impl WorkflowService {
         }
     }
 
-    /// 标记步骤失败
+    /// Mark step as failed
     pub async fn fail_step(&self, instance_id: &str, error: &str) -> AppResult<()> {
         let instance = self
             .get_instance(instance_id)
@@ -557,7 +557,7 @@ impl WorkflowService {
         Ok(())
     }
 
-    /// 取消工作流实例
+    /// Cancel workflow instance
     pub async fn cancel_instance(&self, instance_id: &str) -> AppResult<()> {
         let instance = self
             .get_instance(instance_id)
@@ -583,14 +583,14 @@ impl WorkflowService {
         Ok(())
     }
 
-    /// 获取工作流实例
+    /// Get workflow instance
     pub async fn get_instance(&self, id: &str) -> AppResult<Option<WorkflowInstance>> {
         get_instance(&self.pool, id)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))
     }
 
-    /// 列出工作流实例
+    /// List workflow instances
     pub async fn list_instances(
         &self,
         definition_id: Option<&str>,
@@ -607,7 +607,7 @@ impl WorkflowService {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))
     }
 
-    /// 获取步骤日志
+    /// Get step logs
     pub async fn get_step_logs(&self, instance_id: &str) -> AppResult<Vec<super::model::StepLog>> {
         let instance = self
             .get_instance(instance_id)
@@ -625,7 +625,7 @@ fn extract_parallel_meta(context: &serde_json::Value) -> Option<ParallelMeta> {
         .and_then(|v| serde_json::from_value(v.clone()).ok())
 }
 
-/// 将步骤输出合并到工作流 context
+/// Merge step output into workflow context
 pub(crate) fn merge_output_into_context(
     context: &mut serde_json::Value,
     output: &serde_json::Value,

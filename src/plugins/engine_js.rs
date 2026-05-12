@@ -1,13 +1,13 @@
-//! QuickJS 引擎封装（per-request 模式）
+//! QuickJS engine wrapper (per-request mode)
 //!
-//! 基于 rquickjs 的 `AsyncRuntime` / `AsyncContext`，
-//! 支持 JavaScript 插件在 tokio 异步环境中运行。
+//! Based on rquickjs `AsyncRuntime` / `AsyncContext`,
+//! supporting JavaScript plugins running in the tokio async environment.
 //!
-//! 采用方案 D（per-request）：每次调用创建全新 QuickJS context，用完销毁。
-//! JS context 创建成本约 1ms，零竞争、无限并发、完美隔离。
+//! Uses scheme D (per-request): a fresh QuickJS context is created for each call and destroyed after use.
+//! JS context creation cost is ~1ms, with zero contention, unlimited concurrency, and perfect isolation.
 //!
-//! ESM 模式：插件使用 `import/export` 语法，
-//! 框架从 module namespace 收集 export 函数注册到 Plugin 对象。
+//! ESM mode: plugins use `import/export` syntax;
+//! the framework collects exported functions from the module namespace and registers them to the Plugin object.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -92,11 +92,11 @@ impl rquickjs::loader::Loader for PluginLoader {
 
 // ── JS Engine ────────────────────────────────────────────────────
 
-/// QuickJS 插件引擎（per-request 模式）
+/// QuickJS plugin engine (per-request mode)
 ///
-/// 存储所有 JS 插件的源码和元数据，每次调用时创建全新 context。
-/// 超时由 interrupt_handler 在同步 `ctx.with()` 内实现，
-/// 外层 `plugins.rs` 的 `tokio::time::timeout` 作为兜底。
+/// Stores source code and metadata for all JS plugins; creates a fresh context for each call.
+/// Timeout is implemented via interrupt_handler within the synchronous `ctx.with()`,
+/// with `tokio::time::timeout` in the outer `plugins.rs` as a fallback.
 pub struct JsEngine {
     plugins: DashMap<String, JsPluginEntry>,
     default_memory_limit_bytes: usize,

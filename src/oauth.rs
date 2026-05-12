@@ -1,11 +1,11 @@
-//! OAuth2 社交登录模块
+//! OAuth2 social login module
 //!
-//! 提供 OAuth2 Authorization Code + PKCE 流程的完整实现。
-//! 每个 Provider 实现 [`OAuthProvider`] trait，通过 [`OAuthProviderRegistry`] 管理。
+//! Provides a complete implementation of the OAuth2 Authorization Code + PKCE flow.
+//! Each provider implements the [`OAuthProvider`] trait, managed via [`OAuthProviderRegistry`].
 //!
-//! ## 目录结构
+//! ## Directory structure
 //!
-//! - `oauth/mod.rs` — trait、registry、PKCE 工具（本文件）
+//! - `oauth/mod.rs` — trait, registry, PKCE utilities (this file)
 //! - `oauth/github.rs` — GitHub OAuth2 Provider
 //! - `oauth/google.rs` — Google OAuth2 Provider
 
@@ -22,22 +22,22 @@ use sha2::{Digest, Sha256};
 
 use crate::errors::app_error::AppResult;
 
-/// OAuth Provider 用户信息
+/// OAuth provider user info
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthUserInfo {
-    /// Provider 侧的用户 ID
+    /// User ID on the provider side
     pub provider_user_id: String,
-    /// 用户邮箱
+    /// User email
     pub email: Option<String>,
-    /// 显示名称
+    /// Display name
     pub display_name: Option<String>,
-    /// 头像 URL
+    /// Avatar URL
     pub avatar_url: Option<String>,
-    /// Provider 返回的原始 profile JSON
+    /// Raw profile JSON returned by the provider
     pub raw_profile: serde_json::Value,
 }
 
-/// OAuth Token 交换响应
+/// OAuth token exchange response
 #[derive(Debug, Clone, Deserialize)]
 pub struct OAuthTokenResponse {
     pub access_token: String,
@@ -51,31 +51,32 @@ pub struct OAuthTokenResponse {
 
 /// OAuth Provider trait
 ///
-/// 每个 OAuth Provider 实现此 trait，提供授权 URL 构建、code 交换、用户信息获取。
+/// Each OAuth provider implements this trait, providing authorize URL construction,
+/// code exchange, and user info retrieval.
 #[async_trait::async_trait]
 pub trait OAuthProvider: Send + Sync {
-    /// Provider 标识（如 "github"）
+    /// Provider identifier (e.g. "github")
     fn name(&self) -> &str;
 
-    /// 构建授权 URL
+    /// Build the authorize URL
     fn authorize_url(&self, state: &str, code_challenge: &str) -> String;
 
-    /// 用 authorization code + code_verifier 换 access_token
+    /// Exchange authorization code + code_verifier for an access_token
     async fn exchange_code(&self, code: &str, code_verifier: &str)
     -> AppResult<OAuthTokenResponse>;
 
-    /// 用 access_token 获取用户信息
+    /// Fetch user info using an access_token
     async fn fetch_user_info(&self, access_token: &str) -> AppResult<OAuthUserInfo>;
 }
 
-/// OAuth Provider 注册表
+/// OAuth Provider registry
 #[derive(Default)]
 pub struct OAuthProviderRegistry {
     providers: HashMap<String, Box<dyn OAuthProvider>>,
 }
 
 impl OAuthProviderRegistry {
-    /// 创建空注册表
+    /// Create an empty registry
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -83,25 +84,25 @@ impl OAuthProviderRegistry {
         }
     }
 
-    /// 注册 Provider
+    /// Register a provider
     pub fn register(&mut self, provider: Box<dyn OAuthProvider>) {
         self.providers.insert(provider.name().to_string(), provider);
     }
 
-    /// 获取指定 Provider
+    /// Get a provider by name
     pub fn get(&self, name: &str) -> Option<&dyn OAuthProvider> {
         self.providers.get(name).map(|p| p.as_ref())
     }
 
-    /// 获取已注册的 Provider 名称列表
+    /// Get the list of registered provider names
     pub fn provider_names(&self) -> Vec<&str> {
         self.providers.keys().map(|s| s.as_str()).collect()
     }
 }
 
-// ── PKCE 工具 ────────────────────────────────────────────────
+// ── PKCE utilities ───────────────────────────────────────────
 
-/// 生成随机 code_verifier（43 字符，满足 43-128 要求）
+/// Generate a random code_verifier (43 characters, satisfying the 43-128 requirement)
 pub fn generate_code_verifier() -> String {
     let mut bytes = [0u8; 32];
     getrandom::getrandom(&mut bytes)
@@ -109,18 +110,18 @@ pub fn generate_code_verifier() -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-/// 从 code_verifier 生成 code_challenge（S256 方法）
+/// Generate a code_challenge from a code_verifier (S256 method)
 pub fn generate_code_challenge(verifier: &str) -> String {
     let digest = Sha256::digest(verifier.as_bytes());
     URL_SAFE_NO_PAD.encode(digest)
 }
 
-/// 生成随机 state 参数（32 字节 hex）
+/// Generate a random state parameter (32-byte hex)
 pub fn generate_state() -> String {
     crate::utils::id::random_hex(32)
 }
 
-// ── 测试 ─────────────────────────────────────────────────────
+// ── Tests ────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

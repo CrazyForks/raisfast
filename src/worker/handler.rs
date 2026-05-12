@@ -1,4 +1,4 @@
-//! 任务 Handler trait 与注册表
+//! Job Handler trait and registry
 
 use std::collections::HashMap;
 
@@ -6,13 +6,13 @@ use crate::errors::app_error::AppResult;
 
 use super::Job;
 
-/// 任务处理器 trait
+/// Job handler trait
 #[async_trait::async_trait]
 pub trait JobHandler: Send + Sync {
     async fn handle(&self, job: &Job) -> AppResult<()>;
 }
 
-/// Handler 注册表
+/// Handler registry
 pub struct JobHandlerRegistry {
     handlers: HashMap<String, Box<dyn JobHandler>>,
 }
@@ -29,7 +29,7 @@ impl JobHandlerRegistry {
         self.handlers.insert(job_type.to_string(), handler);
     }
 
-    /// 检查是否有注册的 Handler
+    /// Checks if a handler is registered
     #[must_use]
     pub fn has_handler(&self, job_type: &str) -> bool {
         self.handlers.contains_key(job_type)
@@ -52,7 +52,7 @@ impl Default for JobHandlerRegistry {
     }
 }
 
-/// 日志 Handler — 记录任务执行（默认 handler，用于开发阶段）
+/// Log handler — records job execution (default handler, used during development)
 pub struct LogJobHandler;
 
 #[async_trait::async_trait]

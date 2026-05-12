@@ -1,6 +1,6 @@
-//! 内置表 Aspect dispatch 辅助函数
+//! Built-in table Aspect dispatch helpers
 //!
-//! 提供统一的 before/after dispatch 调用，减少 Service 层重复代码。
+//! Provides unified before/after dispatch calls to reduce duplicate code in the Service layer.
 
 use crate::aspects::engine::AspectEngine;
 use crate::aspects::{
@@ -123,14 +123,14 @@ impl AspectDispatch<'_> {
     }
 }
 
-/// 创建一个 minimal Record 用于 dispatch（只含 id 和关键标识字段）
+/// Create a minimal Record for dispatch (containing only id and key identifier fields)
 pub fn id_record(id: &str) -> Record {
     let mut r = Record::new();
     r.insert("id".into(), serde_json::json!(id));
     r
 }
 
-/// 从 Aspect dispatch 后的 Record 中提取字符串值
+/// Extract a string value from a Record after Aspect dispatch
 pub fn get_str(record: &Record, key: &str) -> Option<String> {
     record
         .get(key)

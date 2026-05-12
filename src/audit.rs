@@ -1,7 +1,7 @@
-//! 审计日志模块
+//! Audit log module
 //!
-//! 持久化记录管理员操作（谁做了什么、什么时候）。
-//! EventBus 订阅者自动将事件写入 `audit_log` 表。
+//! Persistently records admin operations (who did what, when).
+//! EventBus subscribers automatically write events to the `audit_log` table.
 
 pub mod handler;
 pub mod model;

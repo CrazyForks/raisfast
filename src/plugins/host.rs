@@ -1,7 +1,7 @@
-//! WASM 宿主函数 — Component Model 绑定层
+//! WASM host functions — Component Model binding layer
 //!
-//! 通过 wasmtime 26 bindgen 生成的 Host trait 实现导入接口。
-//! 所有函数委托给 HostContext 的业务逻辑方法。
+//! Host trait implementation for the import interface generated via wasmtime 26 bindgen.
+//! All functions delegate to the business logic methods of HostContext.
 
 use std::sync::Arc;
 

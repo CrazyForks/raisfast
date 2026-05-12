@@ -1,10 +1,10 @@
-//! 认证工具函数
+//! Authentication utility functions
 
 use axum::http::request::Parts;
 
-use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::services::auth::Claims;
+use crate::AppState;
 
 pub fn extract_claims(parts: &mut Parts, state: &AppState) -> Result<Claims, AppError> {
     let auth_header = parts
@@ -20,7 +20,7 @@ pub fn extract_claims(parts: &mut Parts, state: &AppState) -> Result<Claims, App
     crate::services::auth::verify_token(token, &state.jwt_decoding_key)
 }
 
-/// 校验当前用户是管理员或资源所有者，否则返回 `Forbidden`。
+/// Verifies that the current user is an admin or the resource owner; otherwise returns `Forbidden`.
 pub fn require_owner_or_admin(role: &str, user_id: i64, owner_id: i64) -> AppResult<()> {
     if role != "admin" && owner_id != user_id {
         return Err(AppError::Forbidden);
@@ -28,7 +28,7 @@ pub fn require_owner_or_admin(role: &str, user_id: i64, owner_id: i64) -> AppRes
     Ok(())
 }
 
-/// 与 [`require_owner_or_admin`] 相同逻辑，但 `owner_id` 为 `Option`（如访客评论）。
+/// Same logic as [`require_owner_or_admin`], but `owner_id` is `Option` (e.g. guest comments).
 pub fn require_owner_or_admin_opt(
     role: &str,
     user_id: i64,

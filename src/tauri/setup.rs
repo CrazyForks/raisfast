@@ -1,14 +1,14 @@
-//! Tauri 应用初始化和启动
+//! Tauri application initialization and startup
 //!
-//! 在实际 Tauri 项目中，需要创建 `src-tauri/` 目录并配置 `tauri.conf.json`。
-//! 本模块提供命令注册和状态管理，供 `tauri::Builder` 使用。
+//! In an actual Tauri project, you need to create a `src-tauri/` directory and configure `tauri.conf.json`.
+//! This module provides command registration and state management for use with `tauri::Builder`.
 
 use crate::config::app::AppConfig;
 use crate::tauri::AppManagedState;
 
-/// 获取所有 Tauri command 的注册闭包。
+/// Returns a registration closure for all Tauri commands.
 ///
-/// 用法：
+/// Usage:
 /// ```ignore
 /// tauri::Builder::default()
 ///     .manage(state)
@@ -41,7 +41,7 @@ pub fn register_commands() -> impl Fn(tauri::ipc::Invoke) -> bool {
     ]
 }
 
-/// 构建 AppState 并包装为 Tauri managed state
+/// Build AppState and wrap it as Tauri managed state
 pub async fn build_state(config: &AppConfig) -> anyhow::Result<AppManagedState> {
     let (_tx, rx) = tokio::sync::watch::channel(false);
     let state = crate::build_app_state(config, rx).await?;

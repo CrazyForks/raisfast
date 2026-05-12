@@ -1,6 +1,6 @@
-//! 密码重置令牌模型与数据库查询
+//! Password reset token model and database queries
 //!
-//! 管理密码重置令牌的创建、查找、标记已用和过期清理。
+//! Manages creation, lookup, marking as used, and expired cleanup of password reset tokens.
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -10,7 +10,7 @@ use crate::errors::app_error::AppResult;
 use crate::utils::id;
 use crate::utils::tz::Timestamp;
 
-/// 密码重置令牌完整数据库行模型
+/// Password reset token full database row model
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
 pub struct PasswordResetToken {
@@ -23,9 +23,9 @@ pub struct PasswordResetToken {
     pub created_at: Timestamp,
 }
 
-/// 创建新的密码重置令牌
+/// Create a new password reset token
 ///
-/// 生成 document_id 和 32 字节随机令牌，有效期由 `expires_in_secs` 控制。
+/// Generates a document_id and a 32-byte random token. Validity is controlled by `expires_in_secs`.
 pub async fn create(
     pool: &crate::db::Pool,
     user_id: i64,
@@ -67,7 +67,7 @@ pub async fn create(
     })
 }
 
-/// 根据令牌查找未使用的重置记录
+/// Find an unused reset record by token
 pub async fn find_by_token(
     pool: &crate::db::Pool,
     token: &str,
@@ -83,7 +83,7 @@ pub async fn find_by_token(
     Ok(row)
 }
 
-/// 标记令牌为已使用
+/// Mark a token as used
 pub async fn mark_used(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     let sql = format!(
@@ -95,7 +95,7 @@ pub async fn mark_used(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
     Ok(())
 }
 
-/// 删除用户所有未使用的重置令牌（在创建新令牌前调用，防止令牌堆积）
+/// Delete all unused reset tokens for a user (called before creating a new token to prevent token accumulation)
 pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<()> {
     let sql = format!(
         "DELETE FROM password_reset_tokens WHERE user_id = {} AND used_at IS NULL",
@@ -105,7 +105,7 @@ pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: i64) -> AppR
     Ok(())
 }
 
-/// 清理已过期且未使用的令牌
+/// Clean up expired and unused tokens
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
     let now = crate::utils::tz::now_utc();
     let sql = format!(

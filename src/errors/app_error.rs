@@ -1,14 +1,15 @@
-//! 应用核心错误类型定义
+//! Application core error type definitions
 //!
-//! 本模块定义了 [`AppError`] 枚举，作为 handler 层与业务逻辑层的统一错误类型。
-//! 每个变体都映射到对应的 HTTP 状态码，并通过 i18n（`rust_i18n`）实现错误消息的
-//! 多语言翻译。实现了 [`IntoResponse`] trait，可直接作为 Axum handler 的返回类型。
+//! This module defines the [`AppError`] enum, serving as the unified error type
+//! for handler and business logic layers. Each variant maps to a corresponding
+//! HTTP status code and supports i18n message translation via `rust_i18n`.
+//! Implements [`IntoResponse`] trait for direct use as Axum handler return types.
 //!
-//! # 错误码约定
+//! # Error Code Convention
 //!
-//! 错误码遵循 `docs/guide.md` 中的规范，范围 40000–50000：
+//! Error codes follow the specification in `docs/guide.md`, range 40000–50000:
 //!
-//! | 变体               | HTTP 状态码               | 错误码  |
+//! | Variant            | HTTP Status               | Code    |
 //! |-------------------|--------------------------|---------|
 //! | `BadRequest`      | 400 Bad Request          | 40000   |
 //! | `Unauthorized`    | 401 Unauthorized         | 40100   |
@@ -21,94 +22,97 @@
 //! | `Internal`        | 500 Internal Server Error| 50000   |
 //! | `ServiceUnavailable`| 503 Service Unavailable | 50300   |
 //!
-//! # i18n 消息格式
+//! # i18n Message Format
 //!
-//! 各变体通过 `rust_i18n::t!` 宏查找对应的翻译键，例如：
+//! Each variant looks up its translation key via `rust_i18n::t!`, for example:
 //! - `BadRequest` → `errors.bad_request`
 //! - `Unauthorized` → `errors.unauthorized`
-//! - `NotFound` → 先翻译资源名称 `resources.{key}`，再代入 `errors.not_found`
+//! - `NotFound` → translates the resource name via `resources.{key}`, then substitutes into `errors.not_found`
 
-use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use axum::Json;
 use serde::Serialize;
 
 use crate::middleware::locale::current_locale;
 
-/// 应用统一错误类型
+/// Application unified error type
 ///
-/// 使用 `thiserror` 派生 `Error` trait，每个变体对应一类 HTTP 错误。
-/// 在 handler 边界通过 [`IntoResponse`] 自动转换为 JSON 响应。
+/// Uses `thiserror` to derive the `Error` trait. Each variant corresponds to
+/// a category of HTTP error. Automatically converts to JSON responses via
+/// [`IntoResponse`] at handler boundaries.
 ///
-/// # 变体说明
+/// # Variant Descriptions
 ///
-/// - [`BadRequest`](AppError::BadRequest)：400 — 请求参数不合法，附带描述信息
-/// - [`Unauthorized`](AppError::Unauthorized)：401 — 未提供有效的身份凭证
-/// - [`Forbidden`](AppError::Forbidden)：403 — 已认证但无权访问该资源
-/// - [`NotFound`](AppError::NotFound)：404 — 请求的资源不存在，附带资源标识
-/// - [`Conflict`](AppError::Conflict)：409 — 资源冲突（如唯一约束违反），附带消息键
-/// - [`Internal`](AppError::Internal)：500 — 服务器内部错误，包装 `anyhow::Error`
+/// - [`BadRequest`](AppError::BadRequest): 400 — Invalid request parameters, with description
+/// - [`Unauthorized`](AppError::Unauthorized): 401 — No valid authentication credentials provided
+/// - [`Forbidden`](AppError::Forbidden): 403 — Authenticated but no permission to access the resource
+/// - [`NotFound`](AppError::NotFound): 404 — Requested resource does not exist, with resource identifier
+/// - [`Conflict`](AppError::Conflict): 409 — Resource conflict (e.g., unique constraint violation), with message key
+/// - [`Internal`](AppError::Internal): 500 — Unexpected internal server error, wrapping `anyhow::Error`
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum AppError {
-    /// 400 Bad Request — 请求参数校验失败或业务规则不满足
+    /// 400 Bad Request — Request parameter validation failed or business rule not satisfied
     ///
-    /// 附带的 `String` 为错误描述，会通过 i18n 键 `errors.bad_request` 翻译。
+    /// The attached `String` is the error description, translated via i18n key `errors.bad_request`.
     #[error("bad request: {0}")]
     BadRequest(String),
-    /// 401 Unauthorized — 未提供或提供了无效的身份认证凭证
+    /// 401 Unauthorized — No or invalid authentication credentials provided
     #[error("unauthorized")]
     Unauthorized,
-    /// 403 Forbidden — 已认证用户无权执行此操作
+    /// 403 Forbidden — Authenticated user lacks permission for this operation
     #[error("forbidden")]
     Forbidden,
-    /// 404 Not Found — 请求的资源不存在
+    /// 404 Not Found — Requested resource does not exist
     ///
-    /// 附带的 `String` 为资源标识键（如 `"user"`），会先通过
-    /// `resources.{key}` 翻译为本地化的资源名称，再代入 `errors.not_found` 模板。
+    /// The attached `String` is the resource identifier key (e.g., `"user"`), which is
+    /// first translated to a localized resource name via `resources.{key}`,
+    /// then substituted into the `errors.not_found` template.
     #[error("not found: {0}")]
     NotFound(String),
-    /// 409 Conflict — 资源冲突（如唯一约束违反、重复操作）
+    /// 409 Conflict — Resource conflict (e.g., unique constraint violation, duplicate operation)
     ///
-    /// 附带的 `String` 为消息键（如 `"duplicate_entry"`），会通过
-    /// `messages.{key}` 翻译为本地化消息，再代入 `errors.conflict` 模板。
+    /// The attached `String` is the message key (e.g., `"duplicate_entry"`), which is
+    /// translated to a localized message via `messages.{key}`,
+    /// then substituted into the `errors.conflict` template.
     #[error("conflict: {0}")]
     Conflict(String),
-    /// 413 Payload Too Large — 请求体超过大小限制
+    /// 413 Payload Too Large — Request body exceeds size limit
     #[error("payload too large")]
     PayloadTooLarge,
-    /// 429 Too Many Requests — 请求频率超过限流阈值
+    /// 429 Too Many Requests — Request rate exceeds throttle threshold
     #[error("too many requests")]
     TooManyRequests,
-    /// 405 Method Not Allowed — 请求方法不被允许
+    /// 405 Method Not Allowed — Request method is not allowed
     #[error("method not allowed")]
     MethodNotAllowed,
-    /// 503 Service Unavailable — 服务暂时不可用
+    /// 503 Service Unavailable — Service temporarily unavailable
     #[error("service unavailable")]
     ServiceUnavailable,
-    /// 500 Internal Server Error — 服务器内部未预期的错误
+    /// 500 Internal Server Error — Unexpected internal server error
     ///
-    /// 通过 `#[from]` 自动从 `anyhow::Error` 转换，避免手动映射。
-    /// 向客户端隐藏内部细节，仅返回通用错误消息。
+    /// Automatically converted from `anyhow::Error` via `#[from]`, avoiding manual mapping.
+    /// Internal details are hidden from clients; only a generic error message is returned.
     #[error("{0}")]
     Internal(#[from] anyhow::Error),
 }
 
 impl AppError {
-    /// 快捷构造 `NotFound` 错误。
+    /// Convenience constructor for `NotFound` error.
     ///
-    /// # 参数
+    /// # Arguments
     ///
-    /// - `resource` — 资源名称键（如 `"post"`），用于 i18n 翻译
+    /// - `resource` — Resource name key (e.g., `"post"`), used for i18n translation
     #[must_use]
     pub fn not_found(resource: &str) -> Self {
         AppError::NotFound(resource.into())
     }
 
-    /// 检查 DELETE/UPDATE 影响行数，为 0 时返回 `NotFound`。
+    /// Check DELETE/UPDATE affected rows; returns `NotFound` if 0.
     ///
-    /// 用于 model 层的 `delete()` 和 `update_status()` 函数，
-    /// 避免每次手动检查 `rows_affected() == 0`。
+    /// Used in model layer `delete()` and `update_status()` functions,
+    /// to avoid manually checking `rows_affected() == 0` each time.
     pub fn expect_affected(result: &crate::db::DbQueryResult, resource: &str) -> AppResult<()> {
         if result.rows_affected() == 0 {
             Err(AppError::NotFound(resource.into()))
@@ -117,18 +121,20 @@ impl AppError {
         }
     }
 
-    /// 根据当前 locale 翻译错误消息
+    /// Translate the error message based on the current locale
     ///
-    /// 每个 `AppError` 变体都有对应的 i18n 翻译键。此方法根据传入的 `locale`
-    /// 参数查找翻译，并将动态参数（如资源名称、错误描述）代入翻译模板。
+    /// Each `AppError` variant has a corresponding i18n translation key. This method
+    /// looks up the translation based on the `locale` parameter and substitutes
+    /// dynamic parameters (e.g., resource name, error description) into the template.
     ///
-    /// # 参数
+    /// # Arguments
     ///
-    /// - `locale` — 目标语言标识（如 `"en"`、`"zh-CN"`），通常从请求中间件获取
+    /// - `locale` — Target locale identifier (e.g., `"en"`, `"zh-CN"`), typically obtained from request middleware
     ///
-    /// # 返回值
+    /// # Returns
     ///
-    /// 返回翻译后的错误消息字符串。若翻译键不存在，`rust_i18n::t!` 会回退到键名本身。
+    /// Returns the translated error message string. If the translation key does not exist,
+    /// `rust_i18n::t!` falls back to the key name itself.
     fn i18n_message(&self, locale: &str) -> String {
         rust_i18n::set_locale(locale);
         match self {
@@ -159,20 +165,20 @@ impl AppError {
     }
 }
 
-/// 将 `AppError` 转换为 Axum HTTP 响应
+/// Convert `AppError` to an Axum HTTP response
 ///
-/// 实现了 [`IntoResponse`] trait，使 `AppError` 可以直接作为 handler 返回类型。
-/// 转换流程：
+/// Implements the [`IntoResponse`] trait, enabling `AppError` to be used directly
+/// as a handler return type. Conversion flow:
 ///
-/// 1. 根据变体确定 HTTP 状态码和业务错误码（40000–50000 范围）
-/// 2. 通过 [`i18n_message`](AppError::i18n_message) 翻译错误消息
-/// 3. 记录错误日志（`tracing::error!`）
-/// 4. 构造 [`ErrorBody`] JSON 响应体
+/// 1. Determine HTTP status code and business error code (40000–50000 range) based on variant
+/// 2. Translate error message via [`i18n_message`](AppError::i18n_message)
+/// 3. Log the error (`tracing::error!`)
+/// 4. Construct the [`ErrorBody`] JSON response body
 ///
-/// # 响应格式
+/// # Response Format
 ///
 /// ```json
-/// { "code": 40000, "message": "错误描述", "data": null }
+/// { "code": 40000, "message": "Error description", "data": null }
 /// ```
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
@@ -215,15 +221,15 @@ impl IntoResponse for AppError {
     }
 }
 
-/// 错误响应体结构
+/// Error response body structure
 ///
-/// 与成功响应保持一致的 JSON 结构，`data` 字段始终为 `()`（空），
-/// 便于客户端使用统一的解析逻辑。
+/// Maintains the same JSON structure as success responses. The `data` field is
+/// always `()` (empty), enabling clients to use unified parsing logic.
 ///
-/// # 序列化示例
+/// # Serialization Example
 ///
 /// ```json
-/// { "code": 40400, "message": "资源未找到", "data": null }
+/// { "code": 40400, "message": "Resource not found", "data": null }
 /// ```
 #[derive(Serialize)]
 struct ErrorBody {
@@ -232,19 +238,19 @@ struct ErrorBody {
     data: (),
 }
 
-/// 数据库错误到 `AppError` 的自动映射
+/// Automatic mapping from database errors to `AppError`
 ///
-/// 将 `sqlx::Error` 转换为语义化的 `AppError` 变体，避免在业务代码中
-/// 手动处理数据库层错误：
+/// Converts `sqlx::Error` into semantic `AppError` variants, avoiding manual
+/// database error handling in business code:
 ///
-/// - `RowNotFound` → [`AppError::NotFound`]（资源标识默认为 `"resource"`）
-/// - `UNIQUE constraint failed` → [`AppError::Conflict`]（消息键为 `"duplicate_entry"`）
-/// - 其他数据库错误 → [`AppError::Internal`]（包装为 `anyhow::Error`）
+/// - `RowNotFound` → [`AppError::NotFound`] (resource identifier defaults to `"resource"`)
+/// - `UNIQUE constraint failed` → [`AppError::Conflict`] (message key is `"duplicate_entry"`)
+/// - Other database errors → [`AppError::Internal`] (wrapped as `anyhow::Error`)
 ///
-/// # 设计决策
+/// # Design Decision
 ///
-/// 将数据库层细节屏蔽在 `AppError` 内部，handler 和 service 层只需
-/// 使用 `?` 操作符即可将 SQL 错误传播为合适的 HTTP 响应。
+/// Database layer details are encapsulated within `AppError`. Handler and service layers
+/// can propagate SQL errors as appropriate HTTP responses using the `?` operator.
 impl From<sqlx::Error> for AppError {
     fn from(err: sqlx::Error) -> Self {
         match err {
@@ -262,10 +268,11 @@ impl From<sqlx::Error> for AppError {
     }
 }
 
-/// 应用层 Result 类型别名
+/// Application-level Result type alias
 ///
-/// 所有 handler 和 service 函数的返回类型统一使用 `AppResult<T>`，
-/// 等价于 `Result<T, AppError>`，简化函数签名并保证错误处理的一致性。
+/// All handler and service functions use `AppResult<T>` as their return type,
+/// equivalent to `Result<T, AppError>`, simplifying function signatures and
+/// ensuring consistent error handling.
 pub type AppResult<T> = Result<T, AppError>;
 
 #[cfg(test)]

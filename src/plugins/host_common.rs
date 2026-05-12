@@ -1,8 +1,8 @@
-//! 插件宿主公共逻辑
+//! Plugin host common logic
 //!
-//! 将 JS / Lua 两套 Host API 的共享业务逻辑抽取到 [`HostContext`] 中。
-//! 各引擎的 `register_host_functions` 只负责引擎特定的参数绑定，
-//! 所有权限校验、HTTP 请求、DB 查询均委托给 `HostContext` 方法。
+//! Extracts shared business logic from both JS and Lua Host APIs into [`HostContext`].
+//! Each engine's `register_host_functions` only handles engine-specific parameter binding;
+//! all permission checks, HTTP requests, and DB queries are delegated to `HostContext` methods.
 
 use crate::constants::PLUGIN_HOST_GLOBAL;
 
@@ -17,15 +17,15 @@ use crate::plugins::vfs::VirtualFs;
 use sqlx::Arguments;
 use std::sync::Mutex;
 
-/// 事务状态（持有从连接池借出的独占连接）
+/// Transaction state (holds an exclusive connection borrowed from the pool)
 struct TxState {
     conn: DbPoolConnection,
 }
 
-/// 插件宿主上下文
+/// Plugin host context
 ///
-/// 持有单个插件所需的全部共享状态，业务逻辑方法均为同步接口
-/// （内部通过 `block_in_place` + `block_on` 执行异步操作）。
+/// Holds all shared state needed by a single plugin. Business logic methods are synchronous
+/// (internally using `block_in_place` + `block_on` to execute async operations).
 pub struct HostContext {
     pub runtime_label: &'static str,
     config: Arc<AppConfig>,
@@ -53,7 +53,7 @@ impl Clone for HostContext {
 }
 
 impl HostContext {
-    /// 创建新的宿主上下文
+    /// Create a new host context
     #[must_use]
     pub fn new(
         runtime_label: &'static str,
@@ -74,18 +74,18 @@ impl HostContext {
         }
     }
 
-    /// 设置事件总线（在 PluginManager 初始化后调用）
+    /// Set the event bus (called after PluginManager initialization)
     pub fn set_event_bus(&mut self, bus: EventBus) {
         self.event_bus = Some(bus);
     }
 
-    /// 返回插件 ID
+    /// Return the plugin ID
     #[must_use]
     pub fn plugin_id(&self) -> &str {
         &self.plugin_id
     }
 
-    /// 返回内存上限（字节），基于 permissions 或默认 32 MB
+    /// Return memory limit in bytes, based on permissions or default 32 MB
     #[must_use]
     pub fn max_memory_bytes(&self) -> usize {
         self.permissions
@@ -93,17 +93,17 @@ impl HostContext {
             .map_or(32 * 1024 * 1024, |mb| mb as usize * 1024 * 1024)
     }
 
-    /// 日志输出
+    /// Log output
     pub fn new_uuid(&self) -> String {
         uuid::Uuid::now_v7().to_string()
     }
 
-    /// 返回当前数据库的第 `idx` 个占位符。
+    /// Return the placeholder for the given index in the current database.
     ///
-    /// - SQLite / MySQL：`?`
-    /// - PostgreSQL：`$idx`
+    /// - SQLite / MySQL: `?`
+    /// - PostgreSQL: `$idx`
     ///
-    /// 插件应用此函数构建参数化 SQL：
+    /// Plugins use this function to build parameterized SQL:
     /// ```js
     /// const sql = `SELECT * FROM tags WHERE id = ${host.dbPh(1)} AND name = ${host.dbPh(2)}`;
     /// host.dbQuery(sql, JSON.stringify(["tag-1", "Rust"]));
@@ -122,7 +122,7 @@ impl HostContext {
         }
     }
 
-    /// 读取配置项
+    /// Read a config value
     #[must_use]
     pub fn get_config(&self, key: &str) -> Option<String> {
         if !PermissionChecker::is_config_key_allowed(&self.permissions, key) {
@@ -131,7 +131,7 @@ impl HostContext {
         get_config_value(&self.config, key)
     }
 
-    /// HTTP GET 请求
+    /// HTTP GET request
     #[must_use]
     pub fn http_get(&self, url: &str) -> String {
         if !PermissionChecker::is_url_allowed(&self.permissions, url) {
@@ -146,7 +146,7 @@ impl HostContext {
         })
     }
 
-    /// HTTP POST 请求
+    /// HTTP POST request
     #[must_use]
     pub fn http_post(&self, url: &str, body: &str) -> String {
         if !PermissionChecker::is_url_allowed(&self.permissions, url) {
@@ -161,7 +161,7 @@ impl HostContext {
         })
     }
 
-    /// 读取插件 KV 存储
+    /// Read from plugin KV store
     pub fn get_data(&self, key: &str) -> Option<String> {
         let Some(pool) = &self.pool else {
             tracing::debug!(
@@ -184,7 +184,7 @@ impl HostContext {
         })
     }
 
-    /// 写入插件 KV 存储
+    /// Write to plugin KV store
     pub fn set_data(&self, key: &str, value: &str) -> bool {
         let Some(pool) = &self.pool else {
             tracing::debug!(
@@ -209,7 +209,7 @@ impl HostContext {
         })
     }
 
-    /// 根据 slug 获取文章（JSON）
+    /// Get a post by slug (returns JSON)
     pub fn get_post(&self, slug: &str) -> Option<String> {
         let Some(pool) = &self.pool else {
             tracing::debug!(
@@ -243,10 +243,10 @@ impl HostContext {
         })
     }
 
-    /// 执行只读 SQL 查询（返回 JSON 数组字符串）。
+    /// Execute a read-only SQL query (returns a JSON array string).
     ///
-    /// `params_json` 为 JSON 数组字符串，与 SQL 中 `host.ph(N)` 占位符按序对应。
-    /// 示例：
+    /// `params_json` is a JSON array string, corresponding in order to the `host.ph(N)` placeholders in the SQL.
+    /// Example:
     /// ```js
     /// const sql = `SELECT * FROM tags WHERE id = ${host.ph(1)}`;
     /// host.dbQuery(sql, JSON.stringify(["tag-1"]));
@@ -292,10 +292,10 @@ impl HostContext {
         })
     }
 
-    /// 执行写操作 SQL（INSERT/UPDATE/DELETE），返回 JSON 结果。
+    /// Execute a write SQL operation (INSERT/UPDATE/DELETE), returns a JSON result.
     ///
-    /// `params_json` 为 JSON 数组字符串，与 SQL 中 `host.ph(N)` 占位符按序对应。
-    /// 示例：
+    /// `params_json` is a JSON array string, corresponding in order to the `host.ph(N)` placeholders in the SQL.
+    /// Example:
     /// ```js
     /// const sql = `INSERT INTO tags (document_id, name) VALUES (${host.ph(1)}, ${host.ph(2)})`;
     /// host.dbExecute(sql, JSON.stringify(["tag-1", "Rust"]));
@@ -365,11 +365,11 @@ impl HostContext {
         })
     }
 
-    /// 开启数据库事务。
+    /// Begin a database transaction.
     ///
-    /// 从连接池获取一个独占连接并执行 `BEGIN`。
-    /// 同一时刻只能有一个活跃事务，重复调用返回错误。
-    /// 插件超时或崩溃时，[`HostContext::cleanup_tx`] 会自动 rollback。
+    /// Acquires an exclusive connection from the pool and executes `BEGIN`.
+    /// Only one active transaction is allowed at a time; repeated calls return an error.
+    /// On plugin timeout or crash, [`HostContext::cleanup_tx`] will automatically roll back.
     #[must_use]
     pub fn db_begin(&self) -> String {
         let Some(pool) = &self.pool else {
@@ -395,7 +395,7 @@ impl HostContext {
         })
     }
 
-    /// 提交当前事务并释放连接。
+    /// Commit the current transaction and release the connection.
     #[must_use]
     pub fn db_commit(&self) -> String {
         let mut tx_guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
@@ -421,7 +421,7 @@ impl HostContext {
         })
     }
 
-    /// 回滚当前事务并释放连接。
+    /// Roll back the current transaction and release the connection.
     #[must_use]
     pub fn db_rollback(&self) -> String {
         let mut tx_guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
@@ -442,7 +442,7 @@ impl HostContext {
         })
     }
 
-    /// 清理未提交的事务（插件超时/崩溃时调用）。
+    /// Clean up an uncommitted transaction (called on plugin timeout/crash).
     pub fn cleanup_tx(&self) {
         let mut tx_guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(mut tx_state) = tx_guard.take() {
@@ -458,47 +458,47 @@ impl HostContext {
         }
     }
 
-    /// 读取虚拟文件系统中的文件
+    /// Read a file from the virtual file system
     pub fn vfs_read(&self, path: &str) -> Result<String, String> {
         let vfs = VirtualFs::new(&self.config, &self.plugin_id, &self.permissions);
         vfs.read_file(path).map_err(|e| e.to_string())
     }
 
-    /// 写入虚拟文件系统中的文件
+    /// Write a file to the virtual file system
     pub fn vfs_write(&self, path: &str, content: &str) -> Result<(), String> {
         let vfs = VirtualFs::new(&self.config, &self.plugin_id, &self.permissions);
         vfs.write_file(path, content).map_err(|e| e.to_string())
     }
 
-    /// 删除虚拟文件系统中的文件
+    /// Delete a file from the virtual file system
     pub fn vfs_delete(&self, path: &str) -> Result<(), String> {
         let vfs = VirtualFs::new(&self.config, &self.plugin_id, &self.permissions);
         vfs.delete_file(path).map_err(|e| e.to_string())
     }
 
-    /// 检查虚拟文件系统中的文件是否存在
+    /// Check if a file exists in the virtual file system
     pub fn vfs_exists(&self, path: &str) -> Result<bool, String> {
         let vfs = VirtualFs::new(&self.config, &self.plugin_id, &self.permissions);
         vfs.exists(path).map_err(|e| e.to_string())
     }
 
-    /// 列出虚拟文件系统目录内容
+    /// List directory contents in the virtual file system
     pub fn vfs_list(&self, path: &str) -> Result<Vec<String>, String> {
         let vfs = VirtualFs::new(&self.config, &self.plugin_id, &self.permissions);
         vfs.list_dir(path).map_err(|e| e.to_string())
     }
 
-    /// 获取虚拟文件系统文件元信息（JSON）
+    /// Get file metadata from the virtual file system (returns JSON)
     pub fn vfs_stat(&self, path: &str) -> Result<String, String> {
         let vfs = VirtualFs::new(&self.config, &self.plugin_id, &self.permissions);
         let info = vfs.stat(path).map_err(|e| e.to_string())?;
         serde_json::to_string(&info).map_err(|e| format!("error: {e}"))
     }
 
-    /// 插件主动触发自定义事件，通过 EventBus 广播。
+    /// Emit a custom event from the plugin, broadcast via EventBus.
     ///
-    /// 其他插件可通过 Hook 监听，WebSocket 客户端也会收到推送。
-    /// 返回 `{"ok":true}` 或 `{"error":"..."}`。
+    /// Other plugins can listen via Hooks, and WebSocket clients will also receive pushes.
+    /// Returns `{"ok":true}` or `{"error":"..."}`.
     #[must_use]
     pub fn emit_event(&self, event_type: &str, data: &str) -> String {
         match &self.event_bus {
@@ -521,7 +521,7 @@ impl HostContext {
         }
     }
 
-    /// 解析参数 JSON 为 Vec<serde_json::Value>
+    /// Parse params JSON into Vec<serde_json::Value>
     fn parse_params(params_json: &str) -> Result<Option<Vec<serde_json::Value>>, String> {
         if params_json.is_empty() {
             return Ok(None);
@@ -539,7 +539,7 @@ impl HostContext {
         Ok(Some(params))
     }
 
-    /// 将单个 JSON Value 添加到 sqlx 参数列表
+    /// Add a single JSON Value to the sqlx parameter list
     fn add_param(args: &mut DbArguments<'_>, p: &serde_json::Value) {
         match p {
             serde_json::Value::String(s) => {
@@ -563,7 +563,7 @@ impl HostContext {
     }
 }
 
-/// 在连接上执行参数化或原始写操作
+/// Execute a parameterized or raw write operation on a connection
 fn build_and_exec(
     conn: &mut DbConnection,
     sql: &str,
@@ -599,7 +599,7 @@ fn add_param_value(args: &mut DbArguments, p: &serde_json::Value) {
     }
 }
 
-/// 根据 key 路径从 `AppConfig` 读取配置值
+/// Read a config value from `AppConfig` by key path
 #[must_use]
 pub fn get_config_value(config: &AppConfig, key: &str) -> Option<String> {
     match key {

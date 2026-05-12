@@ -1,7 +1,7 @@
-//! soft_deletable Protocol — 删除时标记 deleted_at/deleted_by 而非物理删除
+//! soft_deletable Protocol — mark deleted_at/deleted_by on delete instead of physical deletion
 //!
-//! 包含 1 个 Aspect：SoftDeletableAspect（priority = -300）。
-//! before_delete 时设 soft_delete=true 并注入 deleted_at/deleted_by。
+//! Contains 1 Aspect: SoftDeletableAspect (priority = -300).
+//! Sets soft_delete=true on before_delete and injects deleted_at/deleted_by.
 
 use std::sync::Arc;
 
@@ -70,7 +70,7 @@ impl Protocol for SoftDeletableProtocol {
     }
 
     fn description(&self) -> &str {
-        "删除时标记 deleted_at 而非物理删除"
+        "Mark deleted_at on delete instead of physical deletion"
     }
 
     fn aspects(&self) -> Vec<Arc<dyn Aspect>> {

@@ -1,27 +1,27 @@
-//! WebSocket 实时推送处理器
+//! WebSocket real-time push handler
 //!
-//! 将 `EventBus` 事件通过 WebSocket 双向通道推送给客户端。
+//! Pushes `EventBus` events to clients via WebSocket bidirectional channels.
 //!
-//! # 端点
+//! # Endpoint
 //!
-//! `GET /api/v1/ws` — 升级为 WebSocket 连接
+//! `GET /api/v1/ws` — Upgrade to WebSocket connection
 //!
-//! # 协议
+//! # Protocol
 //!
-//! 服务端推送事件格式：
+//! Server push event format:
 //!
 //! ```json
 //! {"event": "PostCreated", "data": {"id": "...", "slug": "...", ...}}
 //! ```
 //!
-//! 客户端发送控制消息：
+//! Client control messages:
 //!
 //! ```json
 //! {"type": "subscribe", "filter": ["PostCreated", "CommentCreated"]}
 //! {"type": "ping"}
 //! ```
 //!
-//! 服务端响应：
+//! Server responses:
 //!
 //! ```json
 //! {"type": "pong"}
@@ -52,41 +52,41 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
-/// WS 连接查询参数
+/// WS connection query parameters
 #[derive(Debug, Deserialize, Default)]
 pub struct WsQuery {
-    /// 逗号分隔的事件类型过滤，如 `PostCreated,CommentCreated`
+    /// Comma-separated event type filter, e.g. `PostCreated,CommentCreated`
     pub filter: Option<String>,
 }
 
-/// 客户端 → 服务端消息
+/// Client → Server message
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ClientMessage {
-    /// 订阅指定事件类型（空列表 = 全部）
+    /// Subscribe to specified event types (empty list = all)
     Subscribe { filter: Option<Vec<String>> },
-    /// 心跳
+    /// Heartbeat
     Ping,
 }
 
-/// 服务端 → 客户端推送
+/// Server → Client push
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ServerMessage {
-    /// 事件推送
+    /// Event push
     Event {
         event: String,
         data: serde_json::Value,
     },
-    /// 心跳响应
+    /// Heartbeat response
     Pong,
-    /// 连接成功
+    /// Connection established
     Connected { message: String },
-    /// 错误
+    /// Error
     Error { message: String },
 }
 
-/// WebSocket 升级端点
+/// WebSocket upgrade endpoint
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<crate::AppState>,

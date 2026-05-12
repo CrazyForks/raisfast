@@ -1,19 +1,19 @@
-//! SQL 方言适配层。
+//! SQL dialect adaptation layer.
 //!
-//! 提供：
-//! - [`ph`]：生成当前数据库的占位符（`?` 或 `$N`）
-//! - [`is_safe_identifier`]：校验标识符是否只含安全字符
-//! - [`now_fn`] / [`ago_expr`] / [`date_trunc_day`]：数据库方言函数
+//! Provides:
+//! - [`ph`]: Generate placeholders for the current database (`?` or `$N`)
+//! - [`is_safe_identifier`]: Validate identifiers contain only safe characters
+//! - [`now_fn`] / [`ago_expr`] / [`date_trunc_day`]: Database dialect functions
 
-/// 检查标识符是否只含安全字符（字母、数字、下划线），可用于表名、列名。
+/// Check if an identifier contains only safe characters (letters, digits, underscores).
 ///
-/// 拒绝空字符串和含空格/特殊字符的输入，防止 SQL 注入。
+/// Rejects empty strings and inputs containing spaces/special characters to prevent SQL injection.
 #[must_use]
 pub fn is_safe_identifier(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// trim 后校验标识符。返回 `Some(trimmed)` 通过校验，`None` 不通过。
+/// Trim and validate an identifier. Returns `Some(trimmed)` if valid, `None` otherwise.
 #[must_use]
 pub fn sanitize_identifier(name: &str) -> Option<&str> {
     let trimmed = name.trim();
@@ -24,10 +24,10 @@ pub fn sanitize_identifier(name: &str) -> Option<&str> {
     }
 }
 
-/// 返回当前数据库获取当前时间的 SQL 函数。
+/// Returns the SQL function for the current time in the current database.
 ///
-/// - `SQLite`：`datetime('now')`
-/// - `PostgreSQL` / `MySQL`：`NOW()`
+/// - `SQLite`: `datetime('now')`
+/// - `PostgreSQL` / `MySQL`: `NOW()`
 #[must_use]
 pub fn now_fn() -> &'static str {
     #[cfg(feature = "db-sqlite")]
@@ -40,10 +40,10 @@ pub fn now_fn() -> &'static str {
     }
 }
 
-/// 返回指定位置序号的占位符。
+/// Returns a placeholder for the given positional index.
 ///
-/// - `SQLite` / MySQL：`?`
-/// - PostgreSQL：`$N`
+/// - `SQLite` / MySQL: `?`
+/// - PostgreSQL: `$N`
 ///
 /// ```ignore
 /// let sql = format!("SELECT * FROM t WHERE id = {} AND name = {}", ph(1), ph(2));
@@ -61,7 +61,7 @@ pub fn ph(idx: usize) -> String {
     }
 }
 
-/// 返回 `N 天前` 的 SQL 表达式（用于 WHERE 比较）。
+/// Returns a SQL expression for `N days ago` (for WHERE comparisons).
 ///
 /// - SQLite: `datetime('now', '-{days} days')`
 /// - PostgreSQL: `NOW() - INTERVAL '{days} days'`
@@ -82,7 +82,7 @@ pub fn ago_expr(days: i64) -> String {
     }
 }
 
-/// 返回按天截断日期/时间的 SQL 表达式。
+/// Returns a SQL expression to truncate a date/time to day granularity.
 ///
 /// - SQLite: `DATE({col})`
 /// - PostgreSQL: `DATE_TRUNC('day', {col}::timestamp)`
@@ -103,7 +103,7 @@ pub fn date_trunc_day(col: &str) -> String {
     }
 }
 
-/// 返回 UPSERT 冲突子句。
+/// Returns an UPSERT conflict clause.
 ///
 /// - SQLite / PostgreSQL: `ON CONFLICT({conflict_cols}) DO UPDATE SET {assignments}`
 /// - MySQL: `ON DUPLICATE KEY UPDATE {assignments}`
@@ -120,7 +120,7 @@ pub fn upsert_clause(conflict_cols: &str, assignments: &str) -> String {
     }
 }
 
-/// 返回 UPSERT 中引用新值的表达式。
+/// Returns an expression referencing the new value in an UPSERT.
 ///
 /// - SQLite / PostgreSQL: `excluded.{col}`
 /// - MySQL: `VALUES({col})`
@@ -136,10 +136,10 @@ pub fn excluded_col(col: &str) -> String {
     }
 }
 
-/// 返回 `RETURNING *` 子句（MySQL 不支持 RETURNING）。
+/// Returns a `RETURNING *` clause (MySQL does not support RETURNING).
 ///
-/// - SQLite / PostgreSQL: 返回 `RETURNING *`（或空串 if不需要）
-/// - MySQL: 返回空串（需二次查询）
+/// - SQLite / PostgreSQL: returns `RETURNING *`
+/// - MySQL: returns empty string (requires a second query)
 #[must_use]
 pub fn returning_clause() -> &'static str {
     #[cfg(not(feature = "db-mysql"))]
@@ -152,7 +152,7 @@ pub fn returning_clause() -> &'static str {
     }
 }
 
-/// 返回 `RETURNING {col}` 子句。
+/// Returns a `RETURNING {col}` clause.
 #[must_use]
 pub fn returning_col(col: &str) -> String {
     #[cfg(not(feature = "db-mysql"))]

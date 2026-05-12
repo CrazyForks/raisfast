@@ -1,7 +1,7 @@
-//! Sitemap 生成 Handler
+//! Sitemap generation Handler
 //!
-//! 查询所有已发布文章，生成 sitemap.xml 写入 `{static_dir}/sitemap.xml`。
-//! 遵循 [sitemaps.org 协议](https://www.sitemaps.org/protocol.html)。
+//! Queries all published posts, generates a sitemap.xml and writes it to `{static_dir}/sitemap.xml`.
+//! Follows the [sitemaps.org protocol](https://www.sitemaps.org/protocol.html).
 
 use std::sync::Arc;
 
@@ -10,14 +10,14 @@ use crate::db::Pool;
 use crate::errors::app_error::AppResult;
 use crate::worker::{Job, JobHandler};
 
-/// Sitemap 生成处理器
+/// Sitemap generation handler
 pub struct GenerateSitemapHandler {
     pool: Pool,
     config: Arc<AppConfig>,
 }
 
 impl GenerateSitemapHandler {
-    /// 创建新的 Sitemap 生成处理器
+    /// Creates a new sitemap generation handler
     #[must_use]
     pub fn new(pool: Pool, config: Arc<AppConfig>) -> Self {
         Self { pool, config }

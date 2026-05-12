@@ -1,10 +1,11 @@
-//! Rhai 宿主函数 — 引擎绑定层
+//! Rhai host functions — engine binding layer
 //!
-//! 仅负责将 [`HostContext`](super::host_common::HostContext) 的公共业务逻辑
-//! 通过 `engine.register_fn()` 绑定到 Rhai 全局作用域。
+//! Only responsible for binding the shared business logic of
+//! [`HostContext`](super::host_common::HostContext) to the Rhai global scope
+//! via `engine.register_fn()`.
 //!
-//! Rhai 不需要外部 SDK 文件，Host API 直接通过 `register_fn` 注入，
-//! 同时注册 `parse_json` / `to_json` / `to_upper` / `to_lower` / `replace` 等辅助函数。
+//! Rhai does not need an external SDK file; the Host API is injected directly via `register_fn`,
+//! along with helper functions like `parse_json` / `to_json` / `to_upper` / `to_lower` / `replace`.
 
 use std::sync::Arc;
 
@@ -12,10 +13,10 @@ use rhai::Engine;
 
 use crate::config::app::AppConfig;
 use crate::db::Pool;
-use crate::plugins::Permissions;
 use crate::plugins::host_common::HostContext;
+use crate::plugins::Permissions;
 
-/// 注册宿主函数到 Rhai Engine 全局作用域。
+/// Register host functions into the Rhai Engine global scope.
 pub fn register_host_functions(
     engine: &mut Engine,
     config: Arc<AppConfig>,

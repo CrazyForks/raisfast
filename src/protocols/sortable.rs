@@ -1,7 +1,7 @@
-//! sortable Protocol — 显式排序列
+//! sortable Protocol — explicit sort column
 //!
-//! 提供排序键列 `sort_key`，列表查询默认按 sort_key Desc 排序。
-//! Aspect 在 create 时注入 sort_key = 0。
+//! Provides a sort key column `sort_key`; list queries default to sorting by sort_key Desc.
+//! The Aspect injects sort_key = 0 on create.
 
 use std::sync::Arc;
 
@@ -64,7 +64,7 @@ impl Protocol for SortableProtocol {
     }
 
     fn description(&self) -> &str {
-        "显式排序列，列表查询默认按 sort_key 排序"
+        "Explicit sort column; list queries default to sorting by sort_key"
     }
 
     fn aspects(&self) -> Vec<Arc<dyn Aspect>> {

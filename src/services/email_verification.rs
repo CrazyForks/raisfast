@@ -1,4 +1,4 @@
-//! 邮箱验证服务。
+//! Email verification service.
 
 use chrono::Utc;
 
@@ -6,9 +6,9 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::eventbus::{Event, EventBus};
 use crate::repositories::UserRepository;
 
-/// 注册后触发邮箱验证（若配置启用）。
+/// Trigger email verification after registration (if enabled in config).
 ///
-/// 删除旧令牌，创建新令牌，通过 EventBus 发送验证邮件。
+/// Deletes old tokens, creates a new token, and sends a verification email via EventBus.
 pub async fn trigger_email_verification(
     pool: &crate::db::Pool,
     eventbus: &EventBus,
@@ -29,9 +29,9 @@ pub async fn trigger_email_verification(
     Ok(())
 }
 
-/// 验证邮箱。
+/// Verify an email address.
 ///
-/// 校验令牌有效性，标记令牌已使用，更新 user_credentials.verified = 1。
+/// Validates the token, marks it as used, and updates user_credentials.verified = 1.
 pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> {
     let verification = crate::models::email_verification::find_by_token(pool, token)
         .await?
@@ -71,9 +71,9 @@ pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> 
     Ok(())
 }
 
-/// 重新发送验证邮件。
+/// Resend a verification email.
 ///
-/// 只有未验证的用户才能重新发送。限流由 sms_codes 的 rate_limit 逻辑类似处理。
+/// Only unverified users can request a resend. Rate limiting is handled similarly to sms_codes.
 pub async fn resend_verification(
     pool: &crate::db::Pool,
     _user_repo: &dyn UserRepository,

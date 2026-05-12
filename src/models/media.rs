@@ -1,9 +1,10 @@
-//! 媒体文件模型与数据库查询
+//! Media file model and database queries
 //!
-//! 定义媒体文件（Media）的数据结构，包括完整行模型、面向前端的响应模型，
-//! 以及对 `media` 表的增删改查操作。
+//! Defines data structures for media files, including the full row model and
+//! frontend-facing response model, as well as CRUD operations on the `media` table.
 //!
-//! 响应模型中的 URL 由 `to_response()` 方法根据服务器地址动态拼接生成。
+//! URLs in the response model are dynamically assembled by the `to_response()` method
+//! based on the server address.
 
 use serde::{Deserialize, Serialize};
 

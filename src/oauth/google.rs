@@ -1,4 +1,4 @@
-//! Google OAuth2 Provider 实现
+//! Google OAuth2 Provider implementation
 
 use crate::errors::app_error::{AppError, AppResult};
 use crate::oauth::{OAuthProvider, OAuthTokenResponse, OAuthUserInfo};
@@ -10,7 +10,7 @@ pub struct GoogleProvider {
 }
 
 impl GoogleProvider {
-    /// 创建 Google Provider
+    /// Create a Google Provider
     pub fn new(client_id: String, client_secret: String) -> Self {
         Self {
             client_id,

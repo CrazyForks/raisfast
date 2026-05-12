@@ -1,4 +1,4 @@
-//! 页面相关 Command
+//! Page-related commands
 
 use crate::models::page::PageStatus;
 

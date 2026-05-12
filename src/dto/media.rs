@@ -6,7 +6,7 @@ use utoipa::ToSchema;
 use crate::models::media::Media;
 use crate::utils::tz::Timestamp;
 
-/// 媒体文件 API 响应
+/// Media file API response
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MediaResponse {
@@ -28,7 +28,7 @@ pub struct MediaResponse {
     pub updated_at: Timestamp,
 }
 
-/// 将 Media 数据库模型转换为 API 响应
+/// Convert Media database model to API response
 #[must_use]
 pub fn media_to_response(media: &Media, base_url: &str) -> MediaResponse {
     MediaResponse {
@@ -49,7 +49,7 @@ pub fn media_to_response(media: &Media, base_url: &str) -> MediaResponse {
     }
 }
 
-/// 将 Media 模型转换为 API 响应（使用 Storage 层提供的 URL）
+/// Convert Media model to API response (using URL provided by Storage layer)
 #[must_use]
 pub fn media_to_response_with_url(media: &Media, url: &str) -> MediaResponse {
     MediaResponse {
@@ -70,7 +70,7 @@ pub fn media_to_response_with_url(media: &Media, url: &str) -> MediaResponse {
     }
 }
 
-/// 存储 statistics API 响应
+/// Storage statistics API response
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MediaStatsResponse {
@@ -79,7 +79,7 @@ pub struct MediaStatsResponse {
     pub by_type: Vec<MediaTypeInfoResponse>,
 }
 
-/// 按 MIME 类型分组的统计
+/// Statistics grouped by MIME type
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MediaTypeInfoResponse {
@@ -88,7 +88,7 @@ pub struct MediaTypeInfoResponse {
     pub total_size: i64,
 }
 
-/// 将 MediaStats 模型转换为 API 响应
+/// Convert MediaStats model to API response
 #[must_use]
 pub fn stats_to_response(stats: &crate::models::media::MediaStats) -> MediaStatsResponse {
     MediaStatsResponse {

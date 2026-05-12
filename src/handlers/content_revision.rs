@@ -1,10 +1,10 @@
-//! 内容版本历史 API Handler
+//! Content revision history API handler
 //!
-//! 为启用 `versioning` 的 content type 提供版本管理端点：
-//! - 列出版本历史
-//! - 获取指定版本快照
-//! - 回滚到指定版本
-//! - 比较两个版本的差异
+//! Provides revision management endpoints for content types with `versioning` enabled:
+//! - List revision history
+//! - Get a specific revision snapshot
+//! - Restore to a specific revision
+//! - Diff between two revisions
 
 use axum::extract::{Path, State};
 use serde_json::json;
@@ -15,7 +15,7 @@ use crate::content_type::repository::ContentRepository;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 
-/// GET /admin/cms/{plural}/{id}/revisions — 列出某条记录的所有版本
+/// GET /admin/cms/{plural}/{id}/revisions — List all revisions of a record
 pub async fn list_revisions(
     State(state): State<AppState>,
     Path((plural, id)): Path<(String, String)>,
@@ -40,7 +40,7 @@ pub async fn list_revisions(
     })))
 }
 
-/// GET /admin/cms/{plural}/{id}/revisions/{revision_id} — 获取指定版本快照
+/// GET /admin/cms/{plural}/{id}/revisions/{revision_id} — Get a specific revision snapshot
 pub async fn get_revision(
     State(state): State<AppState>,
     Path((plural, id, revision_id)): Path<(String, String, String)>,
@@ -77,7 +77,7 @@ pub async fn get_revision(
     })))
 }
 
-/// POST /admin/cms/{plural}/{id}/revisions/{revision_id}/restore — 回滚到指定版本
+/// POST /admin/cms/{plural}/{id}/revisions/{revision_id}/restore — Restore to a specific revision
 pub async fn restore_revision(
     State(state): State<AppState>,
     Path((plural, id, revision_id)): Path<(String, String, String)>,
@@ -121,7 +121,7 @@ pub async fn restore_revision(
     Ok(ApiResponse::success(value))
 }
 
-/// GET /admin/cms/{plural}/{id}/revisions/{rev_a}/diff/{rev_b} — 比较两个版本
+/// GET /admin/cms/{plural}/{id}/revisions/{rev_a}/diff/{rev_b} — Compare two revisions
 pub async fn diff_revisions(
     State(state): State<AppState>,
     Path((plural, id, rev_a, rev_b)): Path<(String, String, String, String)>,
@@ -174,7 +174,7 @@ pub async fn diff_revisions(
     })))
 }
 
-/// utoipa path 注解占位（后续统一添加）
+/// utoipa path annotation placeholder (to be added uniformly later)
 const _UNUSED: () = {
     fn _assert_send() {
         fn check<T: Send>() {}

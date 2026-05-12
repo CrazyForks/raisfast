@@ -1,6 +1,6 @@
-//! tenantable Protocol — 多租户隔离
+//! tenantable Protocol — multi-tenant isolation
 //!
-//! 提供 `tenant_id` 列，自动注入当前租户 ID，列表查询按租户过滤。
+//! Provides a `tenant_id` column; automatically injects the current tenant ID and filters by tenant on list queries.
 
 use std::sync::Arc;
 
@@ -43,7 +43,7 @@ impl Protocol for TenantableProtocol {
     }
 
     fn description(&self) -> &str {
-        "多租户隔离，自动按租户 ID 过滤数据"
+        "Multi-tenant isolation; automatically filters data by tenant ID"
     }
 
     fn aspects(&self) -> Vec<Arc<dyn Aspect>> {

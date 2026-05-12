@@ -1,13 +1,13 @@
-//! 安全响应头中间件。
+//! Security response headers middleware.
 //!
-//! 为每个 HTTP 响应注入安全相关的 HTTP 头，防止常见的 Web 攻击：
+//! Injects security-related HTTP headers into every HTTP response to prevent common web attacks:
 //!
-//! - `X-Content-Type-Options: nosniff` — 阻止 MIME 嗅探
-//! - `X-Frame-Options: DENY` — 阻止点击劫持
-//! - `X-XSS-Protection: 0` — 禁用浏览器 XSS 过滤器（现代最佳实践）
-//! - `Referrer-Policy: strict-origin-when-cross-origin` — 限制 Referer 泄露
-//! - `Permissions-Policy` — 禁用不必要的浏览器 API
-//! - HSTS（仅 HTTPS）— 强制 HTTPS 连接
+//! - `X-Content-Type-Options: nosniff` — Prevents MIME sniffing
+//! - `X-Frame-Options: DENY` — Prevents clickjacking
+//! - `X-XSS-Protection: 0` — Disables browser XSS filter (modern best practice)
+//! - `Referrer-Policy: strict-origin-when-cross-origin` — Limits Referer leakage
+//! - `Permissions-Policy` — Disables unnecessary browser APIs
+//! - HSTS (HTTPS only) — Enforces HTTPS connections
 
 use axum::extract::Request;
 use axum::http::{HeaderName, HeaderValue};
@@ -23,7 +23,7 @@ static STRICT_TRANSPORT_SECURITY: HeaderName = HeaderName::from_static("strict-t
 
 static CONTENT_SECURITY_POLICY: HeaderName = HeaderName::from_static("content-security-policy");
 
-/// 安全响应头中间件。
+/// Security response headers middleware.
 pub async fn security_headers(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
@@ -52,7 +52,7 @@ pub async fn security_headers(request: Request, next: Next) -> Response {
     response
 }
 
-/// HTTPS 安全响应头中间件（额外添加 HSTS）。
+/// HTTPS security response headers middleware (adds HSTS additionally).
 pub async fn security_headers_with_hsts(request: Request, next: Next) -> Response {
     let mut response = security_headers(request, next).await;
     response.headers_mut().insert(

@@ -1,7 +1,7 @@
-//! 分布式文件存储抽象层。
+//! Distributed file storage abstraction layer.
 //!
-//! 通过 [`Storage`] trait 统一本地文件系统和 S3 兼容对象存储的访问接口，
-//! 运行时通过 `STORAGE_DRIVER` 环境变量切换后端，代码零改动。
+//! Provides a unified [`Storage`] trait for local filesystem and S3-compatible object storage.
+//! The backend is selected at runtime via the `STORAGE_DRIVER` environment variable with zero code changes.
 
 pub mod local;
 
@@ -13,33 +13,33 @@ use std::time::Duration;
 use crate::errors::app_error::AppResult;
 use async_trait::async_trait;
 
-/// 文件存储统一接口。
+/// Unified file storage interface.
 ///
-/// 所有后端（LocalFS、S3 等）均实现此 trait。
-/// 业务层通过 `Arc<dyn Storage>` 调用，无需关心底层实现。
+/// All backends (LocalFS, S3, etc.) implement this trait.
+/// The business layer calls via `Arc<dyn Storage>` without worrying about the underlying implementation.
 #[async_trait]
 pub trait Storage: Send + Sync + std::fmt::Debug {
-    /// 存储文件。
+    /// Store a file.
     ///
-    /// `key` 为相对路径，如 `blog/2026/04/a1b2c3d4.jpg`。
+    /// `key` is a relative path, e.g. `blog/2026/04/a1b2c3d4.jpg`.
     async fn put(&self, key: &str, data: &[u8], content_type: &str) -> AppResult<()>;
 
-    /// 读取文件内容。
+    /// Read file contents.
     async fn get(&self, key: &str) -> AppResult<Vec<u8>>;
 
-    /// 删除文件。
+    /// Delete a file.
     async fn delete(&self, key: &str) -> AppResult<()>;
 
-    /// 获取文件的公开访问 URL。
+    /// Get the public access URL for a file.
     async fn url(&self, key: &str) -> AppResult<String>;
 
-    /// 生成预签名上传 URL（S3 模式可用，LocalFS 返回空字符串）。
+    /// Generate a presigned upload URL (available in S3 mode; LocalFS returns an empty string).
     async fn presigned_upload(&self, _key: &str, _ttl: Duration) -> AppResult<String> {
         Ok(String::new())
     }
 }
 
-/// 根据 AppConfig 创建对应的存储实例。
+/// Create the appropriate storage instance based on AppConfig.
 pub fn create_storage(
     config: &crate::config::app::AppConfig,
 ) -> AppResult<std::sync::Arc<dyn Storage>> {

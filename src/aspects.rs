@@ -1,13 +1,13 @@
-//! AOP 横切面基础设施
+//! AOP cross-cutting infrastructure
 //!
-//! Aspect-Oriented Programming 框架，提供统一的横切面抽象。
-//! 所有数据路径（Content Type CRUD、内置表 Service）共享同一套 Aspect 调度。
+//! Aspect-Oriented Programming framework providing unified cross-cutting abstractions.
+//! All data paths (Content Type CRUD, built-in table Services) share the same Aspect dispatch.
 //!
-//! 四层模型：
-//! - HTTP Layer — 请求/响应拦截（Phase 5）
-//! - Access Layer — 路由级 + 数据级权限（Phase 5）
-//! - Data Layer — CRUD 前后拦截（核心层，Phase 1）
-//! - Event Layer — 事件发布/消费拦截（Phase 3）
+//! Four-layer model:
+//! - HTTP Layer — request/response interception (Phase 5)
+//! - Access Layer — route-level + data-level permissions (Phase 5)
+//! - Data Layer — pre/post CRUD interception (core layer, Phase 1)
+//! - Event Layer — event publish/consume interception (Phase 3)
 
 pub mod engine;
 
@@ -90,8 +90,8 @@ impl Pointcut {
 #[derive(Debug)]
 pub enum Advice {
     Continue,
-    /// 跳过剩余 Aspect，但原始操作继续执行（类似 loop 的 break）。
-    /// 用途：缓存命中时跳过后续 Aspect 的数据处理。
+    /// Skip remaining Aspects, but the original operation continues (like loop's break).
+    /// Use case: skip subsequent Aspect data processing on cache hit.
     Skip,
     Return(Value),
 }

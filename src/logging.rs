@@ -1,28 +1,29 @@
-//! 日志初始化：同时输出到终端和滚动文件。
+//! Logging initialization: outputs to both terminal and rolling files.
 //!
-//! 终端使用人类可读格式（带颜色），文件使用 JSON 格式（便于日志分析工具解析）。
-//! 文件按天滚动（格式 `raisfast_YYYY-MM-DD.log`），通过后台任务定期清理过期文件。
+//! Terminal uses a human-readable format (with colors), file uses JSON format
+//! (for log analysis tools). Files roll daily (format `raisfast_YYYY-MM-DD.log`),
+//! with expired files cleaned up periodically via a background task.
 //!
-//! # 环境变量
+//! # Environment variables
 //!
-//! | 变量 | 默认值 | 说明 |
-//! |------|--------|------|
-//! | `LOG_DIR` | `{STORAGE_ROOT_DIR}/logs` | 日志文件目录 |
-//! | `LOG_MAX_FILES` | `7` | 保留的日志文件数量 |
-//! | `RUST_LOG` | `raisfast=info,tower_http=info` | 日志级别过滤 |
+//! | Variable | Default | Description |
+//! |----------|---------|-------------|
+//! | `LOG_DIR` | `{STORAGE_ROOT_DIR}/logs` | Log file directory |
+//! | `LOG_MAX_FILES` | `7` | Number of log files to retain |
+//! | `RUST_LOG` | `raisfast=info,tower_http=info` | Log level filter |
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 
-/// 自定义按天滚动的日志文件写入器。
+/// Custom daily-rolling log file writer.
 ///
-/// 文件名格式：`{prefix}_YYYY-MM-DD.log`，日期变更时自动切换到新文件。
+/// Filename format: `{prefix}_YYYY-MM-DD.log`, automatically switches to a new file on date change.
 struct DailyRollingWriter {
     dir: PathBuf,
     prefix: String,
@@ -81,13 +82,13 @@ impl Write for DailyRollingWriter {
     }
 }
 
-/// 初始化日志系统。
+/// Initialize the logging system.
 ///
-/// - 终端：彩色、人类可读格式
-/// - 文件：JSON 格式、按天滚动（`raisfast_YYYY-MM-DD.log`）
+/// - Terminal: colored, human-readable format
+/// - File: JSON format, daily rolling (`raisfast_YYYY-MM-DD.log`)
 ///
-/// 返回文件 appender 的 guard，**调用者必须持有它直到程序退出**，
-/// 否则文件日志会提前停止写入。
+/// Returns the file appender guard. **The caller must hold it until program exit**,
+/// otherwise file logging will stop prematurely.
 pub fn init(log_dir: &str) -> Option<tracing_appender::non_blocking::WorkerGuard> {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("raisfast=info,tower_http=info"));
@@ -130,10 +131,10 @@ pub fn init(log_dir: &str) -> Option<tracing_appender::non_blocking::WorkerGuard
     Some(guard)
 }
 
-/// 清理过期的日志文件，只保留最新的 `max_files` 个。
+/// Clean up expired log files, keeping only the latest `max_files`.
 ///
-/// 按文件名排序（格式 `raisfast_YYYY-MM-DD.log`），
-/// 删除最旧的文件。启动时调用一次，之后可周期性调用。
+/// Sorts by filename (format `raisfast_YYYY-MM-DD.log`) and deletes the oldest.
+/// Called once at startup, and can be called periodically thereafter.
 pub fn cleanup_old_logs(log_dir: &str, max_files: usize) {
     let Ok(entries) = std::fs::read_dir(log_dir) else {
         return;

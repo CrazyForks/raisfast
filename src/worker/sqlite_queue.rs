@@ -1,4 +1,4 @@
-//! `SQLite` 持久化任务队列
+//! `SQLite` persisted job queue
 
 use sqlx::Row;
 use uuid::Uuid;
@@ -14,7 +14,7 @@ use super::{
     serialize_job,
 };
 
-/// `SQLite` 持久化任务队列
+/// `SQLite` persisted job queue
 pub struct SqliteJobQueue {
     pool: Pool,
 }

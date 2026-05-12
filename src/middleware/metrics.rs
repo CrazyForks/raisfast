@@ -1,10 +1,10 @@
-//! Prometheus metrics 中间件
+//! Prometheus metrics middleware
 //!
-//! 为每个 HTTP 请求记录：
-//! - `http_requests_total` — 计数器（按 method + status + path 分组）
-//! - `http_request_duration_seconds` — 直方图（按 method + path 分组）
+//! For each HTTP request, records:
+//! - `http_requests_total` — Counter (grouped by method + status + path)
+//! - `http_request_duration_seconds` — Histogram (grouped by method + path)
 //!
-//! 初始化时启动 Prometheus recorder，通过全局 handle 渲染输出。
+//! Initializes the Prometheus recorder at startup, rendered via a global handle.
 
 use axum::extract::Request;
 use axum::http::StatusCode;
@@ -17,7 +17,7 @@ use std::time::Instant;
 
 static HANDLE: OnceLock<metrics_exporter_prometheus::PrometheusHandle> = OnceLock::new();
 
-/// 初始化 Prometheus recorder（调用一次）
+/// Initialize the Prometheus recorder (call once)
 pub fn init() {
     let handle = PrometheusBuilder::new()
         .install_recorder()
@@ -27,12 +27,12 @@ pub fn init() {
         .expect("metrics::init called more than once");
 }
 
-/// 渲染 Prometheus 文本输出
+/// Render Prometheus text output
 pub fn render() -> String {
     HANDLE.get().map(|h| h.render()).unwrap_or_default()
 }
 
-/// metrics 中间件：记录请求计数和延迟直方图
+/// Metrics middleware: records request counts and latency histograms
 pub async fn track_metrics(req: Request, next: Next) -> Response {
     let method = req.method().clone().to_string();
     let path = normalize_path(req.uri().path());
@@ -55,7 +55,7 @@ pub async fn track_metrics(req: Request, next: Next) -> Response {
     response
 }
 
-/// Prometheus metrics 端点 handler
+/// Prometheus metrics endpoint handler
 pub async fn metrics_endpoint() -> impl IntoResponse {
     let body = render();
     (
@@ -65,7 +65,7 @@ pub async fn metrics_endpoint() -> impl IntoResponse {
     )
 }
 
-/// 将路径标准化，将动态段替换为占位符以降低基数
+/// Normalize a path by replacing dynamic segments with placeholders to reduce cardinality
 fn normalize_path(path: &str) -> String {
     let segments: Vec<&str> = path.split('/').collect();
     let mut normalized: Vec<String> = Vec::with_capacity(segments.len());
@@ -86,7 +86,7 @@ fn normalize_path(path: &str) -> String {
     normalized.join("/")
 }
 
-/// 判断一段路径是否看起来像 ID（UUID、数字、长 hex）
+/// Determine if a path segment looks like an ID (UUID, numeric, long hex)
 fn looks_like_id(s: &str) -> bool {
     if s.len() >= 32 {
         return true;

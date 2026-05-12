@@ -1,4 +1,4 @@
-//! 短信验证码服务。
+//! SMS verification code service.
 
 use chrono::Utc;
 
@@ -7,9 +7,9 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::repositories::{RefreshTokenRepository, UserRepository};
 
-/// 发送短信验证码。
+/// Send an SMS verification code.
 ///
-/// 检查配置是否启用、限流、生成验证码、入库、通过 Worker 发送。
+/// Checks if the feature is enabled in config, enforces rate limiting, generates the code, persists it, and sends it via a Worker.
 pub async fn send_sms_code(
     pool: &crate::db::Pool,
     config: &crate::config::app::AppConfig,
@@ -41,9 +41,9 @@ pub async fn send_sms_code(
     Ok(())
 }
 
-/// 验证短信验证码并自动注册/登录。
+/// Verify an SMS code and auto-register/login.
 ///
-/// 验证通过后：若手机号已注册则直接登录，否则自动创建用户并登录。
+/// After successful verification: if the phone number is already registered, log in directly; otherwise, auto-create a user and log in.
 #[allow(clippy::too_many_arguments)]
 pub async fn verify_sms_and_auth(
     user_repo: &dyn UserRepository,
@@ -142,7 +142,7 @@ pub async fn verify_sms_and_auth(
     })
 }
 
-/// 已登录用户绑定手机号。
+/// Bind a phone number for a logged-in user.
 pub async fn bind_phone(
     _user_repo: &dyn UserRepository,
     pool: &crate::db::Pool,

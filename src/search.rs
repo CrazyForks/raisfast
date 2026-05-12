@@ -1,7 +1,7 @@
-//! 全文搜索引擎抽象层
+//! Full-text search engine abstraction layer
 //!
-//! 提供 `SearchEngine` trait，支持 Tantivy（生产）和 Noop（降级）两种实现。
-//! 通过 `search-tantivy` feature flag 控制。
+//! Provides the `SearchEngine` trait with two implementations: Tantivy (production) and Noop (fallback).
+//! Controlled via the `search-tantivy` feature flag.
 
 mod noop;
 pub use noop::NoopSearchEngine;
@@ -13,7 +13,7 @@ pub use self::tantivy::TantivyEngine;
 
 use crate::errors::app_error::AppResult;
 
-/// 搜索结果条目
+/// A single search result entry
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SearchResult {
     pub post_id: String,
@@ -22,7 +22,7 @@ pub struct SearchResult {
     pub excerpt_highlight: Option<String>,
 }
 
-/// 可索引的文章数据（从 DB 提取的扁平结构）
+/// Indexable post data (flat structure extracted from DB)
 #[derive(Debug, Clone)]
 pub struct SearchablePost {
     pub id: String,
@@ -30,22 +30,22 @@ pub struct SearchablePost {
     pub content: String,
 }
 
-/// 搜索引擎接口
+/// Search engine interface
 #[async_trait::async_trait]
 pub trait SearchEngine: Send + Sync {
-    /// 索引单篇文章（存在则更新）
+    /// Index a single post (updates if exists)
     async fn index_post(&self, post: &SearchablePost) -> AppResult<()>;
 
-    /// 批量索引多篇文章
+    /// Batch index multiple posts
     async fn index_posts(&self, posts: &[SearchablePost]) -> AppResult<()>;
 
-    /// 删除文章索引
+    /// Delete a post from the index
     async fn delete_post(&self, post_id: &str) -> AppResult<()>;
 
-    /// 清空并重建全部索引
+    /// Clear and rebuild the entire index
     async fn rebuild_all(&self, posts: &[SearchablePost]) -> AppResult<()>;
 
-    /// 搜索文章，返回结果和总数
+    /// Search posts, returning results and total count
     async fn search(
         &self,
         query: &str,
@@ -64,7 +64,7 @@ pub trait SearchEngine: Send + Sync {
     }
 }
 
-/// 将搜索关键词在文本中用 `<em>` 标签包裹，大小写不敏感。
+/// Wrap search keywords in `<em>` tags within text, case-insensitive.
 pub fn highlight_text(query: &str, text: &str) -> String {
     let mut result = text.to_string();
     for word in query.split_whitespace() {
@@ -85,7 +85,7 @@ pub fn highlight_text(query: &str, text: &str) -> String {
     result
 }
 
-/// 从内容中截取包含首个匹配词的摘要片段。
+/// Extract an excerpt from content containing the first matching keyword.
 pub fn make_excerpt(content: &str, query: &str, max_len: usize) -> Option<String> {
     let first = query.split_whitespace().next()?;
     let pos = content.to_lowercase().find(&first.to_lowercase())?;

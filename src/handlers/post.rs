@@ -1,7 +1,8 @@
-//! 文章相关处理器
+//! Post handlers
 //!
-//! 处理文章的列表、详情、创建、更新和删除请求。
-//! 支持按分类、标签、关键词筛选文章列表，以及权限控制（仅作者或管理员可修改/删除）。
+//! Handles post list, detail, create, update, and delete requests.
+//! Supports filtering by category, tag, and keyword, with permission control
+//! (only the author or admin can modify/delete).
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -87,15 +88,15 @@ pub struct AdminPostListQuery {
     pub status: Option<PostStatus>,
 }
 
-/// 获取已发布文章列表（分页）
+/// Get published post list (paginated)
 ///
-/// - **方法/路径：** `GET /api/posts`
-/// - **认证：** 无需认证
-/// - **说明：** 分页查询已发布文章，支持按 `category_id`、`tag_id`、`q`（关键词）筛选。
-///   `page_size` 上限为 100。
-/// - **返回：** `ApiResponse<PaginatedData<PostResponse>>`
+/// - **Method/Path:** `GET /api/posts`
+/// - **Auth:** Not required
+/// - **Description:** Paginated query of published posts, supports filtering by `category_id`, `tag_id`, `q` (keyword).
+///   `page_size` upper limit is 100.
+/// - **Returns:** `ApiResponse<PaginatedData<PostResponse>>`
 #[utoipa::path(get, path = "/posts", tag = "posts",
-    responses((status = 200, description = "文章列表"))
+    responses((status = 200, description = "Post list"))
 )]
 pub async fn list(
     auth: AuthUser,
@@ -131,15 +132,15 @@ pub async fn list(
     Ok(pagination.paginate(posts, total))
 }
 
-/// 获取文章详情（按 slug）
+/// Get post detail (by slug)
 ///
-/// - **方法/路径：** `GET /api/posts/:slug`
-/// - **认证：** 无需认证
-/// - **说明：** 根据 slug 获取已发布文章详情，自动增加浏览量。
-/// - **返回：** `ApiResponse<PostResponse>`
+/// - **Method/Path:** `GET /api/posts/:slug`
+/// - **Auth:** Not required
+/// - **Description:** Fetches published post detail by slug, auto-increments view count.
+/// - **Returns:** `ApiResponse<PostResponse>`
 #[utoipa::path(get, path = "/posts/{slug}", tag = "posts",
-    params(("slug" = String, Path, description = "文章 slug")),
-    responses((status = 200, description = "文章详情"))
+    params(("slug" = String, Path, description = "Post slug")),
+    responses((status = 200, description = "Post detail"))
 )]
 pub async fn get(
     auth: AuthUser,
@@ -151,17 +152,17 @@ pub async fn get(
     Ok(ApiResponse::success(post))
 }
 
-/// 创建新文章
+/// Create a new post
 ///
-/// - **方法/路径：** `POST /api/posts`
-/// - **认证：** 需要作者或以上权限（`AuthorUser`）
-/// - **说明：** 创建新文章，自动生成 slug，支持设置分类和标签。
-/// - **验证：** 通过 `validation::validate()` 校验请求体，验证错误消息通过 i18n 翻译。
-/// - **返回：** `ApiResponse<PostResponse>`
+/// - **Method/Path:** `POST /api/posts`
+/// - **Auth:** Requires author or above permission (`AuthorUser`)
+/// - **Description:** Creates a new post, auto-generates slug, supports setting category and tags.
+/// - **Validation:** Validates request body via `validation::validate()`, with i18n error messages.
+/// - **Returns:** `ApiResponse<PostResponse>`
 #[utoipa::path(post, path = "/posts", tag = "posts",
     security(("bearer_auth" = [])),
     request_body = CreatePostRequest,
-    responses((status = 200, description = "文章已创建"))
+    responses((status = 200, description = "Post created"))
 )]
 pub async fn create(
     auth: AuthUser,
@@ -181,18 +182,18 @@ pub async fn create(
     Ok(ApiResponse::success(post))
 }
 
-/// 更新文章
+/// Update a post
 ///
-/// - **方法/路径：** `PUT /api/posts/:slug`
-/// - **认证：** 需要登录（`AuthUser`），且为文章作者或管理员
-/// - **说明：** 根据 slug 查找文章，验证权限后更新。仅修改提供的字段。
-/// - **验证：** 通过 `validation::validate()` 校验请求体，验证错误消息通过 i18n 翻译。
-/// - **返回：** `ApiResponse<PostResponse>`
+/// - **Method/Path:** `PUT /api/posts/:slug`
+/// - **Auth:** Requires login (`AuthUser`), must be post author or admin
+/// - **Description:** Finds post by slug, verifies permission, then updates. Only modifies provided fields.
+/// - **Validation:** Validates request body via `validation::validate()`, with i18n error messages.
+/// - **Returns:** `ApiResponse<PostResponse>`
 #[utoipa::path(put, path = "/posts/{slug}", tag = "posts",
     security(("bearer_auth" = [])),
-    params(("slug" = String, Path, description = "文章 slug")),
+    params(("slug" = String, Path, description = "Post slug")),
     request_body = UpdatePostRequest,
-    responses((status = 200, description = "文章已更新"))
+    responses((status = 200, description = "Post updated"))
 )]
 pub async fn update(
     auth: AuthUser,
@@ -213,16 +214,16 @@ pub async fn update(
     Ok(ApiResponse::success(post))
 }
 
-/// 删除文章
+/// Delete a post
 ///
-/// - **方法/路径：** `DELETE /api/posts/:slug`
-/// - **认证：** 需要登录（`AuthUser`），且为文章作者或管理员
-/// - **说明：** 根据 slug 查找文章，验证权限后删除。
-/// - **返回：** `ApiResponse<()>`
+/// - **Method/Path:** `DELETE /api/posts/:slug`
+/// - **Auth:** Requires login (`AuthUser`), must be post author or admin
+/// - **Description:** Finds post by slug, verifies permission, then deletes.
+/// - **Returns:** `ApiResponse<()>`
 #[utoipa::path(delete, path = "/posts/{slug}", tag = "posts",
     security(("bearer_auth" = [])),
-    params(("slug" = String, Path, description = "文章 slug")),
-    responses((status = 200, description = "文章已删除"))
+    params(("slug" = String, Path, description = "Post slug")),
+    responses((status = 200, description = "Post deleted"))
 )]
 pub async fn delete(
     auth: AuthUser,
@@ -242,7 +243,7 @@ pub async fn delete(
 
 // ── Admin handlers ──
 
-/// 后台管理：创建文章（admin，可指定作者、强制发布）
+/// Admin: create post (admin, can specify author, force publish)
 pub async fn admin_create(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -261,7 +262,7 @@ pub async fn admin_create(
     Ok(ApiResponse::success(post))
 }
 
-/// 后台管理：编辑任意文章（admin，可改作者/状态）
+/// Admin: edit any post (admin, can change author/status)
 pub async fn admin_update(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -282,7 +283,7 @@ pub async fn admin_update(
     Ok(ApiResponse::success(post))
 }
 
-/// 后台管理：删除任意文章（admin）
+/// Admin: delete any post (admin)
 pub async fn admin_delete(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -300,12 +301,12 @@ pub async fn admin_delete(
     Ok(ApiResponse::success(()))
 }
 
-/// 后台管理：按 slug 获取文章详情（含所有状态）
+/// Admin: get post detail by slug (all statuses included)
 ///
-/// - **方法/路径：** `GET /api/v1/admin/posts/{slug}`
-/// - **认证：** 需要作者或以上权限（`AuthorUser`）
-/// - **说明：** 根据 slug 获取任意状态的文章详情，不增加浏览量。
-/// - **返回：** `ApiResponse<PostResponse>`
+/// - **Method/Path:** `GET /api/v1/admin/posts/{slug}`
+/// - **Auth:** Requires author or above permission (`AuthorUser`)
+/// - **Description:** Fetches post detail of any status by slug, without incrementing view count.
+/// - **Returns:** `ApiResponse<PostResponse>`
 pub async fn admin_get(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -318,12 +319,12 @@ pub async fn admin_get(
     Ok(ApiResponse::success(post))
 }
 
-/// 后台管理：获取全部文章列表（含所有状态）
+/// Admin: get all posts list (all statuses included)
 ///
-/// - **方法/路径：** `GET /api/v1/admin/posts`
-/// - **认证：** 需要作者或以上权限（`AuthorUser`）
-/// - **说明：** 分页查询全部文章（含 draft/published），支持按 `status` 筛选。
-/// - **返回：** `ApiResponse<PaginatedData<PostResponse>>`
+/// - **Method/Path:** `GET /api/v1/admin/posts`
+/// - **Auth:** Requires author or above permission (`AuthorUser`)
+/// - **Description:** Paginated query of all posts (including draft/published), supports filtering by `status`.
+/// - **Returns:** `ApiResponse<PaginatedData<PostResponse>>`
 pub async fn admin_list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -348,7 +349,7 @@ pub async fn admin_list(
     Ok(pagination.paginate(posts, total))
 }
 
-/// 后台管理：批量操作（delete / publish / unpublish）
+/// Admin: batch operations (delete / publish / unpublish)
 pub async fn admin_batch(
     auth: AuthUser,
     State(state): State<crate::AppState>,

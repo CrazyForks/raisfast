@@ -1,4 +1,4 @@
-//! GitHub OAuth2 Provider 实现
+//! GitHub OAuth2 Provider implementation
 
 use crate::errors::app_error::{AppError, AppResult};
 use crate::oauth::{OAuthProvider, OAuthTokenResponse, OAuthUserInfo};
@@ -10,7 +10,7 @@ pub struct GitHubProvider {
 }
 
 impl GitHubProvider {
-    /// 创建 GitHub Provider
+    /// Create a GitHub Provider
     pub fn new(client_id: String, client_secret: String) -> Self {
         Self {
             client_id,
@@ -18,7 +18,7 @@ impl GitHubProvider {
         }
     }
 
-    /// 获取 GitHub 用户主邮箱（需要 user:email scope）
+    /// Fetch the GitHub user's primary email (requires user:email scope)
     async fn fetch_primary_email(
         &self,
         client: &reqwest::Client,

@@ -1,6 +1,6 @@
-//! Plugin CLI 子命令。
+//! Plugin CLI subcommand.
 //!
-//! 提供 `plugin new`（生成模板）、`plugin check`（校验 manifest）。
+//! Provides `plugin new` (generate template), `plugin check` (validate manifest).
 
 use std::path::PathBuf;
 

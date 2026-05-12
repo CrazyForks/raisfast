@@ -1,17 +1,17 @@
-//! Markdown 转 HTML 渲染管线。
+//! Markdown to HTML rendering pipeline.
 //!
-//! 先通过 **comrak** 将 Markdown 文本转换为 HTML，
-//! 再通过 **ammonia** 对生成的 HTML 进行白名单过滤，防止 XSS 攻击。
+//! First converts Markdown text to HTML via **comrak**,
+//! then sanitizes the generated HTML using **ammonia** to prevent XSS attacks.
 //!
-//! 代码块（` ``` `）保留语言标识 CSS class，由前端 JS 高亮库（如 highlight.js）渲染。
+//! Code blocks (` ``` `) preserve language-identifier CSS classes for frontend JS highlighting libraries (e.g. highlight.js).
 
 use ammonia::clean;
-use comrak::{ComrakOptions, markdown_to_html};
+use comrak::{markdown_to_html, ComrakOptions};
 
-/// 将 Markdown 文本渲染为经过安全过滤的 HTML。
+/// Renders Markdown text to sanitized HTML.
 ///
-/// 1. 使用 comrak 将 Markdown 转为原始 HTML（代码块保留 `language-xxx` class）。
-/// 2. 使用 ammonia 对 HTML 进行消毒处理，移除危险标签和属性。
+/// 1. Uses comrak to convert Markdown to raw HTML (code blocks preserve `language-xxx` class).
+/// 2. Uses ammonia to sanitize the HTML, removing dangerous tags and attributes.
 #[must_use]
 pub fn render_markdown(content: &str) -> String {
     let mut options = ComrakOptions::default();

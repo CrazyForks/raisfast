@@ -1,6 +1,6 @@
-//! 分类相关 Command
+//! Category-related commands
 
-/// 创建分类
+/// Create a category
 pub struct CreateCategoryCmd {
     pub name: String,
     pub slug: String,
@@ -9,7 +9,7 @@ pub struct CreateCategoryCmd {
     pub sort_order: i64,
 }
 
-/// 更新分类
+/// Update a category
 pub struct UpdateCategoryCmd {
     pub id: i64,
     pub name: Option<String>,

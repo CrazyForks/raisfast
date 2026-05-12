@@ -1,15 +1,15 @@
-//! Blog 系统入口。
+//! Blog system entry point.
 //!
-//! 默认行为：启动 HTTP 服务器。通过子命令切换到其他操作。
+//! Default behavior: starts the HTTP server. Use subcommands to switch to other operations.
 //!
-//! # 子命令
+//! # Subcommands
 //!
-//! - `server start`    启动服务器（默认）
-//! - `server stop`     停止运行中的服务器
-//! - `server restart`  重启服务器
-//! - `server status`   查看运行状态
-//! - `db migrate`      执行数据库迁移
-//! - `db backup`       备份数据库
+//! - `server start`    Start the server (default)
+//! - `server stop`     Stop the running server
+//! - `server restart`  Restart the server
+//! - `server status`   Check running status
+//! - `db migrate`      Run database migrations
+//! - `db backup`       Backup the database
 
 #![deny(unsafe_code)]
 

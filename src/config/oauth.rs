@@ -1,47 +1,47 @@
-//! OAuth2 社交登录配置
+//! OAuth2 social login configuration
 //!
-//! 支持多个 Provider（GitHub、Google、微信），通过环境变量配置。
+//! Supports multiple providers (GitHub, Google, WeChat), configured via environment variables.
 
 use serde::{Deserialize, Serialize};
 
-/// GitHub OAuth 配置
+/// GitHub OAuth configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitHubOAuthConfig {
     pub client_id: String,
     pub client_secret: String,
 }
 
-/// Google OAuth 配置
+/// Google OAuth configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GoogleOAuthConfig {
     pub client_id: String,
     pub client_secret: String,
 }
 
-/// 微信 OAuth 配置
+/// WeChat OAuth configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WechatOAuthConfig {
     pub app_id: String,
     pub app_secret: String,
 }
 
-/// OAuth2 总配置
+/// OAuth2 overall configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OAuthConfig {
-    /// 是否启用 OAuth 功能（默认 false）
+    /// Whether to enable OAuth (default false)
     pub enabled: bool,
-    /// 前端回调地址（登录成功后 302 重定向目标）
+    /// Frontend callback URL (302 redirect target after successful login)
     pub redirect_url: String,
-    /// GitHub 配置
+    /// GitHub configuration
     pub github: Option<GitHubOAuthConfig>,
-    /// Google 配置
+    /// Google configuration
     pub google: Option<GoogleOAuthConfig>,
-    /// 微信配置
+    /// WeChat configuration
     pub wechat: Option<WechatOAuthConfig>,
 }
 
 impl OAuthConfig {
-    /// 从环境变量加载，缺失项使用默认值
+    /// Load from environment variables, using defaults for missing items
     pub fn from_env() -> Self {
         let enabled = std::env::var("OAUTH_ENABLED")
             .ok()
@@ -102,7 +102,7 @@ impl OAuthConfig {
         }
     }
 
-    /// 检查指定 Provider 是否已配置
+    /// Check if the specified provider is configured
     pub fn is_provider_configured(&self, provider: &str) -> bool {
         match provider {
             "github" => self.github.is_some(),
@@ -112,7 +112,7 @@ impl OAuthConfig {
         }
     }
 
-    /// 获取已配置的 Provider 名称列表
+    /// Get the list of configured provider names
     pub fn configured_providers(&self) -> Vec<&str> {
         let mut providers = Vec::new();
         if self.github.is_some() {

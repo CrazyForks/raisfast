@@ -1,43 +1,44 @@
-//! API Rule 表达式引擎
+//! API Rule expression engine
 //!
-//! 实现类似 PocketBase 的表达式级访问控制。
-//! 将规则表达式解析为 AST，然后编译为 SQL WHERE 子句或运行时布尔判断。
+//! Implements PocketBase-style expression-level access control.
+//! Parses rule expressions into an AST, then compiles them to SQL WHERE clauses or runtime boolean evaluation.
 //!
-//! # 支持的语法（v1 + Phase 1）
+//! # Supported syntax (v1 + Phase 1)
 //!
 //! ```text
-//! # 比较
-//! status = "published"                          — 字段比较
-//! author_id = @request.auth.id                  — 认证用户比较
-//! @request.auth.role = "admin"                  — 角色检查
+//! # Comparison
+//! status = "published"                          — field comparison
+//! author_id = @request.auth.id                  — authenticated user comparison
+//! @request.auth.role = "admin"                  — role check
 //! status = "published" && author_id = @request.auth.id
 //!
-//! # 请求上下文（Phase 1）
-//! @request.body.title != ""                     — 请求体字段
-//! @request.query.category = "news"              — URL 查询参数
+//! # Request context (Phase 1)
+//! @request.body.title != ""                     — request body field
+//! @request.query.category = "news"              — URL query parameter
 //!
-//! # 时间（Phase 1）
-//! created_at > @now                             — 当前时间
+//! # Time (Phase 1)
+//! created_at > @now                             — current time
 //!
-//! # 后缀操作（Phase 1）
-//! title:isset                                   — 字段非空检查
-//! tags:length > 0                               — 字符串/数组长度
+//! # Suffix operations (Phase 1)
+//! title:isset                                   — field non-null check
+//! tags:length > 0                               — string/array length
 //! ```
 //!
-//! # 架构
+//! # Architecture
 //!
-//! 表达式 → Token → AST → SQL WHERE 子句 / 运行时求值
+//! Expression → Token → AST → SQL WHERE clause / runtime evaluation
 //!
-//! # 环境变量配置
+//! # Environment variable configuration
 //!
-//! 所有 SQL 编译和运行时求值的硬编码值可通过 `RuleEngineConfig`（环境变量）覆盖，
-//! 便于适配不同数据库后端和调整缓存策略。详见 `AppConfig::rule_engine`。
+//! All hardcoded values for SQL compilation and runtime evaluation can be overridden
+//! via `RuleEngineConfig` (environment variables), making it easy to adapt to different
+//! database backends and adjust caching strategies. See `AppConfig::rule_engine`.
 
 use crate::config::app::RuleEngineConfig;
 use serde_json::Value;
 use std::cmp::Ordering;
 
-/// 表达式求值上下文
+/// Expression evaluation context
 pub struct RuleContext {
     pub auth_user_id: Option<String>,
     pub auth_role: Option<String>,
@@ -46,7 +47,7 @@ pub struct RuleContext {
 }
 
 impl RuleContext {
-    /// 从请求认证信息构建上下文
+    /// Build context from request authentication info
     pub fn from_auth(auth: &crate::middleware::auth::AuthUser) -> Self {
         Self {
             auth_user_id: auth.user_id().map(|s| s.to_string()),
@@ -61,7 +62,7 @@ impl RuleContext {
     }
 }
 
-/// Token 类型
+/// Token types
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
     Identifier(String),
@@ -84,7 +85,7 @@ enum Token {
     Colon,
 }
 
-/// AST 节点
+/// AST node
 #[derive(Debug, Clone)]
 pub enum Expr {
     Compare {
@@ -124,13 +125,13 @@ pub enum Operand {
     Length(Box<Operand>),
 }
 
-/// parse_comparison 的中间类型：可能是操作数或子表达式
+/// Intermediate type for parse_comparison: may be an operand or a sub-expression
 enum ExprOrOperand {
     Expr(Expr),
     Operand(Operand),
 }
 
-/// 词法分析器
+/// Lexer
 struct Lexer {
     chars: Vec<char>,
     pos: usize,
@@ -312,7 +313,7 @@ impl Lexer {
     }
 }
 
-/// 递归下降解析器
+/// Recursive descent parser
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -462,14 +463,14 @@ impl Parser {
     }
 }
 
-/// 解析后的规则
+/// Parsed rule
 #[derive(Debug, Clone)]
 pub struct Rule {
     expr: Expr,
 }
 
 impl Rule {
-    /// 解析规则表达式字符串为 AST
+    /// Parse a rule expression string into an AST
     pub fn parse(source: &str, config: &RuleEngineConfig) -> Result<Self, String> {
         let now_keyword = config
             .prefix_now
@@ -483,17 +484,17 @@ impl Rule {
         Ok(Self { expr })
     }
 
-    /// 编译为 SQL WHERE 子句片段和参数列表
+    /// Compile to a SQL WHERE clause fragment and parameter list
     ///
-    /// `offset` 是 SQL 参数起始序号（用于多条规则组合时的参数编号），
-    /// 返回 `(sql_fragment, params)`。
+    /// `offset` is the starting SQL parameter index (used for combining multiple rules),
+    /// returns `(sql_fragment, params)`.
     pub fn to_sql(&self, offset: usize, config: &RuleEngineConfig) -> (String, Vec<String>) {
         let mut ctx = SqlContext::new(offset, config);
         ctx.compile_expr(&self.expr);
         (ctx.sql, ctx.params)
     }
 
-    /// 运行时求值：对数据库记录和请求上下文判断规则是否成立
+    /// Runtime evaluation: check whether the rule holds for a database record and request context
     pub fn evaluate(
         &self,
         record: &Value,
@@ -504,7 +505,7 @@ impl Rule {
     }
 }
 
-/// SQL 编译上下文
+/// SQL compilation context
 struct SqlContext<'a> {
     sql: String,
     params: Vec<String>,
@@ -599,10 +600,10 @@ impl<'a> SqlContext<'a> {
     }
 }
 
-/// 带 auth 替换的 SQL 编译（公共接口）
+/// SQL compilation with auth replacement (public interface)
 ///
-/// 将规则编译为 SQL WHERE 子句，同时将 `@request.auth.id` / `@request.auth.role`
-/// 替换为 JWT 中解析的实际值。如果规则引用了 auth 但用户未登录，返回 None。
+/// Compiles the rule into a SQL WHERE clause, replacing `@request.auth.id` / `@request.auth.role`
+/// with actual values parsed from the JWT. Returns None if the rule references auth but the user is not logged in.
 pub fn compile_rule_sql(
     rule: &Rule,
     offset: usize,
@@ -682,7 +683,7 @@ fn operand_is_auth_role(op: &Operand) -> bool {
     }
 }
 
-// ── 运行时求值 ──────────────────────────────────────────────────
+// ── Runtime evaluation ──────────────────────────────────────────
 
 fn eval_expr(expr: &Expr, record: &Value, ctx: &RuleContext, config: &RuleEngineConfig) -> bool {
     match expr {
@@ -809,7 +810,7 @@ mod tests {
         RuleEngineConfig::default()
     }
 
-    // ── Lexer 测试 ──────────────────────────────────────────────
+    // ── Lexer tests ──────────────────────────────────────────────
 
     #[test]
     fn tokenize_simple_comparison() {
@@ -885,7 +886,7 @@ mod tests {
         assert_eq!(tokens[2], Token::Identifier("@current_time".into()));
     }
 
-    // ── Parser 测试 ─────────────────────────────────────────────
+    // ── Parser tests ─────────────────────────────────────────────
 
     #[test]
     fn parse_simple_eq() {
@@ -1031,7 +1032,7 @@ mod tests {
         }
     }
 
-    // ── to_sql 测试 ─────────────────────────────────────────────
+    // ── to_sql tests ─────────────────────────────────────────────
 
     #[test]
     fn sql_simple_comparison() {
@@ -1113,7 +1114,7 @@ mod tests {
         assert!(sql.contains("CHAR_LENGTH(\"tags\")"));
     }
 
-    // ── evaluate 测试 ───────────────────────────────────────────
+    // ── evaluate tests ───────────────────────────────────────────
 
     #[test]
     fn eval_eq_match() {
@@ -1353,7 +1354,7 @@ mod tests {
         assert!(!rule.evaluate(&json!({"status": "active"}), &ctx, &cfg));
     }
 
-    // ── compile_rule_sql 测试 ────────────────────────────────────
+    // ── compile_rule_sql tests ────────────────────────────────────
 
     #[test]
     fn compile_no_auth() {
@@ -1415,7 +1416,7 @@ mod tests {
         assert!(params.contains(&"abc".to_string()));
     }
 
-    // ── 配置化测试 ──────────────────────────────────────────────
+    // ── Configuration tests ──────────────────────────────────────
 
     #[test]
     fn custom_sql_now_fn_postgres() {

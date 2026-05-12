@@ -1,12 +1,12 @@
-//! 短信发送实现
+//! SMS sending implementations
 //!
-//! - [`LogSender`]：开发阶段日志占位
-//! - [`AliyunSender`]：阿里云短信 API
-//! - [`TwilioSender`]：Twilio SMS API
+//! - [`LogSender`]: Log placeholder for development
+//! - [`AliyunSender`]: Alibaba Cloud SMS API
+//! - [`TwilioSender`]: Twilio SMS API
 
 use crate::notifier::{SmsMessage, SmsSender};
 
-/// 日志短信发送器（开发用）
+/// Log SMS sender (for development)
 pub struct LogSender;
 
 #[async_trait::async_trait]
@@ -21,7 +21,7 @@ impl SmsSender for LogSender {
     }
 }
 
-/// 阿里云短信发送器
+/// Alibaba Cloud SMS sender
 pub struct AliyunSender {
     access_key_id: String,
     access_key_secret: String,
@@ -112,7 +112,7 @@ impl SmsSender for AliyunSender {
     }
 }
 
-/// Twilio SMS 发送器
+/// Twilio SMS sender
 pub struct TwilioSender {
     account_sid: String,
     auth_token: String,

@@ -1,9 +1,9 @@
-//! 通知模块
+//! Notification module
 //!
-//! 通用邮件/短信发送抽象层，通过 env 配置选择实现：
+//! Generic email/SMS sending abstraction layer, with implementation selected via env config:
 //!
-//! - 邮件：`log`（日志占位）| `smtp`（lettre）
-//! - 短信：`log`（日志占位）| `aliyun`（阿里云 SMS）| `twilio`
+//! - Email: `log` (log placeholder) | `smtp` (lettre)
+//! - SMS: `log` (log placeholder) | `aliyun` (Alibaba Cloud SMS) | `twilio`
 
 pub mod email;
 pub mod sms;
@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-/// 邮件消息
+/// Email message
 #[derive(Debug, Clone)]
 pub struct EmailMessage {
     pub to: String,
@@ -21,7 +21,7 @@ pub struct EmailMessage {
     pub text_body: Option<String>,
 }
 
-/// 短信消息
+/// SMS message
 #[derive(Debug, Clone)]
 pub struct SmsMessage {
     pub to: String,
@@ -30,21 +30,21 @@ pub struct SmsMessage {
     pub template_params: Option<Value>,
 }
 
-/// 邮件发送 trait
+/// Email sender trait
 #[async_trait::async_trait]
 pub trait EmailSender: Send + Sync {
     async fn send(&self, msg: &EmailMessage) -> anyhow::Result<()>;
     fn name(&self) -> &'static str;
 }
 
-/// 短信发送 trait
+/// SMS sender trait
 #[async_trait::async_trait]
 pub trait SmsSender: Send + Sync {
     async fn send(&self, msg: &SmsMessage) -> anyhow::Result<()>;
     fn name(&self) -> &'static str;
 }
 
-/// 根据配置构建邮件发送器
+/// Build an email sender based on configuration
 pub fn build_email_sender(config: &crate::config::app::AppConfig) -> Arc<dyn EmailSender> {
     match config.email_provider.as_str() {
         "smtp" => Arc::new(email::SmtpSender::new(
@@ -93,7 +93,7 @@ pub fn build_email_sender(config: &crate::config::app::AppConfig) -> Arc<dyn Ema
     }
 }
 
-/// 根据配置构建短信发送器
+/// Build an SMS sender based on configuration
 pub fn build_sms_sender(config: &crate::config::app::AppConfig) -> Arc<dyn SmsSender> {
     match config.sms_provider.as_str() {
         "aliyun" => Arc::new(sms::AliyunSender::new(

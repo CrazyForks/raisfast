@@ -1,10 +1,10 @@
-//! 后台任务队列
+//! Background job queue
 //!
-//! 基于 `SQLite` 持久化的异步任务系统，通过 `EventBus` 与业务层解耦。
+//! An async task system persisted via `SQLite`, decoupled from the business layer through `EventBus`.
 //!
-//! 数据流：
+//! Data flow:
 //! ```text
-//! Service → EventBus.emit(Event) → JobEnqueuer → SQLite jobs 表 → WorkerRunner → JobHandler
+//! Service → EventBus.emit(Event) → JobEnqueuer → SQLite jobs table → WorkerRunner → JobHandler
 //! ```
 
 mod dispatcher;
@@ -51,7 +51,7 @@ pub use scheduler::{
 };
 pub use sqlite_queue::SqliteJobQueue;
 
-/// 任务类型与参数
+/// Job types and parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 #[non_exhaustive]
@@ -94,9 +94,9 @@ pub enum Job {
         email: String,
         verify_token: String,
     },
-    /// 自定义任务类型，支持任意 `job_type` + JSON payload
+    /// Custom job type, supports arbitrary `job_type` + JSON payload
     ///
-    /// 内置 Handler 无法匹配时，WorkerRunner 会 fallback 到插件调度。
+    /// When no built-in Handler matches, WorkerRunner falls back to plugin dispatch.
     Custom {
         job_type: String,
         payload: serde_json::Value,
@@ -104,7 +104,7 @@ pub enum Job {
 }
 
 impl Job {
-    /// 返回 `job_type` 字符串（serde tag）
+    /// Returns the `job_type` string (serde tag)
     #[must_use]
     pub fn job_type(&self) -> &str {
         match self {
@@ -123,7 +123,7 @@ impl Job {
     }
 }
 
-/// 入队参数
+/// Enqueue parameters
 #[derive(Debug, Clone)]
 pub struct NewJob {
     pub job: Job,
@@ -141,7 +141,7 @@ impl From<Job> for NewJob {
     }
 }
 
-/// 出队的任务记录
+/// Dequeued job record
 #[derive(Debug, Clone)]
 pub struct QueuedJob {
     pub document_id: String,
@@ -151,7 +151,7 @@ pub struct QueuedJob {
     pub created_at: Timestamp,
 }
 
-/// 任务队列 trait
+/// Job queue trait
 #[async_trait::async_trait]
 pub trait JobQueue: Send + Sync {
     async fn enqueue(&self, new_job: NewJob) -> AppResult<()>;
@@ -171,7 +171,7 @@ pub trait JobQueue: Send + Sync {
     async fn cleanup(&self) -> AppResult<u64>;
 }
 
-/// 任务统计
+/// Job statistics
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct JobStats {
     pub pending: i64,
@@ -181,7 +181,7 @@ pub struct JobStats {
     pub dead: i64,
 }
 
-/// 任务列表行（管理 API）
+/// Job list row (for admin API)
 #[derive(Debug, Clone, Serialize)]
 pub struct JobRow {
     pub document_id: String,
@@ -196,7 +196,7 @@ pub struct JobRow {
     pub updated_at: Timestamp,
 }
 
-/// 退避时间：指数退避 + 抖动
+/// Backoff duration: exponential backoff + jitter
 #[must_use]
 pub fn backoff_duration(attempts: u32) -> std::time::Duration {
     let base_secs: u64 = 10;
@@ -205,7 +205,7 @@ pub fn backoff_duration(attempts: u32) -> std::time::Duration {
     std::time::Duration::from_secs_f64(delay_secs as f64 * jitter)
 }
 
-/// 确定性伪随机，避免引入 rand crate
+/// Deterministic pseudo-random to avoid depending on the rand crate
 fn rand_id(seed: u32) -> u32 {
     let mut x = seed.wrapping_mul(1103515245).wrapping_add(12345);
     x = x ^ (x >> 16);
@@ -214,9 +214,9 @@ fn rand_id(seed: u32) -> u32 {
     x
 }
 
-/// 解析 payload JSON 为 Job
+/// Parses a payload JSON into a Job
 ///
-/// 先尝试匹配内置枚举变体，不匹配则 fallback 为 `Job::Custom`。
+/// First attempts to match built-in enum variants; on failure, falls back to `Job::Custom`.
 fn parse_job(job_type: &str, payload: &str) -> AppResult<Job> {
     let tagged = if payload.is_empty() || payload == "null" {
         format!(r#"{{"type":"{job_type}"}}"#)
@@ -240,7 +240,7 @@ fn parse_job(job_type: &str, payload: &str) -> AppResult<Job> {
     })
 }
 
-/// 将 Job 序列化为 payload JSON
+/// Serializes a Job into a payload JSON
 fn serialize_job(job: &Job) -> String {
     if let Job::Custom { payload, .. } = job {
         if payload.is_null() {

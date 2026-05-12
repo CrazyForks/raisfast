@@ -1,6 +1,6 @@
-//! OAuth 账号绑定模型与数据库查询
+//! OAuth account binding model and database queries
 //!
-//! 定义 `oauth_accounts` 和 `oauth_states` 表的数据结构和 CRUD 操作。
+//! Defines data structures and CRUD operations for `oauth_accounts` and `oauth_states` tables.
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -9,7 +9,7 @@ use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
-/// OAuth 账号绑定记录
+/// OAuth account binding record
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct OAuthAccount {
     pub id: i64,
@@ -28,7 +28,7 @@ pub struct OAuthAccount {
     pub updated_at: Timestamp,
 }
 
-/// OAuth 短期 state 记录
+/// OAuth short-lived state record
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct OAuthState {
     pub id: i64,
@@ -40,7 +40,7 @@ pub struct OAuthState {
     pub expires_at: Timestamp,
 }
 
-/// 创建 OAuth state 记录
+/// Create an OAuth state record
 pub async fn create_state(
     pool: &crate::db::Pool,
     provider: &str,
@@ -71,7 +71,7 @@ pub async fn create_state(
     Ok(document_id)
 }
 
-/// 根据 state document_id 查找并删除（一次性）
+/// Find and delete a state by document_id (one-time use)
 pub async fn consume_state(
     pool: &crate::db::Pool,
     document_id: &str,
@@ -97,7 +97,7 @@ pub async fn consume_state(
     Ok(state)
 }
 
-/// 清理过期的 OAuth state 记录
+/// Clean up expired OAuth state records
 pub async fn cleanup_expired_states(pool: &crate::db::Pool) -> AppResult<u64> {
     let sql = format!(
         "DELETE FROM oauth_states WHERE expires_at <= {}",
@@ -107,7 +107,7 @@ pub async fn cleanup_expired_states(pool: &crate::db::Pool) -> AppResult<u64> {
     Ok(result.rows_affected())
 }
 
-/// 根据 Provider + Provider 用户 ID 查找绑定
+/// Find a binding by Provider + Provider user ID
 pub async fn find_by_provider_user(
     pool: &crate::db::Pool,
     provider: &str,
@@ -126,7 +126,7 @@ pub async fn find_by_provider_user(
     Ok(account)
 }
 
-/// 查找用户的所有 OAuth 绑定
+/// Find all OAuth bindings for a user
 pub async fn find_by_user_id(pool: &crate::db::Pool, user_id: i64) -> AppResult<Vec<OAuthAccount>> {
     let sql = format!(
         "SELECT * FROM oauth_accounts WHERE user_id = {} ORDER BY created_at",
@@ -139,7 +139,7 @@ pub async fn find_by_user_id(pool: &crate::db::Pool, user_id: i64) -> AppResult<
     Ok(accounts)
 }
 
-/// 创建 OAuth 账号绑定的参数
+/// Parameters for creating an OAuth account binding
 pub struct CreateOAuthAccountParams<'a> {
     pub user_id: i64,
     pub provider: &'a str,
@@ -153,7 +153,7 @@ pub struct CreateOAuthAccountParams<'a> {
     pub profile: Option<&'a str>,
 }
 
-/// 创建 OAuth 账号绑定
+/// Create an OAuth account binding
 pub async fn create_account(
     pool: &crate::db::Pool,
     params: CreateOAuthAccountParams<'_>,
@@ -202,7 +202,7 @@ pub async fn create_account(
     Ok(account)
 }
 
-/// 更新 OAuth 账号绑定的参数
+/// Parameters for updating an OAuth account binding
 pub struct UpdateOAuthAccountParams<'a> {
     pub id: i64,
     pub email: Option<&'a str>,
@@ -214,7 +214,7 @@ pub struct UpdateOAuthAccountParams<'a> {
     pub profile: Option<&'a str>,
 }
 
-/// 更新 OAuth 账号绑定信息
+/// Update OAuth account binding information
 pub async fn update_account(
     pool: &crate::db::Pool,
     params: UpdateOAuthAccountParams<'_>,
@@ -247,7 +247,7 @@ pub async fn update_account(
     Ok(())
 }
 
-/// 删除 OAuth 账号绑定（解绑）
+/// Delete an OAuth account binding (unlink)
 pub async fn delete_account(
     pool: &crate::db::Pool,
     user_id: i64,
@@ -266,7 +266,7 @@ pub async fn delete_account(
     Ok(result.rows_affected() > 0)
 }
 
-/// 统计用户绑定的 OAuth Provider 数量
+/// Count the number of OAuth providers bound to a user
 pub async fn count_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<i64> {
     let sql = format!(
         "SELECT COUNT(*) FROM oauth_accounts WHERE user_id = {}",

@@ -1,7 +1,7 @@
-//! 标签模型与数据库查询
+//! Tag model and database queries
 //!
-//! 定义标签（Tag）的数据结构以及对 `tags` 表的增删改查操作。
-//! 标签通过 `posts_tags` 关联表与文章建立多对多关系。
+//! Defines data structures for tags and CRUD operations on the `tags` table.
+//! Tags are associated with posts via the `posts_tags` join table in a many-to-many relationship.
 
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]

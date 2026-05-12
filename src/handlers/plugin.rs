@@ -1,6 +1,6 @@
-//! 插件管理 API handler
+//! Plugin management API handler
 //!
-//! 提供运行时插件管理端点：列表、详情、启用、禁用、重载。
+//! Provides runtime plugin management endpoints: list, details, enable, disable, reload.
 
 use axum::extract::{Path, Query, State};
 
@@ -72,7 +72,7 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
-/// GET /api/v1/admin/plugins — 列出所有插件及状态（分页）
+/// GET /api/v1/admin/plugins — List all plugins and their status (paginated)
 pub async fn list(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -84,7 +84,7 @@ pub async fn list(
     Ok(params.paginate_in_memory(all))
 }
 
-/// GET /api/v1/admin/plugins/:id — 插件详情
+/// GET /api/v1/admin/plugins/:id — Plugin details
 pub async fn get(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -99,7 +99,7 @@ pub async fn get(
     Ok(ApiResponse::success(detail))
 }
 
-/// POST /api/v1/admin/plugins/:id/enable — 启用插件
+/// POST /api/v1/admin/plugins/:id/enable — Enable plugin
 pub async fn enable(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -110,7 +110,7 @@ pub async fn enable(
     Ok(ApiResponse::success(()))
 }
 
-/// POST /api/v1/admin/plugins/:id/disable — 禁用插件
+/// POST /api/v1/admin/plugins/:id/disable — Disable plugin
 pub async fn disable(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -121,7 +121,7 @@ pub async fn disable(
     Ok(ApiResponse::success(()))
 }
 
-/// POST /api/v1/admin/plugins/:id/reload — 重载插件
+/// POST /api/v1/admin/plugins/:id/reload — Reload plugin
 pub async fn reload(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -139,7 +139,7 @@ pub async fn reload(
     Ok(ApiResponse::success(()))
 }
 
-/// DELETE /api/v1/admin/plugins/:id — 卸载插件
+/// DELETE /api/v1/admin/plugins/:id — Uninstall plugin
 pub async fn remove(
     auth: AuthUser,
     State(state): State<AppState>,

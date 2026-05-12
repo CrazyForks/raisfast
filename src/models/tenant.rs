@@ -1,6 +1,6 @@
-//! 租户模型与数据库查询
+//! Tenant model and database queries
 //!
-//! 定义 `tenants` 表的数据结构及全部 CRUD 操作。
+//! Defines the data structure for the `tenants` table and all CRUD operations.
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -18,7 +18,7 @@ define_enum!(
     }
 );
 
-/// tenants 表行模型
+/// Tenants table row model
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct Tenant {
@@ -32,7 +32,7 @@ pub struct Tenant {
     pub updated_at: Timestamp,
 }
 
-/// 查询所有租户
+/// Query all tenants
 pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Tenant>> {
     let tenants = sqlx::query_as::<_, Tenant>("SELECT * FROM tenants ORDER BY name")
         .fetch_all(pool)
@@ -40,7 +40,7 @@ pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Tenant>> {
     Ok(tenants)
 }
 
-/// 根据 document_id 查找租户
+/// Find a tenant by document_id
 pub async fn find_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<Option<Tenant>> {
     let sql = format!("SELECT * FROM tenants WHERE document_id = {}", ph(1));
     let tenant = sqlx::query_as::<_, Tenant>(&sql)
@@ -50,7 +50,7 @@ pub async fn find_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<
     Ok(tenant)
 }
 
-/// 根据域名查找租户
+/// Find a tenant by domain
 pub async fn find_by_domain(pool: &crate::db::Pool, domain: &str) -> AppResult<Option<Tenant>> {
     let sql = format!("SELECT * FROM tenants WHERE domain = {}", ph(1));
     let tenant = sqlx::query_as::<_, Tenant>(&sql)
@@ -60,7 +60,7 @@ pub async fn find_by_domain(pool: &crate::db::Pool, domain: &str) -> AppResult<O
     Ok(tenant)
 }
 
-/// 创建租户
+/// Create a tenant
 pub async fn create(
     pool: &crate::db::Pool,
     document_id: &str,
@@ -96,7 +96,7 @@ pub async fn create(
         .ok_or_else(|| AppError::not_found("tenant"))
 }
 
-/// 更新租户
+/// Update a tenant
 pub async fn update(
     pool: &crate::db::Pool,
     document_id: &str,
@@ -154,7 +154,7 @@ pub async fn update(
         .ok_or_else(|| AppError::not_found(&format!("tenant/{document_id}")))
 }
 
-/// 删除租户
+/// Delete a tenant
 pub async fn delete(pool: &crate::db::Pool, document_id: &str) -> AppResult<()> {
     let sql = format!("DELETE FROM tenants WHERE document_id = {}", ph(1));
     sqlx::query(&sql).bind(document_id).execute(pool).await?;

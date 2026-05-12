@@ -1,6 +1,6 @@
-//! Content Type CLI 子命令。
+//! Content Type CLI subcommand.
 //!
-//! 提供 `ct new`（生成模板）、`ct check`（校验 TOML schema）、`ct types`（生成 TypeScript 类型）。
+//! Provides `ct new` (generate template), `ct check` (validate TOML schema), `ct types` (generate TypeScript types).
 
 use std::path::PathBuf;
 
@@ -168,10 +168,10 @@ pub fn check(config: &AppConfig, target: Option<&str>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 扫描 content type 目录中的所有 TOML，生成 TypeScript 类型声明。
+/// Scan all TOML files in the content type directory and generate TypeScript type declarations.
 ///
-/// 每个 TOML 解析为 `ContentTypeSchema`，字段映射为 TS 类型，
-/// Protocol 注入的系统字段也会追加。
+/// Each TOML is parsed as a `ContentTypeSchema`, fields are mapped to TS types,
+/// and protocol-injected system fields are appended.
 pub fn generate_types(
     config: &AppConfig,
     singular: Option<&str>,

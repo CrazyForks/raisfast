@@ -1,4 +1,4 @@
-//! 基于 sqlx 的 `RefreshTokenRepository` 实现
+//! sqlx-based `RefreshTokenRepository` implementation
 
 use crate::errors::app_error::AppResult;
 use crate::models::refresh_token::{self, RefreshToken};
@@ -7,19 +7,19 @@ use crate::repositories::define_sqlx_repo;
 
 define_sqlx_repo!(SqlxRefreshTokenRepository);
 
-/// 刷新令牌 Repository 接口
+/// Refresh token Repository interface
 #[async_trait::async_trait]
 pub trait RefreshTokenRepository: Send + Sync {
-    /// 创建新的刷新令牌记录
+    /// Create a new refresh token record
     async fn create_token(&self, user_id: i64, token: &str, expires_at: &str) -> AppResult<()>;
 
-    /// 根据令牌字符串查找刷新令牌
+    /// Find a refresh token by token string
     async fn find_by_token(&self, token: &str) -> AppResult<Option<RefreshToken>>;
 
-    /// 根据令牌字符串删除刷新令牌
+    /// Delete a refresh token by token string
     async fn delete_by_token(&self, token: &str) -> AppResult<()>;
 
-    /// 删除指定用户的所有刷新令牌
+    /// Delete all refresh tokens for a given user
     async fn delete_by_user(&self, user_id: i64) -> AppResult<()>;
 }
 

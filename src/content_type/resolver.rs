@@ -1,12 +1,12 @@
-//! Content Type 关系字段解析
+//! Content Type relation field resolution
 //!
-//! 查询后展开 relation 字段，将 FK ID 替换为目标记录的完整数据。
-//! 类似 Strapi 的 "populate" 机制。
+//! Expands relation fields after query, replacing FK IDs with full target records.
+//! Similar to Strapi's "populate" mechanism.
 //!
-//! 支持的关系类型：
-//! - `many_to_one` / `one_to_one` → 嵌入单条记录
-//! - `one_to_many` → 嵌入记录数组
-//! - `many_to_many` → 通过 junction 表嵌入记录数组
+//! Supported relation types:
+//! - `many_to_one` / `one_to_one` → embed a single record
+//! - `one_to_many` → embed an array of records
+//! - `many_to_many` → embed an array of records via junction table
 
 use serde_json::{Value, json};
 use sqlx::Row;
@@ -16,10 +16,10 @@ use crate::constants::COL_ID;
 use crate::db::Pool;
 use crate::errors::app_error::AppError;
 
-/// 解析 items 中的 relation 字段（批量优化）
+/// Resolve relation fields in items (batch-optimized)
 ///
-/// 按字段维度批量查询：收集所有 items 中同一 relation 字段的 FK ID，
-/// 一次 `WHERE id IN (?)` 查询获取全部目标记录，再按 ID 分发回各 item。
+/// Batch queries by field dimension: collects FK IDs for the same relation field across all items,
+/// fetches all target records with a single `WHERE id IN (?)` query, then distributes them back to each item by ID.
 pub async fn resolve_relations(
     pool: &Pool,
     ct: &ContentTypeSchema,

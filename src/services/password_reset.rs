@@ -1,4 +1,4 @@
-//! 密码重置服务。
+//! Password reset service.
 
 use chrono::Utc;
 
@@ -6,10 +6,10 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::repositories::UserRepository;
 
-/// 请求密码重置。
+/// Request a password reset.
 ///
-/// 查找用户，删除旧令牌，创建新令牌，通过 EventBus 触发邮件发送。
-/// 无论用户是否存在都返回成功（防止邮箱枚举）。
+/// Finds the user, deletes old tokens, creates a new token, and triggers email sending via EventBus.
+/// Always returns success regardless of whether the user exists (to prevent email enumeration).
 pub async fn forgot_password(
     pool: &crate::db::Pool,
     _user_repo: &dyn UserRepository,
@@ -46,10 +46,10 @@ pub async fn forgot_password(
     Ok(())
 }
 
-/// 重置密码。
+/// Reset a password.
 ///
-/// 验证令牌有效性（未使用且未过期），更新凭证密码，标记令牌已使用，
-/// 删除所有刷新令牌使旧会话失效。
+/// Validates the token (unused and not expired), updates the credential password, marks the token as used,
+/// and deletes all refresh tokens to invalidate old sessions.
 pub async fn reset_password(
     _user_repo: &dyn UserRepository,
     pool: &crate::db::Pool,
@@ -123,9 +123,9 @@ pub async fn reset_password(
     Ok(())
 }
 
-/// OAuth 用户设置密码。
+/// Set a password for an OAuth user.
 ///
-/// 已登录用户（通过 OAuth 注册、无密码）设置密码。不需要旧密码验证。
+/// A logged-in user (registered via OAuth, with no password) sets a password. No old password verification required.
 pub async fn set_password(
     user_repo: &dyn UserRepository,
     pool: &crate::db::Pool,

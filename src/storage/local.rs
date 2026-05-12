@@ -1,6 +1,6 @@
-//! 本地文件系统存储后端。
+//! Local filesystem storage backend.
 //!
-//! 文件写入 `{upload_dir}/{key}`，通过 `/uploads/{key}` 提供静态文件服务。
+//! Files are written to `{upload_dir}/{key}`, served via `/uploads/{key}` static file serving.
 
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::storage::Storage;
 
-/// 本地文件系统存储。
+/// Local filesystem storage.
 #[derive(Debug)]
 pub struct LocalStorage {
     base_dir: PathBuf,
@@ -16,7 +16,7 @@ pub struct LocalStorage {
 }
 
 impl LocalStorage {
-    /// 创建本地存储实例，自动创建根目录。
+    /// Create a local storage instance; automatically creates the root directory.
     pub fn new(upload_dir: &str, base_url: &str) -> AppResult<Self> {
         let base_dir = PathBuf::from(upload_dir);
         std::fs::create_dir_all(&base_dir)
@@ -94,7 +94,7 @@ mod tests {
         config
     }
 
-    // ── LocalStorage 基础 CRUD ─────────────────────────────────────
+    // ── LocalStorage basic CRUD ─────────────────────────────────────
 
     #[tokio::test]
     async fn local_put_and_get() {
@@ -204,7 +204,7 @@ mod tests {
         assert!(url.is_empty());
     }
 
-    // ── 多文件并发写入 ────────────────────────────────────────────────
+    // ── Concurrent multi-file writes ────────────────────────────────────────────────
 
     #[tokio::test]
     async fn local_concurrent_puts() {
@@ -227,7 +227,7 @@ mod tests {
         }
     }
 
-    // ── 大文件写入 ────────────────────────────────────────────────────
+    // ── Large file writes ────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn local_large_file() {
@@ -245,7 +245,7 @@ mod tests {
         assert!(result.iter().all(|&b| b == 0xAB));
     }
 
-    // ── 空文件 ────────────────────────────────────────────────────────
+    // ── Empty files ────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn local_empty_file() {
@@ -261,7 +261,7 @@ mod tests {
         assert!(result.is_empty());
     }
 
-    // ── 特殊字符 key ──────────────────────────────────────────────────
+    // ── Special character keys ──────────────────────────────────────────────────
 
     #[tokio::test]
     async fn local_key_with_spaces_and_unicode() {
@@ -277,7 +277,7 @@ mod tests {
         assert_eq!(result, b"unicode");
     }
 
-    // ── create_storage 工厂函数 ──────────────────────────────────────
+    // ── create_storage factory function ──────────────────────────────────────
 
     #[test]
     fn create_storage_local() {
@@ -327,7 +327,7 @@ mod tests {
         }
     }
 
-    // ── storage_key 生成格式 ─────────────────────────────────────────
+    // ── storage_key generation format ─────────────────────────────────────────
 
     #[test]
     fn storage_key_format() {
@@ -351,27 +351,27 @@ mod tests {
         );
     }
 
-    // ── mime_to_ext 映射 ─────────────────────────────────────────────
+    // ── mime_to_ext mapping ─────────────────────────────────────────────
 
     #[test]
     fn mime_to_ext_mapping() {
         use crate::services::media::mime_to_ext;
-        // 图片
+        // Images
         assert_eq!(mime_to_ext("image/jpeg"), "jpg");
         assert_eq!(mime_to_ext("image/png"), "png");
         assert_eq!(mime_to_ext("image/gif"), "gif");
         assert_eq!(mime_to_ext("image/webp"), "webp");
         assert_eq!(mime_to_ext("image/svg+xml"), "svg");
-        // 视频
+        // Videos
         assert_eq!(mime_to_ext("video/mp4"), "mp4");
         assert_eq!(mime_to_ext("video/webm"), "webm");
         assert_eq!(mime_to_ext("video/quicktime"), "mov");
-        // 音频
+        // Audio
         assert_eq!(mime_to_ext("audio/mpeg"), "mp3");
         assert_eq!(mime_to_ext("audio/ogg"), "ogg");
         assert_eq!(mime_to_ext("audio/wav"), "wav");
         assert_eq!(mime_to_ext("audio/aac"), "aac");
-        // 文档
+        // Documents
         assert_eq!(mime_to_ext("application/pdf"), "pdf");
         assert_eq!(mime_to_ext("application/msword"), "doc");
         assert_eq!(
@@ -383,19 +383,19 @@ mod tests {
             mime_to_ext("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
             "xlsx"
         );
-        // 压缩
+        // Archives
         assert_eq!(mime_to_ext("application/zip"), "zip");
         assert_eq!(mime_to_ext("application/x-tar"), "tar");
         assert_eq!(mime_to_ext("application/gzip"), "gz");
-        // 文本
+        // Text
         assert_eq!(mime_to_ext("text/plain"), "txt");
         assert_eq!(mime_to_ext("text/csv"), "csv");
         assert_eq!(mime_to_ext("text/markdown"), "md");
-        // 未知
+        // Unknown
         assert_eq!(mime_to_ext("application/unknown"), "bin");
     }
 
-    // ── magic bytes 校验 ─────────────────────────────────────────────
+    // ── magic bytes validation ─────────────────────────────────────────────
 
     #[test]
     fn validate_magic_bytes_jpeg() {
@@ -559,7 +559,7 @@ mod tests {
         assert!(!validate_magic_bytes("text/csv", b""));
     }
 
-    // ── 文件类型白名单 ────────────────────────────────────────────────
+    // ── File type whitelist ────────────────────────────────────────────────
 
     #[test]
     fn allowed_types_includes_image_types() {
@@ -629,7 +629,7 @@ mod tests {
         assert!(!ALLOWED_TYPES.contains(&"application/x-sh"));
     }
 
-    // ── put → get → delete 完整生命周期 ──────────────────────────────
+    // ── put → get → delete full lifecycle ──────────────────────────────
 
     #[tokio::test]
     async fn local_lifecycle_put_get_delete() {
@@ -649,7 +649,7 @@ mod tests {
         assert!(storage.get(key).await.is_err(), "should be deleted");
     }
 
-    // ── 不同 bucket 隔离 ─────────────────────────────────────────────
+    // ── Different bucket isolation ─────────────────────────────────────────────
 
     #[tokio::test]
     async fn local_different_buckets_isolated() {
@@ -682,7 +682,7 @@ mod tests {
         );
     }
 
-    // ── url 不同 key ──────────────────────────────────────────────────
+    // ── url with different keys ──────────────────────────────────────────────────
 
     #[tokio::test]
     async fn local_url_various_keys() {

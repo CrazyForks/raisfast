@@ -1,4 +1,4 @@
-//! GraphQL Axum 路由处理器
+//! GraphQL Axum route handlers
 
 use crate::AppState;
 use crate::graphql::types::{MutationRoot, QueryRoot};

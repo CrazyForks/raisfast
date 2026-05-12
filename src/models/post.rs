@@ -1,10 +1,12 @@
-//! 文章模型与数据库查询
+//! Post model and database queries
 //!
-//! 定义文章（Post）相关的数据结构，包括完整行模型、面向前端的响应模型、
-//! 标签摘要结构体，以及对 `posts` 表和关联表的全部增删改查操作。
+//! Defines data structures related to posts, including the full row model,
+//! frontend-facing response models, tag summary structs, and all CRUD operations
+//! on the `posts` table and associated tables.
 //!
-//! 同时提供获取作者名、分类名、文章标签等关联数据的辅助查询函数，
-//! 以及按分类/标签/关键词筛选已发布文章的分页查询。
+//! Also provides helper query functions for fetching author names, category names,
+//! post tags, and other related data, as well as paginated queries for published
+//! posts filtered by category, tag, or keyword.
 
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -764,7 +766,7 @@ mod tests {
             &CreatePostCmd {
                 title: title.to_string(),
                 slug: title.to_lowercase().replace(' ', "-"),
-                content: format!("{title}的内容"),
+                content: format!("Content of {title}"),
                 excerpt: None,
                 cover_image: None,
                 status: status.parse().unwrap(),
@@ -790,11 +792,11 @@ mod tests {
     async fn find_joined_by_ids_single() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let p = create_test_post(&pool, uid, "published", "测试文章").await;
+        let p = create_test_post(&pool, uid, "published", "Test Post").await;
         let result = find_joined_by_ids(&pool, &[p.id], None).await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, p.id);
-        assert_eq!(result[0].title, "测试文章");
+        assert_eq!(result[0].title, "Test Post");
         assert_eq!(result[0].author_name.as_deref(), Some("testuser"));
     }
 
@@ -802,9 +804,9 @@ mod tests {
     async fn find_joined_by_ids_multiple() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let p1 = create_test_post(&pool, uid, "published", "文章A").await;
-        let p2 = create_test_post(&pool, uid, "published", "文章B").await;
-        let p3 = create_test_post(&pool, uid, "published", "文章C").await;
+        let p1 = create_test_post(&pool, uid, "published", "Post A").await;
+        let p2 = create_test_post(&pool, uid, "published", "Post B").await;
+        let p3 = create_test_post(&pool, uid, "published", "Post C").await;
         let result = find_joined_by_ids(&pool, &[p1.id, p3.id], None)
             .await
             .unwrap();
@@ -819,7 +821,7 @@ mod tests {
     async fn find_joined_by_ids_filters_draft() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let p = create_test_post(&pool, uid, "draft", "草稿文章").await;
+        let p = create_test_post(&pool, uid, "draft", "Draft Post").await;
         let result = find_joined_by_ids(&pool, &[p.id], None).await.unwrap();
         assert!(result.is_empty());
     }
@@ -835,13 +837,13 @@ mod tests {
     async fn find_joined_by_ids_mixed_published_and_draft() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let pub_post = create_test_post(&pool, uid, "published", "已发布").await;
-        let draft_post = create_test_post(&pool, uid, "draft", "草稿").await;
+        let pub_post = create_test_post(&pool, uid, "published", "Published").await;
+        let draft_post = create_test_post(&pool, uid, "draft", "Draft").await;
         let result = find_joined_by_ids(&pool, &[pub_post.id, draft_post.id], None)
             .await
             .unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].title, "已发布");
+        assert_eq!(result[0].title, "Published");
     }
 
     #[tokio::test]
@@ -849,7 +851,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
         let cat_doc_id = uuid::Uuid::now_v7().to_string();
-        sqlx::query("INSERT INTO categories (document_id, name, slug) VALUES (?, '技术', 'tech')")
+        sqlx::query("INSERT INTO categories (document_id, name, slug) VALUES (?, 'Tech', 'tech')")
             .bind(&cat_doc_id)
             .execute(&pool)
             .await
@@ -863,9 +865,9 @@ mod tests {
         let p = create(
             &pool,
             &CreatePostCmd {
-                title: "分类文章".to_string(),
+                title: "Category Post".to_string(),
                 slug: "cat-post".to_string(),
-                content: "内容".to_string(),
+                content: "Content".to_string(),
                 excerpt: None,
                 cover_image: None,
                 status: PostStatus::Published,
@@ -880,7 +882,7 @@ mod tests {
         .unwrap();
         let result = find_joined_by_ids(&pool, &[p.id], None).await.unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].category_name.as_deref(), Some("技术"));
+        assert_eq!(result[0].category_name.as_deref(), Some("Tech"));
     }
 
     #[tokio::test]
@@ -894,7 +896,7 @@ mod tests {
     async fn count_published_by_ids_single() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let p = create_test_post(&pool, uid, "published", "计数文章").await;
+        let p = create_test_post(&pool, uid, "published", "Count Post").await;
         let count = count_published_by_ids(&pool, &[p.id], None).await.unwrap();
         assert_eq!(count, 1);
     }
@@ -903,7 +905,7 @@ mod tests {
     async fn count_published_by_ids_filters_draft() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let p = create_test_post(&pool, uid, "draft", "草稿").await;
+        let p = create_test_post(&pool, uid, "draft", "Draft").await;
         let count = count_published_by_ids(&pool, &[p.id], None).await.unwrap();
         assert_eq!(count, 0);
     }

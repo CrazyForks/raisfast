@@ -1,4 +1,4 @@
-//! GraphQL Query 解析器
+//! GraphQL Query resolvers
 
 use super::types::{ContentConnection, ContentItem, JsonScalar, QueryRoot};
 use crate::content_type::handler::{ListParams, do_get, do_list};
@@ -21,7 +21,7 @@ fn get_auth(ctx: &Context<'_>) -> Result<AuthUser> {
 
 #[Object]
 impl QueryRoot {
-    /// 分页查询内容列表
+    /// Paginated content list query
     #[allow(clippy::too_many_arguments)]
     async fn content(
         &self,
@@ -64,13 +64,13 @@ impl QueryRoot {
         connection_from_json(result)
     }
 
-    /// 按 ID 获取单条内容
+    /// Get a single content item by ID
     async fn content_by_id(
         &self,
         ctx: &Context<'_>,
         r#type: String,
         id: ID,
-        #[graphql(desc = "关联展开（如 author,tags）")] include: Option<String>,
+        #[graphql(desc = "Relation expansion (e.g. author,tags)")] include: Option<String>,
     ) -> Result<Option<ContentItem>> {
         let state = get_state(ctx)?;
         let auth = get_auth(ctx)?;

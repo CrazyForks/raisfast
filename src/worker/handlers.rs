@@ -1,7 +1,7 @@
-//! 真实任务 Handler 实现
+//! Concrete job Handler implementations
 //!
-//! 每个 Handler 封装所需的外部依赖（Pool、Config），
-//! 在 `register_all()` 统一注册到 `JobHandlerRegistry`。
+//! Each Handler encapsulates its required external dependencies (Pool, Config),
+//! and is registered with the `JobHandlerRegistry` in `register_all()`.
 
 pub mod cache;
 pub mod email;
@@ -22,7 +22,7 @@ use crate::notifier::{EmailSender, SmsSender};
 use crate::search::SearchEngine;
 use crate::worker::JobHandlerRegistry;
 
-/// 将所有真实 Handler 注册到 Registry
+/// Registers all concrete Handlers with the Registry
 pub fn register_all(
     registry: &mut JobHandlerRegistry,
     pool: Pool,

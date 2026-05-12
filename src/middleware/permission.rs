@@ -1,8 +1,9 @@
-//! RBAC 权限守卫中间件
+//! RBAC permission guard middleware
 //!
-//! 替代硬编码的 `role == "admin"` 检查，通过查询 permissions 表做细粒度鉴权。
-//! 保留现有 `AuthUser` / `AdminUser` / `AuthorUser` 提取器作为便捷入口，
-//! 新增 `PermissionGuard` 用于需要动态权限检查的场景。
+//! Replaces hardcoded `role == "admin"` checks with fine-grained authorization
+//! via the permissions table. Retains existing `AuthUser` / `AdminUser` / `AuthorUser`
+//! extractors as convenience entry points, and adds `PermissionGuard` for scenarios
+//! requiring dynamic permission checks.
 
 use std::collections::HashMap;
 
@@ -15,19 +16,20 @@ use crate::errors::app_error::AppError;
 use crate::services::rbac::RbacService;
 use crate::utils::auth::extract_claims;
 
-/// RBAC 权限守卫提取器
+/// RBAC permission guard extractor
 ///
-/// 从 JWT 提取用户信息，然后检查该用户角色是否有权执行指定操作。
+/// Extracts user info from JWT, then checks whether the user's role has permission
+/// to perform the specified action.
 ///
-/// # 使用方式
+/// # Usage
 ///
 /// ```ignore
 /// async fn create_post(
 ///     guard: PermissionGuard,
 ///     State(state): State<AppState>,
 /// ) -> ... {
-///     // guard 已通过权限检查
-///     guard.user_id  // 当前用户 ID
+///     // guard has passed permission check
+///     guard.user_id  // current user ID
 /// }
 /// ```
 #[derive(Debug, Clone)]
@@ -38,7 +40,7 @@ pub struct PermissionGuard {
 }
 
 impl PermissionGuard {
-    /// 检查权限的公共方法，可在 handler 内部使用
+    /// Public method for checking permissions, usable within handlers
     pub async fn check(
         &self,
         rbac: &RbacService,
@@ -72,8 +74,9 @@ impl PermissionGuard {
     }
 }
 
-/// `PermissionGuard` 作为提取器使用时，只做 JWT 认证（不自动检查权限）
-/// 权限检查在 handler 中调用 `guard.check()` 完成
+/// When `PermissionGuard` is used as an extractor, it only performs JWT authentication
+/// (does not automatically check permissions). Permission checking is done by calling
+/// `guard.check()` within the handler.
 impl FromRequestParts<AppState> for PermissionGuard {
     type Rejection = AppError;
 

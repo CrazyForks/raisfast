@@ -1,7 +1,7 @@
-//! 站点配置模型与数据库查询
+//! Site configuration model and database queries
 //!
-//! `options` 表每行含完整元数据（类型、分组、标签、校验规则），
-//! 读取时可直接返回给前端渲染分组表单。
+//! Each row in the `options` table contains full metadata (type, group, label, validation rules).
+//! Reads can be returned directly to the frontend for rendering grouped forms.
 
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +21,7 @@ define_enum!(
     }
 );
 
-/// options 表行模型（含完整元数据）
+/// Options table row model (with full metadata)
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OptionRow {
     pub id: i64,
@@ -108,14 +108,14 @@ impl<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> for OptionRow {
     }
 }
 
-/// 查询所有 autoload 的配置（启动时预加载）
+/// Query all autoload options (preloaded at startup)
 pub async fn find_autoload(pool: &crate::db::Pool) -> AppResult<Vec<OptionRow>> {
     let sql = "SELECT * FROM options WHERE autoload = 1";
     let rows = sqlx::query_as::<_, OptionRow>(sql).fetch_all(pool).await?;
     Ok(rows)
 }
 
-/// 根据 key 查询单条配置
+/// Query a single option by key
 pub async fn find_by_key(
     pool: &crate::db::Pool,
     key: &str,
@@ -146,7 +146,7 @@ pub async fn find_by_key(
     }
 }
 
-/// 查询所有配置
+/// Query all options
 pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<i64>) -> AppResult<Vec<OptionRow>> {
     match tenant_id {
         Some(tid) => {
@@ -168,7 +168,7 @@ pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<i64>) -> AppResu
     }
 }
 
-/// 插入或更新配置 value（UPSERT by key）
+/// Insert or update an option value (UPSERT by key)
 pub async fn upsert_value(
     pool: &crate::db::Pool,
     key: &str,
@@ -212,7 +212,7 @@ pub async fn upsert_value(
     Ok(())
 }
 
-/// 根据 key 删除配置
+/// Delete an option by key
 pub async fn delete_by_key(
     pool: &crate::db::Pool,
     key: &str,

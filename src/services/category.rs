@@ -1,4 +1,4 @@
-//! 分类服务。
+//! Category service.
 
 use slug::slugify;
 

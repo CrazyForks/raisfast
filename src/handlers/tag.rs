@@ -1,4 +1,4 @@
-//! 标签相关处理器
+//! Tag handlers
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -62,9 +62,9 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
-/// 获取标签列表（分页）
+/// Get tag list (paginated)
 #[utoipa::path(get, path = "/tags", tag = "tags",
-    responses((status = 200, description = "标签列表"))
+    responses((status = 200, description = "Tag list"))
 )]
 pub async fn list(
     auth: AuthUser,
@@ -82,10 +82,10 @@ pub async fn list(
     Ok(params.paginate(items, total))
 }
 
-/// 获取单个标签
+/// Get a single tag
 #[utoipa::path(get, path = "/tags/{id}", tag = "tags",
-    params(("id" = String, Path, description = "标签 ID")),
-    responses((status = 200, description = "标签详情"))
+    params(("id" = String, Path, description = "Tag ID")),
+    responses((status = 200, description = "Tag details"))
 )]
 pub async fn get(
     auth: AuthUser,
@@ -96,11 +96,11 @@ pub async fn get(
     Ok(ApiResponse::success(t))
 }
 
-/// 创建新标签
+/// Create a new tag
 #[utoipa::path(post, path = "/tags", tag = "tags",
     security(("bearer_auth" = [])),
     request_body = CreateTagRequest,
-    responses((status = 200, description = "标签已创建"))
+    responses((status = 200, description = "Tag created"))
 )]
 pub async fn create(
     auth: AuthUser,
@@ -113,11 +113,11 @@ pub async fn create(
     Ok(ApiResponse::success(t))
 }
 
-/// 删除标签
+/// Delete a tag
 #[utoipa::path(delete, path = "/tags/{id}", tag = "tags",
     security(("bearer_auth" = [])),
-    params(("id" = String, Path, description = "标签 ID")),
-    responses((status = 200, description = "标签已删除"))
+    params(("id" = String, Path, description = "Tag ID")),
+    responses((status = 200, description = "Tag deleted"))
 )]
 pub async fn delete(
     auth: AuthUser,
@@ -129,12 +129,12 @@ pub async fn delete(
     Ok(ApiResponse::success(()))
 }
 
-/// 更新标签
+/// Update a tag
 #[utoipa::path(put, path = "/tags/{id}", tag = "tags",
     security(("bearer_auth" = [])),
-    params(("id" = String, Path, description = "标签 ID")),
+    params(("id" = String, Path, description = "Tag ID")),
     request_body = UpdateTagRequest,
-    responses((status = 200, description = "标签已更新"))
+    responses((status = 200, description = "Tag updated"))
 )]
 pub async fn update(
     auth: AuthUser,

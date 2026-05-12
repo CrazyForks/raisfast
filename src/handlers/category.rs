@@ -1,4 +1,4 @@
-//! 分类相关处理器
+//! Category handlers
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -62,9 +62,9 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
-/// 获取分类列表（分页）
+/// Get category list (paginated)
 #[utoipa::path(get, path = "/categories", tag = "categories",
-    responses((status = 200, description = "分类列表"))
+    responses((status = 200, description = "Category list"))
 )]
 pub async fn list(
     auth: AuthUser,
@@ -83,10 +83,10 @@ pub async fn list(
     Ok(params.paginate(items, total))
 }
 
-/// 获取单个分类
+/// Get a single category
 #[utoipa::path(get, path = "/categories/{id}", tag = "categories",
-    params(("id" = String, Path, description = "分类 ID")),
-    responses((status = 200, description = "分类详情"))
+    params(("id" = String, Path, description = "Category ID")),
+    responses((status = 200, description = "Category details"))
 )]
 pub async fn get(
     auth: AuthUser,
@@ -97,11 +97,11 @@ pub async fn get(
     Ok(ApiResponse::success(cat))
 }
 
-/// 创建新分类
+/// Create a new category
 #[utoipa::path(post, path = "/categories", tag = "categories",
     security(("bearer_auth" = [])),
     request_body = CreateCategoryRequest,
-    responses((status = 200, description = "分类已创建"))
+    responses((status = 200, description = "Category created"))
 )]
 pub async fn create(
     auth: AuthUser,
@@ -114,12 +114,12 @@ pub async fn create(
     Ok(ApiResponse::success(cat))
 }
 
-/// 更新分类
+/// Update a category
 #[utoipa::path(put, path = "/categories/{id}", tag = "categories",
     security(("bearer_auth" = [])),
-    params(("id" = String, Path, description = "分类 ID")),
+    params(("id" = String, Path, description = "Category ID")),
     request_body = UpdateCategoryRequest,
-    responses((status = 200, description = "分类已更新"))
+    responses((status = 200, description = "Category updated"))
 )]
 pub async fn update(
     auth: AuthUser,
@@ -133,11 +133,11 @@ pub async fn update(
     Ok(ApiResponse::success(cat))
 }
 
-/// 删除分类
+/// Delete a category
 #[utoipa::path(delete, path = "/categories/{id}", tag = "categories",
     security(("bearer_auth" = [])),
-    params(("id" = String, Path, description = "分类 ID")),
-    responses((status = 200, description = "分类已删除"))
+    params(("id" = String, Path, description = "Category ID")),
+    responses((status = 200, description = "Category deleted"))
 )]
 pub async fn delete(
     auth: AuthUser,

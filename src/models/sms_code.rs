@@ -1,4 +1,4 @@
-//! 短信验证码模型与数据库查询
+//! SMS verification code model and database queries
 
 use sqlx::FromRow;
 
@@ -7,7 +7,7 @@ use crate::errors::app_error::AppResult;
 use crate::utils::id;
 use crate::utils::tz::Timestamp;
 
-/// 短信验证码数据库行模型
+/// SMS verification code database row model
 #[derive(Debug, FromRow)]
 #[non_exhaustive]
 pub struct SmsCode {
@@ -23,7 +23,7 @@ pub struct SmsCode {
     pub created_at: Timestamp,
 }
 
-/// 生成指定位数的随机数字验证码
+/// Generate a random numeric verification code of the specified length
 pub fn generate_code(length: u32) -> String {
     let digits: Vec<u8> = (0..length)
         .map(|_| {
@@ -38,9 +38,9 @@ pub fn generate_code(length: u32) -> String {
         .collect()
 }
 
-/// 创建新的短信验证码记录
+/// Create a new SMS verification code record
 ///
-/// 同一手机号同一目的 60 秒内不允许重复发送。
+/// Duplicate sending for the same phone number and purpose within 60 seconds is not allowed.
 pub async fn create(
     pool: &crate::db::Pool,
     phone: &str,
@@ -86,7 +86,7 @@ pub async fn create(
         })
 }
 
-/// 根据 ID 查找验证码
+/// Find a verification code by ID
 pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<Option<SmsCode>> {
     let sql = format!("SELECT * FROM sms_codes WHERE id = {}", ph(1));
     let row = sqlx::query_as::<_, SmsCode>(&sql)
@@ -96,7 +96,7 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<Option<Sms
     Ok(row)
 }
 
-/// 查找手机号最近的未验证验证码
+/// Find the most recent unverified code for a phone number
 pub async fn find_latest_unverified(
     pool: &crate::db::Pool,
     phone: &str,
@@ -115,7 +115,7 @@ pub async fn find_latest_unverified(
     Ok(row)
 }
 
-/// 检查是否在限流期内（同一手机号同一目的最近 N 秒内是否有发送记录）
+/// Check if rate-limited (whether there is a sending record for the same phone number and purpose within the last N seconds)
 pub async fn is_rate_limited(
     pool: &crate::db::Pool,
     phone: &str,
@@ -138,7 +138,7 @@ pub async fn is_rate_limited(
     Ok(row.0 > 0)
 }
 
-/// 验证码验证：匹配后标记已验证，错误时增加 attempts
+/// Verify code: on match, mark as verified; on mismatch, increment attempts
 pub async fn verify_code(
     pool: &crate::db::Pool,
     id: i64,
@@ -180,7 +180,7 @@ pub async fn verify_code(
     Ok(VerifyResult::Verified)
 }
 
-/// 验证结果
+/// Verification result
 #[derive(Debug, Clone, PartialEq)]
 pub enum VerifyResult {
     Verified,
@@ -190,7 +190,7 @@ pub enum VerifyResult {
     MaxAttempts,
 }
 
-/// 清理过期的验证码记录
+/// Clean up expired verification code records
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
     let now = crate::utils::tz::now_utc();
     let sql = format!("DELETE FROM sms_codes WHERE expires_at < {}", ph(1));

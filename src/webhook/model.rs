@@ -1,4 +1,4 @@
-//! Webhook 订阅数据模型与数据库查询
+//! Webhook subscription data models and database queries
 
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
@@ -7,7 +7,7 @@ use ts_rs::TS;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
-/// Webhook 订阅完整数据库行
+/// Complete database row for a webhook subscription
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WebhookSubscription {
@@ -28,7 +28,7 @@ crate::impl_from_row_opt_tenant!(WebhookSubscription {
     optional { description }
 });
 
-/// 创建订阅请求体
+/// Create subscription request body
 #[derive(Debug, Deserialize)]
 pub struct CreateWebhookRequest {
     pub url: String,
@@ -38,7 +38,7 @@ pub struct CreateWebhookRequest {
     pub secret: Option<String>,
 }
 
-/// 更新订阅请求体
+/// Update subscription request body
 #[derive(Debug, Deserialize)]
 pub struct UpdateWebhookRequest {
     pub url: Option<String>,
@@ -47,7 +47,7 @@ pub struct UpdateWebhookRequest {
     pub enabled: Option<bool>,
 }
 
-/// 投递到 webhook 的 payload
+/// Payload delivered to a webhook
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize)]
 pub struct WebhookPayload {
@@ -57,7 +57,7 @@ pub struct WebhookPayload {
     pub timestamp: Timestamp,
 }
 
-/// 插入一条 webhook 订阅
+/// Inserts a webhook subscription
 pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     match &sub.tenant_id {
@@ -115,7 +115,7 @@ pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
     Ok(())
 }
 
-/// 分页查询 webhook 订阅
+/// Paginated query for webhook subscriptions
 pub async fn find_paginated(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
@@ -154,7 +154,7 @@ pub async fn find_paginated(
     Ok((items, total))
 }
 
-/// 根据 ID 查找订阅
+/// Finds a subscription by ID
 pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<WebhookSubscription> {
     let sql = format!(
         "SELECT * FROM webhook_subscriptions WHERE document_id = {}",
@@ -167,7 +167,7 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<WebhookSu
         .map_err(Into::into)
 }
 
-/// 根据 ID 更新订阅
+/// Updates a subscription by ID
 pub async fn update(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     let sql = format!(
@@ -204,7 +204,7 @@ pub async fn delete_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// 查找所有启用的订阅（用于事件投递）
+/// Finds all enabled subscriptions (for event delivery)
 pub async fn find_enabled_by_tenant(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,

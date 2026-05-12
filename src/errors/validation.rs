@@ -1,42 +1,42 @@
-//! 输入校验与 i18n 翻译桥接
+//! Input validation and i18n translation bridge
 //!
-//! 本模块封装了 `validator` crate 的校验逻辑，将校验错误自动翻译为
-//! 当前 locale 对应的自然语言消息，替代了手动调用 `req.validate().map_err(...)`
-//! 的繁琐模式。
+//! This module wraps the `validator` crate's validation logic, automatically translating
+//! validation errors into natural language messages for the current locale, replacing
+//! the tedious pattern of manually calling `req.validate().map_err(...)`.
 //!
-//! # 核心函数
+//! # Core functions
 //!
-//! - [`validate`]：对任意实现了 `validator::Validate` 的结构体执行校验并翻译错误
-//! - [`translate_errors`]：将 `ValidationErrors` 翻译为本地化的错误消息列表
-//! - [`translate_field`]：将字段名翻译为当前 locale 的显示名称
+//! - [`validate`]: Validates any struct implementing `validator::Validate` and translates errors
+//! - [`translate_errors`]: Translates `ValidationErrors` into localized error message list
+//! - [`translate_field`]: Translates field names into display names for the current locale
 
 use crate::errors::app_error::{AppError, AppResult};
 use validator::ValidationErrors;
 
-/// 执行输入校验并自动翻译错误
+/// Perform input validation and automatically translate errors
 ///
-/// 对传入的请求结构体执行 `validator::Validate::validate()`，若校验通过返回 `Ok(())`，
-/// 若失败则通过 [`translate_errors`] 将所有校验错误翻译为本地化消息，
-/// 并合并为一个 [`AppError::BadRequest`] 返回。
+/// Executes `validator::Validate::validate()` on the given request struct. Returns `Ok(())`
+/// if validation passes. If validation fails, all errors are translated via [`translate_errors`]
+/// into localized messages and combined into a single [`AppError::BadRequest`].
 ///
-/// # 参数
+/// # Parameters
 ///
-/// - `req` — 实现了 `validator::Validate` trait 的请求结构体引用
+/// - `req` — Reference to a request struct implementing the `validator::Validate` trait
 ///
-/// # 返回值
+/// # Returns
 ///
-/// - `Ok(())` — 校验通过
-/// - `Err(AppError::BadRequest)` — 校验失败，消息为所有错误的分号连接字符串
+/// - `Ok(())` — Validation passed
+/// - `Err(AppError::BadRequest)` — Validation failed; message is a semicolon-joined string of all errors
 ///
-/// # 替代模式
+/// # Replacement pattern
 ///
-/// 替换了旧的手动模式：
+/// Replaces the old manual pattern:
 ///
 /// ```ignore
-/// // 旧写法（繁琐且不统一）
+/// // Old approach (tedious and inconsistent)
 /// req.validate().map_err(|e| AppError::BadRequest(e.to_string()))?;
 ///
-/// // 新写法（简洁且支持 i18n）
+/// // New approach (concise with i18n support)
 /// validate(&req)?;
 /// ```
 pub fn validate(req: &dyn validator::Validate) -> AppResult<()> {
@@ -46,27 +46,27 @@ pub fn validate(req: &dyn validator::Validate) -> AppResult<()> {
     }
 }
 
-/// 翻译校验错误为本地化消息列表
+/// Translate validation errors into localized message list
 ///
-/// 遍历 `ValidationErrors` 中的每个字段及其错误列表，根据错误类型
-/// 选择对应的 i18n 翻译键，并将字段名通过 [`translate_field`] 翻译为
-/// 当前 locale 的显示名称。
+/// Iterates over each field and its error list in `ValidationErrors`, selects the appropriate
+/// i18n translation key based on error type, and translates field names via [`translate_field`]
+/// into display names for the current locale.
 ///
-/// # i18n 键映射
+/// # i18n key mapping
 ///
-/// | 校验规则        | i18n 键                    | 参数                        |
+/// | Validation rule | i18n key                   | Parameters                  |
 /// |----------------|---------------------------|-----------------------------|
 /// | `required`     | `validation.required`     | `field`                     |
-/// | `length` (范围) | `validation.length_range` | `field`, `min`, `max`       |
-/// | `length` (最小) | `validation.min_length`   | `field`, `min`              |
-/// | `length` (最大) | `validation.max_length`   | `field`, `max`              |
+/// | `length` (range) | `validation.length_range` | `field`, `min`, `max`       |
+/// | `length` (min) | `validation.min_length`   | `field`, `min`              |
+/// | `length` (max) | `validation.max_length`   | `field`, `max`              |
 /// | `email`        | `validation.email_invalid`| —                           |
-/// | 其他            | `validation.required`     | `field`（兜底）              |
+/// | other          | `validation.required`     | `field` (fallback)          |
 ///
-/// # 多错误处理
+/// # Multiple error handling
 ///
-/// 当同一字段存在多个校验错误时，所有翻译后的消息以分号 `;` 连接，
-/// 作为 `BadRequest` 的描述信息一次性返回给客户端。
+/// When a single field has multiple validation errors, all translated messages are joined
+/// with semicolons `;` and returned as a single `BadRequest` description to the client.
 fn translate_errors(errors: &ValidationErrors) -> AppResult<()> {
     let locale = crate::middleware::locale::current_locale();
     rust_i18n::set_locale(&locale);
@@ -133,20 +133,20 @@ fn translate_errors(errors: &ValidationErrors) -> AppResult<()> {
     Err(AppError::BadRequest(messages.join("; ")))
 }
 
-/// 翻译字段名为当前 locale 的显示名称
+/// Translate a field name to a display name for the current locale
 ///
-/// 通过 i18n 键 `fields.{field_name}` 查找字段名的本地化翻译。
-/// 例如，字段 `email` 在中文环境下查找 `fields.email` 键得到 `"邮箱"`。
+/// Looks up the localized translation of the field name via the i18n key `fields.{field_name}`.
+/// For example, the field `email` in a Chinese locale looks up the `fields.email` key to get `"邮箱"`.
 ///
-/// # 参数
+/// # Parameters
 ///
-/// - `field` — 结构体中的原始字段名（如 `"email"`、`"password"`）
-/// - `locale` — 目标语言标识
+/// - `field` — Original field name in the struct (e.g. `"email"`, `"password"`)
 ///
-/// # 返回值
+/// # Returns
 ///
-/// - 若 `fields.{field}` 键存在，返回翻译后的字段名
-/// - 若键不存在（`rust_i18n::t!` 回退为键名本身），则返回原始字段名作为兜底
+/// - If the `fields.{field}` key exists, returns the translated field name
+/// - If the key does not exist (`rust_i18n::t!` falls back to the key name itself),
+///   returns the original field name as a fallback
 fn translate_field(field: &str) -> String {
     let key = format!("fields.{field}");
     let translated = rust_i18n::t!(&key);

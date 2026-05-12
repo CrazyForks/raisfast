@@ -1,27 +1,27 @@
-//! 租户感知的数据库操作层
+//! Tenant-aware database operations layer
 //!
-//! `TenantPool` 包装 `Pool`，为所有 SQL 操作自动检测并注入 `tenant_id`：
-//! - 表有 `tenant_id` 列 → 自动追加 `AND tenant_id = ?` 并绑定
-//! - 表无 `tenant_id` 列 → 查询不受影响
+//! `TenantPool` wraps `Pool` to automatically detect and inject `tenant_id` for all SQL operations:
+//! - Table has `tenant_id` column → automatically appends `AND tenant_id = ?` and binds
+//! - Table has no `tenant_id` column → query is unaffected
 //!
-//! # 使用方式
+//! # Usage
 //!
 //! ```ignore
 //! let tp = TenantPool::new(pool, "default");
 //!
-//! // SELECT — 返回改写后的 SQL + 是否需要额外 bind tenant_id
+//! // SELECT — returns rewritten SQL + whether tenant_id needs to be bound
 //! let (sql, bind_tenant) = tp.prepare_select("posts", "SELECT * FROM posts WHERE id = ?").await;
 //! let mut q = sqlx::query_as::<_, Post>(&sql).bind(id);
 //! if bind_tenant { q = q.bind(tp.tenant_id()); }
 //! let post = q.fetch_optional(tp.pool()).await?;
 //!
-//! // INSERT — 返回改写后的 SQL（自动追加 tenant_id 列）
+//! // INSERT — returns rewritten SQL (automatically appends tenant_id column)
 //! let (sql, bind_tenant) = tp.prepare_insert("posts", "title, slug", 2).await;
 //! let mut q = sqlx::query(&sql).bind(title).bind(slug);
 //! if bind_tenant { q = q.bind(tp.tenant_id()); }
 //! q.execute(tp.pool()).await?;
 //!
-//! // UPDATE/DELETE — 返回改写后的 SQL + 是否需要额外 bind
+//! // UPDATE/DELETE — returns rewritten SQL + whether extra bind is needed
 //! let (sql, bind_tenant) = tp.prepare_modify("posts", "DELETE FROM posts WHERE id = ?").await;
 //! let mut q = sqlx::query(&sql).bind(id);
 //! if bind_tenant { q = q.bind(tp.tenant_id()); }
@@ -37,7 +37,7 @@ use crate::constants::COL_TENANT_ID;
 use super::Pool;
 
 // ---------------------------------------------------------------------------
-// 列检测缓存
+// Column detection cache
 // ---------------------------------------------------------------------------
 
 static CACHE: std::sync::OnceLock<RwLock<HashSet<String>>> = std::sync::OnceLock::new();
@@ -46,7 +46,7 @@ fn cache() -> &'static RwLock<HashSet<String>> {
     CACHE.get_or_init(|| RwLock::new(HashSet::new()))
 }
 
-/// 检测指定表是否包含 `tenant_id` 列（带全局缓存，首次后零开销）。
+/// Check if the specified table has a `tenant_id` column (with global cache, zero overhead after first check).
 pub async fn has_tenant_id(pool: &Pool, table: &str) -> bool {
     {
         let r = cache().read().await;
@@ -61,7 +61,7 @@ pub async fn has_tenant_id(pool: &Pool, table: &str) -> bool {
     exists
 }
 
-/// 清除缓存（测试用）。
+/// Clear the cache (for testing).
 pub async fn invalidate_cache() {
     cache().write().await.clear();
 }
@@ -102,7 +102,7 @@ async fn check_column_exists(pool: &Pool, table: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// SQL 改写
+// SQL rewriting
 // ---------------------------------------------------------------------------
 
 fn count_params(sql: &str) -> usize {
@@ -146,10 +146,10 @@ fn inject_where(sql: &str, idx: usize) -> String {
     )
 }
 
-/// 解析 `Option<&str>` 为有效的租户 ID。
+/// Resolve `Option<&str>` to a valid tenant ID.
 ///
-/// `None`（超管未指定租户）回退到 [`DEFAULT_TENANT`]。
-/// 用于 INSERT 等必须有值的场景。
+/// `None` (superadmin without a specified tenant) falls back to [`DEFAULT_TENANT`].
+/// Used for INSERT and other scenarios where a value is required.
 pub fn resolve_tenant(tenant_id: Option<&str>) -> &str {
     tenant_id.unwrap_or(crate::constants::DEFAULT_TENANT)
 }
@@ -158,7 +158,7 @@ fn sql_has_tenant(sql: &str) -> bool {
     sql.to_lowercase().contains(COL_TENANT_ID)
 }
 
-/// 返回 `AND tenant_id = {ph(idx)}` 或空串，用于条件 SQL 拼接。
+/// Returns `AND tenant_id = {ph(idx)}` or empty string, for conditional SQL concatenation.
 ///
 /// ```ignore
 /// let sql = format!("SELECT * FROM users WHERE id = {}{}", ph(1), tenant_filter_ph(tenant_id, 2));
@@ -170,7 +170,7 @@ pub fn tenant_filter_ph(tenant_id: Option<&str>, idx: usize) -> String {
     }
 }
 
-/// 返回 ` And p.tenant_id = ?` 或空串，用于 JOIN 查询中带表别名的条件拼接。
+/// Returns ` And p.tenant_id = ?` or empty string, for JOIN query conditional concatenation with table alias.
 pub fn tenant_filter_aliased(alias: &str, tenant_id: Option<&str>) -> String {
     match tenant_id {
         Some(_) => format!(" AND {alias}.{COL_TENANT_ID} = ?"),
@@ -178,7 +178,7 @@ pub fn tenant_filter_aliased(alias: &str, tenant_id: Option<&str>) -> String {
     }
 }
 
-/// [`tenant_filter_aliased`] 的占位符安全版本。
+/// Placeholder-safe version of [`tenant_filter_aliased`].
 pub fn tenant_filter_aliased_ph(alias: &str, tenant_id: Option<&str>, idx: usize) -> String {
     match tenant_id {
         Some(_) => format!(" AND {alias}.{COL_TENANT_ID} = {}", super::dialect::ph(idx)),
@@ -190,9 +190,9 @@ pub fn tenant_filter_aliased_ph(alias: &str, tenant_id: Option<&str>, idx: usize
 // TenantPool
 // ---------------------------------------------------------------------------
 
-/// 租户感知的数据库连接。
+/// Tenant-aware database connection.
 ///
-/// 核心流程：**检测列 → 改写 SQL → 用户 bind → 自动 bind tenant_id → 执行**。
+/// Core flow: **detect column → rewrite SQL → user bind → auto bind tenant_id → execute**.
 #[derive(Clone)]
 pub struct TenantPool {
     pool: Pool,
@@ -200,7 +200,7 @@ pub struct TenantPool {
 }
 
 impl TenantPool {
-    /// 创建 `TenantPool`。
+    /// Create a `TenantPool`.
     pub fn new(pool: Pool, tenant_id: impl Into<String>) -> Self {
         Self {
             pool,
@@ -208,21 +208,21 @@ impl TenantPool {
         }
     }
 
-    /// 内部连接池。
+    /// Inner connection pool.
     pub fn pool(&self) -> &Pool {
         &self.pool
     }
 
-    /// 当前租户 ID。
+    /// Current tenant ID.
     pub fn tenant_id(&self) -> &str {
         &self.tenant_id
     }
 
-    /// **SELECT 预处理**：检测表是否有 `tenant_id` 列，改写 SQL。
+    /// **SELECT preprocessing**: detect if table has `tenant_id` column, rewrite SQL.
     ///
-    /// 返回 `(final_sql, bind_tenant)`：
-    /// - `final_sql`：改写后的 SQL（可能追加了 `AND tenant_id = ?`）
-    /// - `bind_tenant`：是否需要在用户参数之后额外 `.bind(tenant_id)`
+    /// Returns `(final_sql, bind_tenant)`:
+    /// - `final_sql`: rewritten SQL (may have `AND tenant_id = ?` appended)
+    /// - `bind_tenant`: whether `.bind(tenant_id)` needs to be called after user params
     pub async fn prepare_select(&self, table: &str, sql: &str) -> (String, bool) {
         let has = has_tenant_id(&self.pool, table).await;
         let inject = has && !sql_has_tenant(sql);
@@ -234,12 +234,12 @@ impl TenantPool {
         (final_sql, inject)
     }
 
-    /// **INSERT 预处理**：检测表，构建 INSERT SQL（自动追加 `tenant_id` 列）。
+    /// **INSERT preprocessing**: detect table, build INSERT SQL (automatically appends `tenant_id` column).
     ///
-    /// `user_cols` — 列名（逗号分隔，不含 `tenant_id`）。
-    /// `user_param_count` — 用户参数数量。
+    /// `user_cols` — column names (comma-separated, excluding `tenant_id`).
+    /// `user_param_count` — number of user parameters.
     ///
-    /// 返回 `(final_sql, bind_tenant)`。
+    /// Returns `(final_sql, bind_tenant)`.
     pub async fn prepare_insert(
         &self,
         table: &str,
@@ -263,9 +263,9 @@ impl TenantPool {
         (sql, has)
     }
 
-    /// **UPDATE/DELETE 预处理**：检测表，改写 SQL（追加 `AND tenant_id = ?`）。
+    /// **UPDATE/DELETE preprocessing**: detect table, rewrite SQL (append `AND tenant_id = ?`).
     ///
-    /// 返回 `(final_sql, bind_tenant)`。
+    /// Returns `(final_sql, bind_tenant)`.
     pub async fn prepare_modify(&self, table: &str, sql: &str) -> (String, bool) {
         let has = has_tenant_id(&self.pool, table).await;
         let inject = has && !sql_has_tenant(sql);

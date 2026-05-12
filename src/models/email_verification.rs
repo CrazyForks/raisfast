@@ -1,4 +1,4 @@
-//! 邮箱验证令牌模型与数据库查询
+//! Email verification token model and database queries
 
 use sqlx::FromRow;
 
@@ -7,7 +7,7 @@ use crate::errors::app_error::AppResult;
 use crate::utils::id;
 use crate::utils::tz::Timestamp;
 
-/// 邮箱验证令牌数据库行模型
+/// Email verification token database row model
 #[derive(Debug, FromRow)]
 #[non_exhaustive]
 pub struct EmailVerificationToken {
@@ -21,7 +21,7 @@ pub struct EmailVerificationToken {
     pub created_at: Timestamp,
 }
 
-/// 创建新的邮箱验证令牌
+/// Create a new email verification token
 pub async fn create(
     pool: &crate::db::Pool,
     user_id: i64,
@@ -66,7 +66,7 @@ pub async fn create(
     })
 }
 
-/// 根据令牌查找未验证的记录
+/// Find an unverified token record by token string
 pub async fn find_by_token(
     pool: &crate::db::Pool,
     token: &str,
@@ -82,7 +82,7 @@ pub async fn find_by_token(
     Ok(row)
 }
 
-/// 标记令牌为已验证
+/// Mark a token as verified
 pub async fn mark_verified(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     let sql = format!(
@@ -94,7 +94,7 @@ pub async fn mark_verified(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
     Ok(())
 }
 
-/// 删除用户所有未使用的验证令牌
+/// Delete all unused verification tokens for a user
 pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<()> {
     let sql = format!(
         "DELETE FROM email_verification_tokens WHERE user_id = {} AND verified_at IS NULL",
@@ -104,7 +104,7 @@ pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: i64) -> AppR
     Ok(())
 }
 
-/// 清理过期的验证令牌
+/// Clean up expired verification tokens
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
     let now = crate::utils::tz::now_utc();
     let sql = format!(

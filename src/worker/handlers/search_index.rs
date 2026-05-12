@@ -1,7 +1,7 @@
-//! 搜索索引重建 Handler
+//! Search index rebuild Handler
 //!
-//! 接收 `RebuildSearchIndex` 任务，从数据库读取文章数据并写入搜索引擎索引。
-//! 当搜索引擎为 `NoopSearchEngine` 时，仅记录日志。
+//! Receives `RebuildSearchIndex` jobs, reads post data from the database and writes it to the search engine index.
+//! When the search engine is `NoopSearchEngine`, only logs are recorded.
 
 use std::sync::Arc;
 
@@ -9,14 +9,14 @@ use crate::errors::app_error::AppResult;
 use crate::search::{SearchEngine, SearchablePost};
 use crate::worker::{Job, JobHandler};
 
-/// 搜索索引重建处理器
+/// Search index rebuild handler
 pub struct RebuildSearchIndexHandler {
     pool: crate::db::Pool,
     search: Arc<dyn SearchEngine>,
 }
 
 impl RebuildSearchIndexHandler {
-    /// 创建新的搜索索引重建处理器
+    /// Creates a new search index rebuild handler
     pub fn new(pool: crate::db::Pool, search: Arc<dyn SearchEngine>) -> Self {
         Self { pool, search }
     }
@@ -125,7 +125,7 @@ mod tests {
         .bind(&document_id)
         .bind(title)
         .bind(title.to_lowercase().replace(' ', "-"))
-        .bind(format!("{title}的内容"))
+        .bind(format!("{title} content"))
         .bind(author_id)
         .bind(&now)
         .bind(&now)
@@ -140,7 +140,7 @@ mod tests {
     async fn indexes_existing_post_with_tantivy() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let (post_int_id, post_doc_id) = create_post(&pool, uid, "Rust编程入门").await;
+        let (post_int_id, post_doc_id) = create_post(&pool, uid, "Rust Programming Intro").await;
 
         let engine = Arc::new(crate::search::TantivyEngine::open_in_memory().unwrap());
         let handler = RebuildSearchIndexHandler::new(pool, engine.clone());
@@ -159,8 +159,8 @@ mod tests {
     async fn indexes_multiple_posts_with_tantivy() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let (p1_id, _) = create_post(&pool, uid, "Rust入门").await;
-        let (p2_id, _) = create_post(&pool, uid, "Go进阶").await;
+        let (p1_id, _) = create_post(&pool, uid, "Rust Intro").await;
+        let (p2_id, _) = create_post(&pool, uid, "Go Advanced").await;
 
         let engine = Arc::new(crate::search::TantivyEngine::open_in_memory().unwrap());
         let handler = RebuildSearchIndexHandler::new(pool, engine.clone());
@@ -184,19 +184,19 @@ mod tests {
         engine
             .index_post(&SearchablePost {
                 id: "0".into(),
-                title: "幽灵文章".into(),
-                content: "内容".into(),
+                title: "Ghost post".into(),
+                content: "content".into(),
             })
             .await
             .unwrap();
-        let (_, t) = engine.search("幽灵", 1, 10).await.unwrap();
+        let (_, t) = engine.search("Ghost", 1, 10).await.unwrap();
         assert_eq!(t, 1);
 
         let handler = RebuildSearchIndexHandler::new(pool, engine.clone());
         let job = Job::RebuildSearchIndex { post_ids: vec![0] };
         assert!(handler.handle(&job).await.is_ok());
 
-        let (_, t) = engine.search("幽灵", 1, 10).await.unwrap();
+        let (_, t) = engine.search("Ghost", 1, 10).await.unwrap();
         assert_eq!(t, 0);
     }
 
@@ -215,7 +215,7 @@ mod tests {
     async fn handles_mixed_existing_and_missing_posts() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let (real_id, real_doc_id) = create_post(&pool, uid, "真实文章").await;
+        let (real_id, real_doc_id) = create_post(&pool, uid, "Real post").await;
 
         let engine = Arc::new(crate::search::TantivyEngine::open_in_memory().unwrap());
         let handler = RebuildSearchIndexHandler::new(pool, engine.clone());
@@ -224,7 +224,7 @@ mod tests {
         };
         assert!(handler.handle(&job).await.is_ok());
 
-        let (results, total) = engine.search("真实", 1, 10).await.unwrap();
+        let (results, total) = engine.search("Real", 1, 10).await.unwrap();
         assert_eq!(total, 1);
         assert_eq!(results[0].post_id, real_doc_id);
     }

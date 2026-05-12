@@ -1,4 +1,4 @@
-//! 基于 sqlx 的 `RbacRepository` 实现
+//! sqlx-based `RbacRepository` implementation
 
 use crate::errors::app_error::AppResult;
 use crate::models::rbac::{self, Permission, Role};

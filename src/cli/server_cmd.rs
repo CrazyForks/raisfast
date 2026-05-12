@@ -1,6 +1,6 @@
-//! `server` 子命令：启动、停止、重启、查看状态。
+//! `server` subcommand: start, stop, restart, view status.
 //!
-//! 通过 PID 文件（`{STORAGE_ROOT_DIR}/raisfast.pid`）管理服务器进程生命周期。
+//! Manages server process lifecycle via PID file (`{STORAGE_ROOT_DIR}/raisfast.pid`).
 
 use std::path::PathBuf;
 
@@ -80,11 +80,11 @@ fn send_kill(pid: u32) -> bool {
     }
 }
 
-// ── 子命令实现 ───────────────────────────────────────────────────
+// ── Subcommand implementations ───────────────────────────────────
 
-/// `server start` — 启动 HTTP 服务器。
+/// `server start` — start the HTTP server.
 ///
-/// 写入 PID 文件并检查是否已有实例在运行。
+/// Writes PID file and checks if another instance is already running.
 pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
     let pid = std::process::id();
     let storage_root = &config.storage_root_dir;
@@ -105,9 +105,9 @@ pub async fn start(config: &AppConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `server stop` — 停止运行中的服务器。
+/// `server stop` — stop the running server.
 ///
-/// 发送 SIGTERM，等待 3 秒后若仍未退出则 SIGKILL。
+/// Sends SIGTERM, waits 3 seconds, then sends SIGKILL if still running.
 pub fn stop() {
     let storage_root = AppConfig::init().storage_root_dir;
     match read_pid(&storage_root) {
@@ -140,14 +140,14 @@ pub fn stop() {
     }
 }
 
-/// `server restart` — 停止旧实例后启动新实例。
+/// `server restart` — stop the old instance then start a new one.
 pub async fn restart(config: &AppConfig) -> anyhow::Result<()> {
     stop();
     std::thread::sleep(std::time::Duration::from_millis(500));
     start(config).await
 }
 
-/// `server status` — 查看服务器运行状态。
+/// `server status` — view server running status.
 pub fn status() {
     let storage_root = AppConfig::init().storage_root_dir;
     match read_pid(&storage_root) {

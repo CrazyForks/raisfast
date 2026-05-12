@@ -1,4 +1,4 @@
-//! Webhook 订阅 API Handler
+//! Webhook subscription API handlers
 
 use axum::extract::{Path, Query, State};
 
@@ -43,7 +43,7 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
-/// GET /admin/webhooks — 分页查询 webhook 订阅
+/// GET /admin/webhooks — paginated list of webhook subscriptions
 pub async fn list(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -60,7 +60,7 @@ pub async fn list(
     Ok(params.paginate(items, total))
 }
 
-/// GET /admin/webhooks/:id — 获取单个订阅
+/// GET /admin/webhooks/:id — get a single subscription
 pub async fn get(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -71,7 +71,7 @@ pub async fn get(
     Ok(ApiResponse::success(sub))
 }
 
-/// POST /admin/webhooks — 创建订阅
+/// POST /admin/webhooks — create a subscription
 pub async fn create(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -103,7 +103,7 @@ pub async fn create(
     Ok(ApiResponse::success(sub))
 }
 
-/// PUT /admin/webhooks/:id — 更新订阅
+/// PUT /admin/webhooks/:id — update a subscription
 pub async fn update(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -118,7 +118,7 @@ pub async fn update(
     Ok(ApiResponse::success(sub))
 }
 
-/// DELETE /admin/webhooks/:id — 删除订阅
+/// DELETE /admin/webhooks/:id — delete a subscription
 pub async fn delete(
     auth: AuthUser,
     State(state): State<AppState>,

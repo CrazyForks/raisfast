@@ -1,14 +1,14 @@
-//! 数据库连接池初始化。
+//! Database connection pool initialization.
 //!
-//! 根据 feature flag 创建对应数据库类型的连接池：
-//! - `sqlite`：创建 `SqlitePool` 并设置 WAL 模式、外键约束
-//! - `postgres`：创建 `PgPool`
-//! - `mysql`：创建 `MySqlPool`
+//! Creates the appropriate connection pool based on the feature flag:
+//! - `sqlite`: Creates `SqlitePool` with WAL mode and foreign key constraints
+//! - `postgres`: Creates `PgPool`
+//! - `mysql`: Creates `MySqlPool`
 //!
-//! 连接池配置包含 `max_connections`、`min_connections`、`acquire_timeout`、`idle_timeout`
-//! 和 `max_lifetime`，确保在高并发下不会无限等待连接，同时避免连接泄漏。
+//! Pool configuration includes `max_connections`, `min_connections`, `acquire_timeout`, `idle_timeout`,
+//! and `max_lifetime`, ensuring no infinite waits under high concurrency while avoiding connection leaks.
 //!
-//! 首次启动时自动执行 `SCHEMA_SQL` 建表 + 预置数据（幂等）。
+//! On first startup, automatically executes `SCHEMA_SQL` to create tables + seed data (idempotent).
 
 use std::time::Duration;
 
@@ -20,10 +20,10 @@ const MAX_LIFETIME: Duration = Duration::from_secs(1800);
 const MAX_CONNECT_RETRIES: u32 = 5;
 const CONNECT_RETRY_BASE_DELAY: Duration = Duration::from_secs(1);
 
-/// 初始化数据库连接池（带指数退避重试）。
+/// Initialize the database connection pool (with exponential backoff retry).
 ///
-/// 容器环境下数据库可能尚未就绪，最多重试 `MAX_CONNECT_RETRIES` 次，
-/// 每次等待 `2^attempt * base_delay`。
+/// In container environments, the database may not be ready yet.
+/// Retries up to `MAX_CONNECT_RETRIES` times, waiting `2^attempt * base_delay` each time.
 pub async fn init_pool(database_url: &str, pool_size: u32) -> Result<Pool, sqlx::Error> {
     let mut last_err = None;
     for attempt in 0..=MAX_CONNECT_RETRIES {
@@ -119,11 +119,11 @@ async fn try_connect(database_url: &str, pool_size: u32) -> Result<Pool, sqlx::E
     }
 }
 
-/// 首次启动时自动执行 schema 建表 + 预置数据。
+/// On first startup, automatically execute schema to create tables + seed data.
 ///
-/// 检测 `_migrations` 表是否存在来判断是否首次启动。
-/// 所有 SQL 使用 `IF NOT EXISTS` / `OR IGNORE`，天然幂等。
-/// 后续结构变更通过 `db migrate` 执行增量迁移文件。
+/// Checks for the existence of the `_migrations` table to determine if this is the first run.
+/// All SQL uses `IF NOT EXISTS` / `OR IGNORE`, making it naturally idempotent.
+/// Subsequent structural changes are applied via incremental migration files through `db migrate`.
 pub async fn ensure_schema(pool: &Pool) -> anyhow::Result<()> {
     let has_migrations = check_migrations_table(pool).await;
 
@@ -164,7 +164,7 @@ pub async fn ensure_schema(pool: &Pool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 检测 `_migrations` 表是否存在（按数据库类型分分支）。
+/// Check if the `_migrations` table exists (branched by database type).
 async fn check_migrations_table(pool: &Pool) -> bool {
     #[cfg(feature = "db-sqlite")]
     {

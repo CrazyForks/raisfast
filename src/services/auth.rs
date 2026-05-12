@@ -1,11 +1,11 @@
-//! 认证与用户服务。
+//! Authentication and user service.
 //!
-//! 提供完整的认证业务逻辑，包括：
+//! Provides complete authentication business logic, including:
 //!
-//! - 密码哈希与验证（Argon2id）
-//! - JWT 访问令牌的生成与验证（HS256）
-//! - 刷新令牌的生成与轮换
-//! - 用户注册、登录、登出
+//! - Password hashing and verification (Argon2id)
+//! - JWT access token generation and verification (HS256)
+//! - Refresh token generation and rotation
+//! - User registration, login, logout
 
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
@@ -22,13 +22,13 @@ use crate::models::user_credential::AuthType;
 use crate::plugins::{HookPoint, PluginManager};
 use crate::repositories::{RefreshTokenRepository, UserRepository};
 
-/// JWT 令牌载荷（Claims）。
+/// JWT token claims (payload).
 ///
-/// - `sub`：用户 ID。
-/// - `role`：用户角色（如 `"admin"`、`"author"`）。
-/// - `tenant_id`：所属租户 ID（默认 `"default"`）。
-/// - `exp`：过期时间（UNIX 时间戳）。
-/// - `iat`：签发时间（UNIX 时间戳）。
+/// - `sub`: User ID.
+/// - `role`: User role (e.g. `"admin"`, `"author"`).
+/// - `tenant_id`: Tenant ID (defaults to `"default"`).
+/// - `exp`: Expiration time (UNIX timestamp).
+/// - `iat`: Issued-at time (UNIX timestamp).
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     pub sub: String,
@@ -44,13 +44,13 @@ fn default_tenant_id() -> String {
     crate::constants::DEFAULT_TENANT.to_string()
 }
 
-/// 校验密码强度。
+/// Validate password strength.
 ///
-/// 要求：
-/// - 最少 8 个字符
-/// - 至少包含一个大写字母
-/// - 至少包含一个小写字母
-/// - 至少包含一个数字
+/// Requirements:
+/// - At least 8 characters
+/// - At least one uppercase letter
+/// - At least one lowercase letter
+/// - At least one digit
 pub fn validate_password_strength(password: &str) -> AppResult<()> {
     if password.len() < 8 {
         return Err(AppError::BadRequest(
@@ -75,9 +75,9 @@ pub fn validate_password_strength(password: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// 使用 Argon2id 算法对密码进行哈希。
+/// Hash a password using the Argon2id algorithm.
 ///
-/// 通过 `getrandom` 生成 32 字节随机盐值，返回 PHC 格式的哈希字符串。
+/// Generates a 32-byte random salt via `getrandom` and returns a PHC-format hash string.
 pub fn hash_password(password: &str) -> AppResult<String> {
     let mut salt_bytes = [0u8; 32];
     getrandom::getrandom(&mut salt_bytes)
@@ -91,9 +91,9 @@ pub fn hash_password(password: &str) -> AppResult<String> {
     Ok(hash.to_string())
 }
 
-/// 验证明文密码是否与 Argon2 哈希匹配。
+/// Verify that a plaintext password matches an Argon2 hash.
 ///
-/// 返回 `Ok(true)` 表示匹配，`Ok(false)` 表示不匹配。
+/// Returns `Ok(true)` if it matches, `Ok(false)` if it does not.
 pub fn verify_password(password: &str, hash: &str) -> AppResult<bool> {
     let parsed = PasswordHash::new(hash)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid password hash: {e}")))?;
@@ -102,7 +102,7 @@ pub fn verify_password(password: &str, hash: &str) -> AppResult<bool> {
         .is_ok())
 }
 
-/// 生成 HS256 签名的 JWT 访问令牌。
+/// Generate an HS256-signed JWT access token.
 pub(crate) fn generate_access_token_internal(
     user_id: &str,
     user_int_id: i64,
@@ -130,9 +130,9 @@ pub(crate) fn generate_access_token_internal(
     .map_err(|e| AppError::Internal(anyhow::anyhow!("token encoding failed: {e}")))
 }
 
-/// 验证并解码 JWT 令牌。
+/// Verify and decode a JWT token.
 ///
-/// 若令牌过期或无效，统一返回 [`AppError::Unauthorized`]。
+/// Returns [`AppError::Unauthorized`] uniformly for expired or invalid tokens.
 pub fn verify_token(token: &str, key: &jsonwebtoken::DecodingKey) -> AppResult<Claims> {
     jsonwebtoken::decode::<Claims>(token, key, &Validation::default())
         .map(|data| data.claims)
@@ -142,7 +142,7 @@ pub fn verify_token(token: &str, key: &jsonwebtoken::DecodingKey) -> AppResult<C
         })
 }
 
-/// 生成 32 字节随机刷新令牌，以十六进制字符串返回。
+/// Generate a 32-byte random refresh token, returned as a hex string.
 pub(crate) fn generate_refresh_token_string_internal() -> AppResult<String> {
     let mut bytes = [0u8; 32];
     getrandom::getrandom(&mut bytes)
@@ -150,7 +150,7 @@ pub(crate) fn generate_refresh_token_string_internal() -> AppResult<String> {
     Ok(hex::encode(bytes))
 }
 
-/// 测试辅助：使用固定 secret 生成 JWT token。
+/// Test helper: generate a JWT token using a fixed secret.
 #[allow(clippy::doc_lazy_continuation)]
 #[must_use]
 pub fn generate_access_token_for_test(user_id: &str, user_int_id: i64, role: UserRole) -> String {
@@ -165,9 +165,10 @@ pub fn generate_access_token_for_test(user_id: &str, user_int_id: i64, role: Use
     .unwrap()
 }
 
-/// 用户注册。
+/// User registration.
 ///
-/// 检查邮箱是否已被注册，若唯一则哈希密码、在事务中创建用户记录和邮箱凭证。
+/// Checks if the email is already registered; if unique, hashes the password and creates
+/// the user record and email credential within a transaction.
 #[tracing::instrument(skip(_user_repo, eventbus), fields(username = tracing::field::Empty))]
 pub async fn register(
     _user_repo: &dyn UserRepository,
@@ -300,9 +301,10 @@ pub async fn register(
     UserResponse::from_user(user)
 }
 
-/// 用户登录。
+/// User login.
 ///
-/// 通过邮箱凭证查找用户，验证密码，成功后生成访问令牌和刷新令牌。
+/// Looks up the user via email credential, verifies the password, and on success generates
+/// an access token and a refresh token.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip(_user_repo, refresh_token_repo, plugins, eventbus), fields(email = %req.email))]
 pub async fn login(
@@ -396,10 +398,10 @@ pub async fn login(
     })
 }
 
-/// 刷新令牌。
+/// Refresh token.
 ///
-/// 验证刷新令牌的有效性，执行令牌轮换：在事务中删除旧刷新令牌，
-/// 生成新的访问令牌和刷新令牌，确保原子性。
+/// Validates the refresh token and performs token rotation: within a transaction, deletes
+/// the old refresh token and generates new access and refresh tokens, ensuring atomicity.
 #[allow(clippy::too_many_arguments)]
 pub async fn refresh(
     _user_repo: &dyn UserRepository,
@@ -477,9 +479,9 @@ pub async fn refresh(
     })
 }
 
-/// 用户登出。
+/// User logout.
 ///
-/// 删除该用户的所有刷新令牌，使其所有设备上的会话失效。
+/// Deletes all refresh tokens for the user, invalidating sessions across all devices.
 pub async fn logout(
     pool: &crate::db::Pool,
     refresh_token_repo: &dyn RefreshTokenRepository,
@@ -492,10 +494,10 @@ pub async fn logout(
     refresh_token_repo.delete_by_user(user.id).await
 }
 
-/// 修改密码。
+/// Change password.
 ///
-/// 验证旧密码正确后，用新密码的哈希替换旧哈希，
-/// 并删除所有刷新令牌，确保旧会话全部失效。
+/// After verifying the old password is correct, replaces the old hash with the new password hash,
+/// and deletes all refresh tokens to invalidate all existing sessions.
 pub async fn change_password(
     user_repo: &dyn UserRepository,
     pool: &crate::db::Pool,
@@ -541,7 +543,7 @@ pub async fn change_password(
     Ok(())
 }
 
-/// 绑定邮箱密码凭证
+/// Bind an email/password credential
 pub async fn bind_email_credential(
     pool: &crate::db::Pool,
     auth: &AuthUser,
@@ -580,7 +582,7 @@ pub async fn bind_email_credential(
     Ok(())
 }
 
-/// 删除凭证
+/// Delete a credential
 pub async fn delete_credential(
     pool: &crate::db::Pool,
     auth: &AuthUser,
@@ -608,7 +610,7 @@ pub async fn delete_credential(
     Ok(())
 }
 
-/// 列出当前用户所有凭证
+/// List all credentials for the current user
 pub async fn list_credentials(
     pool: &crate::db::Pool,
     auth: &AuthUser,

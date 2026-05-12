@@ -1,6 +1,6 @@
-//! Tauri 桌面应用入口
+//! Tauri desktop application entry point
 //!
-//! 用法（在 src-tauri/ 项目中）：
+//! Usage (in src-tauri/ project):
 //! ```ignore
 //! use raisfast::tauri::setup;
 //!
@@ -14,7 +14,7 @@
 //!     .expect("error while running tauri application");
 //! ```
 //!
-//! 本 bin 文件用于 `cargo check --features tauri` 编译验证。
+//! This bin file is used for `cargo check --features tauri` compile verification.
 
 #![deny(unsafe_code)]
 

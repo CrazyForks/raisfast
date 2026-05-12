@@ -1,4 +1,4 @@
-//! 租户管理 API Handler
+//! Tenant management API handler
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -44,7 +44,7 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
-/// GET /admin/tenants — 列出所有租户（分页）
+/// GET /admin/tenants — List all tenants (paginated)
 pub async fn list_tenants(
     State(state): State<AppState>,
     Query(mut params): Query<PaginationParams>,
@@ -54,7 +54,7 @@ pub async fn list_tenants(
     Ok(params.paginate_in_memory(all))
 }
 
-/// GET /admin/tenants/:id — 获取租户详情
+/// GET /admin/tenants/:id — Get tenant details
 pub async fn get_tenant(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -67,7 +67,7 @@ pub async fn get_tenant(
     Ok(ApiResponse::success(tenant))
 }
 
-/// POST /admin/tenants — 创建租户
+/// POST /admin/tenants — Create a tenant
 pub async fn create_tenant(
     State(state): State<AppState>,
     Json(req): Json<CreateTenantRequest>,
@@ -76,7 +76,7 @@ pub async fn create_tenant(
     Ok(ApiResponse::success(tenant))
 }
 
-/// PUT /admin/tenants/:id — 更新租户
+/// PUT /admin/tenants/:id — Update a tenant
 pub async fn update_tenant(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -86,7 +86,7 @@ pub async fn update_tenant(
     Ok(ApiResponse::success(tenant))
 }
 
-/// DELETE /admin/tenants/:id — 删除租户
+/// DELETE /admin/tenants/:id — Delete a tenant
 pub async fn delete_tenant(
     State(state): State<AppState>,
     Path(id): Path<String>,

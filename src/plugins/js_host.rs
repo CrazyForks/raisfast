@@ -1,7 +1,8 @@
-//! JS 宿主函数 — 引擎绑定层
+//! JS host functions — engine binding layer
 //!
-//! 仅负责将 [`HostContext`](super::host_common::HostContext) 的公共业务逻辑
-//! 绑定到 `QuickJS` 全局对象的 `PLUGIN_HOST_GLOBAL` 属性上。
+//! Only responsible for binding the shared business logic of
+//! [`HostContext`](super::host_common::HostContext) to the `PLUGIN_HOST_GLOBAL` property
+//! of the `QuickJS` global object.
 
 use std::sync::Arc;
 
@@ -13,7 +14,7 @@ use crate::db::Pool;
 use crate::plugins::Permissions;
 use crate::plugins::host_common::HostContext;
 
-/// 注册宿主函数到 JS 全局作用域。
+/// Register host functions into the JS global scope.
 pub fn register_host_functions(
     ctx: rquickjs::Ctx,
     config: Arc<AppConfig>,

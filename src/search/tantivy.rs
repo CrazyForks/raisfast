@@ -1,4 +1,4 @@
-//! 基于 Tantivy 0.26 的全文搜索引擎实现
+//! Full-text search engine implementation based on Tantivy 0.26
 
 use std::path::Path;
 

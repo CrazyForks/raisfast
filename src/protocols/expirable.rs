@@ -1,6 +1,6 @@
-//! expirable Protocol — 过期时间
+//! expirable Protocol — expiration time
 //!
-//! 提供 `expires_at` 列，列表查询自动过滤已过期记录（expires_at IS NULL OR expires_at > now）。
+//! Provides an `expires_at` column; list queries automatically filter out expired records (expires_at IS NULL OR expires_at > now).
 
 use std::sync::Arc;
 
@@ -64,7 +64,7 @@ impl Protocol for ExpirableProtocol {
     }
 
     fn description(&self) -> &str {
-        "过期时间管理，列表查询自动过滤已过期记录"
+        "Expiration time management; list queries automatically filter out expired records"
     }
 
     fn aspects(&self) -> Vec<Arc<dyn Aspect>> {

@@ -1,8 +1,8 @@
-//! 缓存装饰器 — 为任意 `PostRepository` 添加缓存层
+//! Cache decorator — adds a caching layer to any `PostRepository`
 //!
-//! 使用装饰器模式（Decorator Pattern）：
-//! - 读操作：先查缓存，命中则直接返回；未命中则委托 inner 并回填
-//! - 写操作：委托 inner，成功后按前缀清除相关缓存
+//! Uses the Decorator Pattern:
+//! - Read: check cache first, return on hit; on miss, delegate to inner and backfill
+//! - Write: delegate to inner, invalidate related cache entries on success
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -34,10 +34,10 @@ fn cache_key_joined(tenant_id: Option<&str>, id: i64) -> String {
     format!("{KEY_PREFIX}:{}:joined:{id}", tid(tenant_id))
 }
 
-/// 缓存装饰器
+/// Cache decorator
 ///
-/// 包装任意 `PostRepository` 实现，在读路径上添加缓存。
-/// 写操作成功后自动清除相关缓存条目。
+/// Wraps any `PostRepository` implementation, adding caching on the read path.
+/// Automatically invalidates related cache entries after successful writes.
 pub struct CachedPostRepository<P: PostRepository> {
     inner: P,
     cache: Arc<dyn CacheStore>,
@@ -45,11 +45,11 @@ pub struct CachedPostRepository<P: PostRepository> {
 }
 
 impl<P: PostRepository> CachedPostRepository<P> {
-    /// 创建缓存装饰器
+    /// Create a cache decorator
     ///
-    /// - `inner`：被装饰的 Repository
-    /// - `cache`：缓存存储后端
-    /// - `ttl`：缓存条目存活时间（默认 5 分钟）
+    /// - `inner`: the decorated Repository
+    /// - `cache`: cache storage backend
+    /// - `ttl`: cache entry time-to-live (defaults to 5 minutes)
     pub fn new(inner: P, cache: Arc<dyn CacheStore>, ttl: Option<Duration>) -> Self {
         Self {
             inner,
@@ -58,13 +58,13 @@ impl<P: PostRepository> CachedPostRepository<P> {
         }
     }
 
-    /// 清除指定租户的所有文章相关缓存
+    /// Invalidate all post-related cache entries for the given tenant
     async fn invalidate_all(&self, tenant_id: Option<&str>) {
         let prefix = format!("{KEY_PREFIX}:{}:", tid(tenant_id));
         let _ = self.cache.delete_prefix(&prefix).await;
     }
 
-    /// 清除指定 ID 相关的缓存（包括 slug 索引）
+    /// Invalidate cache entries related to the given ID (including slug index)
     async fn invalidate_by_id(&self, tenant_id: Option<&str>, id: i64) {
         let id_key = cache_key_id(tenant_id, id);
         if let Some(cached) = self.cache.get(&id_key).await

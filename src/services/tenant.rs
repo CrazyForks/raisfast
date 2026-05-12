@@ -1,4 +1,4 @@
-//! 租户服务层 — 租户 CRUD + 配置覆盖
+//! Tenant service layer — tenant CRUD + config overrides
 
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -26,33 +26,33 @@ pub struct UpdateTenantRequest {
     pub status: Option<String>,
 }
 
-/// 租户服务
+/// Tenant service
 pub struct TenantService {
     repo: Arc<dyn TenantRepository>,
 }
 
 impl TenantService {
-    /// 创建 `TenantService` 实例
+    /// Create a `TenantService` instance
     pub fn new(repo: Arc<dyn TenantRepository>) -> Self {
         Self { repo }
     }
 
-    /// 列出所有租户
+    /// List all tenants
     pub async fn list(&self) -> Result<Vec<Tenant>, AppError> {
         self.repo.find_all().await
     }
 
-    /// 根据 ID 获取租户
+    /// Get a tenant by ID
     pub async fn get(&self, id: &str) -> Result<Option<Tenant>, AppError> {
         self.repo.find_by_id(id).await
     }
 
-    /// 根据域名获取租户
+    /// Get a tenant by domain
     pub async fn get_by_domain(&self, domain: &str) -> Result<Option<Tenant>, AppError> {
         self.repo.find_by_domain(domain).await
     }
 
-    /// 创建租户
+    /// Create a tenant
     pub async fn create(&self, req: &CreateTenantRequest) -> Result<Tenant, AppError> {
         let (id, _now) = crate::utils::id::new_document_id_and_timestamp();
         let config = req.config.as_ref().map_or_else(
@@ -64,7 +64,7 @@ impl TenantService {
             .await
     }
 
-    /// 更新租户
+    /// Update a tenant
     pub async fn update(&self, id: &str, req: &UpdateTenantRequest) -> Result<Tenant, AppError> {
         let config = req
             .config
@@ -87,7 +87,7 @@ impl TenantService {
             .await
     }
 
-    /// 删除租户（默认租户不可删除）
+    /// Delete a tenant (the default tenant cannot be deleted)
     pub async fn delete(&self, id: &str) -> Result<(), AppError> {
         if id == crate::constants::DEFAULT_TENANT {
             return Err(AppError::BadRequest("cannot delete default tenant".into()));
@@ -95,7 +95,7 @@ impl TenantService {
         self.repo.delete(id).await
     }
 
-    /// 解析租户 ID（从 header 或默认值）
+    /// Resolve tenant ID (from header or default value)
     pub async fn resolve_tenant_id(&self, tenant_id: Option<&str>) -> Result<String, AppError> {
         let id = crate::db::tenant::resolve_tenant(tenant_id);
         let tenant = self.repo.find_by_id(id).await?;

@@ -1,4 +1,4 @@
-//! 可复用块模型及数据库查询
+//! Reusable block model and database queries
 
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]

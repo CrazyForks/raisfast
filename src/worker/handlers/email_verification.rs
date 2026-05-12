@@ -1,4 +1,4 @@
-//! 邮箱验证邮件 Handler
+//! Email verification Handler
 
 use std::sync::Arc;
 

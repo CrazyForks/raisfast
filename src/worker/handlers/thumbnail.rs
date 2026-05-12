@@ -1,7 +1,7 @@
-//! 缩略图生成 Handler
+//! Thumbnail generation Handler
 //!
-//! 使用 `image` crate 将上传的图片缩放到指定尺寸，
-//! 保存为 `{upload_dir}/thumbs/{media_id}_{size}.webp`。
+//! Uses the `image` crate to scale uploaded images to the specified size,
+//! saving them as `{upload_dir}/thumbs/{media_id}_{size}.webp`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,14 +11,14 @@ use crate::db::Pool;
 use crate::errors::app_error::AppResult;
 use crate::worker::{Job, JobHandler};
 
-/// 缩略图生成处理器
+/// Thumbnail generation handler
 pub struct GenerateThumbnailHandler {
     pool: Pool,
     config: Arc<AppConfig>,
 }
 
 impl GenerateThumbnailHandler {
-    /// 创建新的缩略图生成处理器
+    /// Creates a new thumbnail generation handler
     #[must_use]
     pub fn new(pool: Pool, config: Arc<AppConfig>) -> Self {
         Self { pool, config }

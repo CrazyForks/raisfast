@@ -1,7 +1,7 @@
-//! 认证相关处理器
+//! Authentication handlers
 //!
-//! 处理用户注册、登录、令牌刷新和登出请求。
-//! 所有函数均为薄层，仅做参数提取、请求验证和 service 调用。
+//! Handles user registration, login, token refresh, and logout requests.
+//! All functions are thin layers — only parameter extraction, request validation, and service calls.
 
 use axum::Json;
 use axum::extract::State;
@@ -170,10 +170,10 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
-/// 用户注册
+/// User registration
 #[utoipa::path(post, path = "/auth/register", tag = "auth",
     request_body = RegisterRequest,
-    responses((status = 200, description = "注册成功"))
+    responses((status = 200, description = "Registration successful"))
 )]
 pub async fn register(
     auth: AuthUser,
@@ -198,10 +198,10 @@ pub async fn register(
     Ok(ApiResponse::success(user))
 }
 
-/// 用户登录
+/// User login
 #[utoipa::path(post, path = "/auth/login", tag = "auth",
     request_body = LoginRequest,
-    responses((status = 200, description = "登录成功"))
+    responses((status = 200, description = "Login successful"))
 )]
 pub async fn login(
     auth: AuthUser,
@@ -226,7 +226,7 @@ pub async fn login(
     Ok(ApiResponse::success(resp))
 }
 
-/// 验证邮箱
+/// Verify email
 pub async fn verify_email(
     State(state): State<crate::AppState>,
     Json(req): Json<VerifyEmailRequest>,
@@ -236,7 +236,7 @@ pub async fn verify_email(
     Ok(ApiResponse::success(()))
 }
 
-/// 重新发送验证邮件
+/// Resend verification email
 pub async fn resend_verification(
     State(state): State<crate::AppState>,
     Json(req): Json<ResendVerificationRequest>,
@@ -252,10 +252,10 @@ pub async fn resend_verification(
     Ok(ApiResponse::success(()))
 }
 
-/// 刷新访问令牌
+/// Refresh access token
 #[utoipa::path(post, path = "/auth/refresh", tag = "auth",
     request_body = RefreshRequest,
-    responses((status = 200, description = "令牌刷新成功"))
+    responses((status = 200, description = "Token refreshed successfully"))
 )]
 pub async fn refresh(
     State(state): State<crate::AppState>,
@@ -276,10 +276,10 @@ pub async fn refresh(
     Ok(ApiResponse::success(resp))
 }
 
-/// 用户登出
+/// User logout
 #[utoipa::path(post, path = "/auth/logout", tag = "auth",
     security(("bearer_auth" = [])),
-    responses((status = 200, description = "登出成功"))
+    responses((status = 200, description = "Logout successful"))
 )]
 pub async fn logout(
     State(state): State<crate::AppState>,
@@ -289,10 +289,10 @@ pub async fn logout(
     Ok(ApiResponse::success(()))
 }
 
-/// 请求密码重置
+/// Request password reset
 #[utoipa::path(post, path = "/auth/forgot-password", tag = "auth",
     request_body = ForgotPasswordRequest,
-    responses((status = 200, description = "重置邮件已发送"))
+    responses((status = 200, description = "Reset email sent"))
 )]
 pub async fn forgot_password(
     auth: AuthUser,
@@ -311,10 +311,10 @@ pub async fn forgot_password(
     Ok(ApiResponse::success(()))
 }
 
-/// 重置密码
+/// Reset password
 #[utoipa::path(post, path = "/auth/reset-password", tag = "auth",
     request_body = ResetPasswordRequest,
-    responses((status = 200, description = "密码已重置"))
+    responses((status = 200, description = "Password reset"))
 )]
 pub async fn reset_password(
     State(state): State<crate::AppState>,
@@ -332,11 +332,11 @@ pub async fn reset_password(
     Ok(ApiResponse::success(()))
 }
 
-/// OAuth 用户设置密码
+/// Set password for OAuth user
 #[utoipa::path(post, path = "/auth/set-password", tag = "auth",
     security(("bearer_auth" = [])),
     request_body = SetPasswordRequest,
-    responses((status = 200, description = "密码已设置"))
+    responses((status = 200, description = "Password set"))
 )]
 pub async fn set_password(
     auth: AuthUser,
@@ -355,7 +355,7 @@ pub async fn set_password(
     Ok(ApiResponse::success(()))
 }
 
-/// 获取认证配置（支持的注册方式等）
+/// Get authentication config (supported registration methods, etc.)
 pub async fn auth_config(
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<AuthConfigResponse>> {
@@ -377,7 +377,7 @@ pub async fn auth_config(
     }))
 }
 
-/// 发送短信验证码
+/// Send SMS verification code
 pub async fn send_sms_code(
     State(state): State<crate::AppState>,
     Json(req): Json<SendSmsCodeRequest>,
@@ -387,7 +387,7 @@ pub async fn send_sms_code(
     Ok(ApiResponse::success(()))
 }
 
-/// 验证短信验证码（自动注册/登录）
+/// Verify SMS code (auto register/login)
 pub async fn verify_sms(
     State(state): State<crate::AppState>,
     Json(req): Json<VerifySmsRequest>,
@@ -408,7 +408,7 @@ pub async fn verify_sms(
     Ok(ApiResponse::success(resp))
 }
 
-/// 绑定手机号
+/// Bind phone number
 pub async fn bind_phone(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -426,7 +426,7 @@ pub async fn bind_phone(
     Ok(ApiResponse::success(()))
 }
 
-/// 绑定邮箱密码凭证
+/// Bind email/password credential
 pub async fn bind_email_credential(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -437,7 +437,7 @@ pub async fn bind_email_credential(
     Ok(ApiResponse::success(()))
 }
 
-/// 列出当前用户所有凭证
+/// List all credentials for the current user
 pub async fn list_credentials(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -450,7 +450,7 @@ pub async fn list_credentials(
     Ok(ApiResponse::success(responses?))
 }
 
-/// 删除指定凭证
+/// Delete a specific credential
 pub async fn delete_credential(
     auth: AuthUser,
     State(state): State<crate::AppState>,

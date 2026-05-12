@@ -1,7 +1,7 @@
-//! Cron 调度管理 API handler
+//! Cron schedule management API handler
 //!
-//! 提供定时任务的 CRUD、启停、执行历史查询端点。
-//! 所有端点需要管理员权限。
+//! Provides scheduled task CRUD, start/stop, and execution history query endpoints.
+//! All endpoints require admin privileges.
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -78,7 +78,7 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
-/// 创建调度请求体
+/// Create schedule request body
 #[derive(Debug, Deserialize, validator::Validate)]
 pub struct CreateCronRequest {
     #[validate(length(min = 1, message = "label is required"))]
@@ -96,7 +96,7 @@ fn default_true() -> bool {
     true
 }
 
-/// 更新调度请求体
+/// Update schedule request body
 #[derive(Debug, Deserialize, validator::Validate)]
 pub struct UpdateCronRequest {
     #[validate(length(min = 1, message = "label is required"))]
@@ -108,7 +108,7 @@ pub struct UpdateCronRequest {
     pub enabled: Option<bool>,
 }
 
-/// 执行日志查询参数
+/// Execution log query parameters
 #[derive(Debug, Deserialize)]
 pub struct LogQueryParams {
     pub schedule_id: Option<String>,
@@ -120,7 +120,7 @@ fn default_limit() -> i64 {
     20
 }
 
-/// GET /api/v1/admin/crons — 列出所有调度（分页）
+/// GET /api/v1/admin/crons — List all schedules (paginated)
 pub async fn list(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -139,7 +139,7 @@ pub async fn list(
     Ok(params.paginate(items, total))
 }
 
-/// GET /api/v1/admin/crons/{id} — 调度详情
+/// GET /api/v1/admin/crons/{id} — Schedule details
 pub async fn get(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -152,7 +152,7 @@ pub async fn get(
     Ok(ApiResponse::success(schedule))
 }
 
-/// POST /api/v1/admin/crons — 创建调度
+/// POST /api/v1/admin/crons — Create a schedule
 pub async fn create(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -172,7 +172,7 @@ pub async fn create(
     Ok(ApiResponse::success(schedule))
 }
 
-/// PUT /api/v1/admin/crons/{id} — 更新调度
+/// PUT /api/v1/admin/crons/{id} — Update a schedule
 pub async fn update(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -194,7 +194,7 @@ pub async fn update(
     Ok(ApiResponse::success(updated))
 }
 
-/// POST /api/v1/admin/crons/{id}/toggle — 启停切换
+/// POST /api/v1/admin/crons/{id}/toggle — Toggle enable/disable
 pub async fn toggle(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -206,7 +206,7 @@ pub async fn toggle(
     Ok(ApiResponse::success(()))
 }
 
-/// DELETE /api/v1/admin/crons/{id} — 删除调度
+/// DELETE /api/v1/admin/crons/{id} — Delete a schedule
 pub async fn delete(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -217,11 +217,11 @@ pub async fn delete(
     Ok(ApiResponse::success(()))
 }
 
-/// GET /api/v1/admin/crons/logs — 查询执行日志
+/// GET /api/v1/admin/crons/logs — Query execution logs
 ///
-/// 支持两种模式：
-/// - `?schedule_id=xxx` — 查某个调度的历史
-/// - 不传 — 查所有调度的最近记录
+/// Supports two modes:
+/// - `?schedule_id=xxx` — Query a specific schedule's history
+/// - Omit — Query recent records for all schedules
 pub async fn logs(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -237,7 +237,7 @@ pub async fn logs(
     Ok(ApiResponse::success(logs))
 }
 
-/// POST /api/v1/admin/crons/logs/cleanup — 清理过期日志
+/// POST /api/v1/admin/crons/logs/cleanup — Clean up expired logs
 pub async fn cleanup_logs(
     auth: AuthUser,
     State(state): State<AppState>,

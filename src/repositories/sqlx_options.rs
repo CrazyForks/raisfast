@@ -1,4 +1,4 @@
-//! 基于 sqlx 的 `OptionsRepository` 实现
+//! sqlx-based `OptionsRepository` implementation
 
 use crate::errors::app_error::AppResult;
 use crate::models::options;

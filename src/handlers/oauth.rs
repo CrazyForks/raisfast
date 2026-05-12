@@ -1,6 +1,6 @@
-//! OAuth2 社交登录处理器
+//! OAuth2 social login handler
 //!
-//! 提供 OAuth 授权发起、回调处理、绑定/解绑的 HTTP 端点。
+//! Provides HTTP endpoints for OAuth authorization initiation, callback handling, and binding/unbinding.
 
 use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Redirect};
@@ -64,7 +64,7 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
-/// 发起 OAuth 登录 — 302 重定向到 Provider 授权页
+/// Initiate OAuth login — 302 redirect to Provider authorization page
 ///
 /// `GET /api/v1/auth/oauth/{provider}`
 pub async fn redirect_to_provider(
@@ -99,14 +99,14 @@ pub async fn redirect_to_provider(
     Ok(Redirect::temporary(&url))
 }
 
-/// OAuth 回调查询参数
+/// OAuth callback query parameters
 #[derive(Debug, Deserialize)]
 pub struct CallbackQuery {
     pub code: String,
     pub state: String,
 }
 
-/// OAuth 回调处理
+/// OAuth callback handler
 ///
 /// `GET /api/v1/auth/oauth/{provider}/callback?code=xxx&state=xxx`
 pub async fn callback(
@@ -163,7 +163,7 @@ pub async fn callback(
     }
 }
 
-/// 获取已配置的 OAuth Provider 列表
+/// Get configured OAuth provider list
 ///
 /// `GET /api/v1/auth/oauth/providers`
 pub async fn list_providers(
@@ -182,7 +182,7 @@ pub async fn list_providers(
     Ok(ApiResponse::success(providers))
 }
 
-/// 获取当前用户的 OAuth 绑定列表
+/// Get current user's OAuth binding list
 ///
 /// `GET /api/v1/auth/oauth/bindings`
 pub async fn list_bindings(
@@ -193,7 +193,7 @@ pub async fn list_bindings(
     Ok(ApiResponse::success(bindings))
 }
 
-/// 解绑 OAuth 账号
+/// Unbind OAuth account
 ///
 /// `DELETE /api/v1/auth/oauth/{provider}/unbind`
 pub async fn unbind(
@@ -205,7 +205,7 @@ pub async fn unbind(
     Ok(ApiResponse::success(()))
 }
 
-/// Provider 信息
+/// Provider info
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, serde::Serialize)]
 pub struct ProviderInfo {

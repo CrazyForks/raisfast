@@ -1,7 +1,7 @@
-//! Tauri Commands — 对应 HTTP handlers 的业务逻辑
+//! Tauri Commands — business logic corresponding to HTTP handlers
 //!
-//! 每个 command 调用 `services/` 层的同一个函数，
-//! 只是把 Axum extractors 替换为普通函数参数。
+//! Each command calls the same function in the `services/` layer,
+//! replacing Axum extractors with plain function parameters.
 
 use crate::content_type::repository::SaveContext;
 use crate::tauri::AppManagedState;
@@ -368,7 +368,7 @@ pub async fn media_list(
     }))
 }
 
-// ── Content Type Schema 管理 ──────────────────────────────────────
+// ── Content Type Schema Management ────────────────────────────────
 
 #[tauri::command]
 pub async fn schema_list(

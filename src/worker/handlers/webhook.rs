@@ -1,12 +1,12 @@
-//! Webhook 通知 Handler
+//! Webhook notification Handler
 //!
-//! 向外部 URL 发送 HTTP POST JSON 请求。
-//! 超时 10 秒，不跟踪重定向，记录非 2xx 响应为错误（触发重试）。
+//! Sends HTTP POST JSON requests to external URLs.
+//! 10-second timeout, no redirect following, logs non-2xx responses as errors (triggers retry).
 
 use crate::errors::app_error::{AppError, AppResult};
 use crate::worker::{Job, JobHandler};
 
-/// Webhook 通知处理器
+/// Webhook notification handler
 pub struct WebhookNotifyHandler;
 
 impl Default for WebhookNotifyHandler {
@@ -16,7 +16,7 @@ impl Default for WebhookNotifyHandler {
 }
 
 impl WebhookNotifyHandler {
-    /// 创建新的 Webhook 通知处理器
+    /// Creates a new webhook notification handler
     #[must_use]
     pub fn new() -> Self {
         Self

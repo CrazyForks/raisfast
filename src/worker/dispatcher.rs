@@ -1,9 +1,9 @@
-//! 插件 Cron 调度分发器
+//! Plugin Cron dispatch dispatcher
 //!
-//! 当内置 Handler 注册表没有匹配的 Handler 时，
-//! `WorkerRunner` 会 fallback 到此分发器，将任务数据传递给插件系统。
+//! When the built-in Handler registry has no matching Handler,
+//! `WorkerRunner` falls back to this dispatcher, passing job data to the plugin system.
 //!
-//! 插件通过在 `plugin.toml` 中声明 `[hooks.on-cron-tick]` 来接收定时任务。
+//! Plugins receive cron jobs by declaring `[hooks.on-cron-tick]` in their `plugin.toml`.
 
 use std::sync::Arc;
 
@@ -13,21 +13,21 @@ use crate::plugins::PluginManager;
 
 use super::Job;
 
-/// 插件 Cron 分发器
+/// Plugin Cron dispatcher
 ///
-/// 将 Job 数据序列化后通过 `PluginManager::dispatch_action` 发送给
-/// 声明了 `on_cron_tick` hook 的插件。
+/// Serializes Job data and sends it via `PluginManager::dispatch_action` to
+/// plugins that declared the `on_cron_tick` hook.
 pub struct PluginCronDispatcher {
     plugins: Arc<PluginManager>,
 }
 
 impl PluginCronDispatcher {
-    /// 创建分发器
+    /// Creates a new dispatcher
     pub fn new(plugins: Arc<PluginManager>) -> Self {
         Self { plugins }
     }
 
-    /// 将 Job 分发给插件
+    /// Dispatches a Job to plugins
     pub async fn dispatch(&self, job: &Job) -> AppResult<()> {
         let payload = match job {
             Job::Custom { job_type, payload } => serde_json::json!({

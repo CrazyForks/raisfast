@@ -1,4 +1,4 @@
-//! 基于 sqlx 的 `TenantRepository` 实现
+//! sqlx-based `TenantRepository` implementation
 
 use crate::errors::app_error::AppResult;
 use crate::models::tenant::{self, Tenant, TenantStatus};

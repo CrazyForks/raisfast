@@ -1,6 +1,6 @@
-//! 缓存失效 Handler
+//! Cache invalidation Handler
 //!
-//! 接收 `InvalidateCache` job，按 key 或前缀删除缓存条目。
+//! Receives `InvalidateCache` jobs and deletes cache entries by key or prefix.
 
 use std::sync::Arc;
 
@@ -8,13 +8,13 @@ use crate::cache::CacheStore;
 use crate::errors::app_error::AppResult;
 use crate::worker::{Job, JobHandler};
 
-/// 缓存失效处理器
+/// Cache invalidation handler
 pub struct InvalidateCacheHandler {
     cache: Arc<dyn CacheStore>,
 }
 
 impl InvalidateCacheHandler {
-    /// 创建新的缓存失效处理器
+    /// Creates a new cache invalidation handler
     #[must_use]
     pub fn new(cache: Arc<dyn CacheStore>) -> Self {
         Self { cache }

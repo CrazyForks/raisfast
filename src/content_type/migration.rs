@@ -1,16 +1,16 @@
-//! Schema → SQL Migration 生成器
+//! Schema → SQL migration generator
 //!
-//! 根据 `ContentTypeSchema` 定义自动生成 CREATE TABLE / ALTER TABLE SQL。
+//! Automatically generates CREATE TABLE / ALTER TABLE SQL from `ContentTypeSchema` definitions.
 
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
 
 use crate::aspects::ColumnDef;
 use crate::constants::{COL_DOCUMENT_ID, COL_ID};
 
-/// 根据内容类型定义生成 CREATE TABLE SQL
+/// Generate CREATE TABLE SQL from a content type definition
 ///
-/// `protocol_columns` 从 `ProtocolRegistry::columns_for()` 获取，
-/// 包含所有 implements 协议声明的列（如 ownable、timestampable、soft_deletable）。
+/// `protocol_columns` is obtained from `ProtocolRegistry::columns_for()`,
+/// containing all columns declared by implemented protocols (e.g. ownable, timestampable, soft_deletable).
 #[must_use]
 pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnDef]) -> String {
     let table = ct.table.as_str();
@@ -46,7 +46,7 @@ pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnD
                     ));
                 }
                 Some(RelationType::ManyToMany | RelationType::ManyWay) => {
-                    // junction table 后续单独生成
+                    // junction table generated separately below
                 }
                 _ => {}
             }
@@ -101,7 +101,7 @@ pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnD
     sql
 }
 
-/// 生成多对多 junction 表的 CREATE TABLE SQL
+/// Generate CREATE TABLE SQL for many-to-many junction tables
 #[must_use]
 pub fn generate_junction_tables(ct: &ContentTypeSchema) -> Vec<String> {
     let mut tables = Vec::new();
@@ -149,7 +149,7 @@ pub fn generate_junction_tables(ct: &ContentTypeSchema) -> Vec<String> {
     tables
 }
 
-/// 生成索引 CREATE INDEX SQL
+/// Generate CREATE INDEX SQL for indexes
 #[must_use]
 pub fn generate_indexes(ct: &ContentTypeSchema) -> Vec<String> {
     let mut indexes = Vec::new();
@@ -184,10 +184,10 @@ pub fn generate_indexes(ct: &ContentTypeSchema) -> Vec<String> {
     indexes
 }
 
-/// 根据内容类型定义和已有列，生成 ALTER TABLE ADD COLUMN SQL
+/// Generate ALTER TABLE ADD COLUMN SQL from a content type definition and existing columns
 ///
-/// 对比 schema 期望的列与数据库中已有的列，只为缺失的列生成 DDL。
-/// 不删除列、不修改列类型——只做增量添加（与 Strapi `forceMigration` 策略一致）。
+/// Compares expected schema columns with existing database columns, generating DDL only for missing ones.
+/// Does not drop or alter column types — only incremental additions (consistent with Strapi's `forceMigration` strategy).
 #[must_use]
 pub fn generate_alter_table(
     ct: &ContentTypeSchema,
@@ -200,7 +200,7 @@ pub fn generate_alter_table(
         .collect();
     let mut stmts = Vec::new();
 
-    // id 列不应该缺失（表已存在说明有主键），跳过
+    // id column should never be missing (table exists means primary key present), skip
 
     for field in &ct.fields {
         if field.field_type == FieldType::Relation {
@@ -270,7 +270,7 @@ pub fn generate_alter_table(
     stmts
 }
 
-/// 获取 content type schema 期望的所有列名（用于与 DB 对比）
+/// Get all column names expected by the content type schema (for comparison with DB)
 #[must_use]
 pub fn expected_columns(ct: &ContentTypeSchema, protocol_columns: &[ColumnDef]) -> Vec<String> {
     let mut cols = vec![COL_ID.to_string(), COL_DOCUMENT_ID.to_string()];

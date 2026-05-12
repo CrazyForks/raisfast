@@ -1,4 +1,4 @@
-//! 短信验证码发送 Handler
+//! SMS verification code sending Handler
 
 use std::sync::Arc;
 
@@ -6,7 +6,7 @@ use crate::errors::app_error::AppResult;
 use crate::notifier::{SmsMessage, SmsSender};
 use crate::worker::{Job, JobHandler};
 
-/// 短信验证码发送处理器
+/// SMS verification code sending handler
 pub struct SendSmsCodeHandler {
     sms_sender: Arc<dyn SmsSender>,
 }

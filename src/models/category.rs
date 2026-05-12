@@ -1,7 +1,7 @@
-//! 分类模型与数据库查询
+//! Category model and database queries
 //!
-//! 定义内容分类的数据结构以及对 `categories` 表的增删改查操作。
-//! 分类支持嵌套（通过 `parent_id`）和自定义排序（通过 `sort_order`）。
+//! Defines data structures for content categories and CRUD operations on the `categories` table.
+//! Categories support nesting (via `parent_id`) and custom ordering (via `sort_order`).
 
 use serde::{Deserialize, Serialize};
 

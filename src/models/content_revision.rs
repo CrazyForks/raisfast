@@ -1,7 +1,8 @@
-//! 内容版本历史模型与数据库查询
+//! Content revision history model and database queries
 //!
-//! 为启用 `versioning` 的 content type 保存每次更新的快照。
-//! 支持：列出历史、获取快照、回滚到指定版本、两个版本间 diff。
+//! Saves a snapshot for each update of content types with `versioning` enabled.
+//! Supports: listing history, retrieving snapshots, rolling back to a specific version,
+//! and computing diffs between two versions.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

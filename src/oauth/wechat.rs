@@ -1,18 +1,18 @@
-//! 微信开放平台 OAuth2 Provider 实现
+//! WeChat Open Platform OAuth2 Provider implementation
 //!
-//! 微信网站应用扫码登录流程：
+//! WeChat website application QR code login flow:
 //!
-//! 1. 前端展示微信二维码（`CONNECT_URL` + `appid` + `redirect_uri`）
-//! 2. 用户扫码授权后，微信回调带 `code`
-//! 3. 后端用 `code` 换 `access_token` + `openid`
-//! 4. 用 `access_token` + `openid` 获取用户信息（昵称、头像）
+//! 1. Frontend displays a WeChat QR code (`CONNECT_URL` + `appid` + `redirect_uri`)
+//! 2. After the user scans and authorizes, WeChat redirects back with a `code`
+//! 3. Backend exchanges `code` for `access_token` + `openid`
+//! 4. Uses `access_token` + `openid` to fetch user info (nickname, avatar)
 //!
-//! 微信 OAuth 不支持 PKCE，`code_challenge` 参数被忽略。
+//! WeChat OAuth does not support PKCE; the `code_challenge` parameter is ignored.
 
 use crate::errors::app_error::{AppError, AppResult};
 use crate::oauth::{OAuthProvider, OAuthTokenResponse, OAuthUserInfo};
 
-/// 微信开放平台 OAuth2 Provider
+/// WeChat Open Platform OAuth2 Provider
 pub struct WechatProvider {
     app_id: String,
     app_secret: String,
@@ -20,7 +20,7 @@ pub struct WechatProvider {
 }
 
 impl WechatProvider {
-    /// 创建微信 Provider
+    /// Create a WeChat Provider
     pub fn new(app_id: String, app_secret: String, base_url: String) -> Self {
         Self {
             app_id,
@@ -36,10 +36,10 @@ impl OAuthProvider for WechatProvider {
         "wechat"
     }
 
-    /// 构建微信扫码登录授权 URL
+    /// Build the WeChat QR code login authorize URL
     ///
-    /// 注意：微信不支持 PKCE，`code_challenge` 被忽略。
-    /// 前端也可以直接用此 URL 展示二维码。
+    /// Note: WeChat does not support PKCE; `code_challenge` is ignored.
+    /// The frontend can also use this URL directly to display the QR code.
     fn authorize_url(&self, state: &str, _code_challenge: &str) -> String {
         let callback = format!("{}/api/v1/auth/oauth/callback/wechat", self.base_url);
         let redirect_uri = urlencoding::encode(&callback);
@@ -49,9 +49,9 @@ impl OAuthProvider for WechatProvider {
         )
     }
 
-    /// 用 code 换 access_token + openid
+    /// Exchange code for access_token + openid
     ///
-    /// 微信 token 接口返回 JSON（不是标准 OAuth2 格式），需要适配。
+    /// The WeChat token endpoint returns JSON (not standard OAuth2 format) and requires adaptation.
     async fn exchange_code(
         &self,
         code: &str,
@@ -95,9 +95,9 @@ impl OAuthProvider for WechatProvider {
         })
     }
 
-    /// 用 access_token + openid 获取用户信息
+    /// Fetch user info using access_token + openid
     ///
-    /// access_token 格式为 `{token}:{openid}`（在 exchange_code 中拼接）。
+    /// The access_token format is `{token}:{openid}` (concatenated in exchange_code).
     async fn fetch_user_info(&self, combined_token: &str) -> AppResult<OAuthUserInfo> {
         let (access_token, openid) = combined_token
             .rsplit_once(':')

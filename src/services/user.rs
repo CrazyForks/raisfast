@@ -1,4 +1,4 @@
-//! 用户资料管理服务。
+//! User profile management service.
 
 use crate::commands::UpdateProfileCmd;
 use crate::dto::{UpdateUserRequest, UserResponse};
@@ -6,7 +6,7 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::repositories::UserRepository;
 
-/// 获取当前用户资料。
+/// Get the current user's profile.
 pub async fn get_me(user_repo: &dyn UserRepository, auth: &AuthUser) -> AppResult<UserResponse> {
     let user = user_repo
         .find_by_id(auth.ensure_authenticated()?, auth.tenant_id())
@@ -15,7 +15,7 @@ pub async fn get_me(user_repo: &dyn UserRepository, auth: &AuthUser) -> AppResul
     UserResponse::from_user(user)
 }
 
-/// 更新当前用户资料（用户名、简介、网站、头像）。
+/// Update the current user's profile (username, bio, website, avatar).
 pub async fn update_me(
     user_repo: &dyn UserRepository,
     auth: &AuthUser,
@@ -38,7 +38,7 @@ pub async fn update_me(
     UserResponse::from_user(user)
 }
 
-/// 获取指定用户的公开资料。
+/// Get a specific user's public profile.
 pub async fn get_public_user(
     user_repo: &dyn UserRepository,
     id: &str,
@@ -51,9 +51,9 @@ pub async fn get_public_user(
     UserResponse::from_user(user)
 }
 
-/// 分页查询用户列表。
+/// List users with pagination.
 ///
-/// 返回用户响应列表和总记录数。
+/// Returns a list of user responses and the total record count.
 pub async fn list_users(
     user_repo: &dyn UserRepository,
     page: i64,

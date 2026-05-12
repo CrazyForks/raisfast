@@ -1,7 +1,8 @@
-//! 媒体文件服务。
+//! Media file service.
 //!
-//! 处理文件上传、列表查询和删除等操作。
-//! 文件 I/O 通过 [`Storage`] trait 抽象，支持本地文件系统和 S3 兼容对象存储。
+//! Handles file upload, list queries, and deletion.
+//! File I/O is abstracted through the [`Storage`] trait, supporting both local filesystem
+//! and S3-compatible object storage.
 
 use chrono::Utc;
 
@@ -12,24 +13,24 @@ use crate::models::media;
 use crate::repositories::MediaRepository;
 use crate::storage::Storage;
 
-/// 允许上传的 MIME 类型白名单。
+/// Whitelist of allowed upload MIME types.
 pub(crate) const ALLOWED_TYPES: &[&str] = &[
-    // 图片
+    // Images
     "image/jpeg",
     "image/png",
     "image/gif",
     "image/webp",
     "image/svg+xml",
-    // 视频
+    // Video
     "video/mp4",
     "video/webm",
     "video/quicktime",
-    // 音频
+    // Audio
     "audio/mpeg",
     "audio/ogg",
     "audio/wav",
     "audio/aac",
-    // 文档
+    // Documents
     "application/pdf",
     "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -37,18 +38,18 @@ pub(crate) const ALLOWED_TYPES: &[&str] = &[
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "application/vnd.ms-powerpoint",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    // 压缩
+    // Archives
     "application/zip",
     "application/x-tar",
     "application/gzip",
     "application/x-rar-compressed",
-    // 文本
+    // Text
     "text/plain",
     "text/csv",
     "text/markdown",
 ];
 
-/// 生成存储 key：`{bucket}/{year}/{month}/{uuid}.{ext}`
+/// Generate a storage key: `{bucket}/{year}/{month}/{uuid}.{ext}`
 pub(crate) fn storage_key(bucket: &str, ext: &str) -> String {
     let now = Utc::now();
     let id = uuid::Uuid::now_v7();
@@ -62,25 +63,25 @@ pub(crate) fn storage_key(bucket: &str, ext: &str) -> String {
     )
 }
 
-/// 从 MIME 类型推断文件扩展名。
+/// Infer file extension from MIME type.
 pub(crate) fn mime_to_ext(content_type: &str) -> &'static str {
     match content_type {
-        // 图片
+        // Images
         "image/jpeg" => "jpg",
         "image/png" => "png",
         "image/gif" => "gif",
         "image/webp" => "webp",
         "image/svg+xml" => "svg",
-        // 视频
+        // Video
         "video/mp4" => "mp4",
         "video/webm" => "webm",
         "video/quicktime" => "mov",
-        // 音频
+        // Audio
         "audio/mpeg" => "mp3",
         "audio/ogg" => "ogg",
         "audio/wav" => "wav",
         "audio/aac" => "aac",
-        // 文档
+        // Documents
         "application/pdf" => "pdf",
         "application/msword" => "doc",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => "docx",
@@ -88,12 +89,12 @@ pub(crate) fn mime_to_ext(content_type: &str) -> &'static str {
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => "xlsx",
         "application/vnd.ms-powerpoint" => "ppt",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation" => "pptx",
-        // 压缩
+        // Archives
         "application/zip" => "zip",
         "application/x-tar" => "tar",
         "application/gzip" => "gz",
         "application/x-rar-compressed" => "rar",
-        // 文本
+        // Text
         "text/plain" => "txt",
         "text/csv" => "csv",
         "text/markdown" => "md",
@@ -101,12 +102,12 @@ pub(crate) fn mime_to_ext(content_type: &str) -> &'static str {
     }
 }
 
-/// 保存上传的媒体文件。
+/// Save an uploaded media file.
 ///
-/// 1. 校验文件类型是否在白名单内。
-/// 2. 校验文件大小。
-/// 3. 通过 [`Storage`] trait 写入文件。
-/// 4. 在数据库中创建媒体记录。
+/// 1. Validate that the file type is in the whitelist.
+/// 2. Validate the file size.
+/// 3. Write the file via the [`Storage`] trait.
+/// 4. Create a media record in the database.
 #[allow(clippy::too_many_arguments)]
 pub async fn save_file(
     storage: &dyn Storage,
@@ -182,10 +183,10 @@ pub async fn save_file(
     Ok(media)
 }
 
-/// 从图片二进制数据中解析宽高。
+/// Parse image dimensions from binary data.
 ///
-/// 仅读取图片头部信息，不解码整张图片，性能开销极小。
-/// 解析失败时静默返回 `None`，不阻断上传流程。
+/// Only reads image header information without decoding the entire image, so overhead is minimal.
+/// Returns `None` silently on failure, without blocking the upload flow.
 fn parse_image_dimensions(data: &[u8]) -> (Option<i32>, Option<i32>) {
     match image::ImageReader::new(std::io::Cursor::new(data)).with_guessed_format() {
         Ok(reader) => match reader.into_dimensions() {
@@ -202,7 +203,7 @@ fn parse_image_dimensions(data: &[u8]) -> (Option<i32>, Option<i32>) {
     }
 }
 
-/// 分页查询指定用户的媒体文件列表。
+/// Paginated query for a user's media files.
 pub async fn list(
     media_repo: &dyn MediaRepository,
     pool: &crate::db::Pool,
@@ -265,9 +266,10 @@ pub async fn admin_delete_media(
     Ok(())
 }
 
-/// 删除媒体文件。
+/// Delete a media file.
 ///
-/// 仅文件所有者或管理员可执行。先删除数据库记录，再通过 [`Storage`] 删除文件。
+/// Only the file owner or an admin can perform this. Deletes the database record first,
+/// then deletes the file via [`Storage`].
 pub async fn delete_media(
     storage: &dyn Storage,
     media_repo: &dyn MediaRepository,
@@ -312,7 +314,7 @@ pub async fn delete_media(
     Ok(())
 }
 
-/// 获取存储统计
+/// Get storage statistics
 pub async fn stats(
     media_repo: &dyn MediaRepository,
     pool: &crate::db::Pool,
@@ -325,16 +327,16 @@ pub async fn stats(
     media_repo.stats(user.id, auth.tenant_id()).await
 }
 
-/// 校验文件实际内容的 magic bytes 是否与声明的 Content-Type 匹配。
+/// Validate whether the file's actual content magic bytes match the declared Content-Type.
 ///
-/// 对无法通过 magic bytes 校验的类型（纯文本、SVG、Office Open XML、tar），
-/// 只做最小长度检查后直接放行。
+/// For types that cannot be reliably validated via magic bytes (plain text, SVG, Office Open XML, tar),
+/// only a minimum length check is performed before passing through.
 pub(crate) fn validate_magic_bytes(content_type: &str, data: &[u8]) -> bool {
     if data.is_empty() {
         return false;
     }
 
-    // 无法可靠校验 magic bytes 的类型：仅检查非空
+    // Types that cannot be reliably validated via magic bytes: only check non-empty
     const SKIP_MAGIC_TYPES: &[&str] = &[
         "text/plain",
         "text/csv",
@@ -354,7 +356,7 @@ pub(crate) fn validate_magic_bytes(content_type: &str, data: &[u8]) -> bool {
         return true;
     }
 
-    // 图片：宽松校验前缀
+    // Images: relaxed prefix validation
     if content_type == "image/jpeg" && data.len() >= 2 {
         return &data[0..2] == b"\xFF\xD8";
     }
@@ -368,7 +370,7 @@ pub(crate) fn validate_magic_bytes(content_type: &str, data: &[u8]) -> bool {
         return &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP";
     }
 
-    // 视频
+    // Video
     if content_type == "video/mp4" && data.len() >= 8 {
         let len = u32::from_be_bytes(data[0..4].try_into().unwrap_or([0; 4])) as usize;
         if len > 0 && len <= data.len() && &data[4..8] == b"ftyp" {
@@ -379,7 +381,7 @@ pub(crate) fn validate_magic_bytes(content_type: &str, data: &[u8]) -> bool {
         return &data[0..4] == b"\x1a\x45\xdf\xa3";
     }
 
-    // 音频
+    // Audio
     if content_type == "audio/mpeg" && data.len() >= 3 {
         return data.starts_with(b"\xFF\xFB")
             || data.starts_with(b"\xFF\xF3")
@@ -393,12 +395,12 @@ pub(crate) fn validate_magic_bytes(content_type: &str, data: &[u8]) -> bool {
         return &data[0..4] == b"RIFF" && &data[8..12] == b"WAVE";
     }
 
-    // 文档
+    // Documents
     if content_type == "application/pdf" && data.len() >= 5 {
         return &data[0..5] == b"%PDF-";
     }
 
-    // 压缩
+    // Archives
     if content_type == "application/zip" && data.len() >= 4 {
         return &data[0..4] == b"PK\x03\x04";
     }
@@ -412,12 +414,12 @@ pub(crate) fn validate_magic_bytes(content_type: &str, data: &[u8]) -> bool {
     false
 }
 
-/// 从文件内容 magic bytes 推断真实 MIME 类型。
+/// Detect the true MIME type from file content magic bytes.
 fn detect_mime_from_magic(data: &[u8]) -> Option<&'static str> {
     if data.len() < 2 {
         return None;
     }
-    // 图片
+    // Images
     if &data[0..2] == b"\xFF\xD8" {
         return Some("image/jpeg");
     }
@@ -430,7 +432,7 @@ fn detect_mime_from_magic(data: &[u8]) -> Option<&'static str> {
     if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
         return Some("image/webp");
     }
-    // 压缩
+    // Archives
     if data.len() >= 4 && &data[0..4] == b"PK\x03\x04" {
         return Some("application/zip");
     }
@@ -440,11 +442,11 @@ fn detect_mime_from_magic(data: &[u8]) -> Option<&'static str> {
     if data.len() >= 6 && &data[0..6] == b"Rar!\x1A\x07" {
         return Some("application/x-rar-compressed");
     }
-    // 文档
+    // Documents
     if data.len() >= 5 && &data[0..5] == b"%PDF-" {
         return Some("application/pdf");
     }
-    // 音频
+    // Audio
     if data.len() >= 3
         && (data.starts_with(b"\xFF\xFB")
             || data.starts_with(b"\xFF\xF3")
@@ -459,7 +461,7 @@ fn detect_mime_from_magic(data: &[u8]) -> Option<&'static str> {
     if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WAVE" {
         return Some("audio/wav");
     }
-    // 视频
+    // Video
     if data.len() >= 8 {
         let len = u32::from_be_bytes(data[0..4].try_into().unwrap_or([0; 4])) as usize;
         if len > 0 && len <= data.len() && &data[4..8] == b"ftyp" {

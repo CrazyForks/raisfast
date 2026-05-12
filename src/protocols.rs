@@ -1,26 +1,26 @@
-//! Protocol 层 — 声明式协议定义
+//! Protocol layer — Declarative protocol definitions
 //!
-//! Protocol = Aspect 组合 + 声明式效果（ProtocolDeclaration）。
+//! Protocol = Aspect composition + declarative effects (ProtocolDeclaration).
 //!
-//! ## 设计
+//! ## Design
 //!
 //! ```text
-//! Protocol 实现
-//!   ├─ aspects()        → Aspect 列表（AOP 数据注入）
-//!   ├─ declaration()    → ProtocolDeclaration（纯数据，编译期安全）
-//!   │     ├─ query_filters     — 自动追加 WHERE 条件
+//! Protocol implementation
+//!   ├─ aspects()        → Aspect list (AOP data injection)
+//!   ├─ declaration()    → ProtocolDeclaration (pure data, compile-time safe)
+//!   │     ├─ query_filters     — automatically appended WHERE conditions
 //!   │     ├─ delete_strategy   — Soft / Hard
-//!   │     ├─ snapshot_before_update — 更新前获取旧记录
-//!   │     └─ revision_routes   — 提供版本历史 API
-//!   └─ on_after_delete() → async hook（唯一非纯数据方法）
+//!   │     ├─ snapshot_before_update — snapshot old record before update
+//!   │     └─ revision_routes   — provide version history API
+//!   └─ on_after_delete() → async hook (the only non-pure-data method)
 //! ```
 //!
-//! ## 扩展协议
+//! ## Extending Protocols
 //!
-//! **场景 A（常见）：新协议只用到已有能力** → 只加 1 个文件
+//! **Scenario A (common): new protocol only uses existing capabilities** → just add 1 file
 //!
-//! **场景 B（罕见）：引入全新系统集成点** → 扩展 ProtocolDeclaration struct，
-//! 编译器会报错提醒所有需要适配的位置。
+//! **Scenario B (rare): introduces a brand-new system integration point** → extend the
+//! ProtocolDeclaration struct, and the compiler will error on all sites that need adaptation.
 
 pub mod expirable;
 pub mod lockable;
@@ -41,10 +41,10 @@ use crate::aspects::{Aspect, ColumnDef};
 
 // ─── DeleteStrategy ───
 
-/// 删除策略
+/// Delete strategy
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum DeleteStrategy {
-    /// 物理 DELETE（默认）
+    /// Physical DELETE (default)
     #[default]
     Hard,
     /// UPDATE SET column = now WHERE ...
@@ -53,7 +53,7 @@ pub enum DeleteStrategy {
 
 // ─── SortDir ───
 
-/// 排序方向
+/// Sort direction
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SortDir {
     #[default]
@@ -63,7 +63,7 @@ pub enum SortDir {
 
 // ─── ProtocolDeclaration ───
 
-/// 状态模式
+/// Status mode
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum StatusMode {
     #[default]
@@ -71,37 +71,37 @@ pub enum StatusMode {
     Numeric,
 }
 
-/// 协议对系统的所有声明式效果
+/// All declarative effects a protocol has on the system
 ///
-/// 纯数据 struct，新能力加字段。
-/// 消费方直接读字段，编译器保证类型安全。
-/// 扩展此 struct 时，编译器会提醒所有需要适配的位置。
+/// Pure data struct. New capabilities are added as fields.
+/// Consumers read fields directly; the compiler guarantees type safety.
+/// When extending this struct, the compiler will flag all sites needing adaptation.
 #[derive(Debug, Clone, Default)]
 pub struct ProtocolDeclaration {
-    /// 查询时自动追加的 WHERE 过滤条件: (column, SQL_condition)
+    /// Query filters automatically appended as WHERE conditions: (column, SQL_condition)
     pub query_filters: Vec<(String, String)>,
-    /// 删除策略
+    /// Delete strategy
     pub delete_strategy: DeleteStrategy,
-    /// 更新前是否获取当前记录快照（用于版本历史）
+    /// Whether to snapshot the current record before update (for version history)
     pub snapshot_before_update: bool,
-    /// 是否提供版本历史 API 路由（/revisions）
+    /// Whether to provide version history API routes (/revisions)
     pub revision_routes: bool,
-    /// 乐观锁列名（UPDATE WHERE column = ? + SET column = column + 1）
+    /// Optimistic lock column name (UPDATE WHERE column = ? + SET column = column + 1)
     pub lock_column: Option<String>,
-    /// 列表查询的默认排序 (column, direction)
+    /// Default sort for list queries (column, direction)
     pub default_sort: Option<(String, SortDir)>,
-    /// statusable: 允许的状态值列表
+    /// statusable: allowed status values
     pub status_values: Option<Vec<String>>,
-    /// statusable: 数字映射 (label → number)
+    /// statusable: numeric mapping (label → number)
     pub status_map: Option<Vec<(String, i64)>>,
-    /// statusable: 默认状态值（字符串模式为 label，数字模式为 label）
+    /// statusable: default status value (label in string mode, label in numeric mode)
     pub status_default: Option<String>,
-    /// statusable: 存储模式
+    /// statusable: storage mode
     pub status_mode: StatusMode,
 }
 
 impl ProtocolDeclaration {
-    /// 合并另一个协议声明（Soft 优先于 Hard，bool 取 OR，lock/sort 后覆盖前）
+    /// Merge another protocol declaration (Soft takes priority over Hard, bool uses OR, lock/sort: last wins)
     pub fn merge(&mut self, other: &ProtocolDeclaration) {
         self.query_filters
             .extend(other.query_filters.iter().cloned());
@@ -146,7 +146,7 @@ impl ProtocolDeclaration {
         }
     }
 
-    /// 聚合多个协议的声明
+    /// Aggregate declarations from multiple protocols
     pub fn aggregated(names: &[String], registry: &ProtocolRegistry) -> Self {
         let mut agg = Self::default();
         for name in names {
@@ -194,14 +194,14 @@ pub trait Protocol: Send + Sync + 'static {
         false
     }
 
-    /// 协议声明式效果（纯数据）
+    /// Protocol declarative effects (pure data)
     fn declaration(&self) -> ProtocolDeclaration {
         ProtocolDeclaration::default()
     }
 
-    /// 将用户配置应用到声明（如 sortable 的 field/direction）
+    /// Apply user configuration to the declaration (e.g., sortable's field/direction)
     ///
-    /// 默认空实现。需要配置的协议覆写此方法。
+    /// Default no-op. Protocols that need configuration override this method.
     fn apply_config(
         &self,
         _config: &HashMap<String, String>,
@@ -210,9 +210,9 @@ pub trait Protocol: Send + Sync + 'static {
     ) {
     }
 
-    /// 注册协议所需的额外 API 路由
+    /// Register additional API routes required by the protocol
     ///
-    /// 默认空实现。需要路由的协议覆写此方法。
+    /// Default no-op. Protocols that need routes override this method.
     fn register_routes(
         &self,
         _router: axum::Router<crate::AppState>,
@@ -222,10 +222,10 @@ pub trait Protocol: Send + Sync + 'static {
         _router
     }
 
-    /// 删除记录后的异步回调（如清理关联表）
+    /// Async callback after record deletion (e.g., cleanup related tables)
     ///
-    /// 这是唯一无法纯数据声明的 hook，因为涉及异步 IO 操作。
-    /// 大多数协议使用默认空实现。
+    /// This is the only hook that cannot be purely data-declared, because it involves
+    /// async IO operations. Most protocols use the default no-op implementation.
     fn on_after_delete(
         &self,
         _pool: &crate::db::pool::Pool,
@@ -245,7 +245,7 @@ pub struct ProtocolEntry {
 
 inventory::collect!(ProtocolEntry);
 
-/// 在协议文件内自注册的宏
+/// Macro for self-registration within protocol files
 #[macro_export]
 macro_rules! register_protocol {
     ($protocol_type:ty, $instance:expr) => {
@@ -332,12 +332,12 @@ impl ProtocolRegistry {
         aspects
     }
 
-    /// 聚合多个协议的声明
+    /// Aggregate declarations from multiple protocols
     pub fn declaration_for(&self, names: &[String]) -> ProtocolDeclaration {
         ProtocolDeclaration::aggregated(names, self)
     }
 
-    /// 对聚合后的声明应用用户配置
+    /// Apply user configuration to the aggregated declaration
     pub fn apply_config_for(
         &self,
         impl_refs: &[crate::content_type::schema::ProtocolRef],
@@ -351,7 +351,7 @@ impl ProtocolRegistry {
         }
     }
 
-    /// 注册所有协议的额外路由
+    /// Register additional routes for all protocols
     pub fn register_routes_for(
         &self,
         names: &[String],
@@ -368,7 +368,7 @@ impl ProtocolRegistry {
         router
     }
 
-    /// 删除后回调
+    /// Post-delete callback
     pub async fn dispatch_after_delete(
         &self,
         names: &[String],
@@ -481,8 +481,8 @@ mod tests {
         assert_eq!(both.query_filters.len(), 1);
     }
 
-    /// 防护测试：确保 merge() 覆盖 ProtocolDeclaration 的所有字段。
-    /// 新增字段时如果忘记更新 merge()，此测试会失败。
+    /// Guard test: ensures merge() covers all ProtocolDeclaration fields.
+    /// When adding new fields, this test will fail if merge() is not updated.
     #[test]
     fn merge_covers_all_declaration_fields() {
         let full = ProtocolDeclaration {

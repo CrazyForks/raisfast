@@ -1,21 +1,21 @@
-//! Request ID 中间件
+//! Request ID middleware
 //!
-//! 为每个入站请求生成唯一 ID（UUID v7），注入到：
+//! Generates a unique ID (UUID v7) for each incoming request and injects it into:
 //!
-//! * 响应头 `X-Request-ID`
-//! * tracing span 的 `request_id` 字段
+//! * Response header `X-Request-ID`
+//! * tracing span's `request_id` field
 //!
-//! 同时将 method/uri 记录到 span 中，便于日志关联。
+//! Also records method/uri in the span for log correlation.
 
 use axum::extract::Request;
 use axum::http::HeaderValue;
 use axum::middleware::Next;
 use axum::response::Response;
 
-/// 响应头名称
+/// Response header name
 pub const HEADER_NAME: &str = "X-Request-ID";
 
-/// 为请求注入 Request ID 的中间件
+/// Middleware that injects a Request ID into the request
 pub async fn inject_request_id(req: Request, next: Next) -> Response {
     let request_id = uuid::Uuid::now_v7().to_string();
 
