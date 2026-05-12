@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use crate::cache::CacheStore;
 use crate::errors::app_error::AppResult;
-use crate::models::post::{Post, PostJoinedRow, TagBrief};
+use crate::models::post::{Post, PostJoinedRow, PostStatus, TagBrief};
 
 use super::PostRepository;
 use crate::commands::{CreatePostCmd, FindPublishedQuery, UpdatePostCmd};
@@ -186,7 +186,7 @@ impl<P: PostRepository> PostRepository for CachedPostRepository<P> {
         &self,
         page: i64,
         page_size: i64,
-        status: Option<&str>,
+        status: Option<PostStatus>,
         tenant_id: Option<&str>,
     ) -> AppResult<(Vec<PostJoinedRow>, i64)> {
         self.inner

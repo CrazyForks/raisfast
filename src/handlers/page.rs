@@ -15,6 +15,7 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
+use crate::models::page::PageStatus;
 use crate::services::{page as page_service, post::resolve_doc_id_to_int};
 use crate::utils::pagination::PaginationParams;
 
@@ -121,7 +122,7 @@ pub struct CreatePageRequest {
     pub template: Option<String>,
     pub parent_id: Option<String>,
     pub sort_order: Option<i64>,
-    pub status: Option<String>,
+    pub status: Option<PageStatus>,
     pub cover_image: Option<String>,
 }
 
@@ -138,7 +139,7 @@ pub struct UpdatePageRequest {
     pub template: Option<String>,
     pub parent_id: Option<Option<String>>,
     pub sort_order: Option<i64>,
-    pub status: Option<String>,
+    pub status: Option<PageStatus>,
     pub cover_image: Option<String>,
 }
 
@@ -152,12 +153,12 @@ pub struct PageListQuery {
 pub struct AdminPageListQuery {
     pub page: Option<i64>,
     pub page_size: Option<i64>,
-    pub status: Option<String>,
+    pub status: Option<PageStatus>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateStatusRequest {
-    pub status: String,
+    pub status: PageStatus,
 }
 
 #[derive(Debug, Deserialize)]
@@ -229,7 +230,7 @@ pub async fn admin_list(
         &state.pool,
         pagination.page,
         pagination.page_size,
-        query.status.as_deref(),
+        query.status,
         &auth,
     )
     .await?;
@@ -259,7 +260,7 @@ pub async fn create(
         .slug
         .unwrap_or_else(|| page_service::generate_slug(&req.title));
     let template = req.template.unwrap_or_else(|| "default".to_string());
-    let status = req.status.unwrap_or_else(|| "draft".to_string());
+    let status = req.status.unwrap_or(PageStatus::Draft);
 
     let resolved_parent_id = resolve_page_parent_id(&state.pool, req.parent_id).await?;
     let cmd = CreatePageCmd {
@@ -331,7 +332,7 @@ pub async fn update_status(
     Json(req): Json<UpdateStatusRequest>,
 ) -> AppResult<ApiResponse<crate::models::page::Page>> {
     auth.ensure_author()?;
-    let page = page_service::update_status(&state.pool, &id, &req.status, &auth).await?;
+    let page = page_service::update_status(&state.pool, &id, req.status, &auth).await?;
     Ok(ApiResponse::success(page))
 }
 
@@ -370,9 +371,9 @@ pub async fn admin_batch(
             }
             "publish" | "unpublish" => {
                 let status = if req.action == "publish" {
-                    "published"
+                    PageStatus::Published
                 } else {
-                    "draft"
+                    PageStatus::Draft
                 };
                 if page_service::update_status(&state.pool, id, status, &auth)
                     .await

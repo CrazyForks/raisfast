@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
 
+use crate::models::user::UserRole;
+
 use super::validate_uuid_vec;
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]
@@ -18,8 +20,7 @@ pub struct BatchRequestWithRole {
     pub action: String,
     #[validate(length(min = 1), custom(function = "validate_uuid_vec"))]
     pub ids: Vec<String>,
-    #[validate(length(min = 1))]
-    pub role: Option<String>,
+    pub role: Option<UserRole>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -73,7 +74,7 @@ mod tests {
         let req = BatchRequestWithRole {
             action: "change_role".to_string(),
             ids: vec!["01901234-5678-7000-8000-000000000000".to_string()],
-            role: Some("author".to_string()),
+            role: Some(UserRole::Author),
         };
         assert!(req.validate().is_ok());
     }

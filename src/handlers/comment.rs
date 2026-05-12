@@ -12,6 +12,7 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
+use crate::models::comment::CommentStatus;
 use crate::services::comment as comment_service;
 use crate::utils::pagination::PaginationParams;
 
@@ -117,7 +118,7 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
 pub struct AdminCommentListQuery {
     pub page: Option<i64>,
     pub page_size: Option<i64>,
-    pub status: Option<String>,
+    pub status: Option<CommentStatus>,
 }
 
 /// 获取指定文章的评论列表（树形结构，分页）
@@ -235,7 +236,7 @@ pub async fn update_status(
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    comment_service::update_comment_status(state.comment_repo.as_ref(), &id, &req.status, &auth)
+    comment_service::update_comment_status(state.comment_repo.as_ref(), &id, req.status, &auth)
         .await?;
     Ok(ApiResponse::success(()))
 }
@@ -264,7 +265,7 @@ pub async fn admin_update_status(
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    comment_service::update_comment_status(state.comment_repo.as_ref(), &id, &req.status, &auth)
+    comment_service::update_comment_status(state.comment_repo.as_ref(), &id, req.status, &auth)
         .await?;
     Ok(ApiResponse::success(()))
 }
@@ -299,9 +300,9 @@ pub async fn admin_batch(
             }
             "approve" | "reject" | "spam" => {
                 let status = match req.action.as_str() {
-                    "approve" => "approved",
-                    "reject" => "pending",
-                    "spam" => "spam",
+                    "approve" => CommentStatus::Approved,
+                    "reject" => CommentStatus::Pending,
+                    "spam" => CommentStatus::Spam,
                     _ => unreachable!(),
                 };
                 if comment_service::update_comment_status(

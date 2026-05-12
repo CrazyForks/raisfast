@@ -12,7 +12,7 @@ pub async fn get_me(user_repo: &dyn UserRepository, auth: &AuthUser) -> AppResul
         .find_by_id(auth.ensure_authenticated()?, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
-    Ok(user.into())
+    UserResponse::from_user(user)
 }
 
 /// 更新当前用户资料（用户名、简介、网站、头像）。
@@ -35,7 +35,7 @@ pub async fn update_me(
             auth.tenant_id(),
         )
         .await?;
-    Ok(user.into())
+    UserResponse::from_user(user)
 }
 
 /// 获取指定用户的公开资料。
@@ -48,7 +48,7 @@ pub async fn get_public_user(
         .find_by_id(id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
-    Ok(user.into())
+    UserResponse::from_user(user)
 }
 
 /// 分页查询用户列表。
@@ -61,8 +61,9 @@ pub async fn list_users(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<UserResponse>, i64)> {
     let (users, total) = user_repo.find_all(page, page_size, tenant_id).await?;
-    let responses = users.into_iter().map(UserResponse::from).collect();
-    Ok((responses, total))
+    let responses: AppResult<Vec<UserResponse>> =
+        users.into_iter().map(UserResponse::from_user).collect();
+    Ok((responses?, total))
 }
 
 #[cfg(test)]
@@ -81,7 +82,12 @@ mod tests {
     }
 
     fn auth(doc_id: &str) -> AuthUser {
-        AuthUser::from_parts(Some(doc_id.to_string()), Some(1), "admin".to_string(), None)
+        AuthUser::from_parts(
+            Some(doc_id.to_string()),
+            Some(1),
+            crate::models::user::UserRole::Admin,
+            None,
+        )
     }
 
     async fn insert_user(pool: &crate::db::Pool, username: &str) -> crate::models::user::User {
@@ -89,7 +95,7 @@ mod tests {
         repo.create(
             crate::commands::CreateUserCmd {
                 username: username.to_string(),
-                registered_via: "email".to_string(),
+                registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
         )
@@ -105,7 +111,7 @@ mod tests {
         let a = AuthUser::from_parts(
             Some(user.document_id.clone()),
             Some(user.id),
-            "admin".to_string(),
+            crate::models::user::UserRole::Admin,
             None,
         );
         let resp = super::get_me(&repo, &a).await.unwrap();
@@ -128,7 +134,7 @@ mod tests {
         let a = AuthUser::from_parts(
             Some(user.document_id.clone()),
             Some(user.id),
-            "admin".to_string(),
+            crate::models::user::UserRole::Admin,
             None,
         );
         let resp = super::update_me(

@@ -17,9 +17,12 @@ pub async fn forgot_password(
     email: &str,
     _tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let cred =
-        crate::models::user_credential::find_by_auth_type_and_identifier(pool, "email", email)
-            .await?;
+    let cred = crate::models::user_credential::find_by_auth_type_and_identifier(
+        pool,
+        crate::models::user_credential::AuthType::Email,
+        email,
+    )
+    .await?;
     let user = match cred {
         Some(c) => crate::models::user::find_by_pk(pool, c.user_id, None).await?,
         None => None,
@@ -84,7 +87,9 @@ pub async fn reset_password(
                 crate::db::dialect::ph(3)
             );
             sqlx::query(&sql)
-                .bind(crate::models::user_credential::wrap_password_hash(&new_hash))
+                .bind(crate::models::user_credential::wrap_password_hash(
+                    &new_hash,
+                ))
                 .bind(now)
                 .bind(cred_id)
                 .execute(&mut *tx)
@@ -135,7 +140,8 @@ pub async fn set_password(
 
     let creds = crate::models::user_credential::find_by_user_id(pool, user.id).await?;
     let has_password = creds.iter().any(|c| {
-        (c.auth_type == "email" || c.auth_type == "password") && !c.credential_data.is_empty()
+        c.auth_type == crate::models::user_credential::AuthType::Email
+            && !c.credential_data.is_empty()
     });
 
     if has_password {
@@ -145,11 +151,26 @@ pub async fn set_password(
     crate::services::auth::validate_password_strength(new_password)?;
     let new_hash = crate::services::auth::hash_password(new_password)?;
 
-    if let Some(cred) = creds.iter().find(|c| c.auth_type == "email") {
-        crate::models::user_credential::update_credential_data(pool, cred.id, &crate::models::user_credential::wrap_password_hash(&new_hash)).await?;
+    if let Some(cred) = creds
+        .iter()
+        .find(|c| c.auth_type == crate::models::user_credential::AuthType::Email)
+    {
+        crate::models::user_credential::update_credential_data(
+            pool,
+            cred.id,
+            &crate::models::user_credential::wrap_password_hash(&new_hash),
+        )
+        .await?;
     } else {
-        crate::models::user_credential::create(pool, user.id, "email", email, &crate::models::user_credential::wrap_password_hash(&new_hash), true)
-            .await?;
+        crate::models::user_credential::create(
+            pool,
+            user.id,
+            crate::models::user_credential::AuthType::Email,
+            email,
+            &crate::models::user_credential::wrap_password_hash(&new_hash),
+            true,
+        )
+        .await?;
     }
 
     let _ = pool;
@@ -181,7 +202,7 @@ mod tests {
             .create(
                 CreateUserCmd {
                     username: email.to_string(),
-                    registered_via: "email".to_string(),
+                    registered_via: crate::models::user::RegisteredVia::Email,
                 },
                 None,
             )
@@ -190,9 +211,11 @@ mod tests {
         crate::models::user_credential::create(
             pool,
             user.id,
-            "email",
+            crate::models::user_credential::AuthType::Email,
             email,
-            &crate::models::user_credential::wrap_password_hash("$argon2id$v=19$m=19456,t=2,p=1$test$test"),
+            &crate::models::user_credential::wrap_password_hash(
+                "$argon2id$v=19$m=19456,t=2,p=1$test$test",
+            ),
             true,
         )
         .await
@@ -275,19 +298,26 @@ mod tests {
             .create(
                 CreateUserCmd {
                     username: "oauthu".into(),
-                    registered_via: "oauth_github".into(),
+                    registered_via: crate::models::user::RegisteredVia::Oauth,
                 },
                 None,
             )
             .await
             .unwrap();
-        crate::models::user_credential::create(&pool, user.id, "email", "oauth@test.com", "", true)
-            .await
-            .unwrap();
+        crate::models::user_credential::create(
+            &pool,
+            user.id,
+            crate::models::user_credential::AuthType::Email,
+            "oauth@test.com",
+            "",
+            true,
+        )
+        .await
+        .unwrap();
         let a = AuthUser::from_parts(
             Some(user.document_id.clone()),
             Some(user.id),
-            "author".to_string(),
+            crate::models::user::UserRole::Author,
             None,
         );
         super::set_password(&repo, &pool, &a, "oauth@test.com", "StrongPass1")
@@ -303,7 +333,7 @@ mod tests {
         let a = AuthUser::from_parts(
             Some(user.document_id.clone()),
             Some(user.id),
-            "author".to_string(),
+            crate::models::user::UserRole::Author,
             None,
         );
         let err = super::set_password(&repo, &pool, &a, "already@test.com", "NewPass1")

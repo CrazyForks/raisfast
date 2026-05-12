@@ -152,9 +152,12 @@ pub async fn handle_callback(
     }
 
     if let Some(email) = &user_info.email {
-        let cred =
-            crate::models::user_credential::find_by_auth_type_and_identifier(pool, "email", email)
-                .await?;
+        let cred = crate::models::user_credential::find_by_auth_type_and_identifier(
+            pool,
+            crate::models::user_credential::AuthType::Email,
+            email,
+        )
+        .await?;
         if let Some(cred) = cred {
             let user = crate::models::user::find_by_pk(pool, cred.user_id, None)
                 .await?
@@ -175,7 +178,7 @@ pub async fn handle_callback(
                 success: true,
             });
 
-        return Ok(OAuthCallbackResult::LoginSuccess(Box::new(login_resp)));
+            return Ok(OAuthCallbackResult::LoginSuccess(Box::new(login_resp)));
         }
     }
 
@@ -220,7 +223,7 @@ pub async fn unbind_oauth(
 
     let creds = crate::models::user_credential::find_by_user_id(pool, user.id).await?;
     for cred in creds {
-        if cred.auth_type == format!("oauth_{provider_name}") {
+        if cred.auth_type == crate::models::user_credential::AuthType::Oauth {
             crate::models::user_credential::delete_by_id(pool, cred.id).await?;
             break;
         }
@@ -270,10 +273,11 @@ async fn create_login_response_for_user(
     jwt_access_expires: u64,
     jwt_refresh_expires: u64,
 ) -> AppResult<LoginResponse> {
+    let user_role = user.role;
     let access_token = crate::services::auth::generate_access_token_internal(
         &user.document_id,
         user.id,
-        &user.role,
+        user_role,
         user.tenant_id
             .as_deref()
             .unwrap_or(crate::constants::DEFAULT_TENANT),
@@ -292,7 +296,7 @@ async fn create_login_response_for_user(
         access_token,
         refresh_token: refresh_token_str,
         expires_in: jwt_access_expires,
-        user: user.clone().into(),
+        user: crate::dto::UserResponse::from_user(user.clone())?,
     })
 }
 
@@ -318,7 +322,7 @@ async fn auto_register_user(
         .create(
             CreateUserCmd {
                 username,
-                registered_via: format!("oauth_{provider_name}"),
+                registered_via: crate::models::user::RegisteredVia::Oauth,
             },
             None,
         )
@@ -341,7 +345,15 @@ async fn auto_register_user(
     }
 
     if !email.is_empty() {
-        crate::models::user_credential::create(pool, user.id, "email", &email, "", true).await?;
+        crate::models::user_credential::create(
+            pool,
+            user.id,
+            crate::models::user_credential::AuthType::Email,
+            &email,
+            "",
+            true,
+        )
+        .await?;
     }
 
     let user = crate::models::user::find_by_pk(pool, user.id, None)
@@ -453,7 +465,7 @@ async fn do_bind_oauth(
         crate::models::user_credential::create(
             pool,
             user_id,
-            &format!("oauth_{provider_name}"),
+            crate::models::user_credential::AuthType::Oauth,
             &oauth_identifier,
             &oauth_data,
             true,

@@ -3,7 +3,7 @@ use super::*;
 async fn setup() -> (axum::Router, String, raisfast::db::Pool) {
     let (app, state) = test_app().await;
     let (int_id, doc_id) = create_admin(&state.pool).await;
-    let tok = make_token(&doc_id, int_id, "admin");
+    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin);
     (app, tok, state.pool)
 }
 
@@ -212,7 +212,11 @@ async fn delete_token_non_owner_forbidden() {
         .execute(&pool)
         .await
         .unwrap();
-    let reader_tok = make_token(&reader_doc_id, reader_int_id, "reader");
+    let reader_tok = make_token(
+        &reader_doc_id,
+        reader_int_id,
+        raisfast::models::user::UserRole::Reader,
+    );
 
     let (status, _) = send(
         &mut app,
@@ -257,7 +261,11 @@ async fn admin_can_delete_other_users_token() {
         .execute(&pool)
         .await
         .unwrap();
-    let reader_tok = make_token(&reader_doc_id, reader_int_id, "reader");
+    let reader_tok = make_token(
+        &reader_doc_id,
+        reader_int_id,
+        raisfast::models::user::UserRole::Reader,
+    );
 
     let (_, create_body) = send(
         &mut app,
@@ -526,7 +534,11 @@ async fn each_user_sees_only_own_tokens() {
         .execute(&pool)
         .await
         .unwrap();
-    let reader_tok = make_token(&reader_doc_id, reader_int_id, "reader");
+    let reader_tok = make_token(
+        &reader_doc_id,
+        reader_int_id,
+        raisfast::models::user::UserRole::Reader,
+    );
 
     send(
         &mut app,

@@ -29,6 +29,7 @@ fn validate_password(pwd: &str) -> Result<(), validator::ValidationError> {
     }
 }
 
+#[allow(dead_code)]
 fn validate_post_status(status: &str) -> Result<(), validator::ValidationError> {
     match status {
         "draft" | "published" => Ok(()),
@@ -40,6 +41,7 @@ fn validate_post_status(status: &str) -> Result<(), validator::ValidationError> 
     }
 }
 
+#[allow(dead_code)]
 fn validate_comment_status(status: &str) -> Result<(), validator::ValidationError> {
     match status {
         "approved" | "pending" | "spam" => Ok(()),
@@ -143,11 +145,13 @@ mod tests {
 
     #[test]
     fn validate_uuid_vec_valid() {
-        assert!(validate_uuid_vec(&[
-            "01901234-5678-7000-8000-000000000000".to_string(),
-            "1".to_string()
-        ])
-        .is_ok());
+        assert!(
+            validate_uuid_vec(&[
+                "01901234-5678-7000-8000-000000000000".to_string(),
+                "1".to_string()
+            ])
+            .is_ok()
+        );
     }
 
     #[test]

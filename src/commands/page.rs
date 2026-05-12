@@ -1,5 +1,7 @@
 //! 页面相关 Command
 
+use crate::models::page::PageStatus;
+
 pub struct CreatePageCmd {
     pub title: String,
     pub slug: String,
@@ -11,7 +13,7 @@ pub struct CreatePageCmd {
     pub template: String,
     pub parent_id: Option<i64>,
     pub sort_order: i64,
-    pub status: String,
+    pub status: PageStatus,
     pub created_by: i64,
     pub updated_by: Option<i64>,
     pub cover_image: Option<String>,
@@ -29,7 +31,7 @@ pub struct UpdatePageCmd {
     pub template: Option<String>,
     pub parent_id: Option<Option<i64>>,
     pub sort_order: Option<i64>,
-    pub status: Option<String>,
+    pub status: Option<PageStatus>,
     pub cover_image: Option<String>,
     pub updated_by: Option<i64>,
 }

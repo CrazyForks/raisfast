@@ -5,7 +5,7 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use serde_json::json;
 
-use super::model::StepDef;
+use super::model::{StepDef, WorkflowInstanceStatus};
 use crate::AppState;
 use crate::db::dialect;
 use crate::errors::app_error::{AppError, AppResult};
@@ -111,7 +111,7 @@ pub struct ExecuteStepRequest {
 #[derive(Debug, Deserialize)]
 pub struct InstanceQuery {
     pub definition_id: Option<String>,
-    pub status: Option<String>,
+    pub status: Option<WorkflowInstanceStatus>,
     pub page: Option<i64>,
     pub page_size: Option<i64>,
 }
@@ -196,12 +196,7 @@ pub async fn list_instances(
     let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
     let (items, total) = state
         .workflow
-        .list_instances(
-            query.definition_id.as_deref(),
-            query.status.as_deref(),
-            page,
-            page_size,
-        )
+        .list_instances(query.definition_id.as_deref(), query.status, page, page_size)
         .await?;
     Ok(ApiResponse::success(json!({
         "items": items,

@@ -8,6 +8,24 @@ use crate::db::Pool;
 use crate::db::dialect::ph;
 use crate::utils::tz::Timestamp;
 
+define_enum!(
+    WorkflowInstanceStatus {
+        Running = "running",
+        Completed = "completed",
+        Failed = "failed",
+        Cancelled = "cancelled",
+        Paused = "paused",
+    }
+);
+
+define_enum!(
+    WorkflowStepStatus {
+        Running = "running",
+        Completed = "completed",
+        Failed = "failed",
+    }
+);
+
 /// 步骤类型
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -75,7 +93,7 @@ pub struct WorkflowInstance {
     pub id: i64,
     pub document_id: String,
     pub definition_id: i64,
-    pub status: String,
+    pub status: WorkflowInstanceStatus,
     pub current_step: Option<String>,
     pub context: String,
     pub triggered_by: Option<i64>,
@@ -100,7 +118,7 @@ pub struct StepLog {
     pub instance_id: i64,
     pub step_id: String,
     pub step_name: String,
-    pub status: String,
+    pub status: WorkflowStepStatus,
     pub input: Option<String>,
     pub output: Option<String>,
     pub error: Option<String>,
@@ -231,7 +249,7 @@ pub async fn get_instance(
 pub async fn list_instances(
     pool: &Pool,
     definition_id: Option<i64>,
-    status: Option<&str>,
+    status: Option<WorkflowInstanceStatus>,
     page: i64,
     page_size: i64,
 ) -> anyhow::Result<(Vec<WorkflowInstance>, i64)> {
@@ -277,13 +295,16 @@ pub async fn list_instances(
 pub async fn update_instance_step(
     pool: &Pool,
     document_id: &str,
-    status: &str,
+    status: WorkflowInstanceStatus,
     current_step: Option<&str>,
     context: &serde_json::Value,
 ) -> anyhow::Result<()> {
     let now = crate::utils::tz::now_utc();
     let ctx_str = serde_json::to_string(context)?;
-    let completed_at = if status == "completed" || status == "failed" || status == "cancelled" {
+    let completed_at = if status == WorkflowInstanceStatus::Completed
+        || status == WorkflowInstanceStatus::Failed
+        || status == WorkflowInstanceStatus::Cancelled
+    {
         Some(now)
     } else {
         None
@@ -405,6 +426,8 @@ pub async fn list_step_logs(pool: &Pool, instance_id: i64) -> anyhow::Result<Vec
 
 #[cfg(test)]
 mod tests {
+    use super::{WorkflowInstanceStatus, WorkflowStepStatus};
+
     async fn setup_pool() -> crate::db::Pool {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
@@ -480,7 +503,7 @@ mod tests {
             .unwrap();
         assert_eq!(inst.document_id, inst_doc_id);
         assert_eq!(inst.definition_id, def.id);
-        assert_eq!(inst.status, "running");
+        assert_eq!(inst.status, WorkflowInstanceStatus::Running);
 
         let got = super::get_instance(&pool, &inst_doc_id)
             .await
@@ -529,15 +552,21 @@ mod tests {
             .unwrap();
 
         let new_ctx = serde_json::json!({"progress": 50});
-        super::update_instance_step(&pool, &inst_doc_id, "paused", Some("s1"), &new_ctx)
-            .await
-            .unwrap();
+        super::update_instance_step(
+            &pool,
+            &inst_doc_id,
+            WorkflowInstanceStatus::Paused,
+            Some("s1"),
+            &new_ctx,
+        )
+        .await
+        .unwrap();
 
         let inst = super::get_instance(&pool, &inst_doc_id)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(inst.status, "paused");
+        assert_eq!(inst.status, WorkflowInstanceStatus::Paused);
         assert_eq!(inst.current_step, Some("s1".to_string()));
     }
 
@@ -561,7 +590,7 @@ mod tests {
         let log = super::create_step_log(&pool, &log_doc_id, inst.id, "s1", "Step 1", Some(&input))
             .await
             .unwrap();
-        assert_eq!(log.status, "running");
+        assert_eq!(log.status, WorkflowStepStatus::Running);
         assert_eq!(log.step_id, "s1");
 
         let output = serde_json::json!({"result": "ok"});
@@ -571,7 +600,7 @@ mod tests {
 
         let logs = super::list_step_logs(&pool, inst.id).await.unwrap();
         assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0].status, "completed");
+        assert_eq!(logs[0].status, WorkflowStepStatus::Completed);
         assert!(logs[0].completed_at.is_some());
     }
 
@@ -627,7 +656,7 @@ mod tests {
             .unwrap();
 
         let logs = super::list_step_logs(&pool, inst.id).await.unwrap();
-        assert_eq!(logs[0].status, "failed");
+        assert_eq!(logs[0].status, WorkflowStepStatus::Failed);
         assert_eq!(logs[0].error, Some("something broke".to_string()));
         assert!(logs[0].completed_at.is_some());
     }
@@ -649,22 +678,33 @@ mod tests {
         super::update_instance_step(
             &pool,
             &inst_doc_id,
-            "completed",
+            WorkflowInstanceStatus::Completed,
             None,
             &serde_json::json!({}),
         )
         .await
         .unwrap();
 
-        let (running, _) = super::list_instances(&pool, Some(def.id), Some("running"), 1, 10)
-            .await
-            .unwrap();
+        let (running, _) = super::list_instances(
+            &pool,
+            Some(def.id),
+            Some(WorkflowInstanceStatus::Running),
+            1,
+            10,
+        )
+        .await
+        .unwrap();
         assert!(running.is_empty());
 
-        let (completed, total) =
-            super::list_instances(&pool, Some(def.id), Some("completed"), 1, 10)
-                .await
-                .unwrap();
+        let (completed, total) = super::list_instances(
+            &pool,
+            Some(def.id),
+            Some(WorkflowInstanceStatus::Completed),
+            1,
+            10,
+        )
+        .await
+        .unwrap();
         assert_eq!(total, 1);
         assert_eq!(completed.len(), 1);
     }
@@ -714,7 +754,7 @@ mod tests {
         super::update_instance_step(
             &pool,
             &inst_doc_id,
-            "completed",
+            WorkflowInstanceStatus::Completed,
             None,
             &serde_json::json!({"done": true}),
         )
@@ -725,7 +765,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(inst.status, "completed");
+        assert_eq!(inst.status, WorkflowInstanceStatus::Completed);
         assert!(inst.completed_at.is_some());
         let ctx = inst.parse_context();
         assert_eq!(ctx["done"], true);

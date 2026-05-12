@@ -7,7 +7,7 @@ use crate::commands::CreateCommentCmd;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::eventbus::{Event, EventBus};
 use crate::middleware::auth::AuthUser;
-use crate::models::comment::{self, CommentResponse};
+use crate::models::comment::{self, CommentResponse, CommentStatus};
 use crate::plugins::{HookPoint, PluginManager};
 use crate::repositories::{CommentRepository, PostRepository};
 
@@ -158,12 +158,9 @@ pub async fn delete_comment(
 pub async fn update_comment_status(
     comment_repo: &dyn CommentRepository,
     comment_id: &str,
-    status: &str,
+    status: CommentStatus,
     auth: &AuthUser,
 ) -> AppResult<()> {
-    if status != "approved" && status != "spam" && status != "pending" {
-        return Err(AppError::BadRequest("invalid_comment_status".into()));
-    }
     let c = comment_repo
         .find_by_document_id(comment_id, auth.tenant_id())
         .await?
@@ -194,7 +191,7 @@ mod tests {
         AuthUser::from_parts(
             Some(user.document_id.clone()),
             Some(user.id),
-            "admin".to_string(),
+            crate::models::user::UserRole::Admin,
             None,
         )
     }
@@ -204,15 +201,20 @@ mod tests {
             pool,
             &crate::commands::user::CreateUserCmd {
                 username: crate::utils::id::new_document_id(),
-                registered_via: "test".to_string(),
+                registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
         )
         .await
         .unwrap();
-        crate::models::user::update_role(pool, &user.document_id, "admin", None)
-            .await
-            .unwrap()
+        crate::models::user::update_role(
+            pool,
+            &user.document_id,
+            crate::models::user::UserRole::Admin,
+            None,
+        )
+        .await
+        .unwrap()
     }
 
     async fn insert_post(pool: &crate::db::Pool, user_id: i64) -> i64 {
@@ -224,7 +226,7 @@ mod tests {
                 content: "body".into(),
                 excerpt: None,
                 cover_image: None,
-                status: "published".into(),
+                status: crate::models::post::PostStatus::Published,
                 created_by: user_id,
                 updated_by: None,
                 category_id: None,
@@ -265,32 +267,23 @@ mod tests {
         let post_id = insert_post(&pool, user.id).await;
         let c = insert_comment(&pool, post_id, user.id).await;
         let repo = SqlxCommentRepository::new(pool.clone());
-        super::update_comment_status(&repo, &c.document_id, "approved", &auth(&user))
+        super::update_comment_status(&repo, &c.document_id, CommentStatus::Approved, &auth(&user))
             .await
             .unwrap();
         let updated = repo.find_by_id(c.id, None).await.unwrap().unwrap();
-        assert_eq!(updated.status, "approved");
-    }
-
-    #[tokio::test]
-    async fn update_comment_status_invalid() {
-        let pool = setup_pool().await;
-        let repo = SqlxCommentRepository::new(pool.clone());
-        let a = AuthUser::new_test("any", "admin", "");
-        let err = super::update_comment_status(&repo, "x", "invalid", &a)
-            .await
-            .unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("invalid_comment_status"), "got: {msg}");
+        assert_eq!(
+            updated.status,
+            crate::models::comment::CommentStatus::Approved
+        );
     }
 
     #[tokio::test]
     async fn update_comment_status_not_found() {
         let pool = setup_pool().await;
         let repo = SqlxCommentRepository::new(pool.clone());
-        let a = AuthUser::new_test("any", "admin", "");
+        let a = AuthUser::new_test("any", crate::models::user::UserRole::Admin, "");
         assert!(
-            super::update_comment_status(&repo, "missing", "approved", &a)
+            super::update_comment_status(&repo, "missing", CommentStatus::Approved, &a)
                 .await
                 .is_err()
         );
@@ -306,7 +299,7 @@ mod tests {
         let a = AuthUser::from_parts(
             Some(user.document_id.clone()),
             Some(user.id),
-            "admin".to_string(),
+            crate::models::user::UserRole::Admin,
             None,
         );
         super::delete_comment(&repo, &c.document_id, &a)
@@ -319,7 +312,7 @@ mod tests {
     async fn delete_comment_not_found() {
         let pool = setup_pool().await;
         let repo = SqlxCommentRepository::new(pool.clone());
-        let a = AuthUser::new_test("any", "admin", "");
+        let a = AuthUser::new_test("any", crate::models::user::UserRole::Admin, "");
         assert!(super::delete_comment(&repo, "missing", &a).await.is_err());
     }
 
@@ -330,10 +323,10 @@ mod tests {
         let post_id = insert_post(&pool, user.id).await;
         let c = insert_comment(&pool, post_id, user.id).await;
         let repo = SqlxCommentRepository::new(pool.clone());
-        super::update_comment_status(&repo, &c.document_id, "spam", &auth(&user))
+        super::update_comment_status(&repo, &c.document_id, CommentStatus::Spam, &auth(&user))
             .await
             .unwrap();
         let updated = repo.find_by_id(c.id, None).await.unwrap().unwrap();
-        assert_eq!(updated.status, "spam");
+        assert_eq!(updated.status, crate::models::comment::CommentStatus::Spam);
     }
 }

@@ -295,7 +295,7 @@ mod tests {
             pool,
             &crate::commands::user::CreateUserCmd {
                 username: "mediauser".to_string(),
-                registered_via: "test".to_string(),
+                registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
         )

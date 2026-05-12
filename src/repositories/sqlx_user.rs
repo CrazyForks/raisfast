@@ -33,7 +33,12 @@ pub trait UserRepository: Send + Sync {
     ) -> AppResult<(Vec<User>, i64)>;
 
     /// 管理员更新用户角色
-    async fn update_role(&self, id: &str, role: &str, tenant_id: Option<&str>) -> AppResult<User>;
+    async fn update_role(
+        &self,
+        id: &str,
+        role: crate::models::user::UserRole,
+        tenant_id: Option<&str>,
+    ) -> AppResult<User>;
 }
 
 #[async_trait::async_trait]
@@ -63,7 +68,12 @@ impl UserRepository for SqlxUserRepository {
         user::find_all(&self.pool, page, page_size, tenant_id).await
     }
 
-    async fn update_role(&self, id: &str, role: &str, tenant_id: Option<&str>) -> AppResult<User> {
+    async fn update_role(
+        &self,
+        id: &str,
+        role: crate::models::user::UserRole,
+        tenant_id: Option<&str>,
+    ) -> AppResult<User> {
         user::update_role(&self.pool, id, role, tenant_id).await
     }
 }

@@ -191,13 +191,12 @@ pub async fn update_role(
     Json(req): Json<UpdateRoleRequest>,
 ) -> AppResult<ApiResponse<UserResponse>> {
     auth.ensure_admin()?;
-    validation::validate(&req)?;
 
     let u = state
         .user_repo
-        .update_role(&id, &req.role, auth.tenant_id())
+        .update_role(&id, req.role, auth.tenant_id())
         .await?;
-    Ok(ApiResponse::success(u.into()))
+    Ok(ApiResponse::success(UserResponse::from_user(u)?))
 }
 
 // ── Admin handlers ──
@@ -257,7 +256,7 @@ pub async fn admin_update_user(
         .user_repo
         .update_profile(cmd, auth.tenant_id())
         .await?;
-    Ok(ApiResponse::success(u.into()))
+    Ok(ApiResponse::success(UserResponse::from_user(u)?))
 }
 
 pub async fn admin_delete_user(
@@ -291,7 +290,7 @@ pub async fn admin_batch_users(
             "disable" => {
                 if state
                     .user_repo
-                    .update_role(uid, "disabled", auth.tenant_id())
+                    .update_role(uid, crate::models::user::UserRole::Reader, auth.tenant_id())
                     .await
                     .is_ok()
                 {
@@ -301,7 +300,7 @@ pub async fn admin_batch_users(
             "enable" => {
                 if state
                     .user_repo
-                    .update_role(uid, "reader", auth.tenant_id())
+                    .update_role(uid, crate::models::user::UserRole::Reader, auth.tenant_id())
                     .await
                     .is_ok()
                 {
@@ -309,12 +308,14 @@ pub async fn admin_batch_users(
                 }
             }
             "change_role" => {
-                if let Some(ref role) = req.role
-                    && state
-                        .user_repo
-                        .update_role(uid, role, auth.tenant_id())
-                        .await
-                        .is_ok()
+                let Some(role) = req.role else {
+                    continue;
+                };
+                if state
+                    .user_repo
+                    .update_role(uid, role, auth.tenant_id())
+                    .await
+                    .is_ok()
                 {
                     affected += 1;
                 }

@@ -5,6 +5,7 @@
 
 use crate::db::Pool;
 use crate::errors::app_error::AppResult;
+use crate::models::post::PostStatus;
 use crate::worker::{Job, JobHandler};
 
 /// 定时发布处理器
@@ -33,7 +34,7 @@ impl JobHandler for ScheduledPublishHandler {
             return Ok(());
         };
 
-        if post.status == "published" {
+        if post.status == PostStatus::Published {
             tracing::info!("[publish] post {} already published", post_id);
             return Ok(());
         }
@@ -47,7 +48,7 @@ impl JobHandler for ScheduledPublishHandler {
                 content: None,
                 excerpt: None,
                 cover_image: None,
-                status: Some("published".to_string()),
+                status: Some(crate::models::post::PostStatus::Published),
                 category_id: None,
                 tag_ids: None,
                 updated_by: None,
@@ -81,15 +82,20 @@ mod tests {
             pool,
             &crate::commands::CreateUserCmd {
                 username: "author".to_string(),
-                registered_via: "test".to_string(),
+                registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
         )
         .await
         .unwrap();
-        user::update_role(pool, &u.document_id, "author", None)
-            .await
-            .unwrap();
+        user::update_role(
+            pool,
+            &u.document_id,
+            crate::models::user::UserRole::Author,
+            None,
+        )
+        .await
+        .unwrap();
         u.id
     }
 
@@ -106,7 +112,7 @@ mod tests {
                 content: "content".to_string(),
                 excerpt: None,
                 cover_image: None,
-                status: "draft".to_string(),
+                status: crate::models::post::PostStatus::Draft,
                 created_by: author_id,
                 updated_by: None,
                 category_id: None,
@@ -122,7 +128,7 @@ mod tests {
         assert!(handler.handle(&job).await.is_ok());
 
         let updated = post::find_by_id(&pool, p.id, None).await.unwrap().unwrap();
-        assert_eq!(updated.status, "published");
+        assert_eq!(updated.status, PostStatus::Published);
         assert!(updated.published_at.is_some());
     }
 
@@ -139,7 +145,7 @@ mod tests {
                 content: "content".to_string(),
                 excerpt: None,
                 cover_image: None,
-                status: "published".to_string(),
+                status: crate::models::post::PostStatus::Published,
                 created_by: author_id,
                 updated_by: None,
                 category_id: None,

@@ -42,7 +42,7 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::plugins::CronEntry;
 use crate::utils::tz::Timestamp;
 
-use super::{Job, JobQueue, NewJob};
+use super::{CronExecStatus, Job, JobQueue, NewJob};
 
 macro_rules! cron_row_to_schedule {
     ($r:expr) => {{
@@ -105,7 +105,7 @@ struct CronExecLogRow {
     schedule_id: i64,
     job_type: String,
     label: String,
-    status: String,
+    status: CronExecStatus,
     duration_ms: Option<i64>,
     error: Option<String>,
     started_at: Timestamp,
@@ -428,7 +428,7 @@ impl CronScheduler {
                 Ok(()) => {
                     if let Some(ref lid) = log_id {
                         sqlx::query(&format!(
-                            "UPDATE cron_execution_log SET status = 'success', duration_ms = {}, finished_at = {} WHERE document_id = {}",
+                            "UPDATE cron_execution_log SET status = 'completed', duration_ms = {}, finished_at = {} WHERE document_id = {}",
                             ph(1), ph(2), ph(3)
                         ))
                         .bind(elapsed)
@@ -550,7 +550,7 @@ pub struct CronExecutionLog {
     pub schedule_id: i64,
     pub job_type: String,
     pub label: String,
-    pub status: String,
+    pub status: CronExecStatus,
     pub duration_ms: Option<i64>,
     pub error: Option<String>,
     pub started_at: Timestamp,
@@ -591,7 +591,7 @@ pub async fn create_execution_log(
 pub async fn complete_execution_log(pool: &Pool, log_id: &str, duration_ms: i64) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     sqlx::query(&format!(
-        "UPDATE cron_execution_log SET status = 'success', duration_ms = {}, finished_at = {} WHERE document_id = {}",
+        "UPDATE cron_execution_log SET status = 'completed', duration_ms = {}, finished_at = {} WHERE document_id = {}",
         ph(1), ph(2), ph(3)
     ))
     .bind(duration_ms)
@@ -1219,7 +1219,7 @@ mod tests {
 
         let logs = list_execution_logs(&pool, "sched-1", 10).await.unwrap();
         assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0].status, "running");
+        assert_eq!(logs[0].status, CronExecStatus::Running);
         assert_eq!(logs[0].job_type, "generate_sitemap");
         assert!(logs[0].duration_ms.is_none());
         assert!(logs[0].finished_at.is_none());
@@ -1227,7 +1227,7 @@ mod tests {
         complete_execution_log(&pool, &log_id, 42).await.unwrap();
 
         let logs = list_execution_logs(&pool, "sched-1", 10).await.unwrap();
-        assert_eq!(logs[0].status, "success");
+        assert_eq!(logs[0].status, CronExecStatus::Completed);
         assert_eq!(logs[0].duration_ms, Some(42));
         assert!(logs[0].finished_at.is_some());
     }
@@ -1246,7 +1246,7 @@ mod tests {
             .unwrap();
 
         let logs = list_execution_logs(&pool, "sched-1", 10).await.unwrap();
-        assert_eq!(logs[0].status, "failed");
+        assert_eq!(logs[0].status, CronExecStatus::Failed);
         assert_eq!(logs[0].duration_ms, Some(100));
         assert_eq!(logs[0].error, Some("something broke".into()));
     }
@@ -1344,7 +1344,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0].status, "success");
+        assert_eq!(logs[0].status, CronExecStatus::Completed);
         assert!(logs[0].duration_ms.is_some());
         assert!(logs[0].finished_at.is_some());
     }

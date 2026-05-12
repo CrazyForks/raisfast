@@ -9,18 +9,29 @@ use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
+define_enum!(
+    AuthType {
+        Email = "email",
+        Phone = "phone",
+        Oauth = "oauth",
+    }
+);
+
 pub fn wrap_password_hash(hash: &str) -> String {
     serde_json::json!({"password_hash": hash}).to_string()
 }
 
 pub fn extract_password_hash(credential_data: &str) -> AppResult<String> {
     if credential_data.starts_with('{') {
-        let val: serde_json::Value = serde_json::from_str(credential_data)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid credential_data JSON: {e}")))?;
+        let val: serde_json::Value = serde_json::from_str(credential_data).map_err(|e| {
+            AppError::Internal(anyhow::anyhow!("invalid credential_data JSON: {e}"))
+        })?;
         val.get("password_hash")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("missing password_hash in credential_data")))
+            .ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!("missing password_hash in credential_data"))
+            })
     } else {
         Ok(credential_data.to_string())
     }
@@ -31,7 +42,7 @@ pub struct UserCredential {
     pub id: i64,
     pub document_id: String,
     pub user_id: i64,
-    pub auth_type: String,
+    pub auth_type: AuthType,
     pub identifier: String,
     pub credential_data: String,
     pub verified: i64,
@@ -41,7 +52,7 @@ pub struct UserCredential {
 
 pub async fn find_by_auth_type_and_identifier(
     pool: &crate::db::Pool,
-    auth_type: &str,
+    auth_type: AuthType,
     identifier: &str,
 ) -> AppResult<Option<UserCredential>> {
     let sql = format!(
@@ -81,7 +92,7 @@ pub async fn count_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<i6
 pub async fn create(
     pool: &crate::db::Pool,
     user_id: i64,
-    auth_type: &str,
+    auth_type: AuthType,
     identifier: &str,
     credential_data: &str,
     verified: bool,

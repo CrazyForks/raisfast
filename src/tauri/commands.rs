@@ -63,8 +63,12 @@ pub async fn auth_get_me(
     state: TauriState<'_, AppManagedState>,
     user_id: String,
 ) -> Result<serde_json::Value, String> {
-    let auth =
-        crate::middleware::auth::AuthUser::from_parts(Some(user_id), None, String::new(), None);
+    let auth = crate::middleware::auth::AuthUser::from_parts(
+        Some(user_id),
+        None,
+        crate::models::user::UserRole::Reader,
+        None,
+    );
     crate::services::user::get_me(state.0.user_repo.as_ref(), &auth)
         .await
         .map_err(|e| e.to_string())
@@ -79,7 +83,12 @@ pub async fn post_list(
     page: Option<i64>,
     page_size: Option<i64>,
 ) -> Result<serde_json::Value, String> {
-    let auth = crate::middleware::auth::AuthUser::from_parts(None, None, String::new(), None);
+    let auth = crate::middleware::auth::AuthUser::from_parts(
+        None,
+        None,
+        crate::models::user::UserRole::Reader,
+        None,
+    );
     let (items, total) = crate::services::post::list_posts(
         state.0.post_repo.as_ref(),
         page.unwrap_or(1),
@@ -107,7 +116,12 @@ pub async fn post_get(
     state: TauriState<'_, AppManagedState>,
     slug: String,
 ) -> Result<serde_json::Value, String> {
-    let auth = crate::middleware::auth::AuthUser::from_parts(None, None, String::new(), None);
+    let auth = crate::middleware::auth::AuthUser::from_parts(
+        None,
+        None,
+        crate::models::user::UserRole::Reader,
+        None,
+    );
     crate::services::post::get_post(state.0.post_repo.as_ref(), &slug, &state.0.plugins, &auth)
         .await
         .map_err(|e| e.to_string())
@@ -133,7 +147,7 @@ pub async fn post_create(
     let auth = crate::middleware::auth::AuthUser::from_parts(
         Some(user_id),
         None,
-        "author".to_string(),
+        crate::models::user::UserRole::Author,
         None,
     );
     crate::services::post::create_post(
@@ -331,8 +345,12 @@ pub async fn media_list(
     page: Option<i64>,
     page_size: Option<i64>,
 ) -> Result<serde_json::Value, String> {
-    let auth =
-        crate::middleware::auth::AuthUser::from_parts(Some(user_id), None, String::new(), None);
+    let auth = crate::middleware::auth::AuthUser::from_parts(
+        Some(user_id),
+        None,
+        crate::models::user::UserRole::Reader,
+        None,
+    );
     let (items, total) = crate::services::media::list(
         state.0.media_repo.as_ref(),
         &auth,

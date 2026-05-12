@@ -237,7 +237,7 @@ mod tests {
             pool,
             &crate::commands::user::CreateUserCmd {
                 username: "blockuser".to_string(),
-                registered_via: "test".to_string(),
+                registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
         )

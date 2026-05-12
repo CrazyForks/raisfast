@@ -103,8 +103,7 @@ CREATE TABLE IF NOT EXISTS currencies (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT chk_currencies_code CHECK (code = UPPER(code) AND CHAR_LENGTH(code) BETWEEN 1 AND 10),
-    CONSTRAINT chk_currencies_decimals CHECK (decimals BETWEEN 0 AND 18),
-    CONSTRAINT chk_currencies_is_active CHECK (is_active IN (0, 1))
+    CONSTRAINT chk_currencies_decimals CHECK (decimals BETWEEN 0 AND 18)
 );
 
 CREATE UNIQUE INDEX idx_currencies_code ON currencies(code);

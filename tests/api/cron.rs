@@ -8,7 +8,7 @@ async fn cron_app() -> (axum::Router, AppState) {
 async fn list_returns_empty() {
     let (int_id, doc_id) = create_admin_helper().await;
     let (mut app, _) = cron_app().await;
-    let tok = make_token(&doc_id, int_id, "admin");
+    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin);
     let (status, body) = send(&mut app, get_auth("/api/v1/admin/crons", &tok)).await;
     assert!(status.is_success());
     assert_eq!(body["code"], 0);
@@ -19,7 +19,7 @@ async fn list_returns_empty() {
 async fn create_and_get() {
     let (int_id, doc_id) = create_admin_helper().await;
     let (mut app, _) = cron_app().await;
-    let tok = make_token(&doc_id, int_id, "admin");
+    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin);
 
     let (status, body) = send(
         &mut app,
@@ -56,7 +56,7 @@ async fn create_and_get() {
 async fn update_changes_fields() {
     let (int_id, doc_id) = create_admin_helper().await;
     let (mut app, _) = cron_app().await;
-    let tok = make_token(&doc_id, int_id, "admin");
+    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin);
 
     let (_, body) = send(
         &mut app,
@@ -92,7 +92,7 @@ async fn update_changes_fields() {
 async fn toggle_enables_and_disables() {
     let (int_id, doc_id) = create_admin_helper().await;
     let (mut app, _) = cron_app().await;
-    let tok = make_token(&doc_id, int_id, "admin");
+    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin);
 
     let (_, body) = send(
         &mut app,
@@ -133,7 +133,7 @@ async fn toggle_enables_and_disables() {
 async fn delete_removes_schedule() {
     let (int_id, doc_id) = create_admin_helper().await;
     let (mut app, _) = cron_app().await;
-    let tok = make_token(&doc_id, int_id, "admin");
+    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin);
 
     let (_, body) = send(
         &mut app,
@@ -172,7 +172,7 @@ async fn delete_removes_schedule() {
 async fn logs_returns_empty_initially() {
     let (int_id, doc_id) = create_admin_helper().await;
     let (mut app, _) = cron_app().await;
-    let tok = make_token(&doc_id, int_id, "admin");
+    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin);
 
     let (status, body) = send(&mut app, get_auth("/api/v1/admin/crons/logs", &tok)).await;
     assert!(status.is_success());
@@ -183,7 +183,7 @@ async fn logs_returns_empty_initially() {
 async fn validation_rejects_empty_label() {
     let (int_id, doc_id) = create_admin_helper().await;
     let (mut app, _) = cron_app().await;
-    let tok = make_token(&doc_id, int_id, "admin");
+    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin);
 
     let (status, body) = send(
         &mut app,

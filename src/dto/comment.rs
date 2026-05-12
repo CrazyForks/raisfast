@@ -2,14 +2,14 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::{validate_comment_status, validate_optional_uuid};
+use crate::models::comment::CommentStatus;
 
 /// 创建评论请求体
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateCommentRequest {
     #[validate(length(min = 1, max = 5000))]
     pub content: String,
-    #[validate(custom(function = "validate_optional_uuid"))]
+    #[validate(custom(function = "super::validate_optional_uuid"))]
     pub parent_id: Option<String>,
     #[validate(length(min = 1, max = 50))]
     pub nickname: Option<String>,
@@ -20,8 +20,7 @@ pub struct CreateCommentRequest {
 /// 更新评论状态请求体
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdateCommentStatusRequest {
-    #[validate(custom(function = "validate_comment_status"))]
-    pub status: String,
+    pub status: CommentStatus,
 }
 
 #[cfg(test)]
@@ -53,16 +52,8 @@ mod tests {
     #[test]
     fn update_status_valid() {
         let req = UpdateCommentStatusRequest {
-            status: "approved".to_string(),
+            status: CommentStatus::Approved,
         };
         assert!(req.validate().is_ok());
-    }
-
-    #[test]
-    fn update_status_invalid() {
-        let req = UpdateCommentStatusRequest {
-            status: "deleted".to_string(),
-        };
-        assert!(req.validate().is_err());
     }
 }

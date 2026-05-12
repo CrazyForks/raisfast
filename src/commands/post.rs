@@ -1,5 +1,7 @@
 //! 文章相关 Command
 
+use crate::models::post::PostStatus;
+
 /// 创建文章
 pub struct CreatePostCmd {
     pub title: String,
@@ -7,7 +9,7 @@ pub struct CreatePostCmd {
     pub content: String,
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
-    pub status: String,
+    pub status: PostStatus,
     pub created_by: i64,
     pub updated_by: Option<i64>,
     pub category_id: Option<i64>,
@@ -22,7 +24,7 @@ pub struct UpdatePostCmd {
     pub content: Option<String>,
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
-    pub status: Option<String>,
+    pub status: Option<PostStatus>,
     pub category_id: Option<i64>,
     pub tag_ids: Option<Vec<i64>>,
     pub updated_by: Option<i64>,

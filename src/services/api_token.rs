@@ -22,12 +22,13 @@ const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// scope → 角色映射
 fn scope_to_role(scopes: &[String]) -> String {
+    use crate::models::user::UserRole;
     if scopes.iter().any(|s| s == "admin") {
-        "admin".to_string()
+        UserRole::Admin.to_string()
     } else if scopes.iter().any(|s| s == "write") {
-        "author".to_string()
+        UserRole::Author.to_string()
     } else {
-        "reader".to_string()
+        UserRole::Reader.to_string()
     }
 }
 
@@ -248,12 +249,15 @@ mod tests {
         std::sync::Arc::new(crate::cache::MemoryCache::new())
     }
 
-    async fn insert_user(pool: &crate::db::Pool, role: &str) -> crate::models::user::User {
+    async fn insert_user(
+        pool: &crate::db::Pool,
+        role: crate::models::user::UserRole,
+    ) -> crate::models::user::User {
         let user = crate::models::user::create(
             pool,
             &crate::commands::user::CreateUserCmd {
                 username: crate::utils::id::new_document_id(),
-                registered_via: "test".to_string(),
+                registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
         )
@@ -329,7 +333,11 @@ mod tests {
     #[tokio::test]
     async fn create_token_rejects_empty_name() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        let auth = crate::middleware::auth::AuthUser::new_test("u1", "author", "default");
+        let auth = crate::middleware::auth::AuthUser::new_test(
+            "u1",
+            crate::models::user::UserRole::Author,
+            "default",
+        );
         let msg = create_token(&pool, &auth, "", vec!["read".into()], None)
             .await
             .unwrap_err()
@@ -340,7 +348,11 @@ mod tests {
     #[tokio::test]
     async fn create_token_rejects_whitespace_name() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        let auth = crate::middleware::auth::AuthUser::new_test("u1", "author", "default");
+        let auth = crate::middleware::auth::AuthUser::new_test(
+            "u1",
+            crate::models::user::UserRole::Author,
+            "default",
+        );
         let msg = create_token(&pool, &auth, "   ", vec!["read".into()], None)
             .await
             .unwrap_err()
@@ -351,7 +363,11 @@ mod tests {
     #[tokio::test]
     async fn create_token_rejects_empty_scopes() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        let auth = crate::middleware::auth::AuthUser::new_test("u1", "author", "default");
+        let auth = crate::middleware::auth::AuthUser::new_test(
+            "u1",
+            crate::models::user::UserRole::Author,
+            "default",
+        );
         let msg = create_token(&pool, &auth, "Test", vec![], None)
             .await
             .unwrap_err()
@@ -362,7 +378,11 @@ mod tests {
     #[tokio::test]
     async fn create_token_rejects_invalid_scope() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        let auth = crate::middleware::auth::AuthUser::new_test("u1", "author", "default");
+        let auth = crate::middleware::auth::AuthUser::new_test(
+            "u1",
+            crate::models::user::UserRole::Author,
+            "default",
+        );
         let msg = create_token(&pool, &auth, "Test", vec!["superuser".into()], None)
             .await
             .unwrap_err()
@@ -373,7 +393,11 @@ mod tests {
     #[tokio::test]
     async fn create_token_rejects_mixed_valid_invalid_scope() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        let auth = crate::middleware::auth::AuthUser::new_test("u1", "author", "default");
+        let auth = crate::middleware::auth::AuthUser::new_test(
+            "u1",
+            crate::models::user::UserRole::Author,
+            "default",
+        );
         let msg = create_token(
             &pool,
             &auth,
@@ -390,11 +414,11 @@ mod tests {
     #[tokio::test]
     async fn create_token_success_with_valid_scopes() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "author").await;
+        let user = insert_user(&pool, crate::models::user::UserRole::Author).await;
         let auth = crate::middleware::auth::AuthUser::from_parts(
             Some(user.document_id.clone()),
             Some(user.id),
-            "author".to_string(),
+            crate::models::user::UserRole::Author,
             Some("default".to_string()),
         );
         let result = create_token(
@@ -416,7 +440,7 @@ mod tests {
     #[tokio::test]
     async fn verify_api_token_expired_is_deleted() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "reader").await;
+        let user = insert_user(&pool, crate::models::user::UserRole::Reader).await;
         let plain = "rblog_expired_token_for_test";
         let token_hash = hash_token(plain);
         let past = "2000-01-01T00:00:00+00:00";
@@ -444,7 +468,7 @@ mod tests {
     #[tokio::test]
     async fn verify_api_token_not_expired_succeeds() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "admin").await;
+        let user = insert_user(&pool, crate::models::user::UserRole::Admin).await;
         let plain = "rblog_valid_future_token_test";
         let token_hash = hash_token(plain);
         let future = "2099-12-31T23:59:59+00:00";
@@ -471,7 +495,7 @@ mod tests {
     #[tokio::test]
     async fn verify_api_token_updates_last_used() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "reader").await;
+        let user = insert_user(&pool, crate::models::user::UserRole::Reader).await;
         let plain = "rblog_last_used_test_token";
         let token_hash = hash_token(plain);
         crate::models::api_token::create(
@@ -508,7 +532,7 @@ mod tests {
     #[tokio::test]
     async fn delete_token_by_owner_succeeds() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "reader").await;
+        let user = insert_user(&pool, crate::models::user::UserRole::Reader).await;
         let row = crate::models::api_token::create(
             &pool,
             user.id,
@@ -520,8 +544,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let auth =
-            crate::middleware::auth::AuthUser::new_test(&user.document_id, "reader", "default");
+        let auth = crate::middleware::auth::AuthUser::new_test(
+            &user.document_id,
+            crate::models::user::UserRole::Reader,
+            "default",
+        );
         let cache = test_cache();
         delete_token(&pool, &*cache, &row.document_id, &auth)
             .await
@@ -537,8 +564,8 @@ mod tests {
     #[tokio::test]
     async fn delete_token_by_admin_succeeds() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "reader").await;
-        let admin = insert_user(&pool, "admin").await;
+        let user = insert_user(&pool, crate::models::user::UserRole::Reader).await;
+        let admin = insert_user(&pool, crate::models::user::UserRole::Admin).await;
         let row = crate::models::api_token::create(
             &pool,
             user.id,
@@ -550,8 +577,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let auth =
-            crate::middleware::auth::AuthUser::new_test(&admin.document_id, "admin", "default");
+        let auth = crate::middleware::auth::AuthUser::new_test(
+            &admin.document_id,
+            crate::models::user::UserRole::Admin,
+            "default",
+        );
         let cache = test_cache();
         delete_token(&pool, &*cache, &row.document_id, &auth)
             .await
@@ -561,7 +591,7 @@ mod tests {
     #[tokio::test]
     async fn delete_token_non_owner_non_admin_forbidden() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "reader").await;
+        let user = insert_user(&pool, crate::models::user::UserRole::Reader).await;
         let row = crate::models::api_token::create(
             &pool,
             user.id,
@@ -573,7 +603,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let auth = crate::middleware::auth::AuthUser::new_test("other-user", "reader", "default");
+        let auth = crate::middleware::auth::AuthUser::new_test(
+            "other-user",
+            crate::models::user::UserRole::Reader,
+            "default",
+        );
         let cache = test_cache();
         assert!(
             delete_token(&pool, &*cache, &row.document_id, &auth)
@@ -585,7 +619,11 @@ mod tests {
     #[tokio::test]
     async fn delete_token_nonexistent_not_found() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        let auth = crate::middleware::auth::AuthUser::new_test("user", "reader", "default");
+        let auth = crate::middleware::auth::AuthUser::new_test(
+            "user",
+            crate::models::user::UserRole::Reader,
+            "default",
+        );
         let cache = test_cache();
         assert!(
             delete_token(&pool, &*cache, "no-such-id", &auth)
@@ -597,7 +635,7 @@ mod tests {
     #[tokio::test]
     async fn verify_api_token_cache_hit_skips_db() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "reader").await;
+        let user = insert_user(&pool, crate::models::user::UserRole::Reader).await;
         let plain = "rblog_cache_hit_test_token";
         let token_hash = hash_token(plain);
         crate::models::api_token::create(
@@ -637,7 +675,7 @@ mod tests {
     #[tokio::test]
     async fn verify_api_token_expired_cache_clears() {
         let pool = setup_pool().await;
-        let user = insert_user(&pool, "reader").await;
+        let user = insert_user(&pool, crate::models::user::UserRole::Reader).await;
         let plain = "rblog_cache_expired_test";
         let token_hash = hash_token(plain);
         let past = "2000-01-01T00:00:00+00:00";

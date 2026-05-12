@@ -1,6 +1,6 @@
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::routing::{get, post as http_post};
-use axum::Json;
 
 use crate::dto::currencies::{CreateCurrencyRequest, CurrencyResponse, UpdateCurrencyRequest};
 use crate::errors::app_error::AppError;
@@ -9,9 +9,7 @@ use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::models::currencies;
 
-pub fn routes(
-    registry: &mut crate::server::RouteRegistry,
-) -> axum::Router<crate::AppState> {
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
     let r = axum::Router::new();
     let r = crate::reg_route!(
         r,
@@ -57,7 +55,9 @@ pub async fn list_currencies(
 ) -> Result<ApiResponse<Vec<CurrencyResponse>>, AppError> {
     auth.ensure_admin()?;
     let rows = currencies::find_all(&state.pool).await?;
-    Ok(ApiResponse::success(rows.into_iter().map(CurrencyResponse::from).collect()))
+    Ok(ApiResponse::success(
+        rows.into_iter().map(CurrencyResponse::from).collect(),
+    ))
 }
 
 pub async fn get_currency(
@@ -81,7 +81,9 @@ pub async fn create_currency(
     validation::validate(&req)?;
     let decimals = req.decimals.unwrap_or(2);
     if !(0..=18).contains(&decimals) {
-        return Err(AppError::BadRequest("decimals must be between 0 and 18".into()));
+        return Err(AppError::BadRequest(
+            "decimals must be between 0 and 18".into(),
+        ));
     }
     let c = currencies::create(&state.pool, &req.code, &req.name, decimals).await?;
     Ok(ApiResponse::success(CurrencyResponse::from(c)))
@@ -95,13 +97,8 @@ pub async fn update_currency(
 ) -> Result<ApiResponse<CurrencyResponse>, AppError> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let c = currencies::update(
-        &state.pool,
-        &code,
-        req.name.as_deref(),
-        req.is_active,
-    )
-    .await?
-    .ok_or_else(|| AppError::not_found("currency"))?;
+    let c = currencies::update(&state.pool, &code, req.name.as_deref(), req.is_active)
+        .await?
+        .ok_or_else(|| AppError::not_found("currency"))?;
     Ok(ApiResponse::success(CurrencyResponse::from(c)))
 }

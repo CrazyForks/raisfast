@@ -12,6 +12,7 @@ use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
+use crate::models::post::PostStatus;
 use crate::services::post as post_service;
 use crate::utils::pagination::PaginationParams;
 
@@ -83,7 +84,7 @@ pub struct PostListQuery {
 pub struct AdminPostListQuery {
     pub page: Option<i64>,
     pub page_size: Option<i64>,
-    pub status: Option<String>,
+    pub status: Option<PostStatus>,
 }
 
 /// 获取已发布文章列表（分页）

@@ -10,7 +10,8 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
 use super::{
-    JobQueue, JobRow, JobStats, NewJob, QueuedJob, backoff_duration, parse_job, serialize_job,
+    JobQueue, JobRow, JobStats, JobStatus, NewJob, QueuedJob, backoff_duration, parse_job,
+    serialize_job,
 };
 
 /// `SQLite` 持久化任务队列
@@ -219,7 +220,7 @@ impl JobQueue for SqliteJobQueue {
 
     async fn list(
         &self,
-        status: Option<&str>,
+        status: Option<JobStatus>,
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<JobRow>, i64)> {
@@ -531,10 +532,10 @@ mod tests {
         let jobs = q.dequeue(1).await.unwrap();
         q.complete(&jobs[0].document_id).await.unwrap();
 
-        let (pending, _) = q.list(Some("pending"), 1, 10).await.unwrap();
+        let (pending, _) = q.list(Some(JobStatus::Pending), 1, 10).await.unwrap();
         assert_eq!(pending.len(), 1);
 
-        let (completed, _) = q.list(Some("completed"), 1, 10).await.unwrap();
+        let (completed, _) = q.list(Some(JobStatus::Completed), 1, 10).await.unwrap();
         assert_eq!(completed.len(), 1);
     }
 

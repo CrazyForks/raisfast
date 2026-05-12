@@ -7,7 +7,15 @@ use ts_rs::TS;
 use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::models::post::CommentOpenStatus;
 use crate::utils::tz::Timestamp;
+
+define_enum!(
+    PageStatus {
+        Draft = "draft",
+        Published = "published",
+    }
+);
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -25,12 +33,12 @@ pub struct Page {
     pub template: String,
     pub parent_id: Option<i64>,
     pub sort_order: i64,
-    pub status: String,
+    pub status: PageStatus,
     pub created_by: i64,
     pub updated_by: Option<i64>,
     pub cover_image: Option<String>,
     pub password: Option<String>,
-    pub comment_status: String,
+    pub comment_status: CommentOpenStatus,
     pub og_title: Option<String>,
     pub og_description: Option<String>,
     pub canonical_url: Option<String>,
@@ -382,7 +390,7 @@ pub async fn list_all(
     pool: &crate::db::Pool,
     page: i64,
     page_size: i64,
-    status: Option<&str>,
+    status: Option<PageStatus>,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Page>, i64)> {
     let offset = (page - 1) * page_size;
@@ -435,13 +443,13 @@ pub async fn create(
     template: &str,
     parent_id: Option<i64>,
     sort_order: i64,
-    status: &str,
+    status: PageStatus,
     created_by: i64,
     cover_image: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
-    let published_at = if status == "published" {
+    let published_at = if status == PageStatus::Published {
         Some(now)
     } else {
         None
@@ -524,7 +532,7 @@ pub async fn update(
     template: Option<&str>,
     parent_id: Option<Option<i64>>,
     sort_order: Option<i64>,
-    status: Option<&str>,
+    status: Option<PageStatus>,
     cover_image: Option<&str>,
     updated_by: Option<i64>,
     tenant_id: Option<&str>,
@@ -674,7 +682,7 @@ pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) ->
 pub async fn update_status(
     pool: &crate::db::Pool,
     id: i64,
-    status: &str,
+    status: PageStatus,
     updated_by: Option<i64>,
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
@@ -689,7 +697,7 @@ pub async fn update_status(
         String::new()
     };
 
-    let published_at_clause = if status == "published" {
+    let published_at_clause = if status == PageStatus::Published {
         idx += 1;
         format!(", published_at = COALESCE(published_at, {})", ph(idx))
     } else {
@@ -710,7 +718,7 @@ pub async fn update_status(
     if let Some(v) = updated_by {
         q = q.bind(v);
     }
-    if status == "published" {
+    if status == PageStatus::Published {
         q = q.bind(now);
     }
     q = q.bind(now);
@@ -804,8 +812,21 @@ mod tests {
         created_by: i64,
     ) -> Page {
         create(
-            pool, title, slug, None, None, None, None, None, "default", None, 0, status,
-            created_by, None, None,
+            pool,
+            title,
+            slug,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "default",
+            None,
+            0,
+            status.parse().unwrap(),
+            created_by,
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -895,12 +916,12 @@ mod tests {
         let uid = create_user(&pool).await;
         let page = create_test_page(&pool, "Status Test", "status-test", "draft", uid).await;
 
-        assert_eq!(page.status, "draft");
+        assert_eq!(page.status, PageStatus::Draft);
 
-        let updated = update_status(&pool, page.id, "published", None, None)
+        let updated = update_status(&pool, page.id, PageStatus::Published, None, None)
             .await
             .unwrap();
-        assert_eq!(updated.status, "published");
+        assert_eq!(updated.status, PageStatus::Published);
         assert!(updated.published_at.is_some());
     }
 }

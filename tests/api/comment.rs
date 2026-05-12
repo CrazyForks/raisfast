@@ -3,7 +3,7 @@ use super::*;
 async fn setup_with_post() -> (axum::Router, AppState, String, String) {
     let (mut app, state) = test_app().await;
     let (int_id, doc_id) = create_author(&state.pool).await;
-    let tok = make_token(&doc_id, int_id, "author");
+    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Author);
     let slug = create_published_post(&mut app, &tok).await;
     (app, state, tok, slug)
 }
@@ -189,7 +189,11 @@ async fn update_status_admin() {
             .unwrap();
 
     let (admin_int_id, admin_doc_id) = create_admin(&state.pool).await;
-    let admin_tok = make_token(&admin_doc_id, admin_int_id, "admin");
+    let admin_tok = make_token(
+        &admin_doc_id,
+        admin_int_id,
+        raisfast::models::user::UserRole::Admin,
+    );
     let (status, _): (StatusCode, Value) = send(
         &mut app,
         put_json_auth(

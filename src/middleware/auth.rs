@@ -39,11 +39,12 @@ use axum::http::request::Parts;
 
 use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::models::user::UserRole;
 
 struct Claims {
     user_id: String,
     user_int_id: i64,
-    role: String,
+    role: UserRole,
     tenant_id: String,
 }
 
@@ -51,7 +52,7 @@ struct Claims {
 struct RequestIdentity {
     user_id: Option<String>,
     user_int_id: Option<i64>,
-    role: String,
+    role: UserRole,
     tenant_id: Option<String>,
     is_super_admin: bool,
 }
@@ -73,7 +74,7 @@ impl AuthUser {
     }
 
     pub fn role(&self) -> &str {
-        &self.0.role
+        self.0.role.as_str()
     }
 
     pub fn tenant_id(&self) -> Option<&str> {
@@ -85,11 +86,11 @@ impl AuthUser {
     }
 
     pub fn is_admin(&self) -> bool {
-        self.0.role == "admin"
+        self.0.role == UserRole::Admin
     }
 
     pub fn is_author(&self) -> bool {
-        self.0.role == "author" || self.0.role == "admin"
+        self.0.role == UserRole::Author || self.0.role == UserRole::Admin
     }
 
     pub fn is_super_admin(&self) -> bool {
@@ -119,7 +120,7 @@ impl AuthUser {
     pub fn from_parts(
         user_id: Option<String>,
         user_int_id: Option<i64>,
-        role: String,
+        role: UserRole,
         tenant_id: Option<String>,
     ) -> Self {
         AuthUser(RequestIdentity {
@@ -134,7 +135,7 @@ impl AuthUser {
 
 #[cfg(test)]
 impl AuthUser {
-    pub fn new_test(user_id: &str, role: &str, tenant_id: &str) -> Self {
+    pub fn new_test(user_id: &str, role: UserRole, tenant_id: &str) -> Self {
         AuthUser(RequestIdentity {
             user_id: if user_id.is_empty() {
                 None
@@ -142,7 +143,7 @@ impl AuthUser {
                 Some(user_id.to_string())
             },
             user_int_id: None,
-            role: role.to_string(),
+            role,
             tenant_id: if tenant_id.is_empty() {
                 None
             } else {
@@ -178,6 +179,7 @@ async fn extract_claims(parts: &Parts, state: &AppState) -> Option<Claims> {
             crate::services::api_token::verify_api_token(&state.pool, &*state.cache, token)
                 .await
                 .ok()?;
+        let role: UserRole = role.parse().ok()?;
         Some(Claims {
             user_id,
             user_int_id,
@@ -210,14 +212,14 @@ impl FromRequestParts<AppState> for AuthUser {
             let no_tenant = !state.config.builtin_tenantable;
 
             let identity = match (claims, header_tenant) {
-                (Some(c), Some(ht)) if c.role == "admin" => RequestIdentity {
+                (Some(c), Some(ht)) if c.role == UserRole::Admin => RequestIdentity {
                     user_id: Some(c.user_id),
                     user_int_id: Some(c.user_int_id),
                     role: c.role,
                     tenant_id: if no_tenant { None } else { Some(ht) },
                     is_super_admin: true,
                 },
-                (Some(c), None) if c.role == "admin" => RequestIdentity {
+                (Some(c), None) if c.role == UserRole::Admin => RequestIdentity {
                     user_id: Some(c.user_id),
                     user_int_id: Some(c.user_int_id),
                     role: c.role,
@@ -234,14 +236,14 @@ impl FromRequestParts<AppState> for AuthUser {
                 (None, Some(ht)) => RequestIdentity {
                     user_id: None,
                     user_int_id: None,
-                    role: String::new(),
+                    role: UserRole::Reader,
                     tenant_id: if no_tenant { None } else { Some(ht) },
                     is_super_admin: false,
                 },
                 (None, None) => RequestIdentity {
                     user_id: None,
                     user_int_id: None,
-                    role: String::new(),
+                    role: UserRole::Reader,
                     tenant_id: if no_tenant {
                         None
                     } else {

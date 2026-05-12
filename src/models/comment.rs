@@ -17,6 +17,14 @@ use crate::db::tenant::{tenant_filter_aliased_ph, tenant_filter_ph};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
+define_enum!(
+    CommentStatus {
+        Pending = "pending",
+        Approved = "approved",
+        Spam = "spam",
+    }
+);
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
 pub struct Comment {
@@ -32,7 +40,7 @@ pub struct Comment {
     pub parent_id: Option<i64>,
     pub author_ip: Option<String>,
     pub author_url: Option<String>,
-    pub status: String,
+    pub status: CommentStatus,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -229,7 +237,7 @@ pub struct AdminCommentRow {
     pub email: Option<String>,
     pub content: String,
     pub parent_id: Option<i64>,
-    pub status: String,
+    pub status: CommentStatus,
     pub created_at: Timestamp,
 }
 
@@ -268,7 +276,7 @@ pub async fn find_all_paginated(
 pub async fn update_status(
     pool: &crate::db::Pool,
     id: i64,
-    status: &str,
+    status: CommentStatus,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
@@ -395,7 +403,7 @@ mod tests {
             parent_id,
             author_ip: None,
             author_url: None,
-            status: "approved".to_string(),
+            status: CommentStatus::Approved,
             created_at: "2025-01-01T00:00:00Z".parse().unwrap(),
             updated_at: "2025-01-01T00:00:00Z".parse().unwrap(),
         }
@@ -480,7 +488,7 @@ mod tests {
                 pool,
                 &crate::commands::user::CreateUserCmd {
                     username: "testuser".to_string(),
-                    registered_via: "test".to_string(),
+                    registered_via: crate::models::user::RegisteredVia::Email,
                 },
                 None,
             )
@@ -556,7 +564,9 @@ mod tests {
             let pid = insert_post(&pool, uid).await;
             let c1 = create(&pool, &make_cmd(pid), None).await.unwrap();
             let _c2 = create(&pool, &make_cmd(pid), None).await.unwrap();
-            update_status(&pool, c1.id, "approved", None).await.unwrap();
+            update_status(&pool, c1.id, CommentStatus::Approved, None)
+                .await
+                .unwrap();
 
             let approved = super::find_approved_by_post(&pool, pid, None)
                 .await
@@ -575,7 +585,9 @@ mod tests {
                 let mut cmd = make_cmd(pid);
                 cmd.content = format!("comment {i}");
                 let c = create(&pool, &cmd, None).await.unwrap();
-                update_status(&pool, c.id, "approved", None).await.unwrap();
+                update_status(&pool, c.id, CommentStatus::Approved, None)
+                    .await
+                    .unwrap();
                 ids.push(c.id);
             }
 
@@ -597,10 +609,12 @@ mod tests {
             let uid = insert_user(&pool).await;
             let pid = insert_post(&pool, uid).await;
             let c = create(&pool, &make_cmd(pid), None).await.unwrap();
-            assert_eq!(c.status, "pending");
-            update_status(&pool, c.id, "approved", None).await.unwrap();
+            assert_eq!(c.status, CommentStatus::Pending);
+            update_status(&pool, c.id, CommentStatus::Approved, None)
+                .await
+                .unwrap();
             let found = super::find_by_id(&pool, c.id, None).await.unwrap().unwrap();
-            assert_eq!(found.status, "approved");
+            assert_eq!(found.status, CommentStatus::Approved);
         }
 
         #[tokio::test]

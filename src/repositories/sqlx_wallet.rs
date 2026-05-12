@@ -21,11 +21,7 @@ pub trait WalletRepository: Send + Sync {
 
     async fn find_or_create_wallet(&self, user_id: i64, currency: &str) -> AppResult<Wallet>;
 
-    async fn find_all_wallets(
-        &self,
-        page: i64,
-        page_size: i64,
-    ) -> AppResult<(Vec<Wallet>, i64)>;
+    async fn find_all_wallets(&self, page: i64, page_size: i64) -> AppResult<(Vec<Wallet>, i64)>;
 
     async fn find_transactions_by_wallet(
         &self,
@@ -54,7 +50,10 @@ pub trait WalletRepository: Send + Sync {
 
     async fn find_tx_by_id(&self, id: i64) -> AppResult<Option<WalletTransaction>>;
 
-    async fn find_tx_by_document_id(&self, document_id: &str) -> AppResult<Option<WalletTransaction>>;
+    async fn find_tx_by_document_id(
+        &self,
+        document_id: &str,
+    ) -> AppResult<Option<WalletTransaction>>;
 
     async fn has_reversal_for(&self, related_tx_id: i64) -> AppResult<bool>;
 
@@ -90,11 +89,7 @@ impl WalletRepository for SqlxWalletRepository {
         wallet::find_or_create(&self.pool, user_id, currency).await
     }
 
-    async fn find_all_wallets(
-        &self,
-        page: i64,
-        page_size: i64,
-    ) -> AppResult<(Vec<Wallet>, i64)> {
+    async fn find_all_wallets(&self, page: i64, page_size: i64) -> AppResult<(Vec<Wallet>, i64)> {
         wallet::find_all_wallets(&self.pool, page, page_size).await
     }
 
@@ -104,7 +99,8 @@ impl WalletRepository for SqlxWalletRepository {
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<WalletTransaction>, i64)> {
-        wallet_transaction::find_transactions_by_wallet(&self.pool, wallet_id, page, page_size).await
+        wallet_transaction::find_transactions_by_wallet(&self.pool, wallet_id, page, page_size)
+            .await
     }
 
     async fn find_transactions_by_user(
@@ -135,7 +131,10 @@ impl WalletRepository for SqlxWalletRepository {
         wallet_transaction::find_tx_by_id(&self.pool, id).await
     }
 
-    async fn find_tx_by_document_id(&self, document_id: &str) -> AppResult<Option<WalletTransaction>> {
+    async fn find_tx_by_document_id(
+        &self,
+        document_id: &str,
+    ) -> AppResult<Option<WalletTransaction>> {
         wallet_transaction::find_tx_by_document_id(&self.pool, document_id).await
     }
 
@@ -173,7 +172,7 @@ mod tests {
             pool,
             &crate::commands::user::CreateUserCmd {
                 username: crate::utils::id::new_document_id(),
-                registered_via: "test".to_string(),
+                registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
         )
@@ -257,10 +256,10 @@ mod tests {
         .bind(&doc_id)
         .bind(w.id)
         .bind(user.id)
-        .bind(crate::models::wallet_transaction::WalletEntryType::Credit.as_str())
+        .bind(crate::models::wallet_transaction::WalletEntryType::Credit)
         .bind(500_i64)
         .bind(500_i64)
-        .bind(crate::models::wallet_transaction::WalletTxType::Recharge.as_str())
+        .bind(crate::models::wallet_transaction::WalletTxType::Recharge)
         .bind("CNY")
         .bind(&tx_no)
         .bind(now)
@@ -292,10 +291,10 @@ mod tests {
         .bind(&doc_id)
         .bind(w.id)
         .bind(user.id)
-        .bind(crate::models::wallet_transaction::WalletEntryType::Credit.as_str())
+        .bind(crate::models::wallet_transaction::WalletEntryType::Credit)
         .bind(500_i64)
         .bind(500_i64)
-        .bind(crate::models::wallet_transaction::WalletTxType::Recharge.as_str())
+        .bind(crate::models::wallet_transaction::WalletTxType::Recharge)
         .bind("CNY")
         .bind(&tx_no)
         .bind(now)
@@ -303,9 +302,18 @@ mod tests {
         .await
         .unwrap();
 
-        let found = repo.find_tx_by_transaction_no(&tx_no).await.unwrap().unwrap();
+        let found = repo
+            .find_tx_by_transaction_no(&tx_no)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.amount, 500);
-        assert!(repo.find_tx_by_transaction_no("nonexistent").await.unwrap().is_none());
+        assert!(
+            repo.find_tx_by_transaction_no("nonexistent")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]

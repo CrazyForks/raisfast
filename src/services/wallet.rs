@@ -2,15 +2,11 @@ use crate::db::dialect::ph;
 use crate::db::pool::DbConnection;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::models::currencies;
-use crate::models::wallet::WalletStatus;
-use crate::models::wallet_transaction::{WalletEntryType, WalletReferenceType, WalletTxType};
 use crate::models::wallet;
+use crate::models::wallet::WalletStatus;
 use crate::models::wallet_transaction::WalletTransaction;
+use crate::models::wallet_transaction::{WalletEntryType, WalletReferenceType, WalletTxType};
 use crate::repositories::WalletRepository;
-
-fn map_enum_err(e: String) -> AppError {
-    AppError::Internal(anyhow::anyhow!(e))
-}
 
 async fn ensure_currency_active(tx: &mut DbConnection, currency: &str) -> AppResult<()> {
     currencies::find_by_code_tx(tx, currency)
@@ -21,16 +17,13 @@ async fn ensure_currency_active(tx: &mut DbConnection, currency: &str) -> AppRes
 
 // Re-export for test convenience
 #[cfg(test)]
-use crate::models::wallet_transaction::WalletTxType as T;
-#[cfg(test)]
 use crate::models::wallet_transaction::WalletEntryType as E;
 #[cfg(test)]
 use crate::models::wallet_transaction::WalletReferenceType as R;
+#[cfg(test)]
+use crate::models::wallet_transaction::WalletTxType as T;
 
-async fn tx_find_wallet_by_id(
-    tx: &mut DbConnection,
-    id: i64,
-) -> AppResult<Option<wallet::Wallet>> {
+async fn tx_find_wallet_by_id(tx: &mut DbConnection, id: i64) -> AppResult<Option<wallet::Wallet>> {
     let sql = format!("SELECT * FROM wallets WHERE id = {}", ph(1));
     sqlx::query_as::<_, wallet::Wallet>(&sql)
         .bind(id)
@@ -44,7 +37,11 @@ async fn tx_find_or_create(
     user_id: i64,
     currency: &str,
 ) -> AppResult<wallet::Wallet> {
-    let sql = format!("SELECT * FROM wallets WHERE user_id = {} AND currency = {}", ph(1), ph(2));
+    let sql = format!(
+        "SELECT * FROM wallets WHERE user_id = {} AND currency = {}",
+        ph(1),
+        ph(2)
+    );
     if let Some(w) = sqlx::query_as::<_, wallet::Wallet>(&sql)
         .bind(user_id)
         .bind(currency)
@@ -56,7 +53,11 @@ async fn tx_find_or_create(
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
     let sql = format!(
         "INSERT INTO wallets (document_id, user_id, currency, created_at, updated_at) VALUES ({}, {}, {}, {}, {})",
-        ph(1), ph(2), ph(3), ph(4), ph(5)
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5)
     );
     let insert_result = sqlx::query(&sql)
         .bind(&document_id)
@@ -77,7 +78,11 @@ async fn tx_find_or_create(
                 .map_err(Into::into)
         }
         Err(_) => {
-            let sql = format!("SELECT * FROM wallets WHERE user_id = {} AND currency = {}", ph(1), ph(2));
+            let sql = format!(
+                "SELECT * FROM wallets WHERE user_id = {} AND currency = {}",
+                ph(1),
+                ph(2)
+            );
             sqlx::query_as::<_, wallet::Wallet>(&sql)
                 .bind(user_id)
                 .bind(currency)
@@ -88,10 +93,7 @@ async fn tx_find_or_create(
     }
 }
 
-async fn tx_find_tx_by_id(
-    tx: &mut DbConnection,
-    id: i64,
-) -> AppResult<Option<WalletTransaction>> {
+async fn tx_find_tx_by_id(tx: &mut DbConnection, id: i64) -> AppResult<Option<WalletTransaction>> {
     let sql = format!("SELECT * FROM wallet_transactions WHERE id = {}", ph(1));
     sqlx::query_as::<_, WalletTransaction>(&sql)
         .bind(id)
@@ -104,7 +106,10 @@ async fn tx_find_tx_by_transaction_no(
     tx: &mut DbConnection,
     transaction_no: &str,
 ) -> AppResult<Option<WalletTransaction>> {
-    let sql = format!("SELECT * FROM wallet_transactions WHERE transaction_no = {}", ph(1));
+    let sql = format!(
+        "SELECT * FROM wallet_transactions WHERE transaction_no = {}",
+        ph(1)
+    );
     sqlx::query_as::<_, WalletTransaction>(&sql)
         .bind(transaction_no)
         .fetch_optional(tx)
@@ -112,10 +117,7 @@ async fn tx_find_tx_by_transaction_no(
         .map_err(Into::into)
 }
 
-async fn tx_has_reversal_for(
-    tx: &mut DbConnection,
-    related_tx_id: i64,
-) -> AppResult<bool> {
+async fn tx_has_reversal_for(tx: &mut DbConnection, related_tx_id: i64) -> AppResult<bool> {
     let sql = format!(
         "SELECT COUNT(*) as count FROM wallet_transactions WHERE related_tx_id = {} AND tx_type = {}",
         ph(1),
@@ -123,7 +125,7 @@ async fn tx_has_reversal_for(
     );
     let (count,): (i64,) = sqlx::query_as(&sql)
         .bind(related_tx_id)
-        .bind(WalletTxType::Refund.as_str())
+        .bind(WalletTxType::Refund)
         .fetch_one(tx)
         .await?;
     Ok(count > 0)
@@ -137,11 +139,15 @@ async fn apply_wallet_delta(
     current_balance: i64,
 ) -> AppResult<()> {
     if delta > 0 {
-        let _ = current_balance.checked_add(delta)
+        let _ = current_balance
+            .checked_add(delta)
             .ok_or_else(|| AppError::BadRequest("balance_overflow".into()))?;
         let sql = format!(
             "UPDATE wallets SET balance = balance + {}, version = version + 1, updated_at = {} WHERE id = {} AND version = {}",
-            ph(1), ph(2), ph(3), ph(4)
+            ph(1),
+            ph(2),
+            ph(3),
+            ph(4)
         );
         let affected = sqlx::query(&sql)
             .bind(delta)
@@ -158,7 +164,11 @@ async fn apply_wallet_delta(
         let abs = -delta;
         let sql = format!(
             "UPDATE wallets SET balance = balance - {}, version = version + 1, updated_at = {} WHERE id = {} AND balance >= {} AND version = {}",
-            ph(1), ph(2), ph(3), ph(4), ph(5)
+            ph(1),
+            ph(2),
+            ph(3),
+            ph(4),
+            ph(5)
         );
         let affected = sqlx::query(&sql)
             .bind(abs)
@@ -187,16 +197,19 @@ async fn reverse_single_tx(
         .await?
         .ok_or_else(|| AppError::not_found("wallet"))?;
 
-    let delta = match original.entry_type_enum().map_err(map_enum_err)? {
+    let delta = match original.entry_type {
         WalletEntryType::Credit => -original.amount,
         WalletEntryType::Debit => original.amount,
     };
 
     if delta > 0 {
-        w.balance.checked_add(delta)
+        w.balance
+            .checked_add(delta)
             .ok_or_else(|| AppError::BadRequest("balance_overflow".into()))?;
     } else if w.balance < -delta {
-        return Err(AppError::BadRequest("insufficient_balance_for_reversal".into()));
+        return Err(AppError::BadRequest(
+            "insufficient_balance_for_reversal".into(),
+        ));
     }
 
     apply_wallet_delta(tx, w.id, w.version, delta, w.balance).await?;
@@ -205,13 +218,28 @@ async fn reverse_single_tx(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("wallet not found")))?;
 
-    let entry_type = if original.entry_type_enum().map_err(map_enum_err)? == WalletEntryType::Credit { WalletEntryType::Debit } else { WalletEntryType::Credit };
+    let entry_type = if original.entry_type == WalletEntryType::Credit {
+        WalletEntryType::Debit
+    } else {
+        WalletEntryType::Credit
+    };
     insert_tx(
-        tx, updated.id, original.user_id, entry_type, original.amount, updated.balance,
-        WalletTxType::Refund, &original.currency, reversal_tx_no, Some(original.id),
-        original.reference_type_enum().map_err(map_enum_err)?, original.reference_id.as_deref(), None,
+        tx,
+        updated.id,
+        original.user_id,
+        entry_type,
+        original.amount,
+        updated.balance,
+        WalletTxType::Refund,
+        &original.currency,
+        reversal_tx_no,
+        Some(original.id),
+        original.reference_type,
+        original.reference_id.as_deref(),
+        None,
         Some(&serde_json::json!({"reversal": true}).to_string()),
-    ).await
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -243,7 +271,7 @@ pub async fn credit_wallet(
         ensure_currency_active(&mut tx, currency).await?;
 
         let w = tx_find_or_create(&mut tx, user_id, currency).await?;
-        if w.status_enum().map_err(map_enum_err)? != WalletStatus::Active {
+        if w.status != WalletStatus::Active {
             return Err(AppError::BadRequest("wallet_frozen".into()));
         }
 
@@ -254,9 +282,22 @@ pub async fn credit_wallet(
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("wallet not found after update")))?;
 
         insert_tx(
-            &mut tx, updated.id, user_id, WalletEntryType::Credit, amount, updated.balance,
-            tx_type, currency, transaction_no, None, reference_type, reference_id, None, metadata,
-        ).await
+            &mut tx,
+            updated.id,
+            user_id,
+            WalletEntryType::Credit,
+            amount,
+            updated.balance,
+            tx_type,
+            currency,
+            transaction_no,
+            None,
+            reference_type,
+            reference_id,
+            None,
+            metadata,
+        )
+        .await
     })
 }
 
@@ -289,7 +330,7 @@ pub async fn debit_wallet(
         ensure_currency_active(&mut tx, currency).await?;
 
         let w = tx_find_or_create(&mut tx, user_id, currency).await?;
-        if w.status_enum().map_err(map_enum_err)? != WalletStatus::Active {
+        if w.status != WalletStatus::Active {
             return Err(AppError::BadRequest("wallet_frozen".into()));
         }
 
@@ -300,9 +341,22 @@ pub async fn debit_wallet(
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("wallet not found after update")))?;
 
         insert_tx(
-            &mut tx, updated.id, user_id, WalletEntryType::Debit, amount, updated.balance,
-            tx_type, currency, transaction_no, None, reference_type, reference_id, None, metadata,
-        ).await
+            &mut tx,
+            updated.id,
+            user_id,
+            WalletEntryType::Debit,
+            amount,
+            updated.balance,
+            tx_type,
+            currency,
+            transaction_no,
+            None,
+            reference_type,
+            reference_id,
+            None,
+            metadata,
+        )
+        .await
     })
 }
 
@@ -324,20 +378,24 @@ pub async fn transfer(
     }
 
     if from_user_id == to_user_id {
-        return Err(AppError::BadRequest("cannot_transfer_to_same_wallet".into()));
+        return Err(AppError::BadRequest(
+            "cannot_transfer_to_same_wallet".into(),
+        ));
     }
 
     if let Some(existing) = repo.find_tx_by_transaction_no(transaction_no).await? {
         let pair_no = format!("{transaction_no}_in");
         let incoming = repo.find_tx_by_transaction_no(&pair_no).await?;
-        let incoming = incoming.ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("transfer pair incomplete"))
-        })?;
+        let incoming = incoming
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("transfer pair incomplete")))?;
         return Ok((existing, incoming));
     }
 
     crate::in_transaction!(pool, tx, {
-        if tx_find_tx_by_transaction_no(&mut tx, transaction_no).await?.is_some() {
+        if tx_find_tx_by_transaction_no(&mut tx, transaction_no)
+            .await?
+            .is_some()
+        {
             return Err(AppError::Conflict("duplicate_transaction".into()));
         }
 
@@ -347,15 +405,31 @@ pub async fn transfer(
         let to_wallet = tx_find_or_create(&mut tx, to_user_id, currency).await?;
 
         if from_wallet.id == to_wallet.id {
-            return Err(AppError::BadRequest("cannot_transfer_to_same_wallet".into()));
+            return Err(AppError::BadRequest(
+                "cannot_transfer_to_same_wallet".into(),
+            ));
         }
 
-        if from_wallet.status_enum().map_err(map_enum_err)? != WalletStatus::Active || to_wallet.status_enum().map_err(map_enum_err)? != WalletStatus::Active {
+        if from_wallet.status != WalletStatus::Active || to_wallet.status != WalletStatus::Active {
             return Err(AppError::BadRequest("wallet_frozen".into()));
         }
 
-        apply_wallet_delta(&mut tx, from_wallet.id, from_wallet.version, -amount, from_wallet.balance).await?;
-        apply_wallet_delta(&mut tx, to_wallet.id, to_wallet.version, amount, to_wallet.balance).await?;
+        apply_wallet_delta(
+            &mut tx,
+            from_wallet.id,
+            from_wallet.version,
+            -amount,
+            from_wallet.balance,
+        )
+        .await?;
+        apply_wallet_delta(
+            &mut tx,
+            to_wallet.id,
+            to_wallet.version,
+            amount,
+            to_wallet.balance,
+        )
+        .await?;
 
         let updated_from = tx_find_wallet_by_id(&mut tx, from_wallet.id)
             .await?
@@ -365,17 +439,41 @@ pub async fn transfer(
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("wallet not found")))?;
 
         let out_tx = insert_tx(
-            &mut tx, updated_from.id, from_user_id, WalletEntryType::Debit, amount, updated_from.balance,
-            WalletTxType::TransferOut, currency, transaction_no, None, reference_type, reference_id,
-            Some(updated_to.id), metadata,
-        ).await?;
+            &mut tx,
+            updated_from.id,
+            from_user_id,
+            WalletEntryType::Debit,
+            amount,
+            updated_from.balance,
+            WalletTxType::TransferOut,
+            currency,
+            transaction_no,
+            None,
+            reference_type,
+            reference_id,
+            Some(updated_to.id),
+            metadata,
+        )
+        .await?;
 
         let in_no = format!("{transaction_no}_in");
         let in_tx = insert_tx(
-            &mut tx, updated_to.id, to_user_id, WalletEntryType::Credit, amount, updated_to.balance,
-            WalletTxType::TransferIn, currency, &in_no, None, reference_type, reference_id,
-            Some(updated_from.id), metadata,
-        ).await?;
+            &mut tx,
+            updated_to.id,
+            to_user_id,
+            WalletEntryType::Credit,
+            amount,
+            updated_to.balance,
+            WalletTxType::TransferIn,
+            currency,
+            &in_no,
+            None,
+            reference_type,
+            reference_id,
+            Some(updated_from.id),
+            metadata,
+        )
+        .await?;
 
         Ok((out_tx, in_tx))
     })
@@ -400,7 +498,7 @@ pub async fn reverse_transaction(
             .await?
             .ok_or_else(|| AppError::not_found("transaction"))?;
 
-        if original.tx_type_enum().map_err(map_enum_err)? == WalletTxType::Refund {
+        if original.tx_type == WalletTxType::Refund {
             return Err(AppError::BadRequest("cannot_reverse_reversal".into()));
         }
 
@@ -410,13 +508,19 @@ pub async fn reverse_transaction(
 
         let refund_tx = reverse_single_tx(&mut tx, &original, transaction_no).await?;
 
-        let original_tx_type = original.tx_type_enum().map_err(map_enum_err)?;
-        if original_tx_type == WalletTxType::TransferOut || original_tx_type == WalletTxType::TransferIn {
+        let original_tx_type = original.tx_type;
+        if original_tx_type == WalletTxType::TransferOut
+            || original_tx_type == WalletTxType::TransferIn
+        {
             let pair_no = if original_tx_type == WalletTxType::TransferOut {
                 format!("{}_in", original.transaction_no)
             } else {
-                original.transaction_no.strip_suffix("_in")
-                    .ok_or_else(|| AppError::Internal(anyhow::anyhow!("invalid transfer_in transaction_no")))?
+                original
+                    .transaction_no
+                    .strip_suffix("_in")
+                    .ok_or_else(|| {
+                        AppError::Internal(anyhow::anyhow!("invalid transfer_in transaction_no"))
+                    })?
                     .to_string()
             };
 
@@ -425,7 +529,9 @@ pub async fn reverse_transaction(
                 .ok_or_else(|| AppError::Internal(anyhow::anyhow!("transfer pair not found")))?;
 
             if tx_has_reversal_for(&mut tx, pair.id).await? {
-                return Err(AppError::BadRequest("transfer_pair_already_reversed".into()));
+                return Err(AppError::BadRequest(
+                    "transfer_pair_already_reversed".into(),
+                ));
             }
 
             let pair_reversal_no = format!("{transaction_no}_pair");
@@ -457,20 +563,34 @@ async fn insert_tx(
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
     let sql = format!(
         "INSERT INTO wallet_transactions (document_id, wallet_id, user_id, entry_type, amount, balance_after, tx_type, currency, transaction_no, related_tx_id, reference_type, reference_id, counterparty_wallet_id, metadata, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
-        ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13), ph(14), ph(15)
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5),
+        ph(6),
+        ph(7),
+        ph(8),
+        ph(9),
+        ph(10),
+        ph(11),
+        ph(12),
+        ph(13),
+        ph(14),
+        ph(15)
     );
     sqlx::query(&sql)
         .bind(&document_id)
         .bind(wallet_id)
         .bind(user_id)
-        .bind(entry_type.as_str())
+        .bind(entry_type)
         .bind(amount)
         .bind(balance_after)
-        .bind(tx_type.as_str())
+        .bind(tx_type)
         .bind(currency)
         .bind(transaction_no)
         .bind(related_tx_id)
-        .bind(reference_type.as_ref().map(|r| r.as_str()))
+        .bind(reference_type)
         .bind(reference_id)
         .bind(counterparty_wallet_id)
         .bind(metadata)
@@ -478,7 +598,10 @@ async fn insert_tx(
         .execute(&mut *tx)
         .await?;
 
-    let sql = format!("SELECT * FROM wallet_transactions WHERE document_id = {}", ph(1));
+    let sql = format!(
+        "SELECT * FROM wallet_transactions WHERE document_id = {}",
+        ph(1)
+    );
     let row = sqlx::query_as::<_, WalletTransaction>(&sql)
         .bind(&document_id)
         .fetch_one(&mut *tx)
@@ -513,15 +636,15 @@ pub async fn tx_list_to_response(
     repo: &dyn WalletRepository,
     rows: Vec<WalletTransaction>,
 ) -> AppResult<Vec<crate::dto::WalletTransactionResponse>> {
-    let related_ids: Vec<i64> = rows.iter()
-        .filter_map(|r| r.related_tx_id)
-        .collect();
+    let related_ids: Vec<i64> = rows.iter().filter_map(|r| r.related_tx_id).collect();
 
     let doc_id_map = repo.find_document_ids_by_ids(&related_ids).await?;
 
     let mut responses = Vec::with_capacity(rows.len());
     for row in rows {
-        let related_doc_id = row.related_tx_id.and_then(|rid| doc_id_map.get(&rid).cloned());
+        let related_doc_id = row
+            .related_tx_id
+            .and_then(|rid| doc_id_map.get(&rid).cloned());
         let mut resp = crate::dto::WalletTransactionResponse::from_tx(row)?;
         resp.related_tx_id = related_doc_id;
         responses.push(resp);
@@ -542,7 +665,9 @@ mod tests {
 
     impl std::ops::Deref for TestContext {
         type Target = crate::db::Pool;
-        fn deref(&self) -> &Self::Target { &self.pool }
+        fn deref(&self) -> &Self::Target {
+            &self.pool
+        }
     }
 
     struct TempDbGuard {
@@ -578,9 +703,16 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        crate::models::currencies::create(&pool, "CNY", "Chinese Yuan", 2).await.unwrap();
-        crate::models::currencies::create(&pool, "USD", "US Dollar", 2).await.unwrap();
-        TestContext { pool, _guard: TempDbGuard { path } }
+        crate::models::currencies::create(&pool, "CNY", "Chinese Yuan", 2)
+            .await
+            .unwrap();
+        crate::models::currencies::create(&pool, "USD", "US Dollar", 2)
+            .await
+            .unwrap();
+        TestContext {
+            pool,
+            _guard: TempDbGuard { path },
+        }
     }
 
     fn setup_repo(pool: &crate::db::Pool) -> SqlxWalletRepository {
@@ -588,8 +720,12 @@ mod tests {
     }
 
     async fn seed_currencies(pool: &crate::db::Pool) {
-        crate::models::currencies::create(pool, "CNY", "Chinese Yuan", 2).await.unwrap();
-        crate::models::currencies::create(pool, "USD", "US Dollar", 2).await.unwrap();
+        crate::models::currencies::create(pool, "CNY", "Chinese Yuan", 2)
+            .await
+            .unwrap();
+        crate::models::currencies::create(pool, "USD", "US Dollar", 2)
+            .await
+            .unwrap();
     }
 
     async fn insert_user(pool: &crate::db::Pool) -> crate::models::user::User {
@@ -597,7 +733,7 @@ mod tests {
             pool,
             &crate::commands::user::CreateUserCmd {
                 username: crate::utils::id::new_document_id(),
-                registered_via: "test".to_string(),
+                registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
         )
@@ -619,19 +755,29 @@ mod tests {
         let tx_no = new_tx_no();
 
         let tx = credit_wallet(
-            &repo, &ctx, user.id, "CNY", 500, T::Recharge, &tx_no,
-            Some(R::Admin), None, None,
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            500,
+            T::Recharge,
+            &tx_no,
+            Some(R::Admin),
+            None,
+            None,
         )
         .await
         .unwrap();
 
-        assert_eq!(tx.entry_type, E::Credit.as_str());
+        assert_eq!(tx.entry_type, E::Credit);
         assert_eq!(tx.amount, 500);
         assert_eq!(tx.balance_after, 500);
-        assert_eq!(tx.tx_type, T::Recharge.as_str());
+        assert_eq!(tx.tx_type, T::Recharge);
 
         let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(w.balance, 500);
     }
 
@@ -641,17 +787,32 @@ mod tests {
         let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
-        assert!(wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
-            .await.unwrap().is_none());
+        assert!(
+            wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
+                .await
+                .unwrap()
+                .is_none()
+        );
 
         credit_wallet(
-            &repo, &ctx, user.id, "CNY", 100, T::Recharge, &new_tx_no(),
-            None, None, None,
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            100,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
         let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(w.balance, 100);
     }
 
@@ -663,18 +824,40 @@ mod tests {
         let tx_no = new_tx_no();
 
         let tx1 = credit_wallet(
-            &repo, &ctx, user.id, "CNY", 500, T::Recharge, &tx_no,
-            None, None, None,
-        ).await.unwrap();
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            500,
+            T::Recharge,
+            &tx_no,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let tx2 = credit_wallet(
-            &repo, &ctx, user.id, "CNY", 500, T::Recharge, &tx_no,
-            None, None, None,
-        ).await.unwrap();
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            500,
+            T::Recharge,
+            &tx_no,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(tx1.transaction_no, tx2.transaction_no);
         let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(w.balance, 500);
     }
 
@@ -685,9 +868,19 @@ mod tests {
         let user = insert_user(&ctx).await;
 
         let err = credit_wallet(
-            &repo, &ctx, user.id, "CNY", 0, T::Recharge, &new_tx_no(),
-            None, None, None,
-        ).await.unwrap_err();
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            0,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
 
         match err {
             AppError::BadRequest(msg) => assert_eq!(msg, "amount_must_be_positive"),
@@ -702,9 +895,19 @@ mod tests {
         let user = insert_user(&ctx).await;
 
         let err = credit_wallet(
-            &repo, &ctx, user.id, "CNY", -100, T::Recharge, &new_tx_no(),
-            None, None, None,
-        ).await.unwrap_err();
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            -100,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
 
         match err {
             AppError::BadRequest(msg) => assert_eq!(msg, "amount_must_be_positive"),
@@ -718,11 +921,39 @@ mod tests {
         let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
-        credit_wallet(&repo, &ctx, user.id, "CNY", 300, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
-        credit_wallet(&repo, &ctx, user.id, "CNY", 700, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
+        credit_wallet(
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            300,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        credit_wallet(
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            700,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(w.balance, 1000);
     }
 
@@ -734,19 +965,44 @@ mod tests {
         let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
-        credit_wallet(&repo, &ctx, user.id, "CNY", 1000, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
+        credit_wallet(
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            1000,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let tx = debit_wallet(
-            &repo, &ctx, user.id, "CNY", 400, T::Payment, &new_tx_no(),
-            Some(R::Order), None, None,
-        ).await.unwrap();
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            400,
+            T::Payment,
+            &new_tx_no(),
+            Some(R::Order),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
-        assert_eq!(tx.entry_type, E::Debit.as_str());
+        assert_eq!(tx.entry_type, E::Debit);
         assert_eq!(tx.amount, 400);
         assert_eq!(tx.balance_after, 600);
 
         let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(w.balance, 600);
     }
 
@@ -756,20 +1012,47 @@ mod tests {
         let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
-        credit_wallet(&repo, &ctx, user.id, "CNY", 100, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
+        credit_wallet(
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            100,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let err = debit_wallet(
-            &repo, &ctx, user.id, "CNY", 200, T::Payment, &new_tx_no(),
-            None, None, None,
-        ).await.unwrap_err();
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            200,
+            T::Payment,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
 
         match err {
-            AppError::BadRequest(msg) => assert_eq!(msg, "insufficient_balance_or_concurrent_update"),
+            AppError::BadRequest(msg) => {
+                assert_eq!(msg, "insufficient_balance_or_concurrent_update")
+            }
             _ => panic!("expected BadRequest"),
         }
 
         let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(w.balance, 100);
     }
 
@@ -779,9 +1062,35 @@ mod tests {
         let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
-        credit_wallet(&repo, &ctx, user.id, "CNY", 500, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
+        credit_wallet(
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            500,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
-        let tx = debit_wallet(&repo, &ctx, user.id, "CNY", 500, T::Payment, &new_tx_no(), None, None, None).await.unwrap();
+        let tx = debit_wallet(
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            500,
+            T::Payment,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(tx.balance_after, 0);
     }
 
@@ -792,14 +1101,55 @@ mod tests {
         let user = insert_user(&ctx).await;
         let tx_no = new_tx_no();
 
-        credit_wallet(&repo, &ctx, user.id, "CNY", 1000, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
+        credit_wallet(
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            1000,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
-        let tx1 = debit_wallet(&repo, &ctx, user.id, "CNY", 300, T::Payment, &tx_no, None, None, None).await.unwrap();
-        let tx2 = debit_wallet(&repo, &ctx, user.id, "CNY", 300, T::Payment, &tx_no, None, None, None).await.unwrap();
+        let tx1 = debit_wallet(
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            300,
+            T::Payment,
+            &tx_no,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let tx2 = debit_wallet(
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            300,
+            T::Payment,
+            &tx_no,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(tx1.transaction_no, tx2.transaction_no);
         let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(w.balance, 700);
     }
 
@@ -810,9 +1160,19 @@ mod tests {
         let user = insert_user(&ctx).await;
 
         let err = debit_wallet(
-            &repo, &ctx, user.id, "CNY", 0, T::Payment, &new_tx_no(),
-            None, None, None,
-        ).await.unwrap_err();
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            0,
+            T::Payment,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
 
         match err {
             AppError::BadRequest(msg) => assert_eq!(msg, "amount_must_be_positive"),
@@ -827,12 +1187,24 @@ mod tests {
         let user = insert_user(&ctx).await;
 
         let err = debit_wallet(
-            &repo, &ctx, user.id, "CNY", 100, T::Payment, &new_tx_no(),
-            None, None, None,
-        ).await.unwrap_err();
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            100,
+            T::Payment,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
 
         match err {
-            AppError::BadRequest(msg) => assert_eq!(msg, "insufficient_balance_or_concurrent_update"),
+            AppError::BadRequest(msg) => {
+                assert_eq!(msg, "insufficient_balance_or_concurrent_update")
+            }
             _ => panic!("expected BadRequest"),
         }
     }
@@ -846,27 +1218,56 @@ mod tests {
         let from_user = insert_user(&ctx).await;
         let to_user = insert_user(&ctx).await;
 
-        credit_wallet(&repo, &ctx, from_user.id, "CNY", 1000, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
+        credit_wallet(
+            &repo,
+            &ctx,
+            from_user.id,
+            "CNY",
+            1000,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let tx_no = new_tx_no();
         let (out_tx, in_tx) = transfer(
-            &repo, &ctx, from_user.id, to_user.id, "CNY", 300,
-            &tx_no, None, None, None,
-        ).await.unwrap();
+            &repo,
+            &ctx,
+            from_user.id,
+            to_user.id,
+            "CNY",
+            300,
+            &tx_no,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
-        assert_eq!(out_tx.entry_type, E::Debit.as_str());
-        assert_eq!(out_tx.tx_type, T::TransferOut.as_str());
+        assert_eq!(out_tx.entry_type, E::Debit);
+        assert_eq!(out_tx.tx_type, T::TransferOut);
         assert_eq!(out_tx.amount, 300);
         assert_eq!(out_tx.balance_after, 700);
 
-        assert_eq!(in_tx.entry_type, E::Credit.as_str());
-        assert_eq!(in_tx.tx_type, T::TransferIn.as_str());
+        assert_eq!(in_tx.entry_type, E::Credit);
+        assert_eq!(in_tx.tx_type, T::TransferIn);
         assert_eq!(in_tx.amount, 300);
         assert_eq!(in_tx.balance_after, 300);
 
-        let from_w = wallet::find_by_user_and_currency(&ctx, from_user.id, "CNY").await.unwrap().unwrap();
+        let from_w = wallet::find_by_user_and_currency(&ctx, from_user.id, "CNY")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(from_w.balance, 700);
-        let to_w = wallet::find_by_user_and_currency(&ctx, to_user.id, "CNY").await.unwrap().unwrap();
+        let to_w = wallet::find_by_user_and_currency(&ctx, to_user.id, "CNY")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(to_w.balance, 300);
     }
 
@@ -877,15 +1278,40 @@ mod tests {
         let from_user = insert_user(&ctx).await;
         let to_user = insert_user(&ctx).await;
 
-        credit_wallet(&repo, &ctx, from_user.id, "CNY", 100, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
+        credit_wallet(
+            &repo,
+            &ctx,
+            from_user.id,
+            "CNY",
+            100,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let err = transfer(
-            &repo, &ctx, from_user.id, to_user.id, "CNY", 200,
-            &new_tx_no(), None, None, None,
-        ).await.unwrap_err();
+            &repo,
+            &ctx,
+            from_user.id,
+            to_user.id,
+            "CNY",
+            200,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
 
         match err {
-            AppError::BadRequest(msg) => assert_eq!(msg, "insufficient_balance_or_concurrent_update"),
+            AppError::BadRequest(msg) => {
+                assert_eq!(msg, "insufficient_balance_or_concurrent_update")
+            }
             _ => panic!("expected BadRequest"),
         }
     }
@@ -896,12 +1322,35 @@ mod tests {
         let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
-        credit_wallet(&repo, &ctx, user.id, "CNY", 1000, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
+        credit_wallet(
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            1000,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let err = transfer(
-            &repo, &ctx, user.id, user.id, "CNY", 100,
-            &new_tx_no(), None, None, None,
-        ).await.unwrap_err();
+            &repo,
+            &ctx,
+            user.id,
+            user.id,
+            "CNY",
+            100,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
 
         match err {
             AppError::BadRequest(msg) => assert_eq!(msg, "cannot_transfer_to_same_wallet"),
@@ -916,16 +1365,58 @@ mod tests {
         let from_user = insert_user(&ctx).await;
         let to_user = insert_user(&ctx).await;
 
-        credit_wallet(&repo, &ctx, from_user.id, "CNY", 1000, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
+        credit_wallet(
+            &repo,
+            &ctx,
+            from_user.id,
+            "CNY",
+            1000,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let tx_no = new_tx_no();
-        let (out1, in1) = transfer(&repo, &ctx, from_user.id, to_user.id, "CNY", 300, &tx_no, None, None, None).await.unwrap();
-        let (out2, in2) = transfer(&repo, &ctx, from_user.id, to_user.id, "CNY", 300, &tx_no, None, None, None).await.unwrap();
+        let (out1, in1) = transfer(
+            &repo,
+            &ctx,
+            from_user.id,
+            to_user.id,
+            "CNY",
+            300,
+            &tx_no,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let (out2, in2) = transfer(
+            &repo,
+            &ctx,
+            from_user.id,
+            to_user.id,
+            "CNY",
+            300,
+            &tx_no,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(out1.transaction_no, out2.transaction_no);
         assert_eq!(in1.transaction_no, in2.transaction_no);
 
-        let from_w = wallet::find_by_user_and_currency(&ctx, from_user.id, "CNY").await.unwrap().unwrap();
+        let from_w = wallet::find_by_user_and_currency(&ctx, from_user.id, "CNY")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(from_w.balance, 700);
     }
 
@@ -937,9 +1428,19 @@ mod tests {
         let to_user = insert_user(&ctx).await;
 
         let err = transfer(
-            &repo, &ctx, from_user.id, to_user.id, "CNY", 0,
-            &new_tx_no(), None, None, None,
-        ).await.unwrap_err();
+            &repo,
+            &ctx,
+            from_user.id,
+            to_user.id,
+            "CNY",
+            0,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
 
         match err {
             AppError::BadRequest(msg) => assert_eq!(msg, "amount_must_be_positive"),
@@ -956,18 +1457,33 @@ mod tests {
         let user = insert_user(&ctx).await;
 
         let original = credit_wallet(
-            &repo, &ctx, user.id, "CNY", 500, T::Recharge, &new_tx_no(),
-            None, None, None,
-        ).await.unwrap();
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            500,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
-        let rev_tx = reverse_transaction(&repo, &ctx, original.id, &new_tx_no()).await.unwrap();
+        let rev_tx = reverse_transaction(&repo, &ctx, original.id, &new_tx_no())
+            .await
+            .unwrap();
 
-        assert_eq!(rev_tx.entry_type, E::Debit.as_str());
+        assert_eq!(rev_tx.entry_type, E::Debit);
         assert_eq!(rev_tx.amount, 500);
         assert_eq!(rev_tx.balance_after, 0);
         assert_eq!(rev_tx.related_tx_id, Some(original.id));
 
-        let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY").await.unwrap().unwrap();
+        let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(w.balance, 0);
     }
 
@@ -977,20 +1493,48 @@ mod tests {
         let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
-        credit_wallet(&repo, &ctx, user.id, "CNY", 1000, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
+        credit_wallet(
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            1000,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let original = debit_wallet(
-            &repo, &ctx, user.id, "CNY", 300, T::Payment, &new_tx_no(),
-            None, None, None,
-        ).await.unwrap();
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            300,
+            T::Payment,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
-        let rev_tx = reverse_transaction(&repo, &ctx, original.id, &new_tx_no()).await.unwrap();
+        let rev_tx = reverse_transaction(&repo, &ctx, original.id, &new_tx_no())
+            .await
+            .unwrap();
 
-        assert_eq!(rev_tx.entry_type, E::Credit.as_str());
+        assert_eq!(rev_tx.entry_type, E::Credit);
         assert_eq!(rev_tx.amount, 300);
         assert_eq!(rev_tx.balance_after, 1000);
 
-        let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY").await.unwrap().unwrap();
+        let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(w.balance, 1000);
     }
 
@@ -1000,11 +1544,28 @@ mod tests {
         let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
-        let original = credit_wallet(&repo, &ctx, user.id, "CNY", 500, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
+        let original = credit_wallet(
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            500,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let rev_no = new_tx_no();
-        let rev1 = reverse_transaction(&repo, &ctx, original.id, &rev_no).await.unwrap();
-        let rev2 = reverse_transaction(&repo, &ctx, original.id, &rev_no).await.unwrap();
+        let rev1 = reverse_transaction(&repo, &ctx, original.id, &rev_no)
+            .await
+            .unwrap();
+        let rev2 = reverse_transaction(&repo, &ctx, original.id, &rev_no)
+            .await
+            .unwrap();
         assert_eq!(rev1.transaction_no, rev2.transaction_no);
     }
 
@@ -1014,10 +1575,27 @@ mod tests {
         let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
-        let original = credit_wallet(&repo, &ctx, user.id, "CNY", 500, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
-        let rev = reverse_transaction(&repo, &ctx, original.id, &new_tx_no()).await.unwrap();
+        let original = credit_wallet(
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            500,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let rev = reverse_transaction(&repo, &ctx, original.id, &new_tx_no())
+            .await
+            .unwrap();
 
-        let err = reverse_transaction(&repo, &ctx, rev.id, &new_tx_no()).await.unwrap_err();
+        let err = reverse_transaction(&repo, &ctx, rev.id, &new_tx_no())
+            .await
+            .unwrap_err();
 
         match err {
             AppError::BadRequest(msg) => assert_eq!(msg, "cannot_reverse_reversal"),
@@ -1031,10 +1609,27 @@ mod tests {
         let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
-        let original = credit_wallet(&repo, &ctx, user.id, "CNY", 500, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
-        reverse_transaction(&repo, &ctx, original.id, &new_tx_no()).await.unwrap();
+        let original = credit_wallet(
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            500,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        reverse_transaction(&repo, &ctx, original.id, &new_tx_no())
+            .await
+            .unwrap();
 
-        let err = reverse_transaction(&repo, &ctx, original.id, &new_tx_no()).await.unwrap_err();
+        let err = reverse_transaction(&repo, &ctx, original.id, &new_tx_no())
+            .await
+            .unwrap_err();
 
         match err {
             AppError::BadRequest(msg) => assert_eq!(msg, "already_reversed"),
@@ -1048,11 +1643,52 @@ mod tests {
         let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
-        credit_wallet(&repo, &ctx, user.id, "CNY", 1000, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
-        let credit_tx = credit_wallet(&repo, &ctx, user.id, "CNY", 500, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
-        debit_wallet(&repo, &ctx, user.id, "CNY", 1400, T::Payment, &new_tx_no(), None, None, None).await.unwrap();
+        credit_wallet(
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            1000,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let credit_tx = credit_wallet(
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            500,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        debit_wallet(
+            &repo,
+            &ctx,
+            user.id,
+            "CNY",
+            1400,
+            T::Payment,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
-        let err = reverse_transaction(&repo, &ctx, credit_tx.id, &new_tx_no()).await.unwrap_err();
+        let err = reverse_transaction(&repo, &ctx, credit_tx.id, &new_tx_no())
+            .await
+            .unwrap_err();
 
         match err {
             AppError::BadRequest(msg) => assert_eq!(msg, "insufficient_balance_for_reversal"),
@@ -1065,7 +1701,9 @@ mod tests {
         let ctx = setup().await;
         let repo = setup_repo(&ctx);
 
-        let err = reverse_transaction(&repo, &ctx, 99999, &new_tx_no()).await.unwrap_err();
+        let err = reverse_transaction(&repo, &ctx, 99999, &new_tx_no())
+            .await
+            .unwrap_err();
 
         match err {
             AppError::NotFound(_) => {}
@@ -1082,26 +1720,57 @@ mod tests {
         let from_user = insert_user(&ctx).await;
         let to_user = insert_user(&ctx).await;
 
-        credit_wallet(&repo, &ctx, from_user.id, "CNY", 1000, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
+        credit_wallet(
+            &repo,
+            &ctx,
+            from_user.id,
+            "CNY",
+            1000,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let tx_no = new_tx_no();
         let (out_tx, _in_tx) = transfer(
-            &repo, &ctx, from_user.id, to_user.id, "CNY", 300,
-            &tx_no, None, None, None,
-        ).await.unwrap();
+            &repo,
+            &ctx,
+            from_user.id,
+            to_user.id,
+            "CNY",
+            300,
+            &tx_no,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let rev_no = new_tx_no();
-        let rev = reverse_transaction(&repo, &ctx, out_tx.id, &rev_no).await.unwrap();
+        let rev = reverse_transaction(&repo, &ctx, out_tx.id, &rev_no)
+            .await
+            .unwrap();
 
-        assert_eq!(rev.entry_type, E::Credit.as_str());
+        assert_eq!(rev.entry_type, E::Credit);
         assert_eq!(rev.amount, 300);
-        assert_eq!(rev.tx_type, T::Refund.as_str());
+        assert_eq!(rev.tx_type, T::Refund);
         assert_eq!(rev.related_tx_id, Some(out_tx.id));
 
-        let from_w = wallet::find_by_user_and_currency(&ctx, from_user.id, "CNY").await.unwrap().unwrap();
+        let from_w = wallet::find_by_user_and_currency(&ctx, from_user.id, "CNY")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(from_w.balance, 1000);
 
-        let to_w = wallet::find_by_user_and_currency(&ctx, to_user.id, "CNY").await.unwrap().unwrap();
+        let to_w = wallet::find_by_user_and_currency(&ctx, to_user.id, "CNY")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(to_w.balance, 0);
     }
 
@@ -1112,21 +1781,52 @@ mod tests {
         let from_user = insert_user(&ctx).await;
         let to_user = insert_user(&ctx).await;
 
-        credit_wallet(&repo, &ctx, from_user.id, "CNY", 1000, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
+        credit_wallet(
+            &repo,
+            &ctx,
+            from_user.id,
+            "CNY",
+            1000,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let tx_no = new_tx_no();
         let (_out_tx, in_tx) = transfer(
-            &repo, &ctx, from_user.id, to_user.id, "CNY", 300,
-            &tx_no, None, None, None,
-        ).await.unwrap();
+            &repo,
+            &ctx,
+            from_user.id,
+            to_user.id,
+            "CNY",
+            300,
+            &tx_no,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
-        let rev = reverse_transaction(&repo, &ctx, in_tx.id, &new_tx_no()).await.unwrap();
-        assert_eq!(rev.tx_type, T::Refund.as_str());
+        let rev = reverse_transaction(&repo, &ctx, in_tx.id, &new_tx_no())
+            .await
+            .unwrap();
+        assert_eq!(rev.tx_type, T::Refund);
 
-        let from_w = wallet::find_by_user_and_currency(&ctx, from_user.id, "CNY").await.unwrap().unwrap();
+        let from_w = wallet::find_by_user_and_currency(&ctx, from_user.id, "CNY")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(from_w.balance, 1000);
 
-        let to_w = wallet::find_by_user_and_currency(&ctx, to_user.id, "CNY").await.unwrap().unwrap();
+        let to_w = wallet::find_by_user_and_currency(&ctx, to_user.id, "CNY")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(to_w.balance, 0);
     }
 
@@ -1137,18 +1837,56 @@ mod tests {
         let from_user = insert_user(&ctx).await;
         let to_user = insert_user(&ctx).await;
 
-        credit_wallet(&repo, &ctx, from_user.id, "CNY", 1000, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
+        credit_wallet(
+            &repo,
+            &ctx,
+            from_user.id,
+            "CNY",
+            1000,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let tx_no = new_tx_no();
         let (out_tx, _in_tx) = transfer(
-            &repo, &ctx, from_user.id, to_user.id, "CNY", 500,
-            &tx_no, None, None, None,
-        ).await.unwrap();
+            &repo,
+            &ctx,
+            from_user.id,
+            to_user.id,
+            "CNY",
+            500,
+            &tx_no,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         // receiver spends the money
-        debit_wallet(&repo, &ctx, to_user.id, "CNY", 500, T::Payment, &new_tx_no(), None, None, None).await.unwrap();
+        debit_wallet(
+            &repo,
+            &ctx,
+            to_user.id,
+            "CNY",
+            500,
+            T::Payment,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
-        let err = reverse_transaction(&repo, &ctx, out_tx.id, &new_tx_no()).await.unwrap_err();
+        let err = reverse_transaction(&repo, &ctx, out_tx.id, &new_tx_no())
+            .await
+            .unwrap_err();
 
         match err {
             AppError::BadRequest(msg) => assert_eq!(msg, "insufficient_balance_for_reversal"),
@@ -1163,19 +1901,46 @@ mod tests {
         let from_user = insert_user(&ctx).await;
         let to_user = insert_user(&ctx).await;
 
-        credit_wallet(&repo, &ctx, from_user.id, "CNY", 1000, T::Recharge, &new_tx_no(), None, None, None).await.unwrap();
+        credit_wallet(
+            &repo,
+            &ctx,
+            from_user.id,
+            "CNY",
+            1000,
+            T::Recharge,
+            &new_tx_no(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let tx_no = new_tx_no();
         let (out_tx, in_tx) = transfer(
-            &repo, &ctx, from_user.id, to_user.id, "CNY", 300,
-            &tx_no, None, None, None,
-        ).await.unwrap();
+            &repo,
+            &ctx,
+            from_user.id,
+            to_user.id,
+            "CNY",
+            300,
+            &tx_no,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         // reverse the out_tx first
-        reverse_transaction(&repo, &ctx, out_tx.id, &new_tx_no()).await.unwrap();
+        reverse_transaction(&repo, &ctx, out_tx.id, &new_tx_no())
+            .await
+            .unwrap();
 
         // trying to reverse in_tx should fail because it was already reversed as part of the pair
-        let err = reverse_transaction(&repo, &ctx, in_tx.id, &new_tx_no()).await.unwrap_err();
+        let err = reverse_transaction(&repo, &ctx, in_tx.id, &new_tx_no())
+            .await
+            .unwrap_err();
 
         match err {
             AppError::BadRequest(msg) => assert_eq!(msg, "already_reversed"),

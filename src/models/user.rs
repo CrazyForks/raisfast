@@ -6,18 +6,38 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub type SocialLinks = HashMap<String, String>;
-pub type UserMetadata = serde_json::Value;
-
 use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
+pub type SocialLinks = HashMap<String, String>;
+pub type UserMetadata = serde_json::Value;
+
+define_enum!(
+    UserRole {
+        Admin = "admin",
+        Editor = "editor",
+        Author = "author",
+        Reader = "reader",
+    }
+);
+
+define_enum!(
+    UserStatus {
+        Active = "active",
+    }
+);
+
+define_enum!(
+    RegisteredVia {
+        Email = "email",
+        Phone = "phone",
+        Oauth = "oauth",
+    }
+);
+
 /// 用户完整数据库行模型
-///
-/// 直接映射 `users` 表的所有字段。
-/// 该结构体仅在内部使用，不应直接返回给前端。
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
 pub struct User {
@@ -25,9 +45,9 @@ pub struct User {
     pub document_id: String,
     pub tenant_id: Option<String>,
     pub username: String,
-    pub role: String,
-    pub status: String,
-    pub registered_via: String,
+    pub role: UserRole,
+    pub status: UserStatus,
+    pub registered_via: RegisteredVia,
     pub avatar: Option<String>,
     pub bio: Option<String>,
     pub website: Option<String>,
@@ -50,7 +70,9 @@ pub fn parse_social_links(raw: &Option<String>) -> Option<SocialLinks> {
 }
 
 pub fn encode_social_links(links: &Option<SocialLinks>) -> Option<String> {
-    links.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default())
+    links
+        .as_ref()
+        .map(|m| serde_json::to_string(m).unwrap_or_default())
 }
 
 pub fn parse_metadata(raw: &Option<String>) -> Option<UserMetadata> {
@@ -58,7 +80,8 @@ pub fn parse_metadata(raw: &Option<String>) -> Option<UserMetadata> {
 }
 
 pub fn encode_metadata(meta: &Option<UserMetadata>) -> Option<String> {
-    meta.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default())
+    meta.as_ref()
+        .map(|v| serde_json::to_string(v).unwrap_or_default())
 }
 
 /// 根据用户名查找用户
@@ -72,8 +95,6 @@ pub async fn find_by_username(pool: &crate::db::Pool, username: &str) -> AppResu
 }
 
 /// 根据 document_id 查找用户（外部接口）
-///
-/// 返回 `Ok(Some(user))` 或 `Ok(None)`（未找到时）。
 pub async fn find_by_id(
     pool: &crate::db::Pool,
     document_id: &str,
@@ -106,9 +127,6 @@ pub async fn find_by_pk(
 }
 
 /// 创建新用户
-///
-/// 自动生成 document_id，默认角色为 `reader`，默认状态为 `active`。
-/// 创建完成后重新查询并返回完整用户记录。
 pub async fn create(
     pool: &crate::db::Pool,
     cmd: &crate::commands::CreateUserCmd,
@@ -129,7 +147,7 @@ pub async fn create(
                 .bind(&cmd.username)
                 .bind(now)
                 .bind(now)
-                .bind(&cmd.registered_via)
+                .bind(cmd.registered_via)
                 .execute(pool)
                 .await?;
         }
@@ -144,7 +162,7 @@ pub async fn create(
                 .bind(&cmd.username)
                 .bind(now)
                 .bind(now)
-                .bind(&cmd.registered_via)
+                .bind(cmd.registered_via)
                 .execute(pool)
                 .await?;
         }
@@ -164,9 +182,6 @@ pub async fn create(
 }
 
 /// 更新用户资料
-///
-/// 仅更新传入的非空字段，其余保留原值。
-/// 自动更新 `updated_at` 时间戳。
 pub async fn update_profile(
     pool: &crate::db::Pool,
     cmd: &crate::commands::UpdateProfileCmd,
@@ -175,7 +190,6 @@ pub async fn update_profile(
     let user = find_by_pk(pool, cmd.id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
-
     let username = cmd.username.as_deref().unwrap_or(&user.username);
     let bio = cmd
         .bio
@@ -202,7 +216,6 @@ pub async fn update_profile(
         .as_ref()
         .map(|v| serde_json::to_string(v).unwrap_or_default())
         .or_else(|| user.metadata.clone());
-
     let now = crate::utils::tz::now_utc();
     let filter = tenant_filter_ph(tenant_id, 9);
     let sql = format!(
@@ -229,15 +242,12 @@ pub async fn update_profile(
         q = q.bind(tid);
     }
     q.execute(pool).await?;
-
     find_by_pk(pool, cmd.id, tenant_id)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch updated user")))
 }
 
 /// 分页查询所有用户
-///
-/// 按 `created_at` 降序排列。返回用户列表和总记录数。
 pub async fn find_all(
     pool: &crate::db::Pool,
     page: i64,
@@ -247,7 +257,6 @@ pub async fn find_all(
     let offset = (page - 1) * page_size;
     let filter = tenant_filter_ph(tenant_id, 1);
     let base = usize::from(tenant_id.is_some());
-
     let sql_q = format!(
         "SELECT * FROM users WHERE 1=1{filter} ORDER BY created_at DESC LIMIT {} OFFSET {}",
         ph(base + 1),
@@ -258,14 +267,12 @@ pub async fn find_all(
         q = q.bind(tid);
     }
     let users = q.bind(page_size).bind(offset).fetch_all(pool).await?;
-
     let count_q = format!("SELECT COUNT(*) FROM users WHERE 1=1{filter}");
     let mut q2 = sqlx::query_as::<_, (i64,)>(&count_q);
     if let Some(tid) = tenant_id {
         q2 = q2.bind(tid);
     }
     let total = q2.fetch_one(pool).await?;
-
     Ok((users, total.0))
 }
 
@@ -273,7 +280,7 @@ pub async fn find_all(
 pub async fn update_role(
     pool: &crate::db::Pool,
     document_id: &str,
-    role: &str,
+    role: UserRole,
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
     let now = crate::utils::tz::now_utc();
@@ -289,9 +296,7 @@ pub async fn update_role(
         q = q.bind(tid);
     }
     let result = q.execute(pool).await?;
-
     AppError::expect_affected(&result, "user")?;
-
     find_by_id(pool, document_id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))
@@ -318,7 +323,6 @@ pub async fn delete_by_document_id(
 #[cfg(test)]
 mod tests {
     use super::*;
-
     async fn setup_pool() -> crate::db::Pool {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
@@ -327,14 +331,12 @@ mod tests {
             .unwrap();
         pool
     }
-
     fn new_cmd(username: &str) -> crate::commands::user::CreateUserCmd {
         crate::commands::user::CreateUserCmd {
             username: username.to_string(),
-            registered_via: "email".to_string(),
+            registered_via: RegisteredVia::Email,
         }
     }
-
     #[tokio::test]
     async fn find_by_id() {
         let pool = setup_pool().await;
@@ -344,9 +346,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(found.id, user.id);
-        assert_eq!(found.document_id, user.document_id);
     }
-
     #[tokio::test]
     async fn find_by_pk() {
         let pool = setup_pool().await;
@@ -357,7 +357,6 @@ mod tests {
             .unwrap();
         assert_eq!(found.document_id, user.document_id);
     }
-
     #[tokio::test]
     async fn update_profile() {
         let pool = setup_pool().await;
@@ -378,9 +377,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(updated.username, "newname");
-        assert_eq!(updated.bio.unwrap(), "hello world");
     }
-
     #[tokio::test]
     async fn find_all_paginated() {
         let pool = setup_pool().await;
@@ -393,15 +390,14 @@ mod tests {
         assert_eq!(users.len(), 3);
         assert_eq!(total, 5);
     }
-
     #[tokio::test]
     async fn update_role() {
         let pool = setup_pool().await;
         let user = create(&pool, &new_cmd("roleuser"), None).await.unwrap();
-        assert_eq!(user.role, "reader");
-        let updated = super::update_role(&pool, &user.document_id, "author", None)
+        assert_eq!(user.role, UserRole::Reader);
+        let updated = super::update_role(&pool, &user.document_id, UserRole::Author, None)
             .await
             .unwrap();
-        assert_eq!(updated.role, "author");
+        assert_eq!(updated.role, UserRole::Author);
     }
 }

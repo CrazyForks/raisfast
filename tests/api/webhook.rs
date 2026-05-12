@@ -2,7 +2,7 @@ use super::*;
 
 async fn setup_admin() -> (axum::Router, String) {
     let admin_id = uuid::Uuid::now_v7().to_string();
-    let token = make_token(&admin_id, 1, "admin");
+    let token = make_token(&admin_id, 1, raisfast::models::user::UserRole::Admin);
     let (app, _) = test_app().await;
     (app, token)
 }
@@ -114,7 +114,7 @@ async fn create_validation_empty_events() {
 async fn create_requires_admin() {
     let (mut app, _state) = test_app().await;
     let author_id = uuid::Uuid::now_v7().to_string();
-    let tok = make_token(&author_id, 1, "author");
+    let tok = make_token(&author_id, 1, raisfast::models::user::UserRole::Author);
     let (status, _body) = send(
         &mut app,
         post_json_auth(

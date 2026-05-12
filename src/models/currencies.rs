@@ -18,14 +18,8 @@ pub struct Currency {
     pub updated_at: Timestamp,
 }
 
-pub async fn find_by_code(
-    pool: &crate::db::Pool,
-    code: &str,
-) -> AppResult<Option<Currency>> {
-    let sql = format!(
-        "SELECT * FROM currencies WHERE code = {}",
-        ph(1)
-    );
+pub async fn find_by_code(pool: &crate::db::Pool, code: &str) -> AppResult<Option<Currency>> {
+    let sql = format!("SELECT * FROM currencies WHERE code = {}", ph(1));
     sqlx::query_as::<_, Currency>(&sql)
         .bind(code)
         .fetch_optional(pool)
@@ -63,9 +57,7 @@ pub async fn find_by_code_tx(
         .map_err(Into::into)
 }
 
-pub async fn find_all(
-    pool: &crate::db::Pool,
-) -> AppResult<Vec<Currency>> {
+pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Currency>> {
     let sql = "SELECT * FROM currencies ORDER BY code";
     sqlx::query_as::<_, Currency>(sql)
         .fetch_all(pool)
@@ -82,7 +74,12 @@ pub async fn create(
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
     let sql = format!(
         "INSERT INTO currencies (document_id, code, name, decimals, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {})",
-        ph(1), ph(2), ph(3), ph(4), ph(5), ph(6)
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5),
+        ph(6)
     );
     sqlx::query(&sql)
         .bind(&document_id)
@@ -120,7 +117,11 @@ pub async fn update(
 
     let sql = format!(
         "UPDATE currencies SET name = {}, is_active = {}, version = version + 1, updated_at = {} WHERE id = {} AND version = {}",
-        ph(1), ph(2), ph(3), ph(4), ph(5)
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5)
     );
     let affected = sqlx::query(&sql)
         .bind(name)
@@ -141,10 +142,7 @@ pub async fn update(
     find_by_code(pool, code).await
 }
 
-pub async fn delete_by_code(
-    pool: &crate::db::Pool,
-    code: &str,
-) -> AppResult<bool> {
+pub async fn delete_by_code(pool: &crate::db::Pool, code: &str) -> AppResult<bool> {
     let existing = find_by_code(pool, code).await?;
     let existing = match existing {
         Some(e) => e,
@@ -152,16 +150,17 @@ pub async fn delete_by_code(
     };
 
     let (count,): (i64,) = sqlx::query_as(&format!(
-        "SELECT COUNT(*) as count FROM wallets WHERE currency = {}", ph(1)
+        "SELECT COUNT(*) as count FROM wallets WHERE currency = {}",
+        ph(1)
     ))
     .bind(code)
     .fetch_one(pool)
     .await?;
 
     if count > 0 {
-        return Err(crate::errors::app_error::AppError::BadRequest(
-            format!("currency_in_use: {count} wallet(s) using '{code}'"),
-        ));
+        return Err(crate::errors::app_error::AppError::BadRequest(format!(
+            "currency_in_use: {count} wallet(s) using '{code}'"
+        )));
     }
 
     let sql = format!("DELETE FROM currencies WHERE id = {}", ph(1));
@@ -211,7 +210,9 @@ mod tests {
         create(&pool, "USD", "US Dollar", 2).await.unwrap();
 
         let updated = update(&pool, "USD", Some("US Dollar Updated"), None)
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(updated.name, "US Dollar Updated");
         assert_eq!(updated.decimals, 2);
     }
@@ -244,13 +245,15 @@ mod tests {
             &pool,
             &crate::commands::user::CreateUserCmd {
                 username: crate::utils::id::new_document_id(),
-                registered_via: "test".to_string(),
+                registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
         )
         .await
         .unwrap();
-        crate::models::wallet::create(&pool, user.id, "CNY").await.unwrap();
+        crate::models::wallet::create(&pool, user.id, "CNY")
+            .await
+            .unwrap();
 
         let err = delete_by_code(&pool, "CNY").await.unwrap_err();
         match err {

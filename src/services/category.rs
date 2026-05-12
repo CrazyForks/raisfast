@@ -131,7 +131,7 @@ mod tests {
         AuthUser::from_parts(
             Some("u1".to_string()),
             Some(1),
-            "admin".to_string(),
+            crate::models::user::UserRole::Admin,
             tid.map(|s| s.to_string()),
         )
     }

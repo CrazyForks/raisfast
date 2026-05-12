@@ -1,6 +1,6 @@
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::routing::{get, post as http_post};
-use axum::Json;
 
 use crate::dto;
 use crate::errors::app_error::AppError;
@@ -10,9 +10,7 @@ use crate::middleware::auth::AuthUser;
 use crate::models::wallet_transaction::{WalletReferenceType, WalletTxType};
 use crate::utils::pagination::PaginationParams;
 
-pub fn routes(
-    registry: &mut crate::server::RouteRegistry,
-) -> axum::Router<crate::AppState> {
+pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
     let r = axum::Router::new();
     let r = crate::reg_route!(
         r,
@@ -127,7 +125,8 @@ pub async fn list_wallets(
         .ok_or(AppError::Unauthorized)?;
 
     let wallets = state.wallet_repo.find_wallets_by_user(user.id).await?;
-    let items: Vec<dto::WalletResponse> = wallets.into_iter()
+    let items: Vec<dto::WalletResponse> = wallets
+        .into_iter()
         .map(dto::WalletResponse::from_wallet)
         .collect::<Result<_, _>>()?;
     Ok(ApiResponse::success(items))
@@ -156,7 +155,10 @@ pub async fn list_transactions(
     State(state): State<crate::AppState>,
     Path(currency): Path<String>,
     Query(params): Query<PaginationParams>,
-) -> Result<ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>, AppError> {
+) -> Result<
+    ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>,
+    AppError,
+> {
     let user_id = auth.ensure_authenticated()?;
     let user = crate::models::user::find_by_id(&state.pool, user_id, auth.tenant_id())
         .await?
@@ -173,7 +175,8 @@ pub async fn list_transactions(
         .find_transactions_by_wallet(w.id, params.page, params.page_size)
         .await?;
 
-    let items = crate::services::wallet::tx_list_to_response(state.wallet_repo.as_ref(), rows).await?;
+    let items =
+        crate::services::wallet::tx_list_to_response(state.wallet_repo.as_ref(), rows).await?;
     Ok(params.paginate(items, total))
 }
 
@@ -181,7 +184,10 @@ pub async fn list_all_transactions(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Query(params): Query<PaginationParams>,
-) -> Result<ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>, AppError> {
+) -> Result<
+    ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>,
+    AppError,
+> {
     let user_id = auth.ensure_authenticated()?;
     let user = crate::models::user::find_by_id(&state.pool, user_id, auth.tenant_id())
         .await?
@@ -192,7 +198,8 @@ pub async fn list_all_transactions(
         .find_transactions_by_user(user.id, params.page, params.page_size)
         .await?;
 
-    let items = crate::services::wallet::tx_list_to_response(state.wallet_repo.as_ref(), rows).await?;
+    let items =
+        crate::services::wallet::tx_list_to_response(state.wallet_repo.as_ref(), rows).await?;
     Ok(params.paginate(items, total))
 }
 
@@ -204,8 +211,12 @@ pub async fn list_all_wallets(
     Query(params): Query<PaginationParams>,
 ) -> Result<ApiResponse<crate::errors::response::PaginatedData<dto::WalletResponse>>, AppError> {
     auth.ensure_admin()?;
-    let (rows, total) = state.wallet_repo.find_all_wallets(params.page, params.page_size).await?;
-    let items: Vec<dto::WalletResponse> = rows.into_iter()
+    let (rows, total) = state
+        .wallet_repo
+        .find_all_wallets(params.page, params.page_size)
+        .await?;
+    let items: Vec<dto::WalletResponse> = rows
+        .into_iter()
         .map(dto::WalletResponse::from_wallet)
         .collect::<Result<_, _>>()?;
     Ok(params.paginate(items, total))
@@ -215,10 +226,17 @@ pub async fn list_all_transactions_admin(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Query(params): Query<PaginationParams>,
-) -> Result<ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>, AppError> {
+) -> Result<
+    ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>,
+    AppError,
+> {
     auth.ensure_admin()?;
-    let (rows, total) = state.wallet_repo.find_all_transactions(params.page, params.page_size).await?;
-    let items = crate::services::wallet::tx_list_to_response(state.wallet_repo.as_ref(), rows).await?;
+    let (rows, total) = state
+        .wallet_repo
+        .find_all_transactions(params.page, params.page_size)
+        .await?;
+    let items =
+        crate::services::wallet::tx_list_to_response(state.wallet_repo.as_ref(), rows).await?;
     Ok(params.paginate(items, total))
 }
 
@@ -241,8 +259,7 @@ pub async fn admin_credit(
         req.amount,
         WalletTxType::Recharge,
         &req.transaction_no,
-        req.reference_type.map(|s| s.parse()).transpose().map_err(|e: String| AppError::BadRequest(e))?
-            .or(Some(WalletReferenceType::Admin)),
+        req.reference_type.or(Some(WalletReferenceType::Admin)),
         req.reference_id.as_deref(),
         req.metadata.as_deref(),
     )
@@ -271,8 +288,7 @@ pub async fn admin_debit(
         req.amount,
         WalletTxType::Payment,
         &req.transaction_no,
-        req.reference_type.map(|s| s.parse()).transpose().map_err(|e: String| AppError::BadRequest(e))?
-            .or(Some(WalletReferenceType::Admin)),
+        req.reference_type.or(Some(WalletReferenceType::Admin)),
         req.reference_id.as_deref(),
         req.metadata.as_deref(),
     )
@@ -287,7 +303,10 @@ pub async fn list_user_transactions(
     State(state): State<crate::AppState>,
     Path((user_doc_id, currency)): Path<(String, String)>,
     Query(params): Query<PaginationParams>,
-) -> Result<ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>, AppError> {
+) -> Result<
+    ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>,
+    AppError,
+> {
     auth.ensure_admin()?;
     let user = crate::models::user::find_by_id(&state.pool, &user_doc_id, None)
         .await?
@@ -304,7 +323,8 @@ pub async fn list_user_transactions(
         .find_transactions_by_wallet(w.id, params.page, params.page_size)
         .await?;
 
-    let items = crate::services::wallet::tx_list_to_response(state.wallet_repo.as_ref(), rows).await?;
+    let items =
+        crate::services::wallet::tx_list_to_response(state.wallet_repo.as_ref(), rows).await?;
     Ok(params.paginate(items, total))
 }
 
@@ -313,7 +333,10 @@ pub async fn list_user_all_transactions(
     State(state): State<crate::AppState>,
     Path(user_doc_id): Path<String>,
     Query(params): Query<PaginationParams>,
-) -> Result<ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>, AppError> {
+) -> Result<
+    ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>,
+    AppError,
+> {
     auth.ensure_admin()?;
     let user = crate::models::user::find_by_id(&state.pool, &user_doc_id, None)
         .await?
@@ -324,7 +347,8 @@ pub async fn list_user_all_transactions(
         .find_transactions_by_user(user.id, params.page, params.page_size)
         .await?;
 
-    let items = crate::services::wallet::tx_list_to_response(state.wallet_repo.as_ref(), rows).await?;
+    let items =
+        crate::services::wallet::tx_list_to_response(state.wallet_repo.as_ref(), rows).await?;
     Ok(params.paginate(items, total))
 }
 

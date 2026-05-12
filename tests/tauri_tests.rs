@@ -264,7 +264,7 @@ async fn tauri_auth_get_me_service() {
     let auth = raisfast::middleware::auth::AuthUser::from_parts(
         Some(user.id.clone()),
         None,
-        "author".to_string(),
+        raisfast::models::user::UserRole::Author,
         None,
     );
     let result = user::get_me(&user_repo, &auth).await;
@@ -296,7 +296,7 @@ async fn tauri_post_create_and_list() {
         content: "Hello world".into(),
         excerpt: None,
         cover_image: None,
-        status: Some("published".into()),
+        status: Some(raisfast::models::post::PostStatus::Published),
         category_id: None,
         tag_ids: None,
     };
@@ -304,7 +304,7 @@ async fn tauri_post_create_and_list() {
     let auth = raisfast::middleware::auth::AuthUser::from_parts(
         Some(author_doc_id.clone()),
         Some(author_int_id),
-        "author".to_string(),
+        raisfast::models::user::UserRole::Author,
         None,
     );
     let created = post::create_post(post_repo.as_ref(), &plugin_mgr, &eventbus, &auth, req)
@@ -352,7 +352,7 @@ async fn tauri_post_get_by_slug() {
         content: "content".into(),
         excerpt: None,
         cover_image: None,
-        status: Some("published".into()),
+        status: Some(raisfast::models::post::PostStatus::Published),
         category_id: None,
         tag_ids: None,
     };
@@ -360,7 +360,7 @@ async fn tauri_post_get_by_slug() {
     let auth = raisfast::middleware::auth::AuthUser::from_parts(
         Some(author_doc_id.clone()),
         Some(author_int_id),
-        "author".to_string(),
+        raisfast::models::user::UserRole::Author,
         None,
     );
     let created = post::create_post(post_repo.as_ref(), &plugin_mgr, &eventbus, &auth, req)

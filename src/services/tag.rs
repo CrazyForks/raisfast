@@ -77,7 +77,12 @@ mod tests {
     }
 
     fn auth() -> AuthUser {
-        AuthUser::from_parts(Some("u1".to_string()), Some(1), "admin".to_string(), None)
+        AuthUser::from_parts(
+            Some("u1".to_string()),
+            Some(1),
+            crate::models::user::UserRole::Admin,
+            None,
+        )
     }
 
     #[tokio::test]

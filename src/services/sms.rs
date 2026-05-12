@@ -78,9 +78,12 @@ pub async fn verify_sms_and_auth(
         }
     }
 
-    let cred =
-        crate::models::user_credential::find_by_auth_type_and_identifier(pool, "phone", phone)
-            .await?;
+    let cred = crate::models::user_credential::find_by_auth_type_and_identifier(
+        pool,
+        crate::models::user_credential::AuthType::Phone,
+        phone,
+    )
+    .await?;
 
     let user = match cred {
         Some(c) => crate::models::user::find_by_pk(pool, c.user_id, None)
@@ -95,20 +98,29 @@ pub async fn verify_sms_and_auth(
                 .create(
                     crate::commands::CreateUserCmd {
                         username,
-                        registered_via: "sms".to_string(),
+                        registered_via: crate::models::user::RegisteredVia::Phone,
                     },
                     None,
                 )
                 .await?;
-            crate::models::user_credential::create(pool, user.id, "phone", phone, "", true).await?;
+            crate::models::user_credential::create(
+                pool,
+                user.id,
+                crate::models::user_credential::AuthType::Phone,
+                phone,
+                "",
+                true,
+            )
+            .await?;
             user
         }
     };
 
+    let user_role = user.role;
     let access_token = crate::services::auth::generate_access_token_internal(
         &user.document_id,
         user.id,
-        &user.role,
+        user_role,
         user.tenant_id
             .as_deref()
             .unwrap_or(crate::constants::DEFAULT_TENANT),
@@ -126,7 +138,7 @@ pub async fn verify_sms_and_auth(
         access_token,
         refresh_token: refresh_token_str,
         expires_in: jwt_access_expires,
-        user: user.into(),
+        user: crate::dto::UserResponse::from_user(user)?,
     })
 }
 
@@ -144,9 +156,13 @@ pub async fn bind_phone(
         .await?
         .ok_or(AppError::Unauthorized)?;
 
-    if crate::models::user_credential::find_by_auth_type_and_identifier(pool, "phone", phone)
-        .await?
-        .is_some()
+    if crate::models::user_credential::find_by_auth_type_and_identifier(
+        pool,
+        crate::models::user_credential::AuthType::Phone,
+        phone,
+    )
+    .await?
+    .is_some()
     {
         return Err(AppError::Conflict("phone_already_bound".into()));
     }
@@ -173,7 +189,15 @@ pub async fn bind_phone(
         }
     }
 
-    crate::models::user_credential::create(pool, _user.id, "phone", phone, "", true).await?;
+    crate::models::user_credential::create(
+        pool,
+        _user.id,
+        crate::models::user_credential::AuthType::Phone,
+        phone,
+        "",
+        true,
+    )
+    .await?;
     Ok(())
 }
 

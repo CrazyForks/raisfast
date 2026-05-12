@@ -14,7 +14,7 @@ use crate::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::eventbus::{Event, EventBus};
 use crate::middleware::auth::AuthUser;
-use crate::models::post::PostJoinedRow;
+use crate::models::post::{PostJoinedRow, PostStatus};
 use crate::plugins::{HookPoint, PluginManager};
 use crate::repositories::PostRepository;
 use crate::search::SearchEngine;
@@ -56,15 +56,17 @@ async fn joined_row_to_response(
     r: PostJoinedRow,
     tags: Vec<crate::models::post::TagBrief>,
     _plugins: &PluginManager,
-) -> PostResponse {
-    PostResponse {
+) -> AppResult<PostResponse> {
+    let status = r.status;
+    let comment_status = r.comment_status;
+    Ok(PostResponse {
         id: r.document_id,
         title: r.title,
         slug: r.slug,
         content: r.content,
         excerpt: r.excerpt,
         cover_image: r.cover_image,
-        status: r.status,
+        status,
         created_by: r.created_by,
         author_name: r.author_name,
         category_id: r.category_id,
@@ -73,7 +75,7 @@ async fn joined_row_to_response(
         view_count: r.view_count,
         is_pinned: r.is_pinned,
         password: r.password,
-        comment_status: r.comment_status,
+        comment_status,
         format: r.format,
         template: r.template,
         meta_title: r.meta_title,
@@ -88,7 +90,7 @@ async fn joined_row_to_response(
         published_at: r.published_at,
         title_highlight: None,
         excerpt_highlight: None,
-    }
+    })
 }
 
 async fn build_response_from_post(
@@ -96,15 +98,17 @@ async fn build_response_from_post(
     author_name: Option<String>,
     category_name: Option<String>,
     tags: Vec<crate::models::post::TagBrief>,
-) -> PostResponse {
-    PostResponse {
+) -> AppResult<PostResponse> {
+    let status = post.status;
+    let comment_status = post.comment_status;
+    Ok(PostResponse {
         id: post.document_id.clone(),
         title: post.title.clone(),
         slug: post.slug.clone(),
         content: post.content.clone(),
         excerpt: post.excerpt.clone(),
         cover_image: post.cover_image.clone(),
-        status: post.status.clone(),
+        status,
         created_by: post.created_by,
         author_name,
         category_id: post.category_id,
@@ -113,7 +117,7 @@ async fn build_response_from_post(
         view_count: post.view_count,
         is_pinned: post.is_pinned,
         password: post.password.clone(),
-        comment_status: post.comment_status.clone(),
+        comment_status,
         format: post.format.clone(),
         template: post.template.clone(),
         meta_title: post.meta_title.clone(),
@@ -128,7 +132,7 @@ async fn build_response_from_post(
         published_at: post.published_at,
         title_highlight: None,
         excerpt_highlight: None,
-    }
+    })
 }
 
 async fn build_post_response_from_repo(
@@ -142,7 +146,7 @@ async fn build_post_response_from_repo(
         .get_post_tags(row.id, auth.tenant_id())
         .await
         .unwrap_or_default();
-    Ok(joined_row_to_response(row, tags, plugins).await)
+    joined_row_to_response(row, tags, plugins).await
 }
 
 fn make_unique_slug(base_slug: &str) -> String {
@@ -178,7 +182,7 @@ pub async fn create_post(
         .await?;
     let base_slug = slugify(&req.title);
     let slug = make_unique_slug(&base_slug);
-    let status = req.status.as_deref().unwrap_or("draft");
+    let status = req.status.unwrap_or(PostStatus::Draft);
     let excerpt = req.excerpt.as_deref().map_or_else(
         || extract_excerpt(&req.content, 200),
         std::string::ToString::to_string,
@@ -210,7 +214,7 @@ pub async fn create_post(
         content: req.content,
         excerpt: Some(excerpt),
         cover_image: req.cover_image,
-        status: status.to_string(),
+        status,
         created_by: auth.user_int_id().ok_or(AppError::Unauthorized)?,
         updated_by: auth.user_int_id(),
         category_id,
@@ -238,7 +242,7 @@ pub async fn create_post(
         .await
         .unwrap_or_default();
 
-    let resp = build_response_from_post(&p, author_name, category_name, tags).await;
+    let resp = build_response_from_post(&p, author_name, category_name, tags).await?;
     tracing::Span::current().record("slug", &resp.slug);
     eventbus.emit(Event::PostCreated {
         id: p.document_id.clone(),
@@ -316,9 +320,9 @@ pub async fn batch_posts(
             }
             "publish" | "unpublish" => {
                 let status = if action == "publish" {
-                    "published"
+                    PostStatus::Published
                 } else {
-                    "draft"
+                    PostStatus::Draft
                 };
                 if let Some(post) = repo.find_by_id(int_id, auth.tenant_id()).await? {
                     let cmd = UpdatePostCmd {
@@ -328,7 +332,7 @@ pub async fn batch_posts(
                         content: None,
                         excerpt: None,
                         cover_image: None,
-                        status: Some(status.to_string()),
+                        status: Some(status),
                         category_id: None,
                         tag_ids: None,
                         updated_by: auth.user_int_id(),
@@ -485,7 +489,7 @@ pub async fn get_post(
         .get_post_tags(row.id, auth.tenant_id())
         .await
         .unwrap_or_default();
-    Ok(joined_row_to_response(row, tags, plugins).await)
+    joined_row_to_response(row, tags, plugins).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -601,6 +605,8 @@ pub async fn list_posts(
         let (title_hl, excerpt_hl): (Option<String>, Option<String>) = highlights
             .get(&r.id)
             .map_or((None, None), |(t, e)| (t.clone(), e.clone()));
+        let status = r.status;
+        let comment_status = r.comment_status;
         responses.push(PostResponse {
             id: r.document_id.clone(),
             title: r.title,
@@ -608,7 +614,7 @@ pub async fn list_posts(
             content: r.content,
             excerpt: r.excerpt,
             cover_image: r.cover_image,
-            status: r.status,
+            status,
             created_by: r.created_by,
             author_name: r.author_name,
             category_id: r.category_id,
@@ -617,7 +623,7 @@ pub async fn list_posts(
             view_count: r.view_count,
             is_pinned: r.is_pinned,
             password: r.password,
-            comment_status: r.comment_status,
+            comment_status,
             format: r.format,
             template: r.template,
             meta_title: r.meta_title,
@@ -652,14 +658,14 @@ pub async fn get_post_any_status(
         .get_post_tags(row.id, auth.tenant_id())
         .await
         .unwrap_or_default();
-    Ok(joined_row_to_response(row, tags, plugins).await)
+    joined_row_to_response(row, tags, plugins).await
 }
 
 pub async fn list_all_posts(
     repo: &dyn PostRepository,
     page: i64,
     page_size: i64,
-    status: Option<&str>,
+    status: Option<PostStatus>,
     _plugins: &PluginManager,
     auth: &AuthUser,
 ) -> AppResult<(Vec<PostResponse>, i64)> {
@@ -675,6 +681,8 @@ pub async fn list_all_posts(
 
     let mut responses = Vec::with_capacity(rows.len());
     for r in rows {
+        let status = r.status;
+        let comment_status = r.comment_status;
         responses.push(PostResponse {
             id: r.document_id.clone(),
             title: r.title,
@@ -682,7 +690,7 @@ pub async fn list_all_posts(
             content: r.content,
             excerpt: r.excerpt,
             cover_image: r.cover_image,
-            status: r.status,
+            status,
             created_by: r.created_by,
             author_name: r.author_name,
             category_id: r.category_id,
@@ -691,7 +699,7 @@ pub async fn list_all_posts(
             view_count: r.view_count,
             is_pinned: r.is_pinned,
             password: r.password,
-            comment_status: r.comment_status,
+            comment_status,
             format: r.format,
             template: r.template,
             meta_title: r.meta_title,

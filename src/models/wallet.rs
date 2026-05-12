@@ -20,15 +20,9 @@ pub struct Wallet {
     pub currency: String,
     pub balance: i64,
     pub version: i64,
-    pub status: String,
+    pub status: WalletStatus,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
-}
-
-impl Wallet {
-    pub fn status_enum(&self) -> Result<WalletStatus, String> {
-        self.status.parse()
-    }
 }
 
 pub async fn find_by_user_and_currency(
@@ -58,10 +52,7 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<Option<Wal
         .map_err(Into::into)
 }
 
-pub async fn find_by_user(
-    pool: &crate::db::Pool,
-    user_id: i64,
-) -> AppResult<Vec<Wallet>> {
+pub async fn find_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<Vec<Wallet>> {
     let sql = format!("SELECT * FROM wallets WHERE user_id = {}", ph(1));
     sqlx::query_as::<_, Wallet>(&sql)
         .bind(user_id)
@@ -70,15 +61,15 @@ pub async fn find_by_user(
         .map_err(Into::into)
 }
 
-pub async fn create(
-    pool: &crate::db::Pool,
-    user_id: i64,
-    currency: &str,
-) -> AppResult<Wallet> {
+pub async fn create(pool: &crate::db::Pool, user_id: i64, currency: &str) -> AppResult<Wallet> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
     let sql = format!(
         "INSERT INTO wallets (document_id, user_id, currency, created_at, updated_at) VALUES ({}, {}, {}, {}, {})",
-        ph(1), ph(2), ph(3), ph(4), ph(5)
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5)
     );
     sqlx::query(&sql)
         .bind(&document_id)
@@ -114,11 +105,13 @@ pub async fn find_all_wallets(
     page_size: i64,
 ) -> AppResult<(Vec<Wallet>, i64)> {
     let offset = (page - 1) * page_size;
-    let (total,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) as count FROM wallets").fetch_one(pool).await?;
+    let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) as count FROM wallets")
+        .fetch_one(pool)
+        .await?;
     let sql = format!(
         "SELECT * FROM wallets ORDER BY created_at DESC LIMIT {} OFFSET {}",
-        ph(1), ph(2)
+        ph(1),
+        ph(2)
     );
     let rows = sqlx::query_as::<_, Wallet>(&sql)
         .bind(page_size)
@@ -146,7 +139,7 @@ mod tests {
             pool,
             &crate::commands::user::CreateUserCmd {
                 username: crate::utils::id::new_document_id(),
-                registered_via: "test".to_string(),
+                registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
         )
@@ -163,7 +156,7 @@ mod tests {
         assert_eq!(w.currency, "CNY");
         assert_eq!(w.balance, 0);
         assert_eq!(w.version, 1);
-        assert_eq!(w.status, WalletStatus::Active.as_str());
+        assert_eq!(w.status, WalletStatus::Active);
     }
 
     #[tokio::test]
@@ -208,10 +201,12 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool).await;
         create(&pool, user.id, "CNY").await.unwrap();
-        assert!(find_by_user_and_currency(&pool, user.id, "USD")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            find_by_user_and_currency(&pool, user.id, "USD")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]

@@ -33,7 +33,7 @@ use crate::utils::auth::extract_claims;
 #[derive(Debug, Clone)]
 pub struct PermissionGuard {
     pub user_id: String,
-    pub role: String,
+    pub role: crate::models::user::UserRole,
     pub tenant_id: String,
 }
 
@@ -46,10 +46,10 @@ impl PermissionGuard {
         subject: &str,
     ) -> Result<(), AppError> {
         let role_id = rbac
-            .get_role_id_by_name(&self.role)
+            .get_role_id_by_name(self.role.as_str())
             .await?
             .map(|id| id.to_string())
-            .unwrap_or_else(|| self.role.clone());
+            .unwrap_or_else(|| self.role.as_str().to_string());
 
         rbac.check_permission(&role_id, action, subject, None).await
     }
@@ -62,10 +62,10 @@ impl PermissionGuard {
         context: &HashMap<String, Value>,
     ) -> Result<(), AppError> {
         let role_id = rbac
-            .get_role_id_by_name(&self.role)
+            .get_role_id_by_name(self.role.as_str())
             .await?
             .map(|id| id.to_string())
-            .unwrap_or_else(|| self.role.clone());
+            .unwrap_or_else(|| self.role.as_str().to_string());
 
         rbac.check_permission(&role_id, action, subject, Some(context))
             .await

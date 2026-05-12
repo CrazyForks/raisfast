@@ -13,7 +13,11 @@ struct Ctx {
 async fn setup() -> Ctx {
     let (mut app, state) = test_app().await;
     let (author_int_id, author_doc_id) = create_author(&state.pool).await;
-    let tok = make_token(&author_doc_id, author_int_id, "author");
+    let tok = make_token(
+        &author_doc_id,
+        author_int_id,
+        raisfast::models::user::UserRole::Author,
+    );
 
     let (_, cb): (StatusCode, Value) = send(
         &mut app,
@@ -433,7 +437,11 @@ async fn admin_can_update_others_post() {
     let mut c = setup().await;
     let slug = create_published_post(&mut c.app, &c.tok).await;
     let admin_id = create_admin(&c.state.pool).await;
-    let admin_tok = make_token(&admin_id.1, admin_id.0, "admin");
+    let admin_tok = make_token(
+        &admin_id.1,
+        admin_id.0,
+        raisfast::models::user::UserRole::Admin,
+    );
     let (status, body): (StatusCode, Value) = send(
         &mut c.app,
         put_json_auth(
@@ -482,7 +490,11 @@ async fn admin_can_delete_others() {
     let mut c = setup().await;
     let slug = create_published_post(&mut c.app, &c.tok).await;
     let admin_id = create_admin(&c.state.pool).await;
-    let admin_tok = make_token(&admin_id.1, admin_id.0, "admin");
+    let admin_tok = make_token(
+        &admin_id.1,
+        admin_id.0,
+        raisfast::models::user::UserRole::Admin,
+    );
     let (status, _): (StatusCode, Value) = send(
         &mut c.app,
         delete_auth(&format!("/api/v1/posts/{slug}"), &admin_tok),

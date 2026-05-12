@@ -40,35 +40,18 @@ pub struct WalletTransaction {
     pub document_id: String,
     pub wallet_id: i64,
     pub user_id: i64,
-    pub entry_type: String,
+    pub entry_type: WalletEntryType,
     pub amount: i64,
     pub balance_after: i64,
-    pub tx_type: String,
+    pub tx_type: WalletTxType,
     pub currency: String,
     pub transaction_no: String,
     pub related_tx_id: Option<i64>,
-    pub reference_type: Option<String>,
+    pub reference_type: Option<WalletReferenceType>,
     pub reference_id: Option<String>,
     pub counterparty_wallet_id: Option<i64>,
     pub metadata: Option<String>,
     pub created_at: Timestamp,
-}
-
-impl WalletTransaction {
-    pub fn entry_type_enum(&self) -> Result<WalletEntryType, String> {
-        self.entry_type.parse()
-    }
-
-    pub fn tx_type_enum(&self) -> Result<WalletTxType, String> {
-        self.tx_type.parse()
-    }
-
-    pub fn reference_type_enum(&self) -> Result<Option<WalletReferenceType>, String> {
-        match &self.reference_type {
-            None => Ok(None),
-            Some(s) => s.parse().map(Some),
-        }
-    }
 }
 
 pub async fn find_transactions_by_wallet(
@@ -89,7 +72,9 @@ pub async fn find_transactions_by_wallet(
 
     let sql = format!(
         "SELECT * FROM wallet_transactions WHERE wallet_id = {} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-        ph(1), ph(2), ph(3)
+        ph(1),
+        ph(2),
+        ph(3)
     );
     let rows = sqlx::query_as::<_, WalletTransaction>(&sql)
         .bind(wallet_id)
@@ -118,7 +103,9 @@ pub async fn find_transactions_by_user(
 
     let sql = format!(
         "SELECT * FROM wallet_transactions WHERE user_id = {} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-        ph(1), ph(2), ph(3)
+        ph(1),
+        ph(2),
+        ph(3)
     );
     let rows = sqlx::query_as::<_, WalletTransaction>(&sql)
         .bind(user_id)
@@ -135,11 +122,13 @@ pub async fn find_all_transactions(
     page_size: i64,
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
     let offset = (page - 1) * page_size;
-    let (total,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) as count FROM wallet_transactions").fetch_one(pool).await?;
+    let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) as count FROM wallet_transactions")
+        .fetch_one(pool)
+        .await?;
     let sql = format!(
         "SELECT * FROM wallet_transactions ORDER BY created_at DESC LIMIT {} OFFSET {}",
-        ph(1), ph(2)
+        ph(1),
+        ph(2)
     );
     let rows = sqlx::query_as::<_, WalletTransaction>(&sql)
         .bind(page_size)
@@ -191,10 +180,7 @@ pub async fn find_tx_by_document_id(
         .map_err(Into::into)
 }
 
-pub async fn has_reversal_for(
-    pool: &crate::db::Pool,
-    related_tx_id: i64,
-) -> AppResult<bool> {
+pub async fn has_reversal_for(pool: &crate::db::Pool, related_tx_id: i64) -> AppResult<bool> {
     let sql = format!(
         "SELECT COUNT(*) as count FROM wallet_transactions WHERE related_tx_id = {} AND tx_type = {}",
         ph(1),
@@ -202,7 +188,7 @@ pub async fn has_reversal_for(
     );
     let (count,): (i64,) = sqlx::query_as(&sql)
         .bind(related_tx_id)
-        .bind(WalletTxType::Refund.as_str())
+        .bind(WalletTxType::Refund)
         .fetch_one(pool)
         .await?;
     Ok(count > 0)
@@ -246,7 +232,7 @@ mod tests {
             pool,
             &crate::commands::user::CreateUserCmd {
                 username: crate::utils::id::new_document_id(),
-                registered_via: "test".to_string(),
+                registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
         )
@@ -256,7 +242,11 @@ mod tests {
 
     async fn seed_wallet_and_tx(
         pool: &crate::db::Pool,
-    ) -> (crate::models::user::User, crate::models::wallet::Wallet, WalletTransaction) {
+    ) -> (
+        crate::models::user::User,
+        crate::models::wallet::Wallet,
+        WalletTransaction,
+    ) {
         let user = insert_user(pool).await;
         let w = crate::models::wallet::create(pool, user.id, "CNY")
             .await
@@ -274,10 +264,10 @@ mod tests {
         .bind(&doc_id)
         .bind(w.id)
         .bind(user.id)
-        .bind(WalletEntryType::Credit.as_str())
+        .bind(WalletEntryType::Credit)
         .bind(1000_i64)
         .bind(1000_i64)
-        .bind(WalletTxType::Recharge.as_str())
+        .bind(WalletTxType::Recharge)
         .bind("CNY")
         .bind(&tx_no)
         .bind(now)
@@ -301,16 +291,18 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(found.amount, 1000);
-        assert_eq!(found.entry_type, WalletEntryType::Credit.as_str());
+        assert_eq!(found.entry_type, WalletEntryType::Credit);
     }
 
     #[tokio::test]
     async fn find_tx_by_transaction_no_not_found() {
         let pool = setup_pool().await;
-        assert!(find_tx_by_transaction_no(&pool, "nonexistent")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            find_tx_by_transaction_no(&pool, "nonexistent")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -336,7 +328,7 @@ mod tests {
             .unwrap();
         assert_eq!(total, 1);
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].entry_type, WalletEntryType::Credit.as_str());
+        assert_eq!(rows[0].entry_type, WalletEntryType::Credit);
     }
 
     #[tokio::test]
@@ -384,10 +376,10 @@ mod tests {
         .bind(&rev_doc_id)
         .bind(tx.wallet_id)
         .bind(tx.user_id)
-        .bind(WalletEntryType::Debit.as_str())
+        .bind(WalletEntryType::Debit)
         .bind(1000_i64)
         .bind(0_i64)
-        .bind(WalletTxType::Refund.as_str())
+        .bind(WalletTxType::Refund)
         .bind("CNY")
         .bind(&rev_no)
         .bind(tx.id)

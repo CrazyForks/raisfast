@@ -295,7 +295,7 @@ mod tests {
     async fn insert_user(pool: &crate::db::Pool) -> i64 {
         let cmd = crate::commands::user::CreateUserCmd {
             username: crate::utils::id::new_document_id(),
-            registered_via: "test".to_string(),
+            registered_via: crate::models::user::RegisteredVia::Email,
         };
         let user = crate::models::user::create(pool, &cmd, None).await.unwrap();
         user.id

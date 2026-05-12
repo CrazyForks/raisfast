@@ -11,8 +11,8 @@ use crate::cache::MemoryCache;
 use crate::config::app::AppConfig;
 use crate::constants::DEFAULT_TENANT;
 use crate::handlers::{
-    api_token, auth, category, comment, cron, health, media, options, page, plugin,
-    post, rbac, reusable_block, rss, sse, stats, tag, tenant, user, wallet, ws,
+    api_token, auth, category, comment, cron, health, media, options, page, plugin, post, rbac,
+    reusable_block, rss, sse, stats, tag, tenant, user, wallet, ws,
 };
 use crate::middleware::locale::locale_middleware;
 use crate::middleware::metrics;

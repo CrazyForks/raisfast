@@ -1,7 +1,7 @@
 //! 基于 sqlx 的 `CommentRepository` 实现
 
 use crate::errors::app_error::AppResult;
-use crate::models::comment::{self, AdminCommentRow, Comment};
+use crate::models::comment::{self, AdminCommentRow, Comment, CommentStatus};
 
 use crate::commands::CreateCommentCmd;
 use crate::repositories::define_sqlx_repo;
@@ -49,7 +49,12 @@ pub trait CommentRepository: Send + Sync {
     ) -> AppResult<(Vec<AdminCommentRow>, i64)>;
 
     /// 更新评论审核状态
-    async fn update_status(&self, id: i64, status: &str, tenant_id: Option<&str>) -> AppResult<()>;
+    async fn update_status(
+        &self,
+        id: i64,
+        status: CommentStatus,
+        tenant_id: Option<&str>,
+    ) -> AppResult<()>;
 
     /// 删除评论
     async fn delete(&self, id: i64, tenant_id: Option<&str>) -> AppResult<()>;
@@ -101,7 +106,12 @@ impl CommentRepository for SqlxCommentRepository {
         comment::find_all_paginated(&self.pool, page, page_size, tenant_id).await
     }
 
-    async fn update_status(&self, id: i64, status: &str, tenant_id: Option<&str>) -> AppResult<()> {
+    async fn update_status(
+        &self,
+        id: i64,
+        status: CommentStatus,
+        tenant_id: Option<&str>,
+    ) -> AppResult<()> {
         comment::update_status(&self.pool, id, status, tenant_id).await
     }
 

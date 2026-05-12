@@ -20,6 +20,24 @@ use serde::{Deserialize, Serialize};
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
+define_enum!(
+    JobStatus {
+        Pending = "pending",
+        Running = "running",
+        Completed = "completed",
+        Failed = "failed",
+        Dead = "dead",
+    }
+);
+
+define_enum!(
+    CronExecStatus {
+        Running = "running",
+        Completed = "completed",
+        Failed = "failed",
+    }
+);
+
 pub use dispatcher::PluginCronDispatcher;
 pub use enqueuer::JobEnqueuer;
 pub use handler::{JobHandler, JobHandlerRegistry, LogJobHandler};
@@ -144,7 +162,7 @@ pub trait JobQueue: Send + Sync {
     async fn stats(&self) -> AppResult<JobStats>;
     async fn list(
         &self,
-        status: Option<&str>,
+        status: Option<JobStatus>,
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<JobRow>, i64)>;
@@ -169,7 +187,7 @@ pub struct JobRow {
     pub document_id: String,
     pub job_type: String,
     pub payload: String,
-    pub status: String,
+    pub status: JobStatus,
     pub attempts: u32,
     pub max_attempts: u32,
     pub run_after: Option<Timestamp>,

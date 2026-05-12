@@ -5,7 +5,9 @@ use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
-use crate::models::user::User;
+use crate::errors::app_error::AppResult;
+use crate::models::user::{RegisteredVia, User, UserRole, UserStatus};
+use crate::models::user_credential::AuthType;
 use crate::utils::tz::Timestamp;
 
 use super::validate_password;
@@ -62,10 +64,9 @@ pub struct UpdatePasswordRequest {
 }
 
 /// 管理员更新角色请求体
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateRoleRequest {
-    #[validate(length(min = 1))]
-    pub role: String,
+    pub role: UserRole,
 }
 
 /// 请求密码重置
@@ -136,7 +137,7 @@ pub struct BindEmailRequest {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CredentialResponse {
     pub id: i64,
-    pub auth_type: String,
+    pub auth_type: AuthType,
     pub identifier: String,
     pub verified: bool,
     #[schema(value_type = String)]
@@ -145,16 +146,16 @@ pub struct CredentialResponse {
     pub updated_at: Timestamp,
 }
 
-impl From<crate::models::user_credential::UserCredential> for CredentialResponse {
-    fn from(c: crate::models::user_credential::UserCredential) -> Self {
-        Self {
+impl CredentialResponse {
+    pub fn from_credential(c: crate::models::user_credential::UserCredential) -> AppResult<Self> {
+        Ok(Self {
             id: c.id,
             auth_type: c.auth_type,
             identifier: c.identifier,
             verified: c.verified == 1,
             created_at: c.created_at,
             updated_at: c.updated_at,
-        }
+        })
     }
 }
 
@@ -189,9 +190,9 @@ pub struct ResendVerificationRequest {
 pub struct UserResponse {
     pub id: String,
     pub username: String,
-    pub role: String,
-    pub status: String,
-    pub registered_via: String,
+    pub role: UserRole,
+    pub status: UserStatus,
+    pub registered_via: RegisteredVia,
     pub avatar: Option<String>,
     pub bio: Option<String>,
     pub website: Option<String>,
@@ -206,14 +207,17 @@ pub struct UserResponse {
     pub updated_at: Timestamp,
 }
 
-impl From<User> for UserResponse {
-    fn from(user: User) -> Self {
-        Self {
+impl UserResponse {
+    pub fn from_user(user: User) -> AppResult<Self> {
+        let role = user.role;
+        let status = user.status;
+        let registered_via = user.registered_via;
+        Ok(Self {
             id: user.document_id,
             username: user.username,
-            role: user.role,
-            status: user.status,
-            registered_via: user.registered_via,
+            role,
+            status,
+            registered_via,
             avatar: user.avatar,
             bio: user.bio,
             website: user.website,
@@ -224,7 +228,7 @@ impl From<User> for UserResponse {
             metadata: crate::models::user::parse_metadata(&user.metadata),
             created_at: user.created_at,
             updated_at: user.updated_at,
-        }
+        })
     }
 }
 
@@ -347,9 +351,9 @@ mod tests {
         let resp = UserResponse {
             id: "doc-123".to_string(),
             username: "test".to_string(),
-            role: "reader".to_string(),
-            status: "active".to_string(),
-            registered_via: "email".to_string(),
+            role: UserRole::Reader,
+            status: UserStatus::Active,
+            registered_via: RegisteredVia::Email,
             avatar: None,
             bio: None,
             website: None,

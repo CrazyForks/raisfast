@@ -85,7 +85,9 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
         comment_repo: Arc::new(SqlxCommentRepository::new(pool.clone())),
         media_repo: Arc::new(SqlxMediaRepository::new(pool.clone())),
         refresh_token_repo: Arc::new(SqlxRefreshTokenRepository::new(pool.clone())),
-        wallet_repo: Arc::new(raisfast::repositories::SqlxWalletRepository::new(pool.clone())),
+        wallet_repo: Arc::new(raisfast::repositories::SqlxWalletRepository::new(
+            pool.clone(),
+        )),
         search: Arc::new(NoopSearchEngine),
         content_type_registry: Arc::new(raisfast::content_type::ContentTypeRegistry::new()),
         aspect_engine: {
@@ -379,7 +381,11 @@ pub(crate) fn delete_auth(path: &str, token: &str) -> Request<Body> {
         .unwrap()
 }
 
-pub(crate) fn make_token(user_id: &str, iid: i64, role: &str) -> String {
+pub(crate) fn make_token(
+    user_id: &str,
+    iid: i64,
+    role: raisfast::models::user::UserRole,
+) -> String {
     raisfast::services::auth::generate_access_token_for_test(user_id, iid, role)
 }
 

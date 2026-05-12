@@ -3,7 +3,7 @@ use super::*;
 async fn admin_token() -> String {
     let pool = test_pool().await;
     let (int_id, doc_id) = create_admin(&pool).await;
-    make_token(&doc_id, int_id, "admin")
+    make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin)
 }
 
 #[tokio::test]

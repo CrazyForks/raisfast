@@ -1,9 +1,10 @@
 //! 工作流引擎 — 状态机核心
 
 use super::model::{
-    StepDef, StepType, WorkflowDefinition, WorkflowInstance, complete_step_log, create_definition,
-    create_instance, create_step_log, fail_step_log, get_definition, get_instance,
-    list_definitions, list_step_logs, update_instance_step,
+    StepDef, StepType, WorkflowDefinition, WorkflowInstance, WorkflowInstanceStatus,
+    WorkflowStepStatus, complete_step_log, create_definition, create_instance, create_step_log,
+    fail_step_log, get_definition, get_instance, list_definitions, list_step_logs,
+    update_instance_step,
 };
 use super::validate::{resolve_next_step, validate_steps};
 use crate::db::Pool;
@@ -117,9 +118,15 @@ impl WorkflowService {
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
-        update_instance_step(&self.pool, &id, "running", Some(&def.initial_step), context)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+        update_instance_step(
+            &self.pool,
+            &id,
+            WorkflowInstanceStatus::Running,
+            Some(&def.initial_step),
+            context,
+        )
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
         let steps = def
             .parse_steps()
@@ -164,7 +171,7 @@ impl WorkflowService {
             .await?
             .ok_or_else(|| AppError::not_found("workflow instance"))?;
 
-        if instance.status != "running" {
+        if instance.status != WorkflowInstanceStatus::Running {
             return Err(AppError::BadRequest(
                 "workflow instance is not running".into(),
             ));
@@ -230,7 +237,7 @@ impl WorkflowService {
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
             .into_iter()
-            .filter(|l| l.step_id == *current_step_id && l.status == "running")
+            .filter(|l| l.step_id == *current_step_id && (l.status == WorkflowStepStatus::Running))
             .collect();
 
         if let Some(log) = active_logs.first() {
@@ -249,7 +256,7 @@ impl WorkflowService {
                         update_instance_step(
                             &self.pool,
                             &instance.document_id,
-                            "running",
+                            WorkflowInstanceStatus::Running,
                             Some(&ns.id),
                             context,
                         )
@@ -281,7 +288,7 @@ impl WorkflowService {
                 update_instance_step(
                     &self.pool,
                     &instance.document_id,
-                    "completed",
+                    WorkflowInstanceStatus::Completed,
                     None,
                     context,
                 )
@@ -341,7 +348,7 @@ impl WorkflowService {
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
             .into_iter()
-            .filter(|l| l.step_id == parallel_step.id && l.status == "running")
+            .filter(|l| l.step_id == parallel_step.id && (l.status == WorkflowStepStatus::Running))
             .collect();
         if let Some(log) = active_logs.first() {
             complete_step_log(&self.pool, &log.document_id, None)
@@ -387,7 +394,7 @@ impl WorkflowService {
         update_instance_step(
             &self.pool,
             &instance.document_id,
-            "running",
+            WorkflowInstanceStatus::Running,
             Some(&first_branch.id),
             context,
         )
@@ -412,7 +419,7 @@ impl WorkflowService {
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
             .into_iter()
-            .filter(|l| l.step_id == branch_step.id && l.status == "running")
+            .filter(|l| l.step_id == branch_step.id && (l.status == WorkflowStepStatus::Running))
             .collect();
         if let Some(log) = active_logs.first() {
             complete_step_log(&self.pool, &log.document_id, None)
@@ -445,7 +452,7 @@ impl WorkflowService {
             update_instance_step(
                 &self.pool,
                 &instance.document_id,
-                "running",
+                WorkflowInstanceStatus::Running,
                 Some(&next_branch.id),
                 context,
             )
@@ -474,7 +481,7 @@ impl WorkflowService {
                 update_instance_step(
                     &self.pool,
                     &instance.document_id,
-                    "running",
+                    WorkflowInstanceStatus::Running,
                     Some(&join_step.id),
                     context,
                 )
@@ -501,7 +508,7 @@ impl WorkflowService {
                 update_instance_step(
                     &self.pool,
                     &instance.document_id,
-                    "completed",
+                    WorkflowInstanceStatus::Completed,
                     None,
                     context,
                 )
@@ -527,7 +534,7 @@ impl WorkflowService {
                 .await
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
                 .into_iter()
-                .filter(|l| l.step_id == *step_id && l.status == "running")
+                .filter(|l| l.step_id == *step_id && (l.status == WorkflowStepStatus::Running))
                 .collect();
 
             if let Some(log) = active_logs.first() {
@@ -537,9 +544,15 @@ impl WorkflowService {
             }
         }
 
-        update_instance_step(&self.pool, instance_id, "failed", None, &json!({}))
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+        update_instance_step(
+            &self.pool,
+            instance_id,
+            WorkflowInstanceStatus::Failed,
+            None,
+            &json!({}),
+        )
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
         Ok(())
     }
@@ -551,15 +564,21 @@ impl WorkflowService {
             .await?
             .ok_or_else(|| AppError::not_found("workflow instance"))?;
 
-        if instance.status != "running" {
+        if instance.status != WorkflowInstanceStatus::Running {
             return Err(AppError::BadRequest(
                 "only running instances can be cancelled".into(),
             ));
         }
 
-        update_instance_step(&self.pool, instance_id, "cancelled", None, &json!({}))
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+        update_instance_step(
+            &self.pool,
+            instance_id,
+            WorkflowInstanceStatus::Cancelled,
+            None,
+            &json!({}),
+        )
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
         Ok(())
     }
@@ -575,7 +594,7 @@ impl WorkflowService {
     pub async fn list_instances(
         &self,
         definition_id: Option<&str>,
-        status: Option<&str>,
+        status: Option<WorkflowInstanceStatus>,
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<WorkflowInstance>, i64)> {
@@ -755,7 +774,7 @@ mod tests {
             .start_workflow("wf-start", &json!({"key": "val"}), None)
             .await
             .unwrap();
-        assert_eq!(inst.status, "running");
+        assert_eq!(inst.status, WorkflowInstanceStatus::Running);
         assert_eq!(inst.current_step, Some("s1".to_string()));
     }
 
@@ -802,7 +821,7 @@ mod tests {
             .execute_step(inst_id, &json!({"done": true}))
             .await
             .unwrap();
-        assert_eq!(result.status, "completed");
+        assert_eq!(result.status, WorkflowInstanceStatus::Completed);
         assert!(result.current_step.is_none());
     }
 
@@ -825,7 +844,7 @@ mod tests {
 
         let result = svc.execute_step(&inst_id, &json!({})).await.unwrap();
         assert_eq!(result.current_step, Some("s2".to_string()));
-        assert_eq!(result.status, "running");
+        assert_eq!(result.status, WorkflowInstanceStatus::Running);
     }
 
     #[tokio::test]
@@ -938,7 +957,7 @@ mod tests {
         assert_eq!(r.current_step, Some("s4".to_string()));
 
         let r = svc.execute_step(&iid, &json!({})).await.unwrap();
-        assert_eq!(r.status, "completed");
+        assert_eq!(r.status, WorkflowInstanceStatus::Completed);
     }
 
     #[tokio::test]
@@ -962,7 +981,7 @@ mod tests {
         svc.execute_step(&iid, &json!({})).await.unwrap();
         svc.execute_step(&iid, &json!({})).await.unwrap();
         let r = svc.execute_step(&iid, &json!({})).await.unwrap();
-        assert_eq!(r.status, "completed");
+        assert_eq!(r.status, WorkflowInstanceStatus::Completed);
     }
 
     #[tokio::test]
@@ -980,7 +999,7 @@ mod tests {
         svc.fail_step(&inst.document_id, "timeout").await.unwrap();
 
         let inst = svc.get_instance(&inst.document_id).await.unwrap().unwrap();
-        assert_eq!(inst.status, "failed");
+        assert_eq!(inst.status, WorkflowInstanceStatus::Failed);
     }
 
     #[tokio::test]
@@ -1005,7 +1024,7 @@ mod tests {
         svc.cancel_instance(&inst.document_id).await.unwrap();
 
         let inst = svc.get_instance(&inst.document_id).await.unwrap().unwrap();
-        assert_eq!(inst.status, "cancelled");
+        assert_eq!(inst.status, WorkflowInstanceStatus::Cancelled);
     }
 
     #[tokio::test]
@@ -1047,7 +1066,7 @@ mod tests {
         let logs = svc.get_step_logs(&inst.document_id).await.unwrap();
         assert!(!logs.is_empty());
         assert_eq!(logs[0].step_id, "s1");
-        assert_eq!(logs[0].status, "completed");
+        assert_eq!(logs[0].status, WorkflowStepStatus::Completed);
     }
 
     #[tokio::test]
@@ -1090,13 +1109,13 @@ mod tests {
             .unwrap();
 
         let (running, _) = svc
-            .list_instances(None, Some("running"), 1, 10)
+            .list_instances(None, Some(WorkflowInstanceStatus::Running), 1, 10)
             .await
             .unwrap();
         assert!(running.is_empty());
 
         let (completed, total) = svc
-            .list_instances(None, Some("completed"), 1, 10)
+            .list_instances(None, Some(WorkflowInstanceStatus::Completed), 1, 10)
             .await
             .unwrap();
         assert_eq!(total, 1);

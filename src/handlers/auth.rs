@@ -443,9 +443,11 @@ pub async fn list_credentials(
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<Vec<CredentialResponse>>> {
     let creds = auth::list_credentials(&state.pool, &auth).await?;
-    Ok(ApiResponse::success(
-        creds.into_iter().map(CredentialResponse::from).collect(),
-    ))
+    let responses: AppResult<Vec<CredentialResponse>> = creds
+        .into_iter()
+        .map(CredentialResponse::from_credential)
+        .collect();
+    Ok(ApiResponse::success(responses?))
 }
 
 /// 删除指定凭证

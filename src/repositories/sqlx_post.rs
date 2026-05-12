@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use crate::db::Pool;
 use crate::errors::app_error::AppResult;
-use crate::models::post::{self, Post, PostJoinedRow, TagBrief};
+use crate::models::post::{self, Post, PostJoinedRow, PostStatus, TagBrief};
 
 use crate::commands::{CreatePostCmd, FindPublishedQuery, UpdatePostCmd};
 use crate::repositories::define_sqlx_repo;
@@ -49,7 +49,7 @@ pub trait PostRepository: Send + Sync {
         &self,
         page: i64,
         page_size: i64,
-        status: Option<&str>,
+        status: Option<PostStatus>,
         tenant_id: Option<&str>,
     ) -> AppResult<(Vec<PostJoinedRow>, i64)>;
 
@@ -136,7 +136,7 @@ impl PostRepository for SqlxPostRepository {
         &self,
         page: i64,
         page_size: i64,
-        status: Option<&str>,
+        status: Option<PostStatus>,
         tenant_id: Option<&str>,
     ) -> AppResult<(Vec<PostJoinedRow>, i64)> {
         post::find_all_joined(&self.pool, page, page_size, status, tenant_id).await

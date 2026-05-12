@@ -1,11 +1,11 @@
 //! 用户相关 Command
 
-use crate::models::user::{SocialLinks, UserMetadata};
+use crate::models::user::{RegisteredVia, SocialLinks, UserMetadata};
 
 /// 创建用户
 pub struct CreateUserCmd {
     pub username: String,
-    pub registered_via: String,
+    pub registered_via: RegisteredVia,
 }
 
 /// 更新用户资料

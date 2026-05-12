@@ -1615,13 +1615,16 @@ type = "integer"
         let auth = crate::middleware::auth::AuthUser::from_parts(
             Some("u1".to_string()),
             Some(42),
-            "admin".to_string(),
+            crate::models::user::UserRole::Admin,
             Some("t1".to_string()),
         );
         let ctx = SaveContext::from_auth(&auth);
         assert_eq!(ctx.user_id, Some("u1".to_string()));
         assert_eq!(ctx.user_int_id, Some(42));
-        assert_eq!(ctx.user_role, Some("admin".to_string()));
+        assert_eq!(
+            ctx.user_role,
+            Some(crate::models::user::UserRole::Admin.to_string())
+        );
         assert_eq!(ctx.tenant_id, Some("t1".to_string()));
     }
 }

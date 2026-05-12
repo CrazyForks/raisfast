@@ -2022,7 +2022,11 @@ mod tests {
     async fn dispatch_route_returns_none_with_no_plugins() {
         let config = test_config();
         let mgr = PluginManager::new(config).await;
-        let auth = crate::middleware::auth::AuthUser::new_test("", "", "");
+        let auth = crate::middleware::auth::AuthUser::new_test(
+            "",
+            crate::models::user::UserRole::Reader,
+            "",
+        );
         assert!(
             mgr.dispatch_route("/api/v1/test", "GET", None, None, &auth)
                 .await
@@ -2226,7 +2230,11 @@ export function handle_test(input) {
                 "GET",
                 None,
                 None,
-                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+                &crate::middleware::auth::AuthUser::new_test(
+                    "",
+                    crate::models::user::UserRole::Reader,
+                    "",
+                ),
             )
             .await;
         assert!(result.is_some());
@@ -2954,7 +2962,11 @@ end
                 "GET",
                 None,
                 None,
-                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+                &crate::middleware::auth::AuthUser::new_test(
+                    "",
+                    crate::models::user::UserRole::Reader,
+                    "",
+                ),
             )
             .await;
         assert!(result.is_some(), "should match declared route");
@@ -2965,7 +2977,11 @@ end
                 "GET",
                 None,
                 None,
-                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+                &crate::middleware::auth::AuthUser::new_test(
+                    "",
+                    crate::models::user::UserRole::Reader,
+                    "",
+                ),
             )
             .await;
         assert!(result.is_none(), "should return none for undeclared path");
@@ -2976,7 +2992,11 @@ end
                 "POST",
                 None,
                 None,
-                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+                &crate::middleware::auth::AuthUser::new_test(
+                    "",
+                    crate::models::user::UserRole::Reader,
+                    "",
+                ),
             )
             .await;
         assert!(result.is_none(), "should not match wrong method");
@@ -3294,7 +3314,11 @@ fn handle_test(input) {
                 "GET",
                 None,
                 None,
-                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+                &crate::middleware::auth::AuthUser::new_test(
+                    "",
+                    crate::models::user::UserRole::Reader,
+                    "",
+                ),
             )
             .await;
         assert!(result.is_some());
@@ -3602,7 +3626,11 @@ fn seo_health(input) {
                 "GET",
                 None,
                 None,
-                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+                &crate::middleware::auth::AuthUser::new_test(
+                    "",
+                    crate::models::user::UserRole::Reader,
+                    "",
+                ),
             )
             .await;
         assert!(health.is_some(), "health route should match");
@@ -3614,7 +3642,11 @@ fn seo_health(input) {
                 "GET",
                 None,
                 None,
-                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+                &crate::middleware::auth::AuthUser::new_test(
+                    "",
+                    crate::models::user::UserRole::Reader,
+                    "",
+                ),
             )
             .await;
         assert!(stats.is_some(), "stats route should match");
@@ -3626,7 +3658,11 @@ fn seo_health(input) {
                 "GET",
                 None,
                 None,
-                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+                &crate::middleware::auth::AuthUser::new_test(
+                    "",
+                    crate::models::user::UserRole::Reader,
+                    "",
+                ),
             )
             .await;
         assert!(none.is_none(), "unknown route should not match");
@@ -3638,7 +3674,11 @@ fn seo_health(input) {
                 "POST",
                 None,
                 None,
-                &crate::middleware::auth::AuthUser::new_test("", "", ""),
+                &crate::middleware::auth::AuthUser::new_test(
+                    "",
+                    crate::models::user::UserRole::Reader,
+                    "",
+                ),
             )
             .await;
         assert!(wrong_method.is_none(), "wrong method should not match");

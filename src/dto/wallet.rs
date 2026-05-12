@@ -4,16 +4,12 @@ use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
-use crate::errors::app_error::{AppError, AppResult};
+use crate::errors::app_error::AppResult;
 use crate::models::wallet::{Wallet, WalletStatus};
 use crate::models::wallet_transaction::{
     WalletEntryType, WalletReferenceType, WalletTransaction, WalletTxType,
 };
 use crate::utils::tz::Timestamp;
-
-fn map_enum_err(e: String) -> AppError {
-    AppError::Internal(anyhow::anyhow!(e))
-}
 
 /// 钱包响应
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -32,7 +28,7 @@ pub struct WalletResponse {
 impl WalletResponse {
     pub fn from_wallet(w: Wallet) -> AppResult<Self> {
         Ok(Self {
-            status: w.status_enum().map_err(map_enum_err)?,
+            status: w.status,
             id: w.document_id,
             currency: w.currency,
             balance: w.balance,
@@ -64,9 +60,9 @@ pub struct WalletTransactionResponse {
 impl WalletTransactionResponse {
     pub fn from_tx(tx: WalletTransaction) -> AppResult<Self> {
         Ok(Self {
-            entry_type: tx.entry_type_enum().map_err(map_enum_err)?,
-            tx_type: tx.tx_type_enum().map_err(map_enum_err)?,
-            reference_type: tx.reference_type_enum().map_err(map_enum_err)?,
+            entry_type: tx.entry_type,
+            tx_type: tx.tx_type,
+            reference_type: tx.reference_type,
             id: tx.document_id,
             amount: tx.amount,
             balance_after: tx.balance_after,
@@ -93,7 +89,7 @@ pub struct AdminWalletOperationRequest {
     pub transaction_no: String,
     #[validate(range(min = 1))]
     pub amount: i64,
-    pub reference_type: Option<String>,
+    pub reference_type: Option<crate::models::wallet_transaction::WalletReferenceType>,
     pub reference_id: Option<String>,
     #[schema(value_type = Option<String>)]
     pub metadata: Option<String>,

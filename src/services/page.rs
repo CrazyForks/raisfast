@@ -7,7 +7,7 @@ use slug::slugify;
 use crate::commands::{CreatePageCmd, UpdatePageCmd};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
-use crate::models::page;
+use crate::models::page::{self, PageStatus};
 
 fn validate_blocks_json(blocks: &str) -> AppResult<Vec<page::PageBlock>> {
     serde_json::from_str(blocks)
@@ -43,7 +43,7 @@ pub async fn list_all(
     pool: &crate::db::Pool,
     page_num: i64,
     page_size: i64,
-    status: Option<&str>,
+    status: Option<PageStatus>,
     auth: &AuthUser,
 ) -> AppResult<(Vec<page::Page>, i64)> {
     page::list_all(pool, page_num, page_size, status, auth.tenant_id()).await
@@ -58,12 +58,6 @@ pub async fn create_page(
         validate_blocks_json(blocks)?;
     }
 
-    let status = if cmd.status.is_empty() {
-        "draft".to_string()
-    } else {
-        cmd.status.clone()
-    };
-
     page::create(
         pool,
         &cmd.title,
@@ -76,7 +70,7 @@ pub async fn create_page(
         &cmd.template,
         cmd.parent_id,
         cmd.sort_order,
-        &status,
+        cmd.status,
         cmd.created_by,
         cmd.cover_image.as_deref(),
         auth.tenant_id(),
@@ -111,7 +105,7 @@ pub async fn update_page(
         cmd.template.as_deref(),
         cmd.parent_id,
         cmd.sort_order,
-        cmd.status.as_deref(),
+        cmd.status,
         cmd.cover_image.as_deref(),
         cmd.updated_by,
         auth.tenant_id(),
@@ -129,13 +123,9 @@ pub async fn delete_page(pool: &crate::db::Pool, id: &str, auth: &AuthUser) -> A
 pub async fn update_status(
     pool: &crate::db::Pool,
     id: &str,
-    status: &str,
+    status: PageStatus,
     auth: &AuthUser,
 ) -> AppResult<page::Page> {
-    let valid = ["draft", "published", "archived"];
-    if !valid.contains(&status) {
-        return Err(AppError::BadRequest(format!("invalid status: {status}")));
-    }
     let p = page::find_by_document_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("page"))?;

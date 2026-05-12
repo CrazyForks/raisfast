@@ -4,7 +4,8 @@ use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::{validate_optional_uuid, validate_post_status, validate_uuid_vec};
+use crate::errors::app_error::AppResult;
+use crate::models::post::{CommentOpenStatus, PostStatus};
 use crate::utils::tz::Timestamp;
 
 /// 创建文章请求体
@@ -16,11 +17,10 @@ pub struct CreatePostRequest {
     pub content: String,
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
-    #[validate(custom(function = "validate_post_status"))]
-    pub status: Option<String>,
-    #[validate(custom(function = "validate_optional_uuid"))]
+    pub status: Option<PostStatus>,
+    #[validate(custom(function = "super::validate_optional_uuid"))]
     pub category_id: Option<String>,
-    #[validate(custom(function = "validate_uuid_vec"))]
+    #[validate(custom(function = "super::validate_uuid_vec"))]
     pub tag_ids: Option<Vec<String>>,
 }
 
@@ -32,11 +32,10 @@ pub struct UpdatePostRequest {
     pub content: Option<String>,
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
-    #[validate(custom(function = "validate_post_status"))]
-    pub status: Option<String>,
-    #[validate(custom(function = "validate_optional_uuid"))]
+    pub status: Option<PostStatus>,
+    #[validate(custom(function = "super::validate_optional_uuid"))]
     pub category_id: Option<String>,
-    #[validate(custom(function = "validate_uuid_vec"))]
+    #[validate(custom(function = "super::validate_uuid_vec"))]
     pub tag_ids: Option<Vec<String>>,
 }
 
@@ -50,7 +49,7 @@ pub struct PostResponse {
     pub content: String,
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
-    pub status: String,
+    pub status: PostStatus,
     pub created_by: i64,
     pub author_name: Option<String>,
     pub category_id: Option<i64>,
@@ -59,7 +58,7 @@ pub struct PostResponse {
     pub view_count: i64,
     pub is_pinned: bool,
     pub password: Option<String>,
-    pub comment_status: String,
+    pub comment_status: CommentOpenStatus,
     pub format: String,
     pub template: String,
     pub meta_title: Option<String>,
@@ -77,4 +76,43 @@ pub struct PostResponse {
     pub published_at: Option<Timestamp>,
     pub title_highlight: Option<String>,
     pub excerpt_highlight: Option<String>,
+}
+
+impl PostResponse {
+    pub fn from_post(p: crate::models::post::Post) -> AppResult<Self> {
+        let status = p.status;
+        let comment_status = p.comment_status;
+        Ok(Self {
+            id: p.document_id,
+            title: p.title,
+            slug: p.slug,
+            content: p.content,
+            status,
+            cover_image: p.cover_image,
+            created_by: p.created_by,
+            author_name: None,
+            category_id: p.category_id,
+            category_name: None,
+            tags: vec![],
+            view_count: p.view_count,
+            is_pinned: p.is_pinned,
+            password: p.password,
+            comment_status,
+            format: p.format,
+            template: p.template,
+            meta_title: p.meta_title,
+            meta_description: p.meta_description,
+            og_title: p.og_title,
+            og_description: p.og_description,
+            og_image: p.og_image,
+            canonical_url: p.canonical_url,
+            reading_time: p.reading_time,
+            excerpt: p.excerpt,
+            created_at: p.created_at,
+            updated_at: p.updated_at,
+            published_at: p.published_at,
+            title_highlight: None,
+            excerpt_highlight: None,
+        })
+    }
 }

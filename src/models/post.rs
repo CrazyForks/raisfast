@@ -6,7 +6,6 @@
 //! 同时提供获取作者名、分类名、文章标签等关联数据的辅助查询函数，
 //! 以及按分类/标签/关键词筛选已发布文章的分页查询。
 
-use crate::utils::tz::Timestamp;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 #[cfg(feature = "export-types")]
@@ -15,6 +14,21 @@ use ts_rs::TS;
 use crate::db::dialect::ph;
 use crate::db::tenant::{tenant_filter_aliased_ph, tenant_filter_ph};
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::tz::Timestamp;
+
+define_enum!(
+    PostStatus {
+        Draft = "draft",
+        Published = "published",
+    }
+);
+
+define_enum!(
+    CommentOpenStatus {
+        Open = "open",
+        Closed = "closed",
+    }
+);
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
@@ -27,14 +41,14 @@ pub struct Post {
     pub content: String,
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
-    pub status: String,
+    pub status: PostStatus,
     pub created_by: i64,
     pub updated_by: Option<i64>,
     pub category_id: Option<i64>,
     pub view_count: i64,
     pub is_pinned: bool,
     pub password: Option<String>,
-    pub comment_status: String,
+    pub comment_status: CommentOpenStatus,
     pub format: String,
     pub template: String,
     pub meta_title: Option<String>,
@@ -136,7 +150,7 @@ pub async fn create_tx(
     tenant_id: Option<&str>,
 ) -> AppResult<Post> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
-    let published_at = if cmd.status == "published" {
+    let published_at = if cmd.status == PostStatus::Published {
         Some(now)
     } else {
         None
@@ -168,7 +182,7 @@ pub async fn create_tx(
                 .bind(&cmd.content)
                 .bind(&cmd.excerpt)
                 .bind(&cmd.cover_image)
-                .bind(&cmd.status)
+                .bind(cmd.status)
                 .bind(cmd.created_by)
                 .bind(cmd.updated_by)
                 .bind(cmd.category_id)
@@ -202,7 +216,7 @@ pub async fn create_tx(
                 .bind(&cmd.content)
                 .bind(&cmd.excerpt)
                 .bind(&cmd.cover_image)
-                .bind(&cmd.status)
+                .bind(cmd.status)
                 .bind(cmd.created_by)
                 .bind(cmd.updated_by)
                 .bind(cmd.category_id)
@@ -267,8 +281,11 @@ pub async fn update_tx(
         .ok_or_else(|| AppError::not_found("post"))?;
 
     let now = crate::utils::tz::now_utc();
-    let new_status = cmd.status.as_deref().unwrap_or(&existing.status);
-    let published_at = if new_status == "published" && existing.published_at.is_none() {
+    let new_status = match cmd.status {
+        Some(ref s) => *s,
+        None => existing.status,
+    };
+    let published_at = if new_status == PostStatus::Published && existing.published_at.is_none() {
         Some(now)
     } else {
         existing.published_at
@@ -331,7 +348,7 @@ pub async fn update_tx(
         content: content.to_string(),
         excerpt,
         cover_image,
-        status: new_status.to_string(),
+        status: new_status,
         created_by: existing.created_by,
         updated_by,
         category_id,
@@ -624,7 +641,7 @@ pub async fn find_all_joined(
     pool: &crate::db::Pool,
     page: i64,
     page_size: i64,
-    status: Option<&str>,
+    status: Option<PostStatus>,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<PostJoinedRow>, i64)> {
     let offset = (page - 1) * page_size;
@@ -728,7 +745,7 @@ mod tests {
                 content: format!("{title}的内容"),
                 excerpt: None,
                 cover_image: None,
-                status: status.to_string(),
+                status: status.parse().unwrap(),
                 created_by: created_by,
                 updated_by: Some(created_by),
                 category_id: None,
@@ -829,7 +846,7 @@ mod tests {
                 content: "内容".to_string(),
                 excerpt: None,
                 cover_image: None,
-                status: "published".to_string(),
+                status: PostStatus::Published,
                 created_by: uid,
                 updated_by: Some(uid),
                 category_id: Some(cat_int_id),
@@ -900,14 +917,14 @@ pub struct PostJoinedRow {
     pub content: String,
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
-    pub status: String,
+    pub status: PostStatus,
     pub created_by: i64,
     pub updated_by: Option<i64>,
     pub category_id: Option<i64>,
     pub view_count: i64,
     pub is_pinned: bool,
     pub password: Option<String>,
-    pub comment_status: String,
+    pub comment_status: CommentOpenStatus,
     pub format: String,
     pub template: String,
     pub meta_title: Option<String>,

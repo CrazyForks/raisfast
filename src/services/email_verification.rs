@@ -78,10 +78,13 @@ pub async fn resend_verification(
     eventbus: &EventBus,
     email: &str,
 ) -> AppResult<()> {
-    let cred =
-        crate::models::user_credential::find_by_auth_type_and_identifier(pool, "email", email)
-            .await?
-            .ok_or_else(|| AppError::not_found("user"))?;
+    let cred = crate::models::user_credential::find_by_auth_type_and_identifier(
+        pool,
+        crate::models::user_credential::AuthType::Email,
+        email,
+    )
+    .await?
+    .ok_or_else(|| AppError::not_found("user"))?;
 
     if cred.verified == 1 {
         return Err(AppError::BadRequest("email_already_verified".into()));
@@ -115,15 +118,22 @@ mod tests {
             .create(
                 CreateUserCmd {
                     username: email.to_string(),
-                    registered_via: "email".to_string(),
+                    registered_via: crate::models::user::RegisteredVia::Email,
                 },
                 None,
             )
             .await
             .unwrap();
-        crate::models::user_credential::create(pool, user.id, "email", email, &crate::models::user_credential::wrap_password_hash("hash"), false)
-            .await
-            .unwrap();
+        crate::models::user_credential::create(
+            pool,
+            user.id,
+            crate::models::user_credential::AuthType::Email,
+            email,
+            &crate::models::user_credential::wrap_password_hash("hash"),
+            false,
+        )
+        .await
+        .unwrap();
         user
     }
 
@@ -194,7 +204,7 @@ mod tests {
         super::verify_email(&pool, &token_str).await.unwrap();
         let cred = crate::models::user_credential::find_by_auth_type_and_identifier(
             &pool,
-            "email",
+            crate::models::user_credential::AuthType::Email,
             "v@test.com",
         )
         .await
