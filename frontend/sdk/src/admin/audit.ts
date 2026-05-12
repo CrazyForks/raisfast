@@ -19,7 +19,7 @@ export class AdminAudit {
     });
   }
 
-  async get(id: string, options?: RequestOptions): Promise<AuditLog> {
+  async get(id: number, options?: RequestOptions): Promise<AuditLog> {
     return this.http.get<AuditLog>(`/admin/audit/${id}`, options);
   }
 }

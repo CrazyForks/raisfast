@@ -27,33 +27,7 @@ import { Button } from "@/components/ui/button";
 import { client } from "@/lib/raisfast";
 import { useAuthStore } from "@/stores/auth";
 import { useT } from "@/lib/i18n";
-
-interface StatsOverview {
-  total_posts: number;
-  total_comments: number;
-  total_users: number;
-  total_media: number;
-  total_categories: number;
-  total_tags: number;
-  posts_by_status: Record<string, number>;
-  comments_by_status: Record<string, number>;
-  content_by_type: Record<string, number>;
-  recent_activity: RecentActivity[];
-}
-
-interface RecentActivity {
-  type: string;
-  title?: string;
-  slug?: string;
-  content?: string;
-  at: string;
-}
-
-interface TrendsData {
-  table: string;
-  days: number;
-  data: { date: string; count: number }[];
-}
+import type { StatsOverview, TrendsData } from "@raisfast/sdk";
 
 const POST_STATUS_COLORS: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
   published: "default",
@@ -115,14 +89,13 @@ export default function DashboardPage() {
 
   const statsQuery = useQuery({
     queryKey: ["admin-stats"],
-    queryFn: () => client.send<StatsOverview>("/admin/stats"),
+    queryFn: () => client.admin.stats.overview(),
     refetchInterval: 30000,
   });
 
   const trendsQuery = useQuery({
     queryKey: ["admin-stats-trends", "posts", 14],
-    queryFn: () =>
-      client.send<TrendsData>("/admin/stats/trends", { query: { table: "posts", days: "14" } }),
+    queryFn: () => client.admin.stats.trends("posts", 14),
     refetchInterval: 60000,
   });
 

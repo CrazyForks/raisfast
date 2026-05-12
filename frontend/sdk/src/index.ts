@@ -20,6 +20,10 @@ export type {
   UpdatePostBody,
 } from "./public/posts";
 export type {
+  StatsOverview,
+  TrendsData,
+} from "./admin/stats";
+export type {
   CreatePageBody,
   UpdatePageBody,
 } from "./admin/pages";

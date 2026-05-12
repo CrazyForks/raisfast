@@ -32,7 +32,7 @@ export class AdminWallets {
   ): Promise<PaginatedData<WalletTransactionResponse>> {
     return this.http.get<PaginatedData<WalletTransactionResponse>>(
       "/admin/wallets/transactions",
-      { ...options, query: query as unknown as Record<string, string> },
+      { ...options, query: toQueryString(query) },
     );
   }
 
@@ -65,7 +65,7 @@ export class AdminWallets {
   ): Promise<PaginatedData<WalletTransactionResponse>> {
     return this.http.get<PaginatedData<WalletTransactionResponse>>(
       `/admin/wallets/${userId}/transactions`,
-      { ...options, query: query as unknown as Record<string, string> },
+      { ...options, query: toQueryString(query) },
     );
   }
 
@@ -77,7 +77,7 @@ export class AdminWallets {
   ): Promise<PaginatedData<WalletTransactionResponse>> {
     return this.http.get<PaginatedData<WalletTransactionResponse>>(
       `/admin/wallets/${userId}/${currency}/transactions`,
-      { ...options, query: query as unknown as Record<string, string> },
+      { ...options, query: toQueryString(query) },
     );
   }
 

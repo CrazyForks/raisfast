@@ -1,5 +1,30 @@
 import { HttpClient, toQueryString } from "../client";
-import type { RequestOptions, TrendPoint } from "../types";
+import type { RequestOptions } from "../types";
+
+export interface StatsOverview {
+  total_posts: number;
+  total_comments: number;
+  total_users: number;
+  total_media: number;
+  total_categories: number;
+  total_tags: number;
+  posts_by_status: Record<string, number>;
+  comments_by_status: Record<string, number>;
+  content_by_type: Record<string, number>;
+  recent_activity: {
+    type: string;
+    title?: string;
+    slug?: string;
+    content?: string;
+    at: string;
+  }[];
+}
+
+export interface TrendsData {
+  table: string;
+  days: number;
+  data: { date: string; count: number }[];
+}
 
 export class AdminStats {
   private readonly http: HttpClient;
@@ -8,15 +33,7 @@ export class AdminStats {
     this.http = http;
   }
 
-  async overview(options?: RequestOptions): Promise<{
-    posts: number;
-    pages: number;
-    comments: number;
-    categories: number;
-    tags: number;
-    media: number;
-    users: number;
-  }> {
+  async overview(options?: RequestOptions): Promise<StatsOverview> {
     return this.http.get("/admin/stats", options);
   }
 
@@ -34,8 +51,8 @@ export class AdminStats {
     table: string,
     days = 30,
     options?: RequestOptions,
-  ): Promise<TrendPoint[]> {
-    return this.http.get<TrendPoint[]>("/admin/stats/trends", {
+  ): Promise<TrendsData> {
+    return this.http.get<TrendsData>("/admin/stats/trends", {
       ...options,
       query: toQueryString({ table, days }),
     });

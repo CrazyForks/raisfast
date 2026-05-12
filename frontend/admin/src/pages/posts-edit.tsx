@@ -72,7 +72,7 @@ export default function EditPostPage() {
 
   const post = postQuery.data;
 
-  const defaultTagIds = post?.tags?.map((t) => t.id) ?? [];
+  const defaultTagIds = post?.tags?.map((t) => String(t.id)) ?? [];
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
   const {
@@ -97,7 +97,7 @@ export default function EditPostPage() {
           content: post.content,
           excerpt: post.excerpt ?? "",
           status: post.status as PostStatus,
-          category_id: post.category_id ?? "",
+          category_id: post.category_id != null ? String(post.category_id) : "",
         }
       : undefined,
   });
@@ -190,7 +190,7 @@ export default function EditPostPage() {
 
       <Card>
         <CardContent className="pt-6">
-          <form onSubmit={handleSubmit((v) => updateMutation.mutate(v))} className="space-y-6">
+          <form onSubmit={handleSubmit((v) => updateMutation.mutate(v as PostForm))} className="space-y-6">
             <div className="space-y-2">
               <Label htmlFor="title">{t("posts.titleCol")}</Label>
               <Input id="title" placeholder={t("posts.postTitle")} {...register("title")} />

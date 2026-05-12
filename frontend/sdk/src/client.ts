@@ -8,7 +8,7 @@ import type {
   SendOptions,
 } from "./types";
 
-export function toQueryString(query?: Record<string, string | number | boolean | undefined>): Record<string, string> | undefined {
+export function toQueryString(query?: Record<string, string | number | bigint | boolean | undefined | null>): Record<string, string> | undefined {
   if (!query) return undefined;
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(query)) {

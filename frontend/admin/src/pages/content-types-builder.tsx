@@ -296,8 +296,8 @@ export default function ContentTypeBuilderPage() {
           timestamps: base.timestamps,
           soft_delete: base.soft_delete,
           slug_field: base.slug_field || null,
-          fields: fieldPayloads,
-        } as unknown as Partial<ContentTypeSchemaSDK>);
+          fields: fieldPayloads as unknown as ContentTypeSchemaSDK["fields"],
+        } as Record<string, unknown> as Partial<ContentTypeSchemaSDK>);
       }
 
       return client.admin.contentTypes.create({
@@ -310,7 +310,7 @@ export default function ContentTypeBuilderPage() {
         timestamps: base.timestamps,
         soft_delete: base.soft_delete,
         slug_field: base.slug_field || null,
-        fields: fieldPayloads,
+        fields: fieldPayloads as unknown as ContentTypeSchemaSDK["fields"],
       } as unknown as ContentTypeSchemaSDK);
     },
     onSuccess: () => {

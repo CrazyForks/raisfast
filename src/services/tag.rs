@@ -43,6 +43,17 @@ pub async fn update_tag(
         .await
 }
 
+pub async fn get_tag(
+    tag_repo: &dyn TagRepository,
+    id: &str,
+    auth: &AuthUser,
+) -> AppResult<crate::models::tag::Tag> {
+    tag_repo
+        .find_by_document_id(id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("tag"))
+}
+
 pub async fn list_tags(
     tag_repo: &dyn TagRepository,
     auth: &AuthUser,

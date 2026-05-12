@@ -28,10 +28,10 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
         r,
         registry,
         "/categories/{id}",
-        put(update).delete(self::delete),
+        get(self::get).put(update).delete(self::delete),
         "system public",
         "categories",
-        ["PUT", "DELETE"]
+        ["GET", "PUT", "DELETE"]
     );
     let r = reg_route!(
         r,
@@ -81,6 +81,20 @@ pub async fn list(
     )
     .await?;
     Ok(params.paginate(items, total))
+}
+
+/// 获取单个分类
+#[utoipa::path(get, path = "/categories/{id}", tag = "categories",
+    params(("id" = String, Path, description = "分类 ID")),
+    responses((status = 200, description = "分类详情"))
+)]
+pub async fn get(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<crate::models::category::Category>> {
+    let cat = category::get_category(state.category_repo.as_ref(), &id, &auth).await?;
+    Ok(ApiResponse::success(cat))
 }
 
 /// 创建新分类

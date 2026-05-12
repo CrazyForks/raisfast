@@ -1,4 +1,4 @@
-import { HttpClient } from "../client";
+import { HttpClient, toQueryString } from "../client";
 import type {
   BatchRequest,
   BatchResponse,
@@ -22,7 +22,7 @@ export class AdminPosts {
   ): Promise<PaginatedData<PostResponse>> {
     return this.http.get<PaginatedData<PostResponse>>("/admin/posts", {
       ...options,
-      query: query as Record<string, string>,
+      query: toQueryString(query as Record<string, string | number | undefined>),
     });
   }
 

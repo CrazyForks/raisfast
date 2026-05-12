@@ -97,6 +97,7 @@ pub async fn create(
             req.events,
             req.description,
             req.enabled.unwrap_or(true),
+            req.secret,
         )
         .await?;
     Ok(ApiResponse::success(sub))

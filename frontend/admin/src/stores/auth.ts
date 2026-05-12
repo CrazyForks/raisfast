@@ -27,7 +27,8 @@ interface AuthState {
 const SESSION_COOKIE = "session";
 
 function setSessionCookie(token: string) {
-  document.cookie = `${SESSION_COOKIE}=${token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
+  const secure = location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `${SESSION_COOKIE}=${token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax${secure}`;
 }
 
 function clearSessionCookie() {

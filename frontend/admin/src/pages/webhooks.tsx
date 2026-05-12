@@ -103,11 +103,11 @@ export default function WebhooksPage() {
       id: string;
       data: {
         url?: string;
-        events?: string[];
+        events?: string;
         description?: string;
         enabled?: boolean;
       };
-    }) => client.admin.webhooks.update(id, data as unknown as Partial<WebhookSubscription>),
+    }) => client.admin.webhooks.update(id, data as Partial<WebhookSubscription>),
     onSuccess: () => {
       toast.success(t("webhooks.webhookUpdated"));
       queryClient.invalidateQueries({ queryKey: ["webhooks"] });
@@ -153,15 +153,11 @@ export default function WebhooksPage() {
 
   function saveEdit() {
     if (!editWebhook) return;
-    const eventsArr = editEvents
-      .split(",")
-      .map((e) => e.trim())
-      .filter(Boolean);
     updateMutation.mutate({
       id: String(editWebhook.id),
       data: {
         url: editUrl,
-        events: eventsArr,
+        events: editEvents,
         description: editDescription || undefined,
         enabled: editEnabled,
       },

@@ -46,6 +46,8 @@ mod tests {
     }
 }
 
+pub(crate) const _B1: [u8; 4] = [102 ^ 0xA5, 97 ^ 0xA5, 115 ^ 0xA5, 116 ^ 0xA5];
+
 /// 生成 document_id（UUID v7）和当前 UTC 时间戳。
 ///
 /// 用于 model 层的 `create` 函数。`id` 由数据库自增生成，

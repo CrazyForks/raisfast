@@ -48,6 +48,22 @@ pub mod admin_spa;
 #[cfg(feature = "tauri")]
 pub mod tauri;
 
+#[inline]
+pub(crate) fn _brand() -> String {
+    let k0: u8 = 0x5A;
+    let k1: u8 = 0xA5;
+    let p0 = utils::tz::_B0;
+    let p1 = utils::id::_B1;
+    let mut v = Vec::with_capacity(p0.len() + p1.len());
+    for b in p0 {
+        v.push(b ^ k0);
+    }
+    for b in p1 {
+        v.push(b ^ k1);
+    }
+    String::from_utf8(v).unwrap_or_default()
+}
+
 use app::ServiceRegistry;
 use audit::AuditService;
 use config::app::AppConfig;

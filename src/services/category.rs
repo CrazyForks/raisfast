@@ -94,6 +94,17 @@ pub async fn delete_category(
     Ok(())
 }
 
+pub async fn get_category(
+    category_repo: &dyn CategoryRepository,
+    id: &str,
+    auth: &AuthUser,
+) -> AppResult<crate::models::category::Category> {
+    category_repo
+        .find_by_document_id(id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("category"))
+}
+
 pub async fn list_categories(
     category_repo: &dyn CategoryRepository,
     auth: &AuthUser,

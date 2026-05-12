@@ -19,6 +19,13 @@ export class Tags {
     });
   }
 
+  async get(
+    id: string,
+    options?: RequestOptions,
+  ): Promise<Tag> {
+    return this.http.get<Tag>(`/tags/${id}`, options);
+  }
+
   async create(
     body: { name: string },
     options?: RequestOptions,

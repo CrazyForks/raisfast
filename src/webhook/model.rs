@@ -35,6 +35,7 @@ pub struct CreateWebhookRequest {
     pub events: Vec<String>,
     pub description: Option<String>,
     pub enabled: Option<bool>,
+    pub secret: Option<String>,
 }
 
 /// 更新订阅请求体

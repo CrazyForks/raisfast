@@ -1,5 +1,5 @@
 import { HttpClient } from "../client";
-import type { BatchResponse, RequestOptions, Webhook } from "../types";
+import type { BatchResponse, PaginatedData, RequestOptions, Webhook } from "../types";
 
 export class AdminWebhooks {
   private readonly http: HttpClient;
@@ -8,12 +8,19 @@ export class AdminWebhooks {
     this.http = http;
   }
 
-  async list(options?: RequestOptions): Promise<Webhook[]> {
-    return this.http.get<Webhook[]>("/admin/webhooks", options);
+  async list(
+    page = 1,
+    pageSize = 25,
+    options?: RequestOptions,
+  ): Promise<PaginatedData<Webhook>> {
+    return this.http.get<PaginatedData<Webhook>>("/admin/webhooks", {
+      ...options,
+      query: { page: String(page), page_size: String(pageSize) },
+    });
   }
 
   async create(
-    data: { url: string; events: string[]; secret?: string },
+    data: { url: string; events: string[]; description?: string; enabled?: boolean },
     options?: RequestOptions,
   ): Promise<Webhook> {
     return this.http.post<Webhook>("/admin/webhooks", data, options);

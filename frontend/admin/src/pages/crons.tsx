@@ -46,9 +46,9 @@ import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
 import { client } from "@/lib/raisfast";
-import { SDKError, type CronJob as CronJobSDK, type PaginatedData } from "@raisfast/sdk";
+import { SDKError, CronExecStatus, type CronSchedule, type PaginatedData } from "@raisfast/sdk";
 
-type CronJob = Omit<CronJobSDK, "id"> & { id: string };
+type CronJob = Omit<CronSchedule, "id"> & { id: string };
 
 function formatTime(iso: string | null): string {
   if (!iso) return "-";
@@ -143,7 +143,7 @@ export default function CronsPage() {
     }: {
       id: string;
       data: { label?: string; cron_expr?: string; payload?: string };
-    }) => client.admin.crons.update(id, data as never),
+    }) => client.admin.crons.update(id, data as Partial<CronSchedule>),
     onSuccess: () => {
       toast.success(t("cron.scheduleUpdated"));
       queryClient.invalidateQueries({ queryKey: ["crons"] });
@@ -301,7 +301,7 @@ export default function CronsPage() {
                   </TableCell>
                 </TableRow>
               ) : (
-                crons.map((c) => (
+                crons.map((c: CronJob) => (
                   <TableRow key={c.id}>
                     <TableCell>
                       {editCron?.id === c.id ? (

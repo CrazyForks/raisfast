@@ -265,6 +265,7 @@ async fn build_app(
         .route("/readyz", get(health::readiness))
         .route("/metrics", get(metrics::metrics_endpoint))
         .route("/feed.xml", get(rss::feed))
+        .route("/api/v1/brand", get(brand_handler))
         .nest(crate::constants::API_PREFIX, api_v1)
         .nest_service("/uploads", ServeDir::new(&upload_dir))
         .nest_service("/static", ServeDir::new(&static_dir))
@@ -274,6 +275,7 @@ async fn build_app(
         )
         .fallback(handle_plugin_route)
         .layer(Extension(limiters))
+        .layer(from_fn(powered_by_middleware))
         .layer(from_fn(locale_middleware))
         .layer(from_fn(metrics::track_metrics))
         .layer(from_fn(crate::middleware::request_id::inject_request_id))
@@ -950,5 +952,31 @@ async fn list_routes(State(state): State<AppState>) -> impl IntoResponse {
         "code": 0,
         "data": routes,
         "message": "ok"
+    }))
+}
+
+async fn powered_by_middleware(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    if let (Ok(name), Ok(value)) = (
+        axum::http::header::HeaderName::from_bytes(b"x-powered-by"),
+        axum::http::HeaderValue::from_str(&crate::_brand()),
+    ) {
+        response.headers_mut().insert(name, value);
+    }
+    response
+}
+
+async fn brand_handler() -> impl IntoResponse {
+    use serde_json::json;
+
+    axum::Json(json!({
+        "code": 0,
+        "data": {
+            "name": crate::_brand(),
+            "version": env!("CARGO_PKG_VERSION")
+        }
     }))
 }

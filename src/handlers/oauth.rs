@@ -136,14 +136,26 @@ pub async fn callback(
     match result {
         oauth::OAuthCallbackResult::LoginSuccess(resp) => {
             let resp = *resp;
-            let redirect_url = format!(
-                "{}?access_token={}&refresh_token={}&expires_in={}",
-                state.config.oauth.redirect_url,
-                resp.access_token,
-                resp.refresh_token,
-                resp.expires_in,
+            let html = format!(
+                r#"<!DOCTYPE html>
+<html><head><title>OAuth Callback</title></head><body>
+<script>
+(function() {{
+  var data = {{ access_token: "{at}", refresh_token: "{rt}", expires_in: {ei} }};
+  if (window.opener) {{
+    window.opener.postMessage({{ type: "oauth_callback", ...data }}, "*");
+    window.close();
+  }} else {{
+    document.body.innerText = "Authentication successful. You can close this tab.";
+  }}
+}})();
+</script>
+</body></html>"#,
+                at = resp.access_token,
+                rt = resp.refresh_token,
+                ei = resp.expires_in,
             );
-            Ok(Redirect::temporary(&redirect_url).into_response())
+            Ok(axum::response::Html(html).into_response())
         }
         oauth::OAuthCallbackResult::BindingRequired { .. } => Err(AppError::BadRequest(
             "binding required but not yet implemented".into(),

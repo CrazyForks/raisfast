@@ -347,16 +347,6 @@ export interface HealthStatus {
   uptime?: number;
 }
 
-export interface AdminStats {
-  posts: number;
-  pages: number;
-  comments: number;
-  categories: number;
-  tags: number;
-  media: number;
-  users: number;
-}
-
 export interface TrendPoint {
   date: string;
   count: number;

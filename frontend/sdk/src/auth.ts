@@ -68,7 +68,7 @@ export class BaseAuthStore implements IAuthStore {
     }
   }
 
-  private _notify(): void {
+  protected _notify(): void {
     for (const cb of this._listeners) {
       cb(this._token, this._user);
     }

@@ -33,6 +33,13 @@ export class Categories {
     });
   }
 
+  async get(
+    id: string,
+    options?: RequestOptions,
+  ): Promise<Category> {
+    return this.http.get<Category>(`/categories/${id}`, options);
+  }
+
   async create(
     body: CreateCategoryBody,
     options?: RequestOptions,

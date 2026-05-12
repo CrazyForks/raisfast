@@ -24,9 +24,10 @@ impl WebhookService {
         events: Vec<String>,
         description: Option<String>,
         enabled: bool,
+        custom_secret: Option<String>,
     ) -> AppResult<model::WebhookSubscription> {
         let (document_id, now) = new_id_and_timestamp();
-        let secret = Self::generate_secret();
+        let secret = custom_secret.unwrap_or_else(Self::generate_secret);
         let sub = model::WebhookSubscription {
             id: 0,
             document_id,

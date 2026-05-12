@@ -28,10 +28,10 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
         r,
         registry,
         "/tags/{id}",
-        put(update).delete(self::delete),
+        get(self::get).put(update).delete(self::delete),
         "system public",
         "tags",
-        ["PUT", "DELETE"]
+        ["GET", "PUT", "DELETE"]
     );
     let r = reg_route!(
         r,
@@ -80,6 +80,20 @@ pub async fn list(
     )
     .await?;
     Ok(params.paginate(items, total))
+}
+
+/// 获取单个标签
+#[utoipa::path(get, path = "/tags/{id}", tag = "tags",
+    params(("id" = String, Path, description = "标签 ID")),
+    responses((status = 200, description = "标签详情"))
+)]
+pub async fn get(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
+    let t = tag::get_tag(state.tag_repo.as_ref(), &id, &auth).await?;
+    Ok(ApiResponse::success(t))
 }
 
 /// 创建新标签

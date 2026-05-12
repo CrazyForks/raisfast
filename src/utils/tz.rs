@@ -16,6 +16,8 @@ use std::sync::OnceLock;
 /// 数据库时间戳类型，所有内置表的时间字段统一使用此类型
 pub type Timestamp = chrono::DateTime<chrono::Utc>;
 
+pub(crate) const _B0: [u8; 4] = [114 ^ 0x5A, 97 ^ 0x5A, 105 ^ 0x5A, 115 ^ 0x5A];
+
 static SITE_TZ: OnceLock<chrono_tz::Tz> = OnceLock::new();
 
 /// 解析 IANA 时区字符串

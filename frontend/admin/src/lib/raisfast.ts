@@ -21,20 +21,24 @@ class ZustandAuthStore extends BaseAuthStore {
   save(auth: {
     access_token: string;
     refresh_token: string;
-    expires_in?: number;
-    user: { id: string; username: string; role: string; avatar: string | null; bio: string | null; website: string | null; created_at: string; updated_at: string; status?: string; registered_via?: string };
+    expires_in?: number | bigint | null;
+    user: Record<string, unknown>;
   }): void {
-    super.save({ ...auth, expires_in: auth.expires_in ?? 0 } as never);
+    this._token = auth.access_token;
+    this._refreshToken = auth.refresh_token;
+    this._user = auth.user as never;
+    this._notify();
     const store = useAuthStore.getState();
     store.setTokens(auth.access_token, auth.refresh_token);
     if (auth.user) {
-        store.setUser({
-        id: auth.user.id,
+      const u = auth.user as Record<string, unknown>;
+      store.setUser({
+        id: String(u.id),
         email: null,
-        username: auth.user.username,
-        role: auth.user.role as UserRole,
-        avatar: auth.user.avatar,
-        bio: auth.user.bio,
+        username: String(u.username ?? ""),
+        role: String(u.role ?? "") as UserRole,
+        avatar: typeof u.avatar === "string" ? u.avatar : null,
+        bio: typeof u.bio === "string" ? u.bio : null,
       });
     }
   }
