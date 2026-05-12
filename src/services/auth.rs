@@ -201,11 +201,11 @@ pub async fn register(
                     .map(crate::db::dialect::ph)
                     .collect::<Vec<_>>()
                     .join(", ");
-                let role = UserRole::Reader.as_str();
-                let status = UserStatus::Active.as_str();
                 let sql = format!(
-                    "INSERT INTO users (document_id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, '{role}', '{status}', {})",
-                    crate::db::dialect::ph(6)
+                    "INSERT INTO users (document_id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, {}, {}, {})",
+                    crate::db::dialect::ph(6),
+                    crate::db::dialect::ph(7),
+                    crate::db::dialect::ph(8)
                 );
                 sqlx::query(&sql)
                     .bind(&document_id)
@@ -213,6 +213,8 @@ pub async fn register(
                     .bind(&req.username)
                     .bind(now)
                     .bind(now)
+                    .bind(UserRole::Reader)
+                    .bind(UserStatus::Active)
                     .bind(registered_via)
                     .execute(&mut *tx)
                     .await?;
@@ -222,17 +224,19 @@ pub async fn register(
                     .map(crate::db::dialect::ph)
                     .collect::<Vec<_>>()
                     .join(", ");
-                let role = UserRole::Reader.as_str();
-                let status = UserStatus::Active.as_str();
                 let sql = format!(
-                    "INSERT INTO users (document_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, '{role}', '{status}', {})",
-                    crate::db::dialect::ph(5)
+                    "INSERT INTO users (document_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, {}, {}, {})",
+                    crate::db::dialect::ph(5),
+                    crate::db::dialect::ph(6),
+                    crate::db::dialect::ph(7)
                 );
                 sqlx::query(&sql)
                     .bind(&document_id)
                     .bind(&req.username)
                     .bind(now)
                     .bind(now)
+                    .bind(UserRole::Reader)
+                    .bind(UserStatus::Active)
                     .bind(registered_via)
                     .execute(&mut *tx)
                     .await?;
@@ -347,12 +351,11 @@ pub async fn login(
         return Err(AppError::BadRequest("account_disabled".into()));
     }
 
-    if let Some(ref tid) = user.tenant_id {
-        if let Ok(Some(tenant)) = crate::models::tenant::find_by_id(pool, tid).await {
-            if tenant.status != crate::models::tenant::TenantStatus::Active {
-                return Err(AppError::BadRequest("tenant_disabled".into()));
-            }
-        }
+    if let Some(ref tid) = user.tenant_id
+        && let Ok(Some(tenant)) = crate::models::tenant::find_by_id(pool, tid).await
+        && tenant.status != crate::models::tenant::TenantStatus::Active
+    {
+        return Err(AppError::BadRequest("tenant_disabled".into()));
     }
 
     let user_role = user.role;

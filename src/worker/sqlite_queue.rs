@@ -35,15 +35,15 @@ impl JobQueue for SqliteJobQueue {
         let payload = serialize_job(&new_job.job);
         let max_attempts = new_job.max_attempts.unwrap_or(3);
 
-        let pending = JobStatus::Pending.as_str();
         sqlx::query(&format!(
             "INSERT INTO jobs ({COL_DOCUMENT_ID}, job_type, payload, status, max_attempts, run_after, created_at, updated_at)
-             VALUES ({}, {}, {}, '{pending}', {}, {}, {}, {})",
-            ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7)
+             VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
+            ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8)
         ))
         .bind(&id)
         .bind(job_type)
         .bind(&payload)
+        .bind(JobStatus::Pending)
         .bind(max_attempts)
         .bind(new_job.run_after)
         .bind(now)
@@ -59,26 +59,28 @@ impl JobQueue for SqliteJobQueue {
         let now = crate::utils::tz::now_utc();
         let limit_i64 = limit as i64;
 
-        let running = JobStatus::Running.as_str();
-        let pending = JobStatus::Pending.as_str();
         let returning = crate::db::dialect::returning_col(&format!(
             "{COL_DOCUMENT_ID} as {COL_ID}, job_type, payload, attempts, max_attempts, created_at"
         ));
         let sql = format!(
-            "UPDATE jobs SET status = '{running}', attempts = attempts + 1, updated_at = {}
+            "UPDATE jobs SET status = {}, attempts = attempts + 1, updated_at = {}
              WHERE {COL_ID} IN (
                SELECT {COL_ID} FROM jobs
-               WHERE status = '{pending}' AND (run_after IS NULL OR run_after <= {})
+               WHERE status = {} AND (run_after IS NULL OR run_after <= {})
                ORDER BY created_at ASC LIMIT {}
              )
              {returning}",
             ph(1),
             ph(2),
-            ph(3)
+            ph(3),
+            ph(4),
+            ph(5)
         );
 
         let rows = sqlx::query(&sql)
+            .bind(JobStatus::Running)
             .bind(now)
+            .bind(JobStatus::Pending)
             .bind(now)
             .bind(limit_i64)
             .fetch_all(&self.pool)
@@ -112,12 +114,13 @@ impl JobQueue for SqliteJobQueue {
 
     async fn complete(&self, id: &str) -> AppResult<()> {
         let now = crate::utils::tz::now_utc();
-        let completed = JobStatus::Completed.as_str();
         sqlx::query(&format!(
-            "UPDATE jobs SET status = '{completed}', updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
+            "UPDATE jobs SET status = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
             ph(1),
-            ph(2)
+            ph(2),
+            ph(3)
         ))
+        .bind(JobStatus::Completed)
         .bind(now)
         .bind(id)
         .execute(&self.pool)
@@ -146,13 +149,14 @@ impl JobQueue for SqliteJobQueue {
             let max_attempts: i32 = r.get("max_attempts");
 
             if attempts >= max_attempts {
-                let dead = JobStatus::Dead.as_str();
                 sqlx::query(&format!(
-                    "UPDATE jobs SET status = '{dead}', error = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
+                    "UPDATE jobs SET status = {}, error = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
                     ph(1),
                     ph(2),
-                    ph(3)
+                    ph(3),
+                    ph(4)
                 ))
+                .bind(JobStatus::Dead)
                 .bind(error)
                 .bind(now)
                 .bind(id)
@@ -166,11 +170,11 @@ impl JobQueue for SqliteJobQueue {
             let run_after =
                 crate::utils::tz::now_utc() + chrono::Duration::from_std(delay).unwrap_or_default();
 
-            let pending = JobStatus::Pending.as_str();
             sqlx::query(&format!(
-                "UPDATE jobs SET status = '{pending}', error = {}, run_after = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
-                ph(1), ph(2), ph(3), ph(4)
+                "UPDATE jobs SET status = {}, error = {}, run_after = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
+                ph(1), ph(2), ph(3), ph(4), ph(5)
             ))
+            .bind(JobStatus::Pending)
             .bind(error)
             .bind(run_after)
             .bind(now)
@@ -187,13 +191,14 @@ impl JobQueue for SqliteJobQueue {
 
     async fn dead(&self, id: &str, error: &str) -> AppResult<()> {
         let now = crate::utils::tz::now_utc();
-        let dead = JobStatus::Dead.as_str();
         sqlx::query(&format!(
-            "UPDATE jobs SET status = '{dead}', error = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
+            "UPDATE jobs SET status = {}, error = {}, updated_at = {} WHERE {COL_DOCUMENT_ID} = {}",
             ph(1),
             ph(2),
-            ph(3)
+            ph(3),
+            ph(4)
         ))
+        .bind(JobStatus::Dead)
         .bind(error)
         .bind(now)
         .bind(id)
@@ -204,20 +209,21 @@ impl JobQueue for SqliteJobQueue {
     }
 
     async fn stats(&self) -> AppResult<JobStats> {
-        let pending = JobStatus::Pending.as_str();
-        let running = JobStatus::Running.as_str();
-        let completed = JobStatus::Completed.as_str();
-        let failed = JobStatus::Failed.as_str();
-        let dead = JobStatus::Dead.as_str();
         let row = sqlx::query(&format!(
             "SELECT
-                COALESCE(SUM(CASE WHEN status='{pending}' THEN 1 ELSE 0 END), 0) as pending,
-                COALESCE(SUM(CASE WHEN status='{running}' THEN 1 ELSE 0 END), 0) as running,
-                COALESCE(SUM(CASE WHEN status='{completed}' THEN 1 ELSE 0 END), 0) as completed,
-                COALESCE(SUM(CASE WHEN status='{failed}' THEN 1 ELSE 0 END), 0) as failed,
-                COALESCE(SUM(CASE WHEN status='{dead}' THEN 1 ELSE 0 END), 0) as dead
+                COALESCE(SUM(CASE WHEN status={} THEN 1 ELSE 0 END), 0) as pending,
+                COALESCE(SUM(CASE WHEN status={} THEN 1 ELSE 0 END), 0) as running,
+                COALESCE(SUM(CASE WHEN status={} THEN 1 ELSE 0 END), 0) as completed,
+                COALESCE(SUM(CASE WHEN status={} THEN 1 ELSE 0 END), 0) as failed,
+                COALESCE(SUM(CASE WHEN status={} THEN 1 ELSE 0 END), 0) as dead
              FROM jobs",
+            ph(1), ph(2), ph(3), ph(4), ph(5)
         ))
+        .bind(JobStatus::Pending)
+        .bind(JobStatus::Running)
+        .bind(JobStatus::Completed)
+        .bind(JobStatus::Failed)
+        .bind(JobStatus::Dead)
         .fetch_one(&self.pool)
         .await?;
 
@@ -316,16 +322,18 @@ impl JobQueue for SqliteJobQueue {
 
     async fn retry(&self, id: &str) -> AppResult<()> {
         let now = crate::utils::tz::now_utc();
-        let pending = JobStatus::Pending.as_str();
-        let dead = JobStatus::Dead.as_str();
         let result = sqlx::query(&format!(
-            "UPDATE jobs SET status = '{pending}', attempts = 0, error = NULL, run_after = NULL, updated_at = {}
-             WHERE {COL_DOCUMENT_ID} = {} AND status = '{dead}'",
+            "UPDATE jobs SET status = {}, attempts = 0, error = NULL, run_after = NULL, updated_at = {}
+             WHERE {COL_DOCUMENT_ID} = {} AND status = {}",
             ph(1),
-            ph(2)
+            ph(2),
+            ph(3),
+            ph(4)
         ))
+        .bind(JobStatus::Pending)
         .bind(now)
         .bind(id)
+        .bind(JobStatus::Dead)
         .execute(&self.pool)
         .await?;
 
@@ -354,13 +362,15 @@ impl JobQueue for SqliteJobQueue {
     }
 
     async fn cleanup(&self) -> AppResult<u64> {
-        let completed = JobStatus::Completed.as_str();
-        let dead = JobStatus::Dead.as_str();
         let sql = format!(
-            "DELETE FROM jobs WHERE status IN ('{completed}', '{dead}') AND updated_at < {}",
-            crate::db::dialect::ago_expr(7)
+            "DELETE FROM jobs WHERE status IN ({}, {}) AND updated_at < {}",
+            ph(1), ph(2), crate::db::dialect::ago_expr(7)
         );
-        let result = sqlx::query(&sql).execute(&self.pool).await?;
+        let result = sqlx::query(&sql)
+            .bind(JobStatus::Completed)
+            .bind(JobStatus::Dead)
+            .execute(&self.pool)
+            .await?;
 
         let count = result.rows_affected();
         if count > 0 {

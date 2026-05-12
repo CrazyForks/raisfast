@@ -71,13 +71,14 @@ pub async fn reset_password(
     in_transaction!(pool, tx, {
         let now = crate::utils::tz::now_utc();
 
-        let auth_type = crate::models::user_credential::AuthType::Email.as_str();
         let sql = format!(
-            "SELECT id, auth_type FROM user_credentials WHERE user_id = {} AND auth_type = '{auth_type}' LIMIT 1",
-            crate::db::dialect::ph(1)
+            "SELECT id, auth_type FROM user_credentials WHERE user_id = {} AND auth_type = {} LIMIT 1",
+            crate::db::dialect::ph(1),
+            crate::db::dialect::ph(2)
         );
-        let row: Option<(i64, String)> = sqlx::query_as(&sql)
+        let row: Option<(i64, crate::models::user_credential::AuthType)> = sqlx::query_as(&sql)
             .bind(reset_token.user_id)
+            .bind(crate::models::user_credential::AuthType::Email)
             .fetch_optional(&mut *tx)
             .await?;
         if let Some((cred_id, _)) = row {

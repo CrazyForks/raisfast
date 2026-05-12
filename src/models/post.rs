@@ -391,13 +391,13 @@ pub async fn increment_view_count_joined(
     slug: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<PostJoinedRow> {
-    let published = PostStatus::Published.as_str();
     let sql = format!(
-        "UPDATE posts SET view_count = view_count + 1 WHERE slug = {} AND status = '{published}'{}",
+        "UPDATE posts SET view_count = view_count + 1 WHERE slug = {} AND status = {}{}",
         ph(1),
-        tenant_filter_ph(tenant_id, 2)
+        ph(2),
+        tenant_filter_ph(tenant_id, 3)
     );
-    let mut q = sqlx::query(&sql).bind(slug);
+    let mut q = sqlx::query(&sql).bind(slug).bind(PostStatus::Published);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -526,28 +526,33 @@ pub async fn find_published(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Post>, i64)> {
     let offset = (page - 1) * page_size;
-    let published = PostStatus::Published.as_str();
 
     let (posts, total) = if let Some(tag_id) = tag_id {
-        let filter = tenant_filter_aliased_ph("p", tenant_id, 2);
+        let filter = tenant_filter_aliased_ph("p", tenant_id, 3);
         let sql = format!(
-            "SELECT p.* FROM posts p INNER JOIN posts_tags pt ON p.id = pt.post_id WHERE p.status = '{published}' AND pt.tag_id = {}{filter} ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT {} OFFSET {}",
+            "SELECT p.* FROM posts p INNER JOIN posts_tags pt ON p.id = pt.post_id WHERE p.status = {} AND pt.tag_id = {}{filter} ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT {} OFFSET {}",
             ph(1),
-            ph(3),
-            ph(4)
+            ph(2),
+            ph(4),
+            ph(5)
         );
-        let mut query = sqlx::query_as::<_, Post>(&sql).bind(tag_id);
+        let mut query = sqlx::query_as::<_, Post>(&sql)
+            .bind(PostStatus::Published)
+            .bind(tag_id);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
         let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
 
-        let filter = tenant_filter_aliased_ph("p", tenant_id, 2);
+        let filter = tenant_filter_aliased_ph("p", tenant_id, 3);
         let sql = format!(
-            "SELECT COUNT(*) FROM posts p INNER JOIN posts_tags pt ON p.id = pt.post_id WHERE p.status = '{published}' AND pt.tag_id = {}{filter}",
-            ph(1)
+            "SELECT COUNT(*) FROM posts p INNER JOIN posts_tags pt ON p.id = pt.post_id WHERE p.status = {} AND pt.tag_id = {}{filter}",
+            ph(1),
+            ph(2)
         );
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(tag_id);
+        let mut query = sqlx::query_as::<_, (i64,)>(&sql)
+            .bind(PostStatus::Published)
+            .bind(tag_id);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -556,15 +561,16 @@ pub async fn find_published(
         (posts, total.0)
     } else if let Some(q) = q {
         let pattern = format!("%{q}%");
-        let filter = tenant_filter_ph(tenant_id, 1);
+        let filter = tenant_filter_ph(tenant_id, 2);
         let sql = format!(
-            "SELECT * FROM posts WHERE status = '{published}'{filter} AND (title LIKE {} OR content LIKE {}) ORDER BY is_pinned DESC, created_at DESC LIMIT {} OFFSET {}",
-            ph(2),
+            "SELECT * FROM posts WHERE status = {}{filter} AND (title LIKE {} OR content LIKE {}) ORDER BY is_pinned DESC, created_at DESC LIMIT {} OFFSET {}",
+            ph(1),
             ph(3),
             ph(4),
-            ph(5)
+            ph(5),
+            ph(6)
         );
-        let mut query = sqlx::query_as::<_, Post>(&sql);
+        let mut query = sqlx::query_as::<_, Post>(&sql).bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -577,11 +583,12 @@ pub async fn find_published(
             .await?;
 
         let sql = format!(
-            "SELECT COUNT(*) FROM posts WHERE status = '{published}'{filter} AND (title LIKE {} OR content LIKE {})",
-            ph(2),
-            ph(3)
+            "SELECT COUNT(*) FROM posts WHERE status = {}{filter} AND (title LIKE {} OR content LIKE {})",
+            ph(1),
+            ph(3),
+            ph(4)
         );
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql);
+        let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -589,24 +596,30 @@ pub async fn find_published(
 
         (posts, total.0)
     } else if let Some(category_id) = category_id {
-        let filter = tenant_filter_ph(tenant_id, 2);
+        let filter = tenant_filter_ph(tenant_id, 3);
         let sql = format!(
-            "SELECT * FROM posts WHERE status = '{published}' AND category_id = {}{filter} ORDER BY is_pinned DESC, created_at DESC LIMIT {} OFFSET {}",
+            "SELECT * FROM posts WHERE status = {} AND category_id = {}{filter} ORDER BY is_pinned DESC, created_at DESC LIMIT {} OFFSET {}",
             ph(1),
-            ph(3),
-            ph(4)
+            ph(2),
+            ph(4),
+            ph(5)
         );
-        let mut query = sqlx::query_as::<_, Post>(&sql).bind(category_id);
+        let mut query = sqlx::query_as::<_, Post>(&sql)
+            .bind(PostStatus::Published)
+            .bind(category_id);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
         let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
 
         let sql = format!(
-            "SELECT COUNT(*) FROM posts WHERE status = '{published}' AND category_id = {}{filter}",
-            ph(1)
+            "SELECT COUNT(*) FROM posts WHERE status = {} AND category_id = {}{filter}",
+            ph(1),
+            ph(2)
         );
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(category_id);
+        let mut query = sqlx::query_as::<_, (i64,)>(&sql)
+            .bind(PostStatus::Published)
+            .bind(category_id);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -614,20 +627,24 @@ pub async fn find_published(
 
         (posts, total.0)
     } else {
-        let filter = tenant_filter_ph(tenant_id, 1);
+        let filter = tenant_filter_ph(tenant_id, 2);
         let sql = format!(
-            "SELECT * FROM posts WHERE status = '{published}'{filter} ORDER BY is_pinned DESC, created_at DESC LIMIT {} OFFSET {}",
-            ph(2),
-            ph(3)
+            "SELECT * FROM posts WHERE status = {}{filter} ORDER BY is_pinned DESC, created_at DESC LIMIT {} OFFSET {}",
+            ph(1),
+            ph(3),
+            ph(4)
         );
-        let mut query = sqlx::query_as::<_, Post>(&sql);
+        let mut query = sqlx::query_as::<_, Post>(&sql).bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
         let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
 
-        let sql = format!("SELECT COUNT(*) FROM posts WHERE status = '{published}'{filter}");
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql);
+        let sql = format!(
+            "SELECT COUNT(*) FROM posts WHERE status = {}{filter}",
+            ph(1)
+        );
+        let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -688,9 +705,12 @@ pub async fn find_all_joined(
             query = query.bind(tid);
         }
         let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
-        let filter = tenant_filter_ph(tenant_id, 1);
-        let sql = format!("SELECT COUNT(*) FROM posts WHERE 1=1{filter}");
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql);
+        let filter = tenant_filter_ph(tenant_id, 2);
+        let sql = format!(
+            "SELECT COUNT(*) FROM posts WHERE status = {}{filter}",
+            ph(1)
+        );
+        let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -981,13 +1001,15 @@ pub async fn find_published_joined_by_slug(
     slug: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<PostJoinedRow> {
-    let published = PostStatus::Published.as_str();
     let sql = format!(
-        "{JOIN_SQL} WHERE p.slug = {} AND p.status = '{published}'{}",
+        "{JOIN_SQL} WHERE p.slug = {} AND p.status = {}{}",
         ph(1),
-        tenant_filter_aliased_ph("p", tenant_id, 2)
+        ph(2),
+        tenant_filter_aliased_ph("p", tenant_id, 3)
     );
-    let mut q = sqlx::query_as::<_, PostJoinedRow>(&sql).bind(slug);
+    let mut q = sqlx::query_as::<_, PostJoinedRow>(&sql)
+        .bind(slug)
+        .bind(PostStatus::Published);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -1051,22 +1073,23 @@ pub async fn find_joined_by_ids(
         return Ok(Vec::new());
     }
 
-    let published = PostStatus::Published.as_str();
     let placeholders: Vec<String> = (1..=ids.len()).map(ph).collect();
     let next_idx = ids.len() + 1;
     let sql = format!(
         "{} \
-         WHERE p.id IN ({}) AND p.status = '{published}'{} \
+         WHERE p.id IN ({}) AND p.status = {}{} \
          ORDER BY p.is_pinned DESC, p.created_at DESC",
         JOIN_SQL,
         placeholders.join(","),
-        tenant_filter_aliased_ph("p", tenant_id, next_idx)
+        ph(next_idx),
+        tenant_filter_aliased_ph("p", tenant_id, next_idx + 1)
     );
 
     let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql);
     for id in ids {
         query = query.bind(id);
     }
+    query = query.bind(PostStatus::Published);
     if let Some(tid) = tenant_id {
         query = query.bind(tid);
     }
@@ -1083,18 +1106,19 @@ pub async fn count_published_by_ids(
         return Ok(0);
     }
 
-    let published = PostStatus::Published.as_str();
     let placeholders: Vec<String> = (1..=ids.len()).map(ph).collect();
     let next_idx = ids.len() + 1;
     let sql = format!(
-        "SELECT COUNT(*) FROM posts WHERE id IN ({}) AND status = '{published}'{}",
+        "SELECT COUNT(*) FROM posts WHERE id IN ({}) AND status = {}{}",
         placeholders.join(","),
-        tenant_filter_ph(tenant_id, next_idx)
+        ph(next_idx),
+        tenant_filter_ph(tenant_id, next_idx + 1)
     );
     let mut query = sqlx::query_as::<_, (i64,)>(&sql);
     for id in ids {
         query = query.bind(id);
     }
+    query = query.bind(PostStatus::Published);
     if let Some(tid) = tenant_id {
         query = query.bind(tid);
     }
@@ -1112,30 +1136,35 @@ pub async fn find_published_joined(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<PostJoinedRow>, i64)> {
     let offset = (page - 1) * page_size;
-    let published = PostStatus::Published.as_str();
 
     let (posts, total) = if let Some(tag_id) = tag_id {
-        let filter = tenant_filter_aliased_ph("p", tenant_id, 2);
+        let filter = tenant_filter_aliased_ph("p", tenant_id, 3);
         let sql = format!(
             "{JOIN_SQL} \
              INNER JOIN posts_tags pt ON p.id = pt.post_id \
-             WHERE p.status = '{published}' AND pt.tag_id = {}{filter} \
+             WHERE p.status = {} AND pt.tag_id = {}{filter} \
              ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT {} OFFSET {}",
             ph(1),
-            ph(3),
-            ph(4)
+            ph(2),
+            ph(4),
+            ph(5)
         );
-        let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql).bind(tag_id);
+        let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql)
+            .bind(PostStatus::Published)
+            .bind(tag_id);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
         let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
 
         let sql = format!(
-            "SELECT COUNT(*) FROM posts p INNER JOIN posts_tags pt ON p.id = pt.post_id WHERE p.status = '{published}' AND pt.tag_id = {}{filter}",
-            ph(1)
+            "SELECT COUNT(*) FROM posts p INNER JOIN posts_tags pt ON p.id = pt.post_id WHERE p.status = {} AND pt.tag_id = {}{filter}",
+            ph(1),
+            ph(2)
         );
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(tag_id);
+        let mut query = sqlx::query_as::<_, (i64,)>(&sql)
+            .bind(PostStatus::Published)
+            .bind(tag_id);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -1144,17 +1173,18 @@ pub async fn find_published_joined(
         (posts, total.0)
     } else if let Some(q) = q {
         let pattern = format!("%{q}%");
-        let filter = tenant_filter_aliased_ph("p", tenant_id, 1);
+        let filter = tenant_filter_aliased_ph("p", tenant_id, 2);
         let sql = format!(
             "{JOIN_SQL} \
-             WHERE p.status = '{published}'{filter} AND (p.title LIKE {} OR p.content LIKE {}) \
+             WHERE p.status = {}{filter} AND (p.title LIKE {} OR p.content LIKE {}) \
              ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT {} OFFSET {}",
-            ph(2),
+            ph(1),
             ph(3),
             ph(4),
-            ph(5)
+            ph(5),
+            ph(6)
         );
-        let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql);
+        let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql).bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -1166,13 +1196,14 @@ pub async fn find_published_joined(
             .fetch_all(pool)
             .await?;
 
-        let filter = tenant_filter_ph(tenant_id, 1);
+        let filter = tenant_filter_ph(tenant_id, 2);
         let sql = format!(
-            "SELECT COUNT(*) FROM posts WHERE status = '{published}'{filter} AND (title LIKE {} OR content LIKE {})",
-            ph(2),
-            ph(3)
+            "SELECT COUNT(*) FROM posts WHERE status = {}{filter} AND (title LIKE {} OR content LIKE {})",
+            ph(1),
+            ph(3),
+            ph(4)
         );
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql);
+        let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -1180,27 +1211,33 @@ pub async fn find_published_joined(
 
         (posts, total.0)
     } else if let Some(category_id) = category_id {
-        let filter = tenant_filter_aliased_ph("p", tenant_id, 2);
+        let filter = tenant_filter_aliased_ph("p", tenant_id, 3);
         let sql = format!(
             "{JOIN_SQL} \
-             WHERE p.status = '{published}' AND p.category_id = {}{filter} \
+             WHERE p.status = {} AND p.category_id = {}{filter} \
              ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT {} OFFSET {}",
             ph(1),
-            ph(3),
-            ph(4)
+            ph(2),
+            ph(4),
+            ph(5)
         );
-        let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql).bind(category_id);
+        let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql)
+            .bind(PostStatus::Published)
+            .bind(category_id);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
         let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
 
-        let filter = tenant_filter_ph(tenant_id, 2);
+        let filter = tenant_filter_ph(tenant_id, 3);
         let sql = format!(
-            "SELECT COUNT(*) FROM posts WHERE status = '{published}' AND category_id = {}{filter}",
-            ph(1)
+            "SELECT COUNT(*) FROM posts WHERE status = {} AND category_id = {}{filter}",
+            ph(1),
+            ph(2)
         );
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(category_id);
+        let mut query = sqlx::query_as::<_, (i64,)>(&sql)
+            .bind(PostStatus::Published)
+            .bind(category_id);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
@@ -1208,23 +1245,27 @@ pub async fn find_published_joined(
 
         (posts, total.0)
     } else {
-        let filter = tenant_filter_aliased_ph("p", tenant_id, 1);
+        let filter = tenant_filter_aliased_ph("p", tenant_id, 2);
         let sql = format!(
             "{JOIN_SQL} \
-             WHERE p.status = '{published}'{filter} \
+             WHERE p.status = {}{filter} \
              ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT {} OFFSET {}",
-            ph(2),
-            ph(3)
+            ph(1),
+            ph(3),
+            ph(4)
         );
-        let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql);
+        let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql).bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }
         let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
 
-        let filter = tenant_filter_ph(tenant_id, 1);
-        let sql = format!("SELECT COUNT(*) FROM posts WHERE status = '{published}'{filter}");
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql);
+        let filter = tenant_filter_ph(tenant_id, 2);
+        let sql = format!(
+            "SELECT COUNT(*) FROM posts WHERE status = {}{filter}",
+            ph(1)
+        );
+        let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
             query = query.bind(tid);
         }

@@ -108,10 +108,9 @@ pub async fn create(
 
     match tenant_id {
         Some(tid) => {
-            let vals = (1..=11).map(ph).collect::<Vec<_>>().join(", ");
-            let status = CommentStatus::Pending.as_str();
+            let vals = (1..=12).map(ph).collect::<Vec<_>>().join(", ");
             let sql = format!(
-                "INSERT INTO comments (document_id, tenant_id, post_id, created_by, updated_by, nickname, email, content, parent_id, created_at, updated_at, status) VALUES ({vals}, '{status}')"
+                "INSERT INTO comments (document_id, tenant_id, post_id, created_by, updated_by, nickname, email, content, parent_id, created_at, updated_at, status) VALUES ({vals})"
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -125,14 +124,14 @@ pub async fn create(
                 .bind(cmd.parent_id)
                 .bind(now)
                 .bind(now)
+                .bind(CommentStatus::Pending)
                 .execute(pool)
                 .await?;
         }
         None => {
-            let vals = (1..=10).map(ph).collect::<Vec<_>>().join(", ");
-            let status = CommentStatus::Pending.as_str();
+            let vals = (1..=11).map(ph).collect::<Vec<_>>().join(", ");
             let sql = format!(
-                "INSERT INTO comments (document_id, post_id, created_by, updated_by, nickname, email, content, parent_id, created_at, updated_at, status) VALUES ({vals}, '{status}')"
+                "INSERT INTO comments (document_id, post_id, created_by, updated_by, nickname, email, content, parent_id, created_at, updated_at, status) VALUES ({vals})"
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -145,6 +144,7 @@ pub async fn create(
                 .bind(cmd.parent_id)
                 .bind(now)
                 .bind(now)
+                .bind(CommentStatus::Pending)
                 .execute(pool)
                 .await?;
         }
@@ -160,13 +160,15 @@ pub async fn find_approved_by_post(
     post_id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<Comment>> {
-    let filter = tenant_filter_ph(tenant_id, 2);
-    let approved = CommentStatus::Approved.as_str();
+    let filter = tenant_filter_ph(tenant_id, 3);
     let sql = format!(
-        "SELECT * FROM comments WHERE post_id = {} AND status = '{approved}'{filter} ORDER BY created_at ASC",
-        ph(1)
+        "SELECT * FROM comments WHERE post_id = {} AND status = {}{filter} ORDER BY created_at ASC",
+        ph(1),
+        ph(2)
     );
-    let mut q = sqlx::query_as::<_, Comment>(&sql).bind(post_id);
+    let mut q = sqlx::query_as::<_, Comment>(&sql)
+        .bind(post_id)
+        .bind(CommentStatus::Approved);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -182,29 +184,33 @@ pub async fn find_approved_by_post_paginated(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Comment>, i64)> {
     let offset = (page - 1) * page_size;
-    let filter = tenant_filter_ph(tenant_id, 2);
+    let filter = tenant_filter_ph(tenant_id, 3);
     let base = usize::from(tenant_id.is_some());
-    let approved = CommentStatus::Approved.as_str();
     let sql = format!(
-        "SELECT * FROM comments WHERE post_id = {} AND status = '{approved}'{filter} ORDER BY created_at ASC LIMIT {} OFFSET {}",
+        "SELECT * FROM comments WHERE post_id = {} AND status = {}{filter} ORDER BY created_at ASC LIMIT {} OFFSET {}",
         ph(1),
-        ph(base + 2),
-        ph(base + 3)
+        ph(2),
+        ph(base + 3),
+        ph(base + 4)
     );
-    let mut q = sqlx::query_as::<_, Comment>(&sql).bind(post_id);
+    let mut q = sqlx::query_as::<_, Comment>(&sql)
+        .bind(post_id)
+        .bind(CommentStatus::Approved);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
     q = q.bind(page_size).bind(offset);
     let comments = q.fetch_all(pool).await?;
 
-    let filter2 = tenant_filter_ph(tenant_id, 2);
-    let approved = CommentStatus::Approved.as_str();
+    let filter2 = tenant_filter_ph(tenant_id, 3);
     let sql2 = format!(
-        "SELECT COUNT(*) FROM comments WHERE post_id = {} AND status = '{approved}'{filter2}",
-        ph(1)
+        "SELECT COUNT(*) FROM comments WHERE post_id = {} AND status = {}{filter2}",
+        ph(1),
+        ph(2)
     );
-    let mut q2 = sqlx::query_scalar::<_, i64>(&sql2).bind(post_id);
+    let mut q2 = sqlx::query_scalar::<_, i64>(&sql2)
+        .bind(post_id)
+        .bind(CommentStatus::Approved);
     if let Some(tid) = tenant_id {
         q2 = q2.bind(tid);
     }

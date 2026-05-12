@@ -54,15 +54,16 @@ pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> 
             .execute(&mut *tx)
             .await?;
 
-        let auth_type = crate::models::user_credential::AuthType::Email.as_str();
         let sql = format!(
-            "UPDATE user_credentials SET verified = 1, updated_at = {} WHERE user_id = {} AND auth_type = '{auth_type}'",
+            "UPDATE user_credentials SET verified = 1, updated_at = {} WHERE user_id = {} AND auth_type = {}",
             crate::db::dialect::ph(1),
-            crate::db::dialect::ph(2)
+            crate::db::dialect::ph(2),
+            crate::db::dialect::ph(3)
         );
         sqlx::query(&sql)
             .bind(now)
             .bind(verification.user_id)
+            .bind(crate::models::user_credential::AuthType::Email)
             .execute(&mut *tx)
             .await?;
         Ok::<_, crate::errors::app_error::AppError>(())

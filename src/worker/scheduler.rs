@@ -427,11 +427,11 @@ impl CronScheduler {
             match &dispatch_result {
                 Ok(()) => {
                     if let Some(ref lid) = log_id {
-                        let completed = CronExecStatus::Completed.as_str();
                         sqlx::query(&format!(
-                            "UPDATE cron_execution_log SET status = '{completed}', duration_ms = {}, finished_at = {} WHERE document_id = {}",
-                            ph(1), ph(2), ph(3)
+                            "UPDATE cron_execution_log SET status = {}, duration_ms = {}, finished_at = {} WHERE document_id = {}",
+                            ph(1), ph(2), ph(3), ph(4)
                         ))
+                        .bind(CronExecStatus::Completed)
                         .bind(elapsed)
                         .bind(now)
                         .bind(lid)
@@ -441,12 +441,12 @@ impl CronScheduler {
                 }
                 Err(e) => {
                     if let Some(ref lid) = log_id {
-                        let failed = CronExecStatus::Failed.as_str();
                         let err_str = e.to_string();
                         sqlx::query(&format!(
-                            "UPDATE cron_execution_log SET status = '{failed}', duration_ms = {}, error = {}, finished_at = {} WHERE document_id = {}",
-                            ph(1), ph(2), ph(3), ph(4)
+                            "UPDATE cron_execution_log SET status = {}, duration_ms = {}, error = {}, finished_at = {} WHERE document_id = {}",
+                            ph(1), ph(2), ph(3), ph(4), ph(5)
                         ))
+                        .bind(CronExecStatus::Failed)
                         .bind(elapsed)
                         .bind(&err_str)
                         .bind(now)
@@ -569,20 +569,21 @@ pub async fn create_execution_log(
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
 
-    let running = CronExecStatus::Running.as_str();
     sqlx::query(&format!(
         "INSERT INTO cron_execution_log (document_id, schedule_id, job_type, label, status, started_at)
-         VALUES ({}, {}, {}, {}, '{running}', {})",
+         VALUES ({}, {}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
         ph(4),
-        ph(5)
+        ph(5),
+        ph(6)
     ))
     .bind(&document_id)
     .bind(schedule_id)
     .bind(job_type)
     .bind(label)
+    .bind(CronExecStatus::Running)
     .bind(now)
     .execute(pool)
     .await?;
@@ -593,11 +594,11 @@ pub async fn create_execution_log(
 /// 标记执行日志为成功
 pub async fn complete_execution_log(pool: &Pool, log_id: &str, duration_ms: i64) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    let completed = CronExecStatus::Completed.as_str();
     sqlx::query(&format!(
-        "UPDATE cron_execution_log SET status = '{completed}', duration_ms = {}, finished_at = {} WHERE document_id = {}",
-        ph(1), ph(2), ph(3)
+        "UPDATE cron_execution_log SET status = {}, duration_ms = {}, finished_at = {} WHERE document_id = {}",
+        ph(1), ph(2), ph(3), ph(4)
     ))
+    .bind(CronExecStatus::Completed)
     .bind(duration_ms)
     .bind(now)
     .bind(log_id)
@@ -614,11 +615,11 @@ pub async fn fail_execution_log(
     error: &str,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    let failed = CronExecStatus::Failed.as_str();
     sqlx::query(&format!(
-        "UPDATE cron_execution_log SET status = '{failed}', duration_ms = {}, error = {}, finished_at = {} WHERE document_id = {}",
-        ph(1), ph(2), ph(3), ph(4)
+        "UPDATE cron_execution_log SET status = {}, duration_ms = {}, error = {}, finished_at = {} WHERE document_id = {}",
+        ph(1), ph(2), ph(3), ph(4), ph(5)
     ))
+    .bind(CronExecStatus::Failed)
     .bind(duration_ms)
     .bind(error)
     .bind(now)

@@ -206,19 +206,20 @@ pub async fn create_instance(
 ) -> anyhow::Result<WorkflowInstance> {
     let now = crate::utils::tz::now_utc();
     let ctx_str = serde_json::to_string(context)?;
-    let running = WorkflowInstanceStatus::Running.as_str();
     let sql = format!(
-        "INSERT INTO workflow_instances (document_id, definition_id, status, context, triggered_by, started_at, updated_at) VALUES ({}, {}, '{running}', {}, {}, {}, {})",
+        "INSERT INTO workflow_instances (document_id, definition_id, status, context, triggered_by, started_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
         ph(4),
         ph(5),
-        ph(6)
+        ph(6),
+        ph(7)
     );
     sqlx::query(&sql)
         .bind(document_id)
         .bind(definition_id)
+        .bind(WorkflowInstanceStatus::Running)
         .bind(&ctx_str)
         .bind(triggered_by)
         .bind(now)
@@ -342,21 +343,22 @@ pub async fn create_step_log(
 ) -> anyhow::Result<StepLog> {
     let now = crate::utils::tz::now_utc();
     let input_str = input.map(|v| serde_json::to_string(v).unwrap_or_default());
-    let running = WorkflowStepStatus::Running.as_str();
     let sql = format!(
-        "INSERT INTO workflow_step_logs (document_id, instance_id, step_id, step_name, status, input, started_at) VALUES ({}, {}, {}, {}, '{running}', {}, {})",
+        "INSERT INTO workflow_step_logs (document_id, instance_id, step_id, step_name, status, input, started_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
         ph(4),
         ph(5),
-        ph(6)
+        ph(6),
+        ph(7)
     );
     sqlx::query(&sql)
         .bind(document_id)
         .bind(instance_id)
         .bind(step_id)
         .bind(step_name)
+        .bind(WorkflowStepStatus::Running)
         .bind(&input_str)
         .bind(now)
         .execute(pool)
@@ -380,14 +382,15 @@ pub async fn complete_step_log(
 ) -> anyhow::Result<()> {
     let now = crate::utils::tz::now_utc();
     let output_str = output.map(|v| serde_json::to_string(v).unwrap_or_default());
-    let completed = WorkflowStepStatus::Completed.as_str();
     let sql = format!(
-        "UPDATE workflow_step_logs SET status = '{completed}', output = {}, completed_at = {} WHERE document_id = {}",
+        "UPDATE workflow_step_logs SET status = {}, output = {}, completed_at = {} WHERE document_id = {}",
         ph(1),
         ph(2),
-        ph(3)
+        ph(3),
+        ph(4)
     );
     sqlx::query(&sql)
+        .bind(WorkflowStepStatus::Completed)
         .bind(&output_str)
         .bind(now)
         .bind(document_id)
@@ -399,14 +402,15 @@ pub async fn complete_step_log(
 /// 标记步骤执行失败
 pub async fn fail_step_log(pool: &Pool, document_id: &str, error: &str) -> anyhow::Result<()> {
     let now = crate::utils::tz::now_utc();
-    let failed = WorkflowStepStatus::Failed.as_str();
     let sql = format!(
-        "UPDATE workflow_step_logs SET status = '{failed}', error = {}, completed_at = {} WHERE document_id = {}",
+        "UPDATE workflow_step_logs SET status = {}, error = {}, completed_at = {} WHERE document_id = {}",
         ph(1),
         ph(2),
-        ph(3)
+        ph(3),
+        ph(4)
     );
     sqlx::query(&sql)
+        .bind(WorkflowStepStatus::Failed)
         .bind(error)
         .bind(now)
         .bind(document_id)

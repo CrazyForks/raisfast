@@ -362,24 +362,24 @@ pub async fn list_published(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Page>, i64)> {
     let offset = (page - 1) * page_size;
-    let count_filter = tenant_filter_ph(tenant_id, 1);
-    let published = PageStatus::Published.as_str();
-    let count_sql = format!("SELECT COUNT(*) FROM pages WHERE status = '{published}'{count_filter}");
-    let mut cq = sqlx::query_scalar::<_, i64>(&count_sql);
+    let count_filter = tenant_filter_ph(tenant_id, 2);
+    let count_sql =
+        format!("SELECT COUNT(*) FROM pages WHERE status = {}{count_filter}", ph(1));
+    let mut cq = sqlx::query_scalar::<_, i64>(&count_sql).bind(PageStatus::Published);
     if let Some(tid) = tenant_id {
         cq = cq.bind(tid);
     }
     let total = cq.fetch_one(pool).await?;
 
     let base = usize::from(tenant_id.is_some());
-    let data_filter = tenant_filter_ph(tenant_id, 1);
-    let published = PageStatus::Published.as_str();
+    let data_filter = tenant_filter_ph(tenant_id, 2);
     let data_sql = format!(
-        "SELECT * FROM pages WHERE status = '{published}'{data_filter} ORDER BY sort_order ASC, created_at DESC LIMIT {} OFFSET {}",
-        ph(base + 1),
-        ph(base + 2)
+        "SELECT * FROM pages WHERE status = {}{data_filter} ORDER BY sort_order ASC, created_at DESC LIMIT {} OFFSET {}",
+        ph(1),
+        ph(base + 2),
+        ph(base + 3)
     );
-    let mut dq = sqlx::query_as::<_, Page>(&data_sql);
+    let mut dq = sqlx::query_as::<_, Page>(&data_sql).bind(PageStatus::Published);
     if let Some(tid) = tenant_id {
         dq = dq.bind(tid);
     }
@@ -764,12 +764,12 @@ pub async fn list_sitemap(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<(String, Option<String>)>> {
-    let filter = tenant_filter_ph(tenant_id, 1);
-    let published = PageStatus::Published.as_str();
+    let filter = tenant_filter_ph(tenant_id, 2);
     let sql = format!(
-        "SELECT slug, updated_at FROM pages WHERE status = '{published}'{filter} ORDER BY sort_order ASC"
+        "SELECT slug, updated_at FROM pages WHERE status = {}{filter} ORDER BY sort_order ASC",
+        ph(1)
     );
-    let mut q = sqlx::query_as::<_, (String, Option<String>)>(&sql);
+    let mut q = sqlx::query_as::<_, (String, Option<String>)>(&sql).bind(PageStatus::Published);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }

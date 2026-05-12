@@ -196,7 +196,12 @@ pub async fn list_instances(
     let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
     let (items, total) = state
         .workflow
-        .list_instances(query.definition_id.as_deref(), query.status, page, page_size)
+        .list_instances(
+            query.definition_id.as_deref(),
+            query.status,
+            page,
+            page_size,
+        )
         .await?;
     Ok(ApiResponse::success(json!({
         "items": items,

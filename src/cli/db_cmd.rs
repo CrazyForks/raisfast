@@ -219,40 +219,46 @@ pub async fn seed(
 
     match tid {
         Some(tid) => {
-            let role = raisfast::models::user::UserRole::Admin.as_str();
-            let status = raisfast::models::user::UserStatus::Active.as_str();
-            let via = raisfast::models::user::RegisteredVia::Email.as_str();
             sqlx::query(&format!(
-                "INSERT INTO users (document_id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({}, {}, {}, {}, {}, '{role}', '{status}', '{via}')",
+                "INSERT INTO users (document_id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
                 dialect::ph(1),
                 dialect::ph(2),
                 dialect::ph(3),
                 dialect::ph(4),
                 dialect::ph(5),
+                dialect::ph(6),
+                dialect::ph(7),
+                dialect::ph(8),
             ))
             .bind(&document_id)
             .bind(&tid)
             .bind(username)
             .bind(now)
             .bind(now)
+            .bind(raisfast::models::user::UserRole::Admin)
+            .bind(raisfast::models::user::UserStatus::Active)
+            .bind(raisfast::models::user::RegisteredVia::Email)
             .execute(&pool)
             .await?;
         }
         None => {
-            let role = raisfast::models::user::UserRole::Admin.as_str();
-            let status = raisfast::models::user::UserStatus::Active.as_str();
-            let via = raisfast::models::user::RegisteredVia::Email.as_str();
             sqlx::query(&format!(
-                "INSERT INTO users (document_id, username, created_at, updated_at, role, status, registered_via) VALUES ({}, {}, {}, {}, '{role}', '{status}', '{via}')",
+                "INSERT INTO users (document_id, username, created_at, updated_at, role, status, registered_via) VALUES ({}, {}, {}, {}, {}, {}, {})",
                 dialect::ph(1),
                 dialect::ph(2),
                 dialect::ph(3),
                 dialect::ph(4),
+                dialect::ph(5),
+                dialect::ph(6),
+                dialect::ph(7),
             ))
             .bind(&document_id)
             .bind(username)
             .bind(now)
             .bind(now)
+            .bind(raisfast::models::user::UserRole::Admin)
+            .bind(raisfast::models::user::UserStatus::Active)
+            .bind(raisfast::models::user::RegisteredVia::Email)
             .execute(&pool)
             .await?;
         }
