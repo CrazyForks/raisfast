@@ -52,7 +52,7 @@ impl From<&OptionRow> for OptionEntry {
         Self {
             option_key: row.option_key.clone(),
             value: parse_value(&row.value),
-            type_: row.type_.clone(),
+            type_: row.type_.to_string(),
             label: row.label.clone(),
             description: row.description.clone(),
             validation: row

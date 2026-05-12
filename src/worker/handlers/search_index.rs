@@ -117,10 +117,11 @@ mod tests {
     async fn create_post(pool: &crate::db::Pool, author_id: i64, title: &str) -> (i64, String) {
         let document_id = uuid::Uuid::now_v7().to_string();
         let now = crate::utils::tz::now_str();
-        let (int_id,): (i64,) = sqlx::query_as(
+        let published = crate::models::post::PostStatus::Published.as_str();
+        let (int_id,): (i64,) = sqlx::query_as(&format!(
             "INSERT INTO posts (document_id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, 'published', ?, NULL, 0, 0, ?, ?) RETURNING id",
-        )
+             VALUES (?, ?, ?, ?, '{published}', ?, NULL, 0, 0, ?, ?) RETURNING id",
+        ))
         .bind(&document_id)
         .bind(title)
         .bind(title.to_lowercase().replace(' ', "-"))

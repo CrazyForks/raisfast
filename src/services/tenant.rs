@@ -1,13 +1,14 @@
 //! 租户服务层 — 租户 CRUD + 配置覆盖
 
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::errors::app_error::AppError;
-use crate::models::tenant::Tenant;
+use crate::models::tenant::{Tenant, TenantStatus};
 use crate::repositories::TenantRepository;
 
 #[derive(Debug, Deserialize)]
@@ -69,13 +70,19 @@ impl TenantService {
             .config
             .as_ref()
             .map(|c| serde_json::to_string(c).unwrap_or_else(|_| "{}".into()));
+        let status = req
+            .status
+            .as_deref()
+            .map(TenantStatus::from_str)
+            .transpose()
+            .map_err(AppError::BadRequest)?;
         self.repo
             .update(
                 id,
                 req.name.as_deref(),
                 req.domain.as_deref(),
                 config.as_deref(),
-                req.status.as_deref(),
+                status,
             )
             .await
     }
@@ -93,7 +100,7 @@ impl TenantService {
         let id = crate::db::tenant::resolve_tenant(tenant_id);
         let tenant = self.repo.find_by_id(id).await?;
         match tenant {
-            Some(t) if t.status == "active" => Ok(t.document_id),
+            Some(t) if t.status == TenantStatus::Active => Ok(t.document_id),
             Some(_) => Err(AppError::BadRequest("tenant is not active".into())),
             None => Err(AppError::not_found(&format!("tenant/{id}"))),
         }

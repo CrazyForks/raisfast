@@ -26,6 +26,8 @@ define_enum!(
 define_enum!(
     UserStatus {
         Active = "active",
+        Suspended = "suspended",
+        Banned = "banned",
     }
 );
 
@@ -137,8 +139,10 @@ pub async fn create(
     match tenant_id {
         Some(tid) => {
             let vals = (1..=5).map(ph).collect::<Vec<_>>().join(", ");
+            let role = UserRole::Reader.as_str();
+            let status = UserStatus::Active.as_str();
             let sql = format!(
-                "INSERT INTO users (document_id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, 'reader', 'active', {})",
+                "INSERT INTO users (document_id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, '{role}', '{status}', {})",
                 ph(6)
             );
             sqlx::query(&sql)
@@ -153,8 +157,10 @@ pub async fn create(
         }
         None => {
             let vals = (1..=4).map(ph).collect::<Vec<_>>().join(", ");
+            let role = UserRole::Reader.as_str();
+            let status = UserStatus::Active.as_str();
             let sql = format!(
-                "INSERT INTO users (document_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, 'reader', 'active', {})",
+                "INSERT INTO users (document_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, '{role}', '{status}', {})",
                 ph(5)
             );
             sqlx::query(&sql)

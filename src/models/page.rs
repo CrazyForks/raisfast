@@ -363,7 +363,8 @@ pub async fn list_published(
 ) -> AppResult<(Vec<Page>, i64)> {
     let offset = (page - 1) * page_size;
     let count_filter = tenant_filter_ph(tenant_id, 1);
-    let count_sql = format!("SELECT COUNT(*) FROM pages WHERE status = 'published'{count_filter}");
+    let published = PageStatus::Published.as_str();
+    let count_sql = format!("SELECT COUNT(*) FROM pages WHERE status = '{published}'{count_filter}");
     let mut cq = sqlx::query_scalar::<_, i64>(&count_sql);
     if let Some(tid) = tenant_id {
         cq = cq.bind(tid);
@@ -372,8 +373,9 @@ pub async fn list_published(
 
     let base = usize::from(tenant_id.is_some());
     let data_filter = tenant_filter_ph(tenant_id, 1);
+    let published = PageStatus::Published.as_str();
     let data_sql = format!(
-        "SELECT * FROM pages WHERE status = 'published'{data_filter} ORDER BY sort_order ASC, created_at DESC LIMIT {} OFFSET {}",
+        "SELECT * FROM pages WHERE status = '{published}'{data_filter} ORDER BY sort_order ASC, created_at DESC LIMIT {} OFFSET {}",
         ph(base + 1),
         ph(base + 2)
     );
@@ -763,8 +765,9 @@ pub async fn list_sitemap(
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<(String, Option<String>)>> {
     let filter = tenant_filter_ph(tenant_id, 1);
+    let published = PageStatus::Published.as_str();
     let sql = format!(
-        "SELECT slug, updated_at FROM pages WHERE status = 'published'{filter} ORDER BY sort_order ASC"
+        "SELECT slug, updated_at FROM pages WHERE status = '{published}'{filter} ORDER BY sort_order ASC"
     );
     let mut q = sqlx::query_as::<_, (String, Option<String>)>(&sql);
     if let Some(tid) = tenant_id {

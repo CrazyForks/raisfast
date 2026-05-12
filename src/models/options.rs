@@ -10,6 +10,17 @@ use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
+define_enum!(
+    OptionType {
+        Text = "text",
+        Url = "url",
+        Email = "email",
+        Select = "select",
+        Integer = "integer",
+        Boolean = "boolean",
+    }
+);
+
 /// options 表行模型（含完整元数据）
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OptionRow {
@@ -19,7 +30,7 @@ pub struct OptionRow {
     pub option_key: String,
     pub value: String,
     #[serde(rename = "type")]
-    pub type_: String,
+    pub type_: OptionType,
     pub group_name: String,
     pub label: String,
     pub description: Option<String>,
@@ -246,11 +257,12 @@ mod tests {
     ) {
         sqlx::query(
             "INSERT INTO options (document_id, option_key, value, type, group_name, label, autoload, sort_order, updated_at) \
-             VALUES (?, ?, ?, 'text', 'test', 'test', ?, 0, ?)",
+             VALUES (?, ?, ?, ?, 'test', 'test', ?, 0, ?)",
         )
         .bind(crate::utils::id::new_document_id())
         .bind(key)
         .bind(value)
+        .bind(OptionType::Text)
         .bind(autoload)
         .bind(updated_at)
         .execute(pool)

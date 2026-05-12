@@ -219,8 +219,11 @@ pub async fn seed(
 
     match tid {
         Some(tid) => {
+            let role = raisfast::models::user::UserRole::Admin.as_str();
+            let status = raisfast::models::user::UserStatus::Active.as_str();
+            let via = raisfast::models::user::RegisteredVia::Email.as_str();
             sqlx::query(&format!(
-                "INSERT INTO users (document_id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({}, {}, {}, {}, {}, 'admin', 'active', 'email')",
+                "INSERT INTO users (document_id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({}, {}, {}, {}, {}, '{role}', '{status}', '{via}')",
                 dialect::ph(1),
                 dialect::ph(2),
                 dialect::ph(3),
@@ -236,8 +239,11 @@ pub async fn seed(
             .await?;
         }
         None => {
+            let role = raisfast::models::user::UserRole::Admin.as_str();
+            let status = raisfast::models::user::UserStatus::Active.as_str();
+            let via = raisfast::models::user::RegisteredVia::Email.as_str();
             sqlx::query(&format!(
-                "INSERT INTO users (document_id, username, created_at, updated_at, role, status, registered_via) VALUES ({}, {}, {}, {}, 'admin', 'active', 'email')",
+                "INSERT INTO users (document_id, username, created_at, updated_at, role, status, registered_via) VALUES ({}, {}, {}, {}, '{role}', '{status}', '{via}')",
                 dialect::ph(1),
                 dialect::ph(2),
                 dialect::ph(3),

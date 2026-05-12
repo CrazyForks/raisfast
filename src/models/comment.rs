@@ -109,8 +109,9 @@ pub async fn create(
     match tenant_id {
         Some(tid) => {
             let vals = (1..=11).map(ph).collect::<Vec<_>>().join(", ");
+            let status = CommentStatus::Pending.as_str();
             let sql = format!(
-                "INSERT INTO comments (document_id, tenant_id, post_id, created_by, updated_by, nickname, email, content, parent_id, created_at, updated_at, status) VALUES ({vals}, 'pending')"
+                "INSERT INTO comments (document_id, tenant_id, post_id, created_by, updated_by, nickname, email, content, parent_id, created_at, updated_at, status) VALUES ({vals}, '{status}')"
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -129,8 +130,9 @@ pub async fn create(
         }
         None => {
             let vals = (1..=10).map(ph).collect::<Vec<_>>().join(", ");
+            let status = CommentStatus::Pending.as_str();
             let sql = format!(
-                "INSERT INTO comments (document_id, post_id, created_by, updated_by, nickname, email, content, parent_id, created_at, updated_at, status) VALUES ({vals}, 'pending')"
+                "INSERT INTO comments (document_id, post_id, created_by, updated_by, nickname, email, content, parent_id, created_at, updated_at, status) VALUES ({vals}, '{status}')"
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -159,8 +161,9 @@ pub async fn find_approved_by_post(
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<Comment>> {
     let filter = tenant_filter_ph(tenant_id, 2);
+    let approved = CommentStatus::Approved.as_str();
     let sql = format!(
-        "SELECT * FROM comments WHERE post_id = {} AND status = 'approved'{filter} ORDER BY created_at ASC",
+        "SELECT * FROM comments WHERE post_id = {} AND status = '{approved}'{filter} ORDER BY created_at ASC",
         ph(1)
     );
     let mut q = sqlx::query_as::<_, Comment>(&sql).bind(post_id);
@@ -181,8 +184,9 @@ pub async fn find_approved_by_post_paginated(
     let offset = (page - 1) * page_size;
     let filter = tenant_filter_ph(tenant_id, 2);
     let base = usize::from(tenant_id.is_some());
+    let approved = CommentStatus::Approved.as_str();
     let sql = format!(
-        "SELECT * FROM comments WHERE post_id = {} AND status = 'approved'{filter} ORDER BY created_at ASC LIMIT {} OFFSET {}",
+        "SELECT * FROM comments WHERE post_id = {} AND status = '{approved}'{filter} ORDER BY created_at ASC LIMIT {} OFFSET {}",
         ph(1),
         ph(base + 2),
         ph(base + 3)
@@ -195,8 +199,9 @@ pub async fn find_approved_by_post_paginated(
     let comments = q.fetch_all(pool).await?;
 
     let filter2 = tenant_filter_ph(tenant_id, 2);
+    let approved = CommentStatus::Approved.as_str();
     let sql2 = format!(
-        "SELECT COUNT(*) FROM comments WHERE post_id = {} AND status = 'approved'{filter2}",
+        "SELECT COUNT(*) FROM comments WHERE post_id = {} AND status = '{approved}'{filter2}",
         ph(1)
     );
     let mut q2 = sqlx::query_scalar::<_, i64>(&sql2).bind(post_id);

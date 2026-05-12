@@ -17,7 +17,7 @@ use crate::dto::{LoginResponse, RegisterRequest, UpdatePasswordRequest, UserResp
 use crate::errors::app_error::{AppError, AppResult};
 use crate::eventbus::{Event, EventBus};
 use crate::middleware::auth::AuthUser;
-use crate::models::user::UserRole;
+use crate::models::user::{UserRole, UserStatus};
 use crate::models::user_credential::AuthType;
 use crate::plugins::{HookPoint, PluginManager};
 use crate::repositories::{RefreshTokenRepository, UserRepository};
@@ -201,8 +201,10 @@ pub async fn register(
                     .map(crate::db::dialect::ph)
                     .collect::<Vec<_>>()
                     .join(", ");
+                let role = UserRole::Reader.as_str();
+                let status = UserStatus::Active.as_str();
                 let sql = format!(
-                    "INSERT INTO users (document_id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, 'reader', 'active', {})",
+                    "INSERT INTO users (document_id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, '{role}', '{status}', {})",
                     crate::db::dialect::ph(6)
                 );
                 sqlx::query(&sql)
@@ -220,8 +222,10 @@ pub async fn register(
                     .map(crate::db::dialect::ph)
                     .collect::<Vec<_>>()
                     .join(", ");
+                let role = UserRole::Reader.as_str();
+                let status = UserStatus::Active.as_str();
                 let sql = format!(
-                    "INSERT INTO users (document_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, 'reader', 'active', {})",
+                    "INSERT INTO users (document_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, '{role}', '{status}', {})",
                     crate::db::dialect::ph(5)
                 );
                 sqlx::query(&sql)
@@ -338,6 +342,18 @@ pub async fn login(
     let user = crate::models::user::find_by_pk(pool, cred.user_id, tenant_id)
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
+
+    if user.status != UserStatus::Active {
+        return Err(AppError::BadRequest("account_disabled".into()));
+    }
+
+    if let Some(ref tid) = user.tenant_id {
+        if let Ok(Some(tenant)) = crate::models::tenant::find_by_id(pool, tid).await {
+            if tenant.status != crate::models::tenant::TenantStatus::Active {
+                return Err(AppError::BadRequest("tenant_disabled".into()));
+            }
+        }
+    }
 
     let user_role = user.role;
     let access_token = generate_access_token_internal(

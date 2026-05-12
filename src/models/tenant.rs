@@ -11,6 +11,13 @@ use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
+define_enum!(
+    TenantStatus {
+        Active = "active",
+        Inactive = "inactive",
+    }
+);
+
 /// tenants 表行模型
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
@@ -20,7 +27,7 @@ pub struct Tenant {
     pub name: String,
     pub domain: Option<String>,
     pub config: String,
-    pub status: String,
+    pub status: TenantStatus,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -63,19 +70,21 @@ pub async fn create(
 ) -> AppResult<Tenant> {
     let now = crate::utils::tz::now_utc();
     let sql = format!(
-        "INSERT INTO tenants (document_id, name, domain, config, status, created_at, updated_at) VALUES ({}, {}, {}, {}, 'active', {}, {})",
+        "INSERT INTO tenants (document_id, name, domain, config, status, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
         ph(4),
         ph(5),
         ph(6),
+        ph(7),
     );
     sqlx::query(&sql)
         .bind(document_id)
         .bind(name)
         .bind(domain)
         .bind(config)
+        .bind(TenantStatus::Active)
         .bind(now)
         .bind(now)
         .execute(pool)
@@ -94,7 +103,7 @@ pub async fn update(
     name: Option<&str>,
     domain: Option<&str>,
     config: Option<&str>,
-    status: Option<&str>,
+    status: Option<TenantStatus>,
 ) -> AppResult<Tenant> {
     let mut sets = Vec::new();
     let mut idx = 1usize;

@@ -1,7 +1,7 @@
 //! 基于 sqlx 的 `TenantRepository` 实现
 
 use crate::errors::app_error::AppResult;
-use crate::models::tenant::{self, Tenant};
+use crate::models::tenant::{self, Tenant, TenantStatus};
 use crate::repositories::define_sqlx_repo;
 
 define_sqlx_repo!(SqlxTenantRepository);
@@ -29,7 +29,7 @@ pub trait TenantRepository: Send + Sync {
         name: Option<&str>,
         domain: Option<&str>,
         config: Option<&str>,
-        status: Option<&str>,
+        status: Option<TenantStatus>,
     ) -> AppResult<Tenant>;
 
     async fn delete(&self, id: &str) -> AppResult<()>;
@@ -66,7 +66,7 @@ impl TenantRepository for SqlxTenantRepository {
         name: Option<&str>,
         domain: Option<&str>,
         config: Option<&str>,
-        status: Option<&str>,
+        status: Option<TenantStatus>,
     ) -> AppResult<tenant::Tenant> {
         tenant::update(&self.pool, id, name, domain, config, status).await
     }
