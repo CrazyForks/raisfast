@@ -1,6 +1,6 @@
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::routing::{get, post as http_post};
+use axum::routing::{get, post as http_post, put};
 
 use crate::dto::currencies::{CreateCurrencyRequest, CurrencyResponse, UpdateCurrencyRequest};
 use crate::errors::app_error::AppError;
@@ -42,7 +42,7 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
         r,
         registry,
         "/admin/currencies/{code}",
-        get(update_currency),
+        put(update_currency),
         "admin currencies",
         "admin/currencies",
         ["PUT"]

@@ -6,6 +6,8 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
+#[cfg(feature = "export-types")]
+use ts_rs::TS;
 
 use crate::dto::{BatchRequest, BatchResponse, CreateCommentRequest, UpdateCommentStatusRequest};
 use crate::errors::app_error::{AppError, AppResult};
@@ -114,6 +116,7 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize)]
 pub struct AdminCommentListQuery {
     pub page: Option<i64>,

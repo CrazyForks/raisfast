@@ -13,10 +13,14 @@ export class Health {
   }
 
   async liveness(options?: RequestOptions): Promise<HealthStatus> {
-    return this.http.get<HealthStatus>("/healthz", options);
+    const base = this.http.baseUrl.replace(/\/api\/v\d+\/?$/, "");
+    const res = await fetch(`${base}/healthz`);
+    return res.json();
   }
 
   async readiness(options?: RequestOptions): Promise<HealthStatus> {
-    return this.http.get<HealthStatus>("/readyz", options);
+    const base = this.http.baseUrl.replace(/\/api\/v\d+\/?$/, "");
+    const res = await fetch(`${base}/readyz`);
+    return res.json();
   }
 }

@@ -3,6 +3,7 @@ import { SDKError } from "../errors";
 import { BaseAuthStore } from "../auth";
 import { Collection } from "../collection";
 import { HttpClient } from "../client";
+import type { UserResponse } from "../types";
 
 describe("SDKError", () => {
   it("stores code, status, url, response", () => {
@@ -40,13 +41,23 @@ describe("BaseAuthStore", () => {
     store.save({
       access_token: "at",
       refresh_token: "rt",
+      expires_in: 3600,
       user: {
         id: "u1",
-        email: "a@b.com",
-        nickname: "test",
+        username: "testuser",
         role: "admin",
+        status: "active",
+        registered_via: "email",
         avatar: null,
-        tenant_id: "default",
+        bio: null,
+        website: null,
+        display_name: null,
+        slug: null,
+        locale: null,
+        social_links: {},
+        metadata: null,
+        created_at: "2024-01-01T00:00:00Z",
+        updated_at: "2024-01-01T00:00:00Z",
       },
     });
 
@@ -66,13 +77,23 @@ describe("BaseAuthStore", () => {
     store.save({
       access_token: "at",
       refresh_token: "rt",
+      expires_in: 3600,
       user: {
         id: "u1",
-        email: "a@b.com",
-        nickname: "test",
+        username: "testuser",
         role: "admin",
+        status: "active",
+        registered_via: "email",
         avatar: null,
-        tenant_id: "default",
+        bio: null,
+        website: null,
+        display_name: null,
+        slug: null,
+        locale: null,
+        social_links: {},
+        metadata: null,
+        created_at: "2024-01-01T00:00:00Z",
+        updated_at: "2024-01-01T00:00:00Z",
       },
     });
 
@@ -95,16 +116,25 @@ describe("BaseAuthStore", () => {
     const listener = vi.fn();
     const unsub = store.onChange(listener);
 
-    const user = {
+    const user: UserResponse = {
       id: "u1",
-      email: "a@b.com",
-      nickname: "test",
+      username: "testuser",
       role: "admin",
+      status: "active",
+      registered_via: "email",
       avatar: null,
-      tenant_id: "default",
+      bio: null,
+      website: null,
+      display_name: null,
+      slug: null,
+      locale: null,
+      social_links: {},
+      metadata: null,
+      created_at: "2024-01-01T00:00:00Z",
+      updated_at: "2024-01-01T00:00:00Z",
     };
 
-    store.save({ access_token: "at", refresh_token: "rt", user });
+    store.save({ access_token: "at", refresh_token: "rt", expires_in: 3600, user });
     expect(listener).toHaveBeenCalledWith("at", user);
     listener.mockClear();
 
@@ -114,7 +144,7 @@ describe("BaseAuthStore", () => {
     unsub();
     listener.mockClear();
 
-    store.save({ access_token: "at2", refresh_token: "rt2", user });
+    store.save({ access_token: "at2", refresh_token: "rt2", expires_in: 3600, user });
     expect(listener).not.toHaveBeenCalled();
   });
 

@@ -1,7 +1,10 @@
 import { HttpClient } from "./client";
 import type {
   AdminCommentRow,
+  BatchRequest,
+  BatchResponse,
   CommentResponse,
+  CommentStatus,
   PaginatedData,
   RequestOptions,
 } from "./types";
@@ -60,7 +63,7 @@ export class Comments {
 
   async updateStatus(
     id: string,
-    status: string,
+    status: CommentStatus,
     options?: RequestOptions,
   ): Promise<void> {
     await this.http.put(`/comments/${id}/status`, { status }, options);
@@ -68,5 +71,34 @@ export class Comments {
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
     await this.http.del(`/comments/${id}`, options);
+  }
+
+  async adminList(
+    query?: { page?: number; page_size?: number; status?: CommentStatus },
+    options?: RequestOptions,
+  ): Promise<PaginatedData<AdminCommentRow>> {
+    return this.http.get<PaginatedData<AdminCommentRow>>("/admin/comments", {
+      ...options,
+      query: query as unknown as Record<string, string>,
+    });
+  }
+
+  async adminUpdateStatus(
+    id: string,
+    status: CommentStatus,
+    options?: RequestOptions,
+  ): Promise<void> {
+    await this.http.put(`/admin/comments/${id}/status`, { status }, options);
+  }
+
+  async adminDelete(id: string, options?: RequestOptions): Promise<void> {
+    await this.http.del(`/admin/comments/${id}`, options);
+  }
+
+  async adminBatch(
+    data: BatchRequest,
+    options?: RequestOptions,
+  ): Promise<BatchResponse> {
+    return this.http.post<BatchResponse>("/admin/comments/batch", data, options);
   }
 }

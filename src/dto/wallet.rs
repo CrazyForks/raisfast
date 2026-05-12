@@ -76,7 +76,7 @@ impl WalletTransactionResponse {
     }
 }
 
-/// 管理员加款/扣款请求
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct AdminWalletOperationRequest {
     pub user_id: String,
@@ -95,7 +95,7 @@ pub struct AdminWalletOperationRequest {
     pub metadata: Option<String>,
 }
 
-/// 冲正请求
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct ReversalRequest {
     #[validate(length(min = 1))]

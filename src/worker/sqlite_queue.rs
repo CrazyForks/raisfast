@@ -217,7 +217,11 @@ impl JobQueue for SqliteJobQueue {
                 COALESCE(SUM(CASE WHEN status={} THEN 1 ELSE 0 END), 0) as failed,
                 COALESCE(SUM(CASE WHEN status={} THEN 1 ELSE 0 END), 0) as dead
              FROM jobs",
-            ph(1), ph(2), ph(3), ph(4), ph(5)
+            ph(1),
+            ph(2),
+            ph(3),
+            ph(4),
+            ph(5)
         ))
         .bind(JobStatus::Pending)
         .bind(JobStatus::Running)
@@ -364,7 +368,9 @@ impl JobQueue for SqliteJobQueue {
     async fn cleanup(&self) -> AppResult<u64> {
         let sql = format!(
             "DELETE FROM jobs WHERE status IN ({}, {}) AND updated_at < {}",
-            ph(1), ph(2), crate::db::dialect::ago_expr(7)
+            ph(1),
+            ph(2),
+            crate::db::dialect::ago_expr(7)
         );
         let result = sqlx::query(&sql)
             .bind(JobStatus::Completed)

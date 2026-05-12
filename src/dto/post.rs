@@ -8,7 +8,7 @@ use crate::errors::app_error::AppResult;
 use crate::models::post::{CommentOpenStatus, PostStatus};
 use crate::utils::tz::Timestamp;
 
-/// 创建文章请求体
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Deserialize, Serialize, Validate, ToSchema)]
 pub struct CreatePostRequest {
     #[validate(length(min = 1, max = 200))]
@@ -24,7 +24,7 @@ pub struct CreatePostRequest {
     pub tag_ids: Option<Vec<String>>,
 }
 
-/// 更新文章请求体
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Serialize, Validate, Clone, ToSchema)]
 pub struct UpdatePostRequest {
     #[validate(length(min = 1, max = 200))]

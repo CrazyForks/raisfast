@@ -4,6 +4,8 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use serde_json::json;
+#[cfg(feature = "export-types")]
+use ts_rs::TS;
 
 use super::model::{StepDef, WorkflowInstanceStatus};
 use crate::AppState;
@@ -89,6 +91,7 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize)]
 pub struct CreateWorkflowRequest {
     pub id: String,
@@ -97,17 +100,22 @@ pub struct CreateWorkflowRequest {
     pub steps: Vec<StepDef>,
 }
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize)]
 pub struct StartWorkflowRequest {
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub context: serde_json::Value,
     pub triggered_by: Option<String>,
 }
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize)]
 pub struct ExecuteStepRequest {
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub output: serde_json::Value,
 }
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize)]
 pub struct InstanceQuery {
     pub definition_id: Option<String>,

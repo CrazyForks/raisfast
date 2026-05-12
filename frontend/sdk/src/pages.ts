@@ -1,6 +1,9 @@
 import { HttpClient } from "./client";
 import type {
+  BatchRequest,
+  BatchResponse,
   Page,
+  PageStatus,
   PaginatedData,
   RequestOptions,
   SitemapEntry,
@@ -17,7 +20,7 @@ export interface CreatePageBody {
   template?: string;
   parent_id?: string;
   sort_order?: number;
-  status?: string;
+  status?: PageStatus;
   cover_image?: string;
 }
 
@@ -32,7 +35,7 @@ export interface UpdatePageBody {
   template?: string;
   parent_id?: string | null;
   sort_order?: number;
-  status?: string;
+  status?: PageStatus;
   cover_image?: string;
 }
 
@@ -66,11 +69,11 @@ export class Pages {
     body: CreatePageBody,
     options?: RequestOptions,
   ): Promise<Page> {
-    return this.http.post<Page>("/pages", body, options);
+    return this.http.post<Page>("/admin/pages", body, options);
   }
 
   async adminList(
-    query?: { page?: number; page_size?: number; status?: string },
+    query?: { page?: number; page_size?: number; status?: PageStatus },
     options?: RequestOptions,
   ): Promise<PaginatedData<Page>> {
     return this.http.get<PaginatedData<Page>>("/admin/pages", {
@@ -93,7 +96,7 @@ export class Pages {
 
   async updateStatus(
     id: string,
-    status: string,
+    status: PageStatus,
     options?: RequestOptions,
   ): Promise<Page> {
     return this.http.put<Page>(`/admin/pages/${id}/status`, { status }, options);
@@ -108,5 +111,12 @@ export class Pages {
     options?: RequestOptions,
   ): Promise<void> {
     await this.http.put("/admin/pages/reorder", { items }, options);
+  }
+
+  async adminBatch(
+    data: BatchRequest,
+    options?: RequestOptions,
+  ): Promise<BatchResponse> {
+    return this.http.post<BatchResponse>("/admin/pages/batch", data, options);
   }
 }

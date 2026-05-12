@@ -15,7 +15,7 @@ use super::validate_password;
 pub type SocialLinks = HashMap<String, String>;
 pub type UserMetadata = serde_json::Value;
 
-/// 注册请求体
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct RegisterRequest {
     #[validate(email)]
@@ -26,7 +26,7 @@ pub struct RegisterRequest {
     pub password: String,
 }
 
-/// 登录请求体
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct LoginRequest {
     #[validate(email)]
@@ -35,14 +35,14 @@ pub struct LoginRequest {
     pub password: String,
 }
 
-/// 刷新令牌请求体
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct RefreshRequest {
     #[validate(length(min = 1))]
     pub refresh_token: String,
 }
 
-/// 更新用户资料请求体
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdateUserRequest {
     #[validate(length(min = 2, max = 50))]
@@ -50,11 +50,13 @@ pub struct UpdateUserRequest {
     pub bio: Option<String>,
     pub website: Option<String>,
     pub avatar: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "Record<string, string>"))]
     pub social_links: Option<SocialLinks>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub metadata: Option<UserMetadata>,
 }
 
-/// 修改密码请求体
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdatePasswordRequest {
     #[validate(length(min = 1, max = 128))]
@@ -63,20 +65,20 @@ pub struct UpdatePasswordRequest {
     pub new_password: String,
 }
 
-/// 管理员更新角色请求体
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateRoleRequest {
     pub role: UserRole,
 }
 
-/// 请求密码重置
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct ForgotPasswordRequest {
     #[validate(email)]
     pub email: String,
 }
 
-/// 重置密码
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct ResetPasswordRequest {
     #[validate(length(min = 1))]
@@ -85,7 +87,7 @@ pub struct ResetPasswordRequest {
     pub new_password: String,
 }
 
-/// OAuth 用户设置密码
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct SetPasswordRequest {
     #[validate(email)]
@@ -94,7 +96,7 @@ pub struct SetPasswordRequest {
     pub new_password: String,
 }
 
-/// 发送短信验证码
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct SendSmsCodeRequest {
     #[validate(length(min = 5, max = 20))]
@@ -103,7 +105,7 @@ pub struct SendSmsCodeRequest {
     pub purpose: String,
 }
 
-/// 验证短信验证码（注册/登录）
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct VerifySmsRequest {
     #[validate(length(min = 5, max = 20))]
@@ -114,7 +116,7 @@ pub struct VerifySmsRequest {
     pub purpose: String,
 }
 
-/// 绑定手机号
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct BindPhoneRequest {
     #[validate(length(min = 5, max = 20))]
@@ -123,7 +125,7 @@ pub struct BindPhoneRequest {
     pub code: String,
 }
 
-/// 绑定邮箱密码
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct BindEmailRequest {
     #[validate(email)]
@@ -169,14 +171,14 @@ pub struct AuthConfigResponse {
     pub require_email_verification: bool,
 }
 
-/// 验证邮箱
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct VerifyEmailRequest {
     #[validate(length(min = 1))]
     pub token: String,
 }
 
-/// 重新发送验证邮件
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct ResendVerificationRequest {
     #[validate(email)]
@@ -199,7 +201,9 @@ pub struct UserResponse {
     pub display_name: Option<String>,
     pub slug: Option<String>,
     pub locale: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "Record<string, string>"))]
     pub social_links: Option<SocialLinks>,
+    #[cfg_attr(feature = "export-types", ts(type = "unknown"))]
     pub metadata: Option<UserMetadata>,
     #[schema(value_type = String)]
     pub created_at: Timestamp,

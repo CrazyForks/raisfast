@@ -11,6 +11,9 @@ import { Categories } from "./categories";
 import { Tags } from "./tags";
 import { Comments } from "./comments";
 import { Pages } from "./pages";
+import { ReusableBlocks } from "./reusable-blocks";
+import { Wallets } from "./wallets";
+import { Currencies } from "./currencies";
 import { SDKError } from "./errors";
 import type {
   AfterSendHook,
@@ -31,6 +34,9 @@ export class RaisFast {
   readonly tags: Tags;
   readonly comments: Comments;
   readonly pages: Pages;
+  readonly wallets: Wallets;
+  readonly currencies: Currencies;
+  readonly reusableBlocks: ReusableBlocks;
   readonly authStore: IAuthStore;
   private readonly http: HttpClient;
 
@@ -50,6 +56,9 @@ export class RaisFast {
     this.tags = new Tags(this.http);
     this.comments = new Comments(this.http);
     this.pages = new Pages(this.http);
+    this.wallets = new Wallets(this.http);
+    this.currencies = new Currencies(this.http);
+    this.reusableBlocks = new ReusableBlocks(this.http);
   }
 
   collection<T = Record<string, unknown>>(name: string): Collection<T> {
@@ -98,5 +107,18 @@ export class RaisFast {
       );
     }
     return result.items[0];
+  }
+
+  subscribeToEvents(filter?: string): EventSource {
+    const base = this.http.baseUrl;
+    const url = filter
+      ? `${base}/events?filter=${encodeURIComponent(filter)}`
+      : `${base}/events`;
+    return new EventSource(url);
+  }
+
+  getRssFeedURL(): string {
+    const base = this.http.baseUrl.replace("/api/v1", "");
+    return `${base}/feed.xml`;
   }
 }

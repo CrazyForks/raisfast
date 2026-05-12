@@ -1,9 +1,12 @@
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "export-types")]
+use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::models::currencies::Currency;
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CurrencyResponse {
     pub id: String,
@@ -25,6 +28,7 @@ impl From<Currency> for CurrencyResponse {
     }
 }
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateCurrencyRequest {
     #[validate(
@@ -37,6 +41,7 @@ pub struct CreateCurrencyRequest {
     pub decimals: Option<i64>,
 }
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdateCurrencyRequest {
     pub name: Option<String>,

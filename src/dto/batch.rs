@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "export-types")]
+use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
@@ -6,6 +8,7 @@ use crate::models::user::UserRole;
 
 use super::validate_uuid_vec;
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct BatchRequest {
     #[validate(length(min = 1))]
@@ -14,6 +17,7 @@ pub struct BatchRequest {
     pub ids: Vec<String>,
 }
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct BatchRequestWithRole {
     #[validate(length(min = 1))]
@@ -23,6 +27,7 @@ pub struct BatchRequestWithRole {
     pub role: Option<UserRole>,
 }
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct BatchResponse {
     pub action: String,

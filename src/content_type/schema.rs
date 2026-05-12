@@ -93,6 +93,7 @@ pub struct ContentTypeSchema {
     pub builtin: bool,
     /// 声明实现的 Protocol 列表（如 ["versionable", "soft_deletable"]）
     #[serde(default)]
+    #[cfg_attr(feature = "export-types", ts(type = "Array<string | Record<string, string>>"))]
     pub implements: Vec<ProtocolRef>,
     /// 索引定义
     #[serde(default)]

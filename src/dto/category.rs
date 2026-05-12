@@ -1,10 +1,12 @@
 use serde::Deserialize;
+#[cfg(feature = "export-types")]
+use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
 use super::validate_optional_uuid;
 
-/// 创建分类请求体
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateCategoryRequest {
     #[validate(length(min = 1, max = 100))]
@@ -15,7 +17,7 @@ pub struct CreateCategoryRequest {
     pub sort_order: Option<i64>,
 }
 
-/// 更新分类请求体
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdateCategoryRequest {
     #[validate(length(min = 1, max = 100))]

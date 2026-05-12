@@ -159,7 +159,7 @@ utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "9", features = ["axum"], optional = true }
 
 # TypeScript type generation
-ts-rs = { version = "12", optional = true }
+ts-rs = { version = "12", optional = true, features = ["chrono-impl"] }
 inventory = "0.3.24"
 
 [dev-dependencies]

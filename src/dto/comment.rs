@@ -1,10 +1,12 @@
 use serde::Deserialize;
+#[cfg(feature = "export-types")]
+use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
 use crate::models::comment::CommentStatus;
 
-/// 创建评论请求体
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateCommentRequest {
     #[validate(length(min = 1, max = 5000))]
@@ -17,7 +19,7 @@ pub struct CreateCommentRequest {
     pub email: Option<String>,
 }
 
-/// 更新评论状态请求体
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdateCommentStatusRequest {
     pub status: CommentStatus,

@@ -46,6 +46,13 @@ class AdminPlugins {
   async unload(id: string, options?: RequestOptions): Promise<void> {
     await this.http.del(`/admin/plugins/${id}`, options);
   }
+
+  async batch(
+    data: { action: string; ids: string[] },
+    options?: RequestOptions,
+  ): Promise<{ action: string; affected: number }> {
+    return this.http.post("/admin/plugins/batch", data, options);
+  }
 }
 
 class AdminContentTypes {
@@ -112,6 +119,13 @@ class AdminTenants {
   async delete(id: string, options?: RequestOptions): Promise<void> {
     await this.http.del(`/admin/tenants/${id}`, options);
   }
+
+  async batch(
+    data: { action: string; ids: string[] },
+    options?: RequestOptions,
+  ): Promise<{ action: string; affected: number }> {
+    return this.http.post("/admin/tenants/batch", data, options);
+  }
 }
 
 class AdminRBAC {
@@ -138,6 +152,13 @@ class AdminRBAC {
 
   async deleteRole(id: string, options?: RequestOptions): Promise<void> {
     await this.http.del(`/admin/rbac/roles/${id}`, options);
+  }
+
+  async batchRoles(
+    data: { action: string; ids: string[] },
+    options?: RequestOptions,
+  ): Promise<{ action: string; affected: number }> {
+    return this.http.post("/admin/rbac/roles/batch", data, options);
   }
 
   async getPermissions(
@@ -187,10 +208,10 @@ class AdminOptions {
   }
 
   async batchUpdate(
-    data: Record<string, string>,
+    data: Record<string, unknown>,
     options?: RequestOptions,
   ): Promise<void> {
-    await this.http.put("/admin/options", data, options);
+    await this.http.put("/admin/options", { options: data }, options);
   }
 
   async getPublic(
@@ -280,23 +301,29 @@ class AdminCrons {
     await this.http.del(`/admin/crons/${id}`, options);
   }
 
-  async toggle(id: string, options?: RequestOptions): Promise<CronJob> {
-    return this.http.post<CronJob>(`/admin/crons/${id}/toggle`, {}, options);
+  async toggle(id: string, enabled: boolean, options?: RequestOptions): Promise<CronJob> {
+    return this.http.post<CronJob>(`/admin/crons/${id}/toggle`, { enabled }, options);
   }
 
   async listLogs(
-    page = 1,
-    pageSize = 25,
+    params?: { schedule_id?: string; limit?: number },
     options?: RequestOptions,
-  ): Promise<PaginatedData<CronLog>> {
-    return this.http.get<PaginatedData<CronLog>>("/admin/crons/logs", {
+  ): Promise<CronLog[]> {
+    return this.http.get<CronLog[]>("/admin/crons/logs", {
       ...options,
-      query: { page: String(page), page_size: String(pageSize) },
+      query: params as unknown as Record<string, string>,
     });
   }
 
   async cleanupLogs(options?: RequestOptions): Promise<void> {
     await this.http.post("/admin/crons/logs/cleanup", {}, options);
+  }
+
+  async batch(
+    data: { action: string; ids: string[] },
+    options?: RequestOptions,
+  ): Promise<{ action: string; affected: number }> {
+    return this.http.post("/admin/crons/batch", data, options);
   }
 }
 
@@ -308,7 +335,7 @@ class AdminTokens {
   }
 
   async create(
-    data: { name: string; expires_at?: string },
+    data: { name: string; scopes: string[]; expires_at?: string },
     options?: RequestOptions,
   ): Promise<ApiToken & { token: string }> {
     return this.http.post<ApiToken & { token: string }>("/tokens", data, options);

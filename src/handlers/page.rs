@@ -109,6 +109,7 @@ async fn resolve_page_parent_id(
 
 // ── DTO ──
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate)]
 pub struct CreatePageRequest {
     #[validate(length(min = 1, max = 200))]
@@ -126,6 +127,7 @@ pub struct CreatePageRequest {
     pub cover_image: Option<String>,
 }
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate)]
 pub struct UpdatePageRequest {
     #[validate(length(min = 1, max = 200))]
@@ -143,12 +145,14 @@ pub struct UpdatePageRequest {
     pub cover_image: Option<String>,
 }
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize)]
 pub struct PageListQuery {
     pub page: Option<i64>,
     pub page_size: Option<i64>,
 }
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize)]
 pub struct AdminPageListQuery {
     pub page: Option<i64>,
@@ -156,16 +160,19 @@ pub struct AdminPageListQuery {
     pub status: Option<PageStatus>,
 }
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize)]
 pub struct UpdateStatusRequest {
     pub status: PageStatus,
 }
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize)]
 pub struct ReorderRequest {
     pub items: Vec<ReorderItem>,
 }
 
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize)]
 pub struct ReorderItem {
     pub id: String,

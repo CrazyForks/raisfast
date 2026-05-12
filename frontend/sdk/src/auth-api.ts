@@ -2,6 +2,7 @@ import { HttpClient } from "./client";
 import type {
   AuthConfig,
   AuthResult,
+  CredentialResponse,
   IAuthStore,
   OAuthBinding,
   OAuthProvider,
@@ -45,7 +46,7 @@ export class Auth {
   }
 
   async register(
-    data: { email: string; password: string; nickname: string },
+    data: { email: string; password: string; username: string },
     options?: RequestOptions,
   ): Promise<AuthResult> {
     const result = await this.http.post<AuthResult>(
@@ -72,10 +73,7 @@ export class Auth {
 
   async logout(options?: RequestOptions): Promise<void> {
     try {
-      const rt = this.store.refreshToken;
-      if (rt) {
-        await this.http.post("/auth/logout", { refresh_token: rt }, options);
-      }
+      await this.http.post("/auth/logout", undefined, options);
     } finally {
       this.store.clear();
     }
@@ -90,7 +88,7 @@ export class Auth {
   }
 
   async updateMe(
-    data: { nickname?: string; avatar?: string },
+    data: { username?: string; bio?: string; website?: string; avatar?: string; social_links?: Record<string, string>; metadata?: unknown },
     options?: RequestOptions,
   ): Promise<User> {
     return this.http.put<User>("/users/me", data, options);
@@ -118,7 +116,7 @@ export class Auth {
   }
 
   async setPassword(
-    data: { new_password: string },
+    data: { email: string; new_password: string },
     options?: RequestOptions,
   ): Promise<void> {
     await this.http.post("/auth/set-password", data, options);
@@ -183,10 +181,12 @@ export class Auth {
     data: { provider: string; code: string; redirect_url: string },
     options?: RequestOptions,
   ): Promise<AuthResult> {
-    const result = await this.http.post<AuthResult>(
+    const result = await this.http.get<AuthResult>(
       `/auth/oauth/${data.provider}/callback`,
-      { code: data.code, redirect_url: data.redirect_url },
-      options,
+      {
+        ...options,
+        query: { code: data.code, redirect_url: data.redirect_url },
+      },
     );
     this.store.save(result);
     return result;
@@ -204,5 +204,20 @@ export class Auth {
     options?: RequestOptions,
   ): Promise<void> {
     await this.http.del(`/auth/oauth/${provider}/unbind`, options);
+  }
+
+  async listCredentials(options?: RequestOptions): Promise<CredentialResponse[]> {
+    return this.http.get<CredentialResponse[]>("/auth/credentials", options);
+  }
+
+  async bindEmail(
+    data: { email: string; password: string },
+    options?: RequestOptions,
+  ): Promise<void> {
+    await this.http.post("/auth/credentials/bind-email", data, options);
+  }
+
+  async deleteCredential(id: number, options?: RequestOptions): Promise<void> {
+    await this.http.del(`/auth/credentials/${id}`, options);
   }
 }

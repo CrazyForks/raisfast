@@ -21,15 +21,81 @@ macro_rules! collect {
 
 fn main() {
     let decls = collect![
-        handlers::dto::AuthConfigResponse,
-        handlers::dto::UserResponse,
-        handlers::dto::LoginResponse,
-        handlers::dto::PostResponse,
-        handlers::dto::MediaResponse,
-        handlers::dto::MediaStatsResponse,
-        handlers::dto::MediaTypeInfoResponse,
+        dto::CredentialResponse,
+        dto::AuthConfigResponse,
+        dto::UserResponse,
+        dto::LoginResponse,
+        dto::RegisterRequest,
+        dto::LoginRequest,
+        dto::RefreshRequest,
+        dto::UpdateUserRequest,
+        dto::UpdatePasswordRequest,
+        dto::UpdateRoleRequest,
+        dto::ForgotPasswordRequest,
+        dto::ResetPasswordRequest,
+        dto::SetPasswordRequest,
+        dto::SendSmsCodeRequest,
+        dto::VerifySmsRequest,
+        dto::BindPhoneRequest,
+        dto::BindEmailRequest,
+        dto::VerifyEmailRequest,
+        dto::ResendVerificationRequest,
+        dto::PostResponse,
+        dto::CreatePostRequest,
+        dto::UpdatePostRequest,
+        dto::CreateCommentRequest,
+        dto::UpdateCommentStatusRequest,
+        dto::WalletResponse,
+        dto::WalletTransactionResponse,
+        dto::AdminWalletOperationRequest,
+        dto::ReversalRequest,
+        dto::CurrencyResponse,
+        dto::CreateCurrencyRequest,
+        dto::UpdateCurrencyRequest,
+        dto::BatchRequest,
+        dto::BatchRequestWithRole,
+        dto::BatchResponse,
+        dto::CreateCategoryRequest,
+        dto::UpdateCategoryRequest,
+        dto::CreateTagRequest,
+        dto::UpdateTagRequest,
+        dto::MediaResponse,
+        dto::MediaStatsResponse,
+        dto::MediaTypeInfoResponse,
         handlers::oauth::ProviderInfo,
+        handlers::page::CreatePageRequest,
+        handlers::page::UpdatePageRequest,
+        handlers::page::PageListQuery,
+        handlers::page::AdminPageListQuery,
+        handlers::page::UpdateStatusRequest,
+        handlers::page::ReorderRequest,
+        handlers::page::ReorderItem,
         handlers::page::SitemapEntry,
+        handlers::post::PostListQuery,
+        handlers::post::AdminPostListQuery,
+        handlers::comment::AdminCommentListQuery,
+        workflow::handler::CreateWorkflowRequest,
+        workflow::handler::StartWorkflowRequest,
+        workflow::handler::ExecuteStepRequest,
+        workflow::handler::InstanceQuery,
+        models::user::UserRole,
+        models::user::UserStatus,
+        models::user::RegisteredVia,
+        models::user_credential::AuthType,
+        models::post::PostStatus,
+        models::post::CommentOpenStatus,
+        models::comment::CommentStatus,
+        models::page::PageStatus,
+        models::wallet::WalletStatus,
+        models::wallet_transaction::WalletEntryType,
+        models::wallet_transaction::WalletTxType,
+        models::wallet_transaction::WalletReferenceType,
+        models::tenant::TenantStatus,
+        models::options::OptionType,
+        worker::JobStatus,
+        worker::CronExecStatus,
+        workflow::model::WorkflowInstanceStatus,
+        workflow::model::WorkflowStepStatus,
         models::api_token::ApiTokenListItem,
         models::category::Category,
         models::comment::CommentResponse,
@@ -206,6 +272,7 @@ fn reindent_block(block: &str, indent: &str) -> String {
 fn split_top_level<'a>(s: &'a str, sep: &str) -> Vec<&'a str> {
     let mut result = Vec::new();
     let mut depth: i32 = 0;
+    let mut angle_depth: i32 = 0;
     let mut in_line_comment = false;
     let mut in_block_comment = false;
     let mut start = 0;
@@ -249,7 +316,15 @@ fn split_top_level<'a>(s: &'a str, sep: &str) -> Vec<&'a str> {
             depth += 1;
         } else if bytes[i] == b'}' {
             depth -= 1;
-        } else if depth == 0 && i + sep_len <= s.len() && &s[i..i + sep_len] == sep {
+        } else if bytes[i] == b'<' {
+            angle_depth += 1;
+        } else if bytes[i] == b'>' {
+            angle_depth -= 1;
+        } else if depth == 0
+            && angle_depth == 0
+            && i + sep_len <= s.len()
+            && &s[i..i + sep_len] == sep
+        {
             result.push(&s[start..i]);
             i += sep_len;
             start = i;

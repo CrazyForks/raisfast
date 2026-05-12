@@ -72,6 +72,7 @@ macro_rules! define_enum {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         #[derive(serde::Serialize, serde::Deserialize)]
         #[derive(utoipa::ToSchema)]
+        #[cfg_attr(feature = "export-types", derive(ts_rs::TS))]
         pub enum $name {
             $(
                 #[serde(rename = $value)]

@@ -363,8 +363,10 @@ pub async fn list_published(
 ) -> AppResult<(Vec<Page>, i64)> {
     let offset = (page - 1) * page_size;
     let count_filter = tenant_filter_ph(tenant_id, 2);
-    let count_sql =
-        format!("SELECT COUNT(*) FROM pages WHERE status = {}{count_filter}", ph(1));
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM pages WHERE status = {}{count_filter}",
+        ph(1)
+    );
     let mut cq = sqlx::query_scalar::<_, i64>(&count_sql).bind(PageStatus::Published);
     if let Some(tid) = tenant_id {
         cq = cq.bind(tid);

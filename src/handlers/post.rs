@@ -6,6 +6,8 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
+#[cfg(feature = "export-types")]
+use ts_rs::TS;
 
 use crate::dto::{BatchRequest, BatchResponse, CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::errors::app_error::AppResult;
@@ -67,9 +69,7 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
-/// 文章列表查询参数
-///
-/// 支持分页、按分类/标签筛选、关键词搜索。
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Default)]
 pub struct PostListQuery {
     pub page: Option<i64>,
@@ -79,7 +79,7 @@ pub struct PostListQuery {
     pub q: Option<String>,
 }
 
-/// 后台管理文章列表查询参数
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Default)]
 pub struct AdminPostListQuery {
     pub page: Option<i64>,

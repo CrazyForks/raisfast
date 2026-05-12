@@ -21,8 +21,7 @@ static REFERRER_POLICY: HeaderName = HeaderName::from_static("referrer-policy");
 static PERMISSIONS_POLICY: HeaderName = HeaderName::from_static("permissions-policy");
 static STRICT_TRANSPORT_SECURITY: HeaderName = HeaderName::from_static("strict-transport-security");
 
-static CONTENT_SECURITY_POLICY: HeaderName =
-    HeaderName::from_static("content-security-policy");
+static CONTENT_SECURITY_POLICY: HeaderName = HeaderName::from_static("content-security-policy");
 
 /// 安全响应头中间件。
 pub async fn security_headers(request: Request, next: Next) -> Response {

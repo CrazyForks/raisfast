@@ -11,6 +11,7 @@ pub mod wallet;
 pub use batch::*;
 pub use category::*;
 pub use comment::*;
+pub use currencies::*;
 pub use media::*;
 pub use post::*;
 pub use tag::*;
