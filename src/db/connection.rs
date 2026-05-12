@@ -17,12 +17,33 @@ use crate::db::pool::Pool;
 const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(600);
 const MAX_LIFETIME: Duration = Duration::from_secs(1800);
+const MAX_CONNECT_RETRIES: u32 = 5;
+const CONNECT_RETRY_BASE_DELAY: Duration = Duration::from_secs(1);
 
-/// 初始化数据库连接池。
+/// 初始化数据库连接池（带指数退避重试）。
 ///
-/// `SQLite` 额外执行 PRAGMA 配置（WAL 模式 + 外键约束），
-/// `PostgreSQL` / `MySQL` 无需额外设置。
+/// 容器环境下数据库可能尚未就绪，最多重试 `MAX_CONNECT_RETRIES` 次，
+/// 每次等待 `2^attempt * base_delay`。
 pub async fn init_pool(database_url: &str, pool_size: u32) -> Result<Pool, sqlx::Error> {
+    let mut last_err = None;
+    for attempt in 0..=MAX_CONNECT_RETRIES {
+        match try_connect(database_url, pool_size).await {
+            Ok(pool) => return Ok(pool),
+            Err(e) => {
+                if attempt < MAX_CONNECT_RETRIES {
+                    let delay = CONNECT_RETRY_BASE_DELAY * 2u32.pow(attempt);
+                    let delay_secs = delay.as_secs();
+                    tracing::warn!(attempt, delay_secs, error = %e, "database connection failed, retrying...");
+                    tokio::time::sleep(delay).await;
+                }
+                last_err = Some(e);
+            }
+        }
+    }
+    Err(last_err.unwrap())
+}
+
+async fn try_connect(database_url: &str, pool_size: u32) -> Result<Pool, sqlx::Error> {
     #[cfg(feature = "db-sqlite")]
     {
         use sqlx::pool::PoolOptions;

@@ -21,6 +21,9 @@ static REFERRER_POLICY: HeaderName = HeaderName::from_static("referrer-policy");
 static PERMISSIONS_POLICY: HeaderName = HeaderName::from_static("permissions-policy");
 static STRICT_TRANSPORT_SECURITY: HeaderName = HeaderName::from_static("strict-transport-security");
 
+static CONTENT_SECURITY_POLICY: HeaderName =
+    HeaderName::from_static("content-security-policy");
+
 /// 安全响应头中间件。
 pub async fn security_headers(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
@@ -41,6 +44,10 @@ pub async fn security_headers(request: Request, next: Next) -> Response {
         HeaderValue::from_static(
             "camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()",
         ),
+    );
+    headers.insert(
+        CONTENT_SECURITY_POLICY.clone(),
+        HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"),
     );
 
     response
