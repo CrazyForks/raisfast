@@ -30,7 +30,11 @@ crate::impl_from_row_opt_tenant!(OrderItem {
     optional { product_id, description, cover_url, attributes }
 });
 
-pub async fn find_by_order_id(pool: &crate::db::Pool, order_id: i64, tenant_id: Option<&str>) -> AppResult<Vec<OrderItem>> {
+pub async fn find_by_order_id(
+    pool: &crate::db::Pool,
+    order_id: i64,
+    tenant_id: Option<&str>,
+) -> AppResult<Vec<OrderItem>> {
     let sql = format!(
         "SELECT * FROM order_items WHERE order_id = {}{}",
         ph(1),
@@ -62,7 +66,17 @@ pub async fn insert(
         Some(tid) => {
             let sql = format!(
                 "INSERT INTO order_items (document_id, tenant_id, order_id, product_id, title, description, unit_price, quantity, subtotal, cover_url, attributes, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11)
             );
             sqlx::query(&sql)
                 .bind(document_id)
@@ -82,7 +96,16 @@ pub async fn insert(
         None => {
             let sql = format!(
                 "INSERT INTO order_items (document_id, order_id, product_id, title, description, unit_price, quantity, subtotal, cover_url, attributes, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10)
             );
             sqlx::query(&sql)
                 .bind(document_id)
@@ -111,7 +134,11 @@ pub async fn insert(
     q.fetch_one(pool).await.map_err(Into::into)
 }
 
-pub async fn insert_batch(pool: &crate::db::Pool, items: Vec<InsertOrderItem>, tenant_id: Option<&str>) -> AppResult<()> {
+pub async fn insert_batch(
+    pool: &crate::db::Pool,
+    items: Vec<InsertOrderItem>,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
     for item in &items {
         insert(
             pool,
@@ -177,10 +204,13 @@ mod tests {
 
     async fn seed_order(pool: &crate::db::Pool, user_id: i64) -> i64 {
         let doc_id = uuid::Uuid::now_v7().to_string();
-        let order_no = format!("ORD-{}", &uuid::Uuid::now_v7().to_string().replace('-', "")[..16]);
+        let order_no = format!(
+            "ORD-{}",
+            &uuid::Uuid::now_v7().to_string().replace('-', "")[..16]
+        );
         crate::models::order::insert(
-            pool, &doc_id, user_id, &order_no, 1000, 0, 0, 1000,
-            "CNY", None, None, None, None, None, None,
+            pool, &doc_id, user_id, &order_no, 1000, 0, 0, 1000, "CNY", None, None, None, None,
+            None, None,
         )
         .await
         .unwrap();
@@ -195,9 +225,32 @@ mod tests {
     async fn seed_product(pool: &crate::db::Pool) -> i64 {
         let doc_id = uuid::Uuid::now_v7().to_string();
         crate::models::product::insert(
-            pool, &doc_id, None, "Test Product", None, None, "custom", "digital",
-            None, None, 1000, "CNY", None, 0,
-            None, None, None, None, None, "piece", 1, None, 0, None, None, None,
+            pool,
+            &doc_id,
+            None,
+            "Test Product",
+            None,
+            None,
+            "custom",
+            "digital",
+            None,
+            None,
+            1000,
+            "CNY",
+            None,
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "piece",
+            1,
+            None,
+            0,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -218,8 +271,17 @@ mod tests {
         let doc_id = uuid::Uuid::now_v7().to_string();
 
         let item = super::insert(
-            &pool, &doc_id, order_id, Some(pid), "Widget", Some("A nice widget"),
-            1000, 2, 2000, Some("https://img.test/widget.jpg"), Some(r#"{"color":"red"}"#),
+            &pool,
+            &doc_id,
+            order_id,
+            Some(pid),
+            "Widget",
+            Some("A nice widget"),
+            1000,
+            2,
+            2000,
+            Some("https://img.test/widget.jpg"),
+            Some(r#"{"color":"red"}"#),
             None,
         )
         .await
@@ -245,14 +307,26 @@ mod tests {
         for i in 0..3 {
             let doc_id = uuid::Uuid::now_v7().to_string();
             super::insert(
-                &pool, &doc_id, order_id, None, &format!("Item{i}"), None,
-                100 * (i + 1), i + 1, 100 * (i + 1) * (i + 1), None, None, None,
+                &pool,
+                &doc_id,
+                order_id,
+                None,
+                &format!("Item{i}"),
+                None,
+                100 * (i + 1),
+                i + 1,
+                100 * (i + 1) * (i + 1),
+                None,
+                None,
+                None,
             )
             .await
             .unwrap();
         }
 
-        let items = super::find_by_order_id(&pool, order_id, None).await.unwrap();
+        let items = super::find_by_order_id(&pool, order_id, None)
+            .await
+            .unwrap();
         assert_eq!(items.len(), 3);
         assert!(items.iter().all(|it| it.order_id == order_id));
     }
@@ -262,7 +336,9 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let order_id = seed_order(&pool, uid).await;
-        let items = super::find_by_order_id(&pool, order_id, None).await.unwrap();
+        let items = super::find_by_order_id(&pool, order_id, None)
+            .await
+            .unwrap();
         assert!(items.is_empty());
     }
 
@@ -274,13 +350,17 @@ mod tests {
         let order2 = seed_order(&pool, uid).await;
 
         let doc1 = uuid::Uuid::now_v7().to_string();
-        super::insert(&pool, &doc1, order1, None, "Item1", None, 100, 1, 100, None, None, None)
-            .await
-            .unwrap();
+        super::insert(
+            &pool, &doc1, order1, None, "Item1", None, 100, 1, 100, None, None, None,
+        )
+        .await
+        .unwrap();
         let doc2 = uuid::Uuid::now_v7().to_string();
-        super::insert(&pool, &doc2, order2, None, "Item2", None, 200, 1, 200, None, None, None)
-            .await
-            .unwrap();
+        super::insert(
+            &pool, &doc2, order2, None, "Item2", None, 200, 1, 200, None, None, None,
+        )
+        .await
+        .unwrap();
 
         let items1 = super::find_by_order_id(&pool, order1, None).await.unwrap();
         let items2 = super::find_by_order_id(&pool, order2, None).await.unwrap();
@@ -324,7 +404,9 @@ mod tests {
         ];
 
         super::insert_batch(&pool, items, None).await.unwrap();
-        let found = super::find_by_order_id(&pool, order_id, None).await.unwrap();
+        let found = super::find_by_order_id(&pool, order_id, None)
+            .await
+            .unwrap();
         assert_eq!(found.len(), 2);
     }
 

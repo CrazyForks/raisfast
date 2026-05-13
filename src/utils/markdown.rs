@@ -6,7 +6,7 @@
 //! Code blocks (` ``` `) preserve language-identifier CSS classes for frontend JS highlighting libraries (e.g. highlight.js).
 
 use ammonia::clean;
-use comrak::{markdown_to_html, ComrakOptions};
+use comrak::{ComrakOptions, markdown_to_html};
 
 /// Renders Markdown text to sanitized HTML.
 ///

@@ -196,7 +196,11 @@ mod tests {
             ),
         ];
 
-        assert_eq!(cases.len(), 11, "all Event variants should have a corresponding name");
+        assert_eq!(
+            cases.len(),
+            11,
+            "all Event variants should have a corresponding name"
+        );
         for (event, expected_name) in &cases {
             assert_eq!(event_type_name(event), *expected_name);
         }

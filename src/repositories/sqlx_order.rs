@@ -1,6 +1,6 @@
 use crate::errors::app_error::AppResult;
 use crate::models::order::{self, Order};
-use crate::models::order_item::{self, OrderItem, InsertOrderItem};
+use crate::models::order_item::{self, InsertOrderItem, OrderItem};
 use crate::models::product::{self, Product};
 use crate::repositories::define_sqlx_repo;
 
@@ -10,7 +10,11 @@ define_sqlx_repo!(SqlxProductRepository);
 #[async_trait::async_trait]
 pub trait ProductRepository: Send + Sync {
     async fn find_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<Option<Product>>;
-    async fn find_by_document_id(&self, document_id: &str, tenant_id: Option<&str>) -> AppResult<Option<Product>>;
+    async fn find_by_document_id(
+        &self,
+        document_id: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<Option<Product>>;
     async fn find_active_paginated(
         &self,
         tenant_id: Option<&str>,
@@ -93,7 +97,11 @@ impl ProductRepository for SqlxProductRepository {
         product::find_by_id(&self.pool, id, tenant_id).await
     }
 
-    async fn find_by_document_id(&self, document_id: &str, tenant_id: Option<&str>) -> AppResult<Option<Product>> {
+    async fn find_by_document_id(
+        &self,
+        document_id: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<Option<Product>> {
         product::find_by_document_id(&self.pool, document_id, tenant_id).await
     }
 
@@ -255,8 +263,16 @@ define_sqlx_repo!(SqlxOrderRepository);
 #[async_trait::async_trait]
 pub trait OrderRepository: Send + Sync {
     async fn find_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<Option<Order>>;
-    async fn find_by_document_id(&self, document_id: &str, tenant_id: Option<&str>) -> AppResult<Option<Order>>;
-    async fn find_by_order_no(&self, order_no: &str, tenant_id: Option<&str>) -> AppResult<Option<Order>>;
+    async fn find_by_document_id(
+        &self,
+        document_id: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<Option<Order>>;
+    async fn find_by_order_no(
+        &self,
+        order_no: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<Option<Order>>;
     async fn find_by_user_paginated(
         &self,
         user_id: i64,
@@ -302,10 +318,28 @@ pub trait OrderRepository: Send + Sync {
         carrier: Option<&str>,
         tenant_id: Option<&str>,
     ) -> AppResult<()>;
-    async fn update_admin_remark(&self, id: i64, admin_remark: &str, tenant_id: Option<&str>) -> AppResult<()>;
-    async fn update_delivery_data(&self, id: i64, delivery_data: &str, tenant_id: Option<&str>) -> AppResult<()>;
-    async fn find_items_by_order_id(&self, order_id: i64, tenant_id: Option<&str>) -> AppResult<Vec<OrderItem>>;
-    async fn insert_items_batch(&self, items: Vec<InsertOrderItem>, tenant_id: Option<&str>) -> AppResult<()>;
+    async fn update_admin_remark(
+        &self,
+        id: i64,
+        admin_remark: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<()>;
+    async fn update_delivery_data(
+        &self,
+        id: i64,
+        delivery_data: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<()>;
+    async fn find_items_by_order_id(
+        &self,
+        order_id: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<Vec<OrderItem>>;
+    async fn insert_items_batch(
+        &self,
+        items: Vec<InsertOrderItem>,
+        tenant_id: Option<&str>,
+    ) -> AppResult<()>;
 }
 
 #[async_trait::async_trait]
@@ -314,11 +348,19 @@ impl OrderRepository for SqlxOrderRepository {
         order::find_by_id(&self.pool, id, tenant_id).await
     }
 
-    async fn find_by_document_id(&self, document_id: &str, tenant_id: Option<&str>) -> AppResult<Option<Order>> {
+    async fn find_by_document_id(
+        &self,
+        document_id: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<Option<Order>> {
         order::find_by_document_id(&self.pool, document_id, tenant_id).await
     }
 
-    async fn find_by_order_no(&self, order_no: &str, tenant_id: Option<&str>) -> AppResult<Option<Order>> {
+    async fn find_by_order_no(
+        &self,
+        order_no: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<Option<Order>> {
         order::find_by_order_no(&self.pool, order_no, tenant_id).await
     }
 
@@ -400,19 +442,37 @@ impl OrderRepository for SqlxOrderRepository {
         order::update_shipped(&self.pool, id, tracking_no, carrier, tenant_id).await
     }
 
-    async fn update_admin_remark(&self, id: i64, admin_remark: &str, tenant_id: Option<&str>) -> AppResult<()> {
+    async fn update_admin_remark(
+        &self,
+        id: i64,
+        admin_remark: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<()> {
         order::update_admin_remark(&self.pool, id, admin_remark, tenant_id).await
     }
 
-    async fn update_delivery_data(&self, id: i64, delivery_data: &str, tenant_id: Option<&str>) -> AppResult<()> {
+    async fn update_delivery_data(
+        &self,
+        id: i64,
+        delivery_data: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<()> {
         order::update_delivery_data(&self.pool, id, delivery_data, tenant_id).await
     }
 
-    async fn find_items_by_order_id(&self, order_id: i64, tenant_id: Option<&str>) -> AppResult<Vec<OrderItem>> {
+    async fn find_items_by_order_id(
+        &self,
+        order_id: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<Vec<OrderItem>> {
         order_item::find_by_order_id(&self.pool, order_id, tenant_id).await
     }
 
-    async fn insert_items_batch(&self, items: Vec<InsertOrderItem>, tenant_id: Option<&str>) -> AppResult<()> {
+    async fn insert_items_batch(
+        &self,
+        items: Vec<InsertOrderItem>,
+        tenant_id: Option<&str>,
+    ) -> AppResult<()> {
         order_item::insert_batch(&self.pool, items, tenant_id).await
     }
 }

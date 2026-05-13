@@ -32,6 +32,7 @@ pub mod middleware;
 pub mod models;
 pub mod notifier;
 pub mod oauth;
+pub mod payment;
 pub mod plugins;
 pub mod protocols;
 pub mod repositories;
@@ -75,8 +76,10 @@ use notifier::{EmailSender, SmsSender};
 use oauth::OAuthProviderRegistry;
 use plugins::PluginManager;
 use repositories::{
-    CategoryRepository, CommentRepository, MediaRepository, OrderRepository, PostRepository,
-    ProductRepository, RefreshTokenRepository, TagRepository, UserRepository, WalletRepository,
+    CategoryRepository, CommentRepository, MediaRepository, OrderRepository,
+    PaymentChannelRepository, PaymentOrderRepository, PaymentRefundRepository,
+    PaymentTransactionRepository, PostRepository, ProductRepository, RefreshTokenRepository,
+    TagRepository, UserRepository, WalletRepository,
 };
 use search::SearchEngine;
 use services::options::OptionsService;
@@ -112,6 +115,10 @@ pub struct AppState {
     pub wallet_repo: Arc<dyn WalletRepository>,
     pub product_repo: Arc<dyn ProductRepository>,
     pub order_repo: Arc<dyn OrderRepository>,
+    pub payment_channel_repo: Arc<dyn PaymentChannelRepository>,
+    pub payment_order_repo: Arc<dyn PaymentOrderRepository>,
+    pub payment_tx_repo: Arc<dyn PaymentTransactionRepository>,
+    pub payment_refund_repo: Arc<dyn PaymentRefundRepository>,
     pub search: Arc<dyn SearchEngine>,
     pub content_type_registry: Arc<ContentTypeRegistry>,
     pub aspect_engine: Arc<crate::aspects::engine::AspectEngine>,
@@ -166,10 +173,24 @@ pub async fn build_app_state(
     let wallet_repo: Arc<dyn crate::repositories::WalletRepository> =
         Arc::new(crate::repositories::SqlxWalletRepository::new(pool.clone()));
 
-    let product_repo: Arc<dyn crate::repositories::ProductRepository> =
-        Arc::new(crate::repositories::SqlxProductRepository::new(pool.clone()));
+    let product_repo: Arc<dyn crate::repositories::ProductRepository> = Arc::new(
+        crate::repositories::SqlxProductRepository::new(pool.clone()),
+    );
     let order_repo: Arc<dyn crate::repositories::OrderRepository> =
         Arc::new(crate::repositories::SqlxOrderRepository::new(pool.clone()));
+
+    let payment_channel_repo: Arc<dyn crate::repositories::PaymentChannelRepository> = Arc::new(
+        crate::repositories::SqlxPaymentChannelRepository::new(pool.clone()),
+    );
+    let payment_order_repo: Arc<dyn crate::repositories::PaymentOrderRepository> = Arc::new(
+        crate::repositories::SqlxPaymentOrderRepository::new(pool.clone()),
+    );
+    let payment_tx_repo: Arc<dyn crate::repositories::PaymentTransactionRepository> = Arc::new(
+        crate::repositories::SqlxPaymentTransactionRepository::new(pool.clone()),
+    );
+    let payment_refund_repo: Arc<dyn crate::repositories::PaymentRefundRepository> = Arc::new(
+        crate::repositories::SqlxPaymentRefundRepository::new(pool.clone()),
+    );
 
     let search: Arc<dyn SearchEngine> = build_search_engine(config);
 
@@ -267,6 +288,10 @@ pub async fn build_app_state(
         wallet_repo,
         product_repo,
         order_repo,
+        payment_channel_repo,
+        payment_order_repo,
+        payment_tx_repo,
+        payment_refund_repo,
         search,
         content_type_registry: ct_registry,
         aspect_engine,

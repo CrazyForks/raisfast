@@ -2,9 +2,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::routing::{get, put};
 
-use crate::dto::{
-    CreateProductRequest, UpdateProductRequest, ProductResponse,
-};
+use crate::dto::{CreateProductRequest, ProductResponse, UpdateProductRequest};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
@@ -60,9 +58,13 @@ pub async fn list_active(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<ProductResponse>>> {
     params.sanitize();
-    let (items, total) =
-        product::list_active_products(state.product_repo.as_ref(), &auth, params.page, params.page_size)
-            .await?;
+    let (items, total) = product::list_active_products(
+        state.product_repo.as_ref(),
+        &auth,
+        params.page,
+        params.page_size,
+    )
+    .await?;
     let resp: Vec<ProductResponse> = items.into_iter().map(Into::into).collect();
     Ok(params.paginate(resp, total))
 }
@@ -83,9 +85,14 @@ pub async fn admin_list(
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<ProductResponse>>> {
     auth.ensure_admin()?;
     params.sanitize();
-    let (items, total) =
-        product::list_admin_products(state.product_repo.as_ref(), &auth, params.page, params.page_size, None)
-            .await?;
+    let (items, total) = product::list_admin_products(
+        state.product_repo.as_ref(),
+        &auth,
+        params.page,
+        params.page_size,
+        None,
+    )
+    .await?;
     let resp: Vec<ProductResponse> = items.into_iter().map(Into::into).collect();
     Ok(params.paginate(resp, total))
 }

@@ -4,6 +4,7 @@ pub mod comment;
 pub mod currencies;
 pub mod media;
 pub mod order;
+pub mod payment;
 pub mod post;
 pub mod tag;
 pub mod user;
@@ -15,6 +16,7 @@ pub use comment::*;
 pub use currencies::*;
 pub use media::*;
 pub use order::*;
+pub use payment::*;
 pub use post::*;
 pub use tag::*;
 pub use user::*;
@@ -148,11 +150,13 @@ mod tests {
 
     #[test]
     fn validate_uuid_vec_valid() {
-        assert!(validate_uuid_vec(&[
-            "01901234-5678-7000-8000-000000000000".to_string(),
-            "1".to_string()
-        ])
-        .is_ok());
+        assert!(
+            validate_uuid_vec(&[
+                "01901234-5678-7000-8000-000000000000".to_string(),
+                "1".to_string()
+            ])
+            .is_ok()
+        );
     }
 
     #[test]

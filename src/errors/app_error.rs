@@ -29,9 +29,9 @@
 //! - `Unauthorized` → `errors.unauthorized`
 //! - `NotFound` → translates the resource name via `resources.{key}`, then substitutes into `errors.not_found`
 
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde::Serialize;
 
 use crate::middleware::locale::current_locale;

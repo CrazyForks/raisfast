@@ -11,8 +11,8 @@ use mlua::{Lua, LuaSerdeExt};
 use crate::config::app::AppConfig;
 use crate::constants::PLUGIN_HOST_GLOBAL;
 use crate::db::Pool;
-use crate::plugins::host_common::HostContext;
 use crate::plugins::Permissions;
+use crate::plugins::host_common::HostContext;
 
 /// Register host functions into the Lua global scope.
 pub fn register_host_functions(

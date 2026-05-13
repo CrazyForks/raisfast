@@ -30,9 +30,10 @@ use raisfast::middleware::rate_limit::{
 use raisfast::plugins::PluginManager;
 use raisfast::repositories::{
     CachedPostRepository, SqlxCategoryRepository, SqlxCommentRepository, SqlxMediaRepository,
-    SqlxOptionsRepository, SqlxOrderRepository, SqlxPostRepository, SqlxProductRepository,
-    SqlxRbacRepository, SqlxRefreshTokenRepository, SqlxTagRepository, SqlxTenantRepository,
-    SqlxUserRepository,
+    SqlxOptionsRepository, SqlxOrderRepository, SqlxPaymentChannelRepository,
+    SqlxPaymentOrderRepository, SqlxPaymentRefundRepository, SqlxPaymentTransactionRepository,
+    SqlxPostRepository, SqlxProductRepository, SqlxRbacRepository, SqlxRefreshTokenRepository,
+    SqlxTagRepository, SqlxTenantRepository, SqlxUserRepository,
 };
 use raisfast::search::NoopSearchEngine;
 use serde_json::{Value, json};
@@ -93,6 +94,18 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
             pool.clone(),
         )),
         order_repo: Arc::new(raisfast::repositories::SqlxOrderRepository::new(
+            pool.clone(),
+        )),
+        payment_channel_repo: Arc::new(raisfast::repositories::SqlxPaymentChannelRepository::new(
+            pool.clone(),
+        )),
+        payment_order_repo: Arc::new(raisfast::repositories::SqlxPaymentOrderRepository::new(
+            pool.clone(),
+        )),
+        payment_tx_repo: Arc::new(
+            raisfast::repositories::SqlxPaymentTransactionRepository::new(pool.clone()),
+        ),
+        payment_refund_repo: Arc::new(raisfast::repositories::SqlxPaymentRefundRepository::new(
             pool.clone(),
         )),
         search: Arc::new(NoopSearchEngine),

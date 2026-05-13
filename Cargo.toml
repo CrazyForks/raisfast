@@ -31,6 +31,13 @@ tls = ["axum-server", "rustls", "tokio-rustls"]
 # ── Storage backend ────────────────────────────────────────────────
 storage-s3 = ["aws-sdk-s3", "aws-config"]
 
+# ── Payment providers ────────────────────────────────────────────────
+payment-alipay = ["rsa"]
+payment-creem = []
+payment-stripe = ["async-stripe"]
+payment-wechat = ["rsa", "x509-cert"]
+payment-all = ["payment-alipay", "payment-creem", "payment-stripe", "payment-wechat"]
+
 # ── OpenAPI / Swagger UI ────────────────────────────────────────────
 openapi = ["utoipa-swagger-ui"]
 
@@ -79,7 +86,9 @@ chrono-tz = "0.10"
 hex = "0.4"
 hmac = "0.12"
  sha2 = "0.10"
-sha1 = "0.10"
+ sha1 = "0.10"
+rsa = { version = "0.9", features = ["pem", "sha2"], optional = true }
+x509-cert = { version = "0.2", optional = true }
 base64 = "0.22"
 
 # Security
@@ -150,6 +159,8 @@ tera = "1"
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls-tls", "hostname"] }
 tauri = { version = "2", features = ["devtools"], optional = true }
 
+aes-gcm = "0.10"
+async-stripe = { version = "0.39", features = ["runtime-tokio-hyper", "webhook-events"], optional = true }
 dashmap = "6"
 moka = { version = "0.12", features = ["sync"] }
 arc-swap = "1"

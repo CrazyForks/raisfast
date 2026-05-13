@@ -31,6 +31,8 @@ define_enum!(
         PointsMall = "points_mall",
         Order = "order",
         Expiry = "expiry",
+        Payment = "payment",
+        PaymentRefund = "payment_refund",
     }
 );
 

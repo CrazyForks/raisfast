@@ -782,3 +782,98 @@ CREATE TABLE IF NOT EXISTS order_items (
 );
 
 CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
+
+-- Payment Channels
+CREATE TABLE IF NOT EXISTS payment_channels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    provider TEXT NOT NULL,
+    name TEXT NOT NULL,
+    is_live INTEGER NOT NULL DEFAULT 0,
+    credentials TEXT NOT NULL,
+    webhook_secret TEXT,
+    settings TEXT,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(provider, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_channels_provider ON payment_channels(provider);
+CREATE INDEX IF NOT EXISTS idx_payment_channels_active ON payment_channels(is_active);
+
+-- Payment Orders
+CREATE TABLE IF NOT EXISTS payment_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    order_id TEXT,
+    title TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    channel_id INTEGER NOT NULL REFERENCES payment_channels(id),
+    provider TEXT NOT NULL,
+    provider_order_id TEXT,
+    provider_method TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    reference_type TEXT,
+    reference_id TEXT,
+    return_url TEXT,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    version INTEGER NOT NULL DEFAULT 1,
+    provider_data TEXT,
+    client_ip TEXT,
+    metadata TEXT,
+    paid_at TEXT,
+    cancelled_at TEXT,
+    expired_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_orders_user ON payment_orders(user_id);
+CREATE INDEX IF NOT EXISTS idx_payment_orders_status ON payment_orders(status);
+CREATE INDEX IF NOT EXISTS idx_payment_orders_provider ON payment_orders(provider_order_id);
+CREATE INDEX IF NOT EXISTS idx_payment_orders_order_id ON payment_orders(order_id);
+
+-- Payment Transactions
+CREATE TABLE IF NOT EXISTS payment_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    payment_order_id INTEGER NOT NULL REFERENCES payment_orders(id),
+    order_id TEXT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    tx_type TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    currency TEXT NOT NULL,
+    provider_tx_id TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    raw_payload TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_tx_order ON payment_transactions(payment_order_id);
+CREATE INDEX IF NOT EXISTS idx_payment_tx_order_id ON payment_transactions(order_id);
+
+-- Payment Refunds
+CREATE TABLE IF NOT EXISTS payment_refunds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    payment_order_id INTEGER NOT NULL REFERENCES payment_orders(id),
+    order_id TEXT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    amount INTEGER NOT NULL,
+    currency TEXT NOT NULL,
+    reason TEXT,
+    provider_refund_id TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    payment_tx_id INTEGER REFERENCES payment_transactions(id),
+    metadata TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_refunds_order ON payment_refunds(payment_order_id);
+CREATE INDEX IF NOT EXISTS idx_payment_refunds_order_id ON payment_refunds(order_id);

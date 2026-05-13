@@ -147,7 +147,9 @@ pub async fn create_order(
     Json(req): Json<CreateOrderRequest>,
 ) -> AppResult<ApiResponse<OrderResponse>> {
     let _user_id = auth.ensure_authenticated()?;
-    let user_int_id = auth.user_int_id().ok_or(crate::errors::app_error::AppError::Unauthorized)?;
+    let user_int_id = auth
+        .user_int_id()
+        .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
     validation::validate(&req)?;
     let o = order::create_order(
         &state.pool,
@@ -158,7 +160,10 @@ pub async fn create_order(
         req,
     )
     .await?;
-    let items = state.order_repo.find_items_by_order_id(o.id, auth.tenant_id()).await?;
+    let items = state
+        .order_repo
+        .find_items_by_order_id(o.id, auth.tenant_id())
+        .await?;
     Ok(ApiResponse::success(to_order_response(o, items)))
 }
 
@@ -168,14 +173,24 @@ pub async fn list_orders(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<OrderResponse>>> {
     let _user_id = auth.ensure_authenticated()?;
-    let user_int_id = auth.user_int_id().ok_or(crate::errors::app_error::AppError::Unauthorized)?;
+    let user_int_id = auth
+        .user_int_id()
+        .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
     params.sanitize();
-    let (orders, total) =
-        order::list_user_orders(state.order_repo.as_ref(), &auth, user_int_id, params.page, params.page_size)
-            .await?;
+    let (orders, total) = order::list_user_orders(
+        state.order_repo.as_ref(),
+        &auth,
+        user_int_id,
+        params.page,
+        params.page_size,
+    )
+    .await?;
     let mut responses = Vec::new();
     for o in orders {
-        let items = state.order_repo.find_items_by_order_id(o.id, auth.tenant_id()).await?;
+        let items = state
+            .order_repo
+            .find_items_by_order_id(o.id, auth.tenant_id())
+            .await?;
         responses.push(to_order_response(o, items));
     }
     Ok(params.paginate(responses, total))
@@ -198,7 +213,9 @@ pub async fn cancel_order_handler(
     Json(_req): Json<CancelOrderRequest>,
 ) -> AppResult<ApiResponse<()>> {
     let _user_id = auth.ensure_authenticated()?;
-    let user_int_id = auth.user_int_id().ok_or(crate::errors::app_error::AppError::Unauthorized)?;
+    let user_int_id = auth
+        .user_int_id()
+        .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
     order::cancel_order(state.order_repo.as_ref(), &auth, &id, user_int_id).await?;
     Ok(ApiResponse::success(()))
 }
@@ -209,7 +226,9 @@ pub async fn confirm_receipt(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     let _user_id = auth.ensure_authenticated()?;
-    let user_int_id = auth.user_int_id().ok_or(crate::errors::app_error::AppError::Unauthorized)?;
+    let user_int_id = auth
+        .user_int_id()
+        .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
     order::confirm_receipt(state.order_repo.as_ref(), &auth, &id, user_int_id).await?;
     Ok(ApiResponse::success(()))
 }
@@ -221,12 +240,20 @@ pub async fn admin_list(
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<OrderResponse>>> {
     auth.ensure_admin()?;
     params.sanitize();
-    let (orders, total) =
-        order::list_admin_orders(state.order_repo.as_ref(), &auth, params.page, params.page_size, None)
-            .await?;
+    let (orders, total) = order::list_admin_orders(
+        state.order_repo.as_ref(),
+        &auth,
+        params.page,
+        params.page_size,
+        None,
+    )
+    .await?;
     let mut responses = Vec::new();
     for o in orders {
-        let items = state.order_repo.find_items_by_order_id(o.id, auth.tenant_id()).await?;
+        let items = state
+            .order_repo
+            .find_items_by_order_id(o.id, auth.tenant_id())
+            .await?;
         responses.push(to_order_response(o, items));
     }
     Ok(params.paginate(responses, total))

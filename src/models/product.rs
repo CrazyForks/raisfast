@@ -79,7 +79,11 @@ crate::impl_from_row_opt_tenant!(Product {
     optional { category_id, description, cover_url, delivery_hook, weight, shipping_template_id, attributes, slug, content, image_ids, original_price, specs, max_purchase, meta_title, meta_description, published_at }
 });
 
-pub async fn find_by_id(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<Option<Product>> {
+pub async fn find_by_id(
+    pool: &crate::db::Pool,
+    id: i64,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<Product>> {
     let sql = format!(
         "SELECT * FROM products WHERE id = {}{}",
         ph(1),
@@ -92,7 +96,11 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>
     q.fetch_optional(pool).await.map_err(Into::into)
 }
 
-pub async fn find_by_document_id(pool: &crate::db::Pool, document_id: &str, tenant_id: Option<&str>) -> AppResult<Option<Product>> {
+pub async fn find_by_document_id(
+    pool: &crate::db::Pool,
+    document_id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<Product>> {
     let sql = format!(
         "SELECT * FROM products WHERE document_id = {}{}",
         ph(1),
@@ -149,13 +157,27 @@ pub async fn find_all_admin(
     let status_ph_idx = if has_tenant { 2 } else { 1 };
     let (count_sql, data_sql_base) = if let Some(_s) = status {
         (
-            format!("SELECT COUNT(*) as count FROM products WHERE status = {}{}", ph(status_ph_idx), tenant_ph),
-            format!("SELECT * FROM products WHERE status = {}{} ORDER BY sort_order, created_at DESC", ph(status_ph_idx), tenant_ph),
+            format!(
+                "SELECT COUNT(*) as count FROM products WHERE status = {}{}",
+                ph(status_ph_idx),
+                tenant_ph
+            ),
+            format!(
+                "SELECT * FROM products WHERE status = {}{} ORDER BY sort_order, created_at DESC",
+                ph(status_ph_idx),
+                tenant_ph
+            ),
         )
     } else {
         (
-            format!("SELECT COUNT(*) as count FROM products WHERE 1=1{}", tenant_ph),
-            format!("SELECT * FROM products WHERE 1=1{} ORDER BY sort_order, created_at DESC", tenant_ph),
+            format!(
+                "SELECT COUNT(*) as count FROM products WHERE 1=1{}",
+                tenant_ph
+            ),
+            format!(
+                "SELECT * FROM products WHERE 1=1{} ORDER BY sort_order, created_at DESC",
+                tenant_ph
+            ),
         )
     };
     let mut q = sqlx::query_as::<_, (i64,)>(&count_sql);
@@ -167,7 +189,12 @@ pub async fn find_all_admin(
     }
     let (total,): (i64,) = q.fetch_one(pool).await?;
     let limit_base = status_ph_idx + usize::from(status.is_some());
-    let sql = format!("{} LIMIT {} OFFSET {}", data_sql_base, ph(limit_base + 1), ph(limit_base + 2));
+    let sql = format!(
+        "{} LIMIT {} OFFSET {}",
+        data_sql_base,
+        ph(limit_base + 1),
+        ph(limit_base + 2)
+    );
     let mut q2 = sqlx::query_as::<_, Product>(&sql);
     if let Some(tid) = tenant_id {
         q2 = q2.bind(tid);
@@ -212,7 +239,31 @@ pub async fn insert(
         Some(tid) => {
             let sql = format!(
                 "INSERT INTO products (document_id, tenant_id, category_id, title, description, cover_url, product_type, fulfillment_type, delivery_hook, weight, price, currency, attributes, sort_order, slug, content, image_ids, original_price, specs, unit, min_purchase, max_purchase, virtual_sales, meta_title, meta_description, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13), ph(14), ph(15), ph(16), ph(17), ph(18), ph(19), ph(20), ph(21), ph(22), ph(23), ph(24), ph(25)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11),
+                ph(12),
+                ph(13),
+                ph(14),
+                ph(15),
+                ph(16),
+                ph(17),
+                ph(18),
+                ph(19),
+                ph(20),
+                ph(21),
+                ph(22),
+                ph(23),
+                ph(24),
+                ph(25)
             );
             sqlx::query(&sql)
                 .bind(document_id)
@@ -246,7 +297,30 @@ pub async fn insert(
         None => {
             let sql = format!(
                 "INSERT INTO products (document_id, category_id, title, description, cover_url, product_type, fulfillment_type, delivery_hook, weight, price, currency, attributes, sort_order, slug, content, image_ids, original_price, specs, unit, min_purchase, max_purchase, virtual_sales, meta_title, meta_description, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13), ph(14), ph(15), ph(16), ph(17), ph(18), ph(19), ph(20), ph(21), ph(22), ph(23), ph(24)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11),
+                ph(12),
+                ph(13),
+                ph(14),
+                ph(15),
+                ph(16),
+                ph(17),
+                ph(18),
+                ph(19),
+                ph(20),
+                ph(21),
+                ph(22),
+                ph(23),
+                ph(24)
             );
             sqlx::query(&sql)
                 .bind(document_id)
@@ -277,7 +351,9 @@ pub async fn insert(
                 .await?;
         }
     }
-    find_by_document_id(pool, document_id, tenant_id).await.map(|o| o.unwrap())
+    find_by_document_id(pool, document_id, tenant_id)
+        .await
+        .map(|o| o.unwrap())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -315,7 +391,34 @@ pub async fn update(
 ) -> AppResult<bool> {
     let sql = format!(
         "UPDATE products SET category_id={}, title={}, description={}, cover_url={}, product_type={}, fulfillment_type={}, delivery_hook={}, weight={}, price={}, currency={}, status={}, attributes={}, sort_order={}, slug={}, content={}, image_ids={}, original_price={}, specs={}, unit={}, min_purchase={}, max_purchase={}, total_sales={}, virtual_sales={}, meta_title={}, meta_description={}, published_at={}, updated_at=datetime('now'), version=version+1 WHERE id={} AND version={}{}",
-        ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13), ph(14), ph(15), ph(16), ph(17), ph(18), ph(19), ph(20), ph(21), ph(22), ph(23), ph(24), ph(25), ph(26), ph(27), ph(28),
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5),
+        ph(6),
+        ph(7),
+        ph(8),
+        ph(9),
+        ph(10),
+        ph(11),
+        ph(12),
+        ph(13),
+        ph(14),
+        ph(15),
+        ph(16),
+        ph(17),
+        ph(18),
+        ph(19),
+        ph(20),
+        ph(21),
+        ph(22),
+        ph(23),
+        ph(24),
+        ph(25),
+        ph(26),
+        ph(27),
+        ph(28),
         tenant_filter_ph(tenant_id, 29)
     );
     let mut q = sqlx::query(&sql)
@@ -354,7 +457,11 @@ pub async fn update(
     Ok(affected > 0)
 }
 
-pub async fn delete_by_id(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<bool> {
+pub async fn delete_by_id(
+    pool: &crate::db::Pool,
+    id: i64,
+    tenant_id: Option<&str>,
+) -> AppResult<bool> {
     let sql = format!(
         "DELETE FROM products WHERE id = {}{}",
         ph(1),
@@ -384,9 +491,8 @@ mod tests {
     async fn seed_product(pool: &crate::db::Pool, title: &str, _status: &str) -> Product {
         let doc_id = uuid::Uuid::now_v7().to_string();
         insert(
-            pool, &doc_id, None, title, None, None, "custom", "digital",
-            None, None, 1000, "CNY", None, 0,
-            None, None, None, None, None, "piece", 1, None, 0, None, None, None,
+            pool, &doc_id, None, title, None, None, "custom", "digital", None, None, 1000, "CNY",
+            None, 0, None, None, None, None, None, "piece", 1, None, 0, None, None, None,
         )
         .await
         .unwrap()
@@ -437,13 +543,23 @@ mod tests {
     #[tokio::test]
     async fn find_by_id_not_found() {
         let pool = setup_pool().await;
-        assert!(super::find_by_id(&pool, 99999, None).await.unwrap().is_none());
+        assert!(
+            super::find_by_id(&pool, 99999, None)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
     async fn find_by_document_id_not_found() {
         let pool = setup_pool().await;
-        assert!(super::find_by_document_id(&pool, "nonexistent", None).await.unwrap().is_none());
+        assert!(
+            super::find_by_document_id(&pool, "nonexistent", None)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -451,9 +567,8 @@ mod tests {
         let pool = setup_pool().await;
         let doc_id = uuid::Uuid::now_v7().to_string();
         let p = super::insert(
-            &pool, &doc_id, None, "Basic", None, None, "custom", "digital",
-            None, None, 500, "USD", None, 0,
-            None, None, None, None, None, "piece", 1, None, 0, None, None, None,
+            &pool, &doc_id, None, "Basic", None, None, "custom", "digital", None, None, 500, "USD",
+            None, 0, None, None, None, None, None, "piece", 1, None, 0, None, None, None,
         )
         .await
         .unwrap();
@@ -471,9 +586,36 @@ mod tests {
         let p = seed_product(&pool, "Old", "draft").await;
         let version = get_version(&pool, p.id).await;
         let ok = super::update(
-            &pool, p.id, None, "New", Some("desc"), None, "custom", "digital",
-            None, None, 2000, "CNY", "active", None, 0,
-            None, None, None, None, None, "piece", 1, None, 0, 0, None, None, None, version, None,
+            &pool,
+            p.id,
+            None,
+            "New",
+            Some("desc"),
+            None,
+            "custom",
+            "digital",
+            None,
+            None,
+            2000,
+            "CNY",
+            "active",
+            None,
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "piece",
+            1,
+            None,
+            0,
+            0,
+            None,
+            None,
+            None,
+            version,
+            None,
         )
         .await
         .unwrap();
@@ -491,9 +633,9 @@ mod tests {
         let pool = setup_pool().await;
         let p = seed_product(&pool, "Conflicting", "draft").await;
         let ok = super::update(
-            &pool, p.id, None, "New", None, None, "custom", "digital",
-            None, None, 1000, "CNY", "draft", None, 0,
-            None, None, None, None, None, "piece", 1, None, 0, 0, None, None, None, 999, None,
+            &pool, p.id, None, "New", None, None, "custom", "digital", None, None, 1000, "CNY",
+            "draft", None, 0, None, None, None, None, None, "piece", 1, None, 0, 0, None, None,
+            None, 999, None,
         )
         .await
         .unwrap();
@@ -506,7 +648,12 @@ mod tests {
         let p = seed_product(&pool, "Bye", "draft").await;
         let ok = super::delete_by_id(&pool, p.id, None).await.unwrap();
         assert!(ok);
-        assert!(super::find_by_id(&pool, p.id, None).await.unwrap().is_none());
+        assert!(
+            super::find_by_id(&pool, p.id, None)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -526,7 +673,9 @@ mod tests {
         let p = seed_product(&pool, "Draft", "draft").await;
         set_status(&pool, p.id, "draft").await;
 
-        let (items, total) = super::find_active_paginated(&pool, None, 1, 3).await.unwrap();
+        let (items, total) = super::find_active_paginated(&pool, None, 1, 3)
+            .await
+            .unwrap();
         assert_eq!(total, 5);
         assert_eq!(items.len(), 3);
         assert!(items.iter().all(|p| p.status == ProductStatus::Active));
@@ -539,7 +688,9 @@ mod tests {
             let p = seed_product(&pool, &format!("P{i}"), "draft").await;
             set_status(&pool, p.id, "active").await;
         }
-        let (items, total) = super::find_active_paginated(&pool, None, 2, 3).await.unwrap();
+        let (items, total) = super::find_active_paginated(&pool, None, 2, 3)
+            .await
+            .unwrap();
         assert_eq!(total, 5);
         assert_eq!(items.len(), 2);
     }
@@ -550,7 +701,9 @@ mod tests {
         for i in 0..4 {
             seed_product(&pool, &format!("P{i}"), "draft").await;
         }
-        let (items, total) = super::find_all_admin(&pool, None, 1, 10, None).await.unwrap();
+        let (items, total) = super::find_all_admin(&pool, None, 1, 10, None)
+            .await
+            .unwrap();
         assert_eq!(total, 4);
         assert_eq!(items.len(), 4);
     }
@@ -564,7 +717,9 @@ mod tests {
         }
         seed_product(&pool, "Draft1", "draft").await;
 
-        let (items, total) = super::find_all_admin(&pool, None, 1, 10, Some("active")).await.unwrap();
+        let (items, total) = super::find_all_admin(&pool, None, 1, 10, Some("active"))
+            .await
+            .unwrap();
         assert_eq!(total, 3);
         assert_eq!(items.len(), 3);
         assert!(items.iter().all(|p| p.status == ProductStatus::Active));
@@ -573,7 +728,9 @@ mod tests {
     #[tokio::test]
     async fn find_active_paginated_empty() {
         let pool = setup_pool().await;
-        let (items, total) = super::find_active_paginated(&pool, None, 1, 10).await.unwrap();
+        let (items, total) = super::find_active_paginated(&pool, None, 1, 10)
+            .await
+            .unwrap();
         assert_eq!(total, 0);
         assert!(items.is_empty());
     }

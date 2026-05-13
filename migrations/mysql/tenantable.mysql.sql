@@ -19,6 +19,17 @@ ALTER TABLE permissions ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(36) NOT NULL 
 ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(36) NOT NULL DEFAULT 'default';
 ALTER TABLE webhook_subscriptions ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(36) NOT NULL DEFAULT 'default';
 
+-- Order system
+ALTER TABLE products ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(36) NOT NULL DEFAULT 'default';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(36) NOT NULL DEFAULT 'default';
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(36) NOT NULL DEFAULT 'default';
+
+-- Payment system
+ALTER TABLE payment_channels ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(36) NOT NULL DEFAULT 'default';
+ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(36) NOT NULL DEFAULT 'default';
+ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(36) NOT NULL DEFAULT 'default';
+ALTER TABLE payment_refunds ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(36) NOT NULL DEFAULT 'default';
+
 -- 更新现有数据
 UPDATE roles SET tenant_id = 'default';
 UPDATE permissions SET tenant_id = 'default';
@@ -39,3 +50,10 @@ CREATE INDEX idx_roles_tenant ON roles(tenant_id);
 CREATE INDEX idx_permissions_tenant ON permissions(tenant_id);
 CREATE INDEX idx_audit_log_tenant ON audit_log(tenant_id);
 CREATE INDEX idx_webhook_subscriptions_tenant ON webhook_subscriptions(tenant_id);
+CREATE INDEX idx_products_tenant ON products(tenant_id);
+CREATE INDEX idx_orders_tenant ON orders(tenant_id);
+CREATE INDEX idx_order_items_tenant ON order_items(tenant_id);
+CREATE INDEX idx_payment_channels_tenant ON payment_channels(tenant_id);
+CREATE INDEX idx_payment_orders_tenant ON payment_orders(tenant_id);
+CREATE INDEX idx_payment_transactions_tenant ON payment_transactions(tenant_id);
+CREATE INDEX idx_payment_refunds_tenant ON payment_refunds(tenant_id);

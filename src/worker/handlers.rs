@@ -6,6 +6,9 @@
 pub mod cache;
 pub mod email;
 pub mod email_verification;
+pub mod payment_expire;
+pub mod payment_reconcile;
+pub mod payment_retry;
 pub mod publish;
 pub mod search_index;
 pub mod sitemap;
@@ -85,6 +88,27 @@ pub fn register_all(
     );
     registry.register(
         "generate_sitemap",
-        Box::new(sitemap::GenerateSitemapHandler::new(pool, config)),
+        Box::new(sitemap::GenerateSitemapHandler::new(pool.clone(), config.clone())),
+    );
+    registry.register(
+        "expire_payment_orders",
+        Box::new(payment_expire::ExpirePaymentOrdersHandler::new(
+            pool.clone(),
+            config.clone(),
+        )),
+    );
+    registry.register(
+        "retry_payment_callback",
+        Box::new(payment_retry::RetryPaymentCallbackHandler::new(
+            pool.clone(),
+            config.clone(),
+        )),
+    );
+    registry.register(
+        "reconcile_payments",
+        Box::new(payment_reconcile::ReconcilePaymentsHandler::new(
+            pool,
+            config.clone(),
+        )),
     );
 }

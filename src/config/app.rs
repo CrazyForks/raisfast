@@ -5,6 +5,7 @@
 
 use std::env;
 
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 /// Application global configuration.
@@ -192,6 +193,7 @@ pub struct AppConfig {
     pub sms_twilio_account_sid: Option<String>,
     pub sms_twilio_auth_token: Option<String>,
     pub sms_twilio_from: Option<String>,
+    pub app_key: Option<String>,
 }
 
 /// Built-in module switches
@@ -496,6 +498,20 @@ pub fn default_cron_schedules() -> Vec<CronScheduleConfig> {
             job_type: "invalidate_cache".into(),
             payload: Some(r#"{"keys":["jobs:cleanup"]}"#.into()),
             cron_expr: "0 0 3 * * *".into(),
+            enabled: true,
+        },
+        CronScheduleConfig {
+            label: "Expire Payment Orders".into(),
+            job_type: "expire_payment_orders".into(),
+            payload: None,
+            cron_expr: "0 */5 * * * *".into(),
+            enabled: true,
+        },
+        CronScheduleConfig {
+            label: "Reconcile Payments".into(),
+            job_type: "reconcile_payments".into(),
+            payload: None,
+            cron_expr: "0 0 4 * * *".into(),
             enabled: true,
         },
     ]
@@ -943,6 +959,7 @@ impl AppConfig {
                 .ok()
                 .filter(|s| !s.is_empty()),
             sms_twilio_from: env::var("SMS_TWILIO_FROM").ok().filter(|s| !s.is_empty()),
+            app_key: env::var("APP_KEY").ok().filter(|s| !s.is_empty()),
             started_at: None,
         }
     }
@@ -1053,6 +1070,7 @@ impl AppConfig {
             sms_twilio_account_sid: None,
             sms_twilio_auth_token: None,
             sms_twilio_from: None,
+            app_key: None,
             started_at: None,
         }
     }
@@ -1080,6 +1098,13 @@ impl AppConfig {
 
         let mut config = Self::from_env();
         config.started_at = Some(std::time::Instant::now());
+
+        if config.app_key.is_none() {
+            let key = Self::generate_app_key();
+            tracing::info!("APP_KEY not set, generated a new key and saved to .env");
+            Self::persist_app_key(&key);
+            config.app_key = Some(key);
+        }
 
         if config.env == "production" {
             assert!(
@@ -1110,6 +1135,33 @@ impl AppConfig {
         dotenvy::from_path(".env").ok();
         dotenvy::from_path(format!(".env.{profile}")).ok();
         dotenvy::from_path(".env.local").ok();
+    }
+
+    fn generate_app_key() -> String {
+        let mut bytes = [0u8; 32];
+        getrandom::getrandom(&mut bytes).expect("failed to generate random APP_KEY");
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    fn persist_app_key(key: &str) {
+        let env_path = std::path::Path::new(".env");
+        let line = format!("APP_KEY={key}");
+        if env_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(env_path) {
+                let updated = if content.contains("APP_KEY=") {
+                    content
+                        .lines()
+                        .map(|l| if l.starts_with("APP_KEY=") { &line } else { l })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                } else {
+                    format!("{content}\n{line}")
+                };
+                let _ = std::fs::write(env_path, updated);
+            }
+        } else {
+            let _ = std::fs::write(env_path, format!("{line}\n"));
+        }
     }
 }
 

@@ -94,6 +94,11 @@ pub enum Job {
         email: String,
         verify_token: String,
     },
+    ExpirePaymentOrders,
+    RetryPaymentCallback {
+        payment_order_id: i64,
+    },
+    ReconcilePayments,
     /// Custom job type, supports arbitrary `job_type` + JSON payload
     ///
     /// When no built-in Handler matches, WorkerRunner falls back to plugin dispatch.
@@ -118,6 +123,9 @@ impl Job {
             Job::SendPasswordResetEmail { .. } => "send_password_reset_email",
             Job::SendSmsCode { .. } => "send_sms_code",
             Job::SendEmailVerification { .. } => "send_email_verification",
+            Job::ExpirePaymentOrders => "expire_payment_orders",
+            Job::RetryPaymentCallback { .. } => "retry_payment_callback",
+            Job::ReconcilePayments => "reconcile_payments",
             Job::Custom { job_type, .. } => job_type,
         }
     }

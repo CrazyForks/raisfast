@@ -663,6 +663,205 @@ CREATE TABLE IF NOT EXISTS workflow_step_logs (
 
 CREATE INDEX idx_wf_step_logs_instance ON workflow_step_logs(instance_id);
 
+-- Products
+CREATE TABLE IF NOT EXISTS products (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    category_id BIGINT,
+    title VARCHAR(500) NOT NULL,
+    description TEXT,
+    cover_url VARCHAR(500),
+    product_type VARCHAR(50) NOT NULL DEFAULT 'custom',
+    fulfillment_type VARCHAR(50) NOT NULL DEFAULT 'digital',
+    delivery_hook VARCHAR(255),
+    weight INT,
+    shipping_template_id BIGINT,
+    price BIGINT NOT NULL CHECK(price >= 0),
+    currency VARCHAR(50) NOT NULL DEFAULT 'USD',
+    status VARCHAR(50) NOT NULL DEFAULT 'draft',
+    attributes JSON,
+    sort_order INT NOT NULL DEFAULT 0,
+    version INT NOT NULL DEFAULT 1,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    slug VARCHAR(255) UNIQUE,
+    content LONGTEXT,
+    image_ids JSON,
+    original_price BIGINT,
+    specs JSON,
+    unit VARCHAR(50) NOT NULL DEFAULT 'piece',
+    min_purchase INT NOT NULL DEFAULT 1,
+    max_purchase INT,
+    total_sales INT NOT NULL DEFAULT 0,
+    virtual_sales INT NOT NULL DEFAULT 0,
+    meta_title VARCHAR(255),
+    meta_description VARCHAR(500),
+    published_at DATETIME(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    FOREIGN KEY (category_id) REFERENCES categories(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_products_status ON products(status);
+CREATE INDEX idx_products_type ON products(product_type);
+CREATE INDEX idx_products_slug ON products(slug);
+
+-- Orders
+CREATE TABLE IF NOT EXISTS orders (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    user_id BIGINT NOT NULL,
+    order_no VARCHAR(255) NOT NULL UNIQUE,
+    subtotal BIGINT NOT NULL DEFAULT 0,
+    discount_amount BIGINT NOT NULL DEFAULT 0,
+    shipping_amount BIGINT NOT NULL DEFAULT 0,
+    total_amount BIGINT NOT NULL CHECK(total_amount >= 0),
+    currency VARCHAR(50) NOT NULL DEFAULT 'USD',
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    buyer_name VARCHAR(255),
+    buyer_phone VARCHAR(50),
+    buyer_email VARCHAR(255),
+    shipping_address TEXT,
+    tracking_no VARCHAR(255),
+    carrier VARCHAR(100),
+    remark TEXT,
+    admin_remark TEXT,
+    delivery_data JSON,
+    paid_at DATETIME(3),
+    completed_at DATETIME(3),
+    cancelled_at DATETIME(3),
+    refunding_at DATETIME(3),
+    refunded_at DATETIME(3),
+    expired_at DATETIME(3),
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_orders_user ON orders(user_id);
+CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX idx_orders_order_no ON orders(order_no);
+
+-- Order Items
+CREATE TABLE IF NOT EXISTS order_items (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    order_id BIGINT NOT NULL,
+    product_id BIGINT,
+    title VARCHAR(500) NOT NULL,
+    description TEXT,
+    unit_price BIGINT NOT NULL CHECK(unit_price >= 0),
+    quantity INT NOT NULL CHECK(quantity > 0),
+    subtotal BIGINT NOT NULL,
+    cover_url VARCHAR(500),
+    attributes JSON,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    FOREIGN KEY (order_id) REFERENCES orders(id),
+    FOREIGN KEY (product_id) REFERENCES products(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_order_items_order ON order_items(order_id);
+
+-- Payment Channels
+CREATE TABLE IF NOT EXISTS payment_channels (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    provider VARCHAR(50) NOT NULL,
+    name VARCHAR(200) NOT NULL,
+    is_live BOOLEAN NOT NULL DEFAULT FALSE,
+    credentials TEXT NOT NULL,
+    webhook_secret TEXT,
+    settings JSON,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order INT NOT NULL DEFAULT 0,
+    version INT NOT NULL DEFAULT 1,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    UNIQUE KEY uq_channel_provider_name (provider, name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_payment_channels_provider ON payment_channels(provider);
+CREATE INDEX idx_payment_channels_active ON payment_channels(is_active);
+
+-- Payment Orders
+CREATE TABLE IF NOT EXISTS payment_orders (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    user_id BIGINT NOT NULL,
+    order_id VARCHAR(36),
+    title VARCHAR(500) NOT NULL,
+    amount BIGINT NOT NULL,
+    currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+    channel_id BIGINT NOT NULL,
+    provider VARCHAR(50) NOT NULL,
+    provider_order_id VARCHAR(200),
+    provider_method VARCHAR(50),
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    reference_type VARCHAR(50),
+    reference_id VARCHAR(200),
+    return_url VARCHAR(500),
+    idempotency_key VARCHAR(200) NOT NULL UNIQUE,
+    version INT NOT NULL DEFAULT 1,
+    provider_data JSON,
+    client_ip VARCHAR(45),
+    metadata JSON,
+    paid_at DATETIME(3),
+    cancelled_at DATETIME(3),
+    expired_at DATETIME(3),
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (channel_id) REFERENCES payment_channels(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_payment_orders_user ON payment_orders(user_id);
+CREATE INDEX idx_payment_orders_status ON payment_orders(status);
+CREATE INDEX idx_payment_orders_provider ON payment_orders(provider_order_id);
+CREATE INDEX idx_payment_orders_order_id ON payment_orders(order_id);
+
+-- Payment Transactions
+CREATE TABLE IF NOT EXISTS payment_transactions (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    payment_order_id BIGINT NOT NULL,
+    order_id VARCHAR(36),
+    user_id BIGINT NOT NULL,
+    tx_type VARCHAR(50) NOT NULL,
+    amount BIGINT NOT NULL,
+    currency VARCHAR(10) NOT NULL,
+    provider_tx_id VARCHAR(200) NOT NULL UNIQUE,
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    raw_payload JSON,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    FOREIGN KEY (payment_order_id) REFERENCES payment_orders(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_payment_tx_order ON payment_transactions(payment_order_id);
+CREATE INDEX idx_payment_tx_order_id ON payment_transactions(order_id);
+
+-- Payment Refunds
+CREATE TABLE IF NOT EXISTS payment_refunds (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    payment_order_id BIGINT NOT NULL,
+    order_id VARCHAR(36),
+    user_id BIGINT NOT NULL,
+    amount BIGINT NOT NULL,
+    currency VARCHAR(10) NOT NULL,
+    reason VARCHAR(200),
+    provider_refund_id VARCHAR(200),
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    payment_tx_id BIGINT,
+    metadata JSON,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    FOREIGN KEY (payment_order_id) REFERENCES payment_orders(id),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (payment_tx_id) REFERENCES payment_transactions(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_payment_refunds_order ON payment_refunds(payment_order_id);
+CREATE INDEX idx_payment_refunds_order_id ON payment_refunds(order_id);
+
 -- ============================================================
 -- 预置数据
 -- ============================================================

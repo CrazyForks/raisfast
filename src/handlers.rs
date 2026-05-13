@@ -30,6 +30,7 @@ pub mod oauth;
 pub mod options;
 pub mod order;
 pub mod page;
+pub mod payment;
 pub mod plugin;
 pub mod post;
 pub mod product;

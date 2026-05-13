@@ -58,7 +58,11 @@ crate::impl_from_row_opt_tenant!(Order {
     optional { buyer_name, buyer_phone, buyer_email, shipping_address, tracking_no, carrier, remark, admin_remark, delivery_data, paid_at, completed_at, cancelled_at, refunding_at, refunded_at, expired_at }
 });
 
-pub async fn find_by_id(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<Option<Order>> {
+pub async fn find_by_id(
+    pool: &crate::db::Pool,
+    id: i64,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<Order>> {
     let sql = format!(
         "SELECT * FROM orders WHERE id = {}{}",
         ph(1),
@@ -71,7 +75,11 @@ pub async fn find_by_id(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>
     q.fetch_optional(pool).await.map_err(Into::into)
 }
 
-pub async fn find_by_document_id(pool: &crate::db::Pool, document_id: &str, tenant_id: Option<&str>) -> AppResult<Option<Order>> {
+pub async fn find_by_document_id(
+    pool: &crate::db::Pool,
+    document_id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<Order>> {
     let sql = format!(
         "SELECT * FROM orders WHERE document_id = {}{}",
         ph(1),
@@ -84,7 +92,11 @@ pub async fn find_by_document_id(pool: &crate::db::Pool, document_id: &str, tena
     q.fetch_optional(pool).await.map_err(Into::into)
 }
 
-pub async fn find_by_order_no(pool: &crate::db::Pool, order_no: &str, tenant_id: Option<&str>) -> AppResult<Option<Order>> {
+pub async fn find_by_order_no(
+    pool: &crate::db::Pool,
+    order_no: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<Order>> {
     let sql = format!(
         "SELECT * FROM orders WHERE order_no = {}{}",
         ph(1),
@@ -106,7 +118,11 @@ pub async fn find_by_user_paginated(
 ) -> AppResult<(Vec<Order>, i64)> {
     let offset = (page - 1) * page_size;
     let tenant_ph = tenant_filter_ph(tenant_id, 2);
-    let count_sql = format!("SELECT COUNT(*) as count FROM orders WHERE user_id = {}{}", ph(1), tenant_ph);
+    let count_sql = format!(
+        "SELECT COUNT(*) as count FROM orders WHERE user_id = {}{}",
+        ph(1),
+        tenant_ph
+    );
     let mut cq = sqlx::query_as::<_, (i64,)>(&count_sql).bind(user_id);
     if let Some(tid) = tenant_id {
         cq = cq.bind(tid);
@@ -115,7 +131,10 @@ pub async fn find_by_user_paginated(
     let base = usize::from(tenant_id.is_some()) + 2;
     let sql = format!(
         "SELECT * FROM orders WHERE user_id = {}{} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-        ph(1), tenant_filter_ph(tenant_id, 2), ph(base), ph(base + 1)
+        ph(1),
+        tenant_filter_ph(tenant_id, 2),
+        ph(base),
+        ph(base + 1)
     );
     let mut dq = sqlx::query_as::<_, Order>(&sql).bind(user_id);
     if let Some(tid) = tenant_id {
@@ -138,13 +157,27 @@ pub async fn find_all_admin_paginated(
     let status_ph_idx = if has_tenant { 2 } else { 1 };
     let (count_sql, data_sql_base) = if let Some(_s) = status {
         (
-            format!("SELECT COUNT(*) as count FROM orders WHERE status = {}{}", ph(status_ph_idx), tenant_ph),
-            format!("SELECT * FROM orders WHERE status = {}{} ORDER BY created_at DESC", ph(status_ph_idx), tenant_ph),
+            format!(
+                "SELECT COUNT(*) as count FROM orders WHERE status = {}{}",
+                ph(status_ph_idx),
+                tenant_ph
+            ),
+            format!(
+                "SELECT * FROM orders WHERE status = {}{} ORDER BY created_at DESC",
+                ph(status_ph_idx),
+                tenant_ph
+            ),
         )
     } else {
         (
-            format!("SELECT COUNT(*) as count FROM orders WHERE 1=1{}", tenant_ph),
-            format!("SELECT * FROM orders WHERE 1=1{} ORDER BY created_at DESC", tenant_ph),
+            format!(
+                "SELECT COUNT(*) as count FROM orders WHERE 1=1{}",
+                tenant_ph
+            ),
+            format!(
+                "SELECT * FROM orders WHERE 1=1{} ORDER BY created_at DESC",
+                tenant_ph
+            ),
         )
     };
     let mut q = sqlx::query_as::<_, (i64,)>(&count_sql);
@@ -156,7 +189,12 @@ pub async fn find_all_admin_paginated(
     }
     let (total,): (i64,) = q.fetch_one(pool).await?;
     let limit_base = status_ph_idx + usize::from(status.is_some());
-    let sql = format!("{} LIMIT {} OFFSET {}", data_sql_base, ph(limit_base + 1), ph(limit_base + 2));
+    let sql = format!(
+        "{} LIMIT {} OFFSET {}",
+        data_sql_base,
+        ph(limit_base + 1),
+        ph(limit_base + 2)
+    );
     let mut q2 = sqlx::query_as::<_, Order>(&sql);
     if let Some(tid) = tenant_id {
         q2 = q2.bind(tid);
@@ -190,7 +228,20 @@ pub async fn insert(
         Some(tid) => {
             let sql = format!(
                 "INSERT INTO orders (document_id, tenant_id, user_id, order_no, subtotal, discount_amount, shipping_amount, total_amount, currency, buyer_name, buyer_phone, buyer_email, shipping_address, remark, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13), ph(14)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11),
+                ph(12),
+                ph(13),
+                ph(14)
             );
             sqlx::query(&sql)
                 .bind(document_id)
@@ -213,7 +264,19 @@ pub async fn insert(
         None => {
             let sql = format!(
                 "INSERT INTO orders (document_id, user_id, order_no, subtotal, discount_amount, shipping_amount, total_amount, currency, buyer_name, buyer_phone, buyer_email, shipping_address, remark, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11),
+                ph(12),
+                ph(13)
             );
             sqlx::query(&sql)
                 .bind(document_id)
@@ -233,7 +296,9 @@ pub async fn insert(
                 .await?;
         }
     }
-    find_by_document_id(pool, document_id, tenant_id).await.map(|o| o.unwrap())
+    find_by_document_id(pool, document_id, tenant_id)
+        .await
+        .map(|o| o.unwrap())
 }
 
 pub async fn update_status(
@@ -246,13 +311,16 @@ pub async fn update_status(
     let sql = if let Some(col) = timestamp_col {
         format!(
             "UPDATE orders SET status = {}, {} = datetime('now'), updated_at = datetime('now') WHERE id = {}{}",
-            ph(1), col, ph(2),
+            ph(1),
+            col,
+            ph(2),
             tenant_filter_ph(tenant_id, 3)
         )
     } else {
         format!(
             "UPDATE orders SET status = {}, updated_at = datetime('now') WHERE id = {}{}",
-            ph(1), ph(2),
+            ph(1),
+            ph(2),
             tenant_filter_ph(tenant_id, 3)
         )
     };
@@ -273,7 +341,10 @@ pub async fn update_shipped(
 ) -> AppResult<()> {
     let sql = format!(
         "UPDATE orders SET status = {}, tracking_no = {}, carrier = {}, updated_at = datetime('now') WHERE id = {}{}",
-        ph(1), ph(2), ph(3), ph(4),
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
         tenant_filter_ph(tenant_id, 5)
     );
     let mut q = sqlx::query(&sql)
@@ -296,7 +367,8 @@ pub async fn update_admin_remark(
 ) -> AppResult<()> {
     let sql = format!(
         "UPDATE orders SET admin_remark = {}, updated_at = datetime('now') WHERE id = {}{}",
-        ph(1), ph(2),
+        ph(1),
+        ph(2),
         tenant_filter_ph(tenant_id, 3)
     );
     let mut q = sqlx::query(&sql).bind(admin_remark).bind(id);
@@ -315,7 +387,8 @@ pub async fn update_delivery_data(
 ) -> AppResult<()> {
     let sql = format!(
         "UPDATE orders SET delivery_data = {}, updated_at = datetime('now') WHERE id = {}{}",
-        ph(1), ph(2),
+        ph(1),
+        ph(2),
         tenant_filter_ph(tenant_id, 3)
     );
     let mut q = sqlx::query(&sql).bind(delivery_data).bind(id);
@@ -360,8 +433,8 @@ mod tests {
         let doc_id = uuid::Uuid::now_v7().to_string();
         let order_no = format!("ORD-{}", uuid::Uuid::now_v7().to_string().replace('-', ""));
         super::insert(
-            pool, &doc_id, user_id, &order_no, 1000, 0, 0, 1000,
-            "CNY", None, None, None, None, None, None,
+            pool, &doc_id, user_id, &order_no, 1000, 0, 0, 1000, "CNY", None, None, None, None,
+            None, None,
         )
         .await
         .unwrap()
@@ -379,11 +452,7 @@ mod tests {
 
     async fn get_optional_field(pool: &crate::db::Pool, id: i64, col: &str) -> Option<String> {
         let sql = format!("SELECT {col} FROM orders WHERE id = ?");
-        let (v,): (Option<String>,) = sqlx::query_as(&sql)
-            .bind(id)
-            .fetch_one(pool)
-            .await
-            .unwrap();
+        let (v,): (Option<String>,) = sqlx::query_as(&sql).bind(id).fetch_one(pool).await.unwrap();
         v
     }
 
@@ -426,13 +495,23 @@ mod tests {
     #[tokio::test]
     async fn find_by_id_not_found() {
         let pool = setup_pool().await;
-        assert!(super::find_by_id(&pool, 99999, None).await.unwrap().is_none());
+        assert!(
+            super::find_by_id(&pool, 99999, None)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
     async fn find_by_document_id_not_found() {
         let pool = setup_pool().await;
-        assert!(super::find_by_document_id(&pool, "nonexistent", None).await.unwrap().is_none());
+        assert!(
+            super::find_by_document_id(&pool, "nonexistent", None)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -454,11 +533,26 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let doc_id = uuid::Uuid::now_v7().to_string();
-        let order_no = format!("ORD-{}", &uuid::Uuid::now_v7().to_string().replace('-', "")[..16]);
+        let order_no = format!(
+            "ORD-{}",
+            &uuid::Uuid::now_v7().to_string().replace('-', "")[..16]
+        );
         let o = super::insert(
-            &pool, &doc_id, uid, &order_no, 500, 0, 0, 500,
-            "USD", Some("John"), Some("1234567890"), Some("john@test.com"),
-            Some("123 Main St"), Some("please be careful"), None,
+            &pool,
+            &doc_id,
+            uid,
+            &order_no,
+            500,
+            0,
+            0,
+            500,
+            "USD",
+            Some("John"),
+            Some("1234567890"),
+            Some("john@test.com"),
+            Some("123 Main St"),
+            Some("please be careful"),
+            None,
         )
         .await
         .unwrap();
@@ -475,7 +569,9 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let o = seed_order(&pool, uid).await;
-        super::update_status(&pool, o.id, "paid", Some("paid_at"), None).await.unwrap();
+        super::update_status(&pool, o.id, "paid", Some("paid_at"), None)
+            .await
+            .unwrap();
         let found = super::find_by_id(&pool, o.id, None).await.unwrap().unwrap();
         assert_eq!(found.status, OrderStatus::Paid);
         assert!(found.paid_at.is_some());
@@ -486,7 +582,9 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let o = seed_order(&pool, uid).await;
-        super::update_status(&pool, o.id, "cancelled", Some("cancelled_at"), None).await.unwrap();
+        super::update_status(&pool, o.id, "cancelled", Some("cancelled_at"), None)
+            .await
+            .unwrap();
         let found = super::find_by_id(&pool, o.id, None).await.unwrap().unwrap();
         assert_eq!(found.status, OrderStatus::Cancelled);
         assert!(found.cancelled_at.is_some());
@@ -497,7 +595,9 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let o = seed_order(&pool, uid).await;
-        super::update_status(&pool, o.id, "expired", None, None).await.unwrap();
+        super::update_status(&pool, o.id, "expired", None, None)
+            .await
+            .unwrap();
         let status = get_status(&pool, o.id).await;
         assert_eq!(status, "expired");
         let expired_at = get_optional_field(&pool, o.id, "expired_at").await;
@@ -509,7 +609,9 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let o = seed_order(&pool, uid).await;
-        super::update_status(&pool, o.id, "paid", Some("paid_at"), None).await.unwrap();
+        super::update_status(&pool, o.id, "paid", Some("paid_at"), None)
+            .await
+            .unwrap();
         super::update_shipped(&pool, o.id, Some("TRACK123"), Some("FedEx"), None)
             .await
             .unwrap();
@@ -540,7 +642,10 @@ mod tests {
             .await
             .unwrap();
         let found = super::find_by_id(&pool, o.id, None).await.unwrap().unwrap();
-        assert_eq!(found.delivery_data.unwrap(), r#"{"tracking_url":"https://t.co/abc"}"#);
+        assert_eq!(
+            found.delivery_data.unwrap(),
+            r#"{"tracking_url":"https://t.co/abc"}"#
+        );
     }
 
     #[tokio::test]
@@ -553,7 +658,9 @@ mod tests {
         }
         seed_order(&pool, uid2).await;
 
-        let (items, total) = super::find_by_user_paginated(&pool, uid1, None, 1, 10).await.unwrap();
+        let (items, total) = super::find_by_user_paginated(&pool, uid1, None, 1, 10)
+            .await
+            .unwrap();
         assert_eq!(total, 3);
         assert_eq!(items.len(), 3);
         assert!(items.iter().all(|o| o.user_id == uid1));
@@ -566,10 +673,14 @@ mod tests {
         for _ in 0..5 {
             seed_order(&pool, uid).await;
         }
-        let (p1, total) = super::find_by_user_paginated(&pool, uid, None, 1, 3).await.unwrap();
+        let (p1, total) = super::find_by_user_paginated(&pool, uid, None, 1, 3)
+            .await
+            .unwrap();
         assert_eq!(total, 5);
         assert_eq!(p1.len(), 3);
-        let (p2, _) = super::find_by_user_paginated(&pool, uid, None, 2, 3).await.unwrap();
+        let (p2, _) = super::find_by_user_paginated(&pool, uid, None, 2, 3)
+            .await
+            .unwrap();
         assert_eq!(p2.len(), 2);
     }
 
@@ -580,7 +691,9 @@ mod tests {
         for _ in 0..4 {
             seed_order(&pool, uid).await;
         }
-        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, None).await.unwrap();
+        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, None)
+            .await
+            .unwrap();
         assert_eq!(total, 4);
         assert_eq!(items.len(), 4);
     }
@@ -591,11 +704,15 @@ mod tests {
         let uid = seed_user(&pool).await;
         for _ in 0..3 {
             let o = seed_order(&pool, uid).await;
-            super::update_status(&pool, o.id, "paid", Some("paid_at"), None).await.unwrap();
+            super::update_status(&pool, o.id, "paid", Some("paid_at"), None)
+                .await
+                .unwrap();
         }
         seed_order(&pool, uid).await;
 
-        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, Some("paid")).await.unwrap();
+        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, Some("paid"))
+            .await
+            .unwrap();
         assert_eq!(total, 3);
         assert_eq!(items.len(), 3);
         assert!(items.iter().all(|o| o.status == OrderStatus::Paid));
@@ -604,7 +721,9 @@ mod tests {
     #[tokio::test]
     async fn find_all_admin_paginated_empty() {
         let pool = setup_pool().await;
-        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, None).await.unwrap();
+        let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, None)
+            .await
+            .unwrap();
         assert_eq!(total, 0);
         assert!(items.is_empty());
     }
@@ -616,13 +735,19 @@ mod tests {
         let o = seed_order(&pool, uid).await;
         assert_eq!(get_status(&pool, o.id).await, "pending");
 
-        super::update_status(&pool, o.id, "paid", Some("paid_at"), None).await.unwrap();
+        super::update_status(&pool, o.id, "paid", Some("paid_at"), None)
+            .await
+            .unwrap();
         assert_eq!(get_status(&pool, o.id).await, "paid");
 
-        super::update_shipped(&pool, o.id, Some("TRK001"), Some("UPS"), None).await.unwrap();
+        super::update_shipped(&pool, o.id, Some("TRK001"), Some("UPS"), None)
+            .await
+            .unwrap();
         assert_eq!(get_status(&pool, o.id).await, "shipped");
 
-        super::update_status(&pool, o.id, "completed", Some("completed_at"), None).await.unwrap();
+        super::update_status(&pool, o.id, "completed", Some("completed_at"), None)
+            .await
+            .unwrap();
         assert_eq!(get_status(&pool, o.id).await, "completed");
     }
 
@@ -632,11 +757,17 @@ mod tests {
         let uid = seed_user(&pool).await;
         let o = seed_order(&pool, uid).await;
 
-        super::update_status(&pool, o.id, "paid", Some("paid_at"), None).await.unwrap();
-        super::update_status(&pool, o.id, "refunding", Some("refunding_at"), None).await.unwrap();
+        super::update_status(&pool, o.id, "paid", Some("paid_at"), None)
+            .await
+            .unwrap();
+        super::update_status(&pool, o.id, "refunding", Some("refunding_at"), None)
+            .await
+            .unwrap();
         assert_eq!(get_status(&pool, o.id).await, "refunding");
 
-        super::update_status(&pool, o.id, "refunded", Some("refunded_at"), None).await.unwrap();
+        super::update_status(&pool, o.id, "refunded", Some("refunded_at"), None)
+            .await
+            .unwrap();
         assert_eq!(get_status(&pool, o.id).await, "refunded");
     }
 }

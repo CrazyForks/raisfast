@@ -149,6 +149,7 @@ pub struct RateLimiterSet {
     pub login: RateLimiter<MemoryStore>,
     pub comment: RateLimiter<MemoryStore>,
     pub api_token: RateLimiter<MemoryStore>,
+    pub payment_callback: RateLimiter<MemoryStore>,
 }
 
 impl RateLimiterSet {
@@ -192,6 +193,13 @@ impl RateLimiterSet {
                     window_secs: config.rate_limit_api_token_window,
                 },
             ),
+            payment_callback: RateLimiter::new(
+                Arc::new(MemoryStore::new()),
+                RateLimitConfig {
+                    max_requests: 30,
+                    window_secs: 60,
+                },
+            ),
         }
     }
 
@@ -232,6 +240,13 @@ impl RateLimiterSet {
                 Arc::new(MemoryStore::new()),
                 RateLimitConfig {
                     max_requests: 120,
+                    window_secs: 60,
+                },
+            ),
+            payment_callback: RateLimiter::new(
+                Arc::new(MemoryStore::new()),
+                RateLimitConfig {
+                    max_requests: 30,
                     window_secs: 60,
                 },
             ),
@@ -320,6 +335,7 @@ macro_rules! rate_limit_fn {
 rate_limit_fn!(register_rate_limit, register);
 rate_limit_fn!(login_rate_limit, login);
 rate_limit_fn!(comment_rate_limit, comment);
+rate_limit_fn!(payment_callback_rate_limit, payment_callback);
 
 #[cfg(test)]
 mod tests {

@@ -78,7 +78,9 @@ pub async fn create_order(
                 attributes: product.attributes.clone(),
             });
         }
-        order_repo.insert_items_batch(items, auth.tenant_id()).await?;
+        order_repo
+            .insert_items_batch(items, auth.tenant_id())
+            .await?;
 
         Ok(order)
     })?;
@@ -105,7 +107,12 @@ pub async fn cancel_order(
     }
 
     order_repo
-        .update_status(order.id, OrderStatus::Cancelled.as_str(), Some("cancelled_at"), auth.tenant_id())
+        .update_status(
+            order.id,
+            OrderStatus::Cancelled.as_str(),
+            Some("cancelled_at"),
+            auth.tenant_id(),
+        )
         .await
 }
 
@@ -124,7 +131,12 @@ pub async fn mark_paid(
     }
 
     order_repo
-        .update_status(order.id, OrderStatus::Paid.as_str(), Some("paid_at"), auth.tenant_id())
+        .update_status(
+            order.id,
+            OrderStatus::Paid.as_str(),
+            Some("paid_at"),
+            auth.tenant_id(),
+        )
         .await?;
 
     order_repo
@@ -149,7 +161,12 @@ pub async fn ship_order(
     }
 
     order_repo
-        .update_shipped(order.id, req.tracking_no.as_deref(), req.carrier.as_deref(), auth.tenant_id())
+        .update_shipped(
+            order.id,
+            req.tracking_no.as_deref(),
+            req.carrier.as_deref(),
+            auth.tenant_id(),
+        )
         .await
 }
 
@@ -172,7 +189,12 @@ pub async fn confirm_receipt(
     }
 
     order_repo
-        .update_status(order.id, OrderStatus::Completed.as_str(), Some("completed_at"), auth.tenant_id())
+        .update_status(
+            order.id,
+            OrderStatus::Completed.as_str(),
+            Some("completed_at"),
+            auth.tenant_id(),
+        )
         .await
 }
 
@@ -187,11 +209,18 @@ pub async fn refund_order(
         .ok_or_else(|| AppError::not_found("order"))?;
 
     if order.status != OrderStatus::Paid && order.status != OrderStatus::Shipped {
-        return Err(AppError::BadRequest("only_paid_or_shipped_can_refund".into()));
+        return Err(AppError::BadRequest(
+            "only_paid_or_shipped_can_refund".into(),
+        ));
     }
 
     order_repo
-        .update_status(order.id, OrderStatus::Refunding.as_str(), Some("refunding_at"), auth.tenant_id())
+        .update_status(
+            order.id,
+            OrderStatus::Refunding.as_str(),
+            Some("refunding_at"),
+            auth.tenant_id(),
+        )
         .await
 }
 
@@ -204,7 +233,9 @@ pub async fn get_order(
         .find_by_document_id(order_id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("order"))?;
-    let items = order_repo.find_items_by_order_id(order.id, auth.tenant_id()).await?;
+    let items = order_repo
+        .find_items_by_order_id(order.id, auth.tenant_id())
+        .await?;
     Ok((order, items))
 }
 
@@ -215,7 +246,9 @@ pub async fn list_user_orders(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<Order>, i64)> {
-    order_repo.find_by_user_paginated(user_id, auth.tenant_id(), page, page_size).await
+    order_repo
+        .find_by_user_paginated(user_id, auth.tenant_id(), page, page_size)
+        .await
 }
 
 pub async fn list_admin_orders(
@@ -225,7 +258,9 @@ pub async fn list_admin_orders(
     page_size: i64,
     status: Option<&str>,
 ) -> AppResult<(Vec<Order>, i64)> {
-    order_repo.find_all_admin_paginated(auth.tenant_id(), page, page_size, status).await
+    order_repo
+        .find_all_admin_paginated(auth.tenant_id(), page, page_size, status)
+        .await
 }
 
 pub async fn update_admin_remark(
@@ -238,14 +273,18 @@ pub async fn update_admin_remark(
         .find_by_document_id(order_id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("order"))?;
-    order_repo.update_admin_remark(order.id, admin_remark, auth.tenant_id()).await
+    order_repo
+        .update_admin_remark(order.id, admin_remark, auth.tenant_id())
+        .await
 }
 
 pub async fn get_stats(
     order_repo: &dyn OrderRepository,
     auth: &AuthUser,
 ) -> AppResult<crate::dto::OrderStatsResponse> {
-    let (_, total_orders) = order_repo.find_all_admin_paginated(auth.tenant_id(), 1, 1, None).await?;
+    let (_, total_orders) = order_repo
+        .find_all_admin_paginated(auth.tenant_id(), 1, 1, None)
+        .await?;
     let (_, pending_orders) = order_repo
         .find_all_admin_paginated(auth.tenant_id(), 1, 1, Some("pending"))
         .await?;
@@ -256,7 +295,9 @@ pub async fn get_stats(
         .find_all_admin_paginated(auth.tenant_id(), 1, 1, Some("completed"))
         .await?;
 
-    let all = order_repo.find_all_admin_paginated(auth.tenant_id(), 1, i64::MAX, Some("completed")).await?;
+    let all = order_repo
+        .find_all_admin_paginated(auth.tenant_id(), 1, i64::MAX, Some("completed"))
+        .await?;
     let total_revenue: i64 = all.0.iter().map(|o| o.total_amount).sum();
 
     Ok(crate::dto::OrderStatsResponse {
@@ -318,12 +359,15 @@ mod tests {
         id
     }
 
-    async fn seed_active_product(pool: &crate::db::Pool, title: &str, price: i64) -> crate::models::product::Product {
+    async fn seed_active_product(
+        pool: &crate::db::Pool,
+        title: &str,
+        price: i64,
+    ) -> crate::models::product::Product {
         let doc_id = uuid::Uuid::now_v7().to_string();
         let p = crate::models::product::insert(
-            pool, &doc_id, None, title, None, None, "custom", "digital",
-            None, None, price, "CNY", None, 0,
-            None, None, None, None, None, "piece", 1, None, 0, None, None, None,
+            pool, &doc_id, None, title, None, None, "custom", "digital", None, None, price, "CNY",
+            None, 0, None, None, None, None, None, "piece", 1, None, 0, None, None, None,
         )
         .await
         .unwrap();
@@ -332,7 +376,10 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
-        crate::models::product::find_by_id(pool, p.id, None).await.unwrap().unwrap()
+        crate::models::product::find_by_id(pool, p.id, None)
+            .await
+            .unwrap()
+            .unwrap()
     }
 
     #[tokio::test]
@@ -345,7 +392,11 @@ mod tests {
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
         let order = super::create_order(
-            &pool, &product_repo, &order_repo, &a, uid,
+            &pool,
+            &product_repo,
+            &order_repo,
+            &a,
+            uid,
             CreateOrderRequest {
                 items: vec![CreateOrderItemRequest {
                     product_id: prod.document_id.clone(),
@@ -368,7 +419,10 @@ mod tests {
         assert_eq!(order.status, OrderStatus::Pending);
         assert!(order.order_no.starts_with("ORD-"));
 
-        let items = order_repo.find_items_by_order_id(order.id, None).await.unwrap();
+        let items = order_repo
+            .find_items_by_order_id(order.id, None)
+            .await
+            .unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Widget");
         assert_eq!(items[0].unit_price, 1000);
@@ -387,11 +441,21 @@ mod tests {
         let p2 = seed_active_product(&pool, "Item2", 200).await;
 
         let order = super::create_order(
-            &pool, &product_repo, &order_repo, &a, uid,
+            &pool,
+            &product_repo,
+            &order_repo,
+            &a,
+            uid,
             CreateOrderRequest {
                 items: vec![
-                    CreateOrderItemRequest { product_id: p1.document_id.clone(), quantity: 3 },
-                    CreateOrderItemRequest { product_id: p2.document_id.clone(), quantity: 1 },
+                    CreateOrderItemRequest {
+                        product_id: p1.document_id.clone(),
+                        quantity: 3,
+                    },
+                    CreateOrderItemRequest {
+                        product_id: p2.document_id.clone(),
+                        quantity: 1,
+                    },
                 ],
                 currency: Some("USD".into()),
                 buyer_name: Some("John".into()),
@@ -408,7 +472,10 @@ mod tests {
         assert_eq!(order.total_amount, 500);
         assert_eq!(order.currency, "USD");
         assert_eq!(order.buyer_name.unwrap(), "John");
-        let items = order_repo.find_items_by_order_id(order.id, None).await.unwrap();
+        let items = order_repo
+            .find_items_by_order_id(order.id, None)
+            .await
+            .unwrap();
         assert_eq!(items.len(), 2);
     }
 
@@ -421,7 +488,11 @@ mod tests {
         let uid = seed_user(&pool).await;
 
         let err = super::create_order(
-            &pool, &product_repo, &order_repo, &a, uid,
+            &pool,
+            &product_repo,
+            &order_repo,
+            &a,
+            uid,
             CreateOrderRequest {
                 items: vec![],
                 currency: None,
@@ -446,7 +517,11 @@ mod tests {
         let uid = seed_user(&pool).await;
 
         let err = super::create_order(
-            &pool, &product_repo, &order_repo, &a, uid,
+            &pool,
+            &product_repo,
+            &order_repo,
+            &a,
+            uid,
             CreateOrderRequest {
                 items: vec![CreateOrderItemRequest {
                     product_id: "nonexistent".into(),
@@ -475,15 +550,42 @@ mod tests {
 
         let doc_id = uuid::Uuid::now_v7().to_string();
         crate::models::product::insert(
-            &pool, &doc_id, None, "Draft Product", None, None, "custom", "digital",
-            None, None, 100, "CNY", None, 0,
-            None, None, None, None, None, "piece", 1, None, 0, None, None, None,
+            &pool,
+            &doc_id,
+            None,
+            "Draft Product",
+            None,
+            None,
+            "custom",
+            "digital",
+            None,
+            None,
+            100,
+            "CNY",
+            None,
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "piece",
+            1,
+            None,
+            0,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
 
         let err = super::create_order(
-            &pool, &product_repo, &order_repo, &a, uid,
+            &pool,
+            &product_repo,
+            &order_repo,
+            &a,
+            uid,
             CreateOrderRequest {
                 items: vec![CreateOrderItemRequest {
                     product_id: doc_id,
@@ -511,7 +613,11 @@ mod tests {
         let uid = seed_user(pool).await;
         let prod = seed_active_product(pool, "Widget", 1000).await;
         let order = create_order(
-            pool, product_repo, order_repo, auth, uid,
+            pool,
+            product_repo,
+            order_repo,
+            auth,
+            uid,
             CreateOrderRequest {
                 items: vec![CreateOrderItemRequest {
                     product_id: prod.document_id.clone(),
@@ -541,7 +647,11 @@ mod tests {
         super::cancel_order(&order_repo, &a, &order.document_id, uid)
             .await
             .unwrap();
-        let found = order_repo.find_by_id(order.id, None).await.unwrap().unwrap();
+        let found = order_repo
+            .find_by_id(order.id, None)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.status, OrderStatus::Cancelled);
         assert!(found.cancelled_at.is_some());
     }
@@ -568,7 +678,10 @@ mod tests {
         let a = auth(None);
         let (uid, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
 
-        order_repo.update_status(order.id, "paid", Some("paid_at"), None).await.unwrap();
+        order_repo
+            .update_status(order.id, "paid", Some("paid_at"), None)
+            .await
+            .unwrap();
 
         let err = super::cancel_order(&order_repo, &a, &order.document_id, uid)
             .await
@@ -584,7 +697,9 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
 
-        let paid = super::mark_paid(&order_repo, &a, &order.document_id).await.unwrap();
+        let paid = super::mark_paid(&order_repo, &a, &order.document_id)
+            .await
+            .unwrap();
         assert_eq!(paid.status, OrderStatus::Paid);
         assert!(paid.paid_at.is_some());
     }
@@ -597,7 +712,10 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
 
-        order_repo.update_status(order.id, "cancelled", Some("cancelled_at"), None).await.unwrap();
+        order_repo
+            .update_status(order.id, "cancelled", Some("cancelled_at"), None)
+            .await
+            .unwrap();
 
         let err = super::mark_paid(&order_repo, &a, &order.document_id)
             .await
@@ -613,15 +731,27 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
 
-        order_repo.update_status(order.id, "paid", Some("paid_at"), None).await.unwrap();
+        order_repo
+            .update_status(order.id, "paid", Some("paid_at"), None)
+            .await
+            .unwrap();
         super::ship_order(
-            &order_repo, &a, &order.document_id,
-            &ShipOrderRequest { tracking_no: Some("TRK001".into()), carrier: Some("FedEx".into()) },
+            &order_repo,
+            &a,
+            &order.document_id,
+            &ShipOrderRequest {
+                tracking_no: Some("TRK001".into()),
+                carrier: Some("FedEx".into()),
+            },
         )
         .await
         .unwrap();
 
-        let found = order_repo.find_by_id(order.id, None).await.unwrap().unwrap();
+        let found = order_repo
+            .find_by_id(order.id, None)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.status, OrderStatus::Shipped);
         assert_eq!(found.tracking_no.unwrap(), "TRK001");
         assert_eq!(found.carrier.unwrap(), "FedEx");
@@ -636,8 +766,13 @@ mod tests {
         let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
 
         let err = super::ship_order(
-            &order_repo, &a, &order.document_id,
-            &ShipOrderRequest { tracking_no: None, carrier: None },
+            &order_repo,
+            &a,
+            &order.document_id,
+            &ShipOrderRequest {
+                tracking_no: None,
+                carrier: None,
+            },
         )
         .await
         .unwrap_err();
@@ -652,13 +787,23 @@ mod tests {
         let a = auth(None);
         let (uid, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
 
-        order_repo.update_status(order.id, "paid", Some("paid_at"), None).await.unwrap();
-        order_repo.update_shipped(order.id, Some("TRK"), Some("UPS"), None).await.unwrap();
+        order_repo
+            .update_status(order.id, "paid", Some("paid_at"), None)
+            .await
+            .unwrap();
+        order_repo
+            .update_shipped(order.id, Some("TRK"), Some("UPS"), None)
+            .await
+            .unwrap();
 
         super::confirm_receipt(&order_repo, &a, &order.document_id, uid)
             .await
             .unwrap();
-        let found = order_repo.find_by_id(order.id, None).await.unwrap().unwrap();
+        let found = order_repo
+            .find_by_id(order.id, None)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.status, OrderStatus::Completed);
         assert!(found.completed_at.is_some());
     }
@@ -671,8 +816,14 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
 
-        order_repo.update_status(order.id, "paid", Some("paid_at"), None).await.unwrap();
-        order_repo.update_shipped(order.id, Some("TRK"), Some("UPS"), None).await.unwrap();
+        order_repo
+            .update_status(order.id, "paid", Some("paid_at"), None)
+            .await
+            .unwrap();
+        order_repo
+            .update_shipped(order.id, Some("TRK"), Some("UPS"), None)
+            .await
+            .unwrap();
 
         let err = super::confirm_receipt(&order_repo, &a, &order.document_id, 999)
             .await
@@ -702,10 +853,19 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
 
-        order_repo.update_status(order.id, "paid", Some("paid_at"), None).await.unwrap();
-        super::refund_order(&order_repo, &a, &order.document_id).await.unwrap();
+        order_repo
+            .update_status(order.id, "paid", Some("paid_at"), None)
+            .await
+            .unwrap();
+        super::refund_order(&order_repo, &a, &order.document_id)
+            .await
+            .unwrap();
 
-        let found = order_repo.find_by_id(order.id, None).await.unwrap().unwrap();
+        let found = order_repo
+            .find_by_id(order.id, None)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.status, OrderStatus::Refunding);
         assert!(found.refunding_at.is_some());
     }
@@ -718,11 +878,23 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
 
-        order_repo.update_status(order.id, "paid", Some("paid_at"), None).await.unwrap();
-        order_repo.update_shipped(order.id, Some("TRK"), None, None).await.unwrap();
-        super::refund_order(&order_repo, &a, &order.document_id).await.unwrap();
+        order_repo
+            .update_status(order.id, "paid", Some("paid_at"), None)
+            .await
+            .unwrap();
+        order_repo
+            .update_shipped(order.id, Some("TRK"), None, None)
+            .await
+            .unwrap();
+        super::refund_order(&order_repo, &a, &order.document_id)
+            .await
+            .unwrap();
 
-        let found = order_repo.find_by_id(order.id, None).await.unwrap().unwrap();
+        let found = order_repo
+            .find_by_id(order.id, None)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.status, OrderStatus::Refunding);
     }
 
@@ -737,7 +909,9 @@ mod tests {
         let err = super::refund_order(&order_repo, &a, &order.document_id)
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::BadRequest(ref s) if s == "only_paid_or_shipped_can_refund"));
+        assert!(
+            matches!(err, AppError::BadRequest(ref s) if s == "only_paid_or_shipped_can_refund")
+        );
     }
 
     #[tokio::test]
@@ -748,7 +922,9 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
 
-        let (found_order, items) = super::get_order(&order_repo, &a, &order.document_id).await.unwrap();
+        let (found_order, items) = super::get_order(&order_repo, &a, &order.document_id)
+            .await
+            .unwrap();
         assert_eq!(found_order.id, order.id);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Widget");
@@ -759,7 +935,11 @@ mod tests {
         let pool = setup_pool().await;
         let order_repo = SqlxOrderRepository::new(pool.clone());
         let a = auth(None);
-        assert!(super::get_order(&order_repo, &a, "nonexistent").await.is_err());
+        assert!(
+            super::get_order(&order_repo, &a, "nonexistent")
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -773,9 +953,16 @@ mod tests {
 
         for _ in 0..3 {
             super::create_order(
-                &pool, &product_repo, &order_repo, &a, uid,
+                &pool,
+                &product_repo,
+                &order_repo,
+                &a,
+                uid,
                 CreateOrderRequest {
-                    items: vec![CreateOrderItemRequest { product_id: prod.document_id.clone(), quantity: 1 }],
+                    items: vec![CreateOrderItemRequest {
+                        product_id: prod.document_id.clone(),
+                        quantity: 1,
+                    }],
                     currency: None,
                     buyer_name: None,
                     buyer_phone: None,
@@ -788,7 +975,9 @@ mod tests {
             .unwrap();
         }
 
-        let (orders, total) = super::list_user_orders(&order_repo, &a, uid, 1, 10).await.unwrap();
+        let (orders, total) = super::list_user_orders(&order_repo, &a, uid, 1, 10)
+            .await
+            .unwrap();
         assert_eq!(total, 3);
         assert_eq!(orders.len(), 3);
     }
@@ -803,9 +992,16 @@ mod tests {
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
         super::create_order(
-            &pool, &product_repo, &order_repo, &a, uid,
+            &pool,
+            &product_repo,
+            &order_repo,
+            &a,
+            uid,
             CreateOrderRequest {
-                items: vec![CreateOrderItemRequest { product_id: prod.document_id.clone(), quantity: 1 }],
+                items: vec![CreateOrderItemRequest {
+                    product_id: prod.document_id.clone(),
+                    quantity: 1,
+                }],
                 currency: None,
                 buyer_name: None,
                 buyer_phone: None,
@@ -817,7 +1013,9 @@ mod tests {
         .await
         .unwrap();
 
-        let (orders, total) = super::list_admin_orders(&order_repo, &a, 1, 10, None).await.unwrap();
+        let (orders, total) = super::list_admin_orders(&order_repo, &a, 1, 10, None)
+            .await
+            .unwrap();
         assert_eq!(total, 1);
         assert_eq!(orders.len(), 1);
     }
@@ -833,7 +1031,11 @@ mod tests {
         super::update_admin_remark(&order_repo, &a, &order.document_id, "verified")
             .await
             .unwrap();
-        let found = order_repo.find_by_id(order.id, None).await.unwrap().unwrap();
+        let found = order_repo
+            .find_by_id(order.id, None)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.admin_remark.unwrap(), "verified");
     }
 
@@ -847,9 +1049,16 @@ mod tests {
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
         let o1 = super::create_order(
-            &pool, &product_repo, &order_repo, &a, uid,
+            &pool,
+            &product_repo,
+            &order_repo,
+            &a,
+            uid,
             CreateOrderRequest {
-                items: vec![CreateOrderItemRequest { product_id: prod.document_id.clone(), quantity: 1 }],
+                items: vec![CreateOrderItemRequest {
+                    product_id: prod.document_id.clone(),
+                    quantity: 1,
+                }],
                 currency: None,
                 buyer_name: None,
                 buyer_phone: None,
@@ -862,9 +1071,16 @@ mod tests {
         .unwrap();
 
         let o2 = super::create_order(
-            &pool, &product_repo, &order_repo, &a, uid,
+            &pool,
+            &product_repo,
+            &order_repo,
+            &a,
+            uid,
             CreateOrderRequest {
-                items: vec![CreateOrderItemRequest { product_id: prod.document_id.clone(), quantity: 2 }],
+                items: vec![CreateOrderItemRequest {
+                    product_id: prod.document_id.clone(),
+                    quantity: 2,
+                }],
                 currency: None,
                 buyer_name: None,
                 buyer_phone: None,
@@ -876,9 +1092,18 @@ mod tests {
         .await
         .unwrap();
 
-        order_repo.update_status(o1.id, "paid", Some("paid_at"), None).await.unwrap();
-        order_repo.update_status(o1.id, "shipped", None, None).await.unwrap();
-        order_repo.update_status(o1.id, "completed", Some("completed_at"), None).await.unwrap();
+        order_repo
+            .update_status(o1.id, "paid", Some("paid_at"), None)
+            .await
+            .unwrap();
+        order_repo
+            .update_status(o1.id, "shipped", None, None)
+            .await
+            .unwrap();
+        order_repo
+            .update_status(o1.id, "completed", Some("completed_at"), None)
+            .await
+            .unwrap();
 
         let stats = super::get_stats(&order_repo, &a).await.unwrap();
         assert_eq!(stats.total_orders, 2);
@@ -895,16 +1120,25 @@ mod tests {
         let a = auth(None);
         let (uid, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
 
-        let (o, items) = super::get_order(&order_repo, &a, &order.document_id).await.unwrap();
+        let (o, items) = super::get_order(&order_repo, &a, &order.document_id)
+            .await
+            .unwrap();
         assert_eq!(o.status, OrderStatus::Pending);
         assert_eq!(items.len(), 1);
 
-        let paid = super::mark_paid(&order_repo, &a, &order.document_id).await.unwrap();
+        let paid = super::mark_paid(&order_repo, &a, &order.document_id)
+            .await
+            .unwrap();
         assert_eq!(paid.status, OrderStatus::Paid);
 
         super::ship_order(
-            &order_repo, &a, &order.document_id,
-            &ShipOrderRequest { tracking_no: Some("TRK123".into()), carrier: Some("DHL".into()) },
+            &order_repo,
+            &a,
+            &order.document_id,
+            &ShipOrderRequest {
+                tracking_no: Some("TRK123".into()),
+                carrier: Some("DHL".into()),
+            },
         )
         .await
         .unwrap();
@@ -913,7 +1147,9 @@ mod tests {
             .await
             .unwrap();
 
-        let (final_order, _) = super::get_order(&order_repo, &a, &order.document_id).await.unwrap();
+        let (final_order, _) = super::get_order(&order_repo, &a, &order.document_id)
+            .await
+            .unwrap();
         assert_eq!(final_order.status, OrderStatus::Completed);
         assert!(final_order.paid_at.is_some());
         assert!(final_order.completed_at.is_some());

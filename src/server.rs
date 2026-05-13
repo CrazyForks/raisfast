@@ -10,6 +10,7 @@ use crate::admin_spa;
 use crate::cache::MemoryCache;
 use crate::config::app::AppConfig;
 use crate::constants::DEFAULT_TENANT;
+use crate::handlers::payment as h_payment;
 use crate::handlers::{
     api_token, auth, category, comment, cron, health, media, options, page, plugin, post, rbac,
     reusable_block, rss, sse, stats, tag, tenant, user, wallet, ws,
@@ -129,7 +130,8 @@ async fn build_app(
 
     api_v1 = api_v1
         .merge(crate::handlers::product::routes(&mut registry))
-        .merge(crate::handlers::order::routes(&mut registry));
+        .merge(crate::handlers::order::routes(&mut registry))
+        .merge(h_payment::routes(&mut registry));
 
     if config.builtins.pages {
         api_v1 = api_v1

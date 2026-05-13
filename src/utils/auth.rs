@@ -2,9 +2,9 @@
 
 use axum::http::request::Parts;
 
+use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::services::auth::Claims;
-use crate::AppState;
 
 pub fn extract_claims(parts: &mut Parts, state: &AppState) -> Result<Claims, AppError> {
     let auth_header = parts

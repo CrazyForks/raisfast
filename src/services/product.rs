@@ -70,7 +70,10 @@ pub async fn update_product(
         .ok_or_else(|| AppError::not_found("product"))?;
 
     let title = req.title.as_deref().unwrap_or(&existing.title);
-    let product_type = req.product_type.as_deref().unwrap_or(existing.product_type.as_str());
+    let product_type = req
+        .product_type
+        .as_deref()
+        .unwrap_or(existing.product_type.as_str());
     let fulfillment_type = req
         .fulfillment_type
         .as_deref()
@@ -89,24 +92,24 @@ pub async fn update_product(
         .published_at
         .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string());
     let generated_published_at;
-    let published_at: Option<&str> =
-        if status == "active"
-            && existing.status.as_str() != "active"
-            && existing.published_at.is_none()
-        {
-            generated_published_at =
-                chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-            Some(generated_published_at.as_str())
-        } else {
-            existing_published_at_str.as_deref()
-        };
+    let published_at: Option<&str> = if status == "active"
+        && existing.status.as_str() != "active"
+        && existing.published_at.is_none()
+    {
+        generated_published_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        Some(generated_published_at.as_str())
+    } else {
+        existing_published_at_str.as_deref()
+    };
 
     let updated = product_repo
         .update(
             existing.id,
             None,
             title,
-            req.description.as_deref().or(existing.description.as_deref()),
+            req.description
+                .as_deref()
+                .or(existing.description.as_deref()),
             req.cover_url.as_deref().or(existing.cover_url.as_deref()),
             product_type,
             fulfillment_type,
@@ -130,7 +133,9 @@ pub async fn update_product(
             total_sales,
             virtual_sales,
             req.meta_title.as_deref().or(existing.meta_title.as_deref()),
-            req.meta_description.as_deref().or(existing.meta_description.as_deref()),
+            req.meta_description
+                .as_deref()
+                .or(existing.meta_description.as_deref()),
             published_at,
             req.version,
             auth.tenant_id(),
@@ -156,7 +161,9 @@ pub async fn delete_product(
         .find_by_document_id(id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("product"))?;
-    product_repo.delete_by_id(existing.id, auth.tenant_id()).await?;
+    product_repo
+        .delete_by_id(existing.id, auth.tenant_id())
+        .await?;
     Ok(())
 }
 
@@ -177,7 +184,9 @@ pub async fn list_active_products(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<Product>, i64)> {
-    product_repo.find_active_paginated(auth.tenant_id(), page, page_size).await
+    product_repo
+        .find_active_paginated(auth.tenant_id(), page, page_size)
+        .await
 }
 
 pub async fn list_admin_products(
@@ -187,7 +196,9 @@ pub async fn list_admin_products(
     page_size: i64,
     status: Option<&str>,
 ) -> AppResult<(Vec<Product>, i64)> {
-    product_repo.find_all_admin(auth.tenant_id(), page, page_size, status).await
+    product_repo
+        .find_all_admin(auth.tenant_id(), page, page_size, status)
+        .await
 }
 
 #[cfg(test)]
@@ -290,8 +301,14 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(p.product_type, crate::models::product::ProductType::Download);
-        assert_eq!(p.fulfillment_type, crate::models::product::FulfillmentType::Digital);
+        assert_eq!(
+            p.product_type,
+            crate::models::product::ProductType::Download
+        );
+        assert_eq!(
+            p.fulfillment_type,
+            crate::models::product::FulfillmentType::Digital
+        );
         assert_eq!(p.currency, "USD");
         assert_eq!(p.sort_order, 10);
     }
@@ -417,7 +434,10 @@ mod tests {
         assert_eq!(updated.title, "New");
         assert_eq!(updated.description.unwrap(), "old desc");
         assert_eq!(updated.price, 100);
-        assert_eq!(updated.status, crate::models::product::ProductStatus::Active);
+        assert_eq!(
+            updated.status,
+            crate::models::product::ProductStatus::Active
+        );
         assert_eq!(updated.version, 2);
     }
 
@@ -572,7 +592,9 @@ mod tests {
         )
         .await
         .unwrap();
-        super::delete_product(&repo, &p.document_id, &a).await.unwrap();
+        super::delete_product(&repo, &p.document_id, &a)
+            .await
+            .unwrap();
         assert!(super::get_product(&repo, &p.document_id, &a).await.is_err());
     }
 
@@ -581,7 +603,11 @@ mod tests {
         let pool = setup_pool().await;
         let repo = SqlxProductRepository::new(pool.clone());
         let a = auth(None);
-        assert!(super::delete_product(&repo, "nonexistent", &a).await.is_err());
+        assert!(
+            super::delete_product(&repo, "nonexistent", &a)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -605,19 +631,19 @@ mod tests {
                     price: 100,
                     currency: None,
                     attributes: None,
-                sort_order: None,
-                slug: None,
-                content: None,
-                image_ids: None,
-                original_price: None,
-                specs: None,
-                unit: None,
-                min_purchase: None,
-                max_purchase: None,
-                virtual_sales: None,
-                meta_title: None,
-                meta_description: None,
-            },
+                    sort_order: None,
+                    slug: None,
+                    content: None,
+                    image_ids: None,
+                    original_price: None,
+                    specs: None,
+                    unit: None,
+                    min_purchase: None,
+                    max_purchase: None,
+                    virtual_sales: None,
+                    meta_title: None,
+                    meta_description: None,
+                },
             )
             .await
             .unwrap();
@@ -705,9 +731,13 @@ mod tests {
         .await
         .unwrap();
 
-        let (all, total_all) = super::list_admin_products(&repo, &a, 1, 10, None).await.unwrap();
+        let (all, total_all) = super::list_admin_products(&repo, &a, 1, 10, None)
+            .await
+            .unwrap();
         assert_eq!(total_all, 2);
-        let (active, total_active) = super::list_admin_products(&repo, &a, 1, 10, Some("active")).await.unwrap();
+        let (active, total_active) = super::list_admin_products(&repo, &a, 1, 10, Some("active"))
+            .await
+            .unwrap();
         assert_eq!(total_active, 1);
         assert_eq!(active.len(), 1);
     }

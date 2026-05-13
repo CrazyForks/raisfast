@@ -13,8 +13,8 @@ use rhai::Engine;
 
 use crate::config::app::AppConfig;
 use crate::db::Pool;
-use crate::plugins::host_common::HostContext;
 use crate::plugins::Permissions;
+use crate::plugins::host_common::HostContext;
 
 /// Register host functions into the Rhai Engine global scope.
 pub fn register_host_functions(
