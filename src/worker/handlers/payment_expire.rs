@@ -30,7 +30,7 @@ impl JobHandler for ExpirePaymentOrdersHandler {
         let cutoff = chrono::Utc::now() - chrono::Duration::minutes(30);
 
         let sql = format!(
-            "SELECT * FROM payment_orders WHERE status = 'pending' AND created_at < {}",
+            "SELECT * FROM payment_orders WHERE status = 'pending' AND created_at < {} LIMIT 500",
             ph(1)
         );
         let orders: Vec<crate::models::payment_order::PaymentOrder> = sqlx::query_as(&sql)
@@ -44,15 +44,26 @@ impl JobHandler for ExpirePaymentOrdersHandler {
         for order in &orders {
             match self.should_expire(order).await {
                 Ok(true) => {
-                    let update_sql = format!(
-                        "UPDATE payment_orders SET status = 'expired', expired_at = datetime('now'), updated_at = datetime('now') WHERE id = {}",
-                        ph(1)
-                    );
-                    sqlx::query(&update_sql)
-                        .bind(order.id)
-                        .execute(&self.pool)
+                    crate::in_transaction!(&self.pool, tx, {
+                        let rows = crate::models::payment_order::tx_update_status_cas(
+                            &mut tx,
+                            order.id,
+                            PaymentStatus::Expired.as_str(),
+                            Some("expired_at"),
+                            PaymentStatus::Pending.as_str(),
+                        )
                         .await?;
-                    expired += 1;
+                        if rows > 0 {
+                            expired += 1;
+                        } else {
+                            tracing::info!(
+                                "[expire_payment_orders] order {} CAS failed, skipped",
+                                order.document_id
+                            );
+                            skipped += 1;
+                        }
+                        Ok(())
+                    })?;
                 }
                 Ok(false) => {
                     skipped += 1;

@@ -212,13 +212,6 @@ pub trait PaymentOrderRepository: Send + Sync {
         metadata: Option<&str>,
         tenant_id: Option<&str>,
     ) -> AppResult<PaymentOrder>;
-    async fn update_status(
-        &self,
-        id: i64,
-        status: &str,
-        timestamp_col: Option<&str>,
-        tenant_id: Option<&str>,
-    ) -> AppResult<()>;
     async fn update_provider_order_id(
         &self,
         id: i64,
@@ -321,16 +314,6 @@ impl PaymentOrderRepository for SqlxPaymentOrderRepository {
             tenant_id,
         )
         .await
-    }
-
-    async fn update_status(
-        &self,
-        id: i64,
-        status: &str,
-        timestamp_col: Option<&str>,
-        tenant_id: Option<&str>,
-    ) -> AppResult<()> {
-        payment_order::update_status(&self.pool, id, status, timestamp_col, tenant_id).await
     }
 
     async fn update_provider_order_id(

@@ -14,6 +14,7 @@ pub mod search_index;
 pub mod sitemap;
 pub mod sms;
 pub mod thumbnail;
+pub mod wallet_outbox;
 pub mod webhook;
 
 use std::sync::Arc;
@@ -107,8 +108,15 @@ pub fn register_all(
     registry.register(
         "reconcile_payments",
         Box::new(payment_reconcile::ReconcilePaymentsHandler::new(
-            pool,
+            pool.clone(),
             config.clone(),
+        )),
+    );
+    registry.register(
+        "process_wallet_outbox",
+        Box::new(wallet_outbox::ProcessWalletOutboxHandler::new(
+            pool,
+            config,
         )),
     );
 }

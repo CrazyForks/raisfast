@@ -64,7 +64,7 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
         r,
         registry,
         "/payment/callback/{channel_doc_id}",
-        http_post(handle_callback),
+        http_post(handle_callback).layer(axum::middleware::from_fn(crate::middleware::rate_limit::payment_callback_rate_limit)),
         "system public",
         "payment",
         ["POST"]
@@ -231,7 +231,9 @@ pub async fn get_payment_order_handler(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PaymentOrderResponse>> {
-    let order = payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, &id).await?;
+    let _user_id = auth.ensure_authenticated()?;
+    let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
+    let order = payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, user_int_id, &id).await?;
     Ok(ApiResponse::success(to_order_response(order)))
 }
 
@@ -244,6 +246,7 @@ pub async fn cancel_payment_order_handler(
     let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
     let audit = AuditService::new(state.pool.clone());
     payment::cancel_payment_order(
+        &state.pool,
         state.payment_order_repo.as_ref(),
         state.payment_channel_repo.as_ref(),
         &auth,
@@ -262,7 +265,8 @@ pub async fn list_order_transactions(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<Vec<PaymentTransactionResponse>>> {
     let _ = auth.ensure_authenticated()?;
-    let order = payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, &id).await?;
+    let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
+    let order = payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, user_int_id, &id).await?;
     let txs = state
         .payment_tx_repo
         .find_by_payment_order_id(order.id, auth.tenant_id())
@@ -277,7 +281,8 @@ pub async fn list_order_refunds(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<Vec<PaymentRefundResponse>>> {
     let _ = auth.ensure_authenticated()?;
-    let order = payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, &id).await?;
+    let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
+    let order = payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, user_int_id, &id).await?;
     let refunds = state
         .payment_refund_repo
         .find_by_payment_order_id(order.id, auth.tenant_id())
@@ -420,7 +425,7 @@ pub async fn admin_get_order(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PaymentOrderResponse>> {
     auth.ensure_admin()?;
-    let order = payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, &id).await?;
+    let order = payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, 0, &id).await?;
     Ok(ApiResponse::success(to_order_response(order)))
 }
 

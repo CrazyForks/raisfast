@@ -1,5 +1,21 @@
 -- 内置表多租户支持 — PostgreSQL（仅 BUILTIN_TENANTABLE=true 时由迁移执行器执行）
 
+-- 租户表
+CREATE TABLE IF NOT EXISTS tenants (
+    id BIGSERIAL PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    domain VARCHAR(255) UNIQUE,
+    config JSONB NOT NULL DEFAULT '{}',
+    status VARCHAR(50) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO tenants (document_id, name, domain, config, status, created_at, updated_at) VALUES
+    ('default', 'Default', NULL, '{}', 'active', NOW(), NOW())
+ON CONFLICT (document_id) DO NOTHING;
+
 -- 业务表
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
@@ -29,6 +45,9 @@ ALTER TABLE payment_channels ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DE
 ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
 ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
 ALTER TABLE payment_refunds ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE wallet_outbox ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE wallets ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
 
 -- 更新现有数据
 UPDATE roles SET tenant_id = 'default';
@@ -57,3 +76,6 @@ CREATE INDEX IF NOT EXISTS idx_payment_channels_tenant ON payment_channels(tenan
 CREATE INDEX IF NOT EXISTS idx_payment_orders_tenant ON payment_orders(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_payment_transactions_tenant ON payment_transactions(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_payment_refunds_tenant ON payment_refunds(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_outbox_tenant ON wallet_outbox(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_wallets_tenant ON wallets(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_transactions_tenant ON wallet_transactions(tenant_id);

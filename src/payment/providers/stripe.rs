@@ -116,6 +116,7 @@ impl PaymentProvider for StripeProvider {
             status: map_stripe_status(&pi.status),
             provider_tx_id: pi.latest_charge.as_ref().map(|c| c.id().to_string()),
             paid_at: None,
+            amount: pi.amount,
         })
     }
 

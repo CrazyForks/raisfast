@@ -337,37 +337,6 @@ pub async fn insert(
         })
 }
 
-pub async fn update_status(
-    pool: &crate::db::Pool,
-    id: i64,
-    status: &str,
-    timestamp_col: Option<&str>,
-    tenant_id: Option<&str>,
-) -> AppResult<()> {
-    let sql = if let Some(col) = timestamp_col {
-        format!(
-            "UPDATE payment_orders SET status = {}, {} = datetime('now'), updated_at = datetime('now'), version = version + 1 WHERE id = {}{}",
-            ph(1),
-            col,
-            ph(2),
-            tenant_filter_ph(tenant_id, 3)
-        )
-    } else {
-        format!(
-            "UPDATE payment_orders SET status = {}, updated_at = datetime('now'), version = version + 1 WHERE id = {}{}",
-            ph(1),
-            ph(2),
-            tenant_filter_ph(tenant_id, 3)
-        )
-    };
-    let mut q = sqlx::query(&sql).bind(status).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.execute(pool).await?;
-    Ok(())
-}
-
 pub async fn update_provider_order_id(
     pool: &crate::db::Pool,
     id: i64,
@@ -391,6 +360,38 @@ pub async fn update_provider_order_id(
     }
     q.execute(pool).await?;
     Ok(())
+}
+
+pub async fn tx_update_status_cas(
+    tx: &mut crate::db::pool::DbConnection,
+    id: i64,
+    new_status: &str,
+    timestamp_col: Option<&str>,
+    expected_status: &str,
+) -> AppResult<u64> {
+    let sql = if let Some(col) = timestamp_col {
+        format!(
+            "UPDATE payment_orders SET status = {}, {} = datetime('now'), updated_at = datetime('now'), version = version + 1 WHERE id = {} AND status = {}",
+            ph(1),
+            col,
+            ph(2),
+            ph(3)
+        )
+    } else {
+        format!(
+            "UPDATE payment_orders SET status = {}, updated_at = datetime('now'), version = version + 1 WHERE id = {} AND status = {}",
+            ph(1),
+            ph(2),
+            ph(3)
+        )
+    };
+    let result = sqlx::query(&sql)
+        .bind(new_status)
+        .bind(id)
+        .bind(expected_status)
+        .execute(&mut *tx)
+        .await?;
+    Ok(result.rows_affected())
 }
 
 #[cfg(test)]
@@ -569,9 +570,18 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let order = seed_payment_order(&pool, uid, ch_id, 1000).await;
-        super::update_status(&pool, order.id, "paid", Some("paid_at"), None)
-            .await
-            .unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let rows = super::tx_update_status_cas(
+            &mut tx,
+            order.id,
+            "paid",
+            Some("paid_at"),
+            "pending",
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(rows, 1);
         let found = super::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
@@ -587,9 +597,18 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let order = seed_payment_order(&pool, uid, ch_id, 1000).await;
-        super::update_status(&pool, order.id, "cancelled", Some("cancelled_at"), None)
-            .await
-            .unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let rows = super::tx_update_status_cas(
+            &mut tx,
+            order.id,
+            "cancelled",
+            Some("cancelled_at"),
+            "pending",
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(rows, 1);
         let found = super::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
@@ -662,9 +681,12 @@ mod tests {
         let ch_id = seed_channel(&pool).await;
         for _ in 0..3 {
             let order = seed_payment_order(&pool, uid, ch_id, 100).await;
-            super::update_status(&pool, order.id, "paid", Some("paid_at"), None)
-                .await
-                .unwrap();
+            let mut tx = pool.begin().await.unwrap();
+            let rows = super::tx_update_status_cas(
+                &mut tx, order.id, "paid", Some("paid_at"), "pending",
+            ).await.unwrap();
+            assert_eq!(rows, 1);
+            tx.commit().await.unwrap();
         }
         seed_payment_order(&pool, uid, ch_id, 100).await;
         let (items, total) = super::find_all_admin_paginated(&pool, None, 1, 10, Some("paid"))
@@ -696,9 +718,12 @@ mod tests {
         super::update_provider_order_id(&pool, order.id, "pi_xyz", None, None)
             .await
             .unwrap();
-        super::update_status(&pool, order.id, "paid", Some("paid_at"), None)
-            .await
-            .unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let rows = super::tx_update_status_cas(
+            &mut tx, order.id, "paid", Some("paid_at"), "pending",
+        ).await.unwrap();
+        assert_eq!(rows, 1);
+        tx.commit().await.unwrap();
 
         let found = super::find_by_id(&pool, order.id, None)
             .await

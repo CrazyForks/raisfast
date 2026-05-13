@@ -1,7 +1,5 @@
 use crate::audit::AuditService;
 use crate::config::app::AppConfig;
-use crate::db::dialect::ph;
-use crate::db::pool::DbConnection;
 use crate::dto::payment::*;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
@@ -17,185 +15,14 @@ use crate::repositories::{
 };
 use base64::Engine;
 
-async fn tx_update_payment_order_status(
-    tx: &mut DbConnection,
-    id: i64,
-    status: &str,
-    timestamp_col: Option<&str>,
-) -> AppResult<()> {
-    let sql = if let Some(col) = timestamp_col {
-        format!(
-            "UPDATE payment_orders SET status = {}, {} = datetime('now'), updated_at = datetime('now'), version = version + 1 WHERE id = {}",
-            ph(1),
-            col,
-            ph(2)
-        )
-    } else {
-        format!(
-            "UPDATE payment_orders SET status = {}, updated_at = datetime('now'), version = version + 1 WHERE id = {}",
-            ph(1),
-            ph(2)
-        )
-    };
-    sqlx::query(&sql)
-        .bind(status)
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn tx_insert_payment_transaction(
-    tx: &mut DbConnection,
-    document_id: &str,
-    payment_order_id: i64,
-    order_id: Option<&str>,
-    user_id: i64,
-    tx_type: &str,
-    amount: i64,
-    currency: &str,
-    provider_tx_id: &str,
-    status: &str,
-    raw_payload: Option<&str>,
-) -> AppResult<()> {
-    let sql = format!(
-        "INSERT INTO payment_transactions (document_id, payment_order_id, order_id, user_id, tx_type, amount, currency, provider_tx_id, status, raw_payload, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7),
-        ph(8),
-        ph(9),
-        ph(10)
-    );
-    sqlx::query(&sql)
-        .bind(document_id)
-        .bind(payment_order_id)
-        .bind(order_id)
-        .bind(user_id)
-        .bind(tx_type)
-        .bind(amount)
-        .bind(currency)
-        .bind(provider_tx_id)
-        .bind(status)
-        .bind(raw_payload)
-        .execute(&mut *tx)
-        .await?;
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn tx_insert_payment_refund(
-    tx: &mut DbConnection,
-    document_id: &str,
-    payment_order_id: i64,
-    order_id: Option<&str>,
-    user_id: i64,
-    amount: i64,
-    currency: &str,
-    reason: Option<&str>,
-    provider_refund_id: Option<&str>,
-    status: &str,
-    metadata: Option<&str>,
-) -> AppResult<()> {
-    let sql = format!(
-        "INSERT INTO payment_refunds (document_id, payment_order_id, order_id, user_id, amount, currency, reason, provider_refund_id, status, metadata, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7),
-        ph(8),
-        ph(9),
-        ph(10)
-    );
-    sqlx::query(&sql)
-        .bind(document_id)
-        .bind(payment_order_id)
-        .bind(order_id)
-        .bind(user_id)
-        .bind(amount)
-        .bind(currency)
-        .bind(reason)
-        .bind(provider_refund_id)
-        .bind(status)
-        .bind(metadata)
-        .execute(&mut *tx)
-        .await?;
-    Ok(())
-}
-
-async fn tx_sum_refunded_by_order(tx: &mut DbConnection, payment_order_id: i64) -> AppResult<i64> {
-    let sql = format!(
-        "SELECT COALESCE(SUM(amount), 0) FROM payment_refunds WHERE payment_order_id = {} AND status IN ('succeeded', 'pending', 'processing')",
-        ph(1)
-    );
-    let (total,): (i64,) = sqlx::query_as(&sql)
-        .bind(payment_order_id)
-        .fetch_one(&mut *tx)
-        .await?;
-    Ok(total)
-}
-
-async fn tx_find_order_id_by_doc_id(
-    tx: &mut DbConnection,
-    document_id: &str,
-) -> AppResult<Option<i64>> {
-    let sql = format!("SELECT id FROM orders WHERE document_id = {}", ph(1));
-    let result: Option<(i64,)> = sqlx::query_as(&sql)
-        .bind(document_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-    Ok(result.map(|(id,)| id))
-}
-
-async fn tx_update_order_status(
-    tx: &mut DbConnection,
-    id: i64,
-    status: &str,
-    timestamp_col: Option<&str>,
-) -> AppResult<()> {
-    let sql = if let Some(col) = timestamp_col {
-        format!(
-            "UPDATE orders SET status = {}, {} = datetime('now'), updated_at = datetime('now') WHERE id = {}",
-            ph(1),
-            col,
-            ph(2)
-        )
-    } else {
-        format!(
-            "UPDATE orders SET status = {}, updated_at = datetime('now') WHERE id = {}",
-            ph(1),
-            ph(2)
-        )
-    };
-    sqlx::query(&sql)
-        .bind(status)
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
-    Ok(())
-}
-
-async fn tx_find_refund_by_doc_id(
-    tx: &mut DbConnection,
-    document_id: &str,
-) -> AppResult<Option<PaymentRefund>> {
-    let sql = format!(
-        "SELECT * FROM payment_refunds WHERE document_id = {}",
-        ph(1)
-    );
-    sqlx::query_as::<_, PaymentRefund>(&sql)
-        .bind(document_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(Into::into)
+fn is_unique_violation(err: &AppError) -> bool {
+    match err {
+        AppError::Internal(e) => {
+            let s = e.to_string();
+            s.contains("UNIQUE constraint failed") || s.contains("duplicate key")
+        }
+        _ => false,
+    }
 }
 
 fn get_encrypt_key(config: &AppConfig) -> AppResult<[u8; 32]> {
@@ -220,6 +47,14 @@ fn get_encrypt_key(config: &AppConfig) -> AppResult<[u8; 32]> {
 fn encrypt_credential(value: &str, config: &AppConfig) -> AppResult<String> {
     let key = get_encrypt_key(config)?;
     crate::payment::crypto::aes256gcm_encrypt(value, &key)
+}
+
+macro_rules! audit_log {
+    ($audit:expr, $($arg:expr),*) => {
+        if let Err(e) = $audit.log($($arg),*).await {
+            tracing::warn!("audit log failed: {e}");
+        }
+    };
 }
 
 pub async fn create_channel(
@@ -251,19 +86,18 @@ pub async fn create_channel(
             auth.tenant_id(),
         )
         .await?;
-    let _ = audit
-        .log(
-            auth.tenant_id().unwrap_or(""),
-            auth.user_id().and_then(|s| s.parse::<i64>().ok()),
-            Some(auth.role()),
-            "payment.channel.create",
-            "payment_channel",
-            Some(&channel.document_id),
-            None,
-            None,
-            None,
-        )
-        .await;
+    audit_log!(
+        audit,
+        auth.tenant_id().unwrap_or(""),
+        auth.user_id().and_then(|s| s.parse::<i64>().ok()),
+        Some(auth.role()),
+        "payment.channel.create",
+        "payment_channel",
+        Some(&channel.document_id),
+        None,
+        None,
+        None
+    );
     Ok(channel)
 }
 
@@ -320,19 +154,18 @@ pub async fn update_channel(
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))?;
 
-    let _ = audit
-        .log(
-            auth.tenant_id().unwrap_or(""),
-            auth.user_id().and_then(|s| s.parse::<i64>().ok()),
-            Some(auth.role()),
-            "payment.channel.update",
-            "payment_channel",
-            Some(&result.document_id),
-            None,
-            None,
-            None,
-        )
-        .await;
+    audit_log!(
+        audit,
+        auth.tenant_id().unwrap_or(""),
+        auth.user_id().and_then(|s| s.parse::<i64>().ok()),
+        Some(auth.role()),
+        "payment.channel.update",
+        "payment_channel",
+        Some(&result.document_id),
+        None,
+        None,
+        None
+    );
 
     Ok(result)
 }
@@ -354,19 +187,18 @@ pub async fn delete_channel(
     if !deleted {
         return Err(AppError::not_found("payment_channel"));
     }
-    let _ = audit
-        .log(
-            auth.tenant_id().unwrap_or(""),
-            auth.user_id().and_then(|s| s.parse::<i64>().ok()),
-            Some(auth.role()),
-            "payment.channel.delete",
-            "payment_channel",
-            Some(&channel.document_id),
-            None,
-            None,
-            None,
-        )
-        .await;
+    audit_log!(
+        audit,
+        auth.tenant_id().unwrap_or(""),
+        auth.user_id().and_then(|s| s.parse::<i64>().ok()),
+        Some(auth.role()),
+        "payment.channel.delete",
+        "payment_channel",
+        Some(&channel.document_id),
+        None,
+        None,
+        None
+    );
     Ok(())
 }
 
@@ -410,6 +242,14 @@ pub async fn create_payment_order(
         .await?
         .ok_or_else(|| AppError::not_found("order"))?;
 
+    if order.user_id != user_id {
+        return Err(AppError::Forbidden);
+    }
+
+    if order.total_amount <= 0 {
+        return Err(AppError::BadRequest("order_amount_invalid".into()));
+    }
+
     let channel = channel_repo
         .find_by_document_id(&req.channel_id, auth.tenant_id())
         .await?
@@ -422,7 +262,7 @@ pub async fn create_payment_order(
     let idempotency_key = format!("{}_{}", order.document_id, channel.document_id);
 
     if let Some(existing) = order_repo
-        .find_by_idempotency_key(&idempotency_key, auth.tenant_id())
+        .find_by_idempotency_key(&idempotency_key, None)
         .await?
     {
         return Ok((existing, None));
@@ -431,7 +271,7 @@ pub async fn create_payment_order(
     let document_id = uuid::Uuid::now_v7().to_string();
     let title = format!("Order {}", order.order_no);
 
-    let payment_order = order_repo
+    let payment_order = match order_repo
         .insert(
             &document_id,
             user_id,
@@ -449,32 +289,53 @@ pub async fn create_payment_order(
             req.metadata.as_deref(),
             auth.tenant_id(),
         )
-        .await?;
+        .await
+    {
+        Ok(po) => po,
+        Err(e) => {
+            if is_unique_violation(&e)
+                && let Some(existing) = order_repo
+                    .find_by_idempotency_key(&idempotency_key, None)
+                    .await?
+            {
+                return Ok((existing, None));
+            }
+            return Err(e);
+        }
+    };
 
-    let provider_response = async {
-        let key = get_encrypt_key(config).ok()?;
-        let provider = crate::payment::providers::get_provider(&channel.provider, &key).ok()?;
-        let resp = provider
-            .create(&channel, &payment_order, req.return_url.as_deref())
-            .await
-            .ok()?;
-        order_repo
-            .update_provider_order_id(
-                payment_order.id,
-                &resp.provider_order_id,
-                None,
-                auth.tenant_id(),
-            )
-            .await
-            .ok()?;
-        Some(resp)
-    }
-    .await;
+    let key = get_encrypt_key(config)?;
+    let provider = crate::payment::providers::get_provider(&channel.provider, &key)?;
+    let provider_response = match provider
+        .create(&channel, &payment_order, req.return_url.as_deref())
+        .await
+    {
+        Ok(resp) => {
+            if let Err(e) = order_repo
+                .update_provider_order_id(
+                    payment_order.id,
+                    &resp.provider_order_id,
+                    None,
+                    auth.tenant_id(),
+                )
+                .await
+            {
+                tracing::warn!("failed to save provider_order_id: {e}");
+            }
+            Some(resp)
+        }
+        Err(e) => {
+            tracing::warn!("provider create failed for order {}: {e}", payment_order.document_id);
+            return Err(e);
+        }
+    };
 
     Ok((payment_order, provider_response))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn cancel_payment_order(
+    pool: &crate::db::Pool,
     order_repo: &dyn PaymentOrderRepository,
     channel_repo: &dyn PaymentChannelRepository,
     auth: &AuthUser,
@@ -503,34 +364,44 @@ pub async fn cancel_payment_order(
             .find_by_id(order.channel_id, auth.tenant_id())
             .await?;
         if let Some(ch) = channel
-            && let Ok(provider) = crate::payment::providers::get_provider(&order.provider, &key)
+            && let Ok(provider) =
+                crate::payment::providers::get_provider(&order.provider, &key)
+            && let Err(e) = provider.cancel(&ch, provider_order_id).await
         {
-            let _ = provider.cancel(&ch, provider_order_id).await;
+            tracing::warn!(
+                "provider cancel failed for order {}: {e}",
+                order.document_id
+            );
         }
     }
 
-    order_repo
-        .update_status(
+    crate::in_transaction!(pool, tx, {
+        let rows = crate::models::payment_order::tx_update_status_cas(
+            &mut tx,
             order.id,
             PaymentStatus::Cancelled.as_str(),
             Some("cancelled_at"),
-            auth.tenant_id(),
+            PaymentStatus::Pending.as_str(),
         )
         .await?;
+        if rows == 0 {
+            return Err(AppError::BadRequest("concurrent_status_change".into()));
+        }
+        Ok(())
+    })?;
 
-    let _ = audit
-        .log(
-            auth.tenant_id().unwrap_or(""),
-            auth.user_id().and_then(|s| s.parse::<i64>().ok()),
-            Some(auth.role()),
-            "payment.order.cancel",
-            "payment_order",
-            Some(&order.document_id),
-            None,
-            None,
-            None,
-        )
-        .await;
+    audit_log!(
+        audit,
+        auth.tenant_id().unwrap_or(""),
+        auth.user_id().and_then(|s| s.parse::<i64>().ok()),
+        Some(auth.role()),
+        "payment.order.cancel",
+        "payment_order",
+        Some(&order.document_id),
+        None,
+        None,
+        None
+    );
 
     Ok(())
 }
@@ -538,13 +409,18 @@ pub async fn cancel_payment_order(
 pub async fn get_payment_order(
     order_repo: &dyn PaymentOrderRepository,
     auth: &AuthUser,
+    user_id: i64,
     id: &str,
 ) -> AppResult<PaymentOrder> {
     let _ = auth.ensure_authenticated()?;
-    order_repo
+    let order = order_repo
         .find_by_document_id(id, auth.tenant_id())
         .await?
-        .ok_or_else(|| AppError::not_found("payment_order"))
+        .ok_or_else(|| AppError::not_found("payment_order"))?;
+    if auth.role() != "admin" && order.user_id != user_id {
+        return Err(AppError::Forbidden);
+    }
+    Ok(order)
 }
 
 pub async fn list_user_payment_orders(
@@ -587,20 +463,18 @@ pub async fn handle_callback(
     let callback = match provider.verify_callback(&channel, headers, body).await {
         Ok(cb) => cb,
         Err(e) => {
-            let audit = AuditService::new(pool.clone());
-            let _ = audit
-                .log(
-                    "",
-                    None,
-                    None,
-                    "payment.callback.failed",
-                    "payment_channel",
-                    Some(channel_doc_id),
-                    Some(&format!("verification_error: {e}")),
-                    None,
-                    None,
-                )
-                .await;
+            audit_log!(
+                audit,
+                "",
+                None,
+                None,
+                "payment.callback.failed",
+                "payment_channel",
+                Some(channel_doc_id),
+                Some(&format!("verification_error: {e}")),
+                None,
+                None
+            );
             return Err(e);
         }
     };
@@ -609,6 +483,10 @@ pub async fn handle_callback(
         .find_by_provider_order_id(&callback.provider_order_id, None)
         .await?
         .ok_or_else(|| AppError::not_found("payment_order"))?;
+
+    if payment_order.channel_id != channel.id {
+        return Err(AppError::BadRequest("channel_order_mismatch".into()));
+    }
 
     if payment_order.status == PaymentStatus::Paid {
         return Ok(());
@@ -636,18 +514,27 @@ pub async fn handle_callback(
     }
 
     crate::in_transaction!(pool, tx, {
-        tx_update_payment_order_status(
+        let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
             payment_order.id,
             PaymentStatus::Paid.as_str(),
             Some("paid_at"),
+            PaymentStatus::Pending.as_str(),
         )
         .await?;
+
+        if rows == 0 {
+            tracing::info!(
+                "callback for order {} skipped: CAS failed (already processed)",
+                payment_order.document_id
+            );
+            return Ok(());
+        }
 
         if let Some(ref provider_tx_id) = callback.provider_tx_id {
             let tx_doc_id = uuid::Uuid::now_v7().to_string();
             let raw_payload = serde_json::to_string(&callback).ok();
-            tx_insert_payment_transaction(
+            crate::models::payment_transaction::tx_insert(
                 &mut tx,
                 &tx_doc_id,
                 payment_order.id,
@@ -659,14 +546,16 @@ pub async fn handle_callback(
                 provider_tx_id,
                 "succeeded",
                 raw_payload.as_deref(),
+                payment_order.tenant_id.as_deref(),
             )
             .await?;
         }
 
         if let Some(ref order_doc_id) = payment_order.order_id
-            && let Some(order_id) = tx_find_order_id_by_doc_id(&mut tx, order_doc_id).await?
+            && let Some(order_id) =
+                crate::models::order::tx_find_id_by_document_id(&mut tx, order_doc_id).await?
         {
-            tx_update_order_status(
+            crate::models::order::tx_update_status(
                 &mut tx,
                 order_id,
                 crate::models::order::OrderStatus::Paid.as_str(),
@@ -675,39 +564,40 @@ pub async fn handle_callback(
             .await?;
         }
 
+        let outbox_doc_id = uuid::Uuid::now_v7().to_string();
+        crate::models::wallet_outbox::tx_insert(
+            &mut tx,
+            &outbox_doc_id,
+            payment_order.user_id,
+            &payment_order.currency,
+            payment_order.amount,
+            "credit",
+            WalletTxType::Recharge.as_str(),
+            &format!("PAY-{}", payment_order.document_id),
+            Some(WalletReferenceType::Payment.as_str()),
+            Some(&payment_order.document_id),
+            None,
+            payment_order.tenant_id.as_deref(),
+        )
+        .await?;
+
         Ok(())
     })?;
 
-    if let Err(e) = crate::services::wallet::credit_wallet(
-        wallet_repo,
-        pool,
-        payment_order.user_id,
-        &payment_order.currency,
-        payment_order.amount,
-        WalletTxType::Recharge,
-        &format!("PAY-{}", payment_order.document_id),
-        Some(WalletReferenceType::Payment),
+    let _ = wallet_repo;
+
+    audit_log!(
+        audit,
+        "",
+        None,
+        None,
+        "payment.callback.success",
+        "payment_order",
         Some(&payment_order.document_id),
         None,
-    )
-    .await
-    {
-        tracing::error!("wallet credit failed after payment callback: {e}");
-    }
-
-    let _ = audit
-        .log(
-            "",
-            None,
-            None,
-            "payment.callback.success",
-            "payment_order",
-            Some(&payment_order.document_id),
-            None,
-            None,
-            None,
-        )
-        .await;
+        None,
+        None
+    );
 
     Ok(())
 }
@@ -718,7 +608,7 @@ pub async fn refund_payment_order(
     order_repo: &dyn PaymentOrderRepository,
     channel_repo: &dyn PaymentChannelRepository,
     _tx_repo: &dyn PaymentTransactionRepository,
-    refund_repo: &dyn PaymentRefundRepository,
+    _refund_repo: &dyn PaymentRefundRepository,
     wallet_repo: &dyn WalletRepository,
     auth: &AuthUser,
     audit: &AuditService,
@@ -738,38 +628,40 @@ pub async fn refund_payment_order(
         return Err(AppError::BadRequest("only_paid_can_refund".into()));
     }
 
-    let already_refunded = refund_repo
-        .sum_refunded_by_order(payment_order.id, auth.tenant_id())
-        .await?;
-
-    if already_refunded + req.amount > payment_order.amount {
-        return Err(AppError::BadRequest("refund_exceeds_payment".into()));
-    }
-
-    let provider_refund_id = if let Some(ref provider_order_id) = payment_order.provider_order_id {
-        let key = get_encrypt_key(config)?;
-        let channel = channel_repo
-            .find_by_id(payment_order.channel_id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("payment_channel"))?;
-        let provider = crate::payment::providers::get_provider(&payment_order.provider, &key)?;
-        let result = provider
-            .refund(
-                &channel,
-                provider_order_id,
-                req.amount,
-                req.reason.as_deref(),
-            )
-            .await?;
-        result.provider_refund_id
-    } else {
-        format!("re_{}", uuid::Uuid::now_v7())
-    };
     let refund_doc_id = uuid::Uuid::now_v7().to_string();
     let wallet_tx_no = format!("PAYMENT_REFUND_{}", refund_doc_id);
 
     let refund = crate::in_transaction!(pool, tx, {
-        tx_insert_payment_refund(
+        let already_refunded_in_tx =
+            crate::models::payment_refund::tx_sum_refunded_by_order(&mut tx, payment_order.id, auth.tenant_id())
+                .await?;
+        if already_refunded_in_tx + req.amount > payment_order.amount {
+            return Err(AppError::BadRequest("refund_exceeds_payment".into()));
+        }
+
+        let provider_refund_id =
+            if let Some(ref provider_order_id) = payment_order.provider_order_id {
+                let key = get_encrypt_key(config)?;
+                let channel = channel_repo
+                    .find_by_id(payment_order.channel_id, auth.tenant_id())
+                    .await?
+                    .ok_or_else(|| AppError::not_found("payment_channel"))?;
+                let provider =
+                    crate::payment::providers::get_provider(&payment_order.provider, &key)?;
+                let result = provider
+                    .refund(
+                        &channel,
+                        provider_order_id,
+                        req.amount,
+                        req.reason.as_deref(),
+                    )
+                    .await?;
+                result.provider_refund_id
+            } else {
+                format!("re_{}", uuid::Uuid::now_v7())
+            };
+
+        crate::models::payment_refund::tx_insert(
             &mut tx,
             &refund_doc_id,
             payment_order.id,
@@ -781,12 +673,13 @@ pub async fn refund_payment_order(
             Some(&provider_refund_id),
             "succeeded",
             None,
+            payment_order.tenant_id.as_deref(),
         )
         .await?;
 
         let tx_doc_id = uuid::Uuid::now_v7().to_string();
         let provider_tx_id = format!("txr_{}", uuid::Uuid::now_v7());
-        tx_insert_payment_transaction(
+        crate::models::payment_transaction::tx_insert(
             &mut tx,
             &tx_doc_id,
             payment_order.id,
@@ -798,70 +691,86 @@ pub async fn refund_payment_order(
             &provider_tx_id,
             "succeeded",
             None,
+            payment_order.tenant_id.as_deref(),
         )
         .await?;
 
-        let already_refunded_in_tx = tx_sum_refunded_by_order(&mut tx, payment_order.id).await?;
+        let already_refunded_in_tx =
+            crate::models::payment_refund::tx_sum_refunded_by_order(&mut tx, payment_order.id, auth.tenant_id())
+                .await?;
         let is_full_refund = already_refunded_in_tx >= payment_order.amount;
         let new_status = if is_full_refund {
             PaymentStatus::Refunded.as_str()
         } else {
             PaymentStatus::PartiallyRefunded.as_str()
         };
-        tx_update_payment_order_status(&mut tx, payment_order.id, new_status, None).await?;
+        let rows = crate::models::payment_order::tx_update_status_cas(
+            &mut tx,
+            payment_order.id,
+            new_status,
+            None,
+            payment_order.status.as_str(),
+        )
+        .await?;
+        if rows == 0 {
+            return Err(AppError::BadRequest("concurrent_status_change".into()));
+        }
 
-        let refund = tx_find_refund_by_doc_id(&mut tx, &refund_doc_id)
-            .await?
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("inserted refund not found")))?;
+        let refund = crate::models::payment_refund::tx_find_by_document_id(
+            &mut tx,
+            &refund_doc_id,
+        )
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("inserted refund not found")))?;
+
+        let outbox_doc_id = uuid::Uuid::now_v7().to_string();
+        crate::models::wallet_outbox::tx_insert(
+            &mut tx,
+            &outbox_doc_id,
+            payment_order.user_id,
+            &payment_order.currency,
+            req.amount,
+            "debit",
+            WalletTxType::Refund.as_str(),
+            &wallet_tx_no,
+            Some(WalletReferenceType::PaymentRefund.as_str()),
+            Some(&payment_order.document_id),
+            None,
+            payment_order.tenant_id.as_deref(),
+        )
+        .await?;
 
         Ok(refund)
     })?;
 
-    if let Err(e) = crate::services::wallet::debit_wallet(
-        wallet_repo,
-        pool,
-        payment_order.user_id,
-        &payment_order.currency,
-        req.amount,
-        WalletTxType::Refund,
-        &wallet_tx_no,
-        Some(WalletReferenceType::PaymentRefund),
-        Some(&payment_order.document_id),
-        None,
-    )
-    .await
-    {
-        tracing::error!("wallet debit failed after refund: {e}");
-    }
+    let _ = wallet_repo;
 
-    let _ = audit
-        .log(
+    audit_log!(
+        audit,
+        auth.tenant_id().unwrap_or(""),
+        auth.user_id().and_then(|s| s.parse::<i64>().ok()),
+        Some(auth.role()),
+        "payment.refund.initiated",
+        "payment_order",
+        Some(&payment_order.document_id),
+        Some(&format!("amount={}", req.amount)),
+        None,
+        None
+    );
+
+    if req.amount > 100_000 {
+        audit_log!(
+            audit,
             auth.tenant_id().unwrap_or(""),
             auth.user_id().and_then(|s| s.parse::<i64>().ok()),
             Some(auth.role()),
-            "payment.refund.initiated",
+            "payment.refund.large",
             "payment_order",
             Some(&payment_order.document_id),
-            Some(&format!("amount={}", req.amount)),
+            Some(&format!("amount={} threshold=100000", req.amount)),
             None,
-            None,
-        )
-        .await;
-
-    if req.amount > 100_000 {
-        let _ = audit
-            .log(
-                auth.tenant_id().unwrap_or(""),
-                auth.user_id().and_then(|s| s.parse::<i64>().ok()),
-                Some(auth.role()),
-                "payment.refund.large",
-                "payment_order",
-                Some(&payment_order.document_id),
-                Some(&format!("amount={} threshold=100000", req.amount)),
-                None,
-                None,
-            )
-            .await;
+            None
+        );
     }
 
     Ok(refund)
@@ -902,4 +811,880 @@ pub async fn list_admin_refunds(
     refund_repo
         .find_all_admin_paginated(auth.tenant_id(), page, page_size)
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::app::AppConfig;
+    use crate::models::currencies;
+    use crate::models::payment_order::PaymentStatus;
+    use crate::repositories::*;
+
+    async fn setup_pool() -> crate::db::Pool {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        currencies::create(&pool, "CNY", "Chinese Yuan", 2)
+            .await
+            .unwrap();
+        currencies::create(&pool, "USD", "US Dollar", 2)
+            .await
+            .unwrap();
+        pool
+    }
+
+    fn test_config() -> AppConfig {
+        let mut c = AppConfig::test_defaults();
+        let mut bytes = [0u8; 32];
+        getrandom::getrandom(&mut bytes).unwrap();
+        c.app_key = Some(base64::engine::general_purpose::STANDARD.encode(bytes));
+        c
+    }
+
+    fn admin_auth() -> AuthUser {
+        AuthUser::from_parts(
+            Some("admin".to_string()),
+            Some(1),
+            crate::models::user::UserRole::Admin,
+            None,
+        )
+    }
+
+    fn user_auth(user_int_id: i64) -> AuthUser {
+        AuthUser::from_parts(
+            Some(format!("u{user_int_id}")),
+            Some(user_int_id),
+            crate::models::user::UserRole::Reader,
+            None,
+        )
+    }
+
+    async fn seed_user(pool: &crate::db::Pool) -> i64 {
+        let doc_id = uuid::Uuid::now_v7().to_string();
+        let username = format!("testuser_{doc_id}");
+        sqlx::query(
+            "INSERT INTO users (document_id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')",
+        )
+        .bind(&doc_id)
+        .bind(&username)
+        .execute(pool)
+        .await
+        .unwrap();
+        let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
+            .bind(&doc_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        id
+    }
+
+    async fn seed_admin(pool: &crate::db::Pool) -> i64 {
+        let doc_id = uuid::Uuid::now_v7().to_string();
+        let username = format!("admin_{doc_id}");
+        sqlx::query(
+            "INSERT INTO users (document_id, username, role, status, registered_via) VALUES (?, ?, 'admin', 'active', 'email')",
+        )
+        .bind(&doc_id)
+        .bind(&username)
+        .execute(pool)
+        .await
+        .unwrap();
+        let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
+            .bind(&doc_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        id
+    }
+
+    async fn seed_channel(pool: &crate::db::Pool, provider: &str) -> PaymentChannel {
+        let doc_id = uuid::Uuid::now_v7().to_string();
+        crate::models::payment_channel::insert(
+            pool,
+            &doc_id,
+            provider,
+            &format!("{provider}-test"),
+            false,
+            r#"{"api_key":"test"}"#,
+            None,
+            None,
+            true,
+            0,
+            None,
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn seed_order(pool: &crate::db::Pool, user_id: i64, amount: i64, currency: &str) -> crate::models::order::Order {
+        let doc_id = uuid::Uuid::now_v7().to_string();
+        let order_no = format!("ORD-{doc_id}");
+        crate::models::order::insert(
+            pool,
+            &doc_id,
+            user_id,
+            &order_no,
+            amount,
+            0,
+            0,
+            amount,
+            currency,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn seed_payment_order(
+        pool: &crate::db::Pool,
+        user_id: i64,
+        channel_id: i64,
+        amount: i64,
+        currency: &str,
+    ) -> PaymentOrder {
+        let doc_id = uuid::Uuid::now_v7().to_string();
+        let idem_key = format!("idem_{doc_id}");
+        crate::models::payment_order::insert(
+            pool,
+            &doc_id,
+            user_id,
+            None,
+            "Test Payment",
+            amount,
+            currency,
+            channel_id,
+            "stripe",
+            None,
+            None,
+            None,
+            &idem_key,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn create_payment_order_rejects_non_owner() {
+        let pool = setup_pool().await;
+        let config = test_config();
+        let owner_id = seed_user(&pool).await;
+        let other_id = seed_user(&pool).await;
+        let _admin_id = seed_admin(&pool).await;
+
+        let channel = seed_channel(&pool, "stripe").await;
+        let order = seed_order(&pool, owner_id, 1000, "CNY").await;
+
+        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+        let product_repo = SqlxProductRepository::new(pool.clone());
+        let order_order_repo = SqlxOrderRepository::new(pool.clone());
+
+        let other_auth = user_auth(other_id);
+        let req = CreatePaymentOrderRequest {
+            order_id: order.document_id.clone(),
+            channel_id: channel.document_id.clone(),
+            method: None,
+            return_url: None,
+            metadata: None,
+        };
+
+        let result = super::create_payment_order(
+            &pool,
+            &channel_repo,
+            &order_repo,
+            &product_repo,
+            &order_order_repo,
+            &other_auth,
+            other_id,
+            req,
+            &config,
+            None,
+        )
+        .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::Forbidden => {}
+            e => panic!("expected Forbidden, got: {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "payment-stripe")]
+    async fn create_payment_order_owner_succeeds() {
+        let pool = setup_pool().await;
+        let config = test_config();
+        let owner_id = seed_user(&pool).await;
+
+        let channel = seed_channel(&pool, "stripe").await;
+        let order = seed_order(&pool, owner_id, 1000, "CNY").await;
+
+        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+        let product_repo = SqlxProductRepository::new(pool.clone());
+        let order_order_repo = SqlxOrderRepository::new(pool.clone());
+
+        let owner_auth = user_auth(owner_id);
+        let req = CreatePaymentOrderRequest {
+            order_id: order.document_id.clone(),
+            channel_id: channel.document_id.clone(),
+            method: None,
+            return_url: None,
+            metadata: None,
+        };
+
+        let result = super::create_payment_order(
+            &pool,
+            &channel_repo,
+            &order_repo,
+            &product_repo,
+            &order_order_repo,
+            &owner_auth,
+            owner_id,
+            req,
+            &config,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let (payment_order, _) = result.unwrap();
+        assert_eq!(payment_order.user_id, owner_id);
+        assert_eq!(payment_order.amount, 1000);
+    }
+
+    #[tokio::test]
+    async fn create_payment_order_rejects_zero_amount() {
+        let pool = setup_pool().await;
+        let config = test_config();
+        let owner_id = seed_user(&pool).await;
+
+        let channel = seed_channel(&pool, "creem").await;
+        let order = seed_order(&pool, owner_id, 0, "CNY").await;
+
+        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+        let product_repo = SqlxProductRepository::new(pool.clone());
+        let order_order_repo = SqlxOrderRepository::new(pool.clone());
+
+        let owner_auth = user_auth(owner_id);
+        let req = CreatePaymentOrderRequest {
+            order_id: order.document_id.clone(),
+            channel_id: channel.document_id.clone(),
+            method: None,
+            return_url: None,
+            metadata: None,
+        };
+
+        let result = super::create_payment_order(
+            &pool,
+            &channel_repo,
+            &order_repo,
+            &product_repo,
+            &order_order_repo,
+            &owner_auth,
+            owner_id,
+            req,
+            &config,
+            None,
+        )
+        .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::BadRequest(msg) => assert_eq!(msg, "order_amount_invalid"),
+            e => panic!("expected BadRequest, got: {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn get_payment_order_rejects_non_owner() {
+        let pool = setup_pool().await;
+        let owner_id = seed_user(&pool).await;
+        let other_id = seed_user(&pool).await;
+
+        let channel = seed_channel(&pool, "stripe").await;
+        let po = seed_payment_order(&pool, owner_id, channel.id, 500, "CNY").await;
+
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+
+        let other_auth = user_auth(other_id);
+        let result =
+            super::get_payment_order(&order_repo, &other_auth, other_id, &po.document_id).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::Forbidden => {}
+            e => panic!("expected Forbidden, got: {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn get_payment_order_owner_can_view() {
+        let pool = setup_pool().await;
+        let owner_id = seed_user(&pool).await;
+
+        let channel = seed_channel(&pool, "stripe").await;
+        let po = seed_payment_order(&pool, owner_id, channel.id, 500, "CNY").await;
+
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+
+        let owner_auth = user_auth(owner_id);
+        let result =
+            super::get_payment_order(&order_repo, &owner_auth, owner_id, &po.document_id).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().amount, 500);
+    }
+
+    #[tokio::test]
+    async fn get_payment_order_admin_can_view_any() {
+        let pool = setup_pool().await;
+        let owner_id = seed_user(&pool).await;
+        let admin_id = seed_admin(&pool).await;
+
+        let channel = seed_channel(&pool, "stripe").await;
+        let po = seed_payment_order(&pool, owner_id, channel.id, 500, "CNY").await;
+
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+
+        let admin_auth_user = AuthUser::from_parts(
+            Some(format!("a{admin_id}")),
+            Some(admin_id),
+            crate::models::user::UserRole::Admin,
+            None,
+        );
+        let result =
+            super::get_payment_order(&order_repo, &admin_auth_user, admin_id, &po.document_id)
+                .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn cancel_order_rejects_non_owner() {
+        let pool = setup_pool().await;
+        let config = test_config();
+        let owner_id = seed_user(&pool).await;
+        let other_id = seed_user(&pool).await;
+
+        let channel = seed_channel(&pool, "stripe").await;
+        let po = seed_payment_order(&pool, owner_id, channel.id, 500, "CNY").await;
+
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
+        let audit = AuditService::new(pool.clone());
+
+        let other_auth = user_auth(other_id);
+        let result = super::cancel_payment_order(
+            &pool,
+            &order_repo,
+            &channel_repo,
+            &other_auth,
+            &audit,
+            &config,
+            &po.document_id,
+            other_id,
+        )
+        .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::Forbidden => {}
+            e => panic!("expected Forbidden, got: {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_order_owner_succeeds() {
+        let pool = setup_pool().await;
+        let config = test_config();
+        let owner_id = seed_user(&pool).await;
+
+        let channel = seed_channel(&pool, "stripe").await;
+        let po = seed_payment_order(&pool, owner_id, channel.id, 500, "CNY").await;
+
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
+        let audit = AuditService::new(pool.clone());
+
+        let owner_auth = user_auth(owner_id);
+        super::cancel_payment_order(
+            &pool,
+            &order_repo,
+            &channel_repo,
+            &owner_auth,
+            &audit,
+            &config,
+            &po.document_id,
+            owner_id,
+        )
+        .await
+        .unwrap();
+
+        let updated = crate::models::payment_order::find_by_id(&pool, po.id, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(updated.status, PaymentStatus::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn cancel_only_pending() {
+        let pool = setup_pool().await;
+        let config = test_config();
+        let owner_id = seed_user(&pool).await;
+
+        let channel = seed_channel(&pool, "stripe").await;
+        let po = seed_payment_order(&pool, owner_id, channel.id, 500, "CNY").await;
+
+        let mut tx = pool.begin().await.unwrap();
+        let rows = crate::models::payment_order::tx_update_status_cas(
+            &mut tx,
+            po.id,
+            PaymentStatus::Paid.as_str(),
+            Some("paid_at"),
+            PaymentStatus::Pending.as_str(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(rows, 1);
+        tx.commit().await.unwrap();
+
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
+        let audit = AuditService::new(pool.clone());
+
+        let owner_auth = user_auth(owner_id);
+        let result = super::cancel_payment_order(
+            &pool,
+            &order_repo,
+            &channel_repo,
+            &owner_auth,
+            &audit,
+            &config,
+            &po.document_id,
+            owner_id,
+        )
+        .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::BadRequest(msg) => assert_eq!(msg, "only_pending_can_cancel"),
+            e => panic!("expected BadRequest, got: {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn refund_rejects_non_paid() {
+        let pool = setup_pool().await;
+        let config = test_config();
+        let admin_id = seed_admin(&pool).await;
+
+        let channel = seed_channel(&pool, "stripe").await;
+        let po = seed_payment_order(&pool, admin_id, channel.id, 1000, "CNY").await;
+
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
+        let tx_repo = SqlxPaymentTransactionRepository::new(pool.clone());
+        let refund_repo = SqlxPaymentRefundRepository::new(pool.clone());
+        let wallet_repo = SqlxWalletRepository::new(pool.clone());
+        let audit = AuditService::new(pool.clone());
+
+        let admin_auth_user = AuthUser::from_parts(
+            Some(format!("a{admin_id}")),
+            Some(admin_id),
+            crate::models::user::UserRole::Admin,
+            None,
+        );
+        let result = super::refund_payment_order(
+            &pool,
+            &order_repo,
+            &channel_repo,
+            &tx_repo,
+            &refund_repo,
+            &wallet_repo,
+            &admin_auth_user,
+            &audit,
+            &config,
+            &po.document_id,
+            CreateRefundRequest {
+                amount: 500,
+                reason: Some("test".into()),
+            },
+        )
+        .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::BadRequest(msg) => assert_eq!(msg, "only_paid_can_refund"),
+            e => panic!("expected BadRequest, got: {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn refund_exceeds_payment() {
+        let pool = setup_pool().await;
+        let config = test_config();
+        let user_id = seed_user(&pool).await;
+        let admin_id = seed_admin(&pool).await;
+
+        let channel = seed_channel(&pool, "creem").await;
+        let po = seed_payment_order(&pool, user_id, channel.id, 1000, "CNY").await;
+
+        let mut tx = pool.begin().await.unwrap();
+        let rows = crate::models::payment_order::tx_update_status_cas(
+            &mut tx,
+            po.id,
+            PaymentStatus::Paid.as_str(),
+            Some("paid_at"),
+            PaymentStatus::Pending.as_str(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(rows, 1);
+        tx.commit().await.unwrap();
+
+        let wallet_repo = SqlxWalletRepository::new(pool.clone());
+        crate::services::wallet::credit_wallet(
+            &wallet_repo,
+            &pool,
+            user_id,
+            "CNY",
+            1000,
+            WalletTxType::Recharge,
+            &format!("PAY-{}", po.document_id),
+            Some(WalletReferenceType::Payment),
+            Some(&po.document_id),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
+        let tx_repo = SqlxPaymentTransactionRepository::new(pool.clone());
+        let refund_repo = SqlxPaymentRefundRepository::new(pool.clone());
+        let audit = AuditService::new(pool.clone());
+
+        let admin_auth_user = AuthUser::from_parts(
+            Some(format!("a{admin_id}")),
+            Some(admin_id),
+            crate::models::user::UserRole::Admin,
+            None,
+        );
+        let result = super::refund_payment_order(
+            &pool,
+            &order_repo,
+            &channel_repo,
+            &tx_repo,
+            &refund_repo,
+            &wallet_repo,
+            &admin_auth_user,
+            &audit,
+            &config,
+            &po.document_id,
+            CreateRefundRequest {
+                amount: 2000,
+                reason: None,
+            },
+        )
+        .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::BadRequest(msg) => assert_eq!(msg, "refund_exceeds_payment"),
+            e => panic!("expected BadRequest, got: {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn refund_partial_then_full() {
+        let pool = setup_pool().await;
+        let config = test_config();
+        let user_id = seed_user(&pool).await;
+        let admin_id = seed_admin(&pool).await;
+
+        let channel = seed_channel(&pool, "creem").await;
+        let po = seed_payment_order(&pool, user_id, channel.id, 1000, "CNY").await;
+
+        let mut tx = pool.begin().await.unwrap();
+        let rows = crate::models::payment_order::tx_update_status_cas(
+            &mut tx,
+            po.id,
+            PaymentStatus::Paid.as_str(),
+            Some("paid_at"),
+            PaymentStatus::Pending.as_str(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(rows, 1);
+        tx.commit().await.unwrap();
+
+        let wallet_repo = SqlxWalletRepository::new(pool.clone());
+        crate::services::wallet::credit_wallet(
+            &wallet_repo,
+            &pool,
+            user_id,
+            "CNY",
+            1000,
+            WalletTxType::Recharge,
+            &format!("PAY-{}", po.document_id),
+            Some(WalletReferenceType::Payment),
+            Some(&po.document_id),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
+        let tx_repo = SqlxPaymentTransactionRepository::new(pool.clone());
+        let refund_repo = SqlxPaymentRefundRepository::new(pool.clone());
+        let audit = AuditService::new(pool.clone());
+
+        let admin_auth_user = AuthUser::from_parts(
+            Some(format!("a{admin_id}")),
+            Some(admin_id),
+            crate::models::user::UserRole::Admin,
+            None,
+        );
+
+        let refund1 = super::refund_payment_order(
+            &pool,
+            &order_repo,
+            &channel_repo,
+            &tx_repo,
+            &refund_repo,
+            &wallet_repo,
+            &admin_auth_user,
+            &audit,
+            &config,
+            &po.document_id,
+            CreateRefundRequest {
+                amount: 400,
+                reason: Some("partial".into()),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(refund1.amount, 400);
+
+        let updated = crate::models::payment_order::find_by_id(&pool, po.id, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(updated.status, PaymentStatus::PartiallyRefunded));
+
+        let refund2 = super::refund_payment_order(
+            &pool,
+            &order_repo,
+            &channel_repo,
+            &tx_repo,
+            &refund_repo,
+            &wallet_repo,
+            &admin_auth_user,
+            &audit,
+            &config,
+            &po.document_id,
+            CreateRefundRequest {
+                amount: 600,
+                reason: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(refund2.amount, 600);
+
+        let updated = crate::models::payment_order::find_by_id(&pool, po.id, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(updated.status, PaymentStatus::Refunded));
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "payment-stripe")]
+    async fn callback_channel_order_mismatch() {
+        let pool = setup_pool().await;
+        let config = test_config();
+
+        let channel_a = seed_channel(&pool, "stripe").await;
+        let channel_b = seed_channel(&pool, "stripe").await;
+        let user_id = seed_user(&pool).await;
+
+        let mut po = seed_payment_order(&pool, user_id, channel_a.id, 500, "CNY").await;
+        po.provider_order_id = Some("prov_123".to_string());
+        crate::models::payment_order::update_provider_order_id(
+            &pool,
+            po.id,
+            "prov_123",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+        let tx_repo = SqlxPaymentTransactionRepository::new(pool.clone());
+        let wallet_repo = SqlxWalletRepository::new(pool.clone());
+        let audit = AuditService::new(pool.clone());
+
+        let result = super::handle_callback(
+            &pool,
+            &channel_repo,
+            &order_repo,
+            &tx_repo,
+            &wallet_repo,
+            &audit,
+            &config,
+            &channel_b.document_id,
+            &axum::http::HeaderMap::new(),
+            b"test",
+        )
+        .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::BadRequest(msg) => assert_eq!(msg, "channel_order_mismatch"),
+            e => panic!("expected channel_order_mismatch, got: {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "payment-stripe")]
+    async fn callback_idempotent_on_paid_order() {
+        let pool = setup_pool().await;
+        let config = test_config();
+        let user_id = seed_user(&pool).await;
+
+        let channel = seed_channel(&pool, "stripe").await;
+        let po = seed_payment_order(&pool, user_id, channel.id, 500, "CNY").await;
+
+        let mut tx = pool.begin().await.unwrap();
+        let rows = crate::models::payment_order::tx_update_status_cas(
+            &mut tx,
+            po.id,
+            PaymentStatus::Paid.as_str(),
+            Some("paid_at"),
+            PaymentStatus::Pending.as_str(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(rows, 1);
+        tx.commit().await.unwrap();
+
+        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+        let tx_repo = SqlxPaymentTransactionRepository::new(pool.clone());
+        let wallet_repo = SqlxWalletRepository::new(pool.clone());
+        let audit = AuditService::new(pool.clone());
+
+        let result = super::handle_callback(
+            &pool,
+            &channel_repo,
+            &order_repo,
+            &tx_repo,
+            &wallet_repo,
+            &audit,
+            &config,
+            &channel.document_id,
+            &axum::http::HeaderMap::new(),
+            b"test",
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn cas_prevents_double_process() {
+        let pool = setup_pool().await;
+        let user_id = seed_user(&pool).await;
+        let channel = seed_channel(&pool, "stripe").await;
+        let po = seed_payment_order(&pool, user_id, channel.id, 1000, "CNY").await;
+
+        let result: Result<(), crate::errors::app_error::AppError> = async {
+            crate::in_transaction!(pool, tx, {
+                let rows = crate::models::payment_order::tx_update_status_cas(
+                    &mut tx,
+                    po.id,
+                    PaymentStatus::Paid.as_str(),
+                    Some("paid_at"),
+                    PaymentStatus::Pending.as_str(),
+                )
+                .await
+                .unwrap();
+                assert_eq!(rows, 1);
+
+                let rows2 = crate::models::payment_order::tx_update_status_cas(
+                    &mut tx,
+                    po.id,
+                    PaymentStatus::Paid.as_str(),
+                    Some("paid_at"),
+                    PaymentStatus::Pending.as_str(),
+                )
+                .await
+                .unwrap();
+                assert_eq!(rows2, 0);
+
+                Ok(())
+            })
+        }
+        .await;
+        result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn idempotency_key_dedup() {
+        let pool = setup_pool().await;
+        let user_id = seed_user(&pool).await;
+
+        let channel = seed_channel(&pool, "creem").await;
+        let order = seed_order(&pool, user_id, 1000, "CNY").await;
+
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+        let idem_key = format!("{}_{}", order.document_id, channel.document_id);
+
+        let doc_id = uuid::Uuid::now_v7().to_string();
+        crate::models::payment_order::insert(
+            &pool,
+            &doc_id,
+            user_id,
+            Some(&order.document_id),
+            "Test",
+            1000,
+            "CNY",
+            channel.id,
+            "creem",
+            None,
+            None,
+            None,
+            &idem_key,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let found = order_repo
+            .find_by_idempotency_key(&idem_key, None)
+            .await
+            .unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().document_id, doc_id);
+    }
 }

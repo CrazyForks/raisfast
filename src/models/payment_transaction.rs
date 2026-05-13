@@ -214,6 +214,62 @@ pub async fn insert(
     q.fetch_one(pool).await.map_err(Into::into)
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn tx_insert(
+    tx: &mut crate::db::pool::DbConnection,
+    document_id: &str,
+    payment_order_id: i64,
+    order_id: Option<&str>,
+    user_id: i64,
+    tx_type: &str,
+    amount: i64,
+    currency: &str,
+    provider_tx_id: &str,
+    status: &str,
+    raw_payload: Option<&str>,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    if let Some(tid) = tenant_id {
+        let sql = format!(
+            "INSERT INTO payment_transactions (document_id, payment_order_id, order_id, user_id, tx_type, amount, currency, provider_tx_id, status, raw_payload, tenant_id, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
+            ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11)
+        );
+        sqlx::query(&sql)
+            .bind(document_id)
+            .bind(payment_order_id)
+            .bind(order_id)
+            .bind(user_id)
+            .bind(tx_type)
+            .bind(amount)
+            .bind(currency)
+            .bind(provider_tx_id)
+            .bind(status)
+            .bind(raw_payload)
+            .bind(tid)
+            .execute(&mut *tx)
+            .await?;
+    } else {
+        let sql = format!(
+            "INSERT INTO payment_transactions (document_id, payment_order_id, order_id, user_id, tx_type, amount, currency, provider_tx_id, status, raw_payload, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
+            ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
+        );
+        sqlx::query(&sql)
+            .bind(document_id)
+            .bind(payment_order_id)
+            .bind(order_id)
+            .bind(user_id)
+            .bind(tx_type)
+            .bind(amount)
+            .bind(currency)
+            .bind(provider_tx_id)
+            .bind(status)
+            .bind(raw_payload)
+            .execute(&mut *tx)
+            .await?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

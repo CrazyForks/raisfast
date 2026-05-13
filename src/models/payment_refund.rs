@@ -210,6 +210,101 @@ pub async fn sum_refunded_by_order(
     Ok(total)
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn tx_insert(
+    tx: &mut crate::db::pool::DbConnection,
+    document_id: &str,
+    payment_order_id: i64,
+    order_id: Option<&str>,
+    user_id: i64,
+    amount: i64,
+    currency: &str,
+    reason: Option<&str>,
+    provider_refund_id: Option<&str>,
+    status: &str,
+    metadata: Option<&str>,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    if let Some(tid) = tenant_id {
+        let sql = format!(
+            "INSERT INTO payment_refunds (document_id, payment_order_id, order_id, user_id, amount, currency, reason, provider_refund_id, status, metadata, tenant_id, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
+            ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11)
+        );
+        sqlx::query(&sql)
+            .bind(document_id)
+            .bind(payment_order_id)
+            .bind(order_id)
+            .bind(user_id)
+            .bind(amount)
+            .bind(currency)
+            .bind(reason)
+            .bind(provider_refund_id)
+            .bind(status)
+            .bind(metadata)
+            .bind(tid)
+            .execute(&mut *tx)
+            .await?;
+    } else {
+        let sql = format!(
+            "INSERT INTO payment_refunds (document_id, payment_order_id, order_id, user_id, amount, currency, reason, provider_refund_id, status, metadata, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
+            ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
+        );
+        sqlx::query(&sql)
+            .bind(document_id)
+            .bind(payment_order_id)
+            .bind(order_id)
+            .bind(user_id)
+            .bind(amount)
+            .bind(currency)
+            .bind(reason)
+            .bind(provider_refund_id)
+            .bind(status)
+            .bind(metadata)
+            .execute(&mut *tx)
+            .await?;
+    }
+    Ok(())
+}
+
+pub async fn tx_sum_refunded_by_order(
+    tx: &mut crate::db::pool::DbConnection,
+    payment_order_id: i64,
+    tenant_id: Option<&str>,
+) -> AppResult<i64> {
+    let sql = if tenant_id.is_some() {
+        format!(
+            "SELECT COALESCE(SUM(amount), 0) FROM payment_refunds WHERE payment_order_id = {} AND tenant_id = {} AND status IN ('succeeded', 'pending', 'processing')",
+            ph(1), ph(2)
+        )
+    } else {
+        format!(
+            "SELECT COALESCE(SUM(amount), 0) FROM payment_refunds WHERE payment_order_id = {} AND status IN ('succeeded', 'pending', 'processing')",
+            ph(1)
+        )
+    };
+    let mut q = sqlx::query_as::<_, (i64,)>(&sql).bind(payment_order_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let (total,) = q.fetch_one(&mut *tx).await?;
+    Ok(total)
+}
+
+pub async fn tx_find_by_document_id(
+    tx: &mut crate::db::pool::DbConnection,
+    document_id: &str,
+) -> AppResult<Option<PaymentRefund>> {
+    let sql = format!(
+        "SELECT * FROM payment_refunds WHERE document_id = {}",
+        ph(1)
+    );
+    sqlx::query_as::<_, PaymentRefund>(&sql)
+        .bind(document_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -203,18 +203,6 @@ CREATE TABLE IF NOT EXISTS permissions (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_role_action_subject
     ON permissions(role_id, action, subject);
 
--- 租户
-CREATE TABLE IF NOT EXISTS tenants (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    domain TEXT UNIQUE,
-    config TEXT NOT NULL DEFAULT '{}',
-    status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-);
-
 -- 审计日志
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -642,10 +630,6 @@ CREATE INDEX IF NOT EXISTS idx_wf_step_logs_instance ON workflow_step_logs(insta
 -- 预置数据
 -- ============================================================
 
--- 默认租户
-INSERT OR IGNORE INTO tenants (document_id, name, domain, config, status, created_at, updated_at) VALUES
-    ('default', 'Default', NULL, '{}', 'active', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
-
 -- 系统角色
 INSERT OR IGNORE INTO roles (document_id, name, description, is_system, created_at, updated_at) VALUES
     ('role-admin', 'admin', '超级管理员', 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
@@ -877,3 +861,27 @@ CREATE TABLE IF NOT EXISTS payment_refunds (
 
 CREATE INDEX IF NOT EXISTS idx_payment_refunds_order ON payment_refunds(payment_order_id);
 CREATE INDEX IF NOT EXISTS idx_payment_refunds_order_id ON payment_refunds(order_id);
+
+-- Wallet Outbox (ensures wallet operations are never lost)
+CREATE TABLE IF NOT EXISTS wallet_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL,
+    currency TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    entry_type TEXT NOT NULL,
+    tx_type TEXT NOT NULL,
+    transaction_no TEXT NOT NULL,
+    reference_type TEXT,
+    reference_id TEXT,
+    metadata TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 5,
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_outbox_status ON wallet_outbox(status);
+CREATE INDEX IF NOT EXISTS idx_wallet_outbox_transaction_no ON wallet_outbox(transaction_no);

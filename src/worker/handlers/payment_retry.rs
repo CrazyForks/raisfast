@@ -5,6 +5,7 @@ use crate::db::Pool;
 use crate::errors::app_error::AppResult;
 use crate::models::payment_channel;
 use crate::models::payment_order::{self, PaymentStatus};
+use crate::models::wallet_transaction::{WalletReferenceType, WalletTxType};
 use crate::worker::{Job, JobHandler};
 
 pub struct RetryPaymentCallbackHandler {
@@ -49,14 +50,17 @@ impl JobHandler for RetryPaymentCallbackHandler {
                 "[retry_payment_callback] order {} has no provider_order_id, expiring",
                 order.document_id
             );
-            payment_order::update_status(
-                &self.pool,
-                order.id,
-                PaymentStatus::Expired.as_str(),
-                Some("expired_at"),
-                None,
-            )
-            .await?;
+            crate::in_transaction!(&self.pool, tx, {
+                crate::models::payment_order::tx_update_status_cas(
+                    &mut tx,
+                    order.id,
+                    PaymentStatus::Expired.as_str(),
+                    Some("expired_at"),
+                    PaymentStatus::Pending.as_str(),
+                )
+                .await?;
+                Ok(())
+            })?;
             return Ok(());
         };
 
@@ -90,34 +94,80 @@ impl JobHandler for RetryPaymentCallbackHandler {
                     "[retry_payment_callback] order {} confirmed paid via provider query",
                     order.document_id
                 );
-                payment_order::update_status(
-                    &self.pool,
-                    order.id,
-                    PaymentStatus::Paid.as_str(),
-                    Some("paid_at"),
-                    None,
-                )
-                .await?;
+                crate::in_transaction!(&self.pool, tx, {
+                    let rows = crate::models::payment_order::tx_update_status_cas(
+                        &mut tx,
+                        order.id,
+                        PaymentStatus::Paid.as_str(),
+                        Some("paid_at"),
+                        PaymentStatus::Pending.as_str(),
+                    )
+                    .await?;
+                    if rows == 0 {
+                        tracing::info!(
+                            "[retry_payment_callback] order {} CAS failed, skipping",
+                            order.document_id
+                        );
+                        return Ok(());
+                    }
+
+                    let outbox_doc_id = uuid::Uuid::now_v7().to_string();
+                    crate::models::wallet_outbox::tx_insert(
+                        &mut tx,
+                        &outbox_doc_id,
+                        order.user_id,
+                        &order.currency,
+                        order.amount,
+                        "credit",
+                        WalletTxType::Recharge.as_str(),
+                        &format!("PAY-{}", order.document_id),
+                        Some(WalletReferenceType::Payment.as_str()),
+                        Some(&order.document_id),
+                        None,
+                        order.tenant_id.as_deref(),
+                    )
+                    .await?;
+
+                    Ok(())
+                })?;
             }
             PaymentStatus::Cancelled => {
-                payment_order::update_status(
-                    &self.pool,
-                    order.id,
-                    PaymentStatus::Cancelled.as_str(),
-                    Some("cancelled_at"),
-                    None,
-                )
-                .await?;
+                crate::in_transaction!(&self.pool, tx, {
+                    let rows = crate::models::payment_order::tx_update_status_cas(
+                        &mut tx,
+                        order.id,
+                        PaymentStatus::Cancelled.as_str(),
+                        Some("cancelled_at"),
+                        PaymentStatus::Pending.as_str(),
+                    )
+                    .await?;
+                    if rows == 0 {
+                        tracing::info!(
+                            "[retry_payment_callback] order {} CAS failed for cancel",
+                            order.document_id
+                        );
+                    }
+                    Ok(())
+                })?;
             }
             PaymentStatus::Expired => {
-                payment_order::update_status(
-                    &self.pool,
-                    order.id,
-                    PaymentStatus::Expired.as_str(),
-                    Some("expired_at"),
-                    None,
-                )
-                .await?;
+                crate::in_transaction!(&self.pool, tx, {
+                    let rows = crate::models::payment_order::tx_update_status_cas(
+                        &mut tx,
+                        order.id,
+                        PaymentStatus::Expired.as_str(),
+                        Some("expired_at"),
+                        PaymentStatus::Pending.as_str(),
+                    )
+                    .await?;
+                    if rows == 0 {
+                        tracing::info!(
+                            "[retry_payment_callback] order {} CAS failed for expire",
+                            order.document_id
+                        );
+                    }
+                    Ok(())
+                })?;
             }
             PaymentStatus::Pending => {
                 tracing::info!(

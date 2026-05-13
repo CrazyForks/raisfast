@@ -36,7 +36,7 @@ impl JobHandler for ReconcilePaymentsHandler {
             .to_string();
 
         let sql = format!(
-            "SELECT * FROM payment_orders WHERE status = 'paid' AND paid_at >= {} AND paid_at < {}",
+            "SELECT * FROM payment_orders WHERE status = 'paid' AND paid_at >= {} AND paid_at < {} LIMIT 500",
             ph(1),
             ph(2)
         );
@@ -119,8 +119,28 @@ impl ReconcilePaymentsHandler {
             return Ok(false);
         }
 
-        if let Some(provider_amount) = status.provider_tx_id.as_deref() {
-            let _ = provider_amount;
+        if let Some(provider_amount) = status.amount
+            && provider_amount != order.amount
+        {
+            let detail = format!(
+                "amount_mismatch local={} provider={} order={}",
+                order.amount, provider_amount, order.document_id
+            );
+            tracing::error!("[reconcile_payments] critical: {detail}");
+            let _ = audit
+                .log(
+                    "",
+                    None,
+                    None,
+                    "payment_reconcile_amount_mismatch",
+                    "payment_order",
+                    Some(&order.document_id),
+                    Some(&detail),
+                    None,
+                    None,
+                )
+                .await;
+            return Ok(false);
         }
 
         Ok(true)

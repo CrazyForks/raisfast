@@ -297,8 +297,26 @@ pub async fn insert(
         }
     }
     find_by_document_id(pool, document_id, tenant_id)
-        .await
-        .map(|o| o.unwrap())
+        .await?
+        .ok_or_else(|| crate::errors::app_error::AppError::Internal(anyhow::anyhow!("order not found after insert")))
+}
+
+fn validate_timestamp_col(col: &str) -> AppResult<()> {
+    let allowed = [
+        "paid_at",
+        "completed_at",
+        "cancelled_at",
+        "refunding_at",
+        "refunded_at",
+        "expired_at",
+    ];
+    if allowed.contains(&col) {
+        Ok(())
+    } else {
+        Err(crate::errors::app_error::AppError::Internal(
+            anyhow::anyhow!("invalid timestamp column: {col}"),
+        ))
+    }
 }
 
 pub async fn update_status(
@@ -309,12 +327,10 @@ pub async fn update_status(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let sql = if let Some(col) = timestamp_col {
+        validate_timestamp_col(col)?;
         format!(
             "UPDATE orders SET status = {}, {} = datetime('now'), updated_at = datetime('now') WHERE id = {}{}",
-            ph(1),
-            col,
-            ph(2),
-            tenant_filter_ph(tenant_id, 3)
+            ph(1), col, ph(2), tenant_filter_ph(tenant_id, 3)
         )
     } else {
         format!(
@@ -397,6 +413,209 @@ pub async fn update_delivery_data(
     }
     q.execute(pool).await?;
     Ok(())
+}
+
+pub async fn tx_find_id_by_document_id(
+    tx: &mut crate::db::pool::DbConnection,
+    document_id: &str,
+) -> AppResult<Option<i64>> {
+    let sql = format!("SELECT id FROM orders WHERE document_id = {}", ph(1));
+    let result: Option<(i64,)> = sqlx::query_as(&sql)
+        .bind(document_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    Ok(result.map(|(id,)| id))
+}
+
+pub async fn tx_find_by_document_id(
+    tx: &mut crate::db::pool::DbConnection,
+    document_id: &str,
+) -> AppResult<Option<Order>> {
+    let sql = format!("SELECT * FROM orders WHERE document_id = {}", ph(1));
+    sqlx::query_as::<_, Order>(&sql)
+        .bind(document_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(Into::into)
+}
+
+pub async fn tx_update_status(
+    tx: &mut crate::db::pool::DbConnection,
+    id: i64,
+    status: &str,
+    timestamp_col: Option<&str>,
+) -> AppResult<()> {
+    let sql = if let Some(col) = timestamp_col {
+        validate_timestamp_col(col)?;
+        format!(
+            "UPDATE orders SET status = {}, {} = datetime('now'), updated_at = datetime('now') WHERE id = {}",
+            ph(1), col, ph(2)
+        )
+    } else {
+        format!(
+            "UPDATE orders SET status = {}, updated_at = datetime('now') WHERE id = {}",
+            ph(1),
+            ph(2)
+        )
+    };
+    sqlx::query(&sql)
+        .bind(status)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn tx_insert(
+    tx: &mut crate::db::pool::DbConnection,
+    document_id: &str,
+    user_id: i64,
+    order_no: &str,
+    subtotal: i64,
+    discount_amount: i64,
+    shipping_amount: i64,
+    total_amount: i64,
+    currency: &str,
+    buyer_name: Option<&str>,
+    buyer_phone: Option<&str>,
+    buyer_email: Option<&str>,
+    shipping_address: Option<&str>,
+    remark: Option<&str>,
+    tenant_id: Option<&str>,
+) -> AppResult<Order> {
+    match tenant_id {
+        Some(tid) => {
+            let sql = format!(
+                "INSERT INTO orders (document_id, tenant_id, user_id, order_no, subtotal, discount_amount, shipping_amount, total_amount, currency, buyer_name, buyer_phone, buyer_email, shipping_address, remark, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
+                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13), ph(14)
+            );
+            sqlx::query(&sql)
+                .bind(document_id).bind(tid).bind(user_id).bind(order_no)
+                .bind(subtotal).bind(discount_amount).bind(shipping_amount).bind(total_amount)
+                .bind(currency).bind(buyer_name).bind(buyer_phone).bind(buyer_email)
+                .bind(shipping_address).bind(remark)
+                .execute(&mut *tx).await?;
+        }
+        None => {
+            let sql = format!(
+                "INSERT INTO orders (document_id, user_id, order_no, subtotal, discount_amount, shipping_amount, total_amount, currency, buyer_name, buyer_phone, buyer_email, shipping_address, remark, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
+                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13)
+            );
+            sqlx::query(&sql)
+                .bind(document_id).bind(user_id).bind(order_no)
+                .bind(subtotal).bind(discount_amount).bind(shipping_amount).bind(total_amount)
+                .bind(currency).bind(buyer_name).bind(buyer_phone).bind(buyer_email)
+                .bind(shipping_address).bind(remark)
+                .execute(&mut *tx).await?;
+        }
+    }
+    let sql = if tenant_id.is_some() {
+        format!("SELECT * FROM orders WHERE document_id = {} AND tenant_id = {}", ph(1), ph(2))
+    } else {
+        format!("SELECT * FROM orders WHERE document_id = {}", ph(1))
+    };
+    let mut q = sqlx::query_as::<_, Order>(&sql).bind(document_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    q.fetch_one(&mut *tx).await.map_err(Into::into)
+}
+
+pub async fn tx_update_status_cas(
+    tx: &mut crate::db::pool::DbConnection,
+    id: i64,
+    new_status: &str,
+    timestamp_col: Option<&str>,
+    expected_status: &str,
+) -> AppResult<u64> {
+    let sql = if let Some(col) = timestamp_col {
+        validate_timestamp_col(col)?;
+        format!(
+            "UPDATE orders SET status = {}, {} = datetime('now'), updated_at = datetime('now') WHERE id = {} AND status = {}",
+            ph(1), col, ph(2), ph(3)
+        )
+    } else {
+        format!(
+            "UPDATE orders SET status = {}, updated_at = datetime('now') WHERE id = {} AND status = {}",
+            ph(1), ph(2), ph(3)
+        )
+    };
+    let result = sqlx::query(&sql)
+        .bind(new_status)
+        .bind(id)
+        .bind(expected_status)
+        .execute(&mut *tx)
+        .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn tx_update_shipped(
+    tx: &mut crate::db::pool::DbConnection,
+    id: i64,
+    tracking_no: Option<&str>,
+    carrier: Option<&str>,
+) -> AppResult<u64> {
+    let sql = format!(
+        "UPDATE orders SET status = {}, tracking_no = {}, carrier = {}, updated_at = datetime('now') WHERE id = {} AND status = {}",
+        ph(1), ph(2), ph(3), ph(4), ph(5)
+    );
+    let result = sqlx::query(&sql)
+        .bind(OrderStatus::Shipped.as_str())
+        .bind(tracking_no)
+        .bind(carrier)
+        .bind(id)
+        .bind(OrderStatus::Paid.as_str())
+        .execute(&mut *tx)
+        .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn get_stats_query(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+) -> AppResult<crate::dto::OrderStatsResponse> {
+    let sql = format!(
+        "SELECT status, COUNT(*) as cnt FROM orders WHERE 1=1{} GROUP BY status",
+        tenant_filter_ph(tenant_id, 1)
+    );
+    let mut q = sqlx::query_as::<_, (String, i64)>(&sql);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    let rows = q.fetch_all(pool).await?;
+
+    let mut total_orders: i64 = 0;
+    let mut pending_orders: i64 = 0;
+    let mut paid_orders: i64 = 0;
+    let mut completed_orders: i64 = 0;
+    for (status, cnt) in &rows {
+        total_orders += cnt;
+        match status.as_str() {
+            "pending" => pending_orders = *cnt,
+            "paid" => paid_orders = *cnt,
+            "completed" => completed_orders = *cnt,
+            _ => {}
+        }
+    }
+
+    let rev_sql = format!(
+        "SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE status = 'completed'{}",
+        tenant_filter_ph(tenant_id, 1)
+    );
+    let mut rq = sqlx::query_as::<_, (i64,)>(&rev_sql);
+    if let Some(tid) = tenant_id {
+        rq = rq.bind(tid);
+    }
+    let (total_revenue,) = rq.fetch_one(pool).await?;
+
+    Ok(crate::dto::OrderStatsResponse {
+        total_orders,
+        pending_orders,
+        paid_orders,
+        completed_orders,
+        total_revenue,
+    })
 }
 
 #[cfg(test)]

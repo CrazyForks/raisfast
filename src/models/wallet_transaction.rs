@@ -122,21 +122,44 @@ pub async fn find_all_transactions(
     pool: &crate::db::Pool,
     page: i64,
     page_size: i64,
+    tenant_id: Option<&str>,
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
     let offset = (page - 1) * page_size;
-    let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) as count FROM wallet_transactions")
-        .fetch_one(pool)
-        .await?;
-    let sql = format!(
-        "SELECT * FROM wallet_transactions ORDER BY created_at DESC LIMIT {} OFFSET {}",
-        ph(1),
-        ph(2)
-    );
-    let rows = sqlx::query_as::<_, WalletTransaction>(&sql)
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
+    let (total,): (i64,) = if let Some(tid) = tenant_id {
+        sqlx::query_as(&format!("SELECT COUNT(*) as count FROM wallet_transactions WHERE tenant_id = {}", crate::db::dialect::ph(1)))
+            .bind(tid)
+            .fetch_one(pool)
+            .await?
+    } else {
+        sqlx::query_as("SELECT COUNT(*) as count FROM wallet_transactions")
+            .fetch_one(pool)
+            .await?
+    };
+    let rows = if let Some(tid) = tenant_id {
+        let sql = format!(
+            "SELECT * FROM wallet_transactions WHERE tenant_id = {} ORDER BY created_at DESC LIMIT {} OFFSET {}",
+            crate::db::dialect::ph(1),
+            crate::db::dialect::ph(2),
+            crate::db::dialect::ph(3)
+        );
+        sqlx::query_as::<_, WalletTransaction>(&sql)
+            .bind(tid)
+            .bind(page_size)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?
+    } else {
+        let sql = format!(
+            "SELECT * FROM wallet_transactions ORDER BY created_at DESC LIMIT {} OFFSET {}",
+            crate::db::dialect::ph(1),
+            crate::db::dialect::ph(2)
+        );
+        sqlx::query_as::<_, WalletTransaction>(&sql)
+            .bind(page_size)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?
+    };
     Ok((rows, total))
 }
 

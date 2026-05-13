@@ -404,6 +404,7 @@ impl PaymentProvider for WechatPayProvider {
             status,
             provider_tx_id: resp.transaction_id,
             paid_at: resp.success_time,
+            amount: resp.amount.and_then(|a| a.total),
         })
     }
 

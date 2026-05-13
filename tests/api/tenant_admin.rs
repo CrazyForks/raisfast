@@ -1,14 +1,14 @@
 use super::*;
 
 async fn admin_token() -> String {
-    let pool = test_pool().await;
+    let pool = test_pool_with_tenants().await;
     let (int_id, doc_id) = create_admin(&pool).await;
     make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin)
 }
 
 #[tokio::test]
 async fn create_and_get_tenant() {
-    let (mut app, _) = test_app().await;
+    let (mut app, _) = test_app_with_tenants().await;
     let tok = admin_token().await;
 
     let (status, body) = send(
@@ -35,7 +35,7 @@ async fn create_and_get_tenant() {
 
 #[tokio::test]
 async fn update_tenant() {
-    let (mut app, _) = test_app().await;
+    let (mut app, _) = test_app_with_tenants().await;
     let tok = admin_token().await;
 
     let (_, create_body) = send(
@@ -60,7 +60,7 @@ async fn update_tenant() {
 
 #[tokio::test]
 async fn delete_tenant() {
-    let (mut app, _) = test_app().await;
+    let (mut app, _) = test_app_with_tenants().await;
     let tok = admin_token().await;
 
     let (_, create_body) = send(
@@ -87,7 +87,7 @@ async fn delete_tenant() {
 
 #[tokio::test]
 async fn list_tenants() {
-    let (mut app, _) = test_app().await;
+    let (mut app, _) = test_app_with_tenants().await;
     let tok = admin_token().await;
 
     send(
@@ -108,7 +108,7 @@ async fn list_tenants() {
 
 #[tokio::test]
 async fn get_tenant_not_found() {
-    let (mut app, _) = test_app().await;
+    let (mut app, _) = test_app_with_tenants().await;
     let tok = admin_token().await;
     let fake_id = uuid::Uuid::now_v7().to_string();
     let (status, _) = send(
@@ -121,7 +121,7 @@ async fn get_tenant_not_found() {
 
 #[tokio::test]
 async fn update_tenant_not_found() {
-    let (mut app, _) = test_app().await;
+    let (mut app, _) = test_app_with_tenants().await;
     let tok = admin_token().await;
     let fake_id = uuid::Uuid::now_v7().to_string();
     let (status, _) = send(
@@ -138,7 +138,7 @@ async fn update_tenant_not_found() {
 
 #[tokio::test]
 async fn delete_tenant_not_found_is_idempotent() {
-    let (mut app, _) = test_app().await;
+    let (mut app, _) = test_app_with_tenants().await;
     let tok = admin_token().await;
     let fake_id = uuid::Uuid::now_v7().to_string();
     let (status, _) = send(

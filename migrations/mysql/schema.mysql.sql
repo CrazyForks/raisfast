@@ -213,18 +213,6 @@ CREATE TABLE IF NOT EXISTS permissions (
 CREATE UNIQUE INDEX idx_permissions_role_action_subject
     ON permissions(role_id, action, subject);
 
--- 租户
-CREATE TABLE IF NOT EXISTS tenants (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    document_id VARCHAR(36) NOT NULL UNIQUE,
-    name VARCHAR(255) NOT NULL,
-    domain VARCHAR(255) UNIQUE,
-    config JSON NOT NULL,
-    status VARCHAR(50) NOT NULL DEFAULT 'active',
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 -- 审计日志
 CREATE TABLE IF NOT EXISTS audit_log (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -862,13 +850,32 @@ CREATE TABLE IF NOT EXISTS payment_refunds (
 CREATE INDEX idx_payment_refunds_order ON payment_refunds(payment_order_id);
 CREATE INDEX idx_payment_refunds_order_id ON payment_refunds(order_id);
 
+-- Wallet Outbox (ensures wallet operations are never lost)
+CREATE TABLE IF NOT EXISTS wallet_outbox (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    user_id BIGINT NOT NULL,
+    currency VARCHAR(10) NOT NULL,
+    amount BIGINT NOT NULL,
+    entry_type VARCHAR(20) NOT NULL,
+    tx_type VARCHAR(20) NOT NULL,
+    transaction_no VARCHAR(100) NOT NULL,
+    reference_type VARCHAR(30),
+    reference_id VARCHAR(100),
+    metadata TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    attempts INT NOT NULL DEFAULT 0,
+    max_attempts INT NOT NULL DEFAULT 5,
+    last_error TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_wallet_outbox_status (status),
+    INDEX idx_wallet_outbox_transaction_no (transaction_no)
+);
+
 -- ============================================================
 -- 预置数据
 -- ============================================================
-
--- 默认租户
-INSERT IGNORE INTO tenants (document_id, name, domain, config, status, created_at, updated_at) VALUES
-    ('default', 'Default', NULL, '{}', 'active', NOW(), NOW());
 
 -- 系统角色
 INSERT IGNORE INTO roles (document_id, name, description, is_system, created_at, updated_at) VALUES

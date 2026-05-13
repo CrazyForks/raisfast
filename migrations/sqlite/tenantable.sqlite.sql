@@ -1,4 +1,21 @@
 -- 内置表多租户支持（仅 BUILTIN_TENANTABLE=true 时由迁移执行器执行）
+
+-- 租户表
+CREATE TABLE IF NOT EXISTS tenants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    domain TEXT UNIQUE,
+    config TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+-- 默认租户
+INSERT OR IGNORE INTO tenants (document_id, name, domain, config, status, created_at, updated_at) VALUES
+    ('default', 'Default', NULL, '{}', 'active', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+
 -- 给所有内置业务表添加 tenant_id 列
 
 -- 业务表
@@ -31,6 +48,13 @@ ALTER TABLE payment_orders ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
 ALTER TABLE payment_transactions ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
 ALTER TABLE payment_refunds ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
 
+-- Wallet outbox
+ALTER TABLE wallet_outbox ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
+
+-- Wallet system
+ALTER TABLE wallets ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE wallet_transactions ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
+
 -- 更新现有数据
 UPDATE roles SET tenant_id = 'default';
 UPDATE permissions SET tenant_id = 'default';
@@ -58,3 +82,6 @@ CREATE INDEX IF NOT EXISTS idx_payment_channels_tenant ON payment_channels(tenan
 CREATE INDEX IF NOT EXISTS idx_payment_orders_tenant ON payment_orders(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_payment_transactions_tenant ON payment_transactions(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_payment_refunds_tenant ON payment_refunds(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_outbox_tenant ON wallet_outbox(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_wallets_tenant ON wallets(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_transactions_tenant ON wallet_transactions(tenant_id);

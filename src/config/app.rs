@@ -514,6 +514,13 @@ pub fn default_cron_schedules() -> Vec<CronScheduleConfig> {
             cron_expr: "0 0 4 * * *".into(),
             enabled: true,
         },
+        CronScheduleConfig {
+            label: "Process Wallet Outbox".into(),
+            job_type: "process_wallet_outbox".into(),
+            payload: None,
+            cron_expr: "0 */10 * * * *".into(),
+            enabled: true,
+        },
     ]
 }
 

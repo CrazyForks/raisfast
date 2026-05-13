@@ -103,21 +103,44 @@ pub async fn find_all_wallets(
     pool: &crate::db::Pool,
     page: i64,
     page_size: i64,
+    tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Wallet>, i64)> {
     let offset = (page - 1) * page_size;
-    let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) as count FROM wallets")
-        .fetch_one(pool)
-        .await?;
-    let sql = format!(
-        "SELECT * FROM wallets ORDER BY created_at DESC LIMIT {} OFFSET {}",
-        ph(1),
-        ph(2)
-    );
-    let rows = sqlx::query_as::<_, Wallet>(&sql)
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
+    let (total,): (i64,) = if let Some(tid) = tenant_id {
+        sqlx::query_as(&format!("SELECT COUNT(*) as count FROM wallets WHERE tenant_id = {}", crate::db::dialect::ph(1)))
+            .bind(tid)
+            .fetch_one(pool)
+            .await?
+    } else {
+        sqlx::query_as("SELECT COUNT(*) as count FROM wallets")
+            .fetch_one(pool)
+            .await?
+    };
+    let rows = if let Some(tid) = tenant_id {
+        let sql = format!(
+            "SELECT * FROM wallets WHERE tenant_id = {} ORDER BY created_at DESC LIMIT {} OFFSET {}",
+            crate::db::dialect::ph(1),
+            crate::db::dialect::ph(2),
+            crate::db::dialect::ph(3)
+        );
+        sqlx::query_as::<_, Wallet>(&sql)
+            .bind(tid)
+            .bind(page_size)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?
+    } else {
+        let sql = format!(
+            "SELECT * FROM wallets ORDER BY created_at DESC LIMIT {} OFFSET {}",
+            crate::db::dialect::ph(1),
+            crate::db::dialect::ph(2)
+        );
+        sqlx::query_as::<_, Wallet>(&sql)
+            .bind(page_size)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?
+    };
     Ok((rows, total))
 }
 
@@ -251,7 +274,7 @@ mod tests {
         let user2 = insert_user(&pool).await;
         create(&pool, user1.id, "CNY").await.unwrap();
         create(&pool, user2.id, "CNY").await.unwrap();
-        let (rows, total) = find_all_wallets(&pool, 1, 10).await.unwrap();
+        let (rows, total) = find_all_wallets(&pool, 1, 10, None).await.unwrap();
         assert_eq!(total, 2);
         assert_eq!(rows.len(), 2);
     }
@@ -261,7 +284,7 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool).await;
         create(&pool, user.id, "CNY").await.unwrap();
-        let (rows, total) = find_all_wallets(&pool, 2, 10).await.unwrap();
+        let (rows, total) = find_all_wallets(&pool, 2, 10, None).await.unwrap();
         assert_eq!(total, 1);
         assert!(rows.is_empty());
     }

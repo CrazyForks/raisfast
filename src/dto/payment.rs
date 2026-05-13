@@ -6,6 +6,14 @@ use validator::Validate;
 
 use crate::models::payment_order::PaymentStatus;
 
+fn validate_url(url: &str) -> Result<(), validator::ValidationError> {
+    if url.starts_with("http://") || url.starts_with("https://") {
+        Ok(())
+    } else {
+        Err(validator::ValidationError::new("invalid_url"))
+    }
+}
+
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreatePaymentOrderRequest {
@@ -14,6 +22,10 @@ pub struct CreatePaymentOrderRequest {
     #[validate(length(min = 1))]
     pub channel_id: String,
     pub method: Option<String>,
+    #[validate(custom(
+        function = "validate_url",
+        message = "return_url must start with http:// or https://"
+    ))]
     pub return_url: Option<String>,
     pub metadata: Option<String>,
 }
@@ -122,11 +134,8 @@ impl From<crate::models::payment_channel::PaymentChannel> for PaymentChannelResp
     }
 }
 
-fn mask_credentials(creds: &str) -> String {
-    if creds.len() <= 8 {
-        return "****".to_string();
-    }
-    format!("{}****{}", &creds[..4], &creds[creds.len() - 4..])
+fn mask_credentials(_creds: &str) -> String {
+    "[encrypted]".to_string()
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]

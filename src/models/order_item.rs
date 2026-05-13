@@ -159,6 +159,82 @@ pub async fn insert_batch(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn tx_insert(
+    tx: &mut crate::db::pool::DbConnection,
+    document_id: &str,
+    order_id: i64,
+    product_id: Option<i64>,
+    title: &str,
+    description: Option<&str>,
+    unit_price: i64,
+    quantity: i64,
+    subtotal: i64,
+    cover_url: Option<&str>,
+    attributes: Option<&str>,
+    tenant_id: Option<&str>,
+) -> AppResult<OrderItem> {
+    match tenant_id {
+        Some(tid) => {
+            let sql = format!(
+                "INSERT INTO order_items (document_id, tenant_id, order_id, product_id, title, description, unit_price, quantity, subtotal, cover_url, attributes, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
+                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11)
+            );
+            sqlx::query(&sql)
+                .bind(document_id).bind(tid).bind(order_id).bind(product_id)
+                .bind(title).bind(description).bind(unit_price).bind(quantity)
+                .bind(subtotal).bind(cover_url).bind(attributes)
+                .execute(&mut *tx).await?;
+        }
+        None => {
+            let sql = format!(
+                "INSERT INTO order_items (document_id, order_id, product_id, title, description, unit_price, quantity, subtotal, cover_url, attributes, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
+                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
+            );
+            sqlx::query(&sql)
+                .bind(document_id).bind(order_id).bind(product_id)
+                .bind(title).bind(description).bind(unit_price).bind(quantity)
+                .bind(subtotal).bind(cover_url).bind(attributes)
+                .execute(&mut *tx).await?;
+        }
+    }
+    let sql2 = format!(
+        "SELECT * FROM order_items WHERE document_id = {}{}",
+        ph(1),
+        crate::db::tenant::tenant_filter_ph(tenant_id, 2)
+    );
+    let mut q = sqlx::query_as::<_, OrderItem>(&sql2).bind(document_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    q.fetch_one(&mut *tx).await.map_err(Into::into)
+}
+
+pub async fn tx_insert_batch(
+    tx: &mut crate::db::pool::DbConnection,
+    items: Vec<InsertOrderItem>,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    for item in &items {
+        tx_insert(
+            tx,
+            &item.document_id,
+            item.order_id,
+            item.product_id,
+            &item.title,
+            item.description.as_deref(),
+            item.unit_price,
+            item.quantity,
+            item.subtotal,
+            item.cover_url.as_deref(),
+            item.attributes.as_deref(),
+            tenant_id,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 pub struct InsertOrderItem {
     pub document_id: String,
     pub order_id: i64,

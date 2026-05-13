@@ -6,10 +6,13 @@ use crate::models::order_item::{InsertOrderItem, OrderItem};
 use crate::models::product::ProductStatus;
 use crate::repositories::{OrderRepository, ProductRepository};
 
+const MAX_ITEMS_PER_ORDER: usize = 100;
+const MAX_QUANTITY: i64 = 10000;
+
 pub async fn create_order(
     pool: &crate::db::Pool,
     product_repo: &dyn ProductRepository,
-    order_repo: &dyn OrderRepository,
+    _order_repo: &dyn OrderRepository,
     auth: &AuthUser,
     user_id: i64,
     req: CreateOrderRequest,
@@ -17,11 +20,17 @@ pub async fn create_order(
     if req.items.is_empty() {
         return Err(AppError::BadRequest("items_empty".into()));
     }
+    if req.items.len() > MAX_ITEMS_PER_ORDER {
+        return Err(AppError::BadRequest("too_many_items".into()));
+    }
 
     let mut order_items_data: Vec<(i64, i64, crate::models::product::Product)> = Vec::new();
     let mut subtotal: i64 = 0;
 
     for item in &req.items {
+        if item.quantity > MAX_QUANTITY {
+            return Err(AppError::BadRequest("quantity_exceeds_limit".into()));
+        }
         let product = product_repo
             .find_by_document_id(&item.product_id, auth.tenant_id())
             .await?
@@ -31,8 +40,13 @@ pub async fn create_order(
             return Err(AppError::BadRequest("product_not_active".into()));
         }
 
-        let line_total = product.price * item.quantity;
-        subtotal += line_total;
+        let line_total = product
+            .price
+            .checked_mul(item.quantity)
+            .ok_or_else(|| AppError::BadRequest("line_total_overflow".into()))?;
+        subtotal = subtotal
+            .checked_add(line_total)
+            .ok_or_else(|| AppError::BadRequest("subtotal_overflow".into()))?;
         order_items_data.push((item.quantity, line_total, product));
     }
 
@@ -44,24 +58,24 @@ pub async fn create_order(
     let total_amount = subtotal;
 
     let order = crate::in_transaction!(pool, tx, {
-        let order = order_repo
-            .insert_order(
-                &document_id,
-                user_id,
-                &order_no,
-                subtotal,
-                0,
-                0,
-                total_amount,
-                currency,
-                req.buyer_name.as_deref(),
-                req.buyer_phone.as_deref(),
-                req.buyer_email.as_deref(),
-                req.shipping_address.as_deref(),
-                req.remark.as_deref(),
-                auth.tenant_id(),
-            )
-            .await?;
+        let order = crate::models::order::tx_insert(
+            &mut tx,
+            &document_id,
+            user_id,
+            &order_no,
+            subtotal,
+            0,
+            0,
+            total_amount,
+            currency,
+            req.buyer_name.as_deref(),
+            req.buyer_phone.as_deref(),
+            req.buyer_email.as_deref(),
+            req.shipping_address.as_deref(),
+            req.remark.as_deref(),
+            auth.tenant_id(),
+        )
+        .await?;
 
         let mut items = Vec::new();
         for (quantity, line_total, product) in &order_items_data {
@@ -78,9 +92,7 @@ pub async fn create_order(
                 attributes: product.attributes.clone(),
             });
         }
-        order_repo
-            .insert_items_batch(items, auth.tenant_id())
-            .await?;
+        crate::models::order_item::tx_insert_batch(&mut tx, items, auth.tenant_id()).await?;
 
         Ok(order)
     })?;
@@ -89,6 +101,7 @@ pub async fn create_order(
 }
 
 pub async fn cancel_order(
+    pool: &crate::db::Pool,
     order_repo: &dyn OrderRepository,
     auth: &AuthUser,
     order_id: &str,
@@ -106,21 +119,33 @@ pub async fn cancel_order(
         return Err(AppError::BadRequest("only_pending_can_cancel".into()));
     }
 
-    order_repo
-        .update_status(
-            order.id,
-            OrderStatus::Cancelled.as_str(),
-            Some("cancelled_at"),
-            auth.tenant_id(),
-        )
-        .await
+    let result: Result<(), AppError> = async {
+        crate::in_transaction!(pool, tx, {
+            let rows = crate::models::order::tx_update_status_cas(
+                &mut tx,
+                order.id,
+                OrderStatus::Cancelled.as_str(),
+                Some("cancelled_at"),
+                OrderStatus::Pending.as_str(),
+            )
+            .await?;
+            if rows == 0 {
+                return Err(AppError::BadRequest("concurrent_status_change".into()));
+            }
+            Ok(())
+        })
+    }
+    .await;
+    result
 }
 
 pub async fn mark_paid(
+    pool: &crate::db::Pool,
     order_repo: &dyn OrderRepository,
     auth: &AuthUser,
     order_id: &str,
 ) -> AppResult<Order> {
+    auth.ensure_admin()?;
     let order = order_repo
         .find_by_document_id(order_id, auth.tenant_id())
         .await?
@@ -130,14 +155,24 @@ pub async fn mark_paid(
         return Err(AppError::BadRequest("only_pending_can_pay".into()));
     }
 
-    order_repo
-        .update_status(
-            order.id,
-            OrderStatus::Paid.as_str(),
-            Some("paid_at"),
-            auth.tenant_id(),
-        )
-        .await?;
+    let result: Result<(), AppError> = async {
+        crate::in_transaction!(pool, tx, {
+            let rows = crate::models::order::tx_update_status_cas(
+                &mut tx,
+                order.id,
+                OrderStatus::Paid.as_str(),
+                Some("paid_at"),
+                OrderStatus::Pending.as_str(),
+            )
+            .await?;
+            if rows == 0 {
+                return Err(AppError::BadRequest("concurrent_status_change".into()));
+            }
+            Ok(())
+        })
+    }
+    .await;
+    result?;
 
     order_repo
         .find_by_id(order.id, auth.tenant_id())
@@ -146,11 +181,13 @@ pub async fn mark_paid(
 }
 
 pub async fn ship_order(
+    pool: &crate::db::Pool,
     order_repo: &dyn OrderRepository,
     auth: &AuthUser,
     order_id: &str,
     req: &ShipOrderRequest,
 ) -> AppResult<()> {
+    auth.ensure_admin()?;
     let order = order_repo
         .find_by_document_id(order_id, auth.tenant_id())
         .await?
@@ -160,17 +197,27 @@ pub async fn ship_order(
         return Err(AppError::BadRequest("only_paid_can_ship".into()));
     }
 
-    order_repo
-        .update_shipped(
-            order.id,
-            req.tracking_no.as_deref(),
-            req.carrier.as_deref(),
-            auth.tenant_id(),
-        )
-        .await
+    let result: Result<(), AppError> = async {
+        crate::in_transaction!(pool, tx, {
+            let rows = crate::models::order::tx_update_shipped(
+                &mut tx,
+                order.id,
+                req.tracking_no.as_deref(),
+                req.carrier.as_deref(),
+            )
+            .await?;
+            if rows == 0 {
+                return Err(AppError::BadRequest("concurrent_status_change".into()));
+            }
+            Ok(())
+        })
+    }
+    .await;
+    result
 }
 
 pub async fn confirm_receipt(
+    pool: &crate::db::Pool,
     order_repo: &dyn OrderRepository,
     auth: &AuthUser,
     order_id: &str,
@@ -188,21 +235,33 @@ pub async fn confirm_receipt(
         return Err(AppError::BadRequest("only_shipped_can_confirm".into()));
     }
 
-    order_repo
-        .update_status(
-            order.id,
-            OrderStatus::Completed.as_str(),
-            Some("completed_at"),
-            auth.tenant_id(),
-        )
-        .await
+    let result: Result<(), AppError> = async {
+        crate::in_transaction!(pool, tx, {
+            let rows = crate::models::order::tx_update_status_cas(
+                &mut tx,
+                order.id,
+                OrderStatus::Completed.as_str(),
+                Some("completed_at"),
+                OrderStatus::Shipped.as_str(),
+            )
+            .await?;
+            if rows == 0 {
+                return Err(AppError::BadRequest("concurrent_status_change".into()));
+            }
+            Ok(())
+        })
+    }
+    .await;
+    result
 }
 
 pub async fn refund_order(
+    pool: &crate::db::Pool,
     order_repo: &dyn OrderRepository,
     auth: &AuthUser,
     order_id: &str,
 ) -> AppResult<()> {
+    auth.ensure_admin()?;
     let order = order_repo
         .find_by_document_id(order_id, auth.tenant_id())
         .await?
@@ -214,14 +273,62 @@ pub async fn refund_order(
         ));
     }
 
-    order_repo
-        .update_status(
-            order.id,
-            OrderStatus::Refunding.as_str(),
-            Some("refunding_at"),
-            auth.tenant_id(),
-        )
-        .await
+    let result: Result<(), AppError> = async {
+        crate::in_transaction!(pool, tx, {
+            let expected = order.status.as_str();
+            let rows = crate::models::order::tx_update_status_cas(
+                &mut tx,
+                order.id,
+                OrderStatus::Refunding.as_str(),
+                Some("refunding_at"),
+                expected,
+            )
+            .await?;
+            if rows == 0 {
+                return Err(AppError::BadRequest("concurrent_status_change".into()));
+            }
+            Ok(())
+        })
+    }
+    .await;
+    result
+}
+
+pub async fn admin_cancel(
+    pool: &crate::db::Pool,
+    order_repo: &dyn OrderRepository,
+    auth: &AuthUser,
+    order_id: &str,
+) -> AppResult<()> {
+    auth.ensure_admin()?;
+    let order = order_repo
+        .find_by_document_id(order_id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("order"))?;
+
+    if order.status != OrderStatus::Pending && order.status != OrderStatus::Paid {
+        return Err(AppError::BadRequest("only_pending_or_paid_can_admin_cancel".into()));
+    }
+
+    let result: Result<(), AppError> = async {
+        crate::in_transaction!(pool, tx, {
+            let expected = order.status.as_str();
+            let rows = crate::models::order::tx_update_status_cas(
+                &mut tx,
+                order.id,
+                OrderStatus::Cancelled.as_str(),
+                Some("cancelled_at"),
+                expected,
+            )
+            .await?;
+            if rows == 0 {
+                return Err(AppError::BadRequest("concurrent_status_change".into()));
+            }
+            Ok(())
+        })
+    }
+    .await;
+    result
 }
 
 pub async fn get_order(
@@ -233,6 +340,12 @@ pub async fn get_order(
         .find_by_document_id(order_id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("order"))?;
+    if auth.role() != "admin" {
+        let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
+        if order.user_id != user_int_id {
+            return Err(AppError::Forbidden);
+        }
+    }
     let items = order_repo
         .find_items_by_order_id(order.id, auth.tenant_id())
         .await?;
@@ -258,6 +371,7 @@ pub async fn list_admin_orders(
     page_size: i64,
     status: Option<&str>,
 ) -> AppResult<(Vec<Order>, i64)> {
+    auth.ensure_admin()?;
     order_repo
         .find_all_admin_paginated(auth.tenant_id(), page, page_size, status)
         .await
@@ -269,6 +383,7 @@ pub async fn update_admin_remark(
     order_id: &str,
     admin_remark: &str,
 ) -> AppResult<()> {
+    auth.ensure_admin()?;
     let order = order_repo
         .find_by_document_id(order_id, auth.tenant_id())
         .await?
@@ -279,34 +394,11 @@ pub async fn update_admin_remark(
 }
 
 pub async fn get_stats(
-    order_repo: &dyn OrderRepository,
+    pool: &crate::db::Pool,
     auth: &AuthUser,
 ) -> AppResult<crate::dto::OrderStatsResponse> {
-    let (_, total_orders) = order_repo
-        .find_all_admin_paginated(auth.tenant_id(), 1, 1, None)
-        .await?;
-    let (_, pending_orders) = order_repo
-        .find_all_admin_paginated(auth.tenant_id(), 1, 1, Some("pending"))
-        .await?;
-    let (_, paid_orders) = order_repo
-        .find_all_admin_paginated(auth.tenant_id(), 1, 1, Some("paid"))
-        .await?;
-    let (_, completed_orders) = order_repo
-        .find_all_admin_paginated(auth.tenant_id(), 1, 1, Some("completed"))
-        .await?;
-
-    let all = order_repo
-        .find_all_admin_paginated(auth.tenant_id(), 1, i64::MAX, Some("completed"))
-        .await?;
-    let total_revenue: i64 = all.0.iter().map(|o| o.total_amount).sum();
-
-    Ok(crate::dto::OrderStatsResponse {
-        total_orders,
-        pending_orders,
-        paid_orders,
-        completed_orders,
-        total_revenue,
-    })
+    auth.ensure_admin()?;
+    crate::models::order::get_stats_query(pool, auth.tenant_id()).await
 }
 
 #[cfg(test)]
@@ -644,7 +736,7 @@ mod tests {
         let a = auth(None);
         let (uid, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
 
-        super::cancel_order(&order_repo, &a, &order.document_id, uid)
+        super::cancel_order(&pool, &order_repo, &a, &order.document_id, uid)
             .await
             .unwrap();
         let found = order_repo
@@ -664,7 +756,7 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
 
-        let err = super::cancel_order(&order_repo, &a, &order.document_id, 999)
+        let err = super::cancel_order(&pool, &order_repo, &a, &order.document_id, 999)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::Forbidden));
@@ -683,7 +775,7 @@ mod tests {
             .await
             .unwrap();
 
-        let err = super::cancel_order(&order_repo, &a, &order.document_id, uid)
+        let err = super::cancel_order(&pool, &order_repo, &a, &order.document_id, uid)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "only_pending_can_cancel"));
@@ -697,7 +789,7 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
 
-        let paid = super::mark_paid(&order_repo, &a, &order.document_id)
+        let paid = super::mark_paid(&pool, &order_repo, &a, &order.document_id)
             .await
             .unwrap();
         assert_eq!(paid.status, OrderStatus::Paid);
@@ -717,7 +809,7 @@ mod tests {
             .await
             .unwrap();
 
-        let err = super::mark_paid(&order_repo, &a, &order.document_id)
+        let err = super::mark_paid(&pool, &order_repo, &a, &order.document_id)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "only_pending_can_pay"));
@@ -736,6 +828,7 @@ mod tests {
             .await
             .unwrap();
         super::ship_order(
+            &pool,
             &order_repo,
             &a,
             &order.document_id,
@@ -766,6 +859,7 @@ mod tests {
         let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
 
         let err = super::ship_order(
+            &pool,
             &order_repo,
             &a,
             &order.document_id,
@@ -796,7 +890,7 @@ mod tests {
             .await
             .unwrap();
 
-        super::confirm_receipt(&order_repo, &a, &order.document_id, uid)
+        super::confirm_receipt(&pool, &order_repo, &a, &order.document_id, uid)
             .await
             .unwrap();
         let found = order_repo
@@ -825,7 +919,7 @@ mod tests {
             .await
             .unwrap();
 
-        let err = super::confirm_receipt(&order_repo, &a, &order.document_id, 999)
+        let err = super::confirm_receipt(&pool, &order_repo, &a, &order.document_id, 999)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::Forbidden));
@@ -839,7 +933,7 @@ mod tests {
         let a = auth(None);
         let (uid, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
 
-        let err = super::confirm_receipt(&order_repo, &a, &order.document_id, uid)
+        let err = super::confirm_receipt(&pool, &order_repo, &a, &order.document_id, uid)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "only_shipped_can_confirm"));
@@ -857,7 +951,7 @@ mod tests {
             .update_status(order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
-        super::refund_order(&order_repo, &a, &order.document_id)
+        super::refund_order(&pool, &order_repo, &a, &order.document_id)
             .await
             .unwrap();
 
@@ -886,7 +980,7 @@ mod tests {
             .update_shipped(order.id, Some("TRK"), None, None)
             .await
             .unwrap();
-        super::refund_order(&order_repo, &a, &order.document_id)
+        super::refund_order(&pool, &order_repo, &a, &order.document_id)
             .await
             .unwrap();
 
@@ -906,7 +1000,7 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
 
-        let err = super::refund_order(&order_repo, &a, &order.document_id)
+        let err = super::refund_order(&pool, &order_repo, &a, &order.document_id)
             .await
             .unwrap_err();
         assert!(
@@ -1105,7 +1199,7 @@ mod tests {
             .await
             .unwrap();
 
-        let stats = super::get_stats(&order_repo, &a).await.unwrap();
+        let stats = super::get_stats(&pool, &a).await.unwrap();
         assert_eq!(stats.total_orders, 2);
         assert_eq!(stats.pending_orders, 1);
         assert_eq!(stats.completed_orders, 1);
@@ -1126,12 +1220,13 @@ mod tests {
         assert_eq!(o.status, OrderStatus::Pending);
         assert_eq!(items.len(), 1);
 
-        let paid = super::mark_paid(&order_repo, &a, &order.document_id)
+        let paid = super::mark_paid(&pool, &order_repo, &a, &order.document_id)
             .await
             .unwrap();
         assert_eq!(paid.status, OrderStatus::Paid);
 
         super::ship_order(
+            &pool,
             &order_repo,
             &a,
             &order.document_id,
@@ -1143,7 +1238,7 @@ mod tests {
         .await
         .unwrap();
 
-        super::confirm_receipt(&order_repo, &a, &order.document_id, uid)
+        super::confirm_receipt(&pool, &order_repo, &a, &order.document_id, uid)
             .await
             .unwrap();
 

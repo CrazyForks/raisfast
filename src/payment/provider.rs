@@ -17,6 +17,7 @@ pub struct ProviderStatus {
     pub status: PaymentStatus,
     pub provider_tx_id: Option<String>,
     pub paid_at: Option<String>,
+    pub amount: Option<i64>,
 }
 
 #[derive(Debug, Clone)]

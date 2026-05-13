@@ -267,6 +267,7 @@ impl PaymentProvider for CreemProvider {
             status,
             provider_tx_id: None,
             paid_at: None,
+            amount: detail.order.and_then(|o| o.amount),
         })
     }
 
@@ -303,7 +304,7 @@ impl PaymentProvider for CreemProvider {
                 AppError::BadRequest("missing creem-signature header".into())
             })?;
 
-        let webhook_secret = channel
+        let encrypted_secret = channel
             .webhook_secret
             .as_deref()
             .ok_or_else(|| {
@@ -312,7 +313,9 @@ impl PaymentProvider for CreemProvider {
                 )
             })?;
 
-        verify_signature(body, signature, webhook_secret)?;
+        let webhook_secret = crate::payment::crypto::aes256gcm_decrypt(encrypted_secret, &self.encrypt_key)?;
+
+        verify_signature(body, signature, &webhook_secret)?;
 
         let payload: CreemWebhookPayload =
             serde_json::from_slice(body).map_err(|e| {

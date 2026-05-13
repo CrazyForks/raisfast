@@ -366,6 +366,7 @@ impl PaymentProvider for AlipayProvider {
                 status: PaymentStatus::Pending,
                 provider_tx_id: None,
                 paid_at: None,
+                amount: None,
             });
         }
 
@@ -379,6 +380,7 @@ impl PaymentProvider for AlipayProvider {
             status,
             provider_tx_id: result.trade_no,
             paid_at: result.send_pay_date,
+            amount: None,
         })
     }
 

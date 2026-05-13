@@ -201,17 +201,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_role_action_subject
     ON permissions(role_id, action, subject);
 
 -- 租户
-CREATE TABLE IF NOT EXISTS tenants (
-    id BIGSERIAL PRIMARY KEY,
-    document_id VARCHAR(36) NOT NULL UNIQUE,
-    name VARCHAR(255) NOT NULL,
-    domain VARCHAR(255) UNIQUE,
-    config JSONB NOT NULL DEFAULT '{}',
-    status VARCHAR(50) NOT NULL DEFAULT 'active',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
 -- 审计日志
 CREATE TABLE IF NOT EXISTS audit_log (
     id BIGSERIAL PRIMARY KEY,
@@ -822,14 +811,33 @@ CREATE TABLE IF NOT EXISTS payment_refunds (
 CREATE INDEX IF NOT EXISTS idx_payment_refunds_order ON payment_refunds(payment_order_id);
 CREATE INDEX IF NOT EXISTS idx_payment_refunds_order_id ON payment_refunds(order_id);
 
+-- Wallet Outbox (ensures wallet operations are never lost)
+CREATE TABLE IF NOT EXISTS wallet_outbox (
+    id BIGSERIAL PRIMARY KEY,
+    document_id TEXT NOT NULL UNIQUE,
+    user_id BIGINT NOT NULL,
+    currency TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    entry_type TEXT NOT NULL,
+    tx_type TEXT NOT NULL,
+    transaction_no TEXT NOT NULL,
+    reference_type TEXT,
+    reference_id TEXT,
+    metadata TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 5,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_outbox_status ON wallet_outbox(status);
+CREATE INDEX IF NOT EXISTS idx_wallet_outbox_transaction_no ON wallet_outbox(transaction_no);
+
 -- ============================================================
 -- 预置数据
 -- ============================================================
-
--- 默认租户
-INSERT INTO tenants (document_id, name, domain, config, status, created_at, updated_at) VALUES
-    ('default', 'Default', NULL, '{}', 'active', NOW(), NOW())
-ON CONFLICT (document_id) DO NOTHING;
 
 -- 系统角色
 INSERT INTO roles (document_id, name, description, is_system, created_at, updated_at) VALUES

@@ -46,4 +46,5 @@ pub mod tenant;
 pub mod user;
 pub mod user_credential;
 pub mod wallet;
+pub mod wallet_outbox;
 pub mod wallet_transaction;

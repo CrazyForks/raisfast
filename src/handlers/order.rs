@@ -63,6 +63,15 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     let r = crate::reg_route!(
         r,
         registry,
+        "/admin/orders/{id}/pay",
+        http_post(admin_pay),
+        "system admin",
+        "admin/orders",
+        ["POST"]
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
         "/admin/orders/{id}/ship",
         http_post(admin_ship),
         "system admin",
@@ -216,7 +225,7 @@ pub async fn cancel_order_handler(
     let user_int_id = auth
         .user_int_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
-    order::cancel_order(state.order_repo.as_ref(), &auth, &id, user_int_id).await?;
+    order::cancel_order(&state.pool, state.order_repo.as_ref(), &auth, &id, user_int_id).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -229,7 +238,7 @@ pub async fn confirm_receipt(
     let user_int_id = auth
         .user_int_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
-    order::confirm_receipt(state.order_repo.as_ref(), &auth, &id, user_int_id).await?;
+    order::confirm_receipt(&state.pool, state.order_repo.as_ref(), &auth, &id, user_int_id).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -276,7 +285,7 @@ pub async fn admin_ship(
     Json(req): Json<ShipOrderRequest>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    order::ship_order(state.order_repo.as_ref(), &auth, &id, &req).await?;
+    order::ship_order(&state.pool, state.order_repo.as_ref(), &auth, &id, &req).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -286,15 +295,17 @@ pub async fn admin_cancel(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    let o = order::get_order(state.order_repo.as_ref(), &auth, &id).await?;
-    crate::models::order::update_status(
-        &state.pool,
-        o.0.id,
-        crate::models::order::OrderStatus::Cancelled.as_str(),
-        Some("cancelled_at"),
-        auth.tenant_id(),
-    )
-    .await?;
+    order::admin_cancel(&state.pool, state.order_repo.as_ref(), &auth, &id).await?;
+    Ok(ApiResponse::success(()))
+}
+
+pub async fn admin_pay(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Path(id): Path<String>,
+) -> AppResult<ApiResponse<()>> {
+    auth.ensure_admin()?;
+    order::mark_paid(&state.pool, state.order_repo.as_ref(), &auth, &id).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -304,7 +315,7 @@ pub async fn admin_refund(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    order::refund_order(state.order_repo.as_ref(), &auth, &id).await?;
+    order::refund_order(&state.pool, state.order_repo.as_ref(), &auth, &id).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -324,6 +335,6 @@ pub async fn admin_stats(
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<OrderStatsResponse>> {
     auth.ensure_admin()?;
-    let stats = order::get_stats(state.order_repo.as_ref(), &auth).await?;
+    let stats = order::get_stats(&state.pool, &auth).await?;
     Ok(ApiResponse::success(stats))
 }

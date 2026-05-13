@@ -21,7 +21,7 @@ pub trait WalletRepository: Send + Sync {
 
     async fn find_or_create_wallet(&self, user_id: i64, currency: &str) -> AppResult<Wallet>;
 
-    async fn find_all_wallets(&self, page: i64, page_size: i64) -> AppResult<(Vec<Wallet>, i64)>;
+    async fn find_all_wallets(&self, page: i64, page_size: i64, tenant_id: Option<&str>) -> AppResult<(Vec<Wallet>, i64)>;
 
     async fn find_transactions_by_wallet(
         &self,
@@ -41,6 +41,7 @@ pub trait WalletRepository: Send + Sync {
         &self,
         page: i64,
         page_size: i64,
+        tenant_id: Option<&str>,
     ) -> AppResult<(Vec<WalletTransaction>, i64)>;
 
     async fn find_tx_by_transaction_no(
@@ -89,8 +90,8 @@ impl WalletRepository for SqlxWalletRepository {
         wallet::find_or_create(&self.pool, user_id, currency).await
     }
 
-    async fn find_all_wallets(&self, page: i64, page_size: i64) -> AppResult<(Vec<Wallet>, i64)> {
-        wallet::find_all_wallets(&self.pool, page, page_size).await
+    async fn find_all_wallets(&self, page: i64, page_size: i64, tenant_id: Option<&str>) -> AppResult<(Vec<Wallet>, i64)> {
+        wallet::find_all_wallets(&self.pool, page, page_size, tenant_id).await
     }
 
     async fn find_transactions_by_wallet(
@@ -116,8 +117,9 @@ impl WalletRepository for SqlxWalletRepository {
         &self,
         page: i64,
         page_size: i64,
+        tenant_id: Option<&str>,
     ) -> AppResult<(Vec<WalletTransaction>, i64)> {
-        wallet_transaction::find_all_transactions(&self.pool, page, page_size).await
+        wallet_transaction::find_all_transactions(&self.pool, page, page_size, tenant_id).await
     }
 
     async fn find_tx_by_transaction_no(
@@ -232,7 +234,7 @@ mod tests {
         let user = insert_user(&pool).await;
         repo.create_wallet(user.id, "CNY").await.unwrap();
         repo.create_wallet(user.id, "USD").await.unwrap();
-        let (rows, total) = repo.find_all_wallets(1, 10).await.unwrap();
+        let (rows, total) = repo.find_all_wallets(1, 10, None).await.unwrap();
         assert_eq!(total, 2);
         assert_eq!(rows.len(), 2);
     }

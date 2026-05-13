@@ -99,6 +99,7 @@ pub enum Job {
         payment_order_id: i64,
     },
     ReconcilePayments,
+    ProcessWalletOutbox,
     /// Custom job type, supports arbitrary `job_type` + JSON payload
     ///
     /// When no built-in Handler matches, WorkerRunner falls back to plugin dispatch.
@@ -126,6 +127,7 @@ impl Job {
             Job::ExpirePaymentOrders => "expire_payment_orders",
             Job::RetryPaymentCallback { .. } => "retry_payment_callback",
             Job::ReconcilePayments => "reconcile_payments",
+            Job::ProcessWalletOutbox => "process_wallet_outbox",
             Job::Custom { job_type, .. } => job_type,
         }
     }
