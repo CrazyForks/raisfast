@@ -49,6 +49,7 @@ macro_rules! impl_from_row_opt_tenant {
 #[macro_export]
 macro_rules! in_transaction {
     ($pool:expr, $tx:ident, $body:block) => {{
+        #[allow(unused_mut)]
         let mut $tx = $pool.begin().await.map_err(|e| {
             $crate::errors::app_error::AppError::Internal(anyhow::anyhow!("begin tx: {e}"))
         })?;

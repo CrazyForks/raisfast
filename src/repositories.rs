@@ -24,6 +24,7 @@ pub mod sqlx_refresh_token;
 pub mod sqlx_tag;
 pub mod sqlx_tenant;
 pub mod sqlx_user;
+pub mod sqlx_order;
 pub mod sqlx_wallet;
 
 pub use crate::commands::*;
@@ -39,6 +40,7 @@ pub use sqlx_tag::{SqlxTagRepository, TagRepository};
 pub use sqlx_tenant::{SqlxTenantRepository, TenantRepository};
 pub use sqlx_user::{SqlxUserRepository, UserRepository};
 pub use sqlx_wallet::{SqlxWalletRepository, WalletRepository};
+pub use sqlx_order::{OrderRepository, ProductRepository, SqlxOrderRepository, SqlxProductRepository};
 
 /// Defines a sqlx Repository struct and `new()` constructor.
 ///

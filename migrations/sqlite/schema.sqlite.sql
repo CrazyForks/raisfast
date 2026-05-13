@@ -689,3 +689,96 @@ INSERT OR IGNORE INTO options (document_id, option_key, value, type, group_name,
     ('opt-default-role', 'default_role', '"reader"', 'select', 'discussion', '新用户默认角色', NULL, '{"values":["reader","author"]}', 0, 1, 22, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     ('opt-theme', 'theme', '"default"', 'select', 'appearance', '当前主题', NULL, '{"values":["default","corporate","minimal","warm"]}', 1, 1, 30, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     ('opt-maintenance', 'maintenance_mode', 'false', 'boolean', 'appearance', '维护模式', '开启后前台显示维护页面', NULL, 1, 1, 31, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+
+-- Products
+CREATE TABLE IF NOT EXISTS products (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    category_id INTEGER REFERENCES categories(id),
+    title TEXT NOT NULL,
+    description TEXT,
+    cover_url TEXT,
+    product_type TEXT NOT NULL DEFAULT 'custom',
+    fulfillment_type TEXT NOT NULL DEFAULT 'digital',
+    delivery_hook TEXT,
+    weight INTEGER,
+    shipping_template_id INTEGER,
+    price INTEGER NOT NULL CHECK(price >= 0),
+    currency TEXT NOT NULL DEFAULT 'USD',
+    status TEXT NOT NULL DEFAULT 'draft',
+    attributes TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    slug TEXT UNIQUE,
+    content TEXT,
+    image_ids TEXT,
+    original_price INTEGER,
+    specs TEXT,
+    unit TEXT NOT NULL DEFAULT 'piece',
+    min_purchase INTEGER NOT NULL DEFAULT 1,
+    max_purchase INTEGER,
+    total_sales INTEGER NOT NULL DEFAULT 0,
+    virtual_sales INTEGER NOT NULL DEFAULT 0,
+    meta_title TEXT,
+    meta_description TEXT,
+    published_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_products_status ON products(status);
+CREATE INDEX IF NOT EXISTS idx_products_type ON products(product_type);
+CREATE INDEX IF NOT EXISTS idx_products_slug ON products(slug);
+
+-- Orders
+CREATE TABLE IF NOT EXISTS orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    order_no TEXT NOT NULL UNIQUE,
+    subtotal INTEGER NOT NULL DEFAULT 0,
+    discount_amount INTEGER NOT NULL DEFAULT 0,
+    shipping_amount INTEGER NOT NULL DEFAULT 0,
+    total_amount INTEGER NOT NULL CHECK(total_amount >= 0),
+    currency TEXT NOT NULL DEFAULT 'USD',
+    status TEXT NOT NULL DEFAULT 'pending',
+    buyer_name TEXT,
+    buyer_phone TEXT,
+    buyer_email TEXT,
+    shipping_address TEXT,
+    tracking_no TEXT,
+    carrier TEXT,
+    remark TEXT,
+    admin_remark TEXT,
+    delivery_data TEXT,
+    paid_at TEXT,
+    completed_at TEXT,
+    cancelled_at TEXT,
+    refunding_at TEXT,
+    refunded_at TEXT,
+    expired_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+CREATE INDEX IF NOT EXISTS idx_orders_order_no ON orders(order_no);
+
+-- Order Items
+CREATE TABLE IF NOT EXISTS order_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    order_id INTEGER NOT NULL REFERENCES orders(id),
+    product_id INTEGER REFERENCES products(id),
+    title TEXT NOT NULL,
+    description TEXT,
+    unit_price INTEGER NOT NULL CHECK(unit_price >= 0),
+    quantity INTEGER NOT NULL CHECK(quantity > 0),
+    subtotal INTEGER NOT NULL,
+    cover_url TEXT,
+    attributes TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);

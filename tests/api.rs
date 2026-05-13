@@ -30,8 +30,9 @@ use raisfast::middleware::rate_limit::{
 use raisfast::plugins::PluginManager;
 use raisfast::repositories::{
     CachedPostRepository, SqlxCategoryRepository, SqlxCommentRepository, SqlxMediaRepository,
-    SqlxOptionsRepository, SqlxPostRepository, SqlxRbacRepository, SqlxRefreshTokenRepository,
-    SqlxTagRepository, SqlxTenantRepository, SqlxUserRepository,
+    SqlxOptionsRepository, SqlxOrderRepository, SqlxPostRepository, SqlxProductRepository,
+    SqlxRbacRepository, SqlxRefreshTokenRepository, SqlxTagRepository, SqlxTenantRepository,
+    SqlxUserRepository,
 };
 use raisfast::search::NoopSearchEngine;
 use serde_json::{Value, json};
@@ -86,6 +87,12 @@ pub(crate) async fn test_app() -> (axum::Router, AppState) {
         media_repo: Arc::new(SqlxMediaRepository::new(pool.clone())),
         refresh_token_repo: Arc::new(SqlxRefreshTokenRepository::new(pool.clone())),
         wallet_repo: Arc::new(raisfast::repositories::SqlxWalletRepository::new(
+            pool.clone(),
+        )),
+        product_repo: Arc::new(raisfast::repositories::SqlxProductRepository::new(
+            pool.clone(),
+        )),
+        order_repo: Arc::new(raisfast::repositories::SqlxOrderRepository::new(
             pool.clone(),
         )),
         search: Arc::new(NoopSearchEngine),

@@ -127,6 +127,10 @@ async fn build_app(
             .merge(comment::routes(&mut registry));
     }
 
+    api_v1 = api_v1
+        .merge(crate::handlers::product::routes(&mut registry))
+        .merge(crate::handlers::order::routes(&mut registry));
+
     if config.builtins.pages {
         api_v1 = api_v1
             .merge(page::routes(&mut registry))

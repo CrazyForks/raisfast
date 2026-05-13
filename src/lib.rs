@@ -75,8 +75,8 @@ use notifier::{EmailSender, SmsSender};
 use oauth::OAuthProviderRegistry;
 use plugins::PluginManager;
 use repositories::{
-    CategoryRepository, CommentRepository, MediaRepository, PostRepository, RefreshTokenRepository,
-    TagRepository, UserRepository, WalletRepository,
+    CategoryRepository, CommentRepository, MediaRepository, OrderRepository, PostRepository,
+    ProductRepository, RefreshTokenRepository, TagRepository, UserRepository, WalletRepository,
 };
 use search::SearchEngine;
 use services::options::OptionsService;
@@ -110,6 +110,8 @@ pub struct AppState {
     pub media_repo: Arc<dyn MediaRepository>,
     pub refresh_token_repo: Arc<dyn RefreshTokenRepository>,
     pub wallet_repo: Arc<dyn WalletRepository>,
+    pub product_repo: Arc<dyn ProductRepository>,
+    pub order_repo: Arc<dyn OrderRepository>,
     pub search: Arc<dyn SearchEngine>,
     pub content_type_registry: Arc<ContentTypeRegistry>,
     pub aspect_engine: Arc<crate::aspects::engine::AspectEngine>,
@@ -163,6 +165,11 @@ pub async fn build_app_state(
 
     let wallet_repo: Arc<dyn crate::repositories::WalletRepository> =
         Arc::new(crate::repositories::SqlxWalletRepository::new(pool.clone()));
+
+    let product_repo: Arc<dyn crate::repositories::ProductRepository> =
+        Arc::new(crate::repositories::SqlxProductRepository::new(pool.clone()));
+    let order_repo: Arc<dyn crate::repositories::OrderRepository> =
+        Arc::new(crate::repositories::SqlxOrderRepository::new(pool.clone()));
 
     let search: Arc<dyn SearchEngine> = build_search_engine(config);
 
@@ -258,6 +265,8 @@ pub async fn build_app_state(
         media_repo,
         refresh_token_repo,
         wallet_repo,
+        product_repo,
+        order_repo,
         search,
         content_type_registry: ct_registry,
         aspect_engine,

@@ -20,6 +20,11 @@ ALTER TABLE permissions ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
 ALTER TABLE audit_log ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
 ALTER TABLE webhook_subscriptions ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
 
+-- Order system
+ALTER TABLE products ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE orders ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE order_items ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
+
 -- 更新现有数据
 UPDATE roles SET tenant_id = 'default';
 UPDATE permissions SET tenant_id = 'default';
@@ -40,3 +45,6 @@ CREATE INDEX IF NOT EXISTS idx_roles_tenant ON roles(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_permissions_tenant ON permissions(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_tenant ON audit_log(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_tenant ON webhook_subscriptions(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_products_tenant ON products(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_orders_tenant ON orders(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_order_items_tenant ON order_items(tenant_id);
