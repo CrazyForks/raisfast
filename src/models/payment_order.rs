@@ -56,6 +56,10 @@ pub struct PaymentOrder {
     pub version: i64,
     pub provider_data: Option<String>,
     pub client_ip: Option<String>,
+    pub client_language: Option<String>,
+    pub client_country: Option<String>,
+    pub client_user_agent: Option<String>,
+    pub channel_selected_by: Option<String>,
     pub metadata: Option<String>,
     pub paid_at: Option<Timestamp>,
     pub cancelled_at: Option<Timestamp>,
@@ -66,7 +70,7 @@ pub struct PaymentOrder {
 
 crate::impl_from_row_opt_tenant!(PaymentOrder {
     required { id, document_id, user_id, title, amount, currency, channel_id, provider, status, idempotency_key, version, created_at, updated_at }
-    optional { order_id, provider_order_id, provider_method, reference_type, reference_id, return_url, provider_data, client_ip, metadata, paid_at, cancelled_at, expired_at }
+    optional { order_id, provider_order_id, provider_method, reference_type, reference_id, return_url, provider_data, client_ip, client_language, client_country, client_user_agent, channel_selected_by, metadata, paid_at, cancelled_at, expired_at }
 });
 
 pub async fn find_by_id(
@@ -250,28 +254,18 @@ pub async fn insert(
     return_url: Option<&str>,
     idempotency_key: &str,
     client_ip: Option<&str>,
+    client_language: Option<&str>,
+    client_country: Option<&str>,
+    client_user_agent: Option<&str>,
+    channel_selected_by: Option<&str>,
     metadata: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<PaymentOrder> {
     match tenant_id {
         Some(tid) => {
             let sql = format!(
-                "INSERT INTO payment_orders (document_id, tenant_id, user_id, order_id, title, amount, currency, channel_id, provider, reference_type, reference_id, return_url, idempotency_key, client_ip, metadata, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10),
-                ph(11),
-                ph(12),
-                ph(13),
-                ph(14),
-                ph(15)
+                "INSERT INTO payment_orders (document_id, tenant_id, user_id, order_id, title, amount, currency, channel_id, provider, reference_type, reference_id, return_url, idempotency_key, client_ip, client_language, client_country, client_user_agent, channel_selected_by, metadata, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
+                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13), ph(14), ph(15), ph(16), ph(17), ph(18), ph(19)
             );
             sqlx::query(&sql)
                 .bind(document_id)
@@ -288,27 +282,18 @@ pub async fn insert(
                 .bind(return_url)
                 .bind(idempotency_key)
                 .bind(client_ip)
+                .bind(client_language)
+                .bind(client_country)
+                .bind(client_user_agent)
+                .bind(channel_selected_by)
                 .bind(metadata)
                 .execute(pool)
                 .await?;
         }
         None => {
             let sql = format!(
-                "INSERT INTO payment_orders (document_id, user_id, order_id, title, amount, currency, channel_id, provider, reference_type, reference_id, return_url, idempotency_key, client_ip, metadata, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10),
-                ph(11),
-                ph(12),
-                ph(13),
-                ph(14)
+                "INSERT INTO payment_orders (document_id, user_id, order_id, title, amount, currency, channel_id, provider, reference_type, reference_id, return_url, idempotency_key, client_ip, client_language, client_country, client_user_agent, channel_selected_by, metadata, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
+                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13), ph(14), ph(15), ph(16), ph(17), ph(18)
             );
             sqlx::query(&sql)
                 .bind(document_id)
@@ -324,6 +309,10 @@ pub async fn insert(
                 .bind(return_url)
                 .bind(idempotency_key)
                 .bind(client_ip)
+                .bind(client_language)
+                .bind(client_country)
+                .bind(client_user_agent)
+                .bind(channel_selected_by)
                 .bind(metadata)
                 .execute(pool)
                 .await?;
@@ -473,6 +462,10 @@ mod tests {
             None,
             None,
             &idem_key,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,

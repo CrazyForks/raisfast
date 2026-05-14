@@ -8,6 +8,7 @@ use crate::models::payment_order::{PaymentOrder, PaymentStatus};
 use crate::models::payment_refund::PaymentRefund;
 use crate::models::payment_transaction::PaymentTransaction;
 use crate::models::wallet_transaction::{WalletReferenceType, WalletTxType};
+use crate::payment::routing::{RoutingContext, select_best_channel, select_channels};
 use crate::payment::ProviderResponse;
 use crate::repositories::{
     PaymentChannelRepository, PaymentOrderRepository, PaymentRefundRepository,
@@ -222,6 +223,51 @@ pub async fn list_channels(
     channel_repo.find_all_active(auth.tenant_id()).await
 }
 
+pub async fn list_available_channels(
+    channel_repo: &dyn PaymentChannelRepository,
+    order_order_repo: &dyn crate::repositories::OrderRepository,
+    auth: &AuthUser,
+    order_id: &str,
+    country: Option<&str>,
+    language: Option<&str>,
+) -> AppResult<AvailableChannelsResponse> {
+    let _ = auth.ensure_authenticated()?;
+
+    let order = order_order_repo
+        .find_by_document_id(order_id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("order"))?;
+
+    let active = channel_repo.find_all_active(auth.tenant_id()).await?;
+    let ctx = RoutingContext {
+        currency: order.currency.clone(),
+        country: country.map(String::from),
+        language: language.map(String::from),
+    };
+    let ranked = select_channels(&active, &ctx);
+
+    let recommended_channel_id = ranked
+        .iter()
+        .find(|r| r.is_recommended)
+        .map(|r| r.channel.document_id.clone());
+
+    let channels = ranked
+        .into_iter()
+        .map(|r| AvailableChannelItem {
+            channel_id: r.channel.document_id,
+            provider: r.channel.provider,
+            name: r.channel.name,
+            is_recommended: r.is_recommended,
+            sort_order: r.channel.sort_order,
+        })
+        .collect();
+
+    Ok(AvailableChannelsResponse {
+        recommended_channel_id,
+        channels,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn create_payment_order(
     _pool: &crate::db::Pool,
@@ -234,6 +280,8 @@ pub async fn create_payment_order(
     req: CreatePaymentOrderRequest,
     config: &AppConfig,
     client_ip: Option<&str>,
+    client_language: Option<&str>,
+    client_user_agent: Option<&str>,
 ) -> AppResult<(PaymentOrder, Option<ProviderResponse>)> {
     let _ = auth.ensure_authenticated()?;
 
@@ -250,14 +298,25 @@ pub async fn create_payment_order(
         return Err(AppError::BadRequest("order_amount_invalid".into()));
     }
 
-    let channel = channel_repo
-        .find_by_document_id(&req.channel_id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("payment_channel"))?;
-
-    if channel.is_active == 0 {
-        return Err(AppError::BadRequest("channel_inactive".into()));
-    }
+    let (channel, channel_selected_by) = if let Some(ref channel_doc_id) = req.channel_id {
+        let ch = channel_repo
+            .find_by_document_id(channel_doc_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("payment_channel"))?;
+        if ch.is_active == 0 {
+            return Err(AppError::BadRequest("channel_inactive".into()));
+        }
+        (ch, "manual")
+    } else {
+        let active = channel_repo.find_all_active(auth.tenant_id()).await?;
+        let ctx = RoutingContext {
+            currency: order.currency.clone(),
+            country: req.country.clone(),
+            language: req.language.clone().or_else(|| client_language.map(String::from)),
+        };
+        let ch = select_best_channel(&active, &ctx)?;
+        (ch, "auto")
+    };
 
     let idempotency_key = format!("{}_{}", order.document_id, channel.document_id);
 
@@ -286,6 +345,10 @@ pub async fn create_payment_order(
             req.return_url.as_deref(),
             &idempotency_key,
             client_ip,
+            client_language,
+            req.country.as_deref(),
+            client_user_agent,
+            Some(channel_selected_by),
             req.metadata.as_deref(),
             auth.tenant_id(),
         )
@@ -969,6 +1032,10 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap()
@@ -993,8 +1060,10 @@ mod tests {
         let other_auth = user_auth(other_id);
         let req = CreatePaymentOrderRequest {
             order_id: order.document_id.clone(),
-            channel_id: channel.document_id.clone(),
+            channel_id: Some(channel.document_id.clone()),
             method: None,
+            country: None,
+            language: None,
             return_url: None,
             metadata: None,
         };
@@ -1009,6 +1078,8 @@ mod tests {
             other_id,
             req,
             &config,
+            None,
+            None,
             None,
         )
         .await;
@@ -1038,8 +1109,10 @@ mod tests {
         let owner_auth = user_auth(owner_id);
         let req = CreatePaymentOrderRequest {
             order_id: order.document_id.clone(),
-            channel_id: channel.document_id.clone(),
+            channel_id: Some(channel.document_id.clone()),
             method: None,
+            country: None,
+            language: None,
             return_url: None,
             metadata: None,
         };
@@ -1054,6 +1127,8 @@ mod tests {
             owner_id,
             req,
             &config,
+            None,
+            None,
             None,
         )
         .await;
@@ -1081,8 +1156,10 @@ mod tests {
         let owner_auth = user_auth(owner_id);
         let req = CreatePaymentOrderRequest {
             order_id: order.document_id.clone(),
-            channel_id: channel.document_id.clone(),
+            channel_id: Some(channel.document_id.clone()),
             method: None,
+            country: None,
+            language: None,
             return_url: None,
             metadata: None,
         };
@@ -1097,6 +1174,8 @@ mod tests {
             owner_id,
             req,
             &config,
+            None,
+            None,
             None,
         )
         .await;
@@ -1676,6 +1755,10 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -1686,5 +1769,289 @@ mod tests {
             .unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().document_id, doc_id);
+    }
+
+    #[tokio::test]
+    async fn list_available_channels_returns_ranked() {
+        let pool = setup_pool().await;
+        let user_id = seed_user(&pool).await;
+
+        let ch_cny = crate::models::payment_channel::insert(
+            &pool,
+            &uuid::Uuid::now_v7().to_string(),
+            "alipay",
+            "Alipay CN",
+            false,
+            r#"{"api_key":"test"}"#,
+            None,
+            Some(r#"{"countries":["CN"],"currencies":["CNY"],"priority":100}"#),
+            true,
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+        let _ch_global = crate::models::payment_channel::insert(
+            &pool,
+            &uuid::Uuid::now_v7().to_string(),
+            "stripe",
+            "Stripe Global",
+            false,
+            r#"{"api_key":"test"}"#,
+            None,
+            Some(r#"{"countries":["*"],"currencies":["USD","CNY"],"priority":10}"#),
+            true,
+            1,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let order = seed_order(&pool, user_id, 1000, "CNY").await;
+        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
+        let order_order_repo = SqlxOrderRepository::new(pool.clone());
+        let auth = user_auth(user_id);
+
+        let result = super::list_available_channels(
+            &channel_repo,
+            &order_order_repo,
+            &auth,
+            &order.document_id,
+            Some("CN"),
+            Some("zh"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.channels.len(), 2);
+        assert_eq!(result.recommended_channel_id, Some(ch_cny.document_id.clone()));
+        assert!(result.channels[0].is_recommended);
+        assert_eq!(result.channels[0].channel_id, ch_cny.document_id);
+        assert!(!result.channels[1].is_recommended);
+    }
+
+    #[tokio::test]
+    async fn list_available_channels_currency_filter() {
+        let pool = setup_pool().await;
+        let user_id = seed_user(&pool).await;
+
+        crate::models::payment_channel::insert(
+            &pool,
+            &uuid::Uuid::now_v7().to_string(),
+            "stripe",
+            "Stripe",
+            false,
+            r#"{"api_key":"test"}"#,
+            None,
+            Some(r#"{"currencies":["USD"]}"#),
+            true,
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let order = seed_order(&pool, user_id, 1000, "JPY").await;
+        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
+        let order_order_repo = SqlxOrderRepository::new(pool.clone());
+        let auth = user_auth(user_id);
+
+        let result = super::list_available_channels(
+            &channel_repo,
+            &order_order_repo,
+            &auth,
+            &order.document_id,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(result.channels.is_empty());
+        assert!(result.recommended_channel_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn list_available_channels_order_not_found() {
+        let pool = setup_pool().await;
+        let user_id = seed_user(&pool).await;
+
+        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
+        let order_order_repo = SqlxOrderRepository::new(pool.clone());
+        let auth = user_auth(user_id);
+
+        let result = super::list_available_channels(
+            &channel_repo,
+            &order_order_repo,
+            &auth,
+            "nonexistent_order",
+            None,
+            None,
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn create_payment_order_auto_routes() {
+        let pool = setup_pool().await;
+        let config = test_config();
+        let user_id = seed_user(&pool).await;
+
+        let ch = crate::models::payment_channel::insert(
+            &pool,
+            &uuid::Uuid::now_v7().to_string(),
+            "stripe",
+            "Stripe",
+            false,
+            r#"{"api_key":"test"}"#,
+            None,
+            Some(r#"{"currencies":["CNY"]}"#),
+            true,
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let order = seed_order(&pool, user_id, 1000, "CNY").await;
+        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+        let product_repo = SqlxProductRepository::new(pool.clone());
+        let order_order_repo = SqlxOrderRepository::new(pool.clone());
+
+        let auth = user_auth(user_id);
+        let req = CreatePaymentOrderRequest {
+            order_id: order.document_id.clone(),
+            channel_id: None,
+            method: None,
+            country: None,
+            language: None,
+            return_url: None,
+            metadata: None,
+        };
+
+        let result = super::create_payment_order(
+            &pool,
+            &channel_repo,
+            &order_repo,
+            &product_repo,
+            &order_order_repo,
+            &auth,
+            user_id,
+            req,
+            &config,
+            Some("127.0.0.1"),
+            Some("zh-CN"),
+            Some("Mozilla/5.0"),
+        )
+        .await;
+
+        #[cfg(feature = "payment-stripe")]
+        {
+            let (po, _) = result.unwrap();
+            assert_eq!(po.channel_id, ch.id);
+            assert_eq!(po.channel_selected_by.unwrap(), "auto");
+            assert_eq!(po.client_country, None);
+            assert_eq!(po.client_language.unwrap(), "zh-CN");
+            assert_eq!(po.client_user_agent.unwrap(), "Mozilla/5.0");
+            assert_eq!(po.client_ip.unwrap(), "127.0.0.1");
+        }
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn create_payment_order_auto_no_channel_error() {
+        let pool = setup_pool().await;
+        let config = test_config();
+        let user_id = seed_user(&pool).await;
+
+        let order = seed_order(&pool, user_id, 1000, "JPY").await;
+        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+        let product_repo = SqlxProductRepository::new(pool.clone());
+        let order_order_repo = SqlxOrderRepository::new(pool.clone());
+
+        let auth = user_auth(user_id);
+        let req = CreatePaymentOrderRequest {
+            order_id: order.document_id.clone(),
+            channel_id: None,
+            method: None,
+            country: None,
+            language: None,
+            return_url: None,
+            metadata: None,
+        };
+
+        let result = super::create_payment_order(
+            &pool,
+            &channel_repo,
+            &order_repo,
+            &product_repo,
+            &order_order_repo,
+            &auth,
+            user_id,
+            req,
+            &config,
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::BadRequest(msg) => assert!(msg.contains("no payment channel")),
+            e => panic!("expected BadRequest, got: {e:?}"),
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "payment-stripe")]
+    async fn create_payment_order_manual_selected_by() {
+        let pool = setup_pool().await;
+        let config = test_config();
+        let user_id = seed_user(&pool).await;
+
+        let ch = seed_channel(&pool, "stripe").await;
+        let order = seed_order(&pool, user_id, 1000, "CNY").await;
+
+        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
+        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
+        let product_repo = SqlxProductRepository::new(pool.clone());
+        let order_order_repo = SqlxOrderRepository::new(pool.clone());
+
+        let auth = user_auth(user_id);
+        let req = CreatePaymentOrderRequest {
+            order_id: order.document_id.clone(),
+            channel_id: Some(ch.document_id.clone()),
+            method: None,
+            country: Some("CN".into()),
+            language: None,
+            return_url: None,
+            metadata: None,
+        };
+
+        let result = super::create_payment_order(
+            &pool,
+            &channel_repo,
+            &order_repo,
+            &product_repo,
+            &order_order_repo,
+            &auth,
+            user_id,
+            req,
+            &config,
+            Some("10.0.0.1"),
+            None,
+            None,
+        )
+        .await;
+
+        let (po, _) = result.unwrap();
+        assert_eq!(po.channel_selected_by.unwrap(), "manual");
+        assert_eq!(po.client_country.unwrap(), "CN");
+        assert_eq!(po.client_ip.unwrap(), "10.0.0.1");
     }
 }

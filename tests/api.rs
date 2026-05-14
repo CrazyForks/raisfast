@@ -390,6 +390,10 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             http_post(h_wallet::admin_reversal),
         )
         .route(
+            "/payment/channels/available",
+            get(h_payment::list_available_channels_handler),
+        )
+        .route(
             "/payment/orders",
             get(h_payment::list_user_orders).post(h_payment::create_payment_order_handler),
         )

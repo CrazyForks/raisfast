@@ -18,6 +18,15 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     let r = crate::reg_route!(
         r,
         registry,
+        "/payment/channels/available",
+        get(list_available_channels_handler),
+        "system public",
+        "payment",
+        ["GET"]
+    );
+    let r = crate::reg_route!(
+        r,
+        registry,
         "/payment/orders",
         get(list_user_orders).post(create_payment_order_handler),
         "system public",
@@ -152,6 +161,11 @@ fn to_order_response(o: crate::models::payment_order::PaymentOrder) -> PaymentOr
         return_url: o.return_url,
         version: o.version,
         provider_data: o.provider_data,
+        client_ip: o.client_ip,
+        client_language: o.client_language,
+        client_country: o.client_country,
+        client_user_agent: o.client_user_agent,
+        channel_selected_by: o.channel_selected_by,
         metadata: o.metadata,
         redirect_url: None,
         qr_code: None,
@@ -187,6 +201,8 @@ pub async fn create_payment_order_handler(
     let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
     validation::validate(&req)?;
     let client_ip = extract_client_ip(&headers);
+    let client_language = extract_accept_language(&headers);
+    let client_user_agent = extract_user_agent(&headers);
     let (order, provider_resp) = payment::create_payment_order(
         &state.pool,
         state.payment_channel_repo.as_ref(),
@@ -198,6 +214,8 @@ pub async fn create_payment_order_handler(
         req,
         &state.config,
         client_ip.as_deref(),
+        client_language.as_deref(),
+        client_user_agent.as_deref(),
     )
     .await?;
     Ok(ApiResponse::success(to_order_response_with_provider(
@@ -326,6 +344,38 @@ fn extract_client_ip(headers: &HeaderMap) -> Option<String> {
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string())
         })
+}
+
+fn extract_accept_language(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("Accept-Language")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(|s| s.trim().to_string())
+}
+
+fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("User-Agent")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+}
+
+pub async fn list_available_channels_handler(
+    auth: AuthUser,
+    State(state): State<crate::AppState>,
+    Query(query): Query<AvailableChannelsQuery>,
+) -> AppResult<ApiResponse<AvailableChannelsResponse>> {
+    let result = payment::list_available_channels(
+        state.payment_channel_repo.as_ref(),
+        state.order_repo.as_ref(),
+        &auth,
+        &query.order_id,
+        query.country.as_deref(),
+        query.language.as_deref(),
+    )
+    .await?;
+    Ok(ApiResponse::success(result))
 }
 
 pub async fn admin_list_channels(

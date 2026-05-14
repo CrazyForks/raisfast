@@ -24,6 +24,46 @@ async fn setup_admin_with_channel() -> (axum::Router, AppState, String, String) 
     (app, state, tok, channel_id)
 }
 
+async fn setup_admin_with_routing_channels() -> (axum::Router, AppState, String) {
+    let (app, state) = test_app().await;
+    let (int_id, doc_id) = create_admin(&state.pool).await;
+    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin);
+
+    send(
+        &mut app.clone(),
+        post_json_auth(
+            "/api/v1/admin/payment/channels",
+            json!({
+                "provider": "stripe",
+                "name": "Stripe CN",
+                "credentials": "{\"api_key\":\"test\"}",
+                "settings": "{\"countries\":[\"CN\"],\"currencies\":[\"CNY\"],\"priority\":100}",
+                "is_live": false,
+            }),
+            &tok,
+        ),
+    )
+    .await;
+
+    send(
+        &mut app.clone(),
+        post_json_auth(
+            "/api/v1/admin/payment/channels",
+            json!({
+                "provider": "stripe",
+                "name": "Stripe Global",
+                "credentials": "{\"api_key\":\"test\"}",
+                "settings": "{\"countries\":[\"*\"],\"currencies\":[\"USD\",\"CNY\"],\"priority\":10}",
+                "is_live": false,
+            }),
+            &tok,
+        ),
+    )
+    .await;
+
+    (app, state, tok)
+}
+
 #[tokio::test]
 async fn admin_create_channel() {
     let (mut app, _, tok, _) = setup_admin_with_channel().await;
@@ -196,4 +236,290 @@ async fn admin_list_refunds_empty() {
     )
     .await;
     assert!(status.is_success(), "list refunds: {status} {body:?}");
+}
+
+#[tokio::test]
+async fn list_available_channels_returns_channels() {
+    let (mut app, state, tok) = setup_admin_with_routing_channels().await;
+
+    let product_id: String;
+    {
+        let (_, pbody) = send(
+            &mut app,
+            post_json_auth(
+                "/api/v1/admin/products",
+                json!({"title": "Pay Product", "price": 9900, "currency": "CNY"}),
+                &tok,
+            ),
+        )
+        .await;
+        product_id = pbody["data"]["id"].as_str().unwrap().to_string();
+        let product_int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE document_id = ?")
+            .bind(&product_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE products SET status = 'active' WHERE id = ?")
+            .bind(product_int_id)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+    }
+
+    let (_, obody) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/orders",
+            json!({"items": [{"product_id": product_id, "quantity": 1}], "currency": "CNY"}),
+            &tok,
+        ),
+    )
+    .await;
+    let order_id = obody["data"]["id"].as_str().unwrap();
+
+    let (status, body) = send(
+        &mut app,
+        get_auth(
+            &format!("/api/v1/payment/channels/available?order_id={order_id}&country=CN&language=zh"),
+            &tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "available channels: {status} {body:?}");
+
+    let channels = body["data"]["channels"].as_array().unwrap();
+    assert_eq!(channels.len(), 2);
+    assert!(channels[0]["is_recommended"].as_bool().unwrap());
+    assert_eq!(channels[0]["provider"], "stripe");
+    assert_eq!(body["data"]["recommended_channel_id"], channels[0]["channel_id"]);
+}
+
+#[tokio::test]
+async fn list_available_channels_no_match() {
+    let (mut app, state, tok) = setup_admin_with_routing_channels().await;
+
+    let (_, pbody) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/products",
+            json!({"title": "JPY Product", "price": 1000, "currency": "JPY"}),
+            &tok,
+        ),
+    )
+    .await;
+    let product_id = pbody["data"]["id"].as_str().unwrap();
+    let product_int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE document_id = ?")
+        .bind(product_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE products SET status = 'active' WHERE id = ?")
+        .bind(product_int_id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+    let (_, obody) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/orders",
+            json!({"items": [{"product_id": product_id, "quantity": 1}], "currency": "JPY"}),
+            &tok,
+        ),
+    )
+    .await;
+    let order_id = obody["data"]["id"].as_str().unwrap();
+
+    let (status, body) = send(
+        &mut app,
+        get_auth(
+            &format!("/api/v1/payment/channels/available?order_id={order_id}"),
+            &tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "available: {status} {body:?}");
+    let channels = body["data"]["channels"].as_array().unwrap();
+    assert!(channels.is_empty());
+    assert!(body["data"]["recommended_channel_id"].is_null());
+}
+
+#[tokio::test]
+async fn list_available_channels_requires_auth() {
+    let (mut app, _, _) = setup_admin_with_routing_channels().await;
+
+    let (status, _) = send(
+        &mut app,
+        get_req("/api/v1/payment/channels/available?order_id=fake"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+#[cfg(feature = "payment-stripe")]
+async fn create_payment_order_auto_route() {
+    let (mut app, state, tok) = setup_admin_with_routing_channels().await;
+
+    let (_, pbody) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/products",
+            json!({"title": "Auto Product", "price": 9900, "currency": "CNY"}),
+            &tok,
+        ),
+    )
+    .await;
+    let product_id = pbody["data"]["id"].as_str().unwrap();
+    let product_int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE document_id = ?")
+        .bind(product_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE products SET status = 'active' WHERE id = ?")
+        .bind(product_int_id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+    let (_, obody) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/orders",
+            json!({"items": [{"product_id": product_id, "quantity": 1}], "currency": "CNY"}),
+            &tok,
+        ),
+    )
+    .await;
+    let order_id = obody["data"]["id"].as_str().unwrap();
+
+    let (status, body) = send(
+        &mut app,
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/payment/orders")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, format!("Bearer {tok}"))
+            .header("Accept-Language", "zh-CN")
+            .header("User-Agent", "TestAgent/1.0")
+            .body(Body::from(
+                serde_json::to_string(&json!({
+                    "order_id": order_id,
+                    "country": "CN",
+                    "language": "zh-CN",
+                }))
+                .unwrap(),
+            ))
+            .unwrap(),
+    )
+    .await;
+
+    assert!(status.is_success(), "auto route create: {status} {body:?}");
+    assert_eq!(body["data"]["provider"].as_str().unwrap_or("none"), "stripe");
+    assert_eq!(body["data"]["channel_selected_by"].as_str().unwrap_or("none"), "auto");
+    assert_eq!(body["data"]["client_country"].as_str().unwrap_or("none"), "CN");
+}
+
+#[tokio::test]
+#[cfg(feature = "payment-stripe")]
+async fn create_payment_order_manual_channel() {
+    let (mut app, state, tok, channel_id) = setup_admin_with_channel().await;
+
+    let (_, pbody) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/products",
+            json!({"title": "Pay Product", "price": 9900, "currency": "CNY"}),
+            &tok,
+        ),
+    )
+    .await;
+    let product_id = pbody["data"]["id"].as_str().unwrap();
+    let product_int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE document_id = ?")
+        .bind(product_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE products SET status = 'active' WHERE id = ?")
+        .bind(product_int_id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+    let (status, obody) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/orders",
+            json!({"items": [{"product_id": product_id, "quantity": 1}], "currency": "CNY"}),
+            &tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "create order: {status} {obody:?}");
+    let order_id = obody["data"]["id"].as_str().unwrap();
+
+    let (status, body) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/payment/orders",
+            json!({
+                "order_id": order_id,
+                "channel_id": channel_id,
+                "country": "US",
+            }),
+            &tok,
+        ),
+    )
+    .await;
+    assert!(status.is_success(), "manual create: {status} {body:?}");
+    assert_eq!(body["data"]["channel_selected_by"], "manual");
+    assert_eq!(body["data"]["client_country"], "US");
+}
+
+#[tokio::test]
+async fn create_payment_order_no_channel_no_match() {
+    let (mut app, state, tok) = setup_admin_with_routing_channels().await;
+
+    let (_, pbody) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/admin/products",
+            json!({"title": "JPY Product", "price": 5000, "currency": "JPY"}),
+            &tok,
+        ),
+    )
+    .await;
+    let product_id = pbody["data"]["id"].as_str().unwrap();
+    let product_int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE document_id = ?")
+        .bind(product_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE products SET status = 'active' WHERE id = ?")
+        .bind(product_int_id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+    let (_, obody) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/orders",
+            json!({"items": [{"product_id": product_id, "quantity": 1}], "currency": "JPY"}),
+            &tok,
+        ),
+    )
+    .await;
+    let order_id = obody["data"]["id"].as_str().unwrap();
+
+    let (status, body) = send(
+        &mut app,
+        post_json_auth(
+            "/api/v1/payment/orders",
+            json!({"order_id": order_id}),
+            &tok,
+        ),
+    )
+    .await;
+    assert!(!status.is_success(), "should fail: {status} {body:?}");
 }

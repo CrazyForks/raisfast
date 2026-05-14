@@ -19,9 +19,10 @@ fn validate_url(url: &str) -> Result<(), validator::ValidationError> {
 pub struct CreatePaymentOrderRequest {
     #[validate(length(min = 1))]
     pub order_id: String,
-    #[validate(length(min = 1))]
-    pub channel_id: String,
+    pub channel_id: Option<String>,
     pub method: Option<String>,
+    pub country: Option<String>,
+    pub language: Option<String>,
     #[validate(custom(
         function = "validate_url",
         message = "return_url must start with http:// or https://"
@@ -85,6 +86,11 @@ pub struct PaymentOrderResponse {
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub version: i64,
     pub provider_data: Option<String>,
+    pub client_ip: Option<String>,
+    pub client_language: Option<String>,
+    pub client_country: Option<String>,
+    pub client_user_agent: Option<String>,
+    pub channel_selected_by: Option<String>,
     pub metadata: Option<String>,
     pub redirect_url: Option<String>,
     pub qr_code: Option<String>,
@@ -208,4 +214,29 @@ impl From<crate::models::payment_refund::PaymentRefund> for PaymentRefundRespons
             updated_at: r.updated_at.to_string(),
         }
     }
+}
+
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AvailableChannelItem {
+    pub channel_id: String,
+    pub provider: String,
+    pub name: String,
+    pub is_recommended: bool,
+    pub sort_order: i64,
+}
+
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AvailableChannelsResponse {
+    pub recommended_channel_id: Option<String>,
+    pub channels: Vec<AvailableChannelItem>,
+}
+
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct AvailableChannelsQuery {
+    pub order_id: String,
+    pub country: Option<String>,
+    pub language: Option<String>,
 }

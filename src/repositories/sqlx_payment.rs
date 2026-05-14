@@ -209,6 +209,10 @@ pub trait PaymentOrderRepository: Send + Sync {
         return_url: Option<&str>,
         idempotency_key: &str,
         client_ip: Option<&str>,
+        client_language: Option<&str>,
+        client_country: Option<&str>,
+        client_user_agent: Option<&str>,
+        channel_selected_by: Option<&str>,
         metadata: Option<&str>,
         tenant_id: Option<&str>,
     ) -> AppResult<PaymentOrder>;
@@ -292,6 +296,10 @@ impl PaymentOrderRepository for SqlxPaymentOrderRepository {
         return_url: Option<&str>,
         idempotency_key: &str,
         client_ip: Option<&str>,
+        client_language: Option<&str>,
+        client_country: Option<&str>,
+        client_user_agent: Option<&str>,
+        channel_selected_by: Option<&str>,
         metadata: Option<&str>,
         tenant_id: Option<&str>,
     ) -> AppResult<PaymentOrder> {
@@ -310,6 +318,10 @@ impl PaymentOrderRepository for SqlxPaymentOrderRepository {
             return_url,
             idempotency_key,
             client_ip,
+            client_language,
+            client_country,
+            client_user_agent,
+            channel_selected_by,
             metadata,
             tenant_id,
         )
