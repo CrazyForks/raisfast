@@ -129,6 +129,17 @@ import type {
   WorkflowInstance,
   WorkflowInstanceStatus,
   WorkflowStepStatus,
+  ProductResponse,
+  OrderItemResponse,
+  OrderResponse,
+  OrderStatsResponse,
+  PaymentStatus,
+  PaymentOrderResponse,
+  PaymentChannelResponse,
+  PaymentTransactionResponse,
+  PaymentRefundResponse,
+  AvailableChannelItem,
+  AvailableChannelsResponse,
 } from "./generated/types";
 
 export type {
@@ -260,6 +271,17 @@ export type {
   WorkflowInstance,
   WorkflowInstanceStatus,
   WorkflowStepStatus,
+  ProductResponse,
+  OrderItemResponse,
+  OrderResponse,
+  OrderStatsResponse,
+  PaymentStatus,
+  PaymentOrderResponse,
+  PaymentChannelResponse,
+  PaymentTransactionResponse,
+  PaymentRefundResponse,
+  AvailableChannelItem,
+  AvailableChannelsResponse,
 };
 
 // ─── Ergonomic aliases (with bigint→number fixes) ───
@@ -280,6 +302,14 @@ export type CronLog = CronExecutionLog;
 export type ApiToken = ApiTokenListItem;
 export type Workflow = WorkflowDefinition;
 export type Revision = RevisionSummary;
+export type PaymentOrder = PaymentOrderResponse;
+export type PaymentChannel = PaymentChannelResponse;
+export type PaymentTransaction = PaymentTransactionResponse;
+export type PaymentRefund = PaymentRefundResponse;
+export type Order = OrderResponse;
+export type OrderItem = OrderItemResponse;
+export type OrderStats = OrderStatsResponse;
+export type Product = ProductResponse;
 
 // ─── SDK-only types (not from backend) ───
 

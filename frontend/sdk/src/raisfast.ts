@@ -11,6 +11,9 @@ import { Media } from "./public/media";
 import { Health } from "./public/health";
 import { Wallets } from "./public/wallets";
 import { Events } from "./public/events";
+import { Orders } from "./public/orders";
+import { Payment } from "./public/payment";
+import { Products } from "./public/products";
 import { Admin } from "./admin";
 import { Collection } from "./collection";
 import { SDKError } from "./errors";
@@ -41,6 +44,9 @@ export class RaisFast {
   readonly pages: Pages;
   readonly wallets: Wallets;
   readonly events: Events;
+  readonly orders: Orders;
+  readonly payment: Payment;
+  readonly products: Products;
   readonly authStore: IAuthStore;
   private readonly http: HttpClient;
 
@@ -62,6 +68,9 @@ export class RaisFast {
     this.pages = new Pages(this.http);
     this.wallets = new Wallets(this.http);
     this.events = new Events(this.http.baseUrl);
+    this.orders = new Orders(this.http);
+    this.payment = new Payment(this.http);
+    this.products = new Products(this.http);
   }
 
   async init(): Promise<void> {

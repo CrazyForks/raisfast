@@ -1311,6 +1311,192 @@ export const WalletTxType = {
 } as const;
 export type WalletTxType = typeof WalletTxType[keyof typeof WalletTxType];
 
+// ─── Product types ───
+
+export type ProductResponse = {
+  id: string;
+  category_id: string | null;
+  title: string;
+  description: string | null;
+  cover_url: string | null;
+  product_type: string;
+  fulfillment_type: string;
+  delivery_hook: string | null;
+  weight: number | null;
+  price: number;
+  currency: string;
+  status: string;
+  attributes: string | null;
+  sort_order: number;
+  slug: string | null;
+  content: string | null;
+  image_ids: unknown;
+  original_price: number | null;
+  specs: unknown;
+  unit: string;
+  min_purchase: number;
+  max_purchase: number | null;
+  total_sales: number;
+  virtual_sales: number;
+  meta_title: string | null;
+  meta_description: string | null;
+  published_at: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+// ─── Order types ───
+
+export type OrderItemResponse = {
+  id: string;
+  order_id: string;
+  product_id: string | null;
+  title: string;
+  description: string | null;
+  unit_price: number;
+  quantity: number;
+  subtotal: number;
+  cover_url: string | null;
+  attributes: string | null;
+  created_at: string;
+};
+
+export type OrderResponse = {
+  id: string;
+  user_id: string;
+  order_no: string;
+  subtotal: number;
+  discount_amount: number;
+  shipping_amount: number;
+  total_amount: number;
+  currency: string;
+  status: string;
+  buyer_name: string | null;
+  buyer_phone: string | null;
+  buyer_email: string | null;
+  shipping_address: string | null;
+  tracking_no: string | null;
+  carrier: string | null;
+  remark: string | null;
+  admin_remark: string | null;
+  delivery_data: string | null;
+  paid_at: string | null;
+  completed_at: string | null;
+  cancelled_at: string | null;
+  created_at: string;
+  updated_at: string;
+  items: OrderItemResponse[];
+};
+
+export type OrderStatsResponse = {
+  total_orders: number;
+  pending_orders: number;
+  paid_orders: number;
+  completed_orders: number;
+  total_revenue: number;
+};
+
+// ─── Payment types ───
+
+export const PaymentStatus = {
+  pending: "pending",
+  processing: "processing",
+  paid: "paid",
+  failed: "failed",
+  cancelled: "cancelled",
+  expired: "expired",
+  refunded: "refunded",
+  partially_refunded: "partially_refunded",
+} as const;
+export type PaymentStatus = typeof PaymentStatus[keyof typeof PaymentStatus];
+
+export type PaymentOrderResponse = {
+  id: string;
+  user_id: number;
+  order_id: string | null;
+  title: string;
+  amount: number;
+  currency: string;
+  channel_id: string;
+  provider: string;
+  provider_order_id: string | null;
+  provider_method: string | null;
+  status: PaymentStatus;
+  return_url: string | null;
+  version: number;
+  provider_data: string | null;
+  client_ip: string | null;
+  client_language: string | null;
+  client_country: string | null;
+  client_user_agent: string | null;
+  channel_selected_by: string | null;
+  metadata: string | null;
+  redirect_url: string | null;
+  qr_code: string | null;
+  client_secret: string | null;
+  paid_at: string | null;
+  cancelled_at: string | null;
+  expired_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PaymentChannelResponse = {
+  id: string;
+  provider: string;
+  name: string;
+  is_live: boolean;
+  credentials_masked: string;
+  webhook_secret_set: boolean;
+  settings: string | null;
+  is_active: boolean;
+  sort_order: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PaymentTransactionResponse = {
+  id: string;
+  payment_order_id: number;
+  order_id: string | null;
+  user_id: number;
+  tx_type: string;
+  amount: number;
+  currency: string;
+  provider_tx_id: string;
+  status: string;
+  created_at: string;
+};
+
+export type PaymentRefundResponse = {
+  id: string;
+  payment_order_id: number;
+  order_id: string | null;
+  user_id: number;
+  amount: number;
+  currency: string;
+  reason: string | null;
+  provider_refund_id: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AvailableChannelItem = {
+  channel_id: string;
+  provider: string;
+  name: string;
+  is_recommended: boolean;
+  sort_order: number;
+};
+
+export type AvailableChannelsResponse = {
+  recommended_channel_id: string | null;
+  channels: AvailableChannelItem[];
+};
+
 export type WebhookSubscription = {
   id: bigint;
   document_id: string;

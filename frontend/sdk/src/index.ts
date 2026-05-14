@@ -12,6 +12,9 @@ export { Comments } from "./public/comments";
 export { Pages } from "./public/pages";
 export { Wallets } from "./public/wallets";
 export { Events } from "./public/events";
+export { Orders } from "./public/orders";
+export { Payment } from "./public/payment";
+export { Products } from "./public/products";
 export { BaseAuthStore, LocalAuthStore } from "./auth";
 export { HttpClient, type ApiStyle } from "./client";
 export { SDKError } from "./errors";
@@ -27,11 +30,31 @@ export type {
   CreatePageBody,
   UpdatePageBody,
 } from "./admin/pages";
+export type {
+  CreateProductBody,
+  UpdateProductBody,
+} from "./admin/products";
+export type {
+  ShipOrderBody,
+  UpdateAdminRemarkBody,
+} from "./admin/orders";
+export type {
+  CreatePaymentChannelBody,
+  UpdatePaymentChannelBody,
+  CreateRefundBody,
+} from "./admin/payment";
 export type { CreateCommentBody } from "./public/comments";
 export type {
   CreateCategoryBody,
   UpdateCategoryBody,
 } from "./public/categories";
+export type {
+  CreateOrderBody,
+  CreateOrderItemBody,
+} from "./public/orders";
+export type {
+  CreatePaymentOrderBody,
+} from "./public/payment";
 export type {
   CreateReusableBlockBody,
   UpdateReusableBlockBody,

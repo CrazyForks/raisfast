@@ -8,9 +8,12 @@ import { AdminCrons } from "./crons";
 import { AdminCurrencies } from "./currencies";
 import { AdminMedia } from "./media";
 import { AdminOptions } from "./options";
+import { AdminOrders } from "./orders";
 import { AdminPages } from "./pages";
+import { AdminPayment } from "./payment";
 import { AdminPlugins } from "./plugins";
 import { AdminPosts } from "./posts";
+import { AdminProducts } from "./products";
 import { AdminRBAC } from "./rbac";
 import { AdminReusableBlocks } from "./reusable-blocks";
 import { AdminStats } from "./stats";
@@ -44,6 +47,9 @@ export class Admin {
   readonly tokens: AdminTokens;
   readonly workflows: AdminWorkflows;
   readonly stats: AdminStats;
+  readonly orders: AdminOrders;
+  readonly payment: AdminPayment;
+  readonly products: AdminProducts;
 
   private readonly http: HttpClient;
 
@@ -70,6 +76,9 @@ export class Admin {
     this.tokens = new AdminTokens(http);
     this.workflows = new AdminWorkflows(http);
     this.stats = new AdminStats(http);
+    this.orders = new AdminOrders(http);
+    this.payment = new AdminPayment(http);
+    this.products = new AdminProducts(http);
   }
 
   async listRoutes(options?: RequestOptions): Promise<RouteInfo[]> {
