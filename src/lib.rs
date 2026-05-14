@@ -50,6 +50,9 @@ pub mod admin_spa;
 #[cfg(feature = "tauri")]
 pub mod tauri;
 
+#[cfg(feature = "proxy")]
+pub mod proxy;
+
 #[inline]
 pub(crate) fn _brand() -> String {
     let k0: u8 = 0x5A;
@@ -200,6 +203,8 @@ pub async fn build_app_state(
 
     let aspect_engine = Arc::new(crate::aspects::engine::AspectEngine::new());
     protocol_registry.register_aspects_into(&aspect_engine);
+    aspect_engine.register(crate::aspects::slug_aspect::SlugAspect);
+    aspect_engine.register(crate::aspects::excerpt_aspect::ExcerptAspect);
     tracing::info!(
         "aspect engine initialized with {} aspect(s), {} protocol(s)",
         aspect_engine.aspects().len(),

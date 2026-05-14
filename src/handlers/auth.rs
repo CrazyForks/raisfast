@@ -18,7 +18,10 @@ use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::services::{auth, email_verification, password_reset, sms};
 
-pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
     use crate::middleware::rate_limit::{login_rate_limit, register_rate_limit};
     use axum::middleware::from_fn;
 
@@ -34,20 +37,146 @@ pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::confi
         r.route("/auth/login", mr)
     };
     registry.record("POST", "/api/v1/auth/login", "system public", "auth");
-    let r = reg_route!(r, registry, restful, "/auth/refresh", post, refresh, "system public", "auth");
-    let r = reg_route!(r, registry, restful, "/auth/logout", post, logout, "system public", "auth");
-    let r = reg_route!(r, registry, restful, "/auth/forgot-password", post, forgot_password, "system public", "auth");
-    let r = reg_route!(r, registry, restful, "/auth/reset-password", post, reset_password, "system public", "auth");
-    let r = reg_route!(r, registry, restful, "/auth/set-password", post, set_password, "system public", "auth");
-    let r = reg_route!(r, registry, restful, "/auth/config", get, auth_config, "system public", "auth");
-    let r = reg_route!(r, registry, restful, "/auth/sms/send", post, send_sms_code, "system public", "auth");
-    let r = reg_route!(r, registry, restful, "/auth/sms/verify", post, verify_sms, "system public", "auth");
-    let r = reg_route!(r, registry, restful, "/auth/phone/bind", post, bind_phone, "system public", "auth");
-    let r = reg_route!(r, registry, restful, "/auth/verify-email", post, verify_email, "system public", "auth");
-    let r = reg_route!(r, registry, restful, "/auth/resend-verification", post, resend_verification, "system public", "auth");
-    let r = reg_route!(r, registry, restful, "/auth/credentials/bind-email", post, bind_email_credential, "system public", "auth");
-    let r = reg_route!(r, registry, restful, "/auth/credentials", get, list_credentials, "system public", "auth");
-    reg_route!(r, registry, restful, "/auth/credentials/{id}", delete, delete_credential, "system public", "auth")
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/refresh",
+        post,
+        refresh,
+        "system public",
+        "auth"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/logout",
+        post,
+        logout,
+        "system public",
+        "auth"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/forgot-password",
+        post,
+        forgot_password,
+        "system public",
+        "auth"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/reset-password",
+        post,
+        reset_password,
+        "system public",
+        "auth"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/set-password",
+        post,
+        set_password,
+        "system public",
+        "auth"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/config",
+        get,
+        auth_config,
+        "system public",
+        "auth"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/sms/send",
+        post,
+        send_sms_code,
+        "system public",
+        "auth"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/sms/verify",
+        post,
+        verify_sms,
+        "system public",
+        "auth"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/phone/bind",
+        post,
+        bind_phone,
+        "system public",
+        "auth"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/verify-email",
+        post,
+        verify_email,
+        "system public",
+        "auth"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/resend-verification",
+        post,
+        resend_verification,
+        "system public",
+        "auth"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/credentials/bind-email",
+        post,
+        bind_email_credential,
+        "system public",
+        "auth"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/credentials",
+        get,
+        list_credentials,
+        "system public",
+        "auth"
+    );
+    reg_route!(
+        r,
+        registry,
+        restful,
+        "/auth/credentials/{id}",
+        delete,
+        delete_credential,
+        "system public",
+        "auth"
+    )
 }
 
 /// User registration

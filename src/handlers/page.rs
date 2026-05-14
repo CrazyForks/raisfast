@@ -19,21 +19,132 @@ use crate::models::page::PageStatus;
 use crate::services::{page as page_service, post::resolve_doc_id_to_int};
 use crate::utils::pagination::PaginationParams;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
     let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, restful, "/pages", get, self::list, "system public", "pages");
-    let r = reg_route!(r, registry, restful, "/pages", create, self::create, "system public", "pages");
-    let r = reg_route!(r, registry, restful, "/pages/sitemap", get, sitemap, "system public", "pages");
-    let r = reg_route!(r, registry, restful, "/pages/{slug}", get, get_by_slug, "system public", "pages");
-    let r = reg_route!(r, registry, restful, "/admin/pages", get, admin_list, "system admin", "admin/pages");
-    let r = reg_route!(r, registry, restful, "/admin/pages", create, self::create, "system admin", "admin/pages");
-    let r = reg_route!(r, registry, restful, "/admin/pages/{id}", get, admin_get, "system admin", "admin/pages");
-    let r = reg_route!(r, registry, restful, "/admin/pages/{id}", put, update, "system admin", "admin/pages");
-    let r = reg_route!(r, registry, restful, "/admin/pages/{id}", delete, self::delete, "system admin", "admin/pages");
-    let r = reg_route!(r, registry, restful, "/admin/pages/{id}/status", put, update_status, "system admin", "admin/pages");
-    let r = reg_route!(r, registry, restful, "/admin/pages/reorder", put, reorder, "system admin", "admin/pages");
-    reg_route!(r, registry, restful, "/admin/pages/batch", post, admin_batch, "system admin", "admin/pages")
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/pages",
+        get,
+        self::list,
+        "system public",
+        "pages"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/pages",
+        create,
+        self::create,
+        "system public",
+        "pages"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/pages/sitemap",
+        get,
+        sitemap,
+        "system public",
+        "pages"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/pages/{slug}",
+        get,
+        get_by_slug,
+        "system public",
+        "pages"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/pages",
+        get,
+        admin_list,
+        "system admin",
+        "admin/pages"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/pages",
+        create,
+        self::create,
+        "system admin",
+        "admin/pages"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/pages/{id}",
+        get,
+        admin_get,
+        "system admin",
+        "admin/pages"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/pages/{id}",
+        put,
+        update,
+        "system admin",
+        "admin/pages"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/pages/{id}",
+        delete,
+        self::delete,
+        "system admin",
+        "admin/pages"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/pages/{id}/status",
+        put,
+        update_status,
+        "system admin",
+        "admin/pages"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/pages/reorder",
+        put,
+        reorder,
+        "system admin",
+        "admin/pages"
+    );
+    reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/pages/batch",
+        post,
+        admin_batch,
+        "system admin",
+        "admin/pages"
+    )
 }
 
 async fn resolve_page_parent_id(
@@ -227,7 +338,7 @@ pub async fn create(
 
     let slug = req
         .slug
-        .unwrap_or_else(|| page_service::generate_slug(&req.title));
+        .unwrap_or_else(|| crate::aspects::slug_aspect::generate_slug(&req.title));
     let template = req.template.unwrap_or_else(|| "default".to_string());
     let status = req.status.unwrap_or(PageStatus::Draft);
 

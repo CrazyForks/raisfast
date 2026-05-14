@@ -1,5 +1,3 @@
-use axum::Json;
-use axum::extract::{Path, Query, State};
 use crate::dto::{CreateProductRequest, ProductResponse, UpdateProductRequest};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
@@ -7,16 +5,75 @@ use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::services::product;
 use crate::utils::pagination::PaginationParams;
+use axum::Json;
+use axum::extract::{Path, Query, State};
 
-pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
     let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, restful, "/products", get, list_active, "system public", "products");
-    let r = reg_route!(r, registry, restful, "/products/{id}", get, get_product, "system public", "products");
-    let r = reg_route!(r, registry, restful, "/admin/products", get, admin_list, "system admin", "admin/products");
-    let r = reg_route!(r, registry, restful, "/admin/products", create, admin_create, "system admin", "admin/products");
-    let r = reg_route!(r, registry, restful, "/admin/products/{id}", put, admin_update, "system admin", "admin/products");
-    reg_route!(r, registry, restful, "/admin/products/{id}", delete, admin_delete, "system admin", "admin/products")
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/products",
+        get,
+        list_active,
+        "system public",
+        "products"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/products/{id}",
+        get,
+        get_product,
+        "system public",
+        "products"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/products",
+        get,
+        admin_list,
+        "system admin",
+        "admin/products"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/products",
+        create,
+        admin_create,
+        "system admin",
+        "admin/products"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/products/{id}",
+        put,
+        admin_update,
+        "system admin",
+        "admin/products"
+    );
+    reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/products/{id}",
+        delete,
+        admin_delete,
+        "system admin",
+        "admin/products"
+    )
 }
 
 #[utoipa::path(get, path = "/products", tag = "products",

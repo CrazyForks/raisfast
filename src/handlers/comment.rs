@@ -18,26 +18,115 @@ use crate::models::comment::CommentStatus;
 use crate::services::comment as comment_service;
 use crate::utils::pagination::PaginationParams;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
     use crate::middleware::rate_limit::comment_rate_limit;
     use axum::middleware::from_fn;
 
     let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, restful, "/posts/{slug}/comments", get, self::list, "system public", "comments");
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/posts/{slug}/comments",
+        get,
+        self::list,
+        "system public",
+        "comments"
+    );
     let r = {
         let mr = axum::routing::post(create_guest).layer(from_fn(comment_rate_limit));
         r.route("/posts/{slug}/comments", mr)
     };
-    registry.record("POST", "/api/v1/posts/{slug}/comments", "system public", "comments");
-    let r = reg_route!(r, registry, restful, "/posts/{slug}/comments/authed", post, create, "system public", "comments");
-    let r = reg_route!(r, registry, restful, "/comments/{id}", delete, self::delete, "system public", "comments");
-    let r = reg_route!(r, registry, restful, "/comments/{id}/status", put, update_status, "system public", "comments");
-    let r = reg_route!(r, registry, restful, "/comments", get, list_all, "system public", "comments");
-    let r = reg_route!(r, registry, restful, "/admin/comments", get, admin_list, "system admin", "admin/comments");
-    let r = reg_route!(r, registry, restful, "/admin/comments/{id}/status", put, admin_update_status, "system admin", "admin/comments");
-    let r = reg_route!(r, registry, restful, "/admin/comments/{id}", delete, admin_delete, "system admin", "admin/comments");
-    reg_route!(r, registry, restful, "/admin/comments/batch", post, admin_batch, "system admin", "admin/comments")
+    registry.record(
+        "POST",
+        "/api/v1/posts/{slug}/comments",
+        "system public",
+        "comments",
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/posts/{slug}/comments/authed",
+        post,
+        create,
+        "system public",
+        "comments"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/comments/{id}",
+        delete,
+        self::delete,
+        "system public",
+        "comments"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/comments/{id}/status",
+        put,
+        update_status,
+        "system public",
+        "comments"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/comments",
+        get,
+        list_all,
+        "system public",
+        "comments"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/comments",
+        get,
+        admin_list,
+        "system admin",
+        "admin/comments"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/comments/{id}/status",
+        put,
+        admin_update_status,
+        "system admin",
+        "admin/comments"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/comments/{id}",
+        delete,
+        admin_delete,
+        "system admin",
+        "admin/comments"
+    );
+    reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/comments/batch",
+        post,
+        admin_batch,
+        "system admin",
+        "admin/comments"
+    )
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]

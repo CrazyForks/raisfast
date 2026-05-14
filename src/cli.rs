@@ -55,6 +55,29 @@ enum Commands {
     },
     /// System diagnostics
     Doctor,
+    /// Proxy management (multi-tenant reverse proxy)
+    #[cfg(feature = "proxy")]
+    Proxy {
+        #[command(subcommand)]
+        action: ProxyAction,
+    },
+}
+
+#[cfg(feature = "proxy")]
+#[derive(Subcommand)]
+pub enum ProxyAction {
+    /// Start the proxy server
+    Start {
+        /// Path to proxy config file
+        #[arg(short, long, default_value = "/etc/raisfast/proxy.toml")]
+        config: String,
+    },
+    /// Validate proxy configuration
+    Check {
+        /// Path to proxy config file
+        #[arg(short, long, default_value = "/etc/raisfast/proxy.toml")]
+        config: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -376,6 +399,43 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
 
         Some(Commands::Doctor) => {
             doctor_cmd::run(config).await;
+        }
+
+        #[cfg(feature = "proxy")]
+        Some(Commands::Proxy {
+            action: ProxyAction::Start {
+                config: proxy_config,
+            },
+        }) => {
+            raisfast::proxy::start(&proxy_config).await?;
+        }
+
+        #[cfg(feature = "proxy")]
+        Some(Commands::Proxy {
+            action: ProxyAction::Check {
+                config: proxy_config,
+            },
+        }) => {
+            match raisfast::proxy::config::ProxyConfig::load(std::path::Path::new(&proxy_config)) {
+                Ok(c) => {
+                    println!("proxy config OK");
+                    println!("  listen_http: {}", c.proxy.listen_http);
+                    println!("  listen_https: {}", c.proxy.listen_https);
+                    println!("  tenants_dir: {}", c.proxy.tenants_dir.display());
+                    let tenants = raisfast::proxy::config::load_all_tenants(&c.proxy.tenants_dir);
+                    println!("  tenants loaded: {}", tenants.len());
+                    for (_, t) in &tenants {
+                        println!(
+                            "    - {} (host={:?}, prefix={:?}, backend={})",
+                            t.tenant.name, t.tenant.host, t.tenant.prefix, t.tenant.backend
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("proxy config error: {e}");
+                    std::process::exit(1);
+                }
+            }
         }
     }
 

@@ -13,16 +13,82 @@ use crate::services::rbac::{
 };
 use crate::utils::pagination::PaginationParams;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
     let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, restful, "/admin/rbac/roles", get, list_roles, "system admin", "admin/rbac");
-    let r = reg_route!(r, registry, restful, "/admin/rbac/roles", create, create_role, "system admin", "admin/rbac");
-    let r = reg_route!(r, registry, restful, "/admin/rbac/roles/{id}", put, update_role, "system admin", "admin/rbac");
-    let r = reg_route!(r, registry, restful, "/admin/rbac/roles/{id}", delete, delete_role, "system admin", "admin/rbac");
-    let r = reg_route!(r, registry, restful, "/admin/rbac/roles/{id}/permissions", get, get_permissions, "system admin", "admin/rbac");
-    let r = reg_route!(r, registry, restful, "/admin/rbac/roles/{id}/permissions", put, set_permissions, "system admin", "admin/rbac");
-    reg_route!(r, registry, restful, "/admin/rbac/roles/batch", post, admin_batch, "system admin", "admin/rbac")
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/rbac/roles",
+        get,
+        list_roles,
+        "system admin",
+        "admin/rbac"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/rbac/roles",
+        create,
+        create_role,
+        "system admin",
+        "admin/rbac"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/rbac/roles/{id}",
+        put,
+        update_role,
+        "system admin",
+        "admin/rbac"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/rbac/roles/{id}",
+        delete,
+        delete_role,
+        "system admin",
+        "admin/rbac"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/rbac/roles/{id}/permissions",
+        get,
+        get_permissions,
+        "system admin",
+        "admin/rbac"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/rbac/roles/{id}/permissions",
+        put,
+        set_permissions,
+        "system admin",
+        "admin/rbac"
+    );
+    reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/rbac/roles/batch",
+        post,
+        admin_batch,
+        "system admin",
+        "admin/rbac"
+    )
 }
 
 /// GET /admin/rbac/roles — List all roles (paginated)

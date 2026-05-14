@@ -1,8 +1,6 @@
 //! Page service layer.
 //!
-//! Provides full CRUD business logic for pages, including slug generation, status management, and block validation.
-
-use slug::slugify;
+//! Provides full CRUD business logic for pages, including status management and block validation.
 
 use crate::commands::{CreatePageCmd, UpdatePageCmd};
 use crate::errors::app_error::{AppError, AppResult};
@@ -120,10 +118,6 @@ pub async fn sitemap(
     page::list_sitemap(pool, auth.tenant_id()).await
 }
 
-pub fn generate_slug(title: &str) -> String {
-    slugify(title)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,30 +146,5 @@ mod tests {
     fn validate_blocks_json_invalid_structure() {
         let result = validate_blocks_json(r#"[{"wrong":"field"}]"#);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn generate_slug_basic() {
-        assert_eq!(generate_slug("Hello World"), "hello-world");
-    }
-
-    #[test]
-    fn generate_slug_special_chars() {
-        let slug = generate_slug("Hello, World! (2024)");
-        assert!(!slug.contains(','));
-        assert!(!slug.contains('!'));
-        assert!(!slug.contains('('));
-    }
-
-    #[test]
-    fn generate_slug_chinese() {
-        let slug = generate_slug("你好世界");
-        assert!(!slug.is_empty());
-    }
-
-    #[test]
-    fn generate_slug_empty() {
-        let slug = generate_slug("");
-        assert!(slug.is_empty() || !slug.is_empty());
     }
 }

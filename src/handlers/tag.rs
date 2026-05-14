@@ -11,19 +11,112 @@ use crate::middleware::auth::AuthUser;
 use crate::services::tag;
 use crate::utils::pagination::PaginationParams;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
     let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, restful, "/tags", get, self::list, "system public", "tags");
-    let r = reg_route!(r, registry, restful, "/tags", create, self::create, "system public", "tags");
-    let r = reg_route!(r, registry, restful, "/tags/{id}", get, self::get, "system public", "tags");
-    let r = reg_route!(r, registry, restful, "/tags/{id}", put, update, "system public", "tags");
-    let r = reg_route!(r, registry, restful, "/tags/{id}", delete, self::delete, "system public", "tags");
-    let r = reg_route!(r, registry, restful, "/admin/tags", get, admin_list, "system admin", "admin/tags");
-    let r = reg_route!(r, registry, restful, "/admin/tags", create, admin_create, "system admin", "admin/tags");
-    let r = reg_route!(r, registry, restful, "/admin/tags/{id}", put, admin_update, "system admin", "admin/tags");
-    let r = reg_route!(r, registry, restful, "/admin/tags/{id}", delete, admin_delete, "system admin", "admin/tags");
-    reg_route!(r, registry, restful, "/admin/tags/batch", post, admin_batch, "system admin", "admin/tags")
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/tags",
+        get,
+        self::list,
+        "system public",
+        "tags"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/tags",
+        create,
+        self::create,
+        "system public",
+        "tags"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/tags/{id}",
+        get,
+        self::get,
+        "system public",
+        "tags"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/tags/{id}",
+        put,
+        update,
+        "system public",
+        "tags"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/tags/{id}",
+        delete,
+        self::delete,
+        "system public",
+        "tags"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/tags",
+        get,
+        admin_list,
+        "system admin",
+        "admin/tags"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/tags",
+        create,
+        admin_create,
+        "system admin",
+        "admin/tags"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/tags/{id}",
+        put,
+        admin_update,
+        "system admin",
+        "admin/tags"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/tags/{id}",
+        delete,
+        admin_delete,
+        "system admin",
+        "admin/tags"
+    );
+    reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/tags/batch",
+        post,
+        admin_batch,
+        "system admin",
+        "admin/tags"
+    )
 }
 
 /// Get tag list (paginated)

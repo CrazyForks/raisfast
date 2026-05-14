@@ -15,20 +15,122 @@ use crate::middleware::auth::AuthUser;
 use crate::services::{auth, user};
 use crate::utils::pagination::PaginationParams;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
     let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, restful, "/users/me", get, get_me, "system public", "users");
-    let r = reg_route!(r, registry, restful, "/users/me", put, update_me, "system public", "users");
-    let r = reg_route!(r, registry, restful, "/users/me/password", put, change_password, "system public", "users");
-    let r = reg_route!(r, registry, restful, "/users/{id}", get, get_user, "system public", "users");
-    let r = reg_route!(r, registry, restful, "/users/{id}/role", put, update_role, "system public", "users");
-    let r = reg_route!(r, registry, restful, "/users", get, list_users, "system public", "users");
-    let r = reg_route!(r, registry, restful, "/admin/users", get, admin_list_users, "system admin", "admin/users");
-    let r = reg_route!(r, registry, restful, "/admin/users/{id}", get, admin_get_user, "system admin", "admin/users");
-    let r = reg_route!(r, registry, restful, "/admin/users/{id}", put, admin_update_user, "system admin", "admin/users");
-    let r = reg_route!(r, registry, restful, "/admin/users/{id}", delete, admin_delete_user, "system admin", "admin/users");
-    reg_route!(r, registry, restful, "/admin/users/batch", post, admin_batch_users, "system admin", "admin/users")
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/users/me",
+        get,
+        get_me,
+        "system public",
+        "users"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/users/me",
+        put,
+        update_me,
+        "system public",
+        "users"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/users/me/password",
+        put,
+        change_password,
+        "system public",
+        "users"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/users/{id}",
+        get,
+        get_user,
+        "system public",
+        "users"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/users/{id}/role",
+        put,
+        update_role,
+        "system public",
+        "users"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/users",
+        get,
+        list_users,
+        "system public",
+        "users"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/users",
+        get,
+        admin_list_users,
+        "system admin",
+        "admin/users"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/users/{id}",
+        get,
+        admin_get_user,
+        "system admin",
+        "admin/users"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/users/{id}",
+        put,
+        admin_update_user,
+        "system admin",
+        "admin/users"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/users/{id}",
+        delete,
+        admin_delete_user,
+        "system admin",
+        "admin/users"
+    );
+    reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/users/batch",
+        post,
+        admin_batch_users,
+        "system admin",
+        "admin/users"
+    )
 }
 
 /// Get the current logged-in user's profile

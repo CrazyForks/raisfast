@@ -1,7 +1,6 @@
 //! Category service.
 
-use slug::slugify;
-
+use crate::aspects::slug_aspect;
 use crate::commands::{CreateCategoryCmd, UpdateCategoryCmd};
 use crate::dto::{CreateCategoryRequest, UpdateCategoryRequest};
 use crate::errors::app_error::{AppError, AppResult};
@@ -13,7 +12,7 @@ pub async fn create_category(
     auth: &AuthUser,
     req: CreateCategoryRequest,
 ) -> AppResult<crate::models::category::Category> {
-    let slug = slugify(&req.name);
+    let slug = slug_aspect::generate_slug(&req.name);
     let parent_id = if let Some(ref doc_id) = req.parent_id {
         if doc_id.parse::<i64>().is_ok() {
             doc_id.parse::<i64>().ok()
@@ -51,7 +50,11 @@ pub async fn update_category(
         .find_by_document_id(id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("category"))?;
-    let new_slug = req.name.as_ref().map(slugify).unwrap_or(existing.slug);
+    let new_slug = req
+        .name
+        .as_ref()
+        .map(|n| slug_aspect::generate_slug(n))
+        .unwrap_or(existing.slug);
 
     let parent_id = if let Some(ref doc_id) = req.parent_id {
         if doc_id.parse::<i64>().is_ok() {

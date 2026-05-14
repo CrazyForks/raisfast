@@ -15,12 +15,42 @@ use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
 use crate::services::api_token;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
     let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, restful, "/tokens", get, self::list, "system public", "tokens");
-    let r = reg_route!(r, registry, restful, "/tokens", create, self::create, "system public", "tokens");
-    reg_route!(r, registry, restful, "/tokens/{id}", delete, self::delete, "system public", "tokens")
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/tokens",
+        get,
+        self::list,
+        "system public",
+        "tokens"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/tokens",
+        create,
+        self::create,
+        "system public",
+        "tokens"
+    );
+    reg_route!(
+        r,
+        registry,
+        restful,
+        "/tokens/{id}",
+        delete,
+        self::delete,
+        "system public",
+        "tokens"
+    )
 }
 
 /// Create API Token request body

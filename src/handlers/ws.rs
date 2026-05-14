@@ -38,7 +38,10 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::handlers::sse::event_type_name;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
     let _restful = config.api_restful;
     reg_route!(
         axum::Router::new(),

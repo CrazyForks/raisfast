@@ -10,6 +10,8 @@
 //! - Event Layer — event publish/consume interception (Phase 3)
 
 pub mod engine;
+pub mod excerpt_aspect;
+pub mod slug_aspect;
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;

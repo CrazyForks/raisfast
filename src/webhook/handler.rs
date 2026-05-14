@@ -10,15 +10,72 @@ use crate::middleware::auth::AuthUser;
 use crate::utils::pagination::PaginationParams;
 use crate::webhook::model::{CreateWebhookRequest, UpdateWebhookRequest};
 
-pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
     let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, restful, "/admin/webhooks", get, list, "system admin", "admin/webhooks");
-    let r = reg_route!(r, registry, restful, "/admin/webhooks", create, create, "system admin", "admin/webhooks");
-    let r = reg_route!(r, registry, restful, "/admin/webhooks/{id}", get, self::get, "system admin", "admin/webhooks");
-    let r = reg_route!(r, registry, restful, "/admin/webhooks/{id}", put, update, "system admin", "admin/webhooks");
-    let r = reg_route!(r, registry, restful, "/admin/webhooks/{id}", delete, self::delete, "system admin", "admin/webhooks");
-    reg_route!(r, registry, restful, "/admin/webhooks/batch", post, admin_batch, "system admin", "admin/webhooks")
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/webhooks",
+        get,
+        list,
+        "system admin",
+        "admin/webhooks"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/webhooks",
+        create,
+        create,
+        "system admin",
+        "admin/webhooks"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/webhooks/{id}",
+        get,
+        self::get,
+        "system admin",
+        "admin/webhooks"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/webhooks/{id}",
+        put,
+        update,
+        "system admin",
+        "admin/webhooks"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/webhooks/{id}",
+        delete,
+        self::delete,
+        "system admin",
+        "admin/webhooks"
+    );
+    reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/webhooks/batch",
+        post,
+        admin_batch,
+        "system admin",
+        "admin/webhooks"
+    )
 }
 
 /// GET /admin/webhooks — paginated list of webhook subscriptions

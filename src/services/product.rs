@@ -1,3 +1,4 @@
+use crate::aspects::slug_aspect;
 use crate::commands::{CreateProductCmd, UpdateProductCmd};
 use crate::dto::{CreateProductRequest, UpdateProductRequest};
 use crate::errors::app_error::{AppError, AppResult};
@@ -13,7 +14,7 @@ pub async fn create_product(
     let product_type = req.product_type.as_deref().unwrap_or("custom");
     let fulfillment_type = req.fulfillment_type.as_deref().unwrap_or("digital");
     let currency = req.currency.as_deref().unwrap_or("CNY");
-    let generated_slug = generate_slug(&req.title);
+    let generated_slug = slug_aspect::generate_slug(&req.title);
     let slug = req.slug.as_deref().or(Some(generated_slug.as_str()));
     product_repo
         .insert(
@@ -45,18 +46,6 @@ pub async fn create_product(
             auth.tenant_id(),
         )
         .await
-}
-
-fn generate_slug(title: &str) -> String {
-    let lower = title.to_lowercase();
-    let slug: String = lower
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '-' })
-        .collect();
-    slug.split('-')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
 }
 
 pub async fn update_product(

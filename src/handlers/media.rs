@@ -24,17 +24,76 @@ pub fn routes(
         r.route("/media/upload", mr)
     };
     registry.record("POST", "/api/v1/media/upload", "system public", "media");
-    let r = reg_route!(r, registry, restful, "/media", get, self::list, "system public", "media");
-    let r = reg_route!(r, registry, restful, "/media/stats", get, stats, "system public", "media");
-    let r = reg_route!(r, registry, restful, "/media/{id}", delete, self::delete, "system public", "media");
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/media",
+        get,
+        self::list,
+        "system public",
+        "media"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/media/stats",
+        get,
+        stats,
+        "system public",
+        "media"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/media/{id}",
+        delete,
+        self::delete,
+        "system public",
+        "media"
+    );
     let r = {
         let mr = axum::routing::post(admin_upload).layer(RequestBodyLimitLayer::new(max_upload));
         r.route("/admin/media/upload", mr)
     };
-    registry.record("POST", "/api/v1/admin/media/upload", "system admin", "admin/media");
-    let r = reg_route!(r, registry, restful, "/admin/media", get, admin_list, "system admin", "admin/media");
-    let r = reg_route!(r, registry, restful, "/admin/media/{id}", delete, admin_delete, "system admin", "admin/media");
-    reg_route!(r, registry, restful, "/admin/media/batch", post, admin_batch, "system admin", "admin/media")
+    registry.record(
+        "POST",
+        "/api/v1/admin/media/upload",
+        "system admin",
+        "admin/media",
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/media",
+        get,
+        admin_list,
+        "system admin",
+        "admin/media"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/media/{id}",
+        delete,
+        admin_delete,
+        "system admin",
+        "admin/media"
+    );
+    reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/media/batch",
+        post,
+        admin_batch,
+        "system admin",
+        "admin/media"
+    )
 }
 
 /// Upload a media file

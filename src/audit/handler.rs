@@ -9,11 +9,32 @@ use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
 use crate::utils::pagination::PaginationParams;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
     let _restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, restful, "/admin/audit", get, list, "system admin", "admin/audit");
-    reg_route!(r, registry, restful, "/admin/audit/{id}", get, self::get, "system admin", "admin/audit")
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/audit",
+        get,
+        list,
+        "system admin",
+        "admin/audit"
+    );
+    reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/audit/{id}",
+        get,
+        self::get,
+        "system admin",
+        "admin/audit"
+    )
 }
 
 /// GET /admin/audit — query audit logs (paginated)

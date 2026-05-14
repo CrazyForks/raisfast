@@ -199,9 +199,9 @@ fn generate_nonce() -> String {
     let mut bytes = [0u8; 16];
     let _ = getrandom::getrandom(&mut bytes);
     let mut s = String::with_capacity(32);
-        for b in bytes {
-            let _ = write!(s, "{b:02x}");
-        }
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
     s
 }
 

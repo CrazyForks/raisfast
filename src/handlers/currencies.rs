@@ -8,13 +8,52 @@ use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::models::currencies;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
     let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, restful, "/admin/currencies", get, list_currencies, "admin currencies", "admin/currencies");
-    let r = reg_route!(r, registry, restful, "/admin/currencies", create, create_currency, "admin currencies", "admin/currencies");
-    let r = reg_route!(r, registry, restful, "/admin/currencies/{code}", get, get_currency, "admin currencies", "admin/currencies");
-    reg_route!(r, registry, restful, "/admin/currencies/{code}", put, update_currency, "admin currencies", "admin/currencies")
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/currencies",
+        get,
+        list_currencies,
+        "admin currencies",
+        "admin/currencies"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/currencies",
+        create,
+        create_currency,
+        "admin currencies",
+        "admin/currencies"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/currencies/{code}",
+        get,
+        get_currency,
+        "admin currencies",
+        "admin/currencies"
+    );
+    reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/currencies/{code}",
+        put,
+        update_currency,
+        "admin currencies",
+        "admin/currencies"
+    )
 }
 
 #[utoipa::path(get, path = "/admin/currencies", tag = "currencies",

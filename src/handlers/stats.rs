@@ -13,12 +13,42 @@ use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::services::stats::StatsService;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
     let _restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, restful, "/admin/stats", get, overview, "system admin", "admin/stats");
-    let r = reg_route!(r, registry, restful, "/admin/stats/content/{table}", get, content_stats, "system admin", "admin/stats");
-    reg_route!(r, registry, restful, "/admin/stats/trends", get, trends, "system admin", "admin/stats")
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/stats",
+        get,
+        overview,
+        "system admin",
+        "admin/stats"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/stats/content/{table}",
+        get,
+        content_stats,
+        "system admin",
+        "admin/stats"
+    );
+    reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/stats/trends",
+        get,
+        trends,
+        "system admin",
+        "admin/stats"
+    )
 }
 
 #[derive(Debug, Deserialize)]

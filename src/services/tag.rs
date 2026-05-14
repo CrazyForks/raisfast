@@ -1,7 +1,6 @@
 //! Tag service.
 
-use slug::slugify;
-
+use crate::aspects::slug_aspect;
 use crate::dto::CreateTagRequest;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
@@ -12,7 +11,7 @@ pub async fn create_tag(
     auth: &AuthUser,
     req: CreateTagRequest,
 ) -> AppResult<crate::models::tag::Tag> {
-    let slug = slugify(&req.name);
+    let slug = slug_aspect::generate_slug(&req.name);
     tag_repo
         .create(&req.name, &slug, auth.tenant_id(), auth.user_int_id())
         .await
@@ -33,7 +32,7 @@ pub async fn update_tag(
     auth: &AuthUser,
     name: String,
 ) -> AppResult<crate::models::tag::Tag> {
-    let slug = slugify(&name);
+    let slug = slug_aspect::generate_slug(&name);
     let tag = tag_repo
         .find_by_document_id(id, auth.tenant_id())
         .await?

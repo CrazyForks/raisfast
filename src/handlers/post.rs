@@ -19,20 +19,122 @@ use crate::models::post::PostStatus;
 use crate::services::post as post_service;
 use crate::utils::pagination::PaginationParams;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
     let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, restful, "/posts", get, self::list, "system public", "posts");
-    let r = reg_route!(r, registry, restful, "/posts", create, self::create, "system public", "posts");
-    let r = reg_route!(r, registry, restful, "/posts/{slug}", get, self::get, "system public", "posts");
-    let r = reg_route!(r, registry, restful, "/posts/{slug}", put, update, "system public", "posts");
-    let r = reg_route!(r, registry, restful, "/posts/{slug}", delete, self::delete, "system public", "posts");
-    let r = reg_route!(r, registry, restful, "/admin/posts", get, admin_list, "system admin", "admin/posts");
-    let r = reg_route!(r, registry, restful, "/admin/posts", create, admin_create, "system admin", "admin/posts");
-    let r = reg_route!(r, registry, restful, "/admin/posts/{id}", get, admin_get, "system admin", "admin/posts");
-    let r = reg_route!(r, registry, restful, "/admin/posts/{id}", put, admin_update, "system admin", "admin/posts");
-    let r = reg_route!(r, registry, restful, "/admin/posts/{id}", delete, admin_delete, "system admin", "admin/posts");
-    reg_route!(r, registry, restful, "/admin/posts/batch", post, admin_batch, "system admin", "admin/posts")
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/posts",
+        get,
+        self::list,
+        "system public",
+        "posts"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/posts",
+        create,
+        self::create,
+        "system public",
+        "posts"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/posts/{slug}",
+        get,
+        self::get,
+        "system public",
+        "posts"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/posts/{slug}",
+        put,
+        update,
+        "system public",
+        "posts"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/posts/{slug}",
+        delete,
+        self::delete,
+        "system public",
+        "posts"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/posts",
+        get,
+        admin_list,
+        "system admin",
+        "admin/posts"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/posts",
+        create,
+        admin_create,
+        "system admin",
+        "admin/posts"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/posts/{id}",
+        get,
+        admin_get,
+        "system admin",
+        "admin/posts"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/posts/{id}",
+        put,
+        admin_update,
+        "system admin",
+        "admin/posts"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/posts/{id}",
+        delete,
+        admin_delete,
+        "system admin",
+        "admin/posts"
+    );
+    reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/posts/batch",
+        post,
+        admin_batch,
+        "system admin",
+        "admin/posts"
+    )
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]

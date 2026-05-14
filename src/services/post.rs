@@ -3,12 +3,13 @@
 //! Provides full CRUD business logic for posts, including:
 //!
 //! - Post creation, update, deletion, published listing, and detail retrieval
-//! - Automatic slug generation and deduplication
-//! - Automatic excerpt extraction
+//! - Slug generation via SlugAspect
+//! - Excerpt extraction via ExcerptAspect
 //! - Post response assembly (with tags and author info)
 
 use slug::slugify;
 
+use crate::aspects::slug_aspect;
 use crate::commands::{CreatePostCmd, FindPublishedQuery, UpdatePostCmd};
 use crate::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::errors::app_error::{AppError, AppResult};
@@ -149,21 +150,19 @@ async fn build_post_response_from_repo(
     joined_row_to_response(row, tags, plugins).await
 }
 
-fn make_unique_slug(base_slug: &str) -> String {
-    let suffix = crate::utils::id::random_hex(2);
-    format!("{base_slug}-{suffix}")
-}
-
-fn extract_excerpt(content: &str, max_len: usize) -> String {
-    let plain = content
-        .chars()
-        .take(max_len.saturating_mul(2))
-        .collect::<String>();
-    if plain.len() > max_len {
-        format!("{}...", &plain[..plain.ceil_char_boundary(max_len)])
-    } else {
-        plain
-    }
+fn generate_slug_and_excerpt(
+    title: &str,
+    content: &str,
+    slug_override: Option<&str>,
+    excerpt_override: Option<&str>,
+) -> (String, String) {
+    let slug = slug_override
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| slug_aspect::make_unique_slug(title));
+    let excerpt = excerpt_override
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| crate::aspects::excerpt_aspect::extract_excerpt(content, 200));
+    (slug, excerpt)
 }
 
 #[tracing::instrument(skip(repo, plugins, eventbus), fields(slug = tracing::field::Empty))]
@@ -180,13 +179,9 @@ pub async fn create_post(
     let req = plugins
         .dispatch_filter(HookPoint::PostCreating, req)
         .await?;
-    let base_slug = slugify(&req.title);
-    let slug = make_unique_slug(&base_slug);
     let status = req.status.unwrap_or(PostStatus::Draft);
-    let excerpt = req.excerpt.as_deref().map_or_else(
-        || extract_excerpt(&req.content, 200),
-        std::string::ToString::to_string,
-    );
+    let (slug, excerpt) =
+        generate_slug_and_excerpt(&req.title, &req.content, None, req.excerpt.as_deref());
 
     let category_id = if let Some(ref doc_id) = req.category_id {
         resolve_doc_id_to_int(repo.pool(), "categories", doc_id, auth.tenant_id()).await?
@@ -364,18 +359,18 @@ async fn update_post_inner(
         .await?
         .ok_or_else(|| AppError::not_found("post"))?;
 
+    let content = req.content.as_deref().unwrap_or(&existing.content);
     let new_slug = req
         .title
         .as_ref()
         .map(slugify)
         .filter(|s| s != &existing.slug);
 
-    let slug: Option<String> = new_slug.as_deref().map(make_unique_slug);
-    let content = req.content.as_deref().unwrap_or(&existing.content);
+    let slug: Option<String> = new_slug.as_deref().map(slug_aspect::make_unique_slug);
     let excerpt = req
         .excerpt
         .clone()
-        .unwrap_or_else(|| extract_excerpt(content, 200));
+        .unwrap_or_else(|| crate::aspects::excerpt_aspect::extract_excerpt(content, 200));
 
     let category_id = if let Some(ref doc_id) = req.category_id {
         resolve_doc_id_to_int(repo.pool(), "categories", doc_id, auth.tenant_id()).await?
@@ -727,14 +722,14 @@ mod tests {
     #[test]
     fn extract_excerpt_short_content() {
         let content = "short";
-        let result = extract_excerpt(content, 200);
+        let result = crate::aspects::excerpt_aspect::extract_excerpt(content, 200);
         assert_eq!(result, "short");
     }
 
     #[test]
     fn extract_excerpt_truncates_long_content() {
         let content = "a".repeat(300);
-        let result = extract_excerpt(&content, 200);
+        let result = crate::aspects::excerpt_aspect::extract_excerpt(&content, 200);
         assert!(result.ends_with("..."));
         assert_eq!(result.len(), 203);
     }
@@ -742,20 +737,20 @@ mod tests {
     #[test]
     fn extract_excerpt_exact_boundary() {
         let content = "a".repeat(200);
-        let result = extract_excerpt(&content, 200);
+        let result = crate::aspects::excerpt_aspect::extract_excerpt(&content, 200);
         assert_eq!(result, "a".repeat(200));
     }
 
     #[test]
     fn extract_excerpt_unicode_safe() {
         let content = "你好世界".repeat(100);
-        let result = extract_excerpt(&content, 200);
+        let result = crate::aspects::excerpt_aspect::extract_excerpt(&content, 200);
         assert!(result.ends_with("...") || result.len() <= 200);
     }
 
     #[test]
     fn make_unique_slug_has_suffix() {
-        let slug = make_unique_slug("my-post");
+        let slug = slug_aspect::make_unique_slug("my-post");
         assert!(slug.starts_with("my-post-"));
         let suffix = &slug["my-post-".len()..];
         assert_eq!(suffix.len(), 4);
@@ -764,15 +759,15 @@ mod tests {
 
     #[test]
     fn make_unique_slug_different_each_call() {
-        let s1 = make_unique_slug("test");
-        let s2 = make_unique_slug("test");
+        let s1 = slug_aspect::make_unique_slug("test");
+        let s2 = slug_aspect::make_unique_slug("test");
         assert_ne!(s1, s2);
     }
 
     #[test]
     fn extract_excerpt_zero_max_len() {
         let content = "hello world";
-        let result = extract_excerpt(content, 0);
+        let result = crate::aspects::excerpt_aspect::extract_excerpt(content, 0);
         assert!(result.is_empty() || result.ends_with("..."));
     }
 

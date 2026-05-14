@@ -11,11 +11,32 @@ use axum::extract::State;
 use axum::response::Html;
 use std::sync::Arc;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
     let _restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, restful, "/graphql", get, graphiql_handler, "system public", "graphql");
-    reg_route!(r, registry, restful, "/graphql", post, graphql_handler, "system public", "graphql")
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/graphql",
+        get,
+        graphiql_handler,
+        "system public",
+        "graphql"
+    );
+    reg_route!(
+        r,
+        registry,
+        restful,
+        "/graphql",
+        post,
+        graphql_handler,
+        "system public",
+        "graphql"
+    )
 }
 
 /// POST /api/v1/graphql

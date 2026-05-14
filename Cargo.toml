@@ -45,6 +45,9 @@ openapi = ["utoipa-swagger-ui"]
 # ── TypeScript type generation ────────────────────────────────────
 export-types = ["ts-rs"]
 
+# ── Built-in reverse proxy (multi-tenant) ──────────────────────────
+proxy = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:tokio-util"]
+
 # ── Tauri desktop mode ────────────────────────────────────────────
 tauri = ["dep:tauri"]
 
@@ -165,6 +168,12 @@ async-stripe = { version = "0.39", features = ["runtime-tokio-hyper", "webhook-e
 dashmap = "6"
 moka = { version = "0.12", features = ["sync"] }
 arc-swap = "1"
+
+# Proxy (optional, multi-tenant reverse proxy)
+hyper = { version = "1", optional = true }
+hyper-util = { version = "0.1", features = ["tokio", "client", "server", "http1"], optional = true }
+http-body-util = { version = "0.1", optional = true }
+tokio-util = { version = "0.7", features = ["rt"], optional = true }
 
 # OpenAPI
 utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }

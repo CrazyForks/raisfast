@@ -23,14 +23,62 @@ use crate::constants::*;
 use crate::errors::app_error::AppError;
 use crate::middleware::auth::AuthUser;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
     let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, restful, "/admin/content-types", get, list_schemas, "system admin", "admin/content-types");
-    let r = reg_route!(r, registry, restful, "/admin/content-types", create, create_schema, "system admin", "admin/content-types");
-    let r = reg_route!(r, registry, restful, "/admin/content-types/{singular}", get, get_schema, "system admin", "admin/content-types");
-    let r = reg_route!(r, registry, restful, "/admin/content-types/{singular}", put, update_schema, "system admin", "admin/content-types");
-    let r = reg_route!(r, registry, restful, "/admin/content-types/{singular}", delete, delete_schema, "system admin", "admin/content-types");
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/content-types",
+        get,
+        list_schemas,
+        "system admin",
+        "admin/content-types"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/content-types",
+        create,
+        create_schema,
+        "system admin",
+        "admin/content-types"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/content-types/{singular}",
+        get,
+        get_schema,
+        "system admin",
+        "admin/content-types"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/content-types/{singular}",
+        put,
+        update_schema,
+        "system admin",
+        "admin/content-types"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/content-types/{singular}",
+        delete,
+        delete_schema,
+        "system admin",
+        "admin/content-types"
+    );
     let r = {
         let mr = axum::routing::any(dynamic_cms_handler);
         r.route("/cms/{*path}", mr)
@@ -40,7 +88,12 @@ pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::confi
         let mr = axum::routing::any(dynamic_admin_cms_handler);
         r.route("/admin/cms/{*path}", mr)
     };
-    registry.record("ANY", "/api/v1/admin/cms/{*path}", "content_type admin", "admin/cms");
+    registry.record(
+        "ANY",
+        "/api/v1/admin/cms/{*path}",
+        "content_type admin",
+        "admin/cms",
+    );
     r
 }
 
@@ -194,9 +247,7 @@ pub fn register_content_routes(
                     })
                     .post({
                         let singular = singular.clone();
-                        move |auth, state, data| {
-                            create_handler(auth, state, singular.clone(), data)
-                        }
+                        move |auth, state, data| create_handler(auth, state, singular.clone(), data)
                     }),
                 )
                 .route(
@@ -213,9 +264,7 @@ pub fn register_content_routes(
                     })
                     .delete({
                         let singular = singular.clone();
-                        move |auth, state, path| {
-                            delete_handler(auth, state, path, singular.clone())
-                        }
+                        move |auth, state, path| delete_handler(auth, state, path, singular.clone())
                     }),
                 )
                 .route(
@@ -247,9 +296,7 @@ pub fn register_content_routes(
                     &format!("{cms}/{plural}/create"),
                     axum::routing::post({
                         let singular = singular.clone();
-                        move |auth, state, data| {
-                            create_handler(auth, state, singular.clone(), data)
-                        }
+                        move |auth, state, data| create_handler(auth, state, singular.clone(), data)
                     }),
                 )
                 .route(
@@ -272,9 +319,7 @@ pub fn register_content_routes(
                     &format!("{cms}/{plural}/{{id_or_slug}}/delete"),
                     axum::routing::post({
                         let singular = singular.clone();
-                        move |auth, state, path| {
-                            delete_handler(auth, state, path, singular.clone())
-                        }
+                        move |auth, state, path| delete_handler(auth, state, path, singular.clone())
                     }),
                 )
                 .route(
@@ -331,9 +376,7 @@ fn resolve_content_type(
 }
 
 /// Parse catch-all path into (segment, optional id_or_slug, optional action)
-fn parse_dynamic_path_with_action(
-    path: &str,
-) -> Option<(String, Option<String>, Option<String>)> {
+fn parse_dynamic_path_with_action(path: &str) -> Option<(String, Option<String>, Option<String>)> {
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if segments.is_empty() {
         return None;
@@ -350,7 +393,11 @@ fn parse_dynamic_path_with_action(
         }
         3 => {
             let action = segments[2];
-            Some((first, Some(segments[1].to_string()), Some(action.to_string())))
+            Some((
+                first,
+                Some(segments[1].to_string()),
+                Some(action.to_string()),
+            ))
         }
         _ => None,
     }
@@ -1729,8 +1776,7 @@ target = "users"
 
     #[test]
     fn parse_dynamic_path_with_action_id_update() {
-        let (seg, id, action) =
-            parse_dynamic_path_with_action("products/abc-123/update").unwrap();
+        let (seg, id, action) = parse_dynamic_path_with_action("products/abc-123/update").unwrap();
         assert_eq!(seg, "products");
         assert_eq!(id, Some("abc-123".to_string()));
         assert_eq!(action, Some("update".to_string()));
@@ -1738,8 +1784,7 @@ target = "users"
 
     #[test]
     fn parse_dynamic_path_with_action_id_delete() {
-        let (seg, id, action) =
-            parse_dynamic_path_with_action("products/abc-123/delete").unwrap();
+        let (seg, id, action) = parse_dynamic_path_with_action("products/abc-123/delete").unwrap();
         assert_eq!(seg, "products");
         assert_eq!(id, Some("abc-123".to_string()));
         assert_eq!(action, Some("delete".to_string()));

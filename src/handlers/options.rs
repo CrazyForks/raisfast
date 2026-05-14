@@ -11,15 +11,72 @@ use crate::AppState;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+pub fn routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
     let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(r, registry, restful, "/options/public", get, get_public_options, "system public", "options");
-    let r = reg_route!(r, registry, restful, "/admin/options", get, list_options, "system admin", "admin/options");
-    let r = reg_route!(r, registry, restful, "/admin/options", put, update_options, "system admin", "admin/options");
-    let r = reg_route!(r, registry, restful, "/admin/options/{key}", get, get_option, "system admin", "admin/options");
-    let r = reg_route!(r, registry, restful, "/admin/options/{key}", put, set_option, "system admin", "admin/options");
-    reg_route!(r, registry, restful, "/admin/options/{key}", delete, delete_option, "system admin", "admin/options")
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/options/public",
+        get,
+        get_public_options,
+        "system public",
+        "options"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/options",
+        get,
+        list_options,
+        "system admin",
+        "admin/options"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/options",
+        put,
+        update_options,
+        "system admin",
+        "admin/options"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/options/{key}",
+        get,
+        get_option,
+        "system admin",
+        "admin/options"
+    );
+    let r = reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/options/{key}",
+        put,
+        set_option,
+        "system admin",
+        "admin/options"
+    );
+    reg_route!(
+        r,
+        registry,
+        restful,
+        "/admin/options/{key}",
+        delete,
+        delete_option,
+        "system admin",
+        "admin/options"
+    )
 }
 
 /// GET /options/public — Public options (values only) + system feature flags
