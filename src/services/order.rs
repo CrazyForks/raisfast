@@ -124,9 +124,9 @@ pub async fn cancel_order(
             let rows = crate::models::order::tx_update_status_cas(
                 &mut tx,
                 order.id,
-                OrderStatus::Cancelled.as_str(),
+                OrderStatus::Cancelled,
                 Some("cancelled_at"),
-                OrderStatus::Pending.as_str(),
+                OrderStatus::Pending,
             )
             .await?;
             if rows == 0 {
@@ -160,9 +160,9 @@ pub async fn mark_paid(
             let rows = crate::models::order::tx_update_status_cas(
                 &mut tx,
                 order.id,
-                OrderStatus::Paid.as_str(),
+                OrderStatus::Paid,
                 Some("paid_at"),
-                OrderStatus::Pending.as_str(),
+                OrderStatus::Pending,
             )
             .await?;
             if rows == 0 {
@@ -240,9 +240,9 @@ pub async fn confirm_receipt(
             let rows = crate::models::order::tx_update_status_cas(
                 &mut tx,
                 order.id,
-                OrderStatus::Completed.as_str(),
+                OrderStatus::Completed,
                 Some("completed_at"),
-                OrderStatus::Shipped.as_str(),
+                OrderStatus::Shipped,
             )
             .await?;
             if rows == 0 {
@@ -275,11 +275,11 @@ pub async fn refund_order(
 
     let result: Result<(), AppError> = async {
         crate::in_transaction!(pool, tx, {
-            let expected = order.status.as_str();
+            let expected = order.status;
             let rows = crate::models::order::tx_update_status_cas(
                 &mut tx,
                 order.id,
-                OrderStatus::Refunding.as_str(),
+                OrderStatus::Refunding,
                 Some("refunding_at"),
                 expected,
             )
@@ -312,11 +312,11 @@ pub async fn admin_cancel(
 
     let result: Result<(), AppError> = async {
         crate::in_transaction!(pool, tx, {
-            let expected = order.status.as_str();
+            let expected = order.status;
             let rows = crate::models::order::tx_update_status_cas(
                 &mut tx,
                 order.id,
-                OrderStatus::Cancelled.as_str(),
+                OrderStatus::Cancelled,
                 Some("cancelled_at"),
                 expected,
             )

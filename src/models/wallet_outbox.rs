@@ -3,6 +3,7 @@ use sqlx::FromRow;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
+use crate::models::wallet_transaction::{WalletReferenceType, WalletTxType};
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -45,9 +46,9 @@ pub async fn tx_insert(
     currency: &str,
     amount: i64,
     entry_type: &str,
-    tx_type: &str,
+    tx_type: WalletTxType,
     transaction_no: &str,
-    reference_type: Option<&str>,
+    reference_type: Option<WalletReferenceType>,
     reference_id: Option<&str>,
     metadata: Option<&str>,
     tenant_id: Option<&str>,

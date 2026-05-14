@@ -54,9 +54,9 @@ impl JobHandler for RetryPaymentCallbackHandler {
                 crate::models::payment_order::tx_update_status_cas(
                     &mut tx,
                     order.id,
-                    PaymentStatus::Expired.as_str(),
+                    PaymentStatus::Expired,
                     Some("expired_at"),
-                    PaymentStatus::Pending.as_str(),
+                    PaymentStatus::Pending,
                 )
                 .await?;
                 Ok(())
@@ -98,9 +98,9 @@ impl JobHandler for RetryPaymentCallbackHandler {
                     let rows = crate::models::payment_order::tx_update_status_cas(
                         &mut tx,
                         order.id,
-                        PaymentStatus::Paid.as_str(),
+                        PaymentStatus::Paid,
                         Some("paid_at"),
-                        PaymentStatus::Pending.as_str(),
+                        PaymentStatus::Pending,
                     )
                     .await?;
                     if rows == 0 {
@@ -119,9 +119,9 @@ impl JobHandler for RetryPaymentCallbackHandler {
                         &order.currency,
                         order.amount,
                         "credit",
-                        WalletTxType::Recharge.as_str(),
+                        WalletTxType::Recharge,
                         &format!("PAY-{}", order.document_id),
-                        Some(WalletReferenceType::Payment.as_str()),
+                        Some(WalletReferenceType::Payment),
                         Some(&order.document_id),
                         None,
                         order.tenant_id.as_deref(),
@@ -136,9 +136,9 @@ impl JobHandler for RetryPaymentCallbackHandler {
                     let rows = crate::models::payment_order::tx_update_status_cas(
                         &mut tx,
                         order.id,
-                        PaymentStatus::Cancelled.as_str(),
+                        PaymentStatus::Cancelled,
                         Some("cancelled_at"),
-                        PaymentStatus::Pending.as_str(),
+                        PaymentStatus::Pending,
                     )
                     .await?;
                     if rows == 0 {
@@ -155,9 +155,9 @@ impl JobHandler for RetryPaymentCallbackHandler {
                     let rows = crate::models::payment_order::tx_update_status_cas(
                         &mut tx,
                         order.id,
-                        PaymentStatus::Expired.as_str(),
+                        PaymentStatus::Expired,
                         Some("expired_at"),
-                        PaymentStatus::Pending.as_str(),
+                        PaymentStatus::Pending,
                     )
                     .await?;
                     if rows == 0 {

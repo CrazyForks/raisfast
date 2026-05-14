@@ -442,7 +442,7 @@ pub async fn tx_find_by_document_id(
 pub async fn tx_update_status(
     tx: &mut crate::db::pool::DbConnection,
     id: i64,
-    status: &str,
+    status: OrderStatus,
     timestamp_col: Option<&str>,
 ) -> AppResult<()> {
     let sql = if let Some(col) = timestamp_col {
@@ -525,9 +525,9 @@ pub async fn tx_insert(
 pub async fn tx_update_status_cas(
     tx: &mut crate::db::pool::DbConnection,
     id: i64,
-    new_status: &str,
+    new_status: OrderStatus,
     timestamp_col: Option<&str>,
-    expected_status: &str,
+    expected_status: OrderStatus,
 ) -> AppResult<u64> {
     let sql = if let Some(col) = timestamp_col {
         validate_timestamp_col(col)?;

@@ -379,9 +379,9 @@ pub async fn cancel_payment_order(
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
             order.id,
-            PaymentStatus::Cancelled.as_str(),
+            PaymentStatus::Cancelled,
             Some("cancelled_at"),
-            PaymentStatus::Pending.as_str(),
+            PaymentStatus::Pending,
         )
         .await?;
         if rows == 0 {
@@ -517,9 +517,9 @@ pub async fn handle_callback(
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
             payment_order.id,
-            PaymentStatus::Paid.as_str(),
+            PaymentStatus::Paid,
             Some("paid_at"),
-            PaymentStatus::Pending.as_str(),
+            PaymentStatus::Pending,
         )
         .await?;
 
@@ -558,7 +558,7 @@ pub async fn handle_callback(
             crate::models::order::tx_update_status(
                 &mut tx,
                 order_id,
-                crate::models::order::OrderStatus::Paid.as_str(),
+            crate::models::order::OrderStatus::Paid,
                 Some("paid_at"),
             )
             .await?;
@@ -572,9 +572,9 @@ pub async fn handle_callback(
             &payment_order.currency,
             payment_order.amount,
             "credit",
-            WalletTxType::Recharge.as_str(),
+            WalletTxType::Recharge,
             &format!("PAY-{}", payment_order.document_id),
-            Some(WalletReferenceType::Payment.as_str()),
+            Some(WalletReferenceType::Payment),
             Some(&payment_order.document_id),
             None,
             payment_order.tenant_id.as_deref(),
@@ -700,16 +700,16 @@ pub async fn refund_payment_order(
                 .await?;
         let is_full_refund = already_refunded_in_tx >= payment_order.amount;
         let new_status = if is_full_refund {
-            PaymentStatus::Refunded.as_str()
+            PaymentStatus::Refunded
         } else {
-            PaymentStatus::PartiallyRefunded.as_str()
+            PaymentStatus::PartiallyRefunded
         };
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
             payment_order.id,
             new_status,
             None,
-            payment_order.status.as_str(),
+            payment_order.status,
         )
         .await?;
         if rows == 0 {
@@ -731,9 +731,9 @@ pub async fn refund_payment_order(
             &payment_order.currency,
             req.amount,
             "debit",
-            WalletTxType::Refund.as_str(),
+            WalletTxType::Refund,
             &wallet_tx_no,
-            Some(WalletReferenceType::PaymentRefund.as_str()),
+            Some(WalletReferenceType::PaymentRefund),
             Some(&payment_order.document_id),
             None,
             payment_order.tenant_id.as_deref(),
@@ -1253,9 +1253,9 @@ mod tests {
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
             po.id,
-            PaymentStatus::Paid.as_str(),
+            PaymentStatus::Paid,
             Some("paid_at"),
-            PaymentStatus::Pending.as_str(),
+            PaymentStatus::Pending,
         )
         .await
         .unwrap();
@@ -1347,9 +1347,9 @@ mod tests {
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
             po.id,
-            PaymentStatus::Paid.as_str(),
+            PaymentStatus::Paid,
             Some("paid_at"),
-            PaymentStatus::Pending.as_str(),
+            PaymentStatus::Pending,
         )
         .await
         .unwrap();
@@ -1423,9 +1423,9 @@ mod tests {
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
             po.id,
-            PaymentStatus::Paid.as_str(),
+            PaymentStatus::Paid,
             Some("paid_at"),
-            PaymentStatus::Pending.as_str(),
+            PaymentStatus::Pending,
         )
         .await
         .unwrap();
@@ -1577,9 +1577,9 @@ mod tests {
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
             po.id,
-            PaymentStatus::Paid.as_str(),
+            PaymentStatus::Paid,
             Some("paid_at"),
-            PaymentStatus::Pending.as_str(),
+            PaymentStatus::Pending,
         )
         .await
         .unwrap();
@@ -1621,9 +1621,9 @@ mod tests {
                 let rows = crate::models::payment_order::tx_update_status_cas(
                     &mut tx,
                     po.id,
-                    PaymentStatus::Paid.as_str(),
+                    PaymentStatus::Paid,
                     Some("paid_at"),
-                    PaymentStatus::Pending.as_str(),
+                    PaymentStatus::Pending,
                 )
                 .await
                 .unwrap();
@@ -1632,9 +1632,9 @@ mod tests {
                 let rows2 = crate::models::payment_order::tx_update_status_cas(
                     &mut tx,
                     po.id,
-                    PaymentStatus::Paid.as_str(),
+                    PaymentStatus::Paid,
                     Some("paid_at"),
-                    PaymentStatus::Pending.as_str(),
+                    PaymentStatus::Pending,
                 )
                 .await
                 .unwrap();

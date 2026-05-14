@@ -48,9 +48,9 @@ impl JobHandler for ExpirePaymentOrdersHandler {
                         let rows = crate::models::payment_order::tx_update_status_cas(
                             &mut tx,
                             order.id,
-                            PaymentStatus::Expired.as_str(),
+                            PaymentStatus::Expired,
                             Some("expired_at"),
-                            PaymentStatus::Pending.as_str(),
+                            PaymentStatus::Pending,
                         )
                         .await?;
                         if rows > 0 {

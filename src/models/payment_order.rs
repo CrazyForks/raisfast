@@ -365,9 +365,9 @@ pub async fn update_provider_order_id(
 pub async fn tx_update_status_cas(
     tx: &mut crate::db::pool::DbConnection,
     id: i64,
-    new_status: &str,
+    new_status: PaymentStatus,
     timestamp_col: Option<&str>,
-    expected_status: &str,
+    expected_status: PaymentStatus,
 ) -> AppResult<u64> {
     let sql = if let Some(col) = timestamp_col {
         format!(
@@ -574,9 +574,9 @@ mod tests {
         let rows = super::tx_update_status_cas(
             &mut tx,
             order.id,
-            "paid",
+            PaymentStatus::Paid,
             Some("paid_at"),
-            "pending",
+            PaymentStatus::Pending,
         )
         .await
         .unwrap();
@@ -601,9 +601,9 @@ mod tests {
         let rows = super::tx_update_status_cas(
             &mut tx,
             order.id,
-            "cancelled",
+            PaymentStatus::Cancelled,
             Some("cancelled_at"),
-            "pending",
+            PaymentStatus::Pending,
         )
         .await
         .unwrap();
@@ -683,7 +683,7 @@ mod tests {
             let order = seed_payment_order(&pool, uid, ch_id, 100).await;
             let mut tx = pool.begin().await.unwrap();
             let rows = super::tx_update_status_cas(
-                &mut tx, order.id, "paid", Some("paid_at"), "pending",
+                &mut tx, order.id, PaymentStatus::Paid, Some("paid_at"), PaymentStatus::Pending,
             ).await.unwrap();
             assert_eq!(rows, 1);
             tx.commit().await.unwrap();
@@ -720,7 +720,7 @@ mod tests {
             .unwrap();
         let mut tx = pool.begin().await.unwrap();
         let rows = super::tx_update_status_cas(
-            &mut tx, order.id, "paid", Some("paid_at"), "pending",
+            &mut tx, order.id, PaymentStatus::Paid, Some("paid_at"), PaymentStatus::Pending,
         ).await.unwrap();
         assert_eq!(rows, 1);
         tx.commit().await.unwrap();
