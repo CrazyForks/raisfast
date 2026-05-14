@@ -36,7 +36,8 @@ payment-alipay = ["rsa"]
 payment-creem = []
 payment-stripe = ["async-stripe"]
 payment-wechat = ["rsa", "x509-cert"]
-payment-all = ["payment-alipay", "payment-creem", "payment-stripe", "payment-wechat"]
+payment-dodo = []
+payment-all = ["payment-alipay", "payment-creem", "payment-dodo", "payment-stripe", "payment-wechat"]
 
 # ── OpenAPI / Swagger UI ────────────────────────────────────────────
 openapi = ["utoipa-swagger-ui"]

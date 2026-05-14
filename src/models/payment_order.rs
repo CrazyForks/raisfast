@@ -14,6 +14,7 @@ define_enum!(
         Refunded = "refunded",
         PartiallyRefunded = "partially_refunded",
         Expired = "expired",
+        Disputed = "disputed",
     }
 );
 

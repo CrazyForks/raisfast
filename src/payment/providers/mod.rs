@@ -4,6 +4,9 @@ pub mod alipay;
 #[cfg(feature = "payment-creem")]
 pub mod creem;
 
+#[cfg(feature = "payment-dodo")]
+pub mod dodo;
+
 #[cfg(feature = "payment-stripe")]
 pub mod stripe;
 
@@ -23,6 +26,8 @@ pub fn get_provider(
         "alipay" => Ok(Box::new(alipay::AlipayProvider::new(*encrypt_key))),
         #[cfg(feature = "payment-creem")]
         "creem" => Ok(Box::new(creem::CreemProvider::new(*encrypt_key))),
+        #[cfg(feature = "payment-dodo")]
+        "dodo" => Ok(Box::new(dodo::DodoProvider::new(*encrypt_key))),
         #[cfg(feature = "payment-stripe")]
         "stripe" => Ok(Box::new(stripe::StripeProvider::new(*encrypt_key))),
         #[cfg(feature = "payment-wechat")]
