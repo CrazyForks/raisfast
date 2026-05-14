@@ -238,29 +238,12 @@ pub async fn find_all_admin_paginated(
     Ok((rows, total))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn insert(
     pool: &crate::db::Pool,
-    document_id: &str,
-    user_id: i64,
-    order_id: Option<&str>,
-    title: &str,
-    amount: i64,
-    currency: &str,
-    channel_id: i64,
-    provider: &str,
-    reference_type: Option<&str>,
-    reference_id: Option<&str>,
-    return_url: Option<&str>,
-    idempotency_key: &str,
-    client_ip: Option<&str>,
-    client_language: Option<&str>,
-    client_country: Option<&str>,
-    client_user_agent: Option<&str>,
-    channel_selected_by: Option<&str>,
-    metadata: Option<&str>,
+    cmd: &crate::commands::CreatePaymentOrderCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<PaymentOrder> {
+    let document_id = uuid::Uuid::now_v7().to_string();
     match tenant_id {
         Some(tid) => {
             let sql = format!(
@@ -268,25 +251,25 @@ pub async fn insert(
                 ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13), ph(14), ph(15), ph(16), ph(17), ph(18), ph(19)
             );
             sqlx::query(&sql)
-                .bind(document_id)
+                .bind(&document_id)
                 .bind(tid)
-                .bind(user_id)
-                .bind(order_id)
-                .bind(title)
-                .bind(amount)
-                .bind(currency)
-                .bind(channel_id)
-                .bind(provider)
-                .bind(reference_type)
-                .bind(reference_id)
-                .bind(return_url)
-                .bind(idempotency_key)
-                .bind(client_ip)
-                .bind(client_language)
-                .bind(client_country)
-                .bind(client_user_agent)
-                .bind(channel_selected_by)
-                .bind(metadata)
+                .bind(cmd.user_id)
+                .bind(&cmd.order_id)
+                .bind(&cmd.title)
+                .bind(cmd.amount)
+                .bind(&cmd.currency)
+                .bind(cmd.channel_id)
+                .bind(&cmd.provider)
+                .bind(&cmd.reference_type)
+                .bind(&cmd.reference_id)
+                .bind(&cmd.return_url)
+                .bind(&cmd.idempotency_key)
+                .bind(&cmd.client_ip)
+                .bind(&cmd.client_language)
+                .bind(&cmd.client_country)
+                .bind(&cmd.client_user_agent)
+                .bind(&cmd.channel_selected_by)
+                .bind(&cmd.metadata)
                 .execute(pool)
                 .await?;
         }
@@ -296,29 +279,29 @@ pub async fn insert(
                 ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13), ph(14), ph(15), ph(16), ph(17), ph(18)
             );
             sqlx::query(&sql)
-                .bind(document_id)
-                .bind(user_id)
-                .bind(order_id)
-                .bind(title)
-                .bind(amount)
-                .bind(currency)
-                .bind(channel_id)
-                .bind(provider)
-                .bind(reference_type)
-                .bind(reference_id)
-                .bind(return_url)
-                .bind(idempotency_key)
-                .bind(client_ip)
-                .bind(client_language)
-                .bind(client_country)
-                .bind(client_user_agent)
-                .bind(channel_selected_by)
-                .bind(metadata)
+                .bind(&document_id)
+                .bind(cmd.user_id)
+                .bind(&cmd.order_id)
+                .bind(&cmd.title)
+                .bind(cmd.amount)
+                .bind(&cmd.currency)
+                .bind(cmd.channel_id)
+                .bind(&cmd.provider)
+                .bind(&cmd.reference_type)
+                .bind(&cmd.reference_id)
+                .bind(&cmd.return_url)
+                .bind(&cmd.idempotency_key)
+                .bind(&cmd.client_ip)
+                .bind(&cmd.client_language)
+                .bind(&cmd.client_country)
+                .bind(&cmd.client_user_agent)
+                .bind(&cmd.channel_selected_by)
+                .bind(&cmd.metadata)
                 .execute(pool)
                 .await?;
         }
     }
-    find_by_document_id(pool, document_id, tenant_id)
+    find_by_document_id(pool, &document_id, tenant_id)
         .await?
         .ok_or_else(|| {
             crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
@@ -415,25 +398,24 @@ mod tests {
     }
 
     async fn seed_channel(pool: &crate::db::Pool) -> i64 {
-        let doc_id = uuid::Uuid::now_v7().to_string();
-        let name = format!("stripe-{}", &doc_id[..8]);
+        let name = format!("stripe-{}", uuid::Uuid::now_v7());
         crate::models::payment_channel::insert(
             pool,
-            &doc_id,
-            "stripe",
-            &name,
-            false,
-            r#"{"api_key":"test"}"#,
-            None,
-            None,
-            true,
-            0,
+            &crate::commands::CreatePaymentChannelCmd {
+                provider: "stripe".into(),
+                name,
+                is_live: false,
+                credentials: r#"{"api_key":"test"}"#.into(),
+                webhook_secret: None,
+                settings: None,
+                is_active: true,
+                sort_order: 0,
+            },
             None,
         )
         .await
         .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM payment_channels WHERE document_id = ?")
-            .bind(&doc_id)
+        let (id,): (i64,) = sqlx::query_as("SELECT id FROM payment_channels WHERE provider = 'stripe' ORDER BY id DESC LIMIT 1")
             .fetch_one(pool)
             .await
             .unwrap();
@@ -446,28 +428,28 @@ mod tests {
         channel_id: i64,
         amount: i64,
     ) -> PaymentOrder {
-        let doc_id = uuid::Uuid::now_v7().to_string();
-        let idem_key = format!("idem_{}", doc_id);
+        let idem_key = format!("idem_{}", uuid::Uuid::now_v7());
         super::insert(
             pool,
-            &doc_id,
-            user_id,
-            None,
-            "Test Payment",
-            amount,
-            "USD",
-            channel_id,
-            "stripe",
-            None,
-            None,
-            None,
-            &idem_key,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &crate::commands::CreatePaymentOrderCmd {
+                user_id,
+                order_id: None,
+                title: "Test Payment".into(),
+                amount,
+                currency: "USD".into(),
+                channel_id,
+                provider: "stripe".into(),
+                reference_type: None,
+                reference_id: None,
+                return_url: None,
+                idempotency_key: idem_key,
+                client_ip: None,
+                client_language: None,
+                client_country: None,
+                client_user_agent: None,
+                channel_selected_by: None,
+                metadata: None,
+            },
             None,
         )
         .await

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::commands::CreatePermissionCmd;
 use crate::errors::app_error::AppError;
 use crate::models::rbac::{Permission, Role};
 use crate::repositories::RbacRepository;
@@ -141,7 +142,6 @@ impl RbacService {
         self.repo.delete_permissions_by_role_id(role.id).await?;
 
         for entry in entries {
-            let (doc_id, _now) = crate::utils::id::new_document_id_and_timestamp();
             let fields_json = entry
                 .fields
                 .as_ref()
@@ -152,14 +152,13 @@ impl RbacService {
                 .map(|c| serde_json::to_string(c).unwrap_or_default());
 
             self.repo
-                .insert_permission(
-                    &doc_id,
-                    role.id,
-                    &entry.action,
-                    &entry.subject,
-                    fields_json.as_deref(),
-                    conditions_json.as_deref(),
-                )
+                .insert_permission(&CreatePermissionCmd {
+                    role_id: role.id,
+                    action: entry.action.clone(),
+                    subject: entry.subject.clone(),
+                    fields: fields_json,
+                    conditions: conditions_json,
+                })
                 .await?;
         }
         self.get_permissions(role_id).await

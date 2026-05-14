@@ -206,97 +206,60 @@ pub async fn find_all_admin_paginated(
     Ok((rows, total))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn insert(
     pool: &crate::db::Pool,
-    document_id: &str,
-    user_id: i64,
-    order_no: &str,
-    subtotal: i64,
-    discount_amount: i64,
-    shipping_amount: i64,
-    total_amount: i64,
-    currency: &str,
-    buyer_name: Option<&str>,
-    buyer_phone: Option<&str>,
-    buyer_email: Option<&str>,
-    shipping_address: Option<&str>,
-    remark: Option<&str>,
+    cmd: &crate::commands::CreateOrderCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Order> {
+    let document_id = uuid::Uuid::now_v7().to_string();
     match tenant_id {
         Some(tid) => {
             let sql = format!(
                 "INSERT INTO orders (document_id, tenant_id, user_id, order_no, subtotal, discount_amount, shipping_amount, total_amount, currency, buyer_name, buyer_phone, buyer_email, shipping_address, remark, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10),
-                ph(11),
-                ph(12),
-                ph(13),
-                ph(14)
+                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13), ph(14)
             );
             sqlx::query(&sql)
-                .bind(document_id)
+                .bind(&document_id)
                 .bind(tid)
-                .bind(user_id)
-                .bind(order_no)
-                .bind(subtotal)
-                .bind(discount_amount)
-                .bind(shipping_amount)
-                .bind(total_amount)
-                .bind(currency)
-                .bind(buyer_name)
-                .bind(buyer_phone)
-                .bind(buyer_email)
-                .bind(shipping_address)
-                .bind(remark)
+                .bind(cmd.user_id)
+                .bind(&cmd.order_no)
+                .bind(cmd.subtotal)
+                .bind(cmd.discount_amount)
+                .bind(cmd.shipping_amount)
+                .bind(cmd.total_amount)
+                .bind(&cmd.currency)
+                .bind(&cmd.buyer_name)
+                .bind(&cmd.buyer_phone)
+                .bind(&cmd.buyer_email)
+                .bind(&cmd.shipping_address)
+                .bind(&cmd.remark)
                 .execute(pool)
                 .await?;
         }
         None => {
             let sql = format!(
                 "INSERT INTO orders (document_id, user_id, order_no, subtotal, discount_amount, shipping_amount, total_amount, currency, buyer_name, buyer_phone, buyer_email, shipping_address, remark, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10),
-                ph(11),
-                ph(12),
-                ph(13)
+                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13)
             );
             sqlx::query(&sql)
-                .bind(document_id)
-                .bind(user_id)
-                .bind(order_no)
-                .bind(subtotal)
-                .bind(discount_amount)
-                .bind(shipping_amount)
-                .bind(total_amount)
-                .bind(currency)
-                .bind(buyer_name)
-                .bind(buyer_phone)
-                .bind(buyer_email)
-                .bind(shipping_address)
-                .bind(remark)
+                .bind(&document_id)
+                .bind(cmd.user_id)
+                .bind(&cmd.order_no)
+                .bind(cmd.subtotal)
+                .bind(cmd.discount_amount)
+                .bind(cmd.shipping_amount)
+                .bind(cmd.total_amount)
+                .bind(&cmd.currency)
+                .bind(&cmd.buyer_name)
+                .bind(&cmd.buyer_phone)
+                .bind(&cmd.buyer_email)
+                .bind(&cmd.shipping_address)
+                .bind(&cmd.remark)
                 .execute(pool)
                 .await?;
         }
     }
-    find_by_document_id(pool, document_id, tenant_id)
+    find_by_document_id(pool, &document_id, tenant_id)
         .await?
         .ok_or_else(|| crate::errors::app_error::AppError::Internal(anyhow::anyhow!("order not found after insert")))
 }
@@ -466,24 +429,12 @@ pub async fn tx_update_status(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn tx_insert(
     tx: &mut crate::db::pool::DbConnection,
-    document_id: &str,
-    user_id: i64,
-    order_no: &str,
-    subtotal: i64,
-    discount_amount: i64,
-    shipping_amount: i64,
-    total_amount: i64,
-    currency: &str,
-    buyer_name: Option<&str>,
-    buyer_phone: Option<&str>,
-    buyer_email: Option<&str>,
-    shipping_address: Option<&str>,
-    remark: Option<&str>,
+    cmd: &crate::commands::CreateOrderCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Order> {
+    let document_id = uuid::Uuid::now_v7().to_string();
     match tenant_id {
         Some(tid) => {
             let sql = format!(
@@ -491,10 +442,10 @@ pub async fn tx_insert(
                 ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13), ph(14)
             );
             sqlx::query(&sql)
-                .bind(document_id).bind(tid).bind(user_id).bind(order_no)
-                .bind(subtotal).bind(discount_amount).bind(shipping_amount).bind(total_amount)
-                .bind(currency).bind(buyer_name).bind(buyer_phone).bind(buyer_email)
-                .bind(shipping_address).bind(remark)
+                .bind(&document_id).bind(tid).bind(cmd.user_id).bind(&cmd.order_no)
+                .bind(cmd.subtotal).bind(cmd.discount_amount).bind(cmd.shipping_amount).bind(cmd.total_amount)
+                .bind(&cmd.currency).bind(&cmd.buyer_name).bind(&cmd.buyer_phone).bind(&cmd.buyer_email)
+                .bind(&cmd.shipping_address).bind(&cmd.remark)
                 .execute(&mut *tx).await?;
         }
         None => {
@@ -503,10 +454,10 @@ pub async fn tx_insert(
                 ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13)
             );
             sqlx::query(&sql)
-                .bind(document_id).bind(user_id).bind(order_no)
-                .bind(subtotal).bind(discount_amount).bind(shipping_amount).bind(total_amount)
-                .bind(currency).bind(buyer_name).bind(buyer_phone).bind(buyer_email)
-                .bind(shipping_address).bind(remark)
+                .bind(&document_id).bind(cmd.user_id).bind(&cmd.order_no)
+                .bind(cmd.subtotal).bind(cmd.discount_amount).bind(cmd.shipping_amount).bind(cmd.total_amount)
+                .bind(&cmd.currency).bind(&cmd.buyer_name).bind(&cmd.buyer_phone).bind(&cmd.buyer_email)
+                .bind(&cmd.shipping_address).bind(&cmd.remark)
                 .execute(&mut *tx).await?;
         }
     }
@@ -515,7 +466,7 @@ pub async fn tx_insert(
     } else {
         format!("SELECT * FROM orders WHERE document_id = {}", ph(1))
     };
-    let mut q = sqlx::query_as::<_, Order>(&sql).bind(document_id);
+    let mut q = sqlx::query_as::<_, Order>(&sql).bind(&document_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -649,15 +600,27 @@ mod tests {
     }
 
     async fn seed_order(pool: &crate::db::Pool, user_id: i64) -> Order {
-        let doc_id = uuid::Uuid::now_v7().to_string();
         let order_no = format!("ORD-{}", uuid::Uuid::now_v7().to_string().replace('-', ""));
         super::insert(
-            pool, &doc_id, user_id, &order_no, 1000, 0, 0, 1000, "CNY", None, None, None, None,
-            None, None,
+            pool,
+            &crate::commands::CreateOrderCmd {
+                user_id,
+                order_no,
+                subtotal: 1000,
+                discount_amount: 0,
+                shipping_amount: 0,
+                total_amount: 1000,
+                currency: "CNY".into(),
+                buyer_name: None,
+                buyer_phone: None,
+                buyer_email: None,
+                shipping_address: None,
+                remark: None,
+            },
+            None,
         )
         .await
         .unwrap()
-        .into()
     }
 
     async fn get_status(pool: &crate::db::Pool, id: i64) -> String {
@@ -751,26 +714,26 @@ mod tests {
     async fn insert_with_buyer_info() {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
-        let doc_id = uuid::Uuid::now_v7().to_string();
         let order_no = format!(
             "ORD-{}",
             &uuid::Uuid::now_v7().to_string().replace('-', "")[..16]
         );
         let o = super::insert(
             &pool,
-            &doc_id,
-            uid,
-            &order_no,
-            500,
-            0,
-            0,
-            500,
-            "USD",
-            Some("John"),
-            Some("1234567890"),
-            Some("john@test.com"),
-            Some("123 Main St"),
-            Some("please be careful"),
+            &crate::commands::CreateOrderCmd {
+                user_id: uid,
+                order_no,
+                subtotal: 500,
+                discount_amount: 0,
+                shipping_amount: 0,
+                total_amount: 500,
+                currency: "USD".into(),
+                buyer_name: Some("John".into()),
+                buyer_phone: Some("1234567890".into()),
+                buyer_email: Some("john@test.com".into()),
+                shipping_address: Some("123 Main St".into()),
+                remark: Some("please be careful".into()),
+            },
             None,
         )
         .await

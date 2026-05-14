@@ -58,31 +58,14 @@ pub async fn create_page(
         validate_blocks_json(blocks)?;
     }
 
-    page::create(
-        pool,
-        &cmd.title,
-        &cmd.slug,
-        cmd.content.as_deref(),
-        cmd.blocks.as_deref(),
-        cmd.meta_title.as_deref(),
-        cmd.meta_description.as_deref(),
-        cmd.og_image.as_deref(),
-        &cmd.template,
-        cmd.parent_id,
-        cmd.sort_order,
-        cmd.status,
-        cmd.created_by,
-        cmd.cover_image.as_deref(),
-        auth.tenant_id(),
-    )
-    .await
+    page::create(pool, &cmd, auth.tenant_id()).await
 }
 
 pub async fn update_page(
     pool: &crate::db::Pool,
     auth: &AuthUser,
     document_id: &str,
-    cmd: UpdatePageCmd,
+    mut cmd: UpdatePageCmd,
 ) -> AppResult<page::Page> {
     if let Some(ref blocks) = cmd.blocks {
         validate_blocks_json(blocks)?;
@@ -92,25 +75,8 @@ pub async fn update_page(
         .await?
         .ok_or_else(|| AppError::not_found("page"))?;
 
-    page::update(
-        pool,
-        existing.id,
-        cmd.title.as_deref(),
-        cmd.slug.as_deref(),
-        cmd.content.as_deref(),
-        cmd.blocks.as_deref(),
-        cmd.meta_title.as_deref(),
-        cmd.meta_description.as_deref(),
-        cmd.og_image.as_deref(),
-        cmd.template.as_deref(),
-        cmd.parent_id,
-        cmd.sort_order,
-        cmd.status,
-        cmd.cover_image.as_deref(),
-        cmd.updated_by,
-        auth.tenant_id(),
-    )
-    .await
+    cmd.id = existing.id;
+    page::update(pool, &cmd, auth.tenant_id()).await
 }
 
 pub async fn delete_page(pool: &crate::db::Pool, id: &str, auth: &AuthUser) -> AppResult<()> {

@@ -95,6 +95,23 @@ pub async fn find_by_provider_tx_id(
     q.fetch_optional(pool).await.map_err(Into::into)
 }
 
+async fn find_by_document_id(
+    pool: &crate::db::Pool,
+    document_id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<PaymentTransaction>> {
+    let sql = format!(
+        "SELECT * FROM payment_transactions WHERE document_id = {}{}",
+        ph(1),
+        tenant_filter_ph(tenant_id, 2)
+    );
+    let mut q = sqlx::query_as::<_, PaymentTransaction>(&sql).bind(document_id);
+    if let Some(tid) = tenant_id {
+        q = q.bind(tid);
+    }
+    q.fetch_optional(pool).await.map_err(Into::into)
+}
+
 pub async fn find_all_admin_paginated(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
@@ -127,124 +144,84 @@ pub async fn find_all_admin_paginated(
     Ok((rows, total))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn insert(
     pool: &crate::db::Pool,
-    document_id: &str,
-    payment_order_id: i64,
-    order_id: Option<&str>,
-    user_id: i64,
-    tx_type: &str,
-    amount: i64,
-    currency: &str,
-    provider_tx_id: &str,
-    status: &str,
-    raw_payload: Option<&str>,
+    cmd: &crate::commands::CreatePaymentTransactionCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<PaymentTransaction> {
+    let document_id = uuid::Uuid::now_v7().to_string();
     match tenant_id {
         Some(tid) => {
             let sql = format!(
                 "INSERT INTO payment_transactions (document_id, tenant_id, payment_order_id, order_id, user_id, tx_type, amount, currency, provider_tx_id, status, raw_payload, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10),
-                ph(11)
+                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11)
             );
             sqlx::query(&sql)
-                .bind(document_id)
+                .bind(&document_id)
                 .bind(tid)
-                .bind(payment_order_id)
-                .bind(order_id)
-                .bind(user_id)
-                .bind(tx_type)
-                .bind(amount)
-                .bind(currency)
-                .bind(provider_tx_id)
-                .bind(status)
-                .bind(raw_payload)
+                .bind(cmd.payment_order_id)
+                .bind(&cmd.order_id)
+                .bind(cmd.user_id)
+                .bind(&cmd.tx_type)
+                .bind(cmd.amount)
+                .bind(&cmd.currency)
+                .bind(&cmd.provider_tx_id)
+                .bind(&cmd.status)
+                .bind(&cmd.raw_payload)
                 .execute(pool)
                 .await?;
         }
         None => {
             let sql = format!(
                 "INSERT INTO payment_transactions (document_id, payment_order_id, order_id, user_id, tx_type, amount, currency, provider_tx_id, status, raw_payload, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10)
+                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
             );
             sqlx::query(&sql)
-                .bind(document_id)
-                .bind(payment_order_id)
-                .bind(order_id)
-                .bind(user_id)
-                .bind(tx_type)
-                .bind(amount)
-                .bind(currency)
-                .bind(provider_tx_id)
-                .bind(status)
-                .bind(raw_payload)
+                .bind(&document_id)
+                .bind(cmd.payment_order_id)
+                .bind(&cmd.order_id)
+                .bind(cmd.user_id)
+                .bind(&cmd.tx_type)
+                .bind(cmd.amount)
+                .bind(&cmd.currency)
+                .bind(&cmd.provider_tx_id)
+                .bind(&cmd.status)
+                .bind(&cmd.raw_payload)
                 .execute(pool)
                 .await?;
         }
     }
-    let sql2 = format!(
-        "SELECT * FROM payment_transactions WHERE document_id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, PaymentTransaction>(&sql2).bind(document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_one(pool).await.map_err(Into::into)
+    find_by_document_id(pool, &document_id, tenant_id)
+        .await?
+        .ok_or_else(|| {
+            crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
+                "inserted row not found: {document_id}"
+            ))
+        })
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn tx_insert(
     tx: &mut crate::db::pool::DbConnection,
-    document_id: &str,
-    payment_order_id: i64,
-    order_id: Option<&str>,
-    user_id: i64,
-    tx_type: &str,
-    amount: i64,
-    currency: &str,
-    provider_tx_id: &str,
-    status: &str,
-    raw_payload: Option<&str>,
+    cmd: &crate::commands::CreatePaymentTransactionCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
+    let document_id = uuid::Uuid::now_v7().to_string();
     if let Some(tid) = tenant_id {
         let sql = format!(
             "INSERT INTO payment_transactions (document_id, payment_order_id, order_id, user_id, tx_type, amount, currency, provider_tx_id, status, raw_payload, tenant_id, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
             ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11)
         );
         sqlx::query(&sql)
-            .bind(document_id)
-            .bind(payment_order_id)
-            .bind(order_id)
-            .bind(user_id)
-            .bind(tx_type)
-            .bind(amount)
-            .bind(currency)
-            .bind(provider_tx_id)
-            .bind(status)
-            .bind(raw_payload)
+            .bind(&document_id)
+            .bind(cmd.payment_order_id)
+            .bind(&cmd.order_id)
+            .bind(cmd.user_id)
+            .bind(&cmd.tx_type)
+            .bind(cmd.amount)
+            .bind(&cmd.currency)
+            .bind(&cmd.provider_tx_id)
+            .bind(&cmd.status)
+            .bind(&cmd.raw_payload)
             .bind(tid)
             .execute(&mut *tx)
             .await?;
@@ -254,16 +231,16 @@ pub async fn tx_insert(
             ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
         );
         sqlx::query(&sql)
-            .bind(document_id)
-            .bind(payment_order_id)
-            .bind(order_id)
-            .bind(user_id)
-            .bind(tx_type)
-            .bind(amount)
-            .bind(currency)
-            .bind(provider_tx_id)
-            .bind(status)
-            .bind(raw_payload)
+            .bind(&document_id)
+            .bind(cmd.payment_order_id)
+            .bind(&cmd.order_id)
+            .bind(cmd.user_id)
+            .bind(&cmd.tx_type)
+            .bind(cmd.amount)
+            .bind(&cmd.currency)
+            .bind(&cmd.provider_tx_id)
+            .bind(&cmd.status)
+            .bind(&cmd.raw_payload)
             .execute(&mut *tx)
             .await?;
     }
@@ -301,25 +278,24 @@ mod tests {
     }
 
     async fn seed_channel(pool: &crate::db::Pool) -> i64 {
-        let doc_id = uuid::Uuid::now_v7().to_string();
-        let name = format!("stripe-{}", &doc_id[..8]);
+        let name = format!("stripe-{}", uuid::Uuid::now_v7());
         crate::models::payment_channel::insert(
             pool,
-            &doc_id,
-            "stripe",
-            &name,
-            false,
-            r#"{"api_key":"test"}"#,
-            None,
-            None,
-            true,
-            0,
+            &crate::commands::CreatePaymentChannelCmd {
+                provider: "stripe".into(),
+                name,
+                is_live: false,
+                credentials: r#"{"api_key":"test"}"#.into(),
+                webhook_secret: None,
+                settings: None,
+                is_active: true,
+                sort_order: 0,
+            },
             None,
         )
         .await
         .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM payment_channels WHERE document_id = ?")
-            .bind(&doc_id)
+        let (id,): (i64,) = sqlx::query_as("SELECT id FROM payment_channels WHERE provider = 'stripe' ORDER BY id DESC LIMIT 1")
             .fetch_one(pool)
             .await
             .unwrap();
@@ -327,34 +303,33 @@ mod tests {
     }
 
     async fn seed_payment_order(pool: &crate::db::Pool, user_id: i64, channel_id: i64) -> i64 {
-        let doc_id = uuid::Uuid::now_v7().to_string();
-        let idem_key = format!("idem_{}", &doc_id[..16]);
+        let idem_key = format!("idem_{}", uuid::Uuid::now_v7());
         crate::models::payment_order::insert(
             pool,
-            &doc_id,
-            user_id,
-            Some("order-ref-1"),
-            "Test Payment",
-            1000,
-            "USD",
-            channel_id,
-            "stripe",
-            None,
-            None,
-            None,
-            &idem_key,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &crate::commands::CreatePaymentOrderCmd {
+                user_id,
+                order_id: Some("order-ref-1".into()),
+                title: "Test Payment".into(),
+                amount: 1000,
+                currency: "USD".into(),
+                channel_id,
+                provider: "stripe".into(),
+                reference_type: None,
+                reference_id: None,
+                return_url: None,
+                idempotency_key: idem_key,
+                client_ip: None,
+                client_language: None,
+                client_country: None,
+                client_user_agent: None,
+                channel_selected_by: None,
+                metadata: None,
+            },
             None,
         )
         .await
         .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM payment_orders WHERE document_id = ?")
-            .bind(&doc_id)
+        let (id,): (i64,) = sqlx::query_as("SELECT id FROM payment_orders WHERE provider = 'stripe' ORDER BY id DESC LIMIT 1")
             .fetch_one(pool)
             .await
             .unwrap();
@@ -368,19 +343,19 @@ mod tests {
         tx_type: &str,
         provider_tx_id: &str,
     ) -> PaymentTransaction {
-        let doc_id = uuid::Uuid::now_v7().to_string();
         super::insert(
             pool,
-            &doc_id,
-            payment_order_id,
-            Some("order-ref-1"),
-            user_id,
-            tx_type,
-            1000,
-            "USD",
-            provider_tx_id,
-            "succeeded",
-            Some(r#"{"event":"charge.succeeded"}"#),
+            &crate::commands::CreatePaymentTransactionCmd {
+                payment_order_id,
+                order_id: Some("order-ref-1".into()),
+                user_id,
+                tx_type: tx_type.into(),
+                amount: 1000,
+                currency: "USD".into(),
+                provider_tx_id: provider_tx_id.into(),
+                status: "succeeded".into(),
+                raw_payload: Some(r#"{"event":"charge.succeeded"}"#.into()),
+            },
             None,
         )
         .await

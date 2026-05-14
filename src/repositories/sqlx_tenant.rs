@@ -22,7 +22,6 @@ pub trait TenantRepository: Send + Sync {
         config: &str,
     ) -> AppResult<Tenant>;
 
-    #[allow(clippy::too_many_arguments)]
     async fn update(
         &self,
         id: &str,
@@ -59,7 +58,6 @@ impl TenantRepository for SqlxTenantRepository {
         tenant::create(&self.pool, id, name, domain, config).await
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn update(
         &self,
         id: &str,

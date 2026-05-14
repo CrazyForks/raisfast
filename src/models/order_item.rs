@@ -47,77 +47,49 @@ pub async fn find_by_order_id(
     q.fetch_all(pool).await.map_err(Into::into)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn insert(
     pool: &crate::db::Pool,
-    document_id: &str,
-    order_id: i64,
-    product_id: Option<i64>,
-    title: &str,
-    description: Option<&str>,
-    unit_price: i64,
-    quantity: i64,
-    subtotal: i64,
-    cover_url: Option<&str>,
-    attributes: Option<&str>,
+    cmd: &crate::commands::CreateOrderItemCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<OrderItem> {
+    let document_id = uuid::Uuid::now_v7().to_string();
     match tenant_id {
         Some(tid) => {
             let sql = format!(
                 "INSERT INTO order_items (document_id, tenant_id, order_id, product_id, title, description, unit_price, quantity, subtotal, cover_url, attributes, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10),
-                ph(11)
+                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11)
             );
             sqlx::query(&sql)
-                .bind(document_id)
+                .bind(&document_id)
                 .bind(tid)
-                .bind(order_id)
-                .bind(product_id)
-                .bind(title)
-                .bind(description)
-                .bind(unit_price)
-                .bind(quantity)
-                .bind(subtotal)
-                .bind(cover_url)
-                .bind(attributes)
+                .bind(cmd.order_id)
+                .bind(cmd.product_id)
+                .bind(&cmd.title)
+                .bind(&cmd.description)
+                .bind(cmd.unit_price)
+                .bind(cmd.quantity)
+                .bind(cmd.subtotal)
+                .bind(&cmd.cover_url)
+                .bind(&cmd.attributes)
                 .execute(pool)
                 .await?;
         }
         None => {
             let sql = format!(
                 "INSERT INTO order_items (document_id, order_id, product_id, title, description, unit_price, quantity, subtotal, cover_url, attributes, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10)
+                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
             );
             sqlx::query(&sql)
-                .bind(document_id)
-                .bind(order_id)
-                .bind(product_id)
-                .bind(title)
-                .bind(description)
-                .bind(unit_price)
-                .bind(quantity)
-                .bind(subtotal)
-                .bind(cover_url)
-                .bind(attributes)
+                .bind(&document_id)
+                .bind(cmd.order_id)
+                .bind(cmd.product_id)
+                .bind(&cmd.title)
+                .bind(&cmd.description)
+                .bind(cmd.unit_price)
+                .bind(cmd.quantity)
+                .bind(cmd.subtotal)
+                .bind(&cmd.cover_url)
+                .bind(&cmd.attributes)
                 .execute(pool)
                 .await?;
         }
@@ -127,7 +99,7 @@ pub async fn insert(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    let mut q = sqlx::query_as::<_, OrderItem>(&sql2).bind(document_id);
+    let mut q = sqlx::query_as::<_, OrderItem>(&sql2).bind(&document_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -136,44 +108,21 @@ pub async fn insert(
 
 pub async fn insert_batch(
     pool: &crate::db::Pool,
-    items: Vec<InsertOrderItem>,
+    items: Vec<crate::commands::CreateOrderItemCmd>,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     for item in &items {
-        insert(
-            pool,
-            &item.document_id,
-            item.order_id,
-            item.product_id,
-            &item.title,
-            item.description.as_deref(),
-            item.unit_price,
-            item.quantity,
-            item.subtotal,
-            item.cover_url.as_deref(),
-            item.attributes.as_deref(),
-            tenant_id,
-        )
-        .await?;
+        insert(pool, item, tenant_id).await?;
     }
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn tx_insert(
     tx: &mut crate::db::pool::DbConnection,
-    document_id: &str,
-    order_id: i64,
-    product_id: Option<i64>,
-    title: &str,
-    description: Option<&str>,
-    unit_price: i64,
-    quantity: i64,
-    subtotal: i64,
-    cover_url: Option<&str>,
-    attributes: Option<&str>,
+    cmd: &crate::commands::CreateOrderItemCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<OrderItem> {
+    let document_id = uuid::Uuid::now_v7().to_string();
     match tenant_id {
         Some(tid) => {
             let sql = format!(
@@ -181,9 +130,9 @@ pub async fn tx_insert(
                 ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11)
             );
             sqlx::query(&sql)
-                .bind(document_id).bind(tid).bind(order_id).bind(product_id)
-                .bind(title).bind(description).bind(unit_price).bind(quantity)
-                .bind(subtotal).bind(cover_url).bind(attributes)
+                .bind(&document_id).bind(tid).bind(cmd.order_id).bind(cmd.product_id)
+                .bind(&cmd.title).bind(&cmd.description).bind(cmd.unit_price).bind(cmd.quantity)
+                .bind(cmd.subtotal).bind(&cmd.cover_url).bind(&cmd.attributes)
                 .execute(&mut *tx).await?;
         }
         None => {
@@ -192,9 +141,9 @@ pub async fn tx_insert(
                 ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
             );
             sqlx::query(&sql)
-                .bind(document_id).bind(order_id).bind(product_id)
-                .bind(title).bind(description).bind(unit_price).bind(quantity)
-                .bind(subtotal).bind(cover_url).bind(attributes)
+                .bind(&document_id).bind(cmd.order_id).bind(cmd.product_id)
+                .bind(&cmd.title).bind(&cmd.description).bind(cmd.unit_price).bind(cmd.quantity)
+                .bind(cmd.subtotal).bind(&cmd.cover_url).bind(&cmd.attributes)
                 .execute(&mut *tx).await?;
         }
     }
@@ -203,7 +152,7 @@ pub async fn tx_insert(
         ph(1),
         crate::db::tenant::tenant_filter_ph(tenant_id, 2)
     );
-    let mut q = sqlx::query_as::<_, OrderItem>(&sql2).bind(document_id);
+    let mut q = sqlx::query_as::<_, OrderItem>(&sql2).bind(&document_id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -212,40 +161,13 @@ pub async fn tx_insert(
 
 pub async fn tx_insert_batch(
     tx: &mut crate::db::pool::DbConnection,
-    items: Vec<InsertOrderItem>,
+    items: Vec<crate::commands::CreateOrderItemCmd>,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     for item in &items {
-        tx_insert(
-            tx,
-            &item.document_id,
-            item.order_id,
-            item.product_id,
-            &item.title,
-            item.description.as_deref(),
-            item.unit_price,
-            item.quantity,
-            item.subtotal,
-            item.cover_url.as_deref(),
-            item.attributes.as_deref(),
-            tenant_id,
-        )
-        .await?;
+        tx_insert(tx, item, tenant_id).await?;
     }
     Ok(())
-}
-
-pub struct InsertOrderItem {
-    pub document_id: String,
-    pub order_id: i64,
-    pub product_id: Option<i64>,
-    pub title: String,
-    pub description: Option<String>,
-    pub unit_price: i64,
-    pub quantity: i64,
-    pub subtotal: i64,
-    pub cover_url: Option<String>,
-    pub attributes: Option<String>,
 }
 
 #[cfg(test)]
@@ -279,19 +201,28 @@ mod tests {
     }
 
     async fn seed_order(pool: &crate::db::Pool, user_id: i64) -> i64 {
-        let doc_id = uuid::Uuid::now_v7().to_string();
-        let order_no = format!(
-            "ORD-{}",
-            &uuid::Uuid::now_v7().to_string().replace('-', "")[..16]
-        );
+        let order_no = format!("ORD-{}", uuid::Uuid::now_v7().to_string().replace('-', ""));
         crate::models::order::insert(
-            pool, &doc_id, user_id, &order_no, 1000, 0, 0, 1000, "CNY", None, None, None, None,
-            None, None,
+            pool,
+            &crate::commands::CreateOrderCmd {
+                user_id,
+                order_no,
+                subtotal: 1000,
+                discount_amount: 0,
+                shipping_amount: 0,
+                total_amount: 1000,
+                currency: "CNY".into(),
+                buyer_name: None,
+                buyer_phone: None,
+                buyer_email: None,
+                shipping_address: None,
+                remark: None,
+            },
+            None,
         )
         .await
         .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM orders WHERE document_id = ?")
-            .bind(&doc_id)
+        let (id,): (i64,) = sqlx::query_as("SELECT id FROM orders ORDER BY id DESC LIMIT 1")
             .fetch_one(pool)
             .await
             .unwrap();
@@ -299,39 +230,38 @@ mod tests {
     }
 
     async fn seed_product(pool: &crate::db::Pool) -> i64 {
-        let doc_id = uuid::Uuid::now_v7().to_string();
         crate::models::product::insert(
             pool,
-            &doc_id,
-            None,
-            "Test Product",
-            None,
-            None,
-            "custom",
-            "digital",
-            None,
-            None,
-            1000,
-            "CNY",
-            None,
-            0,
-            None,
-            None,
-            None,
-            None,
-            None,
-            "piece",
-            1,
-            None,
-            0,
-            None,
-            None,
+            &crate::commands::CreateProductCmd {
+                category_id: None,
+                title: "Test Product".to_string(),
+                description: None,
+                cover_url: None,
+                product_type: "custom".to_string(),
+                fulfillment_type: "digital".to_string(),
+                delivery_hook: None,
+                weight: None,
+                price: 1000,
+                currency: "CNY".to_string(),
+                attributes: None,
+                sort_order: 0,
+                slug: None,
+                content: None,
+                image_ids: None,
+                original_price: None,
+                specs: None,
+                unit: "piece".to_string(),
+                min_purchase: 1,
+                max_purchase: None,
+                virtual_sales: 0,
+                meta_title: None,
+                meta_description: None,
+            },
             None,
         )
         .await
         .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM products WHERE document_id = ?")
-            .bind(&doc_id)
+        let (id,): (i64,) = sqlx::query_as("SELECT id FROM products ORDER BY id DESC LIMIT 1")
             .fetch_one(pool)
             .await
             .unwrap();
@@ -344,20 +274,20 @@ mod tests {
         let uid = seed_user(&pool).await;
         let order_id = seed_order(&pool, uid).await;
         let pid = seed_product(&pool).await;
-        let doc_id = uuid::Uuid::now_v7().to_string();
 
         let item = super::insert(
             &pool,
-            &doc_id,
-            order_id,
-            Some(pid),
-            "Widget",
-            Some("A nice widget"),
-            1000,
-            2,
-            2000,
-            Some("https://img.test/widget.jpg"),
-            Some(r#"{"color":"red"}"#),
+            &crate::commands::CreateOrderItemCmd {
+                order_id,
+                product_id: Some(pid),
+                title: "Widget".into(),
+                description: Some("A nice widget".into()),
+                unit_price: 1000,
+                quantity: 2,
+                subtotal: 2000,
+                cover_url: Some("https://img.test/widget.jpg".into()),
+                attributes: Some(r#"{"color":"red"}"#.into()),
+            },
             None,
         )
         .await
@@ -381,19 +311,19 @@ mod tests {
         let order_id = seed_order(&pool, uid).await;
 
         for i in 0..3 {
-            let doc_id = uuid::Uuid::now_v7().to_string();
             super::insert(
                 &pool,
-                &doc_id,
-                order_id,
-                None,
-                &format!("Item{i}"),
-                None,
-                100 * (i + 1),
-                i + 1,
-                100 * (i + 1) * (i + 1),
-                None,
-                None,
+                &crate::commands::CreateOrderItemCmd {
+                    order_id,
+                    product_id: None,
+                    title: format!("Item{i}"),
+                    description: None,
+                    unit_price: 100 * (i + 1),
+                    quantity: i + 1,
+                    subtotal: 100 * (i + 1) * (i + 1),
+                    cover_url: None,
+                    attributes: None,
+                },
                 None,
             )
             .await
@@ -425,15 +355,37 @@ mod tests {
         let order1 = seed_order(&pool, uid).await;
         let order2 = seed_order(&pool, uid).await;
 
-        let doc1 = uuid::Uuid::now_v7().to_string();
         super::insert(
-            &pool, &doc1, order1, None, "Item1", None, 100, 1, 100, None, None, None,
+            &pool,
+            &crate::commands::CreateOrderItemCmd {
+                order_id: order1,
+                product_id: None,
+                title: "Item1".into(),
+                description: None,
+                unit_price: 100,
+                quantity: 1,
+                subtotal: 100,
+                cover_url: None,
+                attributes: None,
+            },
+            None,
         )
         .await
         .unwrap();
-        let doc2 = uuid::Uuid::now_v7().to_string();
         super::insert(
-            &pool, &doc2, order2, None, "Item2", None, 200, 1, 200, None, None, None,
+            &pool,
+            &crate::commands::CreateOrderItemCmd {
+                order_id: order2,
+                product_id: None,
+                title: "Item2".into(),
+                description: None,
+                unit_price: 200,
+                quantity: 1,
+                subtotal: 200,
+                cover_url: None,
+                attributes: None,
+            },
+            None,
         )
         .await
         .unwrap();
@@ -453,8 +405,7 @@ mod tests {
         let order_id = seed_order(&pool, uid).await;
 
         let items = vec![
-            InsertOrderItem {
-                document_id: uuid::Uuid::now_v7().to_string(),
+            crate::commands::CreateOrderItemCmd {
                 order_id,
                 product_id: None,
                 title: "Batch1".into(),
@@ -465,8 +416,7 @@ mod tests {
                 cover_url: None,
                 attributes: None,
             },
-            InsertOrderItem {
-                document_id: uuid::Uuid::now_v7().to_string(),
+            crate::commands::CreateOrderItemCmd {
                 order_id,
                 product_id: None,
                 title: "Batch2".into(),

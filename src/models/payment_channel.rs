@@ -141,79 +141,54 @@ pub async fn find_all_admin_paginated(
     Ok((rows, total))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn insert(
     pool: &crate::db::Pool,
-    document_id: &str,
-    provider: &str,
-    name: &str,
-    is_live: bool,
-    credentials: &str,
-    webhook_secret: Option<&str>,
-    settings: Option<&str>,
-    is_active: bool,
-    sort_order: i64,
+    cmd: &crate::commands::CreatePaymentChannelCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<PaymentChannel> {
-    let is_live_val = if is_live { 1_i64 } else { 0_i64 };
-    let is_active_val = if is_active { 1_i64 } else { 0_i64 };
+    let document_id = uuid::Uuid::now_v7().to_string();
+    let is_live_val = if cmd.is_live { 1_i64 } else { 0_i64 };
+    let is_active_val = if cmd.is_active { 1_i64 } else { 0_i64 };
     match tenant_id {
         Some(tid) => {
             let sql = format!(
                 "INSERT INTO payment_channels (document_id, tenant_id, provider, name, is_live, credentials, webhook_secret, settings, is_active, sort_order, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10)
+                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
             );
             sqlx::query(&sql)
-                .bind(document_id)
+                .bind(&document_id)
                 .bind(tid)
-                .bind(provider)
-                .bind(name)
+                .bind(&cmd.provider)
+                .bind(&cmd.name)
                 .bind(is_live_val)
-                .bind(credentials)
-                .bind(webhook_secret)
-                .bind(settings)
+                .bind(&cmd.credentials)
+                .bind(&cmd.webhook_secret)
+                .bind(&cmd.settings)
                 .bind(is_active_val)
-                .bind(sort_order)
+                .bind(cmd.sort_order)
                 .execute(pool)
                 .await?;
         }
         None => {
             let sql = format!(
                 "INSERT INTO payment_channels (document_id, provider, name, is_live, credentials, webhook_secret, settings, is_active, sort_order, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9)
+                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9)
             );
             sqlx::query(&sql)
-                .bind(document_id)
-                .bind(provider)
-                .bind(name)
+                .bind(&document_id)
+                .bind(&cmd.provider)
+                .bind(&cmd.name)
                 .bind(is_live_val)
-                .bind(credentials)
-                .bind(webhook_secret)
-                .bind(settings)
+                .bind(&cmd.credentials)
+                .bind(&cmd.webhook_secret)
+                .bind(&cmd.settings)
                 .bind(is_active_val)
-                .bind(sort_order)
+                .bind(cmd.sort_order)
                 .execute(pool)
                 .await?;
         }
     }
-    find_by_document_id(pool, document_id, tenant_id)
+    find_by_document_id(pool, &document_id, tenant_id)
         .await?
         .ok_or_else(|| {
             crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
@@ -222,48 +197,29 @@ pub async fn insert(
         })
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn update(
     pool: &crate::db::Pool,
-    id: i64,
-    provider: &str,
-    name: &str,
-    is_live: bool,
-    credentials: &str,
-    webhook_secret: Option<&str>,
-    settings: Option<&str>,
-    is_active: bool,
-    sort_order: i64,
-    version: i64,
+    cmd: &crate::commands::UpdatePaymentChannelCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
-    let is_live_val = if is_live { 1_i64 } else { 0_i64 };
-    let is_active_val = if is_active { 1_i64 } else { 0_i64 };
+    let is_live_val = if cmd.is_live { 1_i64 } else { 0_i64 };
+    let is_active_val = if cmd.is_active { 1_i64 } else { 0_i64 };
     let sql = format!(
         "UPDATE payment_channels SET provider={}, name={}, is_live={}, credentials={}, webhook_secret={}, settings={}, is_active={}, sort_order={}, updated_at=datetime('now'), version=version+1 WHERE id={} AND version={}{}",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7),
-        ph(8),
-        ph(9),
-        ph(10),
+        ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10),
         tenant_filter_ph(tenant_id, 11)
     );
     let mut q = sqlx::query(&sql)
-        .bind(provider)
-        .bind(name)
+        .bind(&cmd.provider)
+        .bind(&cmd.name)
         .bind(is_live_val)
-        .bind(credentials)
-        .bind(webhook_secret)
-        .bind(settings)
+        .bind(&cmd.credentials)
+        .bind(&cmd.webhook_secret)
+        .bind(&cmd.settings)
         .bind(is_active_val)
-        .bind(sort_order)
-        .bind(id)
-        .bind(version);
+        .bind(cmd.sort_order)
+        .bind(cmd.id)
+        .bind(cmd.version);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -303,19 +259,18 @@ mod tests {
     }
 
     async fn seed_channel(pool: &crate::db::Pool, provider: &str) -> PaymentChannel {
-        let doc_id = uuid::Uuid::now_v7().to_string();
-        let name = format!("{}-channel-{}", provider, &doc_id);
         super::insert(
             pool,
-            &doc_id,
-            provider,
-            &name,
-            false,
-            r#"{"api_key":"test"}"#,
-            None,
-            None,
-            true,
-            0,
+            &crate::commands::CreatePaymentChannelCmd {
+                provider: provider.into(),
+                name: format!("{}-channel-{}", provider, uuid::Uuid::now_v7()),
+                is_live: false,
+                credentials: r#"{"api_key":"test"}"#.into(),
+                webhook_secret: None,
+                settings: None,
+                is_active: true,
+                sort_order: 0,
+            },
             None,
         )
         .await
@@ -420,16 +375,18 @@ mod tests {
         let ch = seed_channel(&pool, "stripe").await;
         let ok = super::update(
             &pool,
-            ch.id,
-            "paypal",
-            "PayPal Live",
-            true,
-            r#"{"client_id":"new"}"#,
-            Some("secret123"),
-            Some(r#"{"currencies":["USD"]}"#),
-            false,
-            5,
-            ch.version,
+            &crate::commands::UpdatePaymentChannelCmd {
+                id: ch.id,
+                provider: "paypal".into(),
+                name: "PayPal Live".into(),
+                is_live: true,
+                credentials: r#"{"client_id":"new"}"#.into(),
+                webhook_secret: Some("secret123".into()),
+                settings: Some(r#"{"currencies":["USD"]}"#.into()),
+                is_active: false,
+                sort_order: 5,
+                version: ch.version,
+            },
             None,
         )
         .await
@@ -452,7 +409,20 @@ mod tests {
         let pool = setup_pool().await;
         let ch = seed_channel(&pool, "stripe").await;
         let ok = super::update(
-            &pool, ch.id, "stripe", "name", false, "{}", None, None, true, 0, 999, None,
+            &pool,
+            &crate::commands::UpdatePaymentChannelCmd {
+                id: ch.id,
+                provider: "stripe".into(),
+                name: "name".into(),
+                is_live: false,
+                credentials: "{}".into(),
+                webhook_secret: None,
+                settings: None,
+                is_active: true,
+                sort_order: 0,
+                version: 999,
+            },
+            None,
         )
         .await
         .unwrap();

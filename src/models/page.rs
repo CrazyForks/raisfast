@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
+use crate::commands::{CreatePageCmd, UpdatePageCmd};
 use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
@@ -434,26 +435,13 @@ pub async fn list_all(
     Ok((items, total))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn create(
     pool: &crate::db::Pool,
-    title: &str,
-    slug: &str,
-    content: Option<&str>,
-    blocks: Option<&str>,
-    meta_title: Option<&str>,
-    meta_description: Option<&str>,
-    og_image: Option<&str>,
-    template: &str,
-    parent_id: Option<i64>,
-    sort_order: i64,
-    status: PageStatus,
-    created_by: i64,
-    cover_image: Option<&str>,
+    cmd: &CreatePageCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
-    let published_at = if status == PageStatus::Published {
+    let published_at = if cmd.status == PageStatus::Published {
         Some(now)
     } else {
         None
@@ -468,20 +456,20 @@ pub async fn create(
             sqlx::query(&sql)
                 .bind(&document_id)
                 .bind(tid)
-                .bind(title)
-                .bind(slug)
-                .bind(content)
-                .bind(blocks)
-                .bind(meta_title)
-                .bind(meta_description)
-                .bind(og_image)
-                .bind(template)
-                .bind(parent_id)
-                .bind(sort_order)
-                .bind(status)
-                .bind(created_by)
-                .bind(created_by)
-                .bind(cover_image)
+                .bind(&cmd.title)
+                .bind(&cmd.slug)
+                .bind(&cmd.content)
+                .bind(&cmd.blocks)
+                .bind(&cmd.meta_title)
+                .bind(&cmd.meta_description)
+                .bind(&cmd.og_image)
+                .bind(&cmd.template)
+                .bind(cmd.parent_id)
+                .bind(cmd.sort_order)
+                .bind(cmd.status)
+                .bind(cmd.created_by)
+                .bind(cmd.created_by)
+                .bind(&cmd.cover_image)
                 .bind(published_at)
                 .bind(now)
                 .bind(now)
@@ -495,20 +483,20 @@ pub async fn create(
             );
             sqlx::query(&sql)
                 .bind(&document_id)
-                .bind(title)
-                .bind(slug)
-                .bind(content)
-                .bind(blocks)
-                .bind(meta_title)
-                .bind(meta_description)
-                .bind(og_image)
-                .bind(template)
-                .bind(parent_id)
-                .bind(sort_order)
-                .bind(status)
-                .bind(created_by)
-                .bind(created_by)
-                .bind(cover_image)
+                .bind(&cmd.title)
+                .bind(&cmd.slug)
+                .bind(&cmd.content)
+                .bind(&cmd.blocks)
+                .bind(&cmd.meta_title)
+                .bind(&cmd.meta_description)
+                .bind(&cmd.og_image)
+                .bind(&cmd.template)
+                .bind(cmd.parent_id)
+                .bind(cmd.sort_order)
+                .bind(cmd.status)
+                .bind(cmd.created_by)
+                .bind(cmd.created_by)
+                .bind(&cmd.cover_image)
                 .bind(published_at)
                 .bind(now)
                 .bind(now)
@@ -522,74 +510,60 @@ pub async fn create(
         .ok_or_else(|| AppError::not_found("page"))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn update(
     pool: &crate::db::Pool,
-    id: i64,
-    title: Option<&str>,
-    slug: Option<&str>,
-    content: Option<&str>,
-    blocks: Option<&str>,
-    meta_title: Option<&str>,
-    meta_description: Option<&str>,
-    og_image: Option<&str>,
-    template: Option<&str>,
-    parent_id: Option<Option<i64>>,
-    sort_order: Option<i64>,
-    status: Option<PageStatus>,
-    cover_image: Option<&str>,
-    updated_by: Option<i64>,
+    cmd: &UpdatePageCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
     let now = crate::utils::tz::now_utc();
     let mut idx = 0;
     let mut sets = vec![];
 
-    if updated_by.is_some() {
+    if cmd.updated_by.is_some() {
         idx += 1;
         sets.push(format!("updated_by = {}", ph(idx)));
     }
-    if title.is_some() {
+    if cmd.title.is_some() {
         idx += 1;
         sets.push(format!("title = {}", ph(idx)));
     }
-    if slug.is_some() {
+    if cmd.slug.is_some() {
         idx += 1;
         sets.push(format!("slug = {}", ph(idx)));
     }
-    if content.is_some() {
+    if cmd.content.is_some() {
         idx += 1;
         sets.push(format!("content = {}", ph(idx)));
     }
-    if blocks.is_some() {
+    if cmd.blocks.is_some() {
         idx += 1;
         sets.push(format!("blocks = {}", ph(idx)));
     }
-    if meta_title.is_some() {
+    if cmd.meta_title.is_some() {
         idx += 1;
         sets.push(format!("meta_title = {}", ph(idx)));
     }
-    if meta_description.is_some() {
+    if cmd.meta_description.is_some() {
         idx += 1;
         sets.push(format!("meta_description = {}", ph(idx)));
     }
-    if og_image.is_some() {
+    if cmd.og_image.is_some() {
         idx += 1;
         sets.push(format!("og_image = {}", ph(idx)));
     }
-    if template.is_some() {
+    if cmd.template.is_some() {
         idx += 1;
         sets.push(format!("template = {}", ph(idx)));
     }
-    if parent_id.is_some() {
+    if cmd.parent_id.is_some() {
         idx += 1;
         sets.push(format!("parent_id = {}", ph(idx)));
     }
-    if sort_order.is_some() {
+    if cmd.sort_order.is_some() {
         idx += 1;
         sets.push(format!("sort_order = {}", ph(idx)));
     }
-    if status.is_some() {
+    if cmd.status.is_some() {
         idx += 1;
         sets.push(format!("status = {}", ph(idx)));
         idx += 1;
@@ -600,7 +574,7 @@ pub async fn update(
             "published_at = COALESCE(published_at, CASE WHEN {s1} = 'published' THEN {s2} ELSE NULL END)"
         ));
     }
-    if cover_image.is_some() {
+    if cmd.cover_image.is_some() {
         idx += 1;
         sets.push(format!("cover_image = {}", ph(idx)));
     }
@@ -617,49 +591,49 @@ pub async fn update(
     );
 
     let mut q = sqlx::query(&sql);
-    if let Some(v) = updated_by {
+    if let Some(v) = cmd.updated_by {
         q = q.bind(v);
     }
-    if let Some(v) = title {
+    if let Some(ref v) = cmd.title {
         q = q.bind(v);
     }
-    if let Some(v) = slug {
+    if let Some(ref v) = cmd.slug {
         q = q.bind(v);
     }
-    if let Some(v) = content {
+    if let Some(ref v) = cmd.content {
         q = q.bind(v);
     }
-    if let Some(v) = blocks {
+    if let Some(ref v) = cmd.blocks {
         q = q.bind(v);
     }
-    if let Some(v) = meta_title {
+    if let Some(ref v) = cmd.meta_title {
         q = q.bind(v);
     }
-    if let Some(v) = meta_description {
+    if let Some(ref v) = cmd.meta_description {
         q = q.bind(v);
     }
-    if let Some(v) = og_image {
+    if let Some(ref v) = cmd.og_image {
         q = q.bind(v);
     }
-    if let Some(v) = template {
+    if let Some(ref v) = cmd.template {
         q = q.bind(v);
     }
-    if let Some(v) = parent_id {
+    if let Some(v) = cmd.parent_id {
         q = q.bind(v);
     }
-    if let Some(v) = sort_order {
+    if let Some(v) = cmd.sort_order {
         q = q.bind(v);
     }
-    if let Some(v) = status {
+    if let Some(v) = cmd.status {
         q = q.bind(v);
         q = q.bind(v);
         q = q.bind(now);
     }
-    if let Some(v) = cover_image {
+    if let Some(ref v) = cmd.cover_image {
         q = q.bind(v);
     }
     q = q.bind(now);
-    q = q.bind(id);
+    q = q.bind(cmd.id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -667,7 +641,7 @@ pub async fn update(
     let result = q.execute(pool).await?;
     AppError::expect_affected(&result, "page")?;
 
-    find_by_id(pool, id, tenant_id)
+    find_by_id(pool, cmd.id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("page"))
 }
@@ -818,19 +792,22 @@ mod tests {
     ) -> Page {
         create(
             pool,
-            title,
-            slug,
-            None,
-            None,
-            None,
-            None,
-            None,
-            "default",
-            None,
-            0,
-            status.parse().unwrap(),
-            created_by,
-            None,
+            &CreatePageCmd {
+                title: title.to_string(),
+                slug: slug.to_string(),
+                content: None,
+                blocks: None,
+                meta_title: None,
+                meta_description: None,
+                og_image: None,
+                template: "default".to_string(),
+                parent_id: None,
+                sort_order: 0,
+                status: status.parse().unwrap(),
+                created_by,
+                updated_by: None,
+                cover_image: None,
+            },
             None,
         )
         .await
@@ -882,20 +859,22 @@ mod tests {
 
         let updated = update(
             &pool,
-            page.id,
-            Some("New Title"),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &UpdatePageCmd {
+                id: page.id,
+                title: Some("New Title".to_string()),
+                slug: None,
+                content: None,
+                blocks: None,
+                meta_title: None,
+                meta_description: None,
+                og_image: None,
+                template: None,
+                parent_id: None,
+                sort_order: None,
+                status: None,
+                cover_image: None,
+                updated_by: None,
+            },
             None,
         )
         .await

@@ -1,3 +1,4 @@
+use crate::commands::{CreateProductCmd, UpdateProductCmd};
 use crate::dto::{CreateProductRequest, UpdateProductRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
@@ -9,7 +10,6 @@ pub async fn create_product(
     auth: &AuthUser,
     req: CreateProductRequest,
 ) -> AppResult<Product> {
-    let document_id = uuid::Uuid::now_v7().to_string();
     let product_type = req.product_type.as_deref().unwrap_or("custom");
     let fulfillment_type = req.fulfillment_type.as_deref().unwrap_or("digital");
     let currency = req.currency.as_deref().unwrap_or("CNY");
@@ -17,30 +17,31 @@ pub async fn create_product(
     let slug = req.slug.as_deref().or(Some(generated_slug.as_str()));
     product_repo
         .insert(
-            &document_id,
-            None,
-            &req.title,
-            req.description.as_deref(),
-            req.cover_url.as_deref(),
-            product_type,
-            fulfillment_type,
-            req.delivery_hook.as_deref(),
-            req.weight,
-            req.price,
-            currency,
-            req.attributes.as_deref(),
-            req.sort_order.unwrap_or(0),
-            slug,
-            req.content.as_deref(),
-            req.image_ids.as_deref(),
-            req.original_price,
-            req.specs.as_deref(),
-            req.unit.as_deref().unwrap_or("piece"),
-            req.min_purchase.unwrap_or(1),
-            req.max_purchase,
-            req.virtual_sales.unwrap_or(0),
-            req.meta_title.as_deref(),
-            req.meta_description.as_deref(),
+            &CreateProductCmd {
+                category_id: None,
+                title: req.title,
+                description: req.description,
+                cover_url: req.cover_url,
+                product_type: product_type.to_string(),
+                fulfillment_type: fulfillment_type.to_string(),
+                delivery_hook: req.delivery_hook,
+                weight: req.weight,
+                price: req.price,
+                currency: currency.to_string(),
+                attributes: req.attributes,
+                sort_order: req.sort_order.unwrap_or(0),
+                slug: slug.map(|s| s.to_string()),
+                content: req.content,
+                image_ids: req.image_ids,
+                original_price: req.original_price,
+                specs: req.specs,
+                unit: req.unit.as_deref().unwrap_or("piece").to_string(),
+                min_purchase: req.min_purchase.unwrap_or(1),
+                max_purchase: req.max_purchase,
+                virtual_sales: req.virtual_sales.unwrap_or(0),
+                meta_title: req.meta_title,
+                meta_description: req.meta_description,
+            },
             auth.tenant_id(),
         )
         .await
@@ -104,40 +105,36 @@ pub async fn update_product(
 
     let updated = product_repo
         .update(
-            existing.id,
-            None,
-            title,
-            req.description
-                .as_deref()
-                .or(existing.description.as_deref()),
-            req.cover_url.as_deref().or(existing.cover_url.as_deref()),
-            product_type,
-            fulfillment_type,
-            req.delivery_hook
-                .as_deref()
-                .or(existing.delivery_hook.as_deref()),
-            req.weight.or(existing.weight),
-            price,
-            currency,
-            status,
-            req.attributes.as_deref().or(existing.attributes.as_deref()),
-            sort_order,
-            slug,
-            req.content.as_deref().or(existing.content.as_deref()),
-            req.image_ids.as_deref().or(existing.image_ids.as_deref()),
-            req.original_price.or(existing.original_price),
-            req.specs.as_deref().or(existing.specs.as_deref()),
-            unit,
-            min_purchase,
-            req.max_purchase.or(existing.max_purchase),
-            total_sales,
-            virtual_sales,
-            req.meta_title.as_deref().or(existing.meta_title.as_deref()),
-            req.meta_description
-                .as_deref()
-                .or(existing.meta_description.as_deref()),
-            published_at,
-            req.version,
+            &UpdateProductCmd {
+                id: existing.id,
+                category_id: None,
+                title: title.to_string(),
+                description: req.description.or(existing.description),
+                cover_url: req.cover_url.or(existing.cover_url),
+                product_type: product_type.to_string(),
+                fulfillment_type: fulfillment_type.to_string(),
+                delivery_hook: req.delivery_hook.or(existing.delivery_hook),
+                weight: req.weight.or(existing.weight),
+                price,
+                currency: currency.to_string(),
+                status: status.to_string(),
+                attributes: req.attributes.or(existing.attributes),
+                sort_order,
+                slug: slug.map(|s| s.to_string()),
+                content: req.content.or(existing.content),
+                image_ids: req.image_ids.or(existing.image_ids),
+                original_price: req.original_price.or(existing.original_price),
+                specs: req.specs.or(existing.specs),
+                unit: unit.to_string(),
+                min_purchase,
+                max_purchase: req.max_purchase.or(existing.max_purchase),
+                total_sales,
+                virtual_sales,
+                meta_title: req.meta_title.or(existing.meta_title),
+                meta_description: req.meta_description.or(existing.meta_description),
+                published_at: published_at.map(|s| s.to_string()),
+                version: req.version,
+            },
             auth.tenant_id(),
         )
         .await?;

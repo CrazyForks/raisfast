@@ -1,8 +1,9 @@
+use crate::commands::CreateOrderCmd;
 use crate::dto::{CreateOrderRequest, ShipOrderRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::order::{Order, OrderStatus};
-use crate::models::order_item::{InsertOrderItem, OrderItem};
+use crate::models::order_item::OrderItem;
 use crate::models::product::ProductStatus;
 use crate::repositories::{OrderRepository, ProductRepository};
 
@@ -50,9 +51,7 @@ pub async fn create_order(
         order_items_data.push((item.quantity, line_total, product));
     }
 
-    let document_id = uuid::Uuid::now_v7().to_string();
-    let uuid_str = uuid::Uuid::now_v7().to_string().replace('-', "");
-    let order_no = format!("ORD-{}", &uuid_str[..16]);
+    let order_no = format!("ORD-{}", uuid::Uuid::now_v7().to_string().replace('-', ""));
 
     let currency = req.currency.as_deref().unwrap_or("CNY");
     let total_amount = subtotal;
@@ -60,27 +59,27 @@ pub async fn create_order(
     let order = crate::in_transaction!(pool, tx, {
         let order = crate::models::order::tx_insert(
             &mut tx,
-            &document_id,
-            user_id,
-            &order_no,
-            subtotal,
-            0,
-            0,
-            total_amount,
-            currency,
-            req.buyer_name.as_deref(),
-            req.buyer_phone.as_deref(),
-            req.buyer_email.as_deref(),
-            req.shipping_address.as_deref(),
-            req.remark.as_deref(),
+            &CreateOrderCmd {
+                user_id,
+                order_no,
+                subtotal,
+                discount_amount: 0,
+                shipping_amount: 0,
+                total_amount,
+                currency: currency.into(),
+                buyer_name: req.buyer_name.clone(),
+                buyer_phone: req.buyer_phone.clone(),
+                buyer_email: req.buyer_email.clone(),
+                shipping_address: req.shipping_address.clone(),
+                remark: req.remark.clone(),
+            },
             auth.tenant_id(),
         )
         .await?;
 
         let mut items = Vec::new();
         for (quantity, line_total, product) in &order_items_data {
-            items.push(InsertOrderItem {
-                document_id: uuid::Uuid::now_v7().to_string(),
+            items.push(crate::commands::CreateOrderItemCmd {
                 order_id: order.id,
                 product_id: Some(product.id),
                 title: product.title.clone(),
@@ -456,10 +455,34 @@ mod tests {
         title: &str,
         price: i64,
     ) -> crate::models::product::Product {
-        let doc_id = uuid::Uuid::now_v7().to_string();
         let p = crate::models::product::insert(
-            pool, &doc_id, None, title, None, None, "custom", "digital", None, None, price, "CNY",
-            None, 0, None, None, None, None, None, "piece", 1, None, 0, None, None, None,
+            pool,
+            &crate::commands::CreateProductCmd {
+                category_id: None,
+                title: title.to_string(),
+                description: None,
+                cover_url: None,
+                product_type: "custom".to_string(),
+                fulfillment_type: "digital".to_string(),
+                delivery_hook: None,
+                weight: None,
+                price,
+                currency: "CNY".to_string(),
+                attributes: None,
+                sort_order: 0,
+                slug: None,
+                content: None,
+                image_ids: None,
+                original_price: None,
+                specs: None,
+                unit: "piece".to_string(),
+                min_purchase: 1,
+                max_purchase: None,
+                virtual_sales: 0,
+                meta_title: None,
+                meta_description: None,
+            },
+            None,
         )
         .await
         .unwrap();
@@ -640,33 +663,33 @@ mod tests {
         let a = auth(None);
         let uid = seed_user(&pool).await;
 
-        let doc_id = uuid::Uuid::now_v7().to_string();
-        crate::models::product::insert(
+        let draft_product = crate::models::product::insert(
             &pool,
-            &doc_id,
-            None,
-            "Draft Product",
-            None,
-            None,
-            "custom",
-            "digital",
-            None,
-            None,
-            100,
-            "CNY",
-            None,
-            0,
-            None,
-            None,
-            None,
-            None,
-            None,
-            "piece",
-            1,
-            None,
-            0,
-            None,
-            None,
+            &crate::commands::CreateProductCmd {
+                category_id: None,
+                title: "Draft Product".to_string(),
+                description: None,
+                cover_url: None,
+                product_type: "custom".to_string(),
+                fulfillment_type: "digital".to_string(),
+                delivery_hook: None,
+                weight: None,
+                price: 100,
+                currency: "CNY".to_string(),
+                attributes: None,
+                sort_order: 0,
+                slug: None,
+                content: None,
+                image_ids: None,
+                original_price: None,
+                specs: None,
+                unit: "piece".to_string(),
+                min_purchase: 1,
+                max_purchase: None,
+                virtual_sales: 0,
+                meta_title: None,
+                meta_description: None,
+            },
             None,
         )
         .await
@@ -680,7 +703,7 @@ mod tests {
             uid,
             CreateOrderRequest {
                 items: vec![CreateOrderItemRequest {
-                    product_id: doc_id,
+                    product_id: draft_product.document_id.clone(),
                     quantity: 1,
                 }],
                 currency: None,

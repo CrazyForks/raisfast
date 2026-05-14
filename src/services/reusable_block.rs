@@ -1,5 +1,6 @@
 //! Reusable block service layer
 
+use crate::commands::{CreateReusableBlockCmd, UpdateReusableBlockCmd};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::page;
@@ -37,11 +38,13 @@ pub async fn create_reusable(
 
     reusable_block::create_reusable(
         pool,
-        name,
-        block_type,
-        content,
-        description,
-        auth.user_int_id(),
+        &CreateReusableBlockCmd {
+            name: name.to_string(),
+            block_type: block_type.to_string(),
+            content: content.to_string(),
+            description: description.map(|s| s.to_string()),
+            created_by: auth.user_int_id(),
+        },
         auth.tenant_id(),
     )
     .await
@@ -64,12 +67,14 @@ pub async fn update_reusable(
         .ok_or_else(|| AppError::not_found("reusable_block"))?;
     reusable_block::update_reusable(
         pool,
-        block.id,
-        name,
-        block_type,
-        content,
-        description,
-        auth.user_int_id(),
+        &UpdateReusableBlockCmd {
+            id: block.id,
+            name: name.map(|s| s.to_string()),
+            block_type: block_type.map(|s| s.to_string()),
+            content: content.map(|s| s.to_string()),
+            description: description.map(|s| s.to_string()),
+            updated_by: auth.user_int_id(),
+        },
         auth.tenant_id(),
     )
     .await

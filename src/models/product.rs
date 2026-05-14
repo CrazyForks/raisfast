@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
+use crate::commands::{CreateProductCmd, UpdateProductCmd};
 use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::AppResult;
@@ -206,35 +207,12 @@ pub async fn find_all_admin(
     Ok((rows, total))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn insert(
     pool: &crate::db::Pool,
-    document_id: &str,
-    category_id: Option<i64>,
-    title: &str,
-    description: Option<&str>,
-    cover_url: Option<&str>,
-    product_type: &str,
-    fulfillment_type: &str,
-    delivery_hook: Option<&str>,
-    weight: Option<i64>,
-    price: i64,
-    currency: &str,
-    attributes: Option<&str>,
-    sort_order: i64,
-    slug: Option<&str>,
-    content: Option<&str>,
-    image_ids: Option<&str>,
-    original_price: Option<i64>,
-    specs: Option<&str>,
-    unit: &str,
-    min_purchase: i64,
-    max_purchase: Option<i64>,
-    virtual_sales: i64,
-    meta_title: Option<&str>,
-    meta_description: Option<&str>,
+    cmd: &CreateProductCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Product> {
+    let document_id = uuid::Uuid::now_v7().to_string();
     match tenant_id {
         Some(tid) => {
             let sql = format!(
@@ -266,31 +244,31 @@ pub async fn insert(
                 ph(25)
             );
             sqlx::query(&sql)
-                .bind(document_id)
+                .bind(&document_id)
                 .bind(tid)
-                .bind(category_id)
-                .bind(title)
-                .bind(description)
-                .bind(cover_url)
-                .bind(product_type)
-                .bind(fulfillment_type)
-                .bind(delivery_hook)
-                .bind(weight)
-                .bind(price)
-                .bind(currency)
-                .bind(attributes)
-                .bind(sort_order)
-                .bind(slug)
-                .bind(content)
-                .bind(image_ids)
-                .bind(original_price)
-                .bind(specs)
-                .bind(unit)
-                .bind(min_purchase)
-                .bind(max_purchase)
-                .bind(virtual_sales)
-                .bind(meta_title)
-                .bind(meta_description)
+                .bind(cmd.category_id)
+                .bind(&cmd.title)
+                .bind(&cmd.description)
+                .bind(&cmd.cover_url)
+                .bind(&cmd.product_type)
+                .bind(&cmd.fulfillment_type)
+                .bind(&cmd.delivery_hook)
+                .bind(cmd.weight)
+                .bind(cmd.price)
+                .bind(&cmd.currency)
+                .bind(&cmd.attributes)
+                .bind(cmd.sort_order)
+                .bind(&cmd.slug)
+                .bind(&cmd.content)
+                .bind(&cmd.image_ids)
+                .bind(cmd.original_price)
+                .bind(&cmd.specs)
+                .bind(&cmd.unit)
+                .bind(cmd.min_purchase)
+                .bind(cmd.max_purchase)
+                .bind(cmd.virtual_sales)
+                .bind(&cmd.meta_title)
+                .bind(&cmd.meta_description)
                 .execute(pool)
                 .await?;
         }
@@ -323,70 +301,42 @@ pub async fn insert(
                 ph(24)
             );
             sqlx::query(&sql)
-                .bind(document_id)
-                .bind(category_id)
-                .bind(title)
-                .bind(description)
-                .bind(cover_url)
-                .bind(product_type)
-                .bind(fulfillment_type)
-                .bind(delivery_hook)
-                .bind(weight)
-                .bind(price)
-                .bind(currency)
-                .bind(attributes)
-                .bind(sort_order)
-                .bind(slug)
-                .bind(content)
-                .bind(image_ids)
-                .bind(original_price)
-                .bind(specs)
-                .bind(unit)
-                .bind(min_purchase)
-                .bind(max_purchase)
-                .bind(virtual_sales)
-                .bind(meta_title)
-                .bind(meta_description)
+                .bind(&document_id)
+                .bind(cmd.category_id)
+                .bind(&cmd.title)
+                .bind(&cmd.description)
+                .bind(&cmd.cover_url)
+                .bind(&cmd.product_type)
+                .bind(&cmd.fulfillment_type)
+                .bind(&cmd.delivery_hook)
+                .bind(cmd.weight)
+                .bind(cmd.price)
+                .bind(&cmd.currency)
+                .bind(&cmd.attributes)
+                .bind(cmd.sort_order)
+                .bind(&cmd.slug)
+                .bind(&cmd.content)
+                .bind(&cmd.image_ids)
+                .bind(cmd.original_price)
+                .bind(&cmd.specs)
+                .bind(&cmd.unit)
+                .bind(cmd.min_purchase)
+                .bind(cmd.max_purchase)
+                .bind(cmd.virtual_sales)
+                .bind(&cmd.meta_title)
+                .bind(&cmd.meta_description)
                 .execute(pool)
                 .await?;
         }
     }
-    find_by_document_id(pool, document_id, tenant_id)
+    find_by_document_id(pool, &document_id, tenant_id)
         .await
         .map(|o| o.unwrap())
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn update(
     pool: &crate::db::Pool,
-    id: i64,
-    category_id: Option<i64>,
-    title: &str,
-    description: Option<&str>,
-    cover_url: Option<&str>,
-    product_type: &str,
-    fulfillment_type: &str,
-    delivery_hook: Option<&str>,
-    weight: Option<i64>,
-    price: i64,
-    currency: &str,
-    status: &str,
-    attributes: Option<&str>,
-    sort_order: i64,
-    slug: Option<&str>,
-    content: Option<&str>,
-    image_ids: Option<&str>,
-    original_price: Option<i64>,
-    specs: Option<&str>,
-    unit: &str,
-    min_purchase: i64,
-    max_purchase: Option<i64>,
-    total_sales: i64,
-    virtual_sales: i64,
-    meta_title: Option<&str>,
-    meta_description: Option<&str>,
-    published_at: Option<&str>,
-    version: i64,
+    cmd: &UpdateProductCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
     let sql = format!(
@@ -422,34 +372,34 @@ pub async fn update(
         tenant_filter_ph(tenant_id, 29)
     );
     let mut q = sqlx::query(&sql)
-        .bind(category_id)
-        .bind(title)
-        .bind(description)
-        .bind(cover_url)
-        .bind(product_type)
-        .bind(fulfillment_type)
-        .bind(delivery_hook)
-        .bind(weight)
-        .bind(price)
-        .bind(currency)
-        .bind(status)
-        .bind(attributes)
-        .bind(sort_order)
-        .bind(slug)
-        .bind(content)
-        .bind(image_ids)
-        .bind(original_price)
-        .bind(specs)
-        .bind(unit)
-        .bind(min_purchase)
-        .bind(max_purchase)
-        .bind(total_sales)
-        .bind(virtual_sales)
-        .bind(meta_title)
-        .bind(meta_description)
-        .bind(published_at)
-        .bind(id)
-        .bind(version);
+        .bind(cmd.category_id)
+        .bind(&cmd.title)
+        .bind(&cmd.description)
+        .bind(&cmd.cover_url)
+        .bind(&cmd.product_type)
+        .bind(&cmd.fulfillment_type)
+        .bind(&cmd.delivery_hook)
+        .bind(cmd.weight)
+        .bind(cmd.price)
+        .bind(&cmd.currency)
+        .bind(&cmd.status)
+        .bind(&cmd.attributes)
+        .bind(cmd.sort_order)
+        .bind(&cmd.slug)
+        .bind(&cmd.content)
+        .bind(&cmd.image_ids)
+        .bind(cmd.original_price)
+        .bind(&cmd.specs)
+        .bind(&cmd.unit)
+        .bind(cmd.min_purchase)
+        .bind(cmd.max_purchase)
+        .bind(cmd.total_sales)
+        .bind(cmd.virtual_sales)
+        .bind(&cmd.meta_title)
+        .bind(&cmd.meta_description)
+        .bind(&cmd.published_at)
+        .bind(cmd.id)
+        .bind(cmd.version);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -489,10 +439,34 @@ mod tests {
     }
 
     async fn seed_product(pool: &crate::db::Pool, title: &str, _status: &str) -> Product {
-        let doc_id = uuid::Uuid::now_v7().to_string();
         insert(
-            pool, &doc_id, None, title, None, None, "custom", "digital", None, None, 1000, "CNY",
-            None, 0, None, None, None, None, None, "piece", 1, None, 0, None, None, None,
+            pool,
+            &CreateProductCmd {
+                category_id: None,
+                title: title.to_string(),
+                description: None,
+                cover_url: None,
+                product_type: "custom".to_string(),
+                fulfillment_type: "digital".to_string(),
+                delivery_hook: None,
+                weight: None,
+                price: 1000,
+                currency: "CNY".to_string(),
+                attributes: None,
+                sort_order: 0,
+                slug: None,
+                content: None,
+                image_ids: None,
+                original_price: None,
+                specs: None,
+                unit: "piece".to_string(),
+                min_purchase: 1,
+                max_purchase: None,
+                virtual_sales: 0,
+                meta_title: None,
+                meta_description: None,
+            },
+            None,
         )
         .await
         .unwrap()
@@ -565,10 +539,34 @@ mod tests {
     #[tokio::test]
     async fn insert_sets_defaults() {
         let pool = setup_pool().await;
-        let doc_id = uuid::Uuid::now_v7().to_string();
         let p = super::insert(
-            &pool, &doc_id, None, "Basic", None, None, "custom", "digital", None, None, 500, "USD",
-            None, 0, None, None, None, None, None, "piece", 1, None, 0, None, None, None,
+            &pool,
+            &CreateProductCmd {
+                category_id: None,
+                title: "Basic".to_string(),
+                description: None,
+                cover_url: None,
+                product_type: "custom".to_string(),
+                fulfillment_type: "digital".to_string(),
+                delivery_hook: None,
+                weight: None,
+                price: 500,
+                currency: "USD".to_string(),
+                attributes: None,
+                sort_order: 0,
+                slug: None,
+                content: None,
+                image_ids: None,
+                original_price: None,
+                specs: None,
+                unit: "piece".to_string(),
+                min_purchase: 1,
+                max_purchase: None,
+                virtual_sales: 0,
+                meta_title: None,
+                meta_description: None,
+            },
+            None,
         )
         .await
         .unwrap();
@@ -587,34 +585,36 @@ mod tests {
         let version = get_version(&pool, p.id).await;
         let ok = super::update(
             &pool,
-            p.id,
-            None,
-            "New",
-            Some("desc"),
-            None,
-            "custom",
-            "digital",
-            None,
-            None,
-            2000,
-            "CNY",
-            "active",
-            None,
-            0,
-            None,
-            None,
-            None,
-            None,
-            None,
-            "piece",
-            1,
-            None,
-            0,
-            0,
-            None,
-            None,
-            None,
-            version,
+            &UpdateProductCmd {
+                id: p.id,
+                category_id: None,
+                title: "New".to_string(),
+                description: Some("desc".to_string()),
+                cover_url: None,
+                product_type: "custom".to_string(),
+                fulfillment_type: "digital".to_string(),
+                delivery_hook: None,
+                weight: None,
+                price: 2000,
+                currency: "CNY".to_string(),
+                status: "active".to_string(),
+                attributes: None,
+                sort_order: 0,
+                slug: None,
+                content: None,
+                image_ids: None,
+                original_price: None,
+                specs: None,
+                unit: "piece".to_string(),
+                min_purchase: 1,
+                max_purchase: None,
+                total_sales: 0,
+                virtual_sales: 0,
+                meta_title: None,
+                meta_description: None,
+                published_at: None,
+                version,
+            },
             None,
         )
         .await
@@ -633,9 +633,38 @@ mod tests {
         let pool = setup_pool().await;
         let p = seed_product(&pool, "Conflicting", "draft").await;
         let ok = super::update(
-            &pool, p.id, None, "New", None, None, "custom", "digital", None, None, 1000, "CNY",
-            "draft", None, 0, None, None, None, None, None, "piece", 1, None, 0, 0, None, None,
-            None, 999, None,
+            &pool,
+            &UpdateProductCmd {
+                id: p.id,
+                category_id: None,
+                title: "New".to_string(),
+                description: None,
+                cover_url: None,
+                product_type: "custom".to_string(),
+                fulfillment_type: "digital".to_string(),
+                delivery_hook: None,
+                weight: None,
+                price: 1000,
+                currency: "CNY".to_string(),
+                status: "draft".to_string(),
+                attributes: None,
+                sort_order: 0,
+                slug: None,
+                content: None,
+                image_ids: None,
+                original_price: None,
+                specs: None,
+                unit: "piece".to_string(),
+                min_purchase: 1,
+                max_purchase: None,
+                total_sales: 0,
+                virtual_sales: 0,
+                meta_title: None,
+                meta_description: None,
+                published_at: None,
+                version: 999,
+            },
+            None,
         )
         .await
         .unwrap();

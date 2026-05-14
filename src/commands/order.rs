@@ -1,0 +1,26 @@
+pub struct CreateOrderCmd {
+    pub user_id: i64,
+    pub order_no: String,
+    pub subtotal: i64,
+    pub discount_amount: i64,
+    pub shipping_amount: i64,
+    pub total_amount: i64,
+    pub currency: String,
+    pub buyer_name: Option<String>,
+    pub buyer_phone: Option<String>,
+    pub buyer_email: Option<String>,
+    pub shipping_address: Option<String>,
+    pub remark: Option<String>,
+}
+
+pub struct CreateOrderItemCmd {
+    pub order_id: i64,
+    pub product_id: Option<i64>,
+    pub title: String,
+    pub description: Option<String>,
+    pub unit_price: i64,
+    pub quantity: i64,
+    pub subtotal: i64,
+    pub cover_url: Option<String>,
+    pub attributes: Option<String>,
+}

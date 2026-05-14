@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
+use crate::commands::{CreateReusableBlockCmd, UpdateReusableBlockCmd};
 use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
@@ -74,14 +75,9 @@ pub async fn list_reusable(
     Ok(q.fetch_all(pool).await?)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn create_reusable(
     pool: &crate::db::Pool,
-    name: &str,
-    block_type: &str,
-    content: &str,
-    description: Option<&str>,
-    created_by: Option<i64>,
+    cmd: &CreateReusableBlockCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<ReusableBlock> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
@@ -94,12 +90,12 @@ pub async fn create_reusable(
             sqlx::query(&sql)
                 .bind(&document_id)
                 .bind(tid)
-                .bind(name)
-                .bind(block_type)
-                .bind(content)
-                .bind(description)
-                .bind(created_by)
-                .bind(created_by)
+                .bind(&cmd.name)
+                .bind(&cmd.block_type)
+                .bind(&cmd.content)
+                .bind(&cmd.description)
+                .bind(cmd.created_by)
+                .bind(cmd.created_by)
                 .bind(now)
                 .bind(now)
                 .execute(pool)
@@ -112,12 +108,12 @@ pub async fn create_reusable(
             );
             sqlx::query(&sql)
                 .bind(&document_id)
-                .bind(name)
-                .bind(block_type)
-                .bind(content)
-                .bind(description)
-                .bind(created_by)
-                .bind(created_by)
+                .bind(&cmd.name)
+                .bind(&cmd.block_type)
+                .bind(&cmd.content)
+                .bind(&cmd.description)
+                .bind(cmd.created_by)
+                .bind(cmd.created_by)
                 .bind(now)
                 .bind(now)
                 .execute(pool)
@@ -130,38 +126,32 @@ pub async fn create_reusable(
         .ok_or_else(|| AppError::not_found("reusable_block"))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn update_reusable(
     pool: &crate::db::Pool,
-    id: i64,
-    name: Option<&str>,
-    block_type: Option<&str>,
-    content: Option<&str>,
-    description: Option<&str>,
-    updated_by: Option<i64>,
+    cmd: &UpdateReusableBlockCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<ReusableBlock> {
     let now = crate::utils::tz::now_utc();
     let mut idx = 1;
     let mut sets = vec![format!("updated_at = {}", ph(1))];
 
-    if updated_by.is_some() {
+    if cmd.updated_by.is_some() {
         idx += 1;
         sets.push(format!("updated_by = {}", ph(idx)));
     }
-    if name.is_some() {
+    if cmd.name.is_some() {
         idx += 1;
         sets.push(format!("name = {}", ph(idx)));
     }
-    if block_type.is_some() {
+    if cmd.block_type.is_some() {
         idx += 1;
         sets.push(format!("block_type = {}", ph(idx)));
     }
-    if content.is_some() {
+    if cmd.content.is_some() {
         idx += 1;
         sets.push(format!("content = {}", ph(idx)));
     }
-    if description.is_some() {
+    if cmd.description.is_some() {
         idx += 1;
         sets.push(format!("description = {}", ph(idx)));
     }
@@ -176,22 +166,22 @@ pub async fn update_reusable(
 
     let mut q = sqlx::query(&sql);
     q = q.bind(now);
-    if let Some(v) = updated_by {
+    if let Some(v) = cmd.updated_by {
         q = q.bind(v);
     }
-    if let Some(v) = name {
+    if let Some(ref v) = cmd.name {
         q = q.bind(v);
     }
-    if let Some(v) = block_type {
+    if let Some(ref v) = cmd.block_type {
         q = q.bind(v);
     }
-    if let Some(v) = content {
+    if let Some(ref v) = cmd.content {
         q = q.bind(v);
     }
-    if let Some(v) = description {
+    if let Some(ref v) = cmd.description {
         q = q.bind(v);
     }
-    q = q.bind(id);
+    q = q.bind(cmd.id);
     if let Some(tid) = tenant_id {
         q = q.bind(tid);
     }
@@ -199,7 +189,7 @@ pub async fn update_reusable(
     let result = q.execute(pool).await?;
     AppError::expect_affected(&result, "reusable_block")?;
 
-    find_reusable_by_id(pool, id, tenant_id)
+    find_reusable_by_id(pool, cmd.id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("reusable_block"))
 }
@@ -250,9 +240,19 @@ mod tests {
     async fn create_and_find_by_id() {
         let pool = setup_pool().await;
         let uid = insert_user(&pool).await;
-        let block = create_reusable(&pool, "Block", "text", "[]", None, Some(uid), None)
-            .await
-            .unwrap();
+        let block = create_reusable(
+            &pool,
+            &CreateReusableBlockCmd {
+                name: "Block".to_string(),
+                block_type: "text".to_string(),
+                content: "[]".to_string(),
+                description: None,
+                created_by: Some(uid),
+            },
+            None,
+        )
+        .await
+        .unwrap();
         let found = find_reusable_by_id(&pool, block.id, None).await.unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().name, "Block");
@@ -262,9 +262,19 @@ mod tests {
     async fn find_by_document_id_test() {
         let pool = setup_pool().await;
         let uid = insert_user(&pool).await;
-        let block = create_reusable(&pool, "Block", "text", "[]", None, Some(uid), None)
-            .await
-            .unwrap();
+        let block = create_reusable(
+            &pool,
+            &CreateReusableBlockCmd {
+                name: "Block".to_string(),
+                block_type: "text".to_string(),
+                content: "[]".to_string(),
+                description: None,
+                created_by: Some(uid),
+            },
+            None,
+        )
+        .await
+        .unwrap();
         let found = super::find_reusable_by_document_id(&pool, &block.document_id, None)
             .await
             .unwrap();
@@ -279,11 +289,13 @@ mod tests {
         for i in 0..3 {
             create_reusable(
                 &pool,
-                &format!("Block{i}"),
-                "text",
-                "[]",
-                None,
-                Some(uid),
+                &CreateReusableBlockCmd {
+                    name: format!("Block{i}"),
+                    block_type: "text".to_string(),
+                    content: "[]".to_string(),
+                    description: None,
+                    created_by: Some(uid),
+                },
                 None,
             )
             .await
@@ -297,17 +309,29 @@ mod tests {
     async fn update_changes_name() {
         let pool = setup_pool().await;
         let uid = insert_user(&pool).await;
-        let block = create_reusable(&pool, "Block", "text", "[]", None, Some(uid), None)
-            .await
-            .unwrap();
+        let block = create_reusable(
+            &pool,
+            &CreateReusableBlockCmd {
+                name: "Block".to_string(),
+                block_type: "text".to_string(),
+                content: "[]".to_string(),
+                description: None,
+                created_by: Some(uid),
+            },
+            None,
+        )
+        .await
+        .unwrap();
         let updated = update_reusable(
             &pool,
-            block.id,
-            Some("Updated"),
-            None,
-            None,
-            None,
-            Some(uid),
+            &UpdateReusableBlockCmd {
+                id: block.id,
+                name: Some("Updated".to_string()),
+                block_type: None,
+                content: None,
+                description: None,
+                updated_by: Some(uid),
+            },
             None,
         )
         .await
@@ -319,9 +343,19 @@ mod tests {
     async fn delete_removes_block() {
         let pool = setup_pool().await;
         let uid = insert_user(&pool).await;
-        let block = create_reusable(&pool, "Block", "text", "[]", None, Some(uid), None)
-            .await
-            .unwrap();
+        let block = create_reusable(
+            &pool,
+            &CreateReusableBlockCmd {
+                name: "Block".to_string(),
+                block_type: "text".to_string(),
+                content: "[]".to_string(),
+                description: None,
+                created_by: Some(uid),
+            },
+            None,
+        )
+        .await
+        .unwrap();
         delete_reusable(&pool, block.id, None).await.unwrap();
         let found = find_reusable_by_id(&pool, block.id, None).await.unwrap();
         assert!(found.is_none());

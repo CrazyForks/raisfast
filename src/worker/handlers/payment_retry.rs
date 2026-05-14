@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::commands::CreateWalletOutboxCmd;
 use crate::config::app::AppConfig;
 use crate::db::Pool;
 use crate::errors::app_error::AppResult;
@@ -111,19 +112,20 @@ impl JobHandler for RetryPaymentCallbackHandler {
                         return Ok(());
                     }
 
-                    let outbox_doc_id = uuid::Uuid::now_v7().to_string();
+                    let outbox_cmd = CreateWalletOutboxCmd {
+                        user_id: order.user_id,
+                        currency: order.currency.clone(),
+                        amount: order.amount,
+                        entry_type: "credit".into(),
+                        tx_type: WalletTxType::Recharge,
+                        transaction_no: format!("PAY-{}", order.document_id),
+                        reference_type: Some(WalletReferenceType::Payment),
+                        reference_id: Some(order.document_id.clone()),
+                        metadata: None,
+                    };
                     crate::models::wallet_outbox::tx_insert(
                         &mut tx,
-                        &outbox_doc_id,
-                        order.user_id,
-                        &order.currency,
-                        order.amount,
-                        "credit",
-                        WalletTxType::Recharge,
-                        &format!("PAY-{}", order.document_id),
-                        Some(WalletReferenceType::Payment),
-                        Some(&order.document_id),
-                        None,
+                        &outbox_cmd,
                         order.tenant_id.as_deref(),
                     )
                     .await?;

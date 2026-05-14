@@ -1,5 +1,6 @@
 //! sqlx-based `RbacRepository` implementation
 
+use crate::commands::CreatePermissionCmd;
 use crate::errors::app_error::AppResult;
 use crate::models::rbac::{self, Permission, Role};
 use crate::repositories::define_sqlx_repo;
@@ -30,16 +31,7 @@ pub trait RbacRepository: Send + Sync {
 
     async fn delete_permissions_by_role_id(&self, role_id: i64) -> AppResult<()>;
 
-    #[allow(clippy::too_many_arguments)]
-    async fn insert_permission(
-        &self,
-        document_id: &str,
-        role_id: i64,
-        action: &str,
-        subject: &str,
-        fields: Option<&str>,
-        conditions: Option<&str>,
-    ) -> AppResult<()>;
+    async fn insert_permission(&self, cmd: &CreatePermissionCmd) -> AppResult<()>;
 }
 
 #[async_trait::async_trait]
@@ -86,24 +78,7 @@ impl RbacRepository for SqlxRbacRepository {
         rbac::delete_permissions_by_role_id(&self.pool, role_id).await
     }
 
-    async fn insert_permission(
-        &self,
-        document_id: &str,
-        role_id: i64,
-        action: &str,
-        subject: &str,
-        fields: Option<&str>,
-        conditions: Option<&str>,
-    ) -> AppResult<()> {
-        rbac::insert_permission(
-            &self.pool,
-            document_id,
-            role_id,
-            action,
-            subject,
-            fields,
-            conditions,
-        )
-        .await
+    async fn insert_permission(&self, cmd: &CreatePermissionCmd) -> AppResult<()> {
+        rbac::insert_permission(&self.pool, cmd).await
     }
 }

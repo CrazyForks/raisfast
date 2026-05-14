@@ -3,7 +3,6 @@ use sqlx::FromRow;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
-use crate::models::wallet_transaction::{WalletReferenceType, WalletTxType};
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -38,21 +37,12 @@ pub struct WalletOutbox {
     pub updated_at: Timestamp,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn tx_insert(
     tx: &mut crate::db::pool::DbConnection,
-    document_id: &str,
-    user_id: i64,
-    currency: &str,
-    amount: i64,
-    entry_type: &str,
-    tx_type: WalletTxType,
-    transaction_no: &str,
-    reference_type: Option<WalletReferenceType>,
-    reference_id: Option<&str>,
-    metadata: Option<&str>,
+    cmd: &crate::commands::CreateWalletOutboxCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
+    let document_id = uuid::Uuid::now_v7().to_string();
     match tenant_id {
         Some(tid) => {
             let sql = format!(
@@ -60,16 +50,16 @@ pub async fn tx_insert(
                 ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11)
             );
             sqlx::query(&sql)
-                .bind(document_id)
-                .bind(user_id)
-                .bind(currency)
-                .bind(amount)
-                .bind(entry_type)
-                .bind(tx_type)
-                .bind(transaction_no)
-                .bind(reference_type)
-                .bind(reference_id)
-                .bind(metadata)
+                .bind(&document_id)
+                .bind(cmd.user_id)
+                .bind(&cmd.currency)
+                .bind(cmd.amount)
+                .bind(&cmd.entry_type)
+                .bind(cmd.tx_type)
+                .bind(&cmd.transaction_no)
+                .bind(cmd.reference_type)
+                .bind(&cmd.reference_id)
+                .bind(&cmd.metadata)
                 .bind(tid)
                 .execute(&mut *tx)
                 .await?;
@@ -80,16 +70,16 @@ pub async fn tx_insert(
                 ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
             );
             sqlx::query(&sql)
-                .bind(document_id)
-                .bind(user_id)
-                .bind(currency)
-                .bind(amount)
-                .bind(entry_type)
-                .bind(tx_type)
-                .bind(transaction_no)
-                .bind(reference_type)
-                .bind(reference_id)
-                .bind(metadata)
+                .bind(&document_id)
+                .bind(cmd.user_id)
+                .bind(&cmd.currency)
+                .bind(cmd.amount)
+                .bind(&cmd.entry_type)
+                .bind(cmd.tx_type)
+                .bind(&cmd.transaction_no)
+                .bind(cmd.reference_type)
+                .bind(&cmd.reference_id)
+                .bind(&cmd.metadata)
                 .execute(&mut *tx)
                 .await?;
         }

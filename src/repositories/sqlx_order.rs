@@ -1,12 +1,12 @@
+use crate::commands::{CreateOrderCmd, CreateOrderItemCmd, CreateProductCmd, UpdateProductCmd};
 use crate::errors::app_error::AppResult;
 use crate::models::order::{self, Order};
-use crate::models::order_item::{self, InsertOrderItem, OrderItem};
+use crate::models::order_item::{self, OrderItem};
 use crate::models::product::{self, Product};
 use crate::repositories::define_sqlx_repo;
 
 define_sqlx_repo!(SqlxProductRepository);
 
-#[allow(clippy::too_many_arguments)]
 #[async_trait::async_trait]
 pub trait ProductRepository: Send + Sync {
     async fn find_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<Option<Product>>;
@@ -30,62 +30,12 @@ pub trait ProductRepository: Send + Sync {
     ) -> AppResult<(Vec<Product>, i64)>;
     async fn insert(
         &self,
-        document_id: &str,
-        category_id: Option<i64>,
-        title: &str,
-        description: Option<&str>,
-        cover_url: Option<&str>,
-        product_type: &str,
-        fulfillment_type: &str,
-        delivery_hook: Option<&str>,
-        weight: Option<i64>,
-        price: i64,
-        currency: &str,
-        attributes: Option<&str>,
-        sort_order: i64,
-        slug: Option<&str>,
-        content: Option<&str>,
-        image_ids: Option<&str>,
-        original_price: Option<i64>,
-        specs: Option<&str>,
-        unit: &str,
-        min_purchase: i64,
-        max_purchase: Option<i64>,
-        virtual_sales: i64,
-        meta_title: Option<&str>,
-        meta_description: Option<&str>,
+        cmd: &CreateProductCmd,
         tenant_id: Option<&str>,
     ) -> AppResult<Product>;
     async fn update(
         &self,
-        id: i64,
-        category_id: Option<i64>,
-        title: &str,
-        description: Option<&str>,
-        cover_url: Option<&str>,
-        product_type: &str,
-        fulfillment_type: &str,
-        delivery_hook: Option<&str>,
-        weight: Option<i64>,
-        price: i64,
-        currency: &str,
-        status: &str,
-        attributes: Option<&str>,
-        sort_order: i64,
-        slug: Option<&str>,
-        content: Option<&str>,
-        image_ids: Option<&str>,
-        original_price: Option<i64>,
-        specs: Option<&str>,
-        unit: &str,
-        min_purchase: i64,
-        max_purchase: Option<i64>,
-        total_sales: i64,
-        virtual_sales: i64,
-        meta_title: Option<&str>,
-        meta_description: Option<&str>,
-        published_at: Option<&str>,
-        version: i64,
+        cmd: &UpdateProductCmd,
         tenant_id: Option<&str>,
     ) -> AppResult<bool>;
     async fn delete_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<bool>;
@@ -124,132 +74,20 @@ impl ProductRepository for SqlxProductRepository {
         product::find_all_admin(&self.pool, tenant_id, page, page_size, status).await
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn insert(
         &self,
-        document_id: &str,
-        category_id: Option<i64>,
-        title: &str,
-        description: Option<&str>,
-        cover_url: Option<&str>,
-        product_type: &str,
-        fulfillment_type: &str,
-        delivery_hook: Option<&str>,
-        weight: Option<i64>,
-        price: i64,
-        currency: &str,
-        attributes: Option<&str>,
-        sort_order: i64,
-        slug: Option<&str>,
-        content: Option<&str>,
-        image_ids: Option<&str>,
-        original_price: Option<i64>,
-        specs: Option<&str>,
-        unit: &str,
-        min_purchase: i64,
-        max_purchase: Option<i64>,
-        virtual_sales: i64,
-        meta_title: Option<&str>,
-        meta_description: Option<&str>,
+        cmd: &CreateProductCmd,
         tenant_id: Option<&str>,
     ) -> AppResult<Product> {
-        product::insert(
-            &self.pool,
-            document_id,
-            category_id,
-            title,
-            description,
-            cover_url,
-            product_type,
-            fulfillment_type,
-            delivery_hook,
-            weight,
-            price,
-            currency,
-            attributes,
-            sort_order,
-            slug,
-            content,
-            image_ids,
-            original_price,
-            specs,
-            unit,
-            min_purchase,
-            max_purchase,
-            virtual_sales,
-            meta_title,
-            meta_description,
-            tenant_id,
-        )
-        .await
+        product::insert(&self.pool, cmd, tenant_id).await
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn update(
         &self,
-        id: i64,
-        category_id: Option<i64>,
-        title: &str,
-        description: Option<&str>,
-        cover_url: Option<&str>,
-        product_type: &str,
-        fulfillment_type: &str,
-        delivery_hook: Option<&str>,
-        weight: Option<i64>,
-        price: i64,
-        currency: &str,
-        status: &str,
-        attributes: Option<&str>,
-        sort_order: i64,
-        slug: Option<&str>,
-        content: Option<&str>,
-        image_ids: Option<&str>,
-        original_price: Option<i64>,
-        specs: Option<&str>,
-        unit: &str,
-        min_purchase: i64,
-        max_purchase: Option<i64>,
-        total_sales: i64,
-        virtual_sales: i64,
-        meta_title: Option<&str>,
-        meta_description: Option<&str>,
-        published_at: Option<&str>,
-        version: i64,
+        cmd: &UpdateProductCmd,
         tenant_id: Option<&str>,
     ) -> AppResult<bool> {
-        product::update(
-            &self.pool,
-            id,
-            category_id,
-            title,
-            description,
-            cover_url,
-            product_type,
-            fulfillment_type,
-            delivery_hook,
-            weight,
-            price,
-            currency,
-            status,
-            attributes,
-            sort_order,
-            slug,
-            content,
-            image_ids,
-            original_price,
-            specs,
-            unit,
-            min_purchase,
-            max_purchase,
-            total_sales,
-            virtual_sales,
-            meta_title,
-            meta_description,
-            published_at,
-            version,
-            tenant_id,
-        )
-        .await
+        product::update(&self.pool, cmd, tenant_id).await
     }
 
     async fn delete_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<bool> {
@@ -259,7 +97,6 @@ impl ProductRepository for SqlxProductRepository {
 
 define_sqlx_repo!(SqlxOrderRepository);
 
-#[allow(clippy::too_many_arguments)]
 #[async_trait::async_trait]
 pub trait OrderRepository: Send + Sync {
     async fn find_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<Option<Order>>;
@@ -289,19 +126,7 @@ pub trait OrderRepository: Send + Sync {
     ) -> AppResult<(Vec<Order>, i64)>;
     async fn insert_order(
         &self,
-        document_id: &str,
-        user_id: i64,
-        order_no: &str,
-        subtotal: i64,
-        discount_amount: i64,
-        shipping_amount: i64,
-        total_amount: i64,
-        currency: &str,
-        buyer_name: Option<&str>,
-        buyer_phone: Option<&str>,
-        buyer_email: Option<&str>,
-        shipping_address: Option<&str>,
-        remark: Option<&str>,
+        cmd: &CreateOrderCmd,
         tenant_id: Option<&str>,
     ) -> AppResult<Order>;
     async fn update_status(
@@ -337,7 +162,7 @@ pub trait OrderRepository: Send + Sync {
     ) -> AppResult<Vec<OrderItem>>;
     async fn insert_items_batch(
         &self,
-        items: Vec<InsertOrderItem>,
+        items: Vec<CreateOrderItemCmd>,
         tenant_id: Option<&str>,
     ) -> AppResult<()>;
 }
@@ -384,42 +209,12 @@ impl OrderRepository for SqlxOrderRepository {
         order::find_all_admin_paginated(&self.pool, tenant_id, page, page_size, status).await
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn insert_order(
         &self,
-        document_id: &str,
-        user_id: i64,
-        order_no: &str,
-        subtotal: i64,
-        discount_amount: i64,
-        shipping_amount: i64,
-        total_amount: i64,
-        currency: &str,
-        buyer_name: Option<&str>,
-        buyer_phone: Option<&str>,
-        buyer_email: Option<&str>,
-        shipping_address: Option<&str>,
-        remark: Option<&str>,
+        cmd: &CreateOrderCmd,
         tenant_id: Option<&str>,
     ) -> AppResult<Order> {
-        order::insert(
-            &self.pool,
-            document_id,
-            user_id,
-            order_no,
-            subtotal,
-            discount_amount,
-            shipping_amount,
-            total_amount,
-            currency,
-            buyer_name,
-            buyer_phone,
-            buyer_email,
-            shipping_address,
-            remark,
-            tenant_id,
-        )
-        .await
+        order::insert(&self.pool, cmd, tenant_id).await
     }
 
     async fn update_status(
@@ -470,7 +265,7 @@ impl OrderRepository for SqlxOrderRepository {
 
     async fn insert_items_batch(
         &self,
-        items: Vec<InsertOrderItem>,
+        items: Vec<CreateOrderItemCmd>,
         tenant_id: Option<&str>,
     ) -> AppResult<()> {
         order_item::insert_batch(&self.pool, items, tenant_id).await

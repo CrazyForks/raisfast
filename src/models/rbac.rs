@@ -7,6 +7,7 @@ use sqlx::FromRow;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
+use crate::commands::CreatePermissionCmd;
 use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
@@ -175,17 +176,11 @@ pub async fn delete_permissions_by_role_id(pool: &crate::db::Pool, role_id: i64)
 }
 
 /// Insert a single permission
-#[allow(clippy::too_many_arguments)]
 pub async fn insert_permission(
     pool: &crate::db::Pool,
-    document_id: &str,
-    role_id: i64,
-    action: &str,
-    subject: &str,
-    fields: Option<&str>,
-    conditions: Option<&str>,
+    cmd: &CreatePermissionCmd,
 ) -> AppResult<()> {
-    let now = crate::utils::tz::now_utc();
+    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
     let sql = format!(
         "INSERT INTO permissions (document_id, role_id, action, subject, fields, conditions, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
         ph(1),
@@ -197,12 +192,12 @@ pub async fn insert_permission(
         ph(7)
     );
     sqlx::query(&sql)
-        .bind(document_id)
-        .bind(role_id)
-        .bind(action)
-        .bind(subject)
-        .bind(fields)
-        .bind(conditions)
+        .bind(&document_id)
+        .bind(cmd.role_id)
+        .bind(&cmd.action)
+        .bind(&cmd.subject)
+        .bind(&cmd.fields)
+        .bind(&cmd.conditions)
         .bind(now)
         .execute(pool)
         .await?;
@@ -284,23 +279,25 @@ mod tests {
 
         insert_permission(
             &pool,
-            &crate::utils::id::new_document_id(),
-            role.id,
-            "read",
-            "posts",
-            None,
-            None,
+            &CreatePermissionCmd {
+                role_id: role.id,
+                action: "read".to_string(),
+                subject: "posts".to_string(),
+                fields: None,
+                conditions: None,
+            },
         )
         .await
         .unwrap();
         insert_permission(
             &pool,
-            &crate::utils::id::new_document_id(),
-            role.id,
-            "write",
-            "posts",
-            None,
-            None,
+            &CreatePermissionCmd {
+                role_id: role.id,
+                action: "write".to_string(),
+                subject: "posts".to_string(),
+                fields: None,
+                conditions: None,
+            },
         )
         .await
         .unwrap();

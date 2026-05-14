@@ -7,6 +7,10 @@ use crate::models::payment_channel::PaymentChannel;
 use crate::models::payment_order::{PaymentOrder, PaymentStatus};
 use crate::models::payment_refund::PaymentRefund;
 use crate::models::payment_transaction::PaymentTransaction;
+use crate::commands::{
+    CreatePaymentChannelCmd, CreatePaymentOrderCmd, CreatePaymentRefundCmd,
+    CreatePaymentTransactionCmd, CreateWalletOutboxCmd,
+};
 use crate::models::wallet_transaction::{WalletReferenceType, WalletTxType};
 use crate::payment::routing::{RoutingContext, select_best_channel, select_channels};
 use crate::payment::ProviderResponse;
@@ -66,26 +70,24 @@ pub async fn create_channel(
     req: CreatePaymentChannelRequest,
 ) -> AppResult<PaymentChannel> {
     auth.ensure_admin()?;
-    let document_id = uuid::Uuid::now_v7().to_string();
     let encrypted_credentials = encrypt_credential(&req.credentials, config)?;
     let encrypted_webhook_secret = req
         .webhook_secret
         .as_deref()
         .map(|s| encrypt_credential(s, config))
         .transpose()?;
+    let cmd = CreatePaymentChannelCmd {
+        provider: req.provider,
+        name: req.name,
+        is_live: req.is_live.unwrap_or(false),
+        credentials: encrypted_credentials,
+        webhook_secret: encrypted_webhook_secret,
+        settings: req.settings,
+        is_active: true,
+        sort_order: req.sort_order.unwrap_or(0),
+    };
     let channel = channel_repo
-        .insert(
-            &document_id,
-            &req.provider,
-            &req.name,
-            req.is_live.unwrap_or(false),
-            &encrypted_credentials,
-            encrypted_webhook_secret.as_deref(),
-            req.settings.as_deref(),
-            true,
-            req.sort_order.unwrap_or(0),
-            auth.tenant_id(),
-        )
+        .insert(&cmd, auth.tenant_id())
         .await?;
     audit_log!(
         audit,
@@ -132,16 +134,18 @@ pub async fn update_channel(
 
     let updated = channel_repo
         .update(
-            channel.id,
-            &channel.provider,
-            req.name.as_deref().unwrap_or(&channel.name),
-            req.is_live.unwrap_or(channel.is_live != 0),
-            &encrypted_credentials,
-            encrypted_webhook_secret.as_deref(),
-            req.settings.as_deref().or(channel.settings.as_deref()),
-            req.is_active.unwrap_or(channel.is_active != 0),
-            req.sort_order.unwrap_or(channel.sort_order),
-            req.version,
+            &crate::commands::UpdatePaymentChannelCmd {
+                id: channel.id,
+                provider: channel.provider.clone(),
+                name: req.name.clone().unwrap_or(channel.name.clone()),
+                is_live: req.is_live.unwrap_or(channel.is_live != 0),
+                credentials: encrypted_credentials,
+                webhook_secret: encrypted_webhook_secret,
+                settings: req.settings.clone().or(channel.settings.clone()),
+                is_active: req.is_active.unwrap_or(channel.is_active != 0),
+                sort_order: req.sort_order.unwrap_or(channel.sort_order),
+                version: req.version,
+            },
             auth.tenant_id(),
         )
         .await?;
@@ -327,31 +331,30 @@ pub async fn create_payment_order(
         return Ok((existing, None));
     }
 
-    let document_id = uuid::Uuid::now_v7().to_string();
     let title = format!("Order {}", order.order_no);
 
+    let cmd = CreatePaymentOrderCmd {
+        user_id,
+        order_id: Some(order.document_id.clone()),
+        title,
+        amount: order.total_amount,
+        currency: order.currency.clone(),
+        channel_id: channel.id,
+        provider: channel.provider.clone(),
+        reference_type: None,
+        reference_id: None,
+        return_url: req.return_url.clone(),
+        idempotency_key: idempotency_key.clone(),
+        client_ip: client_ip.map(String::from),
+        client_language: client_language.map(String::from),
+        client_country: req.country.clone(),
+        client_user_agent: client_user_agent.map(String::from),
+        channel_selected_by: Some(channel_selected_by.into()),
+        metadata: req.metadata.clone(),
+    };
+
     let payment_order = match order_repo
-        .insert(
-            &document_id,
-            user_id,
-            Some(&order.document_id),
-            &title,
-            order.total_amount,
-            &order.currency,
-            channel.id,
-            &channel.provider,
-            None,
-            None,
-            req.return_url.as_deref(),
-            &idempotency_key,
-            client_ip,
-            client_language,
-            req.country.as_deref(),
-            client_user_agent,
-            Some(channel_selected_by),
-            req.metadata.as_deref(),
-            auth.tenant_id(),
-        )
+        .insert(&cmd, auth.tenant_id())
         .await
     {
         Ok(po) => po,
@@ -595,20 +598,21 @@ pub async fn handle_callback(
         }
 
         if let Some(ref provider_tx_id) = callback.provider_tx_id {
-            let tx_doc_id = uuid::Uuid::now_v7().to_string();
             let raw_payload = serde_json::to_string(&callback).ok();
+            let tx_cmd = CreatePaymentTransactionCmd {
+                payment_order_id: payment_order.id,
+                order_id: payment_order.order_id.clone(),
+                user_id: payment_order.user_id,
+                tx_type: "charge".into(),
+                amount: payment_order.amount,
+                currency: payment_order.currency.clone(),
+                provider_tx_id: provider_tx_id.clone(),
+                status: "succeeded".into(),
+                raw_payload,
+            };
             crate::models::payment_transaction::tx_insert(
                 &mut tx,
-                &tx_doc_id,
-                payment_order.id,
-                payment_order.order_id.as_deref(),
-                payment_order.user_id,
-                "charge",
-                payment_order.amount,
-                &payment_order.currency,
-                provider_tx_id,
-                "succeeded",
-                raw_payload.as_deref(),
+                &tx_cmd,
                 payment_order.tenant_id.as_deref(),
             )
             .await?;
@@ -627,19 +631,20 @@ pub async fn handle_callback(
             .await?;
         }
 
-        let outbox_doc_id = uuid::Uuid::now_v7().to_string();
+        let outbox_cmd = CreateWalletOutboxCmd {
+            user_id: payment_order.user_id,
+            currency: payment_order.currency.clone(),
+            amount: payment_order.amount,
+            entry_type: "credit".into(),
+            tx_type: WalletTxType::Recharge,
+            transaction_no: format!("PAY-{}", payment_order.document_id),
+            reference_type: Some(WalletReferenceType::Payment),
+            reference_id: Some(payment_order.document_id.clone()),
+            metadata: None,
+        };
         crate::models::wallet_outbox::tx_insert(
             &mut tx,
-            &outbox_doc_id,
-            payment_order.user_id,
-            &payment_order.currency,
-            payment_order.amount,
-            "credit",
-            WalletTxType::Recharge,
-            &format!("PAY-{}", payment_order.document_id),
-            Some(WalletReferenceType::Payment),
-            Some(&payment_order.document_id),
-            None,
+            &outbox_cmd,
             payment_order.tenant_id.as_deref(),
         )
         .await?;
@@ -691,8 +696,7 @@ pub async fn refund_payment_order(
         return Err(AppError::BadRequest("only_paid_can_refund".into()));
     }
 
-    let refund_doc_id = uuid::Uuid::now_v7().to_string();
-    let wallet_tx_no = format!("PAYMENT_REFUND_{}", refund_doc_id);
+    let wallet_tx_no = format!("PAYMENT_REFUND_{}", uuid::Uuid::now_v7());
 
     let refund = crate::in_transaction!(pool, tx, {
         let already_refunded_in_tx =
@@ -724,36 +728,40 @@ pub async fn refund_payment_order(
                 format!("re_{}", uuid::Uuid::now_v7())
             };
 
+        let refund_cmd = CreatePaymentRefundCmd {
+            payment_order_id: payment_order.id,
+            order_id: payment_order.order_id.clone(),
+            user_id: payment_order.user_id,
+            amount: req.amount,
+            currency: payment_order.currency.clone(),
+            reason: req.reason.clone(),
+            provider_refund_id: Some(provider_refund_id.clone()),
+            status: "succeeded".into(),
+            payment_tx_id: None,
+            metadata: None,
+        };
         crate::models::payment_refund::tx_insert(
             &mut tx,
-            &refund_doc_id,
-            payment_order.id,
-            payment_order.order_id.as_deref(),
-            payment_order.user_id,
-            req.amount,
-            &payment_order.currency,
-            req.reason.as_deref(),
-            Some(&provider_refund_id),
-            "succeeded",
-            None,
+            &refund_cmd,
             payment_order.tenant_id.as_deref(),
         )
         .await?;
 
-        let tx_doc_id = uuid::Uuid::now_v7().to_string();
         let provider_tx_id = format!("txr_{}", uuid::Uuid::now_v7());
+        let tx_cmd = CreatePaymentTransactionCmd {
+            payment_order_id: payment_order.id,
+            order_id: payment_order.order_id.clone(),
+            user_id: payment_order.user_id,
+            tx_type: "refund".into(),
+            amount: req.amount,
+            currency: payment_order.currency.clone(),
+            provider_tx_id,
+            status: "succeeded".into(),
+            raw_payload: None,
+        };
         crate::models::payment_transaction::tx_insert(
             &mut tx,
-            &tx_doc_id,
-            payment_order.id,
-            payment_order.order_id.as_deref(),
-            payment_order.user_id,
-            "refund",
-            req.amount,
-            &payment_order.currency,
-            &provider_tx_id,
-            "succeeded",
-            None,
+            &tx_cmd,
             payment_order.tenant_id.as_deref(),
         )
         .await?;
@@ -779,26 +787,30 @@ pub async fn refund_payment_order(
             return Err(AppError::BadRequest("concurrent_status_change".into()));
         }
 
-        let refund = crate::models::payment_refund::tx_find_by_document_id(
-            &mut tx,
-            &refund_doc_id,
-        )
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("inserted refund not found")))?;
+        let sql = format!(
+            "SELECT * FROM payment_refunds WHERE provider_refund_id = {} LIMIT 1",
+            crate::db::dialect::ph(1)
+        );
+        let refund = sqlx::query_as::<_, PaymentRefund>(&sql)
+            .bind(&provider_refund_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e: sqlx::Error| AppError::from(e))?;
 
-        let outbox_doc_id = uuid::Uuid::now_v7().to_string();
+        let outbox_cmd = CreateWalletOutboxCmd {
+            user_id: payment_order.user_id,
+            currency: payment_order.currency.clone(),
+            amount: req.amount,
+            entry_type: "debit".into(),
+            tx_type: WalletTxType::Refund,
+            transaction_no: wallet_tx_no,
+            reference_type: Some(WalletReferenceType::PaymentRefund),
+            reference_id: Some(payment_order.document_id.clone()),
+            metadata: None,
+        };
         crate::models::wallet_outbox::tx_insert(
             &mut tx,
-            &outbox_doc_id,
-            payment_order.user_id,
-            &payment_order.currency,
-            req.amount,
-            "debit",
-            WalletTxType::Refund,
-            &wallet_tx_no,
-            Some(WalletReferenceType::PaymentRefund),
-            Some(&payment_order.document_id),
-            None,
+            &outbox_cmd,
             payment_order.tenant_id.as_deref(),
         )
         .await?;
@@ -964,18 +976,18 @@ mod tests {
     }
 
     async fn seed_channel(pool: &crate::db::Pool, provider: &str) -> PaymentChannel {
-        let doc_id = uuid::Uuid::now_v7().to_string();
         crate::models::payment_channel::insert(
             pool,
-            &doc_id,
-            provider,
-            &format!("{provider}-test"),
-            false,
-            r#"{"api_key":"test"}"#,
-            None,
-            None,
-            true,
-            0,
+            &CreatePaymentChannelCmd {
+                provider: provider.into(),
+                name: format!("{provider}-test"),
+                is_live: false,
+                credentials: r#"{"api_key":"test"}"#.into(),
+                webhook_secret: None,
+                settings: None,
+                is_active: true,
+                sort_order: 0,
+            },
             None,
         )
         .await
@@ -983,23 +995,23 @@ mod tests {
     }
 
     async fn seed_order(pool: &crate::db::Pool, user_id: i64, amount: i64, currency: &str) -> crate::models::order::Order {
-        let doc_id = uuid::Uuid::now_v7().to_string();
-        let order_no = format!("ORD-{doc_id}");
+        let order_no = format!("ORD-{}", uuid::Uuid::now_v7().to_string().replace('-', ""));
         crate::models::order::insert(
             pool,
-            &doc_id,
-            user_id,
-            &order_no,
-            amount,
-            0,
-            0,
-            amount,
-            currency,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CreateOrderCmd {
+                user_id,
+                order_no,
+                subtotal: amount,
+                discount_amount: 0,
+                shipping_amount: 0,
+                total_amount: amount,
+                currency: currency.into(),
+                buyer_name: None,
+                buyer_phone: None,
+                buyer_email: None,
+                shipping_address: None,
+                remark: None,
+            },
             None,
         )
         .await
@@ -1013,28 +1025,28 @@ mod tests {
         amount: i64,
         currency: &str,
     ) -> PaymentOrder {
-        let doc_id = uuid::Uuid::now_v7().to_string();
-        let idem_key = format!("idem_{doc_id}");
+        let idem_key = format!("idem_{}", uuid::Uuid::now_v7());
         crate::models::payment_order::insert(
             pool,
-            &doc_id,
-            user_id,
-            None,
-            "Test Payment",
-            amount,
-            currency,
-            channel_id,
-            "stripe",
-            None,
-            None,
-            None,
-            &idem_key,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CreatePaymentOrderCmd {
+                user_id,
+                order_id: None,
+                title: "Test Payment".into(),
+                amount,
+                currency: currency.into(),
+                channel_id,
+                provider: "stripe".into(),
+                reference_type: None,
+                reference_id: None,
+                return_url: None,
+                idempotency_key: idem_key,
+                client_ip: None,
+                client_language: None,
+                client_country: None,
+                client_user_agent: None,
+                channel_selected_by: None,
+                metadata: None,
+            },
             None,
         )
         .await
@@ -1737,27 +1749,27 @@ mod tests {
         let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
         let idem_key = format!("{}_{}", order.document_id, channel.document_id);
 
-        let doc_id = uuid::Uuid::now_v7().to_string();
         crate::models::payment_order::insert(
             &pool,
-            &doc_id,
-            user_id,
-            Some(&order.document_id),
-            "Test",
-            1000,
-            "CNY",
-            channel.id,
-            "creem",
-            None,
-            None,
-            None,
-            &idem_key,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CreatePaymentOrderCmd {
+                user_id,
+                order_id: Some(order.document_id.clone()),
+                title: "Test".into(),
+                amount: 1000,
+                currency: "CNY".into(),
+                channel_id: channel.id,
+                provider: "creem".into(),
+                reference_type: None,
+                reference_id: None,
+                return_url: None,
+                idempotency_key: idem_key.clone(),
+                client_ip: None,
+                client_language: None,
+                client_country: None,
+                client_user_agent: None,
+                channel_selected_by: None,
+                metadata: None,
+            },
             None,
         )
         .await
@@ -1768,7 +1780,6 @@ mod tests {
             .await
             .unwrap();
         assert!(found.is_some());
-        assert_eq!(found.unwrap().document_id, doc_id);
     }
 
     #[tokio::test]
@@ -1778,30 +1789,32 @@ mod tests {
 
         let ch_cny = crate::models::payment_channel::insert(
             &pool,
-            &uuid::Uuid::now_v7().to_string(),
-            "alipay",
-            "Alipay CN",
-            false,
-            r#"{"api_key":"test"}"#,
-            None,
-            Some(r#"{"countries":["CN"],"currencies":["CNY"],"priority":100}"#),
-            true,
-            0,
+            &CreatePaymentChannelCmd {
+                provider: "alipay".into(),
+                name: "Alipay CN".into(),
+                is_live: false,
+                credentials: r#"{"api_key":"test"}"#.into(),
+                webhook_secret: None,
+                settings: Some(r#"{"countries":["CN"],"currencies":["CNY"],"priority":100}"#.into()),
+                is_active: true,
+                sort_order: 0,
+            },
             None,
         )
         .await
         .unwrap();
         let _ch_global = crate::models::payment_channel::insert(
             &pool,
-            &uuid::Uuid::now_v7().to_string(),
-            "stripe",
-            "Stripe Global",
-            false,
-            r#"{"api_key":"test"}"#,
-            None,
-            Some(r#"{"countries":["*"],"currencies":["USD","CNY"],"priority":10}"#),
-            true,
-            1,
+            &CreatePaymentChannelCmd {
+                provider: "stripe".into(),
+                name: "Stripe Global".into(),
+                is_live: false,
+                credentials: r#"{"api_key":"test"}"#.into(),
+                webhook_secret: None,
+                settings: Some(r#"{"countries":["*"],"currencies":["USD","CNY"],"priority":10}"#.into()),
+                is_active: true,
+                sort_order: 1,
+            },
             None,
         )
         .await
@@ -1837,15 +1850,16 @@ mod tests {
 
         crate::models::payment_channel::insert(
             &pool,
-            &uuid::Uuid::now_v7().to_string(),
-            "stripe",
-            "Stripe",
-            false,
-            r#"{"api_key":"test"}"#,
-            None,
-            Some(r#"{"currencies":["USD"]}"#),
-            true,
-            0,
+            &CreatePaymentChannelCmd {
+                provider: "stripe".into(),
+                name: "Stripe".into(),
+                is_live: false,
+                credentials: r#"{"api_key":"test"}"#.into(),
+                webhook_secret: None,
+                settings: Some(r#"{"currencies":["USD"]}"#.into()),
+                is_active: true,
+                sort_order: 0,
+            },
             None,
         )
         .await
@@ -1901,15 +1915,16 @@ mod tests {
 
         let ch = crate::models::payment_channel::insert(
             &pool,
-            &uuid::Uuid::now_v7().to_string(),
-            "stripe",
-            "Stripe",
-            false,
-            r#"{"api_key":"test"}"#,
-            None,
-            Some(r#"{"currencies":["CNY"]}"#),
-            true,
-            0,
+            &CreatePaymentChannelCmd {
+                provider: "stripe".into(),
+                name: "Stripe".into(),
+                is_live: false,
+                credentials: r#"{"api_key":"test"}"#.into(),
+                webhook_secret: None,
+                settings: Some(r#"{"currencies":["CNY"]}"#.into()),
+                is_active: true,
+                sort_order: 0,
+            },
             None,
         )
         .await
