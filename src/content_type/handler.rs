@@ -23,46 +23,25 @@ use crate::constants::*;
 use crate::errors::app_error::AppError;
 use crate::middleware::auth::AuthUser;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
-    use axum::routing::get;
-
+pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+    let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/content-types",
-        get(list_schemas).post(create_schema),
-        "system admin",
-        "admin/content-types",
-        ["GET", "POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/content-types/{singular}",
-        get(get_schema).put(update_schema).delete(delete_schema),
-        "system admin",
-        "admin/content-types",
-        ["GET", "PUT", "DELETE"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/cms/{*path}",
-        axum::routing::any(dynamic_cms_handler),
-        "content_type public",
-        "cms",
-        ["GET", "POST", "PUT", "DELETE", "PATCH"]
-    );
-    reg_route!(
-        r,
-        registry,
-        "/admin/cms/{*path}",
-        axum::routing::any(dynamic_admin_cms_handler),
-        "content_type admin",
-        "admin/cms",
-        ["GET", "POST", "PUT", "DELETE", "PATCH"]
-    )
+    let r = reg_route!(r, registry, restful, "/admin/content-types", get, list_schemas, "system admin", "admin/content-types");
+    let r = reg_route!(r, registry, restful, "/admin/content-types", create, create_schema, "system admin", "admin/content-types");
+    let r = reg_route!(r, registry, restful, "/admin/content-types/{singular}", get, get_schema, "system admin", "admin/content-types");
+    let r = reg_route!(r, registry, restful, "/admin/content-types/{singular}", put, update_schema, "system admin", "admin/content-types");
+    let r = reg_route!(r, registry, restful, "/admin/content-types/{singular}", delete, delete_schema, "system admin", "admin/content-types");
+    let r = {
+        let mr = axum::routing::any(dynamic_cms_handler);
+        r.route("/cms/{*path}", mr)
+    };
+    registry.record("ANY", "/api/v1/cms/{*path}", "content_type public", "cms");
+    let r = {
+        let mr = axum::routing::any(dynamic_admin_cms_handler);
+        r.route("/admin/cms/{*path}", mr)
+    };
+    registry.record("ANY", "/api/v1/admin/cms/{*path}", "content_type admin", "admin/cms");
+    r
 }
 
 fn make_base_ctx_from_auth(

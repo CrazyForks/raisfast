@@ -1,6 +1,5 @@
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::routing::{get, post as http_post, put};
 
 use crate::dto::currencies::{CreateCurrencyRequest, CurrencyResponse, UpdateCurrencyRequest};
 use crate::errors::app_error::AppError;
@@ -9,44 +8,13 @@ use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::models::currencies;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+    let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/currencies",
-        get(list_currencies),
-        "admin currencies",
-        "admin/currencies",
-        ["GET"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/currencies",
-        http_post(create_currency),
-        "admin currencies",
-        "admin/currencies",
-        ["POST"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/currencies/{code}",
-        get(get_currency),
-        "admin currencies",
-        "admin/currencies",
-        ["GET"]
-    );
-    crate::reg_route!(
-        r,
-        registry,
-        "/admin/currencies/{code}",
-        put(update_currency),
-        "admin currencies",
-        "admin/currencies",
-        ["PUT"]
-    )
+    let r = reg_route!(r, registry, restful, "/admin/currencies", get, list_currencies, "admin currencies", "admin/currencies");
+    let r = reg_route!(r, registry, restful, "/admin/currencies", create, create_currency, "admin currencies", "admin/currencies");
+    let r = reg_route!(r, registry, restful, "/admin/currencies/{code}", get, get_currency, "admin currencies", "admin/currencies");
+    reg_route!(r, registry, restful, "/admin/currencies/{code}", put, update_currency, "admin currencies", "admin/currencies")
 }
 
 #[utoipa::path(get, path = "/admin/currencies", tag = "currencies",

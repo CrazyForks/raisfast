@@ -17,17 +17,17 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::eventbus::Event;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
-    use axum::routing::get;
-
+pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+    let _restful = config.api_restful;
     reg_route!(
         axum::Router::new(),
         registry,
+        restful,
         "/events",
-        get(subscribe),
+        get,
+        subscribe,
         "system public",
-        "sse",
-        ["GET"]
+        "sse"
     )
 }
 

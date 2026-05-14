@@ -12,64 +12,16 @@ use crate::middleware::auth::AuthUser;
 use crate::plugins::PluginInfoResponse;
 use crate::utils::pagination::PaginationParams;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
-    use axum::routing::{get, post as http_post};
-
+pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+    let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/plugins",
-        get(self::list),
-        "system admin",
-        "admin/plugins",
-        ["GET"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/plugins/{id}",
-        get(self::get).delete(remove),
-        "system admin",
-        "admin/plugins",
-        ["GET", "DELETE"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/plugins/{id}/enable",
-        http_post(enable),
-        "system admin",
-        "admin/plugins",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/plugins/{id}/disable",
-        http_post(disable),
-        "system admin",
-        "admin/plugins",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/plugins/{id}/reload",
-        http_post(reload),
-        "system admin",
-        "admin/plugins",
-        ["POST"]
-    );
-    reg_route!(
-        r,
-        registry,
-        "/admin/plugins/batch",
-        http_post(admin_batch),
-        "system admin",
-        "admin/plugins",
-        ["POST"]
-    )
+    let r = reg_route!(r, registry, restful, "/admin/plugins", get, self::list, "system admin", "admin/plugins");
+    let r = reg_route!(r, registry, restful, "/admin/plugins/{id}", get, self::get, "system admin", "admin/plugins");
+    let r = reg_route!(r, registry, restful, "/admin/plugins/{id}", delete, remove, "system admin", "admin/plugins");
+    let r = reg_route!(r, registry, restful, "/admin/plugins/{id}/enable", post, enable, "system admin", "admin/plugins");
+    let r = reg_route!(r, registry, restful, "/admin/plugins/{id}/disable", post, disable, "system admin", "admin/plugins");
+    let r = reg_route!(r, registry, restful, "/admin/plugins/{id}/reload", post, reload, "system admin", "admin/plugins");
+    reg_route!(r, registry, restful, "/admin/plugins/batch", post, admin_batch, "system admin", "admin/plugins")
 }
 
 /// GET /api/v1/admin/plugins — List all plugins and their status (paginated)

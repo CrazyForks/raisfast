@@ -1,6 +1,5 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::routing::{get, post as http_post};
 
 use crate::dto;
 use crate::errors::app_error::AppError;
@@ -10,107 +9,20 @@ use crate::middleware::auth::AuthUser;
 use crate::models::wallet_transaction::{WalletReferenceType, WalletTxType};
 use crate::utils::pagination::PaginationParams;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+    let _restful = config.api_restful;
     let r = axum::Router::new();
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/wallets",
-        get(list_wallets),
-        "system public",
-        "wallet",
-        ["GET"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/wallets/{currency}",
-        get(get_wallet),
-        "system public",
-        "wallet",
-        ["GET"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/wallets/transactions",
-        get(list_all_transactions),
-        "system public",
-        "wallet",
-        ["GET"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/wallets/{currency}/transactions",
-        get(list_transactions),
-        "system public",
-        "wallet",
-        ["GET"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/wallets",
-        get(list_all_wallets),
-        "admin wallet",
-        "admin/wallet",
-        ["GET"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/wallets/transactions",
-        get(list_all_transactions_admin),
-        "admin wallet",
-        "admin/wallet",
-        ["GET"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/wallets/credit",
-        http_post(admin_credit),
-        "admin wallet",
-        "admin/wallet",
-        ["POST"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/wallets/debit",
-        http_post(admin_debit),
-        "admin wallet",
-        "admin/wallet",
-        ["POST"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/wallets/{user_id}/transactions",
-        get(list_user_all_transactions),
-        "admin wallet",
-        "admin/wallet",
-        ["GET"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/wallets/{user_id}/{currency}/transactions",
-        get(list_user_transactions),
-        "admin wallet",
-        "admin/wallet",
-        ["GET"]
-    );
-    crate::reg_route!(
-        r,
-        registry,
-        "/admin/wallets/{tx_doc_id}/reversal",
-        http_post(admin_reversal),
-        "admin wallet",
-        "admin/wallet",
-        ["POST"]
-    )
+    let r = reg_route!(r, registry, restful, "/wallets", get, list_wallets, "system public", "wallet");
+    let r = reg_route!(r, registry, restful, "/wallets/{currency}", get, get_wallet, "system public", "wallet");
+    let r = reg_route!(r, registry, restful, "/wallets/transactions", get, list_all_transactions, "system public", "wallet");
+    let r = reg_route!(r, registry, restful, "/wallets/{currency}/transactions", get, list_transactions, "system public", "wallet");
+    let r = reg_route!(r, registry, restful, "/admin/wallets", get, list_all_wallets, "admin wallet", "admin/wallet");
+    let r = reg_route!(r, registry, restful, "/admin/wallets/transactions", get, list_all_transactions_admin, "admin wallet", "admin/wallet");
+    let r = reg_route!(r, registry, restful, "/admin/wallets/credit", post, admin_credit, "admin wallet", "admin/wallet");
+    let r = reg_route!(r, registry, restful, "/admin/wallets/debit", post, admin_debit, "admin wallet", "admin/wallet");
+    let r = reg_route!(r, registry, restful, "/admin/wallets/{user_id}/transactions", get, list_user_all_transactions, "admin wallet", "admin/wallet");
+    let r = reg_route!(r, registry, restful, "/admin/wallets/{user_id}/{currency}/transactions", get, list_user_transactions, "admin wallet", "admin/wallet");
+    reg_route!(r, registry, restful, "/admin/wallets/{tx_doc_id}/reversal", post, admin_reversal, "admin wallet", "admin/wallet")
 }
 
 // ── User-facing ──

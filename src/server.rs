@@ -113,61 +113,61 @@ async fn build_app(
     let mut api_v1 = axum::Router::new();
 
     api_v1 = api_v1
-        .merge(auth::routes(&mut registry))
-        .merge(crate::handlers::oauth::routes(&mut registry))
-        .merge(api_token::routes(&mut registry))
-        .merge(user::routes(&mut registry))
-        .merge(wallet::routes(&mut registry))
-        .merge(crate::handlers::currencies::routes(&mut registry));
+        .merge(auth::routes(&mut registry, config))
+        .merge(crate::handlers::oauth::routes(&mut registry, config))
+        .merge(api_token::routes(&mut registry, config))
+        .merge(user::routes(&mut registry, config))
+        .merge(wallet::routes(&mut registry, config))
+        .merge(crate::handlers::currencies::routes(&mut registry, config));
 
     if config.builtins.blog {
         api_v1 = api_v1
-            .merge(category::routes(&mut registry))
-            .merge(tag::routes(&mut registry))
-            .merge(post::routes(&mut registry))
-            .merge(comment::routes(&mut registry));
+            .merge(category::routes(&mut registry, config))
+            .merge(tag::routes(&mut registry, config))
+            .merge(post::routes(&mut registry, config))
+            .merge(comment::routes(&mut registry, config));
     }
 
     api_v1 = api_v1
-        .merge(crate::handlers::product::routes(&mut registry))
-        .merge(crate::handlers::order::routes(&mut registry))
-        .merge(h_payment::routes(&mut registry));
+        .merge(crate::handlers::product::routes(&mut registry, config))
+        .merge(crate::handlers::order::routes(&mut registry, config))
+        .merge(h_payment::routes(&mut registry, config));
 
     if config.builtins.pages {
         api_v1 = api_v1
-            .merge(page::routes(&mut registry))
-            .merge(reusable_block::routes(&mut registry));
+            .merge(page::routes(&mut registry, config))
+            .merge(reusable_block::routes(&mut registry, config));
     }
 
     if config.builtins.media {
-        api_v1 = api_v1.merge(media::routes(max_upload, &mut registry));
+        api_v1 = api_v1.merge(media::routes(max_upload, &mut registry, config));
     }
 
-    api_v1 = api_v1.merge(sse::routes(&mut registry));
+    api_v1 = api_v1.merge(sse::routes(&mut registry, config));
 
     if config.websocket_enabled {
         tracing::info!("WebSocket enabled at /api/v1/ws");
-        api_v1 = api_v1.merge(ws::routes(&mut registry));
+        api_v1 = api_v1.merge(ws::routes(&mut registry, config));
     }
 
     if config.graphql_enabled {
         tracing::info!("GraphQL enabled at /api/v1/graphql");
-        api_v1 = api_v1.merge(crate::graphql::handler::routes(&mut registry));
+        api_v1 = api_v1.merge(crate::graphql::handler::routes(&mut registry, config));
     }
 
     api_v1 = api_v1
-        .merge(plugin::routes(&mut registry))
-        .merge(cron::routes(&mut registry))
-        .merge(rbac::routes(&mut registry))
-        .merge(stats::routes(&mut registry))
-        .merge(options::routes(&mut registry))
-        .merge(tenant::routes(&mut registry))
-        .merge(crate::audit::handler::routes(&mut registry))
-        .merge(crate::webhook::handler::routes(&mut registry))
-        .merge(crate::content_type::handler::routes(&mut registry));
+        .merge(plugin::routes(&mut registry, config))
+        .merge(cron::routes(&mut registry, config))
+        .merge(rbac::routes(&mut registry, config))
+        .merge(stats::routes(&mut registry, config))
+        .merge(options::routes(&mut registry, config))
+        .merge(tenant::routes(&mut registry, config))
+        .merge(crate::audit::handler::routes(&mut registry, config))
+        .merge(crate::webhook::handler::routes(&mut registry, config))
+        .merge(crate::content_type::handler::routes(&mut registry, config));
 
     if config.builtins.workflow {
-        api_v1 = api_v1.merge(workflow::handler::routes(&mut registry));
+        api_v1 = api_v1.merge(workflow::handler::routes(&mut registry, config));
     }
 
     api_v1 = api_v1

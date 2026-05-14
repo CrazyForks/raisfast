@@ -2,7 +2,6 @@ use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
-use axum::routing::{get, post as http_post};
 
 use crate::audit::AuditService;
 use crate::dto::payment::*;
@@ -13,138 +12,33 @@ use crate::middleware::auth::AuthUser;
 use crate::services::payment;
 use crate::utils::pagination::PaginationParams;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+    let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/payment/channels/available",
-        get(list_available_channels_handler),
-        "system public",
-        "payment",
-        ["GET"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/payment/orders",
-        get(list_user_orders).post(create_payment_order_handler),
-        "system public",
-        "payment",
-        ["GET", "POST"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/payment/orders/{id}",
-        get(get_payment_order_handler),
-        "system public",
-        "payment",
-        ["GET"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/payment/orders/{id}/cancel",
-        http_post(cancel_payment_order_handler),
-        "system public",
-        "payment",
-        ["POST"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/payment/orders/{id}/transactions",
-        get(list_order_transactions),
-        "system public",
-        "payment",
-        ["GET"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/payment/orders/{id}/refunds",
-        get(list_order_refunds),
-        "system public",
-        "payment",
-        ["GET"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/payment/callback/{channel_doc_id}",
-        http_post(handle_callback).layer(axum::middleware::from_fn(
+    let r = reg_route!(r, registry, restful, "/payment/channels/available", get, list_available_channels_handler, "system public", "payment");
+    let r = reg_route!(r, registry, restful, "/payment/orders", get, list_user_orders, "system public", "payment");
+    let r = reg_route!(r, registry, restful, "/payment/orders", create, create_payment_order_handler, "system public", "payment");
+    let r = reg_route!(r, registry, restful, "/payment/orders/{id}", get, get_payment_order_handler, "system public", "payment");
+    let r = reg_route!(r, registry, restful, "/payment/orders/{id}/cancel", post, cancel_payment_order_handler, "system public", "payment");
+    let r = reg_route!(r, registry, restful, "/payment/orders/{id}/transactions", get, list_order_transactions, "system public", "payment");
+    let r = reg_route!(r, registry, restful, "/payment/orders/{id}/refunds", get, list_order_refunds, "system public", "payment");
+    let r = {
+        let mr = axum::routing::post(handle_callback).layer(axum::middleware::from_fn(
             crate::middleware::rate_limit::payment_callback_rate_limit
-        )),
-        "system public",
-        "payment",
-        ["POST"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/payment/channels",
-        get(admin_list_channels).post(admin_create_channel),
-        "system admin",
-        "admin/payment",
-        ["GET", "POST"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/payment/channels/{id}",
-        get(admin_get_channel)
-            .put(admin_update_channel)
-            .delete(admin_delete_channel),
-        "system admin",
-        "admin/payment",
-        ["GET", "PUT", "DELETE"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/payment/orders",
-        get(admin_list_orders),
-        "system admin",
-        "admin/payment",
-        ["GET"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/payment/orders/{id}",
-        get(admin_get_order),
-        "system admin",
-        "admin/payment",
-        ["GET"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/payment/orders/{id}/refund",
-        http_post(admin_refund_order),
-        "system admin",
-        "admin/payment",
-        ["POST"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/payment/transactions",
-        get(admin_list_transactions),
-        "system admin",
-        "admin/payment",
-        ["GET"]
-    );
-    crate::reg_route!(
-        r,
-        registry,
-        "/admin/payment/refunds",
-        get(admin_list_refunds),
-        "system admin",
-        "admin/payment",
-        ["GET"]
-    )
+        ));
+        r.route("/payment/callback/{channel_doc_id}", mr)
+    };
+    registry.record("POST", "/api/v1/payment/callback/{channel_doc_id}", "system public", "payment");
+    let r = reg_route!(r, registry, restful, "/admin/payment/channels", get, admin_list_channels, "system admin", "admin/payment");
+    let r = reg_route!(r, registry, restful, "/admin/payment/channels", create, admin_create_channel, "system admin", "admin/payment");
+    let r = reg_route!(r, registry, restful, "/admin/payment/channels/{id}", get, admin_get_channel, "system admin", "admin/payment");
+    let r = reg_route!(r, registry, restful, "/admin/payment/channels/{id}", put, admin_update_channel, "system admin", "admin/payment");
+    let r = reg_route!(r, registry, restful, "/admin/payment/channels/{id}", delete, admin_delete_channel, "system admin", "admin/payment");
+    let r = reg_route!(r, registry, restful, "/admin/payment/orders", get, admin_list_orders, "system admin", "admin/payment");
+    let r = reg_route!(r, registry, restful, "/admin/payment/orders/{id}", get, admin_get_order, "system admin", "admin/payment");
+    let r = reg_route!(r, registry, restful, "/admin/payment/orders/{id}/refund", post, admin_refund_order, "system admin", "admin/payment");
+    let r = reg_route!(r, registry, restful, "/admin/payment/transactions", get, admin_list_transactions, "system admin", "admin/payment");
+    reg_route!(r, registry, restful, "/admin/payment/refunds", get, admin_list_refunds, "system admin", "admin/payment")
 }
 
 fn to_order_response(o: crate::models::payment_order::PaymentOrder) -> PaymentOrderResponse {

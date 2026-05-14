@@ -13,55 +13,14 @@ use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
 use crate::services::oauth;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
-    use axum::routing::{delete, get};
-
+pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+    let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/oauth/{provider}",
-        get(redirect_to_provider),
-        "system public",
-        "oauth",
-        ["GET"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/oauth/{provider}/callback",
-        get(callback),
-        "system public",
-        "oauth",
-        ["GET"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/oauth/providers",
-        get(list_providers),
-        "system public",
-        "oauth",
-        ["GET"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/oauth/bindings",
-        get(list_bindings),
-        "system public",
-        "oauth",
-        ["GET"]
-    );
-    reg_route!(
-        r,
-        registry,
-        "/auth/oauth/{provider}/unbind",
-        delete(unbind),
-        "system public",
-        "oauth",
-        ["DELETE"]
-    )
+    let r = reg_route!(r, registry, restful, "/auth/oauth/{provider}", get, redirect_to_provider, "system public", "oauth");
+    let r = reg_route!(r, registry, restful, "/auth/oauth/{provider}/callback", get, callback, "system public", "oauth");
+    let r = reg_route!(r, registry, restful, "/auth/oauth/providers", get, list_providers, "system public", "oauth");
+    let r = reg_route!(r, registry, restful, "/auth/oauth/bindings", get, list_bindings, "system public", "oauth");
+    reg_route!(r, registry, restful, "/auth/oauth/{provider}/unbind", delete, unbind, "system public", "oauth")
 }
 
 /// Initiate OAuth login — 302 redirect to Provider authorization page

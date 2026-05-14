@@ -18,156 +18,36 @@ use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::services::{auth, email_verification, password_reset, sms};
 
-pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
     use crate::middleware::rate_limit::{login_rate_limit, register_rate_limit};
     use axum::middleware::from_fn;
-    use axum::routing::{delete, get, post as http_post};
 
+    let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/register",
-        http_post(register).layer(from_fn(register_rate_limit)),
-        "system public",
-        "auth",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/login",
-        http_post(login).layer(from_fn(login_rate_limit)),
-        "system public",
-        "auth",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/refresh",
-        http_post(refresh),
-        "system public",
-        "auth",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/logout",
-        http_post(logout),
-        "system public",
-        "auth",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/forgot-password",
-        http_post(forgot_password),
-        "system public",
-        "auth",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/reset-password",
-        http_post(reset_password),
-        "system public",
-        "auth",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/set-password",
-        http_post(set_password),
-        "system public",
-        "auth",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/config",
-        get(auth_config),
-        "system public",
-        "auth",
-        ["GET"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/sms/send",
-        http_post(send_sms_code),
-        "system public",
-        "auth",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/sms/verify",
-        http_post(verify_sms),
-        "system public",
-        "auth",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/phone/bind",
-        http_post(bind_phone),
-        "system public",
-        "auth",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/verify-email",
-        http_post(verify_email),
-        "system public",
-        "auth",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/resend-verification",
-        http_post(resend_verification),
-        "system public",
-        "auth",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/credentials/bind-email",
-        http_post(bind_email_credential),
-        "system public",
-        "auth",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/auth/credentials",
-        get(list_credentials),
-        "system public",
-        "auth",
-        ["GET"]
-    );
-    reg_route!(
-        r,
-        registry,
-        "/auth/credentials/{id}",
-        delete(delete_credential),
-        "system public",
-        "auth",
-        ["DELETE"]
-    )
+    let r = {
+        let mr = axum::routing::post(register).layer(from_fn(register_rate_limit));
+        r.route("/auth/register", mr)
+    };
+    registry.record("POST", "/api/v1/auth/register", "system public", "auth");
+    let r = {
+        let mr = axum::routing::post(login).layer(from_fn(login_rate_limit));
+        r.route("/auth/login", mr)
+    };
+    registry.record("POST", "/api/v1/auth/login", "system public", "auth");
+    let r = reg_route!(r, registry, restful, "/auth/refresh", post, refresh, "system public", "auth");
+    let r = reg_route!(r, registry, restful, "/auth/logout", post, logout, "system public", "auth");
+    let r = reg_route!(r, registry, restful, "/auth/forgot-password", post, forgot_password, "system public", "auth");
+    let r = reg_route!(r, registry, restful, "/auth/reset-password", post, reset_password, "system public", "auth");
+    let r = reg_route!(r, registry, restful, "/auth/set-password", post, set_password, "system public", "auth");
+    let r = reg_route!(r, registry, restful, "/auth/config", get, auth_config, "system public", "auth");
+    let r = reg_route!(r, registry, restful, "/auth/sms/send", post, send_sms_code, "system public", "auth");
+    let r = reg_route!(r, registry, restful, "/auth/sms/verify", post, verify_sms, "system public", "auth");
+    let r = reg_route!(r, registry, restful, "/auth/phone/bind", post, bind_phone, "system public", "auth");
+    let r = reg_route!(r, registry, restful, "/auth/verify-email", post, verify_email, "system public", "auth");
+    let r = reg_route!(r, registry, restful, "/auth/resend-verification", post, resend_verification, "system public", "auth");
+    let r = reg_route!(r, registry, restful, "/auth/credentials/bind-email", post, bind_email_credential, "system public", "auth");
+    let r = reg_route!(r, registry, restful, "/auth/credentials", get, list_credentials, "system public", "auth");
+    reg_route!(r, registry, restful, "/auth/credentials/{id}", delete, delete_credential, "system public", "auth")
 }
 
 /// User registration

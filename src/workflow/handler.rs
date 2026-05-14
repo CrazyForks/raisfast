@@ -13,82 +13,19 @@ use crate::db::dialect;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
-    use axum::routing::{get, post as http_post};
-
+pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+    let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/workflows",
-        get(list).post(create),
-        "system admin",
-        "admin/workflows",
-        ["GET", "POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/workflows/{id}",
-        get(self::get).delete(self::delete),
-        "system admin",
-        "admin/workflows",
-        ["GET", "DELETE"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/workflows/{id}/start",
-        http_post(start),
-        "system admin",
-        "admin/workflows",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/workflows/instances",
-        get(list_instances),
-        "system admin",
-        "admin/workflows",
-        ["GET"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/workflows/instances/{id}",
-        get(get_instance),
-        "system admin",
-        "admin/workflows",
-        ["GET"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/workflows/instances/{id}/execute",
-        http_post(execute_step),
-        "system admin",
-        "admin/workflows",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/workflows/instances/{id}/cancel",
-        http_post(cancel_instance),
-        "system admin",
-        "admin/workflows",
-        ["POST"]
-    );
-    reg_route!(
-        r,
-        registry,
-        "/admin/workflows/instances/{id}/logs",
-        get(get_step_logs),
-        "system admin",
-        "admin/workflows",
-        ["GET"]
-    )
+    let r = reg_route!(r, registry, restful, "/admin/workflows", get, list, "system admin", "admin/workflows");
+    let r = reg_route!(r, registry, restful, "/admin/workflows", create, create, "system admin", "admin/workflows");
+    let r = reg_route!(r, registry, restful, "/admin/workflows/{id}", get, self::get, "system admin", "admin/workflows");
+    let r = reg_route!(r, registry, restful, "/admin/workflows/{id}", delete, self::delete, "system admin", "admin/workflows");
+    let r = reg_route!(r, registry, restful, "/admin/workflows/{id}/start", post, start, "system admin", "admin/workflows");
+    let r = reg_route!(r, registry, restful, "/admin/workflows/instances", get, list_instances, "system admin", "admin/workflows");
+    let r = reg_route!(r, registry, restful, "/admin/workflows/instances/{id}", get, get_instance, "system admin", "admin/workflows");
+    let r = reg_route!(r, registry, restful, "/admin/workflows/instances/{id}/execute", post, execute_step, "system admin", "admin/workflows");
+    let r = reg_route!(r, registry, restful, "/admin/workflows/instances/{id}/cancel", post, cancel_instance, "system admin", "admin/workflows");
+    reg_route!(r, registry, restful, "/admin/workflows/instances/{id}/logs", get, get_step_logs, "system admin", "admin/workflows")
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]

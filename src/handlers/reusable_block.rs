@@ -12,39 +12,15 @@ use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::services::reusable_block as reusable_service;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
-    use axum::routing::{get, post as http_post};
-
+pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+    let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/reusable-blocks",
-        get(list_reusable).post(create_reusable),
-        "system admin",
-        "admin/pages",
-        ["GET", "POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/reusable-blocks/{id}",
-        get(get_reusable)
-            .put(update_reusable)
-            .delete(delete_reusable),
-        "system admin",
-        "admin/pages",
-        ["GET", "PUT", "DELETE"]
-    );
-    reg_route!(
-        r,
-        registry,
-        "/admin/reusable-blocks/batch",
-        http_post(admin_batch),
-        "system admin",
-        "admin/pages",
-        ["POST"]
-    )
+    let r = reg_route!(r, registry, restful, "/admin/reusable-blocks", get, list_reusable, "system admin", "admin/pages");
+    let r = reg_route!(r, registry, restful, "/admin/reusable-blocks", create, create_reusable, "system admin", "admin/pages");
+    let r = reg_route!(r, registry, restful, "/admin/reusable-blocks/{id}", get, get_reusable, "system admin", "admin/pages");
+    let r = reg_route!(r, registry, restful, "/admin/reusable-blocks/{id}", put, update_reusable, "system admin", "admin/pages");
+    let r = reg_route!(r, registry, restful, "/admin/reusable-blocks/{id}", delete, delete_reusable, "system admin", "admin/pages");
+    reg_route!(r, registry, restful, "/admin/reusable-blocks/batch", post, admin_batch, "system admin", "admin/pages")
 }
 
 #[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]

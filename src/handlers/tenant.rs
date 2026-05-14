@@ -11,37 +11,15 @@ use crate::models::tenant::Tenant;
 use crate::services::tenant::{CreateTenantRequest, UpdateTenantRequest};
 use crate::utils::pagination::PaginationParams;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
-    use axum::routing::{get, post as http_post};
-
+pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+    let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/tenants",
-        get(list_tenants).post(create_tenant),
-        "system admin",
-        "admin/tenants",
-        ["GET", "POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/tenants/{id}",
-        get(get_tenant).put(update_tenant).delete(delete_tenant),
-        "system admin",
-        "admin/tenants",
-        ["GET", "PUT", "DELETE"]
-    );
-    reg_route!(
-        r,
-        registry,
-        "/admin/tenants/batch",
-        http_post(admin_batch),
-        "system admin",
-        "admin/tenants",
-        ["POST"]
-    )
+    let r = reg_route!(r, registry, restful, "/admin/tenants", get, list_tenants, "system admin", "admin/tenants");
+    let r = reg_route!(r, registry, restful, "/admin/tenants", create, create_tenant, "system admin", "admin/tenants");
+    let r = reg_route!(r, registry, restful, "/admin/tenants/{id}", get, get_tenant, "system admin", "admin/tenants");
+    let r = reg_route!(r, registry, restful, "/admin/tenants/{id}", put, update_tenant, "system admin", "admin/tenants");
+    let r = reg_route!(r, registry, restful, "/admin/tenants/{id}", delete, delete_tenant, "system admin", "admin/tenants");
+    reg_route!(r, registry, restful, "/admin/tenants/batch", post, admin_batch, "system admin", "admin/tenants")
 }
 
 /// GET /admin/tenants — List all tenants (paginated)

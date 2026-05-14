@@ -11,55 +11,19 @@ use crate::middleware::auth::AuthUser;
 use crate::services::category;
 use crate::utils::pagination::PaginationParams;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
-    use axum::routing::{get, post as http_post, put};
-
+pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+    let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(
-        r,
-        registry,
-        "/categories",
-        get(self::list).post(create),
-        "system public",
-        "categories",
-        ["GET", "POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/categories/{id}",
-        get(self::get).put(update).delete(self::delete),
-        "system public",
-        "categories",
-        ["GET", "PUT", "DELETE"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/categories",
-        get(admin_list).post(admin_create),
-        "system admin",
-        "admin/categories",
-        ["GET", "POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/categories/{id}",
-        put(admin_update).delete(admin_delete),
-        "system admin",
-        "admin/categories",
-        ["PUT", "DELETE"]
-    );
-    reg_route!(
-        r,
-        registry,
-        "/admin/categories/batch",
-        http_post(admin_batch),
-        "system admin",
-        "admin/categories",
-        ["POST"]
-    )
+    let r = reg_route!(r, registry, restful, "/categories", get, self::list, "system public", "categories");
+    let r = reg_route!(r, registry, restful, "/categories", create, self::create, "system public", "categories");
+    let r = reg_route!(r, registry, restful, "/categories/{id}", get, self::get, "system public", "categories");
+    let r = reg_route!(r, registry, restful, "/categories/{id}", put, update, "system public", "categories");
+    let r = reg_route!(r, registry, restful, "/categories/{id}", delete, self::delete, "system public", "categories");
+    let r = reg_route!(r, registry, restful, "/admin/categories", get, admin_list, "system admin", "admin/categories");
+    let r = reg_route!(r, registry, restful, "/admin/categories", create, admin_create, "system admin", "admin/categories");
+    let r = reg_route!(r, registry, restful, "/admin/categories/{id}", put, admin_update, "system admin", "admin/categories");
+    let r = reg_route!(r, registry, restful, "/admin/categories/{id}", delete, admin_delete, "system admin", "admin/categories");
+    reg_route!(r, registry, restful, "/admin/categories/batch", post, admin_batch, "system admin", "admin/categories")
 }
 
 /// Get category list (paginated)

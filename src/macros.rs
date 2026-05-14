@@ -1,8 +1,96 @@
+/// Register a single route with automatic POST compatibility for PUT/DELETE.
+///
+/// # Syntax
+///
+/// ```ignore
+/// reg_route!(router, registry, restful, "/path", method, handler, "source", "name");
+/// ```
+///
+/// - `restful`: bool (typically `config.api_restful`)
+/// - `method`: `get`, `post`, `create`, `put`, or `delete`
+/// - `handler`: handler function or `axum::routing::MethodRouter` expression
+/// - When `restful=false`:
+///   - `create` → `POST /path/create`
+///   - `put`    → `POST /path/update`
+///   - `delete` → `POST /path/delete`
+/// - When `restful=true`: no extra routes generated
+///
+/// # Examples
+///
+/// ```ignore
+/// reg_route!(r, reg, restful, "/pages", get, list, "public", "pages");
+/// reg_route!(r, reg, restful, "/pages", create, create_page, "public", "pages");
+/// reg_route!(r, reg, restful, "/pages/{id}", put, update, "admin", "pages");
+/// reg_route!(r, reg, restful, "/pages/{id}", delete, remove, "admin", "pages");
+/// // Non-CRUD POST (login, batch, callback — always POST /path):
+/// reg_route!(r, reg, restful, "/auth/login", post, login, "public", "auth");
+/// // With middleware:
+/// reg_route!(r, reg, restful, "/auth/login", post, post(login).layer(mw), "public", "auth");
+/// ```
 #[macro_export]
 macro_rules! reg_route {
-    ($router:expr, $registry:expr, $path:literal, $handler:expr, $source:expr, $name:expr, [$($method:literal),+ $(,)?]) => {{
-        let r = $router.route($path, $handler);
-        $($registry.record($method, concat!("/api/v1", $path), $source, $name);)+
+    // ── GET ──────────────────────────────────────────────────────
+    ($router:expr, $registry:expr, $restful:expr, $path:literal, get, $handler:expr, $source:expr, $name:expr $(,)?) => {{
+        let r = $router.route($path, axum::routing::get($handler));
+        $registry.record("GET", concat!("/api/v1", $path), $source, $name);
+        r
+    }};
+
+    // ── POST (non-CRUD, always POST /path) ──────────────────────
+    ($router:expr, $registry:expr, $restful:expr, $path:literal, post, $handler:expr, $source:expr, $name:expr $(,)?) => {{
+        let r = $router.route($path, axum::routing::post($handler));
+        $registry.record("POST", concat!("/api/v1", $path), $source, $name);
+        r
+    }};
+
+    // ── CREATE ──────────────────────────────────────────────────
+    //   restful=true  → POST /path
+    //   restful=false → POST /path/create
+    ($router:expr, $registry:expr, $restful:expr, $path:literal, create, $handler:expr, $source:expr, $name:expr $(,)?) => {{
+        let r = if $restful {
+            let r = $router.route($path, axum::routing::post($handler));
+            $registry.record("POST", concat!("/api/v1", $path), $source, $name);
+            r
+        } else {
+            let __compat_path = concat!($path, "/create");
+            let r = $router.route(__compat_path, axum::routing::post($handler));
+            $registry.record("POST", concat!("/api/v1", $path, "/create"), $source, $name);
+            r
+        };
+        r
+    }};
+
+    // ── PUT ──────────────────────────────────────────────────────
+    //   restful=true  → PUT /path
+    //   restful=false → POST /path/update
+    ($router:expr, $registry:expr, $restful:expr, $path:literal, put, $handler:expr, $source:expr, $name:expr $(,)?) => {{
+        let r = if $restful {
+            let r = $router.route($path, axum::routing::put($handler));
+            $registry.record("PUT", concat!("/api/v1", $path), $source, $name);
+            r
+        } else {
+            let __compat_path = concat!($path, "/update");
+            let r = $router.route(__compat_path, axum::routing::post($handler));
+            $registry.record("POST", concat!("/api/v1", $path, "/update"), $source, $name);
+            r
+        };
+        r
+    }};
+
+    // ── DELETE ───────────────────────────────────────────────────
+    //   restful=true  → DELETE /path
+    //   restful=false → POST /path/delete
+    ($router:expr, $registry:expr, $restful:expr, $path:literal, delete, $handler:expr, $source:expr, $name:expr $(,)?) => {{
+        let r = if $restful {
+            let r = $router.route($path, axum::routing::delete($handler));
+            $registry.record("DELETE", concat!("/api/v1", $path), $source, $name);
+            r
+        } else {
+            let __compat_path = concat!($path, "/delete");
+            let r = $router.route(__compat_path, axum::routing::post($handler));
+            $registry.record("POST", concat!("/api/v1", $path, "/delete"), $source, $name);
+            r
+        };
         r
     }};
 }

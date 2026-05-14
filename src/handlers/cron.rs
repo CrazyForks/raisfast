@@ -18,64 +18,18 @@ use crate::worker::{
     list_execution_logs, list_schedules, recent_execution_logs, toggle_schedule, update_schedule,
 };
 
-pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
-    use axum::routing::{get, post as http_post};
-
+pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+    let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/crons",
-        get(self::list).post(create),
-        "system admin",
-        "admin/crons",
-        ["GET", "POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/crons/{id}",
-        get(self::get).put(update).delete(self::delete),
-        "system admin",
-        "admin/crons",
-        ["GET", "PUT", "DELETE"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/crons/{id}/toggle",
-        http_post(toggle),
-        "system admin",
-        "admin/crons",
-        ["POST"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/crons/logs",
-        get(logs),
-        "system admin",
-        "admin/crons",
-        ["GET"]
-    );
-    let r = reg_route!(
-        r,
-        registry,
-        "/admin/crons/logs/cleanup",
-        http_post(cleanup_logs),
-        "system admin",
-        "admin/crons",
-        ["POST"]
-    );
-    reg_route!(
-        r,
-        registry,
-        "/admin/crons/batch",
-        http_post(admin_batch),
-        "system admin",
-        "admin/crons",
-        ["POST"]
-    )
+    let r = reg_route!(r, registry, restful, "/admin/crons", get, self::list, "system admin", "admin/crons");
+    let r = reg_route!(r, registry, restful, "/admin/crons", create, self::create, "system admin", "admin/crons");
+    let r = reg_route!(r, registry, restful, "/admin/crons/{id}", get, self::get, "system admin", "admin/crons");
+    let r = reg_route!(r, registry, restful, "/admin/crons/{id}", put, update, "system admin", "admin/crons");
+    let r = reg_route!(r, registry, restful, "/admin/crons/{id}", delete, self::delete, "system admin", "admin/crons");
+    let r = reg_route!(r, registry, restful, "/admin/crons/{id}/toggle", post, toggle, "system admin", "admin/crons");
+    let r = reg_route!(r, registry, restful, "/admin/crons/logs", get, logs, "system admin", "admin/crons");
+    let r = reg_route!(r, registry, restful, "/admin/crons/logs/cleanup", post, cleanup_logs, "system admin", "admin/crons");
+    reg_route!(r, registry, restful, "/admin/crons/batch", post, admin_batch, "system admin", "admin/crons")
 }
 
 /// Create schedule request body

@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 /// | `APP_HOST` | String | `0.0.0.0` | Listen address |
 /// | `APP_PORT` | u16 | `9898` | Listen port |
 /// | `APP_ENV` | String | `development` | Runtime environment |
+/// | `API_RESTFUL` | bool | `true` | `true` = full RESTful (GET/POST/PUT/DELETE), `false` = GET/POST only |
 /// | `DATABASE_URL` | String | (varies by DB backend) | Database connection string |
 /// | `DB_POOL_SIZE` | u32 | `5` | Connection pool size |
 /// | `JWT_SECRET` | String | (built-in default) | JWT signing secret |
@@ -43,6 +44,7 @@ pub struct AppConfig {
     pub host: String,
     pub port: u16,
     pub env: String,
+    pub api_restful: bool,
     pub database_url: String,
     pub db_pool_size: u32,
     pub jwt_secret: String,
@@ -670,8 +672,12 @@ fn default_sms_provider() -> String {
 }
 
 const DEFAULT_JWT_SECRET: &str = "change-me-in-production-at-least-32-chars";
-
 impl AppConfig {
+    /// Whether API uses RESTful style (PUT/DELETE allowed).
+    pub fn is_restful(&self) -> bool {
+        self.api_restful
+    }
+
     /// Build configuration from environment variables, using defaults for missing variables.
     #[must_use]
     pub fn from_env() -> Self {
@@ -709,6 +715,10 @@ impl AppConfig {
             host,
             port,
             env: env::var("APP_ENV").unwrap_or_else(|_| "development".into()),
+            api_restful: env::var("API_RESTFUL")
+                .ok()
+                .map(|v| v != "false" && v != "0")
+                .unwrap_or(true),
             database_url,
             db_pool_size: env::var("DB_POOL_SIZE")
                 .ok()
@@ -997,6 +1007,7 @@ impl AppConfig {
             host: "0.0.0.0".into(),
             port: 9898,
             env: "test".into(),
+            api_restful: true,
             database_url: "sqlite::memory:".into(),
             db_pool_size: 1,
             jwt_secret: "test-secret-key-at-least-32-characters-long".into(),

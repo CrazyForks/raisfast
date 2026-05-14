@@ -1,6 +1,5 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::routing::{get, post as http_post, put};
 
 use crate::dto::{
     CancelOrderRequest, CreateOrderRequest, OrderItemResponse, OrderResponse, OrderStatsResponse,
@@ -13,109 +12,22 @@ use crate::middleware::auth::AuthUser;
 use crate::services::order;
 use crate::utils::pagination::PaginationParams;
 
-pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate::AppState> {
+pub fn routes(registry: &mut crate::server::RouteRegistry, config: &crate::config::app::AppConfig) -> axum::Router<crate::AppState> {
+    let restful = config.api_restful;
     let r = axum::Router::new();
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/orders",
-        get(list_orders).post(create_order),
-        "system public",
-        "orders",
-        ["GET", "POST"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/orders/{id}",
-        get(get_order).put(cancel_order_handler),
-        "system public",
-        "orders",
-        ["GET", "PUT"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/orders/{id}/confirm",
-        http_post(confirm_receipt),
-        "system public",
-        "orders",
-        ["POST"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/orders",
-        get(admin_list),
-        "system admin",
-        "admin/orders",
-        ["GET"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/orders/{id}",
-        get(admin_get),
-        "system admin",
-        "admin/orders",
-        ["GET"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/orders/{id}/pay",
-        http_post(admin_pay),
-        "system admin",
-        "admin/orders",
-        ["POST"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/orders/{id}/ship",
-        http_post(admin_ship),
-        "system admin",
-        "admin/orders",
-        ["POST"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/orders/{id}/cancel",
-        http_post(admin_cancel),
-        "system admin",
-        "admin/orders",
-        ["POST"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/orders/{id}/refund",
-        http_post(admin_refund),
-        "system admin",
-        "admin/orders",
-        ["POST"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/orders/{id}/remark",
-        put(admin_update_remark),
-        "system admin",
-        "admin/orders",
-        ["PUT"]
-    );
-    let r = crate::reg_route!(
-        r,
-        registry,
-        "/admin/orders/stats",
-        get(admin_stats),
-        "system admin",
-        "admin/orders",
-        ["GET"]
-    );
-    #[allow(clippy::let_and_return)]
-    r
+    let r = reg_route!(r, registry, restful, "/orders", get, list_orders, "system public", "orders");
+    let r = reg_route!(r, registry, restful, "/orders", create, create_order, "system public", "orders");
+    let r = reg_route!(r, registry, restful, "/orders/{id}", get, get_order, "system public", "orders");
+    let r = reg_route!(r, registry, restful, "/orders/{id}", put, cancel_order_handler, "system public", "orders");
+    let r = reg_route!(r, registry, restful, "/orders/{id}/confirm", post, confirm_receipt, "system public", "orders");
+    let r = reg_route!(r, registry, restful, "/admin/orders", get, admin_list, "system admin", "admin/orders");
+    let r = reg_route!(r, registry, restful, "/admin/orders/{id}", get, admin_get, "system admin", "admin/orders");
+    let r = reg_route!(r, registry, restful, "/admin/orders/{id}/pay", post, admin_pay, "system admin", "admin/orders");
+    let r = reg_route!(r, registry, restful, "/admin/orders/{id}/ship", post, admin_ship, "system admin", "admin/orders");
+    let r = reg_route!(r, registry, restful, "/admin/orders/{id}/cancel", post, admin_cancel, "system admin", "admin/orders");
+    let r = reg_route!(r, registry, restful, "/admin/orders/{id}/refund", post, admin_refund, "system admin", "admin/orders");
+    let r = reg_route!(r, registry, restful, "/admin/orders/{id}/remark", put, admin_update_remark, "system admin", "admin/orders");
+    reg_route!(r, registry, restful, "/admin/orders/stats", get, admin_stats, "system admin", "admin/orders")
 }
 
 fn to_order_response(

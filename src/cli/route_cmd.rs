@@ -7,45 +7,45 @@ use raisfast::server::RouteRegistry;
 
 fn collect_routes(config: &AppConfig) -> Vec<RouteInfo> {
     let mut registry = RouteRegistry::default();
-    let _ = raisfast::handlers::auth::routes(&mut registry);
-    let _ = raisfast::handlers::oauth::routes(&mut registry);
-    let _ = raisfast::handlers::api_token::routes(&mut registry);
-    let _ = raisfast::handlers::user::routes(&mut registry);
-    let _ = raisfast::handlers::wallet::routes(&mut registry);
-    let _ = raisfast::handlers::currencies::routes(&mut registry);
+    let _ = raisfast::handlers::auth::routes(&mut registry, config);
+    let _ = raisfast::handlers::oauth::routes(&mut registry, config);
+    let _ = raisfast::handlers::api_token::routes(&mut registry, config);
+    let _ = raisfast::handlers::user::routes(&mut registry, config);
+    let _ = raisfast::handlers::wallet::routes(&mut registry, config);
+    let _ = raisfast::handlers::currencies::routes(&mut registry, config);
 
     if config.builtins.blog {
-        let _ = raisfast::handlers::category::routes(&mut registry);
-        let _ = raisfast::handlers::tag::routes(&mut registry);
-        let _ = raisfast::handlers::post::routes(&mut registry);
-        let _ = raisfast::handlers::comment::routes(&mut registry);
+        let _ = raisfast::handlers::category::routes(&mut registry, config);
+        let _ = raisfast::handlers::tag::routes(&mut registry, config);
+        let _ = raisfast::handlers::post::routes(&mut registry, config);
+        let _ = raisfast::handlers::comment::routes(&mut registry, config);
     }
 
     if config.builtins.pages {
-        let _ = raisfast::handlers::page::routes(&mut registry);
-        let _ = raisfast::handlers::reusable_block::routes(&mut registry);
+        let _ = raisfast::handlers::page::routes(&mut registry, config);
+        let _ = raisfast::handlers::reusable_block::routes(&mut registry, config);
     }
 
     if config.builtins.media {
-        let _ = raisfast::handlers::media::routes(0, &mut registry);
+        let _ = raisfast::handlers::media::routes(0, &mut registry, config);
     }
 
-    let _ = raisfast::handlers::sse::routes(&mut registry);
-    let _ = raisfast::handlers::ws::routes(&mut registry);
-    let _ = raisfast::graphql::handler::routes(&mut registry);
+    let _ = raisfast::handlers::sse::routes(&mut registry, config);
+    let _ = raisfast::handlers::ws::routes(&mut registry, config);
+    let _ = raisfast::graphql::handler::routes(&mut registry, config);
 
-    let _ = raisfast::handlers::plugin::routes(&mut registry);
-    let _ = raisfast::handlers::cron::routes(&mut registry);
-    let _ = raisfast::handlers::rbac::routes(&mut registry);
-    let _ = raisfast::handlers::stats::routes(&mut registry);
-    let _ = raisfast::handlers::options::routes(&mut registry);
-    let _ = raisfast::handlers::tenant::routes(&mut registry);
-    let _ = raisfast::audit::handler::routes(&mut registry);
-    let _ = raisfast::webhook::handler::routes(&mut registry);
-    let _ = raisfast::content_type::handler::routes(&mut registry);
+    let _ = raisfast::handlers::plugin::routes(&mut registry, config);
+    let _ = raisfast::handlers::cron::routes(&mut registry, config);
+    let _ = raisfast::handlers::rbac::routes(&mut registry, config);
+    let _ = raisfast::handlers::stats::routes(&mut registry, config);
+    let _ = raisfast::handlers::options::routes(&mut registry, config);
+    let _ = raisfast::handlers::tenant::routes(&mut registry, config);
+    let _ = raisfast::audit::handler::routes(&mut registry, config);
+    let _ = raisfast::webhook::handler::routes(&mut registry, config);
+    let _ = raisfast::content_type::handler::routes(&mut registry, config);
 
     if config.builtins.workflow {
-        let _ = raisfast::workflow::handler::routes(&mut registry);
+        let _ = raisfast::workflow::handler::routes(&mut registry, config);
     }
 
     let mut routes = registry.into_vec();
