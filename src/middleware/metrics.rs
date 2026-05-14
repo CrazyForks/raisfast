@@ -24,7 +24,7 @@ pub fn init() {
         .unwrap_or_else(|e| panic!("prometheus recorder install failed: {e}"));
     HANDLE
         .set(handle)
-        .expect("metrics::init called more than once");
+        .unwrap_or_else(|_| panic!("metrics::init called more than once"));
 }
 
 /// Render Prometheus text output

@@ -427,15 +427,17 @@ async fn shutdown_signal(shutdown_tx: tokio::sync::watch::Sender<bool>) {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
-            .expect("failed to install ctrl+c handler");
+            .unwrap_or_else(|e| tracing::error!("ctrl+c handler failed: {e}"));
     };
 
     #[cfg(unix)]
     let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut stream) => {
+                stream.recv().await;
+            }
+            Err(e) => tracing::error!("SIGTERM handler failed: {e}"),
+        }
     };
 
     #[cfg(not(unix))]

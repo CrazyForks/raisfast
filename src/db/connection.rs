@@ -9,6 +9,7 @@
 //! and `max_lifetime`, ensuring no infinite waits under high concurrency while avoiding connection leaks.
 //!
 //! On first startup, automatically executes `SCHEMA_SQL` to create tables + seed data (idempotent).
+//! On every startup, automatically runs pending incremental migrations from `migrations/{db}/`.
 
 use std::time::Duration;
 
@@ -40,7 +41,9 @@ pub async fn init_pool(database_url: &str, pool_size: u32) -> Result<Pool, sqlx:
             }
         }
     }
-    Err(last_err.unwrap())
+    Err(last_err.unwrap_or_else(|| {
+        sqlx::Error::Configuration("database connection failed with no error recorded".into())
+    }))
 }
 
 async fn try_connect(database_url: &str, pool_size: u32) -> Result<Pool, sqlx::Error> {
@@ -120,48 +123,170 @@ async fn try_connect(database_url: &str, pool_size: u32) -> Result<Pool, sqlx::E
 }
 
 /// On first startup, automatically execute schema to create tables + seed data.
+/// On every startup, run any pending incremental migrations.
 ///
 /// Checks for the existence of the `_migrations` table to determine if this is the first run.
 /// All SQL uses `IF NOT EXISTS` / `OR IGNORE`, making it naturally idempotent.
-/// Subsequent structural changes are applied via incremental migration files through `db migrate`.
 pub async fn ensure_schema(pool: &Pool) -> anyhow::Result<()> {
     let has_migrations = check_migrations_table(pool).await;
 
-    if has_migrations {
-        tracing::debug!("schema already initialized");
-        return Ok(());
-    }
+    if !has_migrations {
+        tracing::info!("first run — executing schema...");
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("schema execution failed: {e}"))?;
 
-    tracing::info!("first run — executing schema...");
-    sqlx::query(crate::db::schema::SCHEMA_SQL)
-        .execute(pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("schema execution failed: {e}"))?;
+        let schema_label = db_label();
+        let checksum = sha256_hex(crate::db::schema::SCHEMA_SQL);
 
-    let schema_label = if cfg!(feature = "db-sqlite") {
-        "schema.sqlite.sql"
-    } else if cfg!(feature = "db-postgres") {
-        "schema.postgres.sql"
-    } else {
-        "schema.mysql.sql"
-    };
-
-    sqlx::query("CREATE TABLE IF NOT EXISTS _migrations (filename TEXT PRIMARY KEY)")
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS _migrations (\
+             filename TEXT PRIMARY KEY, \
+             checksum TEXT NOT NULL, \
+             applied_at TEXT NOT NULL DEFAULT (datetime('now'))\
+             )",
+        )
         .execute(pool)
         .await
         .map_err(|e| anyhow::anyhow!("create _migrations table failed: {e}"))?;
 
-    sqlx::query(&format!(
-        "INSERT INTO _migrations (filename) VALUES ({})",
-        crate::db::dialect::ph(1)
-    ))
-    .bind(schema_label)
-    .execute(pool)
-    .await
-    .map_err(|e| anyhow::anyhow!("record schema migration failed: {e}"))?;
+        let ph = crate::db::dialect::ph;
+        sqlx::query(&format!(
+            "INSERT INTO _migrations (filename, checksum) VALUES ({}, {})",
+            ph(1),
+            ph(2)
+        ))
+        .bind(format!("schema.{schema_label}.sql"))
+        .bind(&checksum)
+        .execute(pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("record schema migration failed: {e}"))?;
 
-    tracing::info!("schema initialized successfully");
+        tracing::info!("schema initialized successfully");
+    } else {
+        ensure_migrations_table_schema(pool).await;
+    }
+
+    run_pending_migrations(pool).await?;
+
     Ok(())
+}
+
+/// Auto-run any pending incremental migration files from `migrations/{db}/`.
+///
+/// Called automatically during startup after `ensure_schema`.
+/// Migrations are sorted alphabetically and tracked in `_migrations`.
+/// Files already recorded are skipped. Checksums are verified on re-run detection.
+async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
+    let db_name = match db_label() {
+        "sqlite" => "sqlite",
+        "postgres" => "postgres",
+        "mysql" => "mysql",
+        other => {
+            tracing::debug!("unknown db label '{other}', skipping auto-migration");
+            return Ok(());
+        }
+    };
+
+    let migrations_dir = std::path::Path::new("./migrations").join(db_name);
+    if !migrations_dir.exists() {
+        tracing::debug!("no migrations directory found, skipping auto-migration");
+        return Ok(());
+    }
+
+    let schema_label = format!("schema.{db_name}.sql");
+
+    let mut entries: Vec<_> = std::fs::read_dir(&migrations_dir)
+        .ok()
+        .map(|dir| {
+            dir.filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.path().extension().is_some_and(|ext| ext == "sql")
+                        && e.file_name().to_string_lossy() != schema_label
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    entries.sort_by_key(|e| e.file_name());
+
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    let ph = crate::db::dialect::ph;
+    let check_sql = format!(
+        "SELECT checksum FROM _migrations WHERE filename = {}",
+        ph(1)
+    );
+    let insert_sql = format!(
+        "INSERT INTO _migrations (filename, checksum) VALUES ({}, {})",
+        ph(1),
+        ph(2)
+    );
+
+    let mut applied = 0u32;
+
+    for entry in &entries {
+        let filename = entry.file_name().to_string_lossy().to_string();
+
+        let existing: Option<(String,)> = sqlx::query_as(&check_sql)
+            .bind(&filename)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+
+        if let Some((recorded_checksum,)) = existing {
+            let sql = std::fs::read_to_string(entry.path()).unwrap_or_default();
+            let current_checksum = sha256_hex(&sql);
+            if recorded_checksum != current_checksum {
+                tracing::warn!(
+                    filename = %filename,
+                    "migration file checksum mismatch — file was modified after being applied, skipping"
+                );
+            }
+            continue;
+        }
+
+        let sql = std::fs::read_to_string(entry.path())?;
+        let checksum = sha256_hex(&sql);
+
+        tracing::info!(filename = %filename, "applying migration...");
+        sqlx::query(&sql)
+            .execute(pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("migration {filename} failed: {e}"))?;
+
+        sqlx::query(&insert_sql)
+            .bind(&filename)
+            .bind(&checksum)
+            .execute(pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("record migration {filename} failed: {e}"))?;
+
+        tracing::info!(filename = %filename, "migration applied");
+        applied += 1;
+    }
+
+    if applied > 0 {
+        tracing::info!("applied {applied} migration(s)");
+    }
+
+    Ok(())
+}
+
+/// Ensure the `_migrations` table has the `checksum` and `applied_at` columns.
+/// Handles upgrades from the old schema (filename-only).
+async fn ensure_migrations_table_schema(pool: &Pool) {
+    let _ = sqlx::query("ALTER TABLE _migrations ADD COLUMN checksum TEXT NOT NULL DEFAULT ''")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query(
+        "ALTER TABLE _migrations ADD COLUMN applied_at TEXT NOT NULL DEFAULT (datetime('now'))",
+    )
+    .execute(pool)
+    .await;
 }
 
 /// Check if the `_migrations` table exists (branched by database type).
@@ -198,4 +323,28 @@ async fn check_migrations_table(pool: &Pool) -> bool {
         .unwrap_or(0)
             > 0
     }
+}
+
+/// Return the database label string based on active feature flag.
+fn db_label() -> &'static str {
+    if cfg!(feature = "db-sqlite") {
+        "sqlite"
+    } else if cfg!(feature = "db-postgres") {
+        "postgres"
+    } else if cfg!(feature = "db-mysql") {
+        "mysql"
+    } else {
+        "unknown"
+    }
+}
+
+/// Compute SHA-256 hex digest of the input string.
+fn sha256_hex(input: &str) -> String {
+    use std::fmt::Write;
+    let hash = <sha2::Sha256 as sha2::Digest>::digest(input.as_bytes());
+    let mut hex = String::with_capacity(hash.len() * 2);
+    for byte in hash {
+        write!(hex, "{byte:02x}").unwrap();
+    }
+    hex
 }

@@ -95,3 +95,47 @@ impl FromRequestParts<AppState> for PermissionGuard {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::user::UserRole;
+
+    #[test]
+    fn construction_fields_match() {
+        let guard = PermissionGuard {
+            user_id: "user-123".to_string(),
+            role: UserRole::Author,
+            tenant_id: "tenant-1".to_string(),
+        };
+        assert_eq!(guard.user_id, "user-123");
+        assert_eq!(guard.role, UserRole::Author);
+        assert_eq!(guard.tenant_id, "tenant-1");
+    }
+
+    #[test]
+    fn admin_role_field() {
+        let guard = PermissionGuard {
+            user_id: "admin-1".to_string(),
+            role: UserRole::Admin,
+            tenant_id: "t1".to_string(),
+        };
+        assert_eq!(guard.role, UserRole::Admin);
+        assert_eq!(guard.role.as_str(), "admin");
+    }
+
+    #[test]
+    fn clone_and_debug() {
+        let guard = PermissionGuard {
+            user_id: "u1".to_string(),
+            role: UserRole::Reader,
+            tenant_id: "t1".to_string(),
+        };
+        let cloned = guard.clone();
+        assert_eq!(cloned.user_id, guard.user_id);
+        assert_eq!(cloned.role.as_str(), guard.role.as_str());
+        assert_eq!(cloned.tenant_id, guard.tenant_id);
+        let debug_str = format!("{guard:?}");
+        assert!(debug_str.contains("u1"));
+    }
+}

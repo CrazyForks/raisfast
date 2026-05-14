@@ -170,7 +170,11 @@ async fn admin_list_all_wallets() {
     )
     .await;
 
-    let (status, body) = send(&mut app, get_auth("/api/v1/admin/wallets?page=1&page_size=10", &tok)).await;
+    let (status, body) = send(
+        &mut app,
+        get_auth("/api/v1/admin/wallets?page=1&page_size=10", &tok),
+    )
+    .await;
     assert!(status.is_success(), "admin list wallets: {status} {body:?}");
     let items = body["data"]["items"].as_array().unwrap();
     assert!(!items.is_empty());
@@ -235,7 +239,10 @@ async fn user_list_transactions() {
 
     let (status, body) = send(
         &mut app,
-        get_auth("/api/v1/wallets/transactions?page=1&page_size=10", &user_tok),
+        get_auth(
+            "/api/v1/wallets/transactions?page=1&page_size=10",
+            &user_tok,
+        ),
     )
     .await;
     assert!(status.is_success(), "list txns: {status} {body:?}");

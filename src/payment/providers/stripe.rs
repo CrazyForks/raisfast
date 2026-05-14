@@ -84,8 +84,9 @@ impl PaymentProvider for StripeProvider {
             params.return_url = Some(url);
         }
 
-        let client = client
-            .with_strategy(stripe::RequestStrategy::Idempotent(order.idempotency_key.clone()));
+        let client = client.with_strategy(stripe::RequestStrategy::Idempotent(
+            order.idempotency_key.clone(),
+        ));
         let pi = stripe::PaymentIntent::create(&client, params)
             .await
             .map_err(stripe_error)?;

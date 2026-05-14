@@ -125,6 +125,10 @@ pub struct AdminCommentListQuery {
 }
 
 /// Get the comment list for a specific post (tree structure, paginated)
+#[utoipa::path(get, path = "/posts/{slug}/comments", tag = "comments",
+    params(("slug" = String, Path, description = "Post slug")),
+    responses((status = 200, description = "Comment list for a post"))
+)]
 pub async fn list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -148,6 +152,10 @@ pub async fn list(
 }
 
 /// Admin gets global comment list (paginated)
+#[utoipa::path(get, path = "/comments", tag = "comments",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Global comment list"))
+)]
 pub async fn list_all(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -164,6 +172,12 @@ pub async fn list_all(
 }
 
 /// Create a comment (logged-in user)
+#[utoipa::path(post, path = "/posts/{slug}/comments/authed", tag = "comments",
+    security(("bearer_auth" = [])),
+    params(("slug" = String, Path, description = "Post slug")),
+    request_body = CreateCommentRequest,
+    responses((status = 200, description = "Comment created"))
+)]
 pub async fn create(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -190,6 +204,11 @@ pub async fn create(
 }
 
 /// Create a comment (guest)
+#[utoipa::path(post, path = "/posts/{slug}/comments", tag = "comments",
+    params(("slug" = String, Path, description = "Post slug")),
+    request_body = CreateCommentRequest,
+    responses((status = 200, description = "Guest comment created"))
+)]
 pub async fn create_guest(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -221,6 +240,11 @@ pub async fn create_guest(
 }
 
 /// Delete a comment
+#[utoipa::path(delete, path = "/comments/{id}", tag = "comments",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Comment ID")),
+    responses((status = 200, description = "Comment deleted"))
+)]
 pub async fn delete(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -231,6 +255,12 @@ pub async fn delete(
 }
 
 /// Update comment review status (admin)
+#[utoipa::path(put, path = "/comments/{id}/status", tag = "comments",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Comment ID")),
+    request_body = UpdateCommentStatusRequest,
+    responses((status = 200, description = "Comment status updated"))
+)]
 pub async fn update_status(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -246,6 +276,10 @@ pub async fn update_status(
 
 // ── Admin handlers ──
 
+#[utoipa::path(get, path = "/admin/comments", tag = "comments",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Admin comment list"))
+)]
 pub async fn admin_list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -260,6 +294,12 @@ pub async fn admin_list(
     Ok(pagination.paginate(comments, total))
 }
 
+#[utoipa::path(put, path = "/admin/comments/{id}/status", tag = "comments",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Comment ID")),
+    request_body = UpdateCommentStatusRequest,
+    responses((status = 200, description = "Comment status updated"))
+)]
 pub async fn admin_update_status(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -273,6 +313,11 @@ pub async fn admin_update_status(
     Ok(ApiResponse::success(()))
 }
 
+#[utoipa::path(delete, path = "/admin/comments/{id}", tag = "comments",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Comment ID")),
+    responses((status = 200, description = "Comment deleted"))
+)]
 pub async fn admin_delete(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -283,6 +328,11 @@ pub async fn admin_delete(
     Ok(ApiResponse::success(()))
 }
 
+#[utoipa::path(post, path = "/admin/comments/batch", tag = "comments",
+    security(("bearer_auth" = [])),
+    request_body = BatchRequest,
+    responses((status = 200, description = "Batch operation completed"))
+)]
 pub async fn admin_batch(
     auth: AuthUser,
     State(state): State<crate::AppState>,

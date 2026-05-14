@@ -176,10 +176,7 @@ pub async fn delete_permissions_by_role_id(pool: &crate::db::Pool, role_id: i64)
 }
 
 /// Insert a single permission
-pub async fn insert_permission(
-    pool: &crate::db::Pool,
-    cmd: &CreatePermissionCmd,
-) -> AppResult<()> {
+pub async fn insert_permission(pool: &crate::db::Pool, cmd: &CreatePermissionCmd) -> AppResult<()> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
     let sql = format!(
         "INSERT INTO permissions (document_id, role_id, action, subject, fields, conditions, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",

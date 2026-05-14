@@ -90,7 +90,18 @@ pub async fn insert(
         Some(tid) => {
             let sql = format!(
                 "INSERT INTO payment_refunds (document_id, tenant_id, payment_order_id, order_id, user_id, amount, currency, reason, provider_refund_id, status, payment_tx_id, metadata, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11),
+                ph(12)
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -111,7 +122,17 @@ pub async fn insert(
         None => {
             let sql = format!(
                 "INSERT INTO payment_refunds (document_id, payment_order_id, order_id, user_id, amount, currency, reason, provider_refund_id, status, payment_tx_id, metadata, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11)
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -188,7 +209,17 @@ pub async fn tx_insert(
     if let Some(tid) = tenant_id {
         let sql = format!(
             "INSERT INTO payment_refunds (document_id, payment_order_id, order_id, user_id, amount, currency, reason, provider_refund_id, status, metadata, tenant_id, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-            ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11)
+            ph(1),
+            ph(2),
+            ph(3),
+            ph(4),
+            ph(5),
+            ph(6),
+            ph(7),
+            ph(8),
+            ph(9),
+            ph(10),
+            ph(11)
         );
         sqlx::query(&sql)
             .bind(&document_id)
@@ -207,7 +238,16 @@ pub async fn tx_insert(
     } else {
         let sql = format!(
             "INSERT INTO payment_refunds (document_id, payment_order_id, order_id, user_id, amount, currency, reason, provider_refund_id, status, metadata, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-            ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
+            ph(1),
+            ph(2),
+            ph(3),
+            ph(4),
+            ph(5),
+            ph(6),
+            ph(7),
+            ph(8),
+            ph(9),
+            ph(10)
         );
         sqlx::query(&sql)
             .bind(&document_id)
@@ -234,7 +274,8 @@ pub async fn tx_sum_refunded_by_order(
     let sql = if tenant_id.is_some() {
         format!(
             "SELECT COALESCE(SUM(amount), 0) FROM payment_refunds WHERE payment_order_id = {} AND tenant_id = {} AND status IN ('succeeded', 'pending', 'processing')",
-            ph(1), ph(2)
+            ph(1),
+            ph(2)
         )
     } else {
         format!(
@@ -313,10 +354,12 @@ mod tests {
         )
         .await
         .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM payment_channels WHERE provider = 'stripe' ORDER BY id DESC LIMIT 1")
-            .fetch_one(pool)
-            .await
-            .unwrap();
+        let (id,): (i64,) = sqlx::query_as(
+            "SELECT id FROM payment_channels WHERE provider = 'stripe' ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
         id
     }
 
@@ -347,10 +390,12 @@ mod tests {
         )
         .await
         .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM payment_orders WHERE provider = 'stripe' ORDER BY id DESC LIMIT 1")
-            .fetch_one(pool)
-            .await
-            .unwrap();
+        let (id,): (i64,) = sqlx::query_as(
+            "SELECT id FROM payment_orders WHERE provider = 'stripe' ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
         id
     }
 

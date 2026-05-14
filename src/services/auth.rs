@@ -162,7 +162,7 @@ pub fn generate_access_token_for_test(user_id: &str, user_int_id: i64, role: Use
         "test-secret-key-at-least-32-characters-long",
         900,
     )
-    .unwrap()
+    .unwrap_or_else(|e| panic!("test token generation failed: {e}"))
 }
 
 /// User registration.

@@ -154,7 +154,17 @@ pub async fn insert(
         Some(tid) => {
             let sql = format!(
                 "INSERT INTO payment_transactions (document_id, tenant_id, payment_order_id, order_id, user_id, tx_type, amount, currency, provider_tx_id, status, raw_payload, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11)
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -174,7 +184,16 @@ pub async fn insert(
         None => {
             let sql = format!(
                 "INSERT INTO payment_transactions (document_id, payment_order_id, order_id, user_id, tx_type, amount, currency, provider_tx_id, status, raw_payload, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10)
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -209,7 +228,17 @@ pub async fn tx_insert(
     if let Some(tid) = tenant_id {
         let sql = format!(
             "INSERT INTO payment_transactions (document_id, payment_order_id, order_id, user_id, tx_type, amount, currency, provider_tx_id, status, raw_payload, tenant_id, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-            ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11)
+            ph(1),
+            ph(2),
+            ph(3),
+            ph(4),
+            ph(5),
+            ph(6),
+            ph(7),
+            ph(8),
+            ph(9),
+            ph(10),
+            ph(11)
         );
         sqlx::query(&sql)
             .bind(&document_id)
@@ -228,7 +257,16 @@ pub async fn tx_insert(
     } else {
         let sql = format!(
             "INSERT INTO payment_transactions (document_id, payment_order_id, order_id, user_id, tx_type, amount, currency, provider_tx_id, status, raw_payload, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-            ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
+            ph(1),
+            ph(2),
+            ph(3),
+            ph(4),
+            ph(5),
+            ph(6),
+            ph(7),
+            ph(8),
+            ph(9),
+            ph(10)
         );
         sqlx::query(&sql)
             .bind(&document_id)
@@ -295,10 +333,12 @@ mod tests {
         )
         .await
         .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM payment_channels WHERE provider = 'stripe' ORDER BY id DESC LIMIT 1")
-            .fetch_one(pool)
-            .await
-            .unwrap();
+        let (id,): (i64,) = sqlx::query_as(
+            "SELECT id FROM payment_channels WHERE provider = 'stripe' ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
         id
     }
 
@@ -329,10 +369,12 @@ mod tests {
         )
         .await
         .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM payment_orders WHERE provider = 'stripe' ORDER BY id DESC LIMIT 1")
-            .fetch_one(pool)
-            .await
-            .unwrap();
+        let (id,): (i64,) = sqlx::query_as(
+            "SELECT id FROM payment_orders WHERE provider = 'stripe' ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
         id
     }
 

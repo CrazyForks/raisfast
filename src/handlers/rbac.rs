@@ -56,6 +56,10 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
 }
 
 /// GET /admin/rbac/roles — List all roles (paginated)
+#[utoipa::path(get, path = "/admin/rbac/roles", tag = "rbac",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Role list"))
+)]
 pub async fn list_roles(
     State(state): State<AppState>,
     Query(mut params): Query<PaginationParams>,
@@ -66,6 +70,10 @@ pub async fn list_roles(
 }
 
 /// POST /admin/rbac/roles — Create a role
+#[utoipa::path(post, path = "/admin/rbac/roles", tag = "rbac",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Role created"))
+)]
 pub async fn create_role(
     State(state): State<AppState>,
     Json(req): Json<CreateRoleRequest>,
@@ -75,6 +83,11 @@ pub async fn create_role(
 }
 
 /// PUT /admin/rbac/roles/:id — Update a role
+#[utoipa::path(put, path = "/admin/rbac/roles/{id}", tag = "rbac",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Role ID")),
+    responses((status = 200, description = "Role updated"))
+)]
 pub async fn update_role(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -85,6 +98,11 @@ pub async fn update_role(
 }
 
 /// DELETE /admin/rbac/roles/:id — Delete a role
+#[utoipa::path(delete, path = "/admin/rbac/roles/{id}", tag = "rbac",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Role ID")),
+    responses((status = 200, description = "Role deleted"))
+)]
 pub async fn delete_role(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -94,6 +112,11 @@ pub async fn delete_role(
 }
 
 /// GET /admin/rbac/roles/:id/permissions — Get role permissions
+#[utoipa::path(get, path = "/admin/rbac/roles/{id}/permissions", tag = "rbac",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Role ID")),
+    responses((status = 200, description = "Role permissions"))
+)]
 pub async fn get_permissions(
     State(state): State<AppState>,
     Path(role_id): Path<String>,
@@ -103,6 +126,11 @@ pub async fn get_permissions(
 }
 
 /// PUT /admin/rbac/roles/:id/permissions — Set role permissions (replace all)
+#[utoipa::path(put, path = "/admin/rbac/roles/{id}/permissions", tag = "rbac",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Role ID")),
+    responses((status = 200, description = "Permissions updated"))
+)]
 pub async fn set_permissions(
     State(state): State<AppState>,
     Path(role_id): Path<String>,
@@ -115,6 +143,11 @@ pub async fn set_permissions(
     Ok(ApiResponse::success(perms))
 }
 
+#[utoipa::path(post, path = "/admin/rbac/roles/batch", tag = "rbac",
+    security(("bearer_auth" = [])),
+    request_body = BatchRequest,
+    responses((status = 200, description = "Batch operation completed"))
+)]
 pub async fn admin_batch(
     State(state): State<AppState>,
     Json(req): Json<BatchRequest>,

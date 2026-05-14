@@ -28,16 +28,8 @@ pub trait ProductRepository: Send + Sync {
         page_size: i64,
         status: Option<&str>,
     ) -> AppResult<(Vec<Product>, i64)>;
-    async fn insert(
-        &self,
-        cmd: &CreateProductCmd,
-        tenant_id: Option<&str>,
-    ) -> AppResult<Product>;
-    async fn update(
-        &self,
-        cmd: &UpdateProductCmd,
-        tenant_id: Option<&str>,
-    ) -> AppResult<bool>;
+    async fn insert(&self, cmd: &CreateProductCmd, tenant_id: Option<&str>) -> AppResult<Product>;
+    async fn update(&self, cmd: &UpdateProductCmd, tenant_id: Option<&str>) -> AppResult<bool>;
     async fn delete_by_id(&self, id: i64, tenant_id: Option<&str>) -> AppResult<bool>;
 }
 
@@ -74,19 +66,11 @@ impl ProductRepository for SqlxProductRepository {
         product::find_all_admin(&self.pool, tenant_id, page, page_size, status).await
     }
 
-    async fn insert(
-        &self,
-        cmd: &CreateProductCmd,
-        tenant_id: Option<&str>,
-    ) -> AppResult<Product> {
+    async fn insert(&self, cmd: &CreateProductCmd, tenant_id: Option<&str>) -> AppResult<Product> {
         product::insert(&self.pool, cmd, tenant_id).await
     }
 
-    async fn update(
-        &self,
-        cmd: &UpdateProductCmd,
-        tenant_id: Option<&str>,
-    ) -> AppResult<bool> {
+    async fn update(&self, cmd: &UpdateProductCmd, tenant_id: Option<&str>) -> AppResult<bool> {
         product::update(&self.pool, cmd, tenant_id).await
     }
 
@@ -124,11 +108,8 @@ pub trait OrderRepository: Send + Sync {
         page_size: i64,
         status: Option<&str>,
     ) -> AppResult<(Vec<Order>, i64)>;
-    async fn insert_order(
-        &self,
-        cmd: &CreateOrderCmd,
-        tenant_id: Option<&str>,
-    ) -> AppResult<Order>;
+    async fn insert_order(&self, cmd: &CreateOrderCmd, tenant_id: Option<&str>)
+    -> AppResult<Order>;
     async fn update_status(
         &self,
         id: i64,

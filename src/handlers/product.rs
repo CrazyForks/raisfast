@@ -52,6 +52,10 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     r
 }
 
+#[utoipa::path(get, path = "/products", tag = "products",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "List active products"))
+)]
 pub async fn list_active(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -69,6 +73,11 @@ pub async fn list_active(
     Ok(params.paginate(resp, total))
 }
 
+#[utoipa::path(get, path = "/products/{id}", tag = "products",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Product ID")),
+    responses((status = 200, description = "Product detail"))
+)]
 pub async fn get_product(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -78,6 +87,10 @@ pub async fn get_product(
     Ok(ApiResponse::success(ProductResponse::from(p)))
 }
 
+#[utoipa::path(get, path = "/admin/products", tag = "products",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Admin product list"))
+)]
 pub async fn admin_list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -97,6 +110,11 @@ pub async fn admin_list(
     Ok(params.paginate(resp, total))
 }
 
+#[utoipa::path(post, path = "/admin/products", tag = "products",
+    security(("bearer_auth" = [])),
+    request_body = CreateProductRequest,
+    responses((status = 200, description = "Product created"))
+)]
 pub async fn admin_create(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -108,6 +126,12 @@ pub async fn admin_create(
     Ok(ApiResponse::success(ProductResponse::from(p)))
 }
 
+#[utoipa::path(put, path = "/admin/products/{id}", tag = "products",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Product ID")),
+    request_body = UpdateProductRequest,
+    responses((status = 200, description = "Product updated"))
+)]
 pub async fn admin_update(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -120,6 +144,11 @@ pub async fn admin_update(
     Ok(ApiResponse::success(ProductResponse::from(p)))
 }
 
+#[utoipa::path(delete, path = "/admin/products/{id}", tag = "products",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Product ID")),
+    responses((status = 200, description = "Product deleted"))
+)]
 pub async fn admin_delete(
     auth: AuthUser,
     State(state): State<crate::AppState>,

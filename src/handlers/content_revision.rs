@@ -16,6 +16,11 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 
 /// GET /admin/cms/{plural}/{id}/revisions — List all revisions of a record
+#[utoipa::path(get, path = "/admin/cms/{plural}/{id}/revisions", tag = "revisions",
+    security(("bearer_auth" = [])),
+    params(("plural" = String, Path, description = "Content type plural"), ("id" = String, Path, description = "Record ID")),
+    responses((status = 200, description = "Revision list"))
+)]
 pub async fn list_revisions(
     State(state): State<AppState>,
     Path((plural, id)): Path<(String, String)>,
@@ -41,6 +46,11 @@ pub async fn list_revisions(
 }
 
 /// GET /admin/cms/{plural}/{id}/revisions/{revision_id} — Get a specific revision snapshot
+#[utoipa::path(get, path = "/admin/cms/{plural}/{id}/revisions/{revision_id}", tag = "revisions",
+    security(("bearer_auth" = [])),
+    params(("plural" = String, Path, description = "Content type plural"), ("id" = String, Path, description = "Record ID"), ("revision_id" = String, Path, description = "Revision ID")),
+    responses((status = 200, description = "Revision detail"))
+)]
 pub async fn get_revision(
     State(state): State<AppState>,
     Path((plural, id, revision_id)): Path<(String, String, String)>,
@@ -78,6 +88,11 @@ pub async fn get_revision(
 }
 
 /// POST /admin/cms/{plural}/{id}/revisions/{revision_id}/restore — Restore to a specific revision
+#[utoipa::path(post, path = "/admin/cms/{plural}/{id}/revisions/{revision_id}/restore", tag = "revisions",
+    security(("bearer_auth" = [])),
+    params(("plural" = String, Path, description = "Content type plural"), ("id" = String, Path, description = "Record ID"), ("revision_id" = String, Path, description = "Revision ID")),
+    responses((status = 200, description = "Revision restored"))
+)]
 pub async fn restore_revision(
     State(state): State<AppState>,
     Path((plural, id, revision_id)): Path<(String, String, String)>,
@@ -122,6 +137,11 @@ pub async fn restore_revision(
 }
 
 /// GET /admin/cms/{plural}/{id}/revisions/{rev_a}/diff/{rev_b} — Compare two revisions
+#[utoipa::path(get, path = "/admin/cms/{plural}/{id}/revisions/{rev_a}/diff/{rev_b}", tag = "revisions",
+    security(("bearer_auth" = [])),
+    params(("plural" = String, Path, description = "Content type plural"), ("id" = String, Path, description = "Record ID"), ("rev_a" = String, Path, description = "Revision A"), ("rev_b" = String, Path, description = "Revision B")),
+    responses((status = 200, description = "Revision diff"))
+)]
 pub async fn diff_revisions(
     State(state): State<AppState>,
     Path((plural, id, rev_a, rev_b)): Path<(String, String, String, String)>,

@@ -10,44 +10,27 @@ use crate::config::app::AppConfig;
 use crate::plugins::Permissions;
 
 /// Virtual filesystem errors
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum VfsError {
     /// Path contains `..` or other escape attempts
+    #[error("path escape detected")]
     PathEscape,
     /// Exceeds single file size limit
+    #[error("file exceeds max size ({max} bytes)")]
     FileTooLarge { max: usize },
     /// Exceeds total storage quota
+    #[error("quota exceeded (used {used}/{max}, need {need})")]
     QuotaExceeded {
         used: usize,
         max: usize,
         need: usize,
     },
     /// Permission denied (read-only / no access)
+    #[error("filesystem permission denied")]
     PermissionDenied,
     /// IO error
-    Io(std::io::Error),
-}
-
-impl std::fmt::Display for VfsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            VfsError::PathEscape => write!(f, "error: path escape detected"),
-            VfsError::FileTooLarge { max } => {
-                write!(f, "error: file exceeds max size ({max} bytes)")
-            }
-            VfsError::QuotaExceeded { used, max, need } => {
-                write!(f, "error: quota exceeded (used {used}/{max}, need {need})")
-            }
-            VfsError::PermissionDenied => write!(f, "error: filesystem permission denied"),
-            VfsError::Io(e) => write!(f, "error: {e}"),
-        }
-    }
-}
-
-impl From<std::io::Error> for VfsError {
-    fn from(e: std::io::Error) -> Self {
-        VfsError::Io(e)
-    }
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
 }
 
 /// Virtual filesystem instance
@@ -495,24 +478,18 @@ mod tests {
     #[test]
     fn error_display_human_readable() {
         assert!(VfsError::PathEscape.to_string().contains("escape"));
-        assert!(
-            VfsError::PermissionDenied
-                .to_string()
-                .contains("permission")
-        );
-        assert!(
-            VfsError::FileTooLarge { max: 1024 }
-                .to_string()
-                .contains("1024")
-        );
-        assert!(
-            VfsError::QuotaExceeded {
-                used: 100,
-                max: 200,
-                need: 150,
-            }
+        assert!(VfsError::PermissionDenied
             .to_string()
-            .contains("quota")
-        );
+            .contains("permission"));
+        assert!(VfsError::FileTooLarge { max: 1024 }
+            .to_string()
+            .contains("1024"));
+        assert!(VfsError::QuotaExceeded {
+            used: 100,
+            max: 200,
+            need: 150,
+        }
+        .to_string()
+        .contains("quota"));
     }
 }

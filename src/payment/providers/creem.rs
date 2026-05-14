@@ -6,9 +6,9 @@ use sha2::Sha256;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::models::payment_channel::PaymentChannel;
 use crate::models::payment_order::{PaymentOrder, PaymentStatus};
+use crate::payment::PaymentProvider;
 use crate::payment::crypto::aes256gcm_decrypt;
 use crate::payment::provider::{CallbackData, ProviderResponse, ProviderStatus, RefundResponse};
-use crate::payment::PaymentProvider;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -71,9 +71,8 @@ fn decrypt_credentials(
     encrypt_key: &[u8; 32],
 ) -> AppResult<CreemCredentials> {
     let decrypted = aes256gcm_decrypt(&channel.credentials, encrypt_key)?;
-    serde_json::from_str(&decrypted).map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("creem credentials parse: {e}"))
-    })
+    serde_json::from_str(&decrypted)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("creem credentials parse: {e}")))
 }
 
 fn base_url(creds: &CreemCredentials) -> &str {
@@ -160,11 +159,7 @@ async fn do_get_checkout(
         .map_err(creem_error)
 }
 
-fn verify_signature(
-    body: &[u8],
-    signature: &str,
-    webhook_secret: &str,
-) -> AppResult<()> {
+fn verify_signature(body: &[u8], signature: &str, webhook_secret: &str) -> AppResult<()> {
     let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
         .map_err(|e| AppError::Internal(anyhow::anyhow!("hmac init: {e}")))?;
     mac.update(body);
@@ -183,9 +178,7 @@ fn extract_product_id(channel: &PaymentChannel) -> AppResult<String> {
         .and_then(|v| v.get("product_id").cloned())
         .and_then(|v| v.as_str().map(String::from))
         .ok_or_else(|| {
-            AppError::BadRequest(
-                "creem: product_id not found in channel settings".into(),
-            )
+            AppError::BadRequest("creem: product_id not found in channel settings".into())
         })
 }
 
@@ -271,11 +264,7 @@ impl PaymentProvider for CreemProvider {
         })
     }
 
-    async fn cancel(
-        &self,
-        _channel: &PaymentChannel,
-        _provider_order_id: &str,
-    ) -> AppResult<()> {
+    async fn cancel(&self, _channel: &PaymentChannel, _provider_order_id: &str) -> AppResult<()> {
         Ok(())
     }
 
@@ -300,41 +289,29 @@ impl PaymentProvider for CreemProvider {
         let signature = headers
             .get("creem-signature")
             .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| {
-                AppError::BadRequest("missing creem-signature header".into())
-            })?;
+            .ok_or_else(|| AppError::BadRequest("missing creem-signature header".into()))?;
 
         let encrypted_secret = channel
             .webhook_secret
             .as_deref()
-            .ok_or_else(|| {
-                AppError::BadRequest(
-                    "creem webhook_secret not configured".into(),
-                )
-            })?;
+            .ok_or_else(|| AppError::BadRequest("creem webhook_secret not configured".into()))?;
 
-        let webhook_secret = crate::payment::crypto::aes256gcm_decrypt(encrypted_secret, &self.encrypt_key)?;
+        let webhook_secret =
+            crate::payment::crypto::aes256gcm_decrypt(encrypted_secret, &self.encrypt_key)?;
 
         verify_signature(body, signature, &webhook_secret)?;
 
-        let payload: CreemWebhookPayload =
-            serde_json::from_slice(body).map_err(|e| {
-                AppError::BadRequest(format!("creem webhook parse: {e}"))
-            })?;
+        let payload: CreemWebhookPayload = serde_json::from_slice(body)
+            .map_err(|e| AppError::BadRequest(format!("creem webhook parse: {e}")))?;
 
-        let event_type = payload
-            .event_type
-            .as_deref()
-            .unwrap_or("unknown");
+        let event_type = payload.event_type.as_deref().unwrap_or("unknown");
 
         let obj = &payload.object;
 
         let (provider_order_id, status, amount, provider_tx_id) = match event_type {
             "checkout.completed" => {
                 let order = obj.get("order").ok_or_else(|| {
-                    AppError::BadRequest(
-                        "creem checkout.completed: missing order".into(),
-                    )
+                    AppError::BadRequest("creem checkout.completed: missing order".into())
                 })?;
                 let id = order
                     .get("id")
@@ -345,10 +322,7 @@ impl PaymentProvider for CreemProvider {
                     .get("status")
                     .and_then(|v| v.as_str())
                     .unwrap_or("paid");
-                let amt = order
-                    .get("amount")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
+                let amt = order.get("amount").and_then(|v| v.as_i64()).unwrap_or(0);
                 let tx_id = obj
                     .get("transaction")
                     .and_then(|t| t.get("id"))
@@ -445,8 +419,7 @@ mod tests {
     fn signature_verification_valid() {
         let secret = "test_webhook_secret";
         let body = br#"{"event_type":"checkout.completed","object":{}}"#;
-        let mut mac =
-            HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
         mac.update(body);
         let sig = hex::encode(mac.finalize().into_bytes());
 
@@ -462,11 +435,8 @@ mod tests {
     #[test]
     fn extract_product_id_from_settings() {
         let key = test_key();
-        let encrypted = crate::payment::crypto::aes256gcm_encrypt(
-            r#"{"api_key":"test_key"}"#,
-            &key,
-        )
-        .unwrap();
+        let encrypted =
+            crate::payment::crypto::aes256gcm_encrypt(r#"{"api_key":"test_key"}"#, &key).unwrap();
 
         let channel = PaymentChannel {
             id: 1,
@@ -562,8 +532,7 @@ mod tests {
         });
         let body_bytes = serde_json::to_vec(&body).unwrap();
 
-        let mut mac =
-            HmacSha256::new_from_slice(webhook_secret.as_bytes()).unwrap();
+        let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes()).unwrap();
         mac.update(&body_bytes);
         let sig = hex::encode(mac.finalize().into_bytes());
 
@@ -596,10 +565,7 @@ mod tests {
         assert_eq!(result.provider_order_id, "order_001");
         assert!(matches!(result.status, PaymentStatus::Paid));
         assert_eq!(result.amount, 9999);
-        assert_eq!(
-            result.provider_tx_id.as_deref(),
-            Some("txn_001")
-        );
+        assert_eq!(result.provider_tx_id.as_deref(), Some("txn_001"));
     }
 
     #[tokio::test]
@@ -619,8 +585,7 @@ mod tests {
         });
         let body_bytes = serde_json::to_vec(&body).unwrap();
 
-        let mut mac =
-            HmacSha256::new_from_slice(webhook_secret.as_bytes()).unwrap();
+        let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes()).unwrap();
         mac.update(&body_bytes);
         let sig = hex::encode(mac.finalize().into_bytes());
 

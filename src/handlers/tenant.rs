@@ -45,6 +45,10 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
 }
 
 /// GET /admin/tenants — List all tenants (paginated)
+#[utoipa::path(get, path = "/admin/tenants", tag = "tenants",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Tenant list"))
+)]
 pub async fn list_tenants(
     State(state): State<AppState>,
     Query(mut params): Query<PaginationParams>,
@@ -55,6 +59,11 @@ pub async fn list_tenants(
 }
 
 /// GET /admin/tenants/:id — Get tenant details
+#[utoipa::path(get, path = "/admin/tenants/{id}", tag = "tenants",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Tenant ID")),
+    responses((status = 200, description = "Tenant details"))
+)]
 pub async fn get_tenant(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -68,6 +77,10 @@ pub async fn get_tenant(
 }
 
 /// POST /admin/tenants — Create a tenant
+#[utoipa::path(post, path = "/admin/tenants", tag = "tenants",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Tenant created"))
+)]
 pub async fn create_tenant(
     State(state): State<AppState>,
     Json(req): Json<CreateTenantRequest>,
@@ -77,6 +90,11 @@ pub async fn create_tenant(
 }
 
 /// PUT /admin/tenants/:id — Update a tenant
+#[utoipa::path(put, path = "/admin/tenants/{id}", tag = "tenants",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Tenant ID")),
+    responses((status = 200, description = "Tenant updated"))
+)]
 pub async fn update_tenant(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -87,6 +105,11 @@ pub async fn update_tenant(
 }
 
 /// DELETE /admin/tenants/:id — Delete a tenant
+#[utoipa::path(delete, path = "/admin/tenants/{id}", tag = "tenants",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Tenant ID")),
+    responses((status = 200, description = "Tenant deleted"))
+)]
 pub async fn delete_tenant(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -97,6 +120,11 @@ pub async fn delete_tenant(
     })))
 }
 
+#[utoipa::path(post, path = "/admin/tenants/batch", tag = "tenants",
+    security(("bearer_auth" = [])),
+    request_body = BatchRequest,
+    responses((status = 200, description = "Batch operation completed"))
+)]
 pub async fn admin_batch(
     State(state): State<AppState>,
     Json(req): Json<BatchRequest>,

@@ -216,7 +216,20 @@ pub async fn insert(
         Some(tid) => {
             let sql = format!(
                 "INSERT INTO orders (document_id, tenant_id, user_id, order_no, subtotal, discount_amount, shipping_amount, total_amount, currency, buyer_name, buyer_phone, buyer_email, shipping_address, remark, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13), ph(14)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11),
+                ph(12),
+                ph(13),
+                ph(14)
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -239,7 +252,19 @@ pub async fn insert(
         None => {
             let sql = format!(
                 "INSERT INTO orders (document_id, user_id, order_no, subtotal, discount_amount, shipping_amount, total_amount, currency, buyer_name, buyer_phone, buyer_email, shipping_address, remark, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11),
+                ph(12),
+                ph(13)
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -261,7 +286,11 @@ pub async fn insert(
     }
     find_by_document_id(pool, &document_id, tenant_id)
         .await?
-        .ok_or_else(|| crate::errors::app_error::AppError::Internal(anyhow::anyhow!("order not found after insert")))
+        .ok_or_else(|| {
+            crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
+                "order not found after insert"
+            ))
+        })
 }
 
 fn validate_timestamp_col(col: &str) -> AppResult<()> {
@@ -293,7 +322,10 @@ pub async fn update_status(
         validate_timestamp_col(col)?;
         format!(
             "UPDATE orders SET status = {}, {} = datetime('now'), updated_at = datetime('now') WHERE id = {}{}",
-            ph(1), col, ph(2), tenant_filter_ph(tenant_id, 3)
+            ph(1),
+            col,
+            ph(2),
+            tenant_filter_ph(tenant_id, 3)
         )
     } else {
         format!(
@@ -412,7 +444,9 @@ pub async fn tx_update_status(
         validate_timestamp_col(col)?;
         format!(
             "UPDATE orders SET status = {}, {} = datetime('now'), updated_at = datetime('now') WHERE id = {}",
-            ph(1), col, ph(2)
+            ph(1),
+            col,
+            ph(2)
         )
     } else {
         format!(
@@ -439,30 +473,80 @@ pub async fn tx_insert(
         Some(tid) => {
             let sql = format!(
                 "INSERT INTO orders (document_id, tenant_id, user_id, order_no, subtotal, discount_amount, shipping_amount, total_amount, currency, buyer_name, buyer_phone, buyer_email, shipping_address, remark, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13), ph(14)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11),
+                ph(12),
+                ph(13),
+                ph(14)
             );
             sqlx::query(&sql)
-                .bind(&document_id).bind(tid).bind(cmd.user_id).bind(&cmd.order_no)
-                .bind(cmd.subtotal).bind(cmd.discount_amount).bind(cmd.shipping_amount).bind(cmd.total_amount)
-                .bind(&cmd.currency).bind(&cmd.buyer_name).bind(&cmd.buyer_phone).bind(&cmd.buyer_email)
-                .bind(&cmd.shipping_address).bind(&cmd.remark)
-                .execute(&mut *tx).await?;
+                .bind(&document_id)
+                .bind(tid)
+                .bind(cmd.user_id)
+                .bind(&cmd.order_no)
+                .bind(cmd.subtotal)
+                .bind(cmd.discount_amount)
+                .bind(cmd.shipping_amount)
+                .bind(cmd.total_amount)
+                .bind(&cmd.currency)
+                .bind(&cmd.buyer_name)
+                .bind(&cmd.buyer_phone)
+                .bind(&cmd.buyer_email)
+                .bind(&cmd.shipping_address)
+                .bind(&cmd.remark)
+                .execute(&mut *tx)
+                .await?;
         }
         None => {
             let sql = format!(
                 "INSERT INTO orders (document_id, user_id, order_no, subtotal, discount_amount, shipping_amount, total_amount, currency, buyer_name, buyer_phone, buyer_email, shipping_address, remark, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11),
+                ph(12),
+                ph(13)
             );
             sqlx::query(&sql)
-                .bind(&document_id).bind(cmd.user_id).bind(&cmd.order_no)
-                .bind(cmd.subtotal).bind(cmd.discount_amount).bind(cmd.shipping_amount).bind(cmd.total_amount)
-                .bind(&cmd.currency).bind(&cmd.buyer_name).bind(&cmd.buyer_phone).bind(&cmd.buyer_email)
-                .bind(&cmd.shipping_address).bind(&cmd.remark)
-                .execute(&mut *tx).await?;
+                .bind(&document_id)
+                .bind(cmd.user_id)
+                .bind(&cmd.order_no)
+                .bind(cmd.subtotal)
+                .bind(cmd.discount_amount)
+                .bind(cmd.shipping_amount)
+                .bind(cmd.total_amount)
+                .bind(&cmd.currency)
+                .bind(&cmd.buyer_name)
+                .bind(&cmd.buyer_phone)
+                .bind(&cmd.buyer_email)
+                .bind(&cmd.shipping_address)
+                .bind(&cmd.remark)
+                .execute(&mut *tx)
+                .await?;
         }
     }
     let sql = if tenant_id.is_some() {
-        format!("SELECT * FROM orders WHERE document_id = {} AND tenant_id = {}", ph(1), ph(2))
+        format!(
+            "SELECT * FROM orders WHERE document_id = {} AND tenant_id = {}",
+            ph(1),
+            ph(2)
+        )
     } else {
         format!("SELECT * FROM orders WHERE document_id = {}", ph(1))
     };
@@ -484,12 +568,17 @@ pub async fn tx_update_status_cas(
         validate_timestamp_col(col)?;
         format!(
             "UPDATE orders SET status = {}, {} = datetime('now'), updated_at = datetime('now') WHERE id = {} AND status = {}",
-            ph(1), col, ph(2), ph(3)
+            ph(1),
+            col,
+            ph(2),
+            ph(3)
         )
     } else {
         format!(
             "UPDATE orders SET status = {}, updated_at = datetime('now') WHERE id = {} AND status = {}",
-            ph(1), ph(2), ph(3)
+            ph(1),
+            ph(2),
+            ph(3)
         )
     };
     let result = sqlx::query(&sql)
@@ -509,7 +598,11 @@ pub async fn tx_update_shipped(
 ) -> AppResult<u64> {
     let sql = format!(
         "UPDATE orders SET status = {}, tracking_no = {}, carrier = {}, updated_at = datetime('now') WHERE id = {} AND status = {}",
-        ph(1), ph(2), ph(3), ph(4), ph(5)
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5)
     );
     let result = sqlx::query(&sql)
         .bind(OrderStatus::Shipped.as_str())

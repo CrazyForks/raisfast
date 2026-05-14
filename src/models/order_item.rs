@@ -57,7 +57,17 @@ pub async fn insert(
         Some(tid) => {
             let sql = format!(
                 "INSERT INTO order_items (document_id, tenant_id, order_id, product_id, title, description, unit_price, quantity, subtotal, cover_url, attributes, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11)
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -77,7 +87,16 @@ pub async fn insert(
         None => {
             let sql = format!(
                 "INSERT INTO order_items (document_id, order_id, product_id, title, description, unit_price, quantity, subtotal, cover_url, attributes, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10)
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -127,24 +146,60 @@ pub async fn tx_insert(
         Some(tid) => {
             let sql = format!(
                 "INSERT INTO order_items (document_id, tenant_id, order_id, product_id, title, description, unit_price, quantity, subtotal, cover_url, attributes, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11)
             );
             sqlx::query(&sql)
-                .bind(&document_id).bind(tid).bind(cmd.order_id).bind(cmd.product_id)
-                .bind(&cmd.title).bind(&cmd.description).bind(cmd.unit_price).bind(cmd.quantity)
-                .bind(cmd.subtotal).bind(&cmd.cover_url).bind(&cmd.attributes)
-                .execute(&mut *tx).await?;
+                .bind(&document_id)
+                .bind(tid)
+                .bind(cmd.order_id)
+                .bind(cmd.product_id)
+                .bind(&cmd.title)
+                .bind(&cmd.description)
+                .bind(cmd.unit_price)
+                .bind(cmd.quantity)
+                .bind(cmd.subtotal)
+                .bind(&cmd.cover_url)
+                .bind(&cmd.attributes)
+                .execute(&mut *tx)
+                .await?;
         }
         None => {
             let sql = format!(
                 "INSERT INTO order_items (document_id, order_id, product_id, title, description, unit_price, quantity, subtotal, cover_url, attributes, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10)
             );
             sqlx::query(&sql)
-                .bind(&document_id).bind(cmd.order_id).bind(cmd.product_id)
-                .bind(&cmd.title).bind(&cmd.description).bind(cmd.unit_price).bind(cmd.quantity)
-                .bind(cmd.subtotal).bind(&cmd.cover_url).bind(&cmd.attributes)
-                .execute(&mut *tx).await?;
+                .bind(&document_id)
+                .bind(cmd.order_id)
+                .bind(cmd.product_id)
+                .bind(&cmd.title)
+                .bind(&cmd.description)
+                .bind(cmd.unit_price)
+                .bind(cmd.quantity)
+                .bind(cmd.subtotal)
+                .bind(&cmd.cover_url)
+                .bind(&cmd.attributes)
+                .execute(&mut *tx)
+                .await?;
         }
     }
     let sql2 = format!(

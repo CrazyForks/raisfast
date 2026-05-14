@@ -73,6 +73,10 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
 }
 
 /// GET /api/v1/admin/plugins — List all plugins and their status (paginated)
+#[utoipa::path(get, path = "/admin/plugins", tag = "plugins",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Plugin list"))
+)]
 pub async fn list(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -85,6 +89,11 @@ pub async fn list(
 }
 
 /// GET /api/v1/admin/plugins/:id — Plugin details
+#[utoipa::path(get, path = "/admin/plugins/{id}", tag = "plugins",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Plugin ID")),
+    responses((status = 200, description = "Plugin detail"))
+)]
 pub async fn get(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -100,6 +109,11 @@ pub async fn get(
 }
 
 /// POST /api/v1/admin/plugins/:id/enable — Enable plugin
+#[utoipa::path(post, path = "/admin/plugins/{id}/enable", tag = "plugins",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Plugin ID")),
+    responses((status = 200, description = "Plugin enabled"))
+)]
 pub async fn enable(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -111,6 +125,11 @@ pub async fn enable(
 }
 
 /// POST /api/v1/admin/plugins/:id/disable — Disable plugin
+#[utoipa::path(post, path = "/admin/plugins/{id}/disable", tag = "plugins",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Plugin ID")),
+    responses((status = 200, description = "Plugin disabled"))
+)]
 pub async fn disable(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -122,6 +141,11 @@ pub async fn disable(
 }
 
 /// POST /api/v1/admin/plugins/:id/reload — Reload plugin
+#[utoipa::path(post, path = "/admin/plugins/{id}/reload", tag = "plugins",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Plugin ID")),
+    responses((status = 200, description = "Plugin reloaded"))
+)]
 pub async fn reload(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -140,6 +164,11 @@ pub async fn reload(
 }
 
 /// DELETE /api/v1/admin/plugins/:id — Uninstall plugin
+#[utoipa::path(delete, path = "/admin/plugins/{id}", tag = "plugins",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Plugin ID")),
+    responses((status = 200, description = "Plugin removed"))
+)]
 pub async fn remove(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -150,6 +179,11 @@ pub async fn remove(
     Ok(ApiResponse::success(()))
 }
 
+#[utoipa::path(post, path = "/admin/plugins/batch", tag = "plugins",
+    security(("bearer_auth" = [])),
+    request_body = BatchRequest,
+    responses((status = 200, description = "Batch operation completed"))
+)]
 pub async fn admin_batch(
     auth: AuthUser,
     State(state): State<AppState>,

@@ -93,6 +93,10 @@ pub fn routes(
 }
 
 /// Upload a media file
+#[utoipa::path(post, path = "/media/upload", tag = "media",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "File uploaded"))
+)]
 pub async fn upload(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -137,6 +141,9 @@ pub async fn upload(
 }
 
 /// Get the current user's media file list (paginated)
+#[utoipa::path(get, path = "/media", tag = "media",
+    responses((status = 200, description = "Media file list"))
+)]
 pub async fn list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -163,6 +170,11 @@ pub async fn list(
 }
 
 /// Delete a media file
+#[utoipa::path(delete, path = "/media/{id}", tag = "media",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Media ID")),
+    responses((status = 200, description = "Media deleted"))
+)]
 pub async fn delete(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -180,6 +192,9 @@ pub async fn delete(
 }
 
 /// Get storage statistics
+#[utoipa::path(get, path = "/media/stats", tag = "media",
+    responses((status = 200, description = "Storage statistics"))
+)]
 pub async fn stats(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -190,6 +205,10 @@ pub async fn stats(
 
 // ── Admin handlers ──
 
+#[utoipa::path(post, path = "/admin/media/upload", tag = "media",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "File uploaded"))
+)]
 pub async fn admin_upload(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -231,6 +250,10 @@ pub async fn admin_upload(
     ))
 }
 
+#[utoipa::path(get, path = "/admin/media", tag = "media",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Admin media list"))
+)]
 pub async fn admin_list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -256,6 +279,11 @@ pub async fn admin_list(
     Ok(params.paginate(responses, total))
 }
 
+#[utoipa::path(delete, path = "/admin/media/{id}", tag = "media",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Media ID")),
+    responses((status = 200, description = "Media deleted"))
+)]
 pub async fn admin_delete(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -273,6 +301,11 @@ pub async fn admin_delete(
     Ok(ApiResponse::success(()))
 }
 
+#[utoipa::path(post, path = "/admin/media/batch", tag = "media",
+    security(("bearer_auth" = [])),
+    request_body = BatchRequest,
+    responses((status = 200, description = "Batch operation completed"))
+)]
 pub async fn admin_batch(
     auth: AuthUser,
     State(state): State<crate::AppState>,

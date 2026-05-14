@@ -152,6 +152,24 @@ impl AuthUser {
             is_super_admin: false,
         })
     }
+
+    pub fn new_test_super_admin(user_id: &str, tenant_id: &str) -> Self {
+        AuthUser(RequestIdentity {
+            user_id: if user_id.is_empty() {
+                None
+            } else {
+                Some(user_id.to_string())
+            },
+            user_int_id: None,
+            role: UserRole::Admin,
+            tenant_id: if tenant_id.is_empty() {
+                None
+            } else {
+                Some(tenant_id.to_string())
+            },
+            is_super_admin: true,
+        })
+    }
 }
 
 fn extract_header_tenant(parts: &Parts) -> Option<String> {
@@ -255,5 +273,156 @@ impl FromRequestParts<AppState> for AuthUser {
 
             Ok(AuthUser(identity))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::errors::app_error::AppError;
+
+    #[test]
+    fn from_parts_all_fields_accessors() {
+        let auth = AuthUser::from_parts(
+            Some("uid-123".to_string()),
+            Some(42),
+            UserRole::Author,
+            Some("tenant-1".to_string()),
+        );
+        assert_eq!(auth.user_id(), Some("uid-123"));
+        assert_eq!(auth.user_int_id(), Some(42));
+        assert_eq!(auth.role(), "author");
+        assert_eq!(auth.tenant_id(), Some("tenant-1"));
+        assert!(auth.is_authenticated());
+    }
+
+    #[test]
+    fn from_parts_no_user_id_not_authenticated() {
+        let auth = AuthUser::from_parts(None, None, UserRole::Reader, Some("t1".to_string()));
+        assert!(!auth.is_authenticated());
+        assert!(auth.user_id().is_none());
+        assert!(auth.user_int_id().is_none());
+        let err = auth.ensure_authenticated().unwrap_err();
+        assert!(matches!(err, AppError::Unauthorized));
+    }
+
+    #[test]
+    fn admin_role_passes_admin_checks() {
+        let auth = AuthUser::from_parts(
+            Some("uid".to_string()),
+            Some(1),
+            UserRole::Admin,
+            Some("t1".to_string()),
+        );
+        assert!(auth.is_admin());
+        assert!(auth.ensure_admin().is_ok());
+        assert!(auth.is_author());
+        assert!(auth.ensure_author().is_ok());
+    }
+
+    #[test]
+    fn reader_role_denied_admin_and_author() {
+        let auth = AuthUser::from_parts(
+            Some("uid".to_string()),
+            Some(1),
+            UserRole::Reader,
+            Some("t1".to_string()),
+        );
+        assert!(!auth.is_admin());
+        assert!(matches!(
+            auth.ensure_admin().unwrap_err(),
+            AppError::Forbidden
+        ));
+        assert!(!auth.is_author());
+        assert!(matches!(
+            auth.ensure_author().unwrap_err(),
+            AppError::Forbidden
+        ));
+    }
+
+    #[test]
+    fn author_role_passes_author_checks() {
+        let auth = AuthUser::from_parts(
+            Some("uid".to_string()),
+            Some(1),
+            UserRole::Author,
+            Some("t1".to_string()),
+        );
+        assert!(auth.is_author());
+        assert!(auth.ensure_author().is_ok());
+        assert!(!auth.is_admin());
+        assert!(matches!(
+            auth.ensure_admin().unwrap_err(),
+            AppError::Forbidden
+        ));
+    }
+
+    #[test]
+    fn super_admin_flag_true() {
+        let auth = AuthUser::new_test_super_admin("uid", "t1");
+        assert!(auth.is_super_admin());
+        assert!(auth.is_admin());
+        assert!(auth.is_authenticated());
+    }
+
+    #[test]
+    fn from_parts_super_admin_flag_false() {
+        let auth = AuthUser::from_parts(
+            Some("uid".to_string()),
+            Some(1),
+            UserRole::Admin,
+            Some("t1".to_string()),
+        );
+        assert!(!auth.is_super_admin());
+    }
+
+    #[test]
+    fn tenant_id_some() {
+        let auth = AuthUser::from_parts(
+            Some("uid".to_string()),
+            Some(1),
+            UserRole::Reader,
+            Some("my-tenant".to_string()),
+        );
+        assert_eq!(auth.tenant_id(), Some("my-tenant"));
+    }
+
+    #[test]
+    fn tenant_id_none() {
+        let auth = AuthUser::from_parts(Some("uid".to_string()), Some(1), UserRole::Reader, None);
+        assert!(auth.tenant_id().is_none());
+    }
+
+    #[test]
+    fn unauthenticated_ensure_admin_and_author_forbidden() {
+        let auth = AuthUser::from_parts(None, None, UserRole::Reader, None);
+        assert!(matches!(
+            auth.ensure_admin().unwrap_err(),
+            AppError::Forbidden
+        ));
+        assert!(matches!(
+            auth.ensure_author().unwrap_err(),
+            AppError::Forbidden
+        ));
+    }
+
+    #[test]
+    fn new_test_with_empty_strings_is_anonymous() {
+        let auth = AuthUser::new_test("", UserRole::Reader, "");
+        assert!(!auth.is_authenticated());
+        assert!(auth.user_id().is_none());
+        assert!(auth.tenant_id().is_none());
+    }
+
+    #[test]
+    fn editor_role_not_admin_not_author() {
+        let auth = AuthUser::from_parts(
+            Some("uid".to_string()),
+            Some(1),
+            UserRole::Editor,
+            Some("t1".to_string()),
+        );
+        assert!(!auth.is_admin());
+        assert!(!auth.is_author());
     }
 }

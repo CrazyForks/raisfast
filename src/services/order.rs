@@ -306,7 +306,9 @@ pub async fn admin_cancel(
         .ok_or_else(|| AppError::not_found("order"))?;
 
     if order.status != OrderStatus::Pending && order.status != OrderStatus::Paid {
-        return Err(AppError::BadRequest("only_pending_or_paid_can_admin_cancel".into()));
+        return Err(AppError::BadRequest(
+            "only_pending_or_paid_can_admin_cancel".into(),
+        ));
     }
 
     let result: Result<(), AppError> = async {

@@ -67,6 +67,11 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
 /// Initiate OAuth login — 302 redirect to Provider authorization page
 ///
 /// `GET /api/v1/auth/oauth/{provider}`
+#[utoipa::path(get, path = "/auth/oauth/{provider}", tag = "oauth",
+    security(("bearer_auth" = [])),
+    params(("provider" = String, Path, description = "OAuth provider name")),
+    responses((status = 200, description = "Redirect to OAuth provider"))
+)]
 pub async fn redirect_to_provider(
     State(state): State<crate::AppState>,
     Path(provider): Path<String>,
@@ -109,6 +114,10 @@ pub struct CallbackQuery {
 /// OAuth callback handler
 ///
 /// `GET /api/v1/auth/oauth/{provider}/callback?code=xxx&state=xxx`
+#[utoipa::path(get, path = "/auth/oauth/{provider}/callback", tag = "oauth",
+    params(("provider" = String, Path, description = "OAuth provider name")),
+    responses((status = 200, description = "OAuth callback processed"))
+)]
 pub async fn callback(
     State(state): State<crate::AppState>,
     Path(provider): Path<String>,
@@ -166,6 +175,9 @@ pub async fn callback(
 /// Get configured OAuth provider list
 ///
 /// `GET /api/v1/auth/oauth/providers`
+#[utoipa::path(get, path = "/auth/oauth/providers", tag = "oauth",
+    responses((status = 200, description = "List configured OAuth providers"))
+)]
 pub async fn list_providers(
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<Vec<ProviderInfo>>> {
@@ -185,6 +197,10 @@ pub async fn list_providers(
 /// Get current user's OAuth binding list
 ///
 /// `GET /api/v1/auth/oauth/bindings`
+#[utoipa::path(get, path = "/auth/oauth/bindings", tag = "oauth",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "User OAuth bindings"))
+)]
 pub async fn list_bindings(
     State(state): State<crate::AppState>,
     auth: AuthUser,
@@ -196,6 +212,11 @@ pub async fn list_bindings(
 /// Unbind OAuth account
 ///
 /// `DELETE /api/v1/auth/oauth/{provider}/unbind`
+#[utoipa::path(delete, path = "/auth/oauth/{provider}/unbind", tag = "oauth",
+    security(("bearer_auth" = [])),
+    params(("provider" = String, Path, description = "OAuth provider name")),
+    responses((status = 200, description = "OAuth binding removed"))
+)]
 pub async fn unbind(
     State(state): State<crate::AppState>,
     auth: AuthUser,

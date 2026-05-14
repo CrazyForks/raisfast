@@ -153,7 +153,16 @@ pub async fn insert(
         Some(tid) => {
             let sql = format!(
                 "INSERT INTO payment_channels (document_id, tenant_id, provider, name, is_live, credentials, webhook_secret, settings, is_active, sort_order, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10)
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -172,7 +181,15 @@ pub async fn insert(
         None => {
             let sql = format!(
                 "INSERT INTO payment_channels (document_id, provider, name, is_live, credentials, webhook_secret, settings, is_active, sort_order, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9)
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -206,7 +223,16 @@ pub async fn update(
     let is_active_val = if cmd.is_active { 1_i64 } else { 0_i64 };
     let sql = format!(
         "UPDATE payment_channels SET provider={}, name={}, is_live={}, credentials={}, webhook_secret={}, settings={}, is_active={}, sort_order={}, updated_at=datetime('now'), version=version+1 WHERE id={} AND version={}{}",
-        ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10),
+        ph(1),
+        ph(2),
+        ph(3),
+        ph(4),
+        ph(5),
+        ph(6),
+        ph(7),
+        ph(8),
+        ph(9),
+        ph(10),
         tenant_filter_ph(tenant_id, 11)
     );
     let mut q = sqlx::query(&sql)

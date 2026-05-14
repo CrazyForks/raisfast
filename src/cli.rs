@@ -326,7 +326,7 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
             action: DbAction::Backup { output },
         }) => {
             let out = output.unwrap_or_else(|| format!("{}/backups", config.storage_root_dir));
-            db_cmd::backup(config, &out)?;
+            db_cmd::backup(config, &out, config.backup_retention).await?;
         }
 
         Some(Commands::Db {

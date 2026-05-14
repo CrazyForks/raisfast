@@ -269,7 +269,7 @@ pub fn extract_client_ip(req: &Request) -> String {
 }
 
 pub fn rate_limited_response() -> Response {
-    crate::errors::app_error::AppError::TooManyRequests.into_response()
+    crate::errors::app_error::AppError::TooManyRequests("rate limit exceeded".into()).into_response()
 }
 
 pub async fn global_rate_limit(

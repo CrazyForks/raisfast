@@ -31,9 +31,7 @@ impl JobHandler for ReconcilePaymentsHandler {
         let yesterday_start = (chrono::Utc::now() - chrono::Duration::days(1))
             .format("%Y-%m-%dT00:00:00Z")
             .to_string();
-        let yesterday_end = chrono::Utc::now()
-            .format("%Y-%m-%dT00:00:00Z")
-            .to_string();
+        let yesterday_end = chrono::Utc::now().format("%Y-%m-%dT00:00:00Z").to_string();
 
         let sql = format!(
             "SELECT * FROM payment_orders WHERE status = 'paid' AND paid_at >= {} AND paid_at < {} LIMIT 500",
@@ -148,14 +146,9 @@ impl ReconcilePaymentsHandler {
 }
 
 fn get_encrypt_key(config: &AppConfig) -> AppResult<[u8; 32]> {
-    let key_str = config
-        .app_key
-        .as_deref()
-        .ok_or_else(|| {
-            crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
-                "APP_KEY not configured"
-            ))
-        })?;
+    let key_str = config.app_key.as_deref().ok_or_else(|| {
+        crate::errors::app_error::AppError::Internal(anyhow::anyhow!("APP_KEY not configured"))
+    })?;
     let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, key_str)
         .map_err(|e| {
             crate::errors::app_error::AppError::Internal(anyhow::anyhow!(

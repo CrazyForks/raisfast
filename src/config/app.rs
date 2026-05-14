@@ -51,6 +51,8 @@ pub struct AppConfig {
     #[serde(default = "default_storage_root_dir")]
     pub storage_root_dir: String,
     pub upload_dir: String,
+    #[serde(default = "default_backup_retention")]
+    pub backup_retention: usize,
     #[serde(skip)]
     pub started_at: Option<std::time::Instant>,
     pub max_upload_size: usize,
@@ -459,6 +461,10 @@ fn default_storage_root_dir() -> String {
     "./storage".into()
 }
 
+fn default_backup_retention() -> usize {
+    10
+}
+
 fn storage_subdir(root: &str, sub: &str) -> String {
     format!("{root}/{sub}")
 }
@@ -519,6 +525,13 @@ pub fn default_cron_schedules() -> Vec<CronScheduleConfig> {
             job_type: "process_wallet_outbox".into(),
             payload: None,
             cron_expr: "0 */10 * * * *".into(),
+            enabled: true,
+        },
+        CronScheduleConfig {
+            label: "Daily Database Backup".into(),
+            job_type: "db_backup".into(),
+            payload: None,
+            cron_expr: "0 0 2 * * *".into(),
             enabled: true,
         },
     ]
@@ -718,6 +731,10 @@ impl AppConfig {
             storage_root_dir: storage_root_dir.clone(),
             upload_dir: env::var("UPLOAD_DIR")
                 .unwrap_or_else(|_| storage_subdir(&storage_root_dir, "uploads")),
+            backup_retention: env::var("BACKUP_RETENTION")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_backup_retention()),
             max_upload_size: env::var("MAX_UPLOAD_SIZE")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -987,6 +1004,7 @@ impl AppConfig {
             jwt_refresh_expires: 604800,
             storage_root_dir: "./test-storage".into(),
             upload_dir: "./test-storage/uploads".into(),
+            backup_retention: default_backup_retention(),
             max_upload_size: 104857600,
             static_dir: "./static".into(),
             base_url: "http://localhost:3000".into(),
@@ -1146,7 +1164,8 @@ impl AppConfig {
 
     fn generate_app_key() -> String {
         let mut bytes = [0u8; 32];
-        getrandom::getrandom(&mut bytes).expect("failed to generate random APP_KEY");
+        getrandom::getrandom(&mut bytes)
+            .unwrap_or_else(|e| panic!("failed to generate random APP_KEY: {e}"));
         base64::engine::general_purpose::STANDARD.encode(bytes)
     }
 

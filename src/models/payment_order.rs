@@ -248,7 +248,25 @@ pub async fn insert(
         Some(tid) => {
             let sql = format!(
                 "INSERT INTO payment_orders (document_id, tenant_id, user_id, order_id, title, amount, currency, channel_id, provider, reference_type, reference_id, return_url, idempotency_key, client_ip, client_language, client_country, client_user_agent, channel_selected_by, metadata, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13), ph(14), ph(15), ph(16), ph(17), ph(18), ph(19)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11),
+                ph(12),
+                ph(13),
+                ph(14),
+                ph(15),
+                ph(16),
+                ph(17),
+                ph(18),
+                ph(19)
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -276,7 +294,24 @@ pub async fn insert(
         None => {
             let sql = format!(
                 "INSERT INTO payment_orders (document_id, user_id, order_id, title, amount, currency, channel_id, provider, reference_type, reference_id, return_url, idempotency_key, client_ip, client_language, client_country, client_user_agent, channel_selected_by, metadata, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13), ph(14), ph(15), ph(16), ph(17), ph(18)
+                ph(1),
+                ph(2),
+                ph(3),
+                ph(4),
+                ph(5),
+                ph(6),
+                ph(7),
+                ph(8),
+                ph(9),
+                ph(10),
+                ph(11),
+                ph(12),
+                ph(13),
+                ph(14),
+                ph(15),
+                ph(16),
+                ph(17),
+                ph(18)
             );
             sqlx::query(&sql)
                 .bind(&document_id)
@@ -415,10 +450,12 @@ mod tests {
         )
         .await
         .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM payment_channels WHERE provider = 'stripe' ORDER BY id DESC LIMIT 1")
-            .fetch_one(pool)
-            .await
-            .unwrap();
+        let (id,): (i64,) = sqlx::query_as(
+            "SELECT id FROM payment_channels WHERE provider = 'stripe' ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
         id
     }
 
@@ -659,8 +696,14 @@ mod tests {
             let order = seed_payment_order(&pool, uid, ch_id, 100).await;
             let mut tx = pool.begin().await.unwrap();
             let rows = super::tx_update_status_cas(
-                &mut tx, order.id, PaymentStatus::Paid, Some("paid_at"), PaymentStatus::Pending,
-            ).await.unwrap();
+                &mut tx,
+                order.id,
+                PaymentStatus::Paid,
+                Some("paid_at"),
+                PaymentStatus::Pending,
+            )
+            .await
+            .unwrap();
             assert_eq!(rows, 1);
             tx.commit().await.unwrap();
         }
@@ -696,8 +739,14 @@ mod tests {
             .unwrap();
         let mut tx = pool.begin().await.unwrap();
         let rows = super::tx_update_status_cas(
-            &mut tx, order.id, PaymentStatus::Paid, Some("paid_at"), PaymentStatus::Pending,
-        ).await.unwrap();
+            &mut tx,
+            order.id,
+            PaymentStatus::Paid,
+            Some("paid_at"),
+            PaymentStatus::Pending,
+        )
+        .await
+        .unwrap();
         assert_eq!(rows, 1);
         tx.commit().await.unwrap();
 

@@ -12,9 +12,8 @@
 //! - [`ApiResponse`]: Generic response wrapper supporting success and error responses
 //! - [`PaginatedData`]: Pagination data envelope for list endpoints
 
-use axum::Json;
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use axum::Json;
 use serde::Serialize;
 
 /// Unified API response structure
@@ -62,37 +61,6 @@ impl<T: Serialize> ApiResponse<T> {
             message,
             data: Some(data),
         }
-    }
-}
-
-impl ApiResponse<()> {
-    /// Construct an error response
-    ///
-    /// Creates a business error response. The HTTP status code is fixed at `200 OK`; the actual
-    /// error is distinguished via the `code` field in the JSON body (following the 40000–50000 range convention).
-    ///
-    /// # Parameters
-    ///
-    /// - `code` — Business error code (e.g. `40000`, `40400`)
-    /// - `message` — Error description message (typically already i18n-translated)
-    ///
-    /// # Returns
-    ///
-    /// Returns an `axum::response::Response` that can be returned directly from a handler.
-    ///
-    /// # Note
-    ///
-    /// This method is defined on `ApiResponse<()>` and is only used to construct error responses without data.
-    /// The normal error handling flow should prefer [`AppError`](crate::errors::AppError)
-    /// and its [`IntoResponse`] implementation, which automatically sets the correct HTTP status code.
-    #[must_use]
-    pub fn error(code: i32, message: String) -> Response {
-        let body = Self {
-            code,
-            message,
-            data: None,
-        };
-        (StatusCode::OK, Json(body)).into_response()
     }
 }
 

@@ -29,9 +29,9 @@
 //! - `Unauthorized` → `errors.unauthorized`
 //! - `NotFound` → translates the resource name via `resources.{key}`, then substitutes into `errors.not_found`
 
-use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use axum::Json;
 use serde::Serialize;
 
 use crate::middleware::locale::current_locale;
@@ -78,18 +78,18 @@ pub enum AppError {
     /// then substituted into the `errors.conflict` template.
     #[error("conflict: {0}")]
     Conflict(String),
+    /// 405 Method Not Allowed — Request method is not allowed for this resource
+    #[error("method not allowed: {0}")]
+    MethodNotAllowed(String),
     /// 413 Payload Too Large — Request body exceeds size limit
-    #[error("payload too large")]
-    PayloadTooLarge,
+    #[error("payload too large: {0}")]
+    PayloadTooLarge(String),
     /// 429 Too Many Requests — Request rate exceeds throttle threshold
-    #[error("too many requests")]
-    TooManyRequests,
-    /// 405 Method Not Allowed — Request method is not allowed
-    #[error("method not allowed")]
-    MethodNotAllowed,
+    #[error("too many requests: {0}")]
+    TooManyRequests(String),
     /// 503 Service Unavailable — Service temporarily unavailable
-    #[error("service unavailable")]
-    ServiceUnavailable,
+    #[error("service unavailable: {0}")]
+    ServiceUnavailable(String),
     /// 500 Internal Server Error — Unexpected internal server error
     ///
     /// Automatically converted from `anyhow::Error` via `#[from]`, avoiding manual mapping.
@@ -136,30 +136,47 @@ impl AppError {
     /// Returns the translated error message string. If the translation key does not exist,
     /// `rust_i18n::t!` falls back to the key name itself.
     fn i18n_message(&self, locale: &str) -> String {
-        rust_i18n::set_locale(locale);
         match self {
             AppError::BadRequest(msg) => {
-                rust_i18n::t!("errors.bad_request", message = msg).to_string()
+                rust_i18n::t!("errors.bad_request", locale = locale, message = msg).to_string()
             }
-            AppError::Unauthorized => rust_i18n::t!("errors.unauthorized").to_string(),
-            AppError::Forbidden => rust_i18n::t!("errors.forbidden").to_string(),
+            AppError::Unauthorized => {
+                rust_i18n::t!("errors.unauthorized", locale = locale).to_string()
+            }
+            AppError::Forbidden => rust_i18n::t!("errors.forbidden", locale = locale).to_string(),
             AppError::NotFound(resource_key) => {
                 let res_key = format!("resources.{resource_key}");
-                let resource = rust_i18n::t!(&res_key);
-                rust_i18n::t!("errors.not_found", resource = resource).to_string()
+                let resource = rust_i18n::t!(&res_key, locale = locale);
+                rust_i18n::t!("errors.not_found", locale = locale, resource = resource).to_string()
             }
             AppError::Conflict(msg_key) => {
                 let msg_key_full = format!("messages.{msg_key}");
-                let message = rust_i18n::t!(&msg_key_full);
-                rust_i18n::t!("errors.conflict", message = message).to_string()
+                let message = rust_i18n::t!(&msg_key_full, locale = locale);
+                rust_i18n::t!("errors.conflict", locale = locale, message = message).to_string()
             }
-            AppError::PayloadTooLarge => rust_i18n::t!("errors.payload_too_large").to_string(),
-            AppError::TooManyRequests => rust_i18n::t!("errors.too_many_requests").to_string(),
-            AppError::MethodNotAllowed => rust_i18n::t!("errors.method_not_allowed").to_string(),
-            AppError::ServiceUnavailable => rust_i18n::t!("errors.service_unavailable").to_string(),
+            AppError::PayloadTooLarge(detail) => {
+                let base = rust_i18n::t!("errors.payload_too_large", locale = locale).to_string();
+                format!("{base}: {detail}")
+            }
+            AppError::TooManyRequests(detail) => {
+                let base = rust_i18n::t!("errors.too_many_requests", locale = locale).to_string();
+                format!("{base}: {detail}")
+            }
+            AppError::MethodNotAllowed(detail) => {
+                let base = rust_i18n::t!("errors.method_not_allowed", locale = locale).to_string();
+                format!("{base}: {detail}")
+            }
+            AppError::ServiceUnavailable(detail) => {
+                let base = rust_i18n::t!("errors.service_unavailable", locale = locale).to_string();
+                format!("{base}: {detail}")
+            }
             AppError::Internal(err) => {
-                let base: String = rust_i18n::t!("errors.internal").into();
-                format!("{base}: {err}")
+                let base: String = rust_i18n::t!("errors.internal", locale = locale).into();
+                if std::env::var("APP_ENV").unwrap_or_default() == "production" {
+                    base
+                } else {
+                    format!("{base}: {err}")
+                }
             }
         }
     }
@@ -187,12 +204,12 @@ impl IntoResponse for AppError {
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, 40100),
             AppError::Forbidden => (StatusCode::FORBIDDEN, 40300),
             AppError::NotFound(_) => (StatusCode::NOT_FOUND, 40400),
-            AppError::MethodNotAllowed => (StatusCode::METHOD_NOT_ALLOWED, 40500),
+            AppError::MethodNotAllowed(_) => (StatusCode::METHOD_NOT_ALLOWED, 40500),
             AppError::Conflict(_) => (StatusCode::CONFLICT, 40900),
-            AppError::PayloadTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, 41300),
-            AppError::TooManyRequests => (StatusCode::TOO_MANY_REQUESTS, 42900),
+            AppError::PayloadTooLarge(_) => (StatusCode::PAYLOAD_TOO_LARGE, 41300),
+            AppError::TooManyRequests(_) => (StatusCode::TOO_MANY_REQUESTS, 42900),
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, 50000),
-            AppError::ServiceUnavailable => (StatusCode::SERVICE_UNAVAILABLE, 50300),
+            AppError::ServiceUnavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, 50300),
         };
 
         let locale = current_locale();

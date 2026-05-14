@@ -59,7 +59,10 @@ impl JobHandler for ProcessWalletOutboxHandler {
                         entry.amount,
                         parse_tx_type(&entry.tx_type),
                         &entry.transaction_no,
-                        entry.reference_type.as_deref().and_then(parse_reference_type),
+                        entry
+                            .reference_type
+                            .as_deref()
+                            .and_then(parse_reference_type),
                         entry.reference_id.as_deref(),
                         entry.metadata.as_deref(),
                     )
@@ -74,7 +77,10 @@ impl JobHandler for ProcessWalletOutboxHandler {
                         entry.amount,
                         parse_tx_type(&entry.tx_type),
                         &entry.transaction_no,
-                        entry.reference_type.as_deref().and_then(parse_reference_type),
+                        entry
+                            .reference_type
+                            .as_deref()
+                            .and_then(parse_reference_type),
                         entry.reference_id.as_deref(),
                         entry.metadata.as_deref(),
                     )
@@ -103,9 +109,7 @@ impl JobHandler for ProcessWalletOutboxHandler {
         }
 
         if processed > 0 || failed > 0 {
-            tracing::info!(
-                "[wallet_outbox] processed {processed}, failed {failed}"
-            );
+            tracing::info!("[wallet_outbox] processed {processed}, failed {failed}");
         }
 
         Ok(())

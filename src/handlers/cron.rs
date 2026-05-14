@@ -121,6 +121,10 @@ fn default_limit() -> i64 {
 }
 
 /// GET /api/v1/admin/crons — List all schedules (paginated)
+#[utoipa::path(get, path = "/admin/crons", tag = "cron",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "List cron schedules"))
+)]
 pub async fn list(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -140,6 +144,11 @@ pub async fn list(
 }
 
 /// GET /api/v1/admin/crons/{id} — Schedule details
+#[utoipa::path(get, path = "/admin/crons/{id}", tag = "cron",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Schedule ID")),
+    responses((status = 200, description = "Schedule detail"))
+)]
 pub async fn get(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -153,6 +162,11 @@ pub async fn get(
 }
 
 /// POST /api/v1/admin/crons — Create a schedule
+#[utoipa::path(post, path = "/admin/crons", tag = "cron",
+    security(("bearer_auth" = [])),
+    request_body = serde_json::Value,
+    responses((status = 200, description = "Schedule created"))
+)]
 pub async fn create(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -173,6 +187,12 @@ pub async fn create(
 }
 
 /// PUT /api/v1/admin/crons/{id} — Update a schedule
+#[utoipa::path(put, path = "/admin/crons/{id}", tag = "cron",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Schedule ID")),
+    request_body = serde_json::Value,
+    responses((status = 200, description = "Schedule updated"))
+)]
 pub async fn update(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -195,6 +215,12 @@ pub async fn update(
 }
 
 /// POST /api/v1/admin/crons/{id}/toggle — Toggle enable/disable
+#[utoipa::path(post, path = "/admin/crons/{id}/toggle", tag = "cron",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Schedule ID")),
+    request_body = serde_json::Value,
+    responses((status = 200, description = "Schedule toggled"))
+)]
 pub async fn toggle(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -207,6 +233,11 @@ pub async fn toggle(
 }
 
 /// DELETE /api/v1/admin/crons/{id} — Delete a schedule
+#[utoipa::path(delete, path = "/admin/crons/{id}", tag = "cron",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Schedule ID")),
+    responses((status = 200, description = "Schedule deleted"))
+)]
 pub async fn delete(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -222,6 +253,10 @@ pub async fn delete(
 /// Supports two modes:
 /// - `?schedule_id=xxx` — Query a specific schedule's history
 /// - Omit — Query recent records for all schedules
+#[utoipa::path(get, path = "/admin/crons/logs", tag = "cron",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Execution logs"))
+)]
 pub async fn logs(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -238,6 +273,10 @@ pub async fn logs(
 }
 
 /// POST /api/v1/admin/crons/logs/cleanup — Clean up expired logs
+#[utoipa::path(post, path = "/admin/crons/logs/cleanup", tag = "cron",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Expired logs cleaned up"))
+)]
 pub async fn cleanup_logs(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -253,6 +292,11 @@ pub struct ToggleBody {
     pub enabled: bool,
 }
 
+#[utoipa::path(post, path = "/admin/crons/batch", tag = "cron",
+    security(("bearer_auth" = [])),
+    request_body = BatchRequest,
+    responses((status = 200, description = "Batch operation completed"))
+)]
 pub async fn admin_batch(
     auth: AuthUser,
     State(state): State<AppState>,

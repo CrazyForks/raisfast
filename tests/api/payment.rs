@@ -125,7 +125,10 @@ async fn admin_get_channel() {
 
     let (status, body) = send(
         &mut app,
-        get_auth(&format!("/api/v1/admin/payment/channels/{channel_id}"), &tok),
+        get_auth(
+            &format!("/api/v1/admin/payment/channels/{channel_id}"),
+            &tok,
+        ),
     )
     .await;
     assert!(status.is_success(), "get channel: {status} {body:?}");
@@ -138,7 +141,10 @@ async fn admin_update_channel() {
 
     let (_, get_body) = send(
         &mut app,
-        get_auth(&format!("/api/v1/admin/payment/channels/{channel_id}"), &tok),
+        get_auth(
+            &format!("/api/v1/admin/payment/channels/{channel_id}"),
+            &tok,
+        ),
     )
     .await;
     let version = get_body["data"]["version"].as_i64().unwrap();
@@ -162,14 +168,20 @@ async fn admin_delete_channel() {
 
     let (status, _) = send(
         &mut app,
-        delete_auth(&format!("/api/v1/admin/payment/channels/{channel_id}"), &tok),
+        delete_auth(
+            &format!("/api/v1/admin/payment/channels/{channel_id}"),
+            &tok,
+        ),
     )
     .await;
     assert!(status.is_success(), "delete channel");
 
     let (status, _) = send(
         &mut app,
-        get_auth(&format!("/api/v1/admin/payment/channels/{channel_id}"), &tok),
+        get_auth(
+            &format!("/api/v1/admin/payment/channels/{channel_id}"),
+            &tok,
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -199,7 +211,10 @@ async fn list_user_payment_orders_empty() {
         get_auth("/api/v1/payment/orders?page=1&page_size=10", &tok),
     )
     .await;
-    assert!(status.is_success(), "list payment orders: {status} {body:?}");
+    assert!(
+        status.is_success(),
+        "list payment orders: {status} {body:?}"
+    );
 }
 
 #[tokio::test]
@@ -211,7 +226,10 @@ async fn admin_list_payment_orders() {
         get_auth("/api/v1/admin/payment/orders?page=1&page_size=10", &tok),
     )
     .await;
-    assert!(status.is_success(), "admin list payment orders: {status} {body:?}");
+    assert!(
+        status.is_success(),
+        "admin list payment orders: {status} {body:?}"
+    );
 }
 
 #[tokio::test]
@@ -220,7 +238,10 @@ async fn admin_list_transactions_empty() {
 
     let (status, body) = send(
         &mut app,
-        get_auth("/api/v1/admin/payment/transactions?page=1&page_size=10", &tok),
+        get_auth(
+            "/api/v1/admin/payment/transactions?page=1&page_size=10",
+            &tok,
+        ),
     )
     .await;
     assert!(status.is_success(), "list txns: {status} {body:?}");
@@ -254,11 +275,12 @@ async fn list_available_channels_returns_channels() {
         )
         .await;
         product_id = pbody["data"]["id"].as_str().unwrap().to_string();
-        let product_int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE document_id = ?")
-            .bind(&product_id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+        let product_int_id: i64 =
+            sqlx::query_scalar("SELECT id FROM products WHERE document_id = ?")
+                .bind(&product_id)
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
         sqlx::query("UPDATE products SET status = 'active' WHERE id = ?")
             .bind(product_int_id)
             .execute(&state.pool)
@@ -280,7 +302,9 @@ async fn list_available_channels_returns_channels() {
     let (status, body) = send(
         &mut app,
         get_auth(
-            &format!("/api/v1/payment/channels/available?order_id={order_id}&country=CN&language=zh"),
+            &format!(
+                "/api/v1/payment/channels/available?order_id={order_id}&country=CN&language=zh"
+            ),
             &tok,
         ),
     )
@@ -291,7 +315,10 @@ async fn list_available_channels_returns_channels() {
     assert_eq!(channels.len(), 2);
     assert!(channels[0]["is_recommended"].as_bool().unwrap());
     assert_eq!(channels[0]["provider"], "stripe");
-    assert_eq!(body["data"]["recommended_channel_id"], channels[0]["channel_id"]);
+    assert_eq!(
+        body["data"]["recommended_channel_id"],
+        channels[0]["channel_id"]
+    );
 }
 
 #[tokio::test]
@@ -415,9 +442,20 @@ async fn create_payment_order_auto_route() {
     .await;
 
     assert!(status.is_success(), "auto route create: {status} {body:?}");
-    assert_eq!(body["data"]["provider"].as_str().unwrap_or("none"), "stripe");
-    assert_eq!(body["data"]["channel_selected_by"].as_str().unwrap_or("none"), "auto");
-    assert_eq!(body["data"]["client_country"].as_str().unwrap_or("none"), "CN");
+    assert_eq!(
+        body["data"]["provider"].as_str().unwrap_or("none"),
+        "stripe"
+    );
+    assert_eq!(
+        body["data"]["channel_selected_by"]
+            .as_str()
+            .unwrap_or("none"),
+        "auto"
+    );
+    assert_eq!(
+        body["data"]["client_country"].as_str().unwrap_or("none"),
+        "CN"
+    );
 }
 
 #[tokio::test]

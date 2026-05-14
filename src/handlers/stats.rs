@@ -55,6 +55,10 @@ pub struct TrendsQuery {
 /// Overview statistics
 ///
 /// `GET /api/v1/admin/stats`
+#[utoipa::path(get, path = "/admin/stats", tag = "stats",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Overview statistics"))
+)]
 pub async fn overview(State(state): State<AppState>) -> AppResult<ApiResponse<serde_json::Value>> {
     let svc = StatsService::new(state.pool.clone());
     let data = svc.overview(None).await?;
@@ -64,6 +68,11 @@ pub async fn overview(State(state): State<AppState>) -> AppResult<ApiResponse<se
 /// Single content type statistics
 ///
 /// `GET /api/v1/admin/stats/content/:table`
+#[utoipa::path(get, path = "/admin/stats/content/{table}", tag = "stats",
+    security(("bearer_auth" = [])),
+    params(("table" = String, Path, description = "Content table name")),
+    responses((status = 200, description = "Content statistics"))
+)]
 pub async fn content_stats(
     State(state): State<AppState>,
     Path(table): Path<String>,
@@ -76,6 +85,10 @@ pub async fn content_stats(
 /// Trend data
 ///
 /// `GET /api/v1/admin/stats/trends?table=posts&days=30`
+#[utoipa::path(get, path = "/admin/stats/trends", tag = "stats",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Trend data"))
+)]
 pub async fn trends(
     State(state): State<AppState>,
     Query(query): Query<TrendsQuery>,

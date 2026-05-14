@@ -3,6 +3,7 @@
 //! Provides multi-database support (SQLite, PostgreSQL, MySQL),
 //! with the backend selected at compile time via feature flags.
 
+pub mod backup;
 pub mod connection;
 pub mod dialect;
 pub mod pool;

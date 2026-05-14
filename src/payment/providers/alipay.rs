@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::models::payment_channel::PaymentChannel;
 use crate::models::payment_order::{PaymentOrder, PaymentStatus};
+use crate::payment::PaymentProvider;
 use crate::payment::crypto::aes256gcm_decrypt;
 use crate::payment::provider::{CallbackData, ProviderResponse, ProviderStatus, RefundResponse};
-use crate::payment::PaymentProvider;
 
 const GATEWAY_LIVE: &str = "https://openapi.alipay.com/gateway.do";
 const GATEWAY_TEST: &str = "https://openapi-sandbox.dl.alipaydev.com/gateway.do";
@@ -104,9 +104,8 @@ fn decrypt_credentials(
     encrypt_key: &[u8; 32],
 ) -> AppResult<AlipayCredentials> {
     let decrypted = aes256gcm_decrypt(&channel.credentials, encrypt_key)?;
-    serde_json::from_str(&decrypted).map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("alipay credentials parse: {e}"))
-    })
+    serde_json::from_str(&decrypted)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay credentials parse: {e}")))
 }
 
 fn parse_private_key(pem_or_raw: &str) -> AppResult<rsa::RsaPrivateKey> {
@@ -143,10 +142,7 @@ fn gateway_url(creds: &AlipayCredentials) -> &str {
     }
 }
 
-fn sign_data(
-    data: &[u8],
-    private_key: &rsa::RsaPrivateKey,
-) -> AppResult<Vec<u8>> {
+fn sign_data(data: &[u8], private_key: &rsa::RsaPrivateKey) -> AppResult<Vec<u8>> {
     let hash = Sha256::digest(data);
     let scheme = Pkcs1v15Sign::new::<Sha256>();
     private_key
@@ -154,11 +150,7 @@ fn sign_data(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay sign: {e}")))
 }
 
-fn verify_data(
-    data: &[u8],
-    sig_bytes: &[u8],
-    public_key: &rsa::RsaPublicKey,
-) -> AppResult<()> {
+fn verify_data(data: &[u8], sig_bytes: &[u8], public_key: &rsa::RsaPublicKey) -> AppResult<()> {
     let hash = Sha256::digest(data);
     let scheme = Pkcs1v15Sign::new::<Sha256>();
     public_key
@@ -188,9 +180,9 @@ fn verify_signature(
     signature_b64: &str,
     public_key: &rsa::RsaPublicKey,
 ) -> AppResult<()> {
-    let sig_bytes = BASE64.decode(signature_b64).map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("alipay signature base64 decode: {e}"))
-    })?;
+    let sig_bytes = BASE64
+        .decode(signature_b64)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay signature base64 decode: {e}")))?;
     let signing_str = build_signing_string(params);
     verify_data(signing_str.as_bytes(), &sig_bytes, public_key)
 }
@@ -269,9 +261,7 @@ fn extract_alipay_public_key(channel: &PaymentChannel) -> AppResult<String> {
         .webhook_secret
         .as_deref()
         .ok_or_else(|| {
-            AppError::BadRequest(
-                "alipay: alipay_public_key (webhook_secret) not configured".into(),
-            )
+            AppError::BadRequest("alipay: alipay_public_key (webhook_secret) not configured".into())
         })
         .map(String::from)
 }
@@ -310,8 +300,7 @@ impl PaymentProvider for AlipayProvider {
         let biz_json = serde_json::to_string(&biz)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("biz_content serialize: {e}")))?;
 
-        let body =
-            call_alipay(&creds, &private_key, "alipay.trade.precreate", &biz_json).await?;
+        let body = call_alipay(&creds, &private_key, "alipay.trade.precreate", &biz_json).await?;
 
         let resp: AlipayResponse<PrecreateResult> = serde_json::from_str(&body)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay response parse: {e}")))?;
@@ -357,9 +346,9 @@ impl PaymentProvider for AlipayProvider {
         let resp: AlipayResponse<QueryResult> = serde_json::from_str(&body)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay response parse: {e}")))?;
 
-        let result = resp.query.ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("alipay: missing query response"))
-        })?;
+        let result = resp
+            .query
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("alipay: missing query response")))?;
 
         if result.code.as_deref() != Some("10000") {
             return Ok(ProviderStatus {
@@ -384,11 +373,7 @@ impl PaymentProvider for AlipayProvider {
         })
     }
 
-    async fn cancel(
-        &self,
-        channel: &PaymentChannel,
-        provider_order_id: &str,
-    ) -> AppResult<()> {
+    async fn cancel(&self, channel: &PaymentChannel, provider_order_id: &str) -> AppResult<()> {
         let creds = decrypt_credentials(channel, &self.encrypt_key)?;
         let private_key = parse_private_key(&creds.private_key)?;
 
@@ -502,10 +487,7 @@ impl PaymentProvider for AlipayProvider {
         };
 
         Ok(CallbackData {
-            provider_order_id: params
-                .get("out_trade_no")
-                .cloned()
-                .unwrap_or_default(),
+            provider_order_id: params.get("out_trade_no").cloned().unwrap_or_default(),
             status,
             amount,
             provider_tx_id,
@@ -516,8 +498,8 @@ impl PaymentProvider for AlipayProvider {
 
 #[cfg(test)]
 mod tests {
-    use rsa::pkcs8::{EncodePublicKey, LineEnding};
     use super::*;
+    use rsa::pkcs8::{EncodePublicKey, LineEnding};
 
     fn generate_keypair() -> (rsa::RsaPrivateKey, rsa::RsaPublicKey) {
         let mut rng = rsa::rand_core::OsRng;
@@ -586,10 +568,7 @@ mod tests {
             "biz_content".to_string(),
             r#"{"out_trade_no":"test"}"#.to_string(),
         );
-        params.insert(
-            "method".to_string(),
-            "alipay.trade.precreate".to_string(),
-        );
+        params.insert("method".to_string(), "alipay.trade.precreate".to_string());
 
         let signature = sign_params(&params, &private_key).unwrap();
         verify_signature(&params, &signature, &public_key).unwrap();
@@ -620,10 +599,7 @@ mod tests {
         };
         let params = build_common_params(&creds, "alipay.trade.precreate", "{}");
         assert_eq!(params.get("app_id").unwrap(), "2021001234");
-        assert_eq!(
-            params.get("method").unwrap(),
-            "alipay.trade.precreate"
-        );
+        assert_eq!(params.get("method").unwrap(), "alipay.trade.precreate");
         assert_eq!(params.get("charset").unwrap(), "utf-8");
         assert_eq!(params.get("sign_type").unwrap(), "RSA2");
         assert_eq!(params.get("version").unwrap(), "1.0");
@@ -647,9 +623,7 @@ mod tests {
         let (private_key, public_key) = generate_keypair();
 
         let key = [42u8; 32];
-        let pub_key_pem = public_key
-            .to_public_key_pem(LineEnding::LF)
-            .unwrap();
+        let pub_key_pem = public_key.to_public_key_pem(LineEnding::LF).unwrap();
 
         let mut params = BTreeMap::new();
         params.insert("app_id".to_string(), "2021001234".to_string());

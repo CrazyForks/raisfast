@@ -100,7 +100,7 @@ impl WasmInstancePool {
             .semaphore
             .acquire()
             .await
-            .expect("semaphore closed unexpectedly");
+            .unwrap_or_else(|_| panic!("semaphore closed unexpectedly"));
         for (i, pooled) in self.instances.iter().enumerate() {
             if pooled
                 .busy

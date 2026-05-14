@@ -17,6 +17,9 @@ use crate::models::post;
 /// - **Description:** Generates an RSS 2.0 XML feed containing the 20 most recently published posts.
 ///   Titles and descriptions are translated via i18n based on the current locale.
 /// - **Returns:** RSS response in `application/xml` format
+#[utoipa::path(get, path = "/rss", tag = "rss",
+    responses((status = 200, description = "RSS XML feed"))
+)]
 pub async fn feed(State(state): State<crate::AppState>) -> AppResult<Response> {
     let locale = current_locale();
     rust_i18n::set_locale(&locale);

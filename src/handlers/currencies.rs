@@ -49,6 +49,10 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
+#[utoipa::path(get, path = "/admin/currencies", tag = "currencies",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "List currencies"))
+)]
 pub async fn list_currencies(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -60,6 +64,11 @@ pub async fn list_currencies(
     ))
 }
 
+#[utoipa::path(get, path = "/admin/currencies/{code}", tag = "currencies",
+    security(("bearer_auth" = [])),
+    params(("code" = String, Path, description = "Currency code")),
+    responses((status = 200, description = "Currency detail"))
+)]
 pub async fn get_currency(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -72,6 +81,11 @@ pub async fn get_currency(
     Ok(ApiResponse::success(CurrencyResponse::from(c)))
 }
 
+#[utoipa::path(post, path = "/admin/currencies", tag = "currencies",
+    security(("bearer_auth" = [])),
+    request_body = CreateCurrencyRequest,
+    responses((status = 200, description = "Currency created"))
+)]
 pub async fn create_currency(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -89,6 +103,12 @@ pub async fn create_currency(
     Ok(ApiResponse::success(CurrencyResponse::from(c)))
 }
 
+#[utoipa::path(put, path = "/admin/currencies/{code}", tag = "currencies",
+    security(("bearer_auth" = [])),
+    params(("code" = String, Path, description = "Currency code")),
+    request_body = UpdateCurrencyRequest,
+    responses((status = 200, description = "Currency updated"))
+)]
 pub async fn update_currency(
     auth: AuthUser,
     State(state): State<crate::AppState>,

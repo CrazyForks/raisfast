@@ -21,7 +21,12 @@ pub trait WalletRepository: Send + Sync {
 
     async fn find_or_create_wallet(&self, user_id: i64, currency: &str) -> AppResult<Wallet>;
 
-    async fn find_all_wallets(&self, page: i64, page_size: i64, tenant_id: Option<&str>) -> AppResult<(Vec<Wallet>, i64)>;
+    async fn find_all_wallets(
+        &self,
+        page: i64,
+        page_size: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<(Vec<Wallet>, i64)>;
 
     async fn find_transactions_by_wallet(
         &self,
@@ -90,7 +95,12 @@ impl WalletRepository for SqlxWalletRepository {
         wallet::find_or_create(&self.pool, user_id, currency).await
     }
 
-    async fn find_all_wallets(&self, page: i64, page_size: i64, tenant_id: Option<&str>) -> AppResult<(Vec<Wallet>, i64)> {
+    async fn find_all_wallets(
+        &self,
+        page: i64,
+        page_size: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<(Vec<Wallet>, i64)> {
         wallet::find_all_wallets(&self.pool, page, page_size, tenant_id).await
     }
 

@@ -45,6 +45,9 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
 }
 
 /// GET /options/public — Public options (values only) + system feature flags
+#[utoipa::path(get, path = "/options/public", tag = "options",
+    responses((status = 200, description = "Public options"))
+)]
 pub async fn get_public_options(
     State(state): State<AppState>,
 ) -> AppResult<ApiResponse<HashMap<String, Value>>> {
@@ -57,6 +60,10 @@ pub async fn get_public_options(
 }
 
 /// GET /admin/options — All options (grouped, with metadata)
+#[utoipa::path(get, path = "/admin/options", tag = "options",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "All options grouped"))
+)]
 pub async fn list_options(
     State(state): State<AppState>,
 ) -> AppResult<ApiResponse<Vec<crate::services::options::OptionGroup>>> {
@@ -65,6 +72,11 @@ pub async fn list_options(
 }
 
 /// GET /admin/options/:key — Get a single option
+#[utoipa::path(get, path = "/admin/options/{key}", tag = "options",
+    security(("bearer_auth" = [])),
+    params(("key" = String, Path, description = "Option key")),
+    responses((status = 200, description = "Option value"))
+)]
 pub async fn get_option(
     State(state): State<AppState>,
     Path(key): Path<String>,
@@ -80,12 +92,16 @@ pub async fn get_option(
 }
 
 /// Batch update request body
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateOptionsRequest {
     pub options: HashMap<String, Value>,
 }
 
 /// PUT /admin/options — Batch update options
+#[utoipa::path(put, path = "/admin/options", tag = "options",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Options updated"))
+)]
 pub async fn update_options(
     State(state): State<AppState>,
     Json(body): Json<UpdateOptionsRequest>,
@@ -96,12 +112,17 @@ pub async fn update_options(
 }
 
 /// Update single option request body
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateOptionRequest {
     pub value: Value,
 }
 
 /// PUT /admin/options/:key — Set a single option
+#[utoipa::path(put, path = "/admin/options/{key}", tag = "options",
+    security(("bearer_auth" = [])),
+    params(("key" = String, Path, description = "Option key")),
+    responses((status = 200, description = "Option set"))
+)]
 pub async fn set_option(
     State(state): State<AppState>,
     Path(key): Path<String>,
@@ -115,6 +136,11 @@ pub async fn set_option(
 }
 
 /// DELETE /admin/options/:key — Delete an option
+#[utoipa::path(delete, path = "/admin/options/{key}", tag = "options",
+    security(("bearer_auth" = [])),
+    params(("key" = String, Path, description = "Option key")),
+    responses((status = 200, description = "Option deleted"))
+)]
 pub async fn delete_option(
     State(state): State<AppState>,
     Path(key): Path<String>,

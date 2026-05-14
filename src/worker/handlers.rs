@@ -4,6 +4,7 @@
 //! and is registered with the `JobHandlerRegistry` in `register_all()`.
 
 pub mod cache;
+pub mod db_backup;
 pub mod email;
 pub mod email_verification;
 pub mod payment_expire;
@@ -89,7 +90,10 @@ pub fn register_all(
     );
     registry.register(
         "generate_sitemap",
-        Box::new(sitemap::GenerateSitemapHandler::new(pool.clone(), config.clone())),
+        Box::new(sitemap::GenerateSitemapHandler::new(
+            pool.clone(),
+            config.clone(),
+        )),
     );
     registry.register(
         "expire_payment_orders",
@@ -116,7 +120,11 @@ pub fn register_all(
         "process_wallet_outbox",
         Box::new(wallet_outbox::ProcessWalletOutboxHandler::new(
             pool,
-            config,
+            config.clone(),
         )),
+    );
+    registry.register(
+        "db_backup",
+        Box::new(db_backup::DbBackupHandler::new(config)),
     );
 }

@@ -48,7 +48,7 @@ pub fn hmac_sha1_sign(key: &str, data: &str) -> String {
 
     let key_with_suffix = format!("{key}&");
     let mut mac = HmacSha1::new_from_slice(key_with_suffix.as_bytes())
-        .expect("HMAC can take key of any size");
+        .unwrap_or_else(|_| panic!("HMAC-SHA1 accepts any key size"));
     mac.update(data.as_bytes());
     let result = mac.finalize().into_bytes();
     base64::engine::general_purpose::STANDARD.encode(result)

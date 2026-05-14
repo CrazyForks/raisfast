@@ -150,6 +150,11 @@ fn to_order_response(
     }
 }
 
+#[utoipa::path(post, path = "/orders", tag = "orders",
+    security(("bearer_auth" = [])),
+    request_body = CreateOrderRequest,
+    responses((status = 200, description = "Order created"))
+)]
 pub async fn create_order(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -176,6 +181,10 @@ pub async fn create_order(
     Ok(ApiResponse::success(to_order_response(o, items)))
 }
 
+#[utoipa::path(get, path = "/orders", tag = "orders",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "User orders list"))
+)]
 pub async fn list_orders(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -205,6 +214,11 @@ pub async fn list_orders(
     Ok(params.paginate(responses, total))
 }
 
+#[utoipa::path(get, path = "/orders/{id}", tag = "orders",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Order ID")),
+    responses((status = 200, description = "Order detail"))
+)]
 pub async fn get_order(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -215,6 +229,12 @@ pub async fn get_order(
     Ok(ApiResponse::success(to_order_response(o, items)))
 }
 
+#[utoipa::path(put, path = "/orders/{id}", tag = "orders",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Order ID")),
+    request_body = CancelOrderRequest,
+    responses((status = 200, description = "Order cancelled"))
+)]
 pub async fn cancel_order_handler(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -225,10 +245,22 @@ pub async fn cancel_order_handler(
     let user_int_id = auth
         .user_int_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
-    order::cancel_order(&state.pool, state.order_repo.as_ref(), &auth, &id, user_int_id).await?;
+    order::cancel_order(
+        &state.pool,
+        state.order_repo.as_ref(),
+        &auth,
+        &id,
+        user_int_id,
+    )
+    .await?;
     Ok(ApiResponse::success(()))
 }
 
+#[utoipa::path(post, path = "/orders/{id}/confirm", tag = "orders",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Order ID")),
+    responses((status = 200, description = "Receipt confirmed"))
+)]
 pub async fn confirm_receipt(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -238,10 +270,21 @@ pub async fn confirm_receipt(
     let user_int_id = auth
         .user_int_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
-    order::confirm_receipt(&state.pool, state.order_repo.as_ref(), &auth, &id, user_int_id).await?;
+    order::confirm_receipt(
+        &state.pool,
+        state.order_repo.as_ref(),
+        &auth,
+        &id,
+        user_int_id,
+    )
+    .await?;
     Ok(ApiResponse::success(()))
 }
 
+#[utoipa::path(get, path = "/admin/orders", tag = "orders",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Admin orders list"))
+)]
 pub async fn admin_list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -268,6 +311,11 @@ pub async fn admin_list(
     Ok(params.paginate(responses, total))
 }
 
+#[utoipa::path(get, path = "/admin/orders/{id}", tag = "orders",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Order ID")),
+    responses((status = 200, description = "Order detail"))
+)]
 pub async fn admin_get(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -278,6 +326,12 @@ pub async fn admin_get(
     Ok(ApiResponse::success(to_order_response(o, items)))
 }
 
+#[utoipa::path(post, path = "/admin/orders/{id}/ship", tag = "orders",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Order ID")),
+    request_body = ShipOrderRequest,
+    responses((status = 200, description = "Order shipped"))
+)]
 pub async fn admin_ship(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -289,6 +343,11 @@ pub async fn admin_ship(
     Ok(ApiResponse::success(()))
 }
 
+#[utoipa::path(post, path = "/admin/orders/{id}/cancel", tag = "orders",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Order ID")),
+    responses((status = 200, description = "Order cancelled"))
+)]
 pub async fn admin_cancel(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -299,6 +358,11 @@ pub async fn admin_cancel(
     Ok(ApiResponse::success(()))
 }
 
+#[utoipa::path(post, path = "/admin/orders/{id}/pay", tag = "orders",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Order ID")),
+    responses((status = 200, description = "Order marked as paid"))
+)]
 pub async fn admin_pay(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -309,6 +373,11 @@ pub async fn admin_pay(
     Ok(ApiResponse::success(()))
 }
 
+#[utoipa::path(post, path = "/admin/orders/{id}/refund", tag = "orders",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Order ID")),
+    responses((status = 200, description = "Order refunded"))
+)]
 pub async fn admin_refund(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -319,6 +388,12 @@ pub async fn admin_refund(
     Ok(ApiResponse::success(()))
 }
 
+#[utoipa::path(put, path = "/admin/orders/{id}/remark", tag = "orders",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Order ID")),
+    request_body = UpdateAdminRemarkRequest,
+    responses((status = 200, description = "Remark updated"))
+)]
 pub async fn admin_update_remark(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -330,6 +405,10 @@ pub async fn admin_update_remark(
     Ok(ApiResponse::success(()))
 }
 
+#[utoipa::path(get, path = "/admin/orders/stats", tag = "orders",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Order statistics"))
+)]
 pub async fn admin_stats(
     auth: AuthUser,
     State(state): State<crate::AppState>,

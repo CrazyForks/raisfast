@@ -15,29 +15,29 @@ use crate::models::rbac::{Permission, Role};
 use crate::repositories::RbacRepository;
 use crate::utils::tz::Timestamp;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateRoleRequest {
     pub name: String,
     pub description: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateRoleRequest {
     pub name: Option<String>,
     pub description: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct SetPermissionsRequest {
-    pub permissions: Vec<PermissionEntry>,
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct PermissionEntry {
     pub action: String,
     pub subject: String,
     pub fields: Option<Vec<String>>,
     pub conditions: Option<HashMap<String, String>>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct SetPermissionsRequest {
+    pub permissions: Vec<PermissionEntry>,
 }
 
 /// Handler-facing Permission view (fields/conditions already deserialized)

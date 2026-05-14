@@ -115,6 +115,10 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
 
 // ── User-facing ──
 
+#[utoipa::path(get, path = "/wallets", tag = "wallets",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "User wallets list"))
+)]
 pub async fn list_wallets(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -132,6 +136,11 @@ pub async fn list_wallets(
     Ok(ApiResponse::success(items))
 }
 
+#[utoipa::path(get, path = "/wallets/{currency}", tag = "wallets",
+    security(("bearer_auth" = [])),
+    params(("currency" = String, Path, description = "Currency code")),
+    responses((status = 200, description = "Wallet detail"))
+)]
 pub async fn get_wallet(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -150,6 +159,11 @@ pub async fn get_wallet(
     Ok(ApiResponse::success(dto::WalletResponse::from_wallet(w)?))
 }
 
+#[utoipa::path(get, path = "/wallets/{currency}/transactions", tag = "wallets",
+    security(("bearer_auth" = [])),
+    params(("currency" = String, Path, description = "Currency code")),
+    responses((status = 200, description = "Wallet transactions"))
+)]
 pub async fn list_transactions(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -180,6 +194,10 @@ pub async fn list_transactions(
     Ok(params.paginate(items, total))
 }
 
+#[utoipa::path(get, path = "/wallets/transactions", tag = "wallets",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "All wallet transactions"))
+)]
 pub async fn list_all_transactions(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -205,6 +223,10 @@ pub async fn list_all_transactions(
 
 // ── Admin ──
 
+#[utoipa::path(get, path = "/admin/wallets", tag = "wallets",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Admin wallets list"))
+)]
 pub async fn list_all_wallets(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -222,6 +244,10 @@ pub async fn list_all_wallets(
     Ok(params.paginate(items, total))
 }
 
+#[utoipa::path(get, path = "/admin/wallets/transactions", tag = "wallets",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Admin all transactions"))
+)]
 pub async fn list_all_transactions_admin(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -240,6 +266,11 @@ pub async fn list_all_transactions_admin(
     Ok(params.paginate(items, total))
 }
 
+#[utoipa::path(post, path = "/admin/wallets/credit", tag = "wallets",
+    security(("bearer_auth" = [])),
+    request_body = dto::AdminWalletOperationRequest,
+    responses((status = 200, description = "Wallet credited"))
+)]
 pub async fn admin_credit(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -269,6 +300,11 @@ pub async fn admin_credit(
     Ok(ApiResponse::success(resp))
 }
 
+#[utoipa::path(post, path = "/admin/wallets/debit", tag = "wallets",
+    security(("bearer_auth" = [])),
+    request_body = dto::AdminWalletOperationRequest,
+    responses((status = 200, description = "Wallet debited"))
+)]
 pub async fn admin_debit(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -298,6 +334,11 @@ pub async fn admin_debit(
     Ok(ApiResponse::success(resp))
 }
 
+#[utoipa::path(get, path = "/admin/wallets/{user_id}/{currency}/transactions", tag = "wallets",
+    security(("bearer_auth" = [])),
+    params(("user_id" = String, Path, description = "User ID"), ("currency" = String, Path, description = "Currency code")),
+    responses((status = 200, description = "User wallet transactions"))
+)]
 pub async fn list_user_transactions(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -328,6 +369,11 @@ pub async fn list_user_transactions(
     Ok(params.paginate(items, total))
 }
 
+#[utoipa::path(get, path = "/admin/wallets/{user_id}/transactions", tag = "wallets",
+    security(("bearer_auth" = [])),
+    params(("user_id" = String, Path, description = "User ID")),
+    responses((status = 200, description = "User all transactions"))
+)]
 pub async fn list_user_all_transactions(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -352,6 +398,12 @@ pub async fn list_user_all_transactions(
     Ok(params.paginate(items, total))
 }
 
+#[utoipa::path(post, path = "/admin/wallets/{tx_doc_id}/reversal", tag = "wallets",
+    security(("bearer_auth" = [])),
+    params(("tx_doc_id" = String, Path, description = "Transaction document ID")),
+    request_body = dto::ReversalRequest,
+    responses((status = 200, description = "Transaction reversed"))
+)]
 pub async fn admin_reversal(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -373,8 +425,9 @@ pub async fn admin_reversal(
             .find_wallet_by_id(original.wallet_id)
             .await?
             .ok_or_else(|| AppError::not_found("wallet"))?;
-        let user = crate::models::user::find_by_id(&state.pool, &wallet.user_id.to_string(), Some(tid))
-            .await?;
+        let user =
+            crate::models::user::find_by_id(&state.pool, &wallet.user_id.to_string(), Some(tid))
+                .await?;
         if user.is_none() {
             return Err(AppError::not_found("transaction"));
         }

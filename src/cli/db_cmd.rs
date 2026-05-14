@@ -1,7 +1,5 @@
 //! `db` subcommand: database migration, backup, seed data.
 
-use std::path::Path;
-
 use raisfast::config::app::AppConfig;
 use raisfast::db::connection::init_pool;
 use raisfast::db::dialect;
@@ -11,99 +9,12 @@ use raisfast::db::dialect;
 /// `db migrate` — execute incremental schema changes.
 ///
 /// Uses the `_migrations` table to track executed filenames, idempotent and safe.
-///
-/// - Schema is auto-executed by `ensure_schema()` on first startup, not handled by this command
-/// - This command handles incremental migration files under `migrations/{db}/` (e.g. `tenantable.*.sql`)
+/// Now runs the same logic as the auto-migration on startup.
 pub async fn migrate(config: &AppConfig) -> anyhow::Result<()> {
     println!("running migrations...");
     let pool = init_pool(&config.database_url, 1).await?;
 
     raisfast::db::connection::ensure_schema(&pool).await?;
-
-    let db_name = if cfg!(feature = "db-sqlite") {
-        "sqlite"
-    } else if cfg!(feature = "db-postgres") {
-        "postgres"
-    } else if cfg!(feature = "db-mysql") {
-        "mysql"
-    } else {
-        anyhow::bail!("no database feature enabled (db-sqlite / db-postgres / db-mysql)");
-    };
-
-    let migrations_dir = Path::new("./migrations").join(db_name);
-    if !migrations_dir.exists() {
-        println!("no migrations directory found (skipped)");
-        return Ok(());
-    }
-
-    let schema_label = format!("schema.{}.sql", db_name);
-
-    let mut entries: Vec<_> = std::fs::read_dir(&migrations_dir)?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path().extension().is_some_and(|ext| ext == "sql")
-                && e.file_name().to_string_lossy() != schema_label
-        })
-        .collect();
-    entries.sort_by_key(|e| e.file_name());
-
-    if entries.is_empty() {
-        println!("no migration files found");
-        return Ok(());
-    }
-
-    let check_sql = format!(
-        "SELECT COUNT(*) FROM _migrations WHERE filename = {}",
-        dialect::ph(1)
-    );
-    let insert_sql = format!(
-        "INSERT INTO _migrations (filename) VALUES ({})",
-        dialect::ph(1)
-    );
-
-    let tenantable_file = format!("tenantable.{}.sql", db_name);
-    let mut applied = 0u32;
-
-    for entry in &entries {
-        let filename = entry.file_name().to_string_lossy().to_string();
-
-        let already_applied: bool = sqlx::query_scalar::<_, i64>(&check_sql)
-            .bind(&filename)
-            .fetch_one(&pool)
-            .await
-            .unwrap_or(0)
-            > 0;
-
-        if already_applied {
-            println!("  [skip] {}", filename);
-            continue;
-        }
-
-        if filename == tenantable_file && !config.builtin_tenantable {
-            println!("  [skip] {} (BUILTIN_TENANTABLE=false)", filename);
-            sqlx::query(&insert_sql)
-                .bind(&filename)
-                .execute(&pool)
-                .await?;
-            continue;
-        }
-
-        let sql = std::fs::read_to_string(entry.path())?;
-        print!("  [apply] {} ... ", filename);
-        sqlx::query(&sql).execute(&pool).await?;
-        sqlx::query(&insert_sql)
-            .bind(&filename)
-            .execute(&pool)
-            .await?;
-        println!("ok");
-        applied += 1;
-    }
-
-    if applied == 0 {
-        println!("all migrations already applied");
-    } else {
-        println!("applied {} migration(s)", applied);
-    }
 
     Ok(())
 }
@@ -112,67 +23,9 @@ pub async fn migrate(config: &AppConfig) -> anyhow::Result<()> {
 
 /// `db backup` — backup the database.
 ///
-/// SQLite: copies the database file to the specified directory, auto-adds timestamp suffix, keeps the latest 10 backups.
-/// PostgreSQL / MySQL: prompts to use `pg_dump` / `mysqldump`.
-pub fn backup(config: &AppConfig, output_dir: &str) -> anyhow::Result<()> {
-    #[cfg(feature = "db-sqlite")]
-    {
-        let db_path = config
-            .database_url
-            .trim_start_matches("sqlite:")
-            .split('?')
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("invalid DATABASE_URL: {}", config.database_url))?;
-
-        if !Path::new(db_path).exists() {
-            anyhow::bail!("database file not found: {}", db_path);
-        }
-
-        std::fs::create_dir_all(output_dir)?;
-
-        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-        let backup_name = format!("raisfast_{}.db", timestamp);
-        let backup_path = Path::new(output_dir).join(&backup_name);
-
-        std::fs::copy(db_path, &backup_path)?;
-        let now = std::time::SystemTime::now();
-        let _ = std::fs::File::open(&backup_path).and_then(|f| f.set_modified(now));
-        let size = std::fs::metadata(&backup_path)?.len();
-
-        println!("backed up to {} ({} bytes)", backup_path.display(), size);
-
-        cleanup_old_backups(output_dir);
-        Ok(())
-    }
-
-    #[cfg(not(feature = "db-sqlite"))]
-    {
-        let _ = (config, output_dir);
-        anyhow::bail!(
-            "file-based backup is only supported for SQLite. \
-             Use pg_dump (PostgreSQL) or mysqldump (MySQL) instead."
-        );
-    }
-}
-
-/// Clean up old backups, keeping only the latest 10.
-fn cleanup_old_backups(output_dir: &str) {
-    let mut backups: Vec<_> = std::fs::read_dir(output_dir)
-        .ok()
-        .map(|dir| {
-            dir.filter_map(|e| e.ok())
-                .filter(|e| e.path().extension().is_some_and(|ext| ext == "db"))
-                .collect()
-        })
-        .unwrap_or_default();
-    backups.sort_by_key(|e| e.metadata().ok().map(|m| m.modified().ok()));
-    while backups.len() > 10 {
-        if let Some(old) = backups.first() {
-            let _ = std::fs::remove_file(old.path());
-            println!("  removed old backup: {}", old.path().display());
-        }
-        backups.remove(0);
-    }
+/// Delegates to `raisfast::db::backup::backup_database` which flushes WAL and copies the file.
+pub async fn backup(config: &AppConfig, output_dir: &str, retention: usize) -> anyhow::Result<()> {
+    raisfast::db::backup::backup_database(config, output_dir, retention).await
 }
 
 // ── seed ────────────────────────────────────────────────────────

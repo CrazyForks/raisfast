@@ -107,10 +107,13 @@ pub async fn find_all_wallets(
 ) -> AppResult<(Vec<Wallet>, i64)> {
     let offset = (page - 1) * page_size;
     let (total,): (i64,) = if let Some(tid) = tenant_id {
-        sqlx::query_as(&format!("SELECT COUNT(*) as count FROM wallets WHERE tenant_id = {}", crate::db::dialect::ph(1)))
-            .bind(tid)
-            .fetch_one(pool)
-            .await?
+        sqlx::query_as(&format!(
+            "SELECT COUNT(*) as count FROM wallets WHERE tenant_id = {}",
+            crate::db::dialect::ph(1)
+        ))
+        .bind(tid)
+        .fetch_one(pool)
+        .await?
     } else {
         sqlx::query_as("SELECT COUNT(*) as count FROM wallets")
             .fetch_one(pool)

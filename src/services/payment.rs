@@ -1,4 +1,8 @@
 use crate::audit::AuditService;
+use crate::commands::{
+    CreatePaymentChannelCmd, CreatePaymentOrderCmd, CreatePaymentRefundCmd,
+    CreatePaymentTransactionCmd, CreateWalletOutboxCmd,
+};
 use crate::config::app::AppConfig;
 use crate::dto::payment::*;
 use crate::errors::app_error::{AppError, AppResult};
@@ -7,13 +11,9 @@ use crate::models::payment_channel::PaymentChannel;
 use crate::models::payment_order::{PaymentOrder, PaymentStatus};
 use crate::models::payment_refund::PaymentRefund;
 use crate::models::payment_transaction::PaymentTransaction;
-use crate::commands::{
-    CreatePaymentChannelCmd, CreatePaymentOrderCmd, CreatePaymentRefundCmd,
-    CreatePaymentTransactionCmd, CreateWalletOutboxCmd,
-};
 use crate::models::wallet_transaction::{WalletReferenceType, WalletTxType};
-use crate::payment::routing::{RoutingContext, select_best_channel, select_channels};
 use crate::payment::ProviderResponse;
+use crate::payment::routing::{RoutingContext, select_best_channel, select_channels};
 use crate::repositories::{
     PaymentChannelRepository, PaymentOrderRepository, PaymentRefundRepository,
     PaymentTransactionRepository, WalletRepository,
@@ -86,9 +86,7 @@ pub async fn create_channel(
         is_active: true,
         sort_order: req.sort_order.unwrap_or(0),
     };
-    let channel = channel_repo
-        .insert(&cmd, auth.tenant_id())
-        .await?;
+    let channel = channel_repo.insert(&cmd, auth.tenant_id()).await?;
     audit_log!(
         audit,
         auth.tenant_id().unwrap_or(""),
@@ -316,7 +314,10 @@ pub async fn create_payment_order(
         let ctx = RoutingContext {
             currency: order.currency.clone(),
             country: req.country.clone(),
-            language: req.language.clone().or_else(|| client_language.map(String::from)),
+            language: req
+                .language
+                .clone()
+                .or_else(|| client_language.map(String::from)),
         };
         let ch = select_best_channel(&active, &ctx)?;
         (ch, "auto")
@@ -353,10 +354,7 @@ pub async fn create_payment_order(
         metadata: req.metadata.clone(),
     };
 
-    let payment_order = match order_repo
-        .insert(&cmd, auth.tenant_id())
-        .await
-    {
+    let payment_order = match order_repo.insert(&cmd, auth.tenant_id()).await {
         Ok(po) => po,
         Err(e) => {
             if is_unique_violation(&e)
@@ -391,7 +389,10 @@ pub async fn create_payment_order(
             Some(resp)
         }
         Err(e) => {
-            tracing::warn!("provider create failed for order {}: {e}", payment_order.document_id);
+            tracing::warn!(
+                "provider create failed for order {}: {e}",
+                payment_order.document_id
+            );
             return Err(e);
         }
     };
@@ -430,8 +431,7 @@ pub async fn cancel_payment_order(
             .find_by_id(order.channel_id, auth.tenant_id())
             .await?;
         if let Some(ch) = channel
-            && let Ok(provider) =
-                crate::payment::providers::get_provider(&order.provider, &key)
+            && let Ok(provider) = crate::payment::providers::get_provider(&order.provider, &key)
             && let Err(e) = provider.cancel(&ch, provider_order_id).await
         {
             tracing::warn!(
@@ -625,7 +625,7 @@ pub async fn handle_callback(
             crate::models::order::tx_update_status(
                 &mut tx,
                 order_id,
-            crate::models::order::OrderStatus::Paid,
+                crate::models::order::OrderStatus::Paid,
                 Some("paid_at"),
             )
             .await?;
@@ -699,34 +699,37 @@ pub async fn refund_payment_order(
     let wallet_tx_no = format!("PAYMENT_REFUND_{}", uuid::Uuid::now_v7());
 
     let refund = crate::in_transaction!(pool, tx, {
-        let already_refunded_in_tx =
-            crate::models::payment_refund::tx_sum_refunded_by_order(&mut tx, payment_order.id, auth.tenant_id())
-                .await?;
+        let already_refunded_in_tx = crate::models::payment_refund::tx_sum_refunded_by_order(
+            &mut tx,
+            payment_order.id,
+            auth.tenant_id(),
+        )
+        .await?;
         if already_refunded_in_tx + req.amount > payment_order.amount {
             return Err(AppError::BadRequest("refund_exceeds_payment".into()));
         }
 
-        let provider_refund_id =
-            if let Some(ref provider_order_id) = payment_order.provider_order_id {
-                let key = get_encrypt_key(config)?;
-                let channel = channel_repo
-                    .find_by_id(payment_order.channel_id, auth.tenant_id())
-                    .await?
-                    .ok_or_else(|| AppError::not_found("payment_channel"))?;
-                let provider =
-                    crate::payment::providers::get_provider(&payment_order.provider, &key)?;
-                let result = provider
-                    .refund(
-                        &channel,
-                        provider_order_id,
-                        req.amount,
-                        req.reason.as_deref(),
-                    )
-                    .await?;
-                result.provider_refund_id
-            } else {
-                format!("re_{}", uuid::Uuid::now_v7())
-            };
+        let provider_refund_id = if let Some(ref provider_order_id) =
+            payment_order.provider_order_id
+        {
+            let key = get_encrypt_key(config)?;
+            let channel = channel_repo
+                .find_by_id(payment_order.channel_id, auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("payment_channel"))?;
+            let provider = crate::payment::providers::get_provider(&payment_order.provider, &key)?;
+            let result = provider
+                .refund(
+                    &channel,
+                    provider_order_id,
+                    req.amount,
+                    req.reason.as_deref(),
+                )
+                .await?;
+            result.provider_refund_id
+        } else {
+            format!("re_{}", uuid::Uuid::now_v7())
+        };
 
         let refund_cmd = CreatePaymentRefundCmd {
             payment_order_id: payment_order.id,
@@ -766,9 +769,12 @@ pub async fn refund_payment_order(
         )
         .await?;
 
-        let already_refunded_in_tx =
-            crate::models::payment_refund::tx_sum_refunded_by_order(&mut tx, payment_order.id, auth.tenant_id())
-                .await?;
+        let already_refunded_in_tx = crate::models::payment_refund::tx_sum_refunded_by_order(
+            &mut tx,
+            payment_order.id,
+            auth.tenant_id(),
+        )
+        .await?;
         let is_full_refund = already_refunded_in_tx >= payment_order.amount;
         let new_status = if is_full_refund {
             PaymentStatus::Refunded
@@ -994,7 +1000,12 @@ mod tests {
         .unwrap()
     }
 
-    async fn seed_order(pool: &crate::db::Pool, user_id: i64, amount: i64, currency: &str) -> crate::models::order::Order {
+    async fn seed_order(
+        pool: &crate::db::Pool,
+        user_id: i64,
+        amount: i64,
+        currency: &str,
+    ) -> crate::models::order::Order {
         let order_no = format!("ORD-{}", uuid::Uuid::now_v7().to_string().replace('-', ""));
         crate::models::order::insert(
             pool,
@@ -1618,11 +1629,7 @@ mod tests {
         let mut po = seed_payment_order(&pool, user_id, channel_a.id, 500, "CNY").await;
         po.provider_order_id = Some("prov_123".to_string());
         crate::models::payment_order::update_provider_order_id(
-            &pool,
-            po.id,
-            "prov_123",
-            None,
-            None,
+            &pool, po.id, "prov_123", None, None,
         )
         .await
         .unwrap();
@@ -1795,7 +1802,9 @@ mod tests {
                 is_live: false,
                 credentials: r#"{"api_key":"test"}"#.into(),
                 webhook_secret: None,
-                settings: Some(r#"{"countries":["CN"],"currencies":["CNY"],"priority":100}"#.into()),
+                settings: Some(
+                    r#"{"countries":["CN"],"currencies":["CNY"],"priority":100}"#.into(),
+                ),
                 is_active: true,
                 sort_order: 0,
             },
@@ -1811,7 +1820,9 @@ mod tests {
                 is_live: false,
                 credentials: r#"{"api_key":"test"}"#.into(),
                 webhook_secret: None,
-                settings: Some(r#"{"countries":["*"],"currencies":["USD","CNY"],"priority":10}"#.into()),
+                settings: Some(
+                    r#"{"countries":["*"],"currencies":["USD","CNY"],"priority":10}"#.into(),
+                ),
                 is_active: true,
                 sort_order: 1,
             },
@@ -1837,7 +1848,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.channels.len(), 2);
-        assert_eq!(result.recommended_channel_id, Some(ch_cny.document_id.clone()));
+        assert_eq!(
+            result.recommended_channel_id,
+            Some(ch_cny.document_id.clone())
+        );
         assert!(result.channels[0].is_recommended);
         assert_eq!(result.channels[0].channel_id, ch_cny.document_id);
         assert!(!result.channels[1].is_recommended);

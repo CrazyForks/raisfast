@@ -85,7 +85,11 @@ async fn get_order_by_id() {
     .await;
     let order_id = create_body["data"]["id"].as_str().unwrap();
 
-    let (status, body) = send(&mut app, get_auth(&format!("/api/v1/orders/{order_id}"), &tok)).await;
+    let (status, body) = send(
+        &mut app,
+        get_auth(&format!("/api/v1/orders/{order_id}"), &tok),
+    )
+    .await;
     assert!(status.is_success(), "get order: {status} {body:?}");
     assert_eq!(body["data"]["id"], order_id);
 }
@@ -107,7 +111,11 @@ async fn list_user_orders() {
     )
     .await;
 
-    let (status, body) = send(&mut app, get_auth("/api/v1/orders?page=1&page_size=10", &tok)).await;
+    let (status, body) = send(
+        &mut app,
+        get_auth("/api/v1/orders?page=1&page_size=10", &tok),
+    )
+    .await;
     assert!(status.is_success(), "list orders: {status} {body:?}");
     let items = body["data"]["items"].as_array().unwrap();
     assert!(!items.is_empty());
@@ -133,16 +141,16 @@ async fn cancel_own_order() {
 
     let (status, _) = send(
         &mut app,
-        put_json_auth(
-            &format!("/api/v1/orders/{order_id}"),
-            json!({}),
-            &tok,
-        ),
+        put_json_auth(&format!("/api/v1/orders/{order_id}"), json!({}), &tok),
     )
     .await;
     assert!(status.is_success(), "cancel order: {status}");
 
-    let (_, body) = send(&mut app, get_auth(&format!("/api/v1/orders/{order_id}"), &tok)).await;
+    let (_, body) = send(
+        &mut app,
+        get_auth(&format!("/api/v1/orders/{order_id}"), &tok),
+    )
+    .await;
     assert_eq!(body["data"]["status"], "cancelled");
 }
 
@@ -213,7 +221,11 @@ async fn admin_ship_order() {
     .await;
     assert!(status.is_success(), "ship: {status}");
 
-    let (_, body) = send(&mut app, get_auth(&format!("/api/v1/admin/orders/{order_id}"), &tok)).await;
+    let (_, body) = send(
+        &mut app,
+        get_auth(&format!("/api/v1/admin/orders/{order_id}"), &tok),
+    )
+    .await;
     assert_eq!(body["data"]["status"], "shipped");
     assert_eq!(body["data"]["tracking_no"], "SF1234567890");
 }
@@ -277,7 +289,11 @@ async fn admin_update_remark() {
     .await;
     assert!(status.is_success(), "update remark: {status}");
 
-    let (_, body) = send(&mut app, get_auth(&format!("/api/v1/admin/orders/{order_id}"), &tok)).await;
+    let (_, body) = send(
+        &mut app,
+        get_auth(&format!("/api/v1/admin/orders/{order_id}"), &tok),
+    )
+    .await;
     assert_eq!(body["data"]["admin_remark"], "VIP customer");
 }
 

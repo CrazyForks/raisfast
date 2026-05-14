@@ -126,10 +126,13 @@ pub async fn find_all_transactions(
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
     let offset = (page - 1) * page_size;
     let (total,): (i64,) = if let Some(tid) = tenant_id {
-        sqlx::query_as(&format!("SELECT COUNT(*) as count FROM wallet_transactions WHERE tenant_id = {}", crate::db::dialect::ph(1)))
-            .bind(tid)
-            .fetch_one(pool)
-            .await?
+        sqlx::query_as(&format!(
+            "SELECT COUNT(*) as count FROM wallet_transactions WHERE tenant_id = {}",
+            crate::db::dialect::ph(1)
+        ))
+        .bind(tid)
+        .fetch_one(pool)
+        .await?
     } else {
         sqlx::query_as("SELECT COUNT(*) as count FROM wallet_transactions")
             .fetch_one(pool)

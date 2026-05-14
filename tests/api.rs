@@ -20,9 +20,9 @@ use raisfast::config::app::AppConfig;
 use raisfast::handlers::{
     api_token as h_token, auth as h_auth, category as h_cat, comment as h_cmt, cron as h_cron,
     health as h_health, media as h_media, options as h_options, order as h_order, page as h_page,
-    payment as h_payment, plugin as h_plugin, post as h_post, product as h_product,
-    rbac as h_rbac, reusable_block as h_block, rss as h_rss, sse as h_sse,
-    stats as h_stats, tag as h_tag, tenant as h_tenant, user as h_user, wallet as h_wallet,
+    payment as h_payment, plugin as h_plugin, post as h_post, product as h_product, rbac as h_rbac,
+    reusable_block as h_block, rss as h_rss, sse as h_sse, stats as h_stats, tag as h_tag,
+    tenant as h_tenant, user as h_user, wallet as h_wallet,
 };
 use raisfast::middleware::locale::locale_middleware;
 use raisfast::middleware::rate_limit::{
@@ -54,9 +54,10 @@ pub(crate) fn test_config() -> AppConfig {
     cfg.base_url = "http://localhost:9000".into();
     let mut key_bytes = [0u8; 32];
     getrandom::getrandom(&mut key_bytes).unwrap();
-    cfg.app_key = Some(
-        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, key_bytes),
-    );
+    cfg.app_key = Some(base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        key_bytes,
+    ));
     cfg
 }
 
@@ -352,20 +353,38 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             "/admin/products/{id}",
             put(h_product::admin_update).delete(h_product::admin_delete),
         )
-        .route("/orders", get(h_order::list_orders).post(h_order::create_order))
-        .route("/orders/{id}", get(h_order::get_order).put(h_order::cancel_order_handler))
+        .route(
+            "/orders",
+            get(h_order::list_orders).post(h_order::create_order),
+        )
+        .route(
+            "/orders/{id}",
+            get(h_order::get_order).put(h_order::cancel_order_handler),
+        )
         .route("/orders/{id}/confirm", http_post(h_order::confirm_receipt))
         .route("/admin/orders", get(h_order::admin_list))
         .route("/admin/orders/{id}", get(h_order::admin_get))
         .route("/admin/orders/{id}/pay", http_post(h_order::admin_pay))
         .route("/admin/orders/{id}/ship", http_post(h_order::admin_ship))
-        .route("/admin/orders/{id}/cancel", http_post(h_order::admin_cancel))
-        .route("/admin/orders/{id}/refund", http_post(h_order::admin_refund))
-        .route("/admin/orders/{id}/remark", put(h_order::admin_update_remark))
+        .route(
+            "/admin/orders/{id}/cancel",
+            http_post(h_order::admin_cancel),
+        )
+        .route(
+            "/admin/orders/{id}/refund",
+            http_post(h_order::admin_refund),
+        )
+        .route(
+            "/admin/orders/{id}/remark",
+            put(h_order::admin_update_remark),
+        )
         .route("/admin/orders/stats", get(h_order::admin_stats))
         .route("/wallets", get(h_wallet::list_wallets))
         .route("/wallets/{currency}", get(h_wallet::get_wallet))
-        .route("/wallets/transactions", get(h_wallet::list_all_transactions))
+        .route(
+            "/wallets/transactions",
+            get(h_wallet::list_all_transactions),
+        )
         .route(
             "/wallets/{currency}/transactions",
             get(h_wallet::list_transactions),
@@ -397,26 +416,49 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             "/payment/orders",
             get(h_payment::list_user_orders).post(h_payment::create_payment_order_handler),
         )
-        .route("/payment/orders/{id}", get(h_payment::get_payment_order_handler))
-        .route("/payment/orders/{id}/cancel", http_post(h_payment::cancel_payment_order_handler))
+        .route(
+            "/payment/orders/{id}",
+            get(h_payment::get_payment_order_handler),
+        )
+        .route(
+            "/payment/orders/{id}/cancel",
+            http_post(h_payment::cancel_payment_order_handler),
+        )
         .route(
             "/payment/orders/{id}/transactions",
             get(h_payment::list_order_transactions),
         )
-        .route("/payment/orders/{id}/refunds", get(h_payment::list_order_refunds))
+        .route(
+            "/payment/orders/{id}/refunds",
+            get(h_payment::list_order_refunds),
+        )
         .route(
             "/payment/callback/{channel_doc_id}",
             http_post(h_payment::handle_callback).layer(from_fn(payment_callback_rate_limit)),
         )
-        .route("/admin/payment/channels", get(h_payment::admin_list_channels).post(h_payment::admin_create_channel))
+        .route(
+            "/admin/payment/channels",
+            get(h_payment::admin_list_channels).post(h_payment::admin_create_channel),
+        )
         .route(
             "/admin/payment/channels/{id}",
-            get(h_payment::admin_get_channel).put(h_payment::admin_update_channel).delete(h_payment::admin_delete_channel),
+            get(h_payment::admin_get_channel)
+                .put(h_payment::admin_update_channel)
+                .delete(h_payment::admin_delete_channel),
         )
         .route("/admin/payment/orders", get(h_payment::admin_list_orders))
-        .route("/admin/payment/orders/{id}", get(h_payment::admin_get_order))
-        .route("/admin/payment/orders/{id}/refund", http_post(h_payment::admin_refund_order))
-        .route("/admin/payment/transactions", get(h_payment::admin_list_transactions))
+        .route(
+            "/admin/payment/orders/{id}",
+            get(h_payment::admin_get_order),
+        )
+        .route(
+            "/admin/payment/orders/{id}/refund",
+            http_post(h_payment::admin_refund_order),
+        )
+        .route(
+            "/admin/payment/transactions",
+            get(h_payment::admin_list_transactions),
+        )
         .route("/admin/payment/refunds", get(h_payment::admin_list_refunds))
         .layer(from_fn(global_rate_limit))
         .layer(axum::Extension(RateLimiterSet::new_default()));
@@ -646,8 +688,12 @@ mod health;
 mod media;
 #[path = "api/options.rs"]
 mod options;
+#[path = "api/order.rs"]
+mod order;
 #[path = "api/page.rs"]
 mod page;
+#[path = "api/payment.rs"]
+mod payment;
 #[path = "api/plugin.rs"]
 mod plugin;
 #[path = "api/post.rs"]
@@ -670,13 +716,9 @@ mod tenant_admin;
 mod tenant_e2e;
 #[path = "api/user.rs"]
 mod user;
-#[path = "api/webhook.rs"]
-mod webhook;
 #[path = "api/wallet.rs"]
 mod wallet;
-#[path = "api/order.rs"]
-mod order;
-#[path = "api/payment.rs"]
-mod payment;
+#[path = "api/webhook.rs"]
+mod webhook;
 #[path = "api/workflow.rs"]
 mod workflow;

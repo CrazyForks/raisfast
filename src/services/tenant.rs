@@ -11,14 +11,14 @@ use crate::errors::app_error::AppError;
 use crate::models::tenant::{Tenant, TenantStatus};
 use crate::repositories::TenantRepository;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateTenantRequest {
     pub name: String,
     pub domain: Option<String>,
     pub config: Option<HashMap<String, Value>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateTenantRequest {
     pub name: Option<String>,
     pub domain: Option<String>,

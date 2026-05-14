@@ -9,9 +9,9 @@ use sha2::Sha256;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::models::payment_channel::PaymentChannel;
 use crate::models::payment_order::{PaymentOrder, PaymentStatus};
+use crate::payment::PaymentProvider;
 use crate::payment::crypto::aes256gcm_decrypt;
 use crate::payment::provider::{CallbackData, ProviderResponse, ProviderStatus, RefundResponse};
-use crate::payment::PaymentProvider;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -211,10 +211,7 @@ async fn do_create_checkout(
     resp.json::<CheckoutResponse>().await.map_err(dodo_error)
 }
 
-async fn do_get_payment(
-    creds: &DodoCredentials,
-    payment_id: &str,
-) -> AppResult<PaymentResponse> {
+async fn do_get_payment(creds: &DodoCredentials, payment_id: &str) -> AppResult<PaymentResponse> {
     let url = format!("{}/payments/{payment_id}", base_url(creds));
     let client = reqwest::Client::new();
     let resp = client
@@ -279,12 +276,14 @@ fn verify_webhook_signature(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("system time: {e}")))?
         .as_secs();
 
-    let ts: u64 = timestamp.parse().map_err(|_| {
-        AppError::BadRequest("dodo webhook: invalid timestamp".into())
-    })?;
+    let ts: u64 = timestamp
+        .parse()
+        .map_err(|_| AppError::BadRequest("dodo webhook: invalid timestamp".into()))?;
 
     if now.abs_diff(ts) > WEBHOOK_TOLERANCE_SECS {
-        return Err(AppError::BadRequest("dodo webhook: timestamp expired".into()));
+        return Err(AppError::BadRequest(
+            "dodo webhook: timestamp expired".into(),
+        ));
     }
 
     let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
@@ -298,7 +297,10 @@ fn verify_webhook_signature(
     let expected = BASE64.encode(mac.finalize().into_bytes());
 
     let signatures: Vec<&str> = signature.split(' ').collect();
-    if signatures.iter().all(|s| !s.eq_ignore_ascii_case(&expected)) {
+    if signatures
+        .iter()
+        .all(|s| !s.eq_ignore_ascii_case(&expected))
+    {
         return Err(AppError::BadRequest(
             "dodo webhook: signature mismatch".into(),
         ));
@@ -379,11 +381,7 @@ impl PaymentProvider for DodoProvider {
         })
     }
 
-    async fn cancel(
-        &self,
-        _channel: &PaymentChannel,
-        _provider_order_id: &str,
-    ) -> AppResult<()> {
+    async fn cancel(&self, _channel: &PaymentChannel, _provider_order_id: &str) -> AppResult<()> {
         Ok(())
     }
 
@@ -413,37 +411,29 @@ impl PaymentProvider for DodoProvider {
         let webhook_id = headers
             .get("webhook-id")
             .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| {
-                AppError::BadRequest("missing webhook-id header".into())
-            })?;
+            .ok_or_else(|| AppError::BadRequest("missing webhook-id header".into()))?;
 
         let signature = headers
             .get("webhook-signature")
             .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| {
-                AppError::BadRequest("missing webhook-signature header".into())
-            })?;
+            .ok_or_else(|| AppError::BadRequest("missing webhook-signature header".into()))?;
 
         let timestamp = headers
             .get("webhook-timestamp")
             .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| {
-                AppError::BadRequest("missing webhook-timestamp header".into())
-            })?;
+            .ok_or_else(|| AppError::BadRequest("missing webhook-timestamp header".into()))?;
 
         let webhook_secret = decrypt_webhook_secret(channel, &self.encrypt_key)?;
 
         verify_webhook_signature(body, webhook_id, signature, timestamp, &webhook_secret)?;
 
-        let payload: DodoWebhookPayload =
-            serde_json::from_slice(body).map_err(|e| {
-                AppError::BadRequest(format!("dodo webhook parse: {e}"))
-            })?;
+        let payload: DodoWebhookPayload = serde_json::from_slice(body)
+            .map_err(|e| AppError::BadRequest(format!("dodo webhook parse: {e}")))?;
 
         let event_type = payload.event_type.as_deref().unwrap_or("unknown");
-        let data = payload.data.ok_or_else(|| {
-            AppError::BadRequest("dodo webhook: missing data field".into())
-        })?;
+        let data = payload
+            .data
+            .ok_or_else(|| AppError::BadRequest("dodo webhook: missing data field".into()))?;
 
         let (provider_order_id, status, amount) = match event_type {
             "payment.succeeded" => (
@@ -539,8 +529,7 @@ mod tests {
     fn extract_product_id_from_settings() {
         let key = test_key();
         let encrypted =
-            crate::payment::crypto::aes256gcm_encrypt(r#"{"api_key":"test_key"}"#, &key)
-                .unwrap();
+            crate::payment::crypto::aes256gcm_encrypt(r#"{"api_key":"test_key"}"#, &key).unwrap();
 
         let channel = PaymentChannel {
             id: 1,
@@ -627,8 +616,7 @@ mod tests {
         let body = br#"{"type":"payment.succeeded","data":{}}"#;
 
         let timestamp_str = timestamp.to_string();
-        let mut mac =
-            HmacSha256::new_from_slice(webhook_secret.as_bytes()).unwrap();
+        let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes()).unwrap();
         mac.update(webhook_id.as_bytes());
         mac.update(b".");
         mac.update(timestamp_str.as_bytes());
@@ -637,24 +625,15 @@ mod tests {
         let sig = BASE64.encode(mac.finalize().into_bytes());
 
         assert!(
-            verify_webhook_signature(
-                body,
-                webhook_id,
-                &sig,
-                &timestamp_str,
-                webhook_secret,
-            )
-            .is_ok()
+            verify_webhook_signature(body, webhook_id, &sig, &timestamp_str, webhook_secret,)
+                .is_ok()
         );
     }
 
     #[test]
     fn webhook_signature_verification_invalid() {
         let body = br#"{"type":"test"}"#;
-        assert!(
-            verify_webhook_signature(body, "msg_1", "badsig", "9999999999", "secret")
-                .is_err()
-        );
+        assert!(verify_webhook_signature(body, "msg_1", "badsig", "9999999999", "secret").is_err());
     }
 
     #[test]
@@ -665,8 +644,7 @@ mod tests {
         let body = br#"{"type":"payment.succeeded"}"#;
 
         let old_ts_str = old_timestamp.to_string();
-        let mut mac =
-            HmacSha256::new_from_slice(webhook_secret.as_bytes()).unwrap();
+        let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes()).unwrap();
         mac.update(webhook_id.as_bytes());
         mac.update(b".");
         mac.update(old_ts_str.as_bytes());
@@ -675,14 +653,7 @@ mod tests {
         let sig = BASE64.encode(mac.finalize().into_bytes());
 
         assert!(
-            verify_webhook_signature(
-                body,
-                webhook_id,
-                &sig,
-                &old_ts_str,
-                webhook_secret,
-            )
-            .is_err()
+            verify_webhook_signature(body, webhook_id, &sig, &old_ts_str, webhook_secret,).is_err()
         );
     }
 
@@ -711,8 +682,7 @@ mod tests {
             .as_secs();
 
         let timestamp_str = timestamp.to_string();
-        let mut mac =
-            HmacSha256::new_from_slice(webhook_secret.as_bytes()).unwrap();
+        let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes()).unwrap();
         mac.update(webhook_id.as_bytes());
         mac.update(b".");
         mac.update(timestamp_str.as_bytes());
@@ -723,10 +693,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("webhook-id", webhook_id.parse().unwrap());
         headers.insert("webhook-signature", sig.parse().unwrap());
-        headers.insert(
-            "webhook-timestamp",
-            timestamp_str.parse().unwrap(),
-        );
+        headers.insert("webhook-timestamp", timestamp_str.parse().unwrap());
 
         let channel = PaymentChannel {
             id: 1,
@@ -781,8 +748,7 @@ mod tests {
             .as_secs();
 
         let timestamp_str = timestamp.to_string();
-        let mut mac =
-            HmacSha256::new_from_slice(webhook_secret.as_bytes()).unwrap();
+        let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes()).unwrap();
         mac.update(webhook_id.as_bytes());
         mac.update(b".");
         mac.update(timestamp_str.as_bytes());
@@ -793,10 +759,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("webhook-id", webhook_id.parse().unwrap());
         headers.insert("webhook-signature", sig.parse().unwrap());
-        headers.insert(
-            "webhook-timestamp",
-            timestamp_str.parse().unwrap(),
-        );
+        headers.insert("webhook-timestamp", timestamp_str.parse().unwrap());
 
         let channel = PaymentChannel {
             id: 1,

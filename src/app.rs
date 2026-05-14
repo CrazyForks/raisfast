@@ -42,7 +42,7 @@ impl ServiceRegistry {
     pub fn insert<T: Send + Sync + 'static + ?Sized>(&self, service: Arc<T>) {
         self.inner
             .write()
-            .expect("ServiceRegistry lock poisoned")
+            .unwrap_or_else(|e| panic!("ServiceRegistry write lock poisoned: {e}"))
             .map
             .insert(TypeId::of::<T>(), Box::new(service));
     }
@@ -53,22 +53,27 @@ impl ServiceRegistry {
     ///
     /// Panics if `T` was not registered or if the lock is poisoned.
     pub fn resolve<T: 'static + ?Sized>(&self) -> Arc<T> {
-        let guard = self.inner.read().expect("ServiceRegistry lock poisoned");
+        let guard = self
+            .inner
+            .read()
+            .unwrap_or_else(|e| panic!("ServiceRegistry read lock poisoned: {e}"));
         let Some(boxed) = guard.map.get(&TypeId::of::<T>()) else {
             let type_name = std::any::type_name::<T>();
             panic!("ServiceRegistry: no service registered for type `{type_name}`");
         };
-        boxed
-            .downcast_ref::<Arc<T>>()
-            .cloned()
-            .expect("ServiceRegistry: type mismatch — stored Arc<T> does not match requested T")
+        boxed.downcast_ref::<Arc<T>>().cloned().unwrap_or_else(|| {
+            panic!(
+                "ServiceRegistry: type mismatch for `{}`",
+                std::any::type_name::<T>()
+            )
+        })
     }
 
     /// Check if a service of type `T` has been registered.
     pub fn contains<T: 'static + ?Sized>(&self) -> bool {
         self.inner
             .read()
-            .expect("ServiceRegistry lock poisoned")
+            .unwrap_or_else(|e| panic!("ServiceRegistry read lock poisoned: {e}"))
             .map
             .contains_key(&TypeId::of::<T>())
     }
@@ -77,7 +82,7 @@ impl ServiceRegistry {
     pub fn len(&self) -> usize {
         self.inner
             .read()
-            .expect("ServiceRegistry lock poisoned")
+            .unwrap_or_else(|e| panic!("ServiceRegistry read lock poisoned: {e}"))
             .map
             .len()
     }

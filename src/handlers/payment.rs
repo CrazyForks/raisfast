@@ -73,7 +73,9 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
         r,
         registry,
         "/payment/callback/{channel_doc_id}",
-        http_post(handle_callback).layer(axum::middleware::from_fn(crate::middleware::rate_limit::payment_callback_rate_limit)),
+        http_post(handle_callback).layer(axum::middleware::from_fn(
+            crate::middleware::rate_limit::payment_callback_rate_limit
+        )),
         "system public",
         "payment",
         ["POST"]
@@ -191,6 +193,11 @@ fn to_order_response_with_provider(
     resp
 }
 
+#[utoipa::path(post, path = "/payment/orders", tag = "payments",
+    security(("bearer_auth" = [])),
+    request_body = CreatePaymentOrderRequest,
+    responses((status = 200, description = "Payment order created"))
+)]
 pub async fn create_payment_order_handler(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -224,6 +231,10 @@ pub async fn create_payment_order_handler(
     )))
 }
 
+#[utoipa::path(get, path = "/payment/orders", tag = "payments",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "User payment orders"))
+)]
 pub async fn list_user_orders(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -244,6 +255,11 @@ pub async fn list_user_orders(
     Ok(params.paginate(responses, total))
 }
 
+#[utoipa::path(get, path = "/payment/orders/{id}", tag = "payments",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Payment order ID")),
+    responses((status = 200, description = "Payment order detail"))
+)]
 pub async fn get_payment_order_handler(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -251,10 +267,17 @@ pub async fn get_payment_order_handler(
 ) -> AppResult<ApiResponse<PaymentOrderResponse>> {
     let _user_id = auth.ensure_authenticated()?;
     let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
-    let order = payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, user_int_id, &id).await?;
+    let order =
+        payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, user_int_id, &id)
+            .await?;
     Ok(ApiResponse::success(to_order_response(order)))
 }
 
+#[utoipa::path(post, path = "/payment/orders/{id}/cancel", tag = "payments",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Payment order ID")),
+    responses((status = 200, description = "Payment order cancelled"))
+)]
 pub async fn cancel_payment_order_handler(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -277,6 +300,11 @@ pub async fn cancel_payment_order_handler(
     Ok(ApiResponse::success(()))
 }
 
+#[utoipa::path(get, path = "/payment/orders/{id}/transactions", tag = "payments",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Payment order ID")),
+    responses((status = 200, description = "Payment transactions"))
+)]
 pub async fn list_order_transactions(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -284,7 +312,9 @@ pub async fn list_order_transactions(
 ) -> AppResult<ApiResponse<Vec<PaymentTransactionResponse>>> {
     let _ = auth.ensure_authenticated()?;
     let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
-    let order = payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, user_int_id, &id).await?;
+    let order =
+        payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, user_int_id, &id)
+            .await?;
     let txs = state
         .payment_tx_repo
         .find_by_payment_order_id(order.id, auth.tenant_id())
@@ -293,6 +323,11 @@ pub async fn list_order_transactions(
     Ok(ApiResponse::success(responses))
 }
 
+#[utoipa::path(get, path = "/payment/orders/{id}/refunds", tag = "payments",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Payment order ID")),
+    responses((status = 200, description = "Payment refunds"))
+)]
 pub async fn list_order_refunds(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -300,7 +335,9 @@ pub async fn list_order_refunds(
 ) -> AppResult<ApiResponse<Vec<PaymentRefundResponse>>> {
     let _ = auth.ensure_authenticated()?;
     let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
-    let order = payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, user_int_id, &id).await?;
+    let order =
+        payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, user_int_id, &id)
+            .await?;
     let refunds = state
         .payment_refund_repo
         .find_by_payment_order_id(order.id, auth.tenant_id())
@@ -309,6 +346,11 @@ pub async fn list_order_refunds(
     Ok(ApiResponse::success(responses))
 }
 
+#[utoipa::path(post, path = "/payment/callback/{channel_doc_id}", tag = "payments",
+    params(("channel_doc_id" = String, Path, description = "Channel document ID")),
+    request_body = String,
+    responses((status = 200, description = "Callback processed"))
+)]
 pub async fn handle_callback(
     State(state): State<crate::AppState>,
     Path(channel_doc_id): Path<String>,
@@ -361,6 +403,10 @@ fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+#[utoipa::path(get, path = "/payment/channels/available", tag = "payments",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Available payment channels"))
+)]
 pub async fn list_available_channels_handler(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -378,6 +424,10 @@ pub async fn list_available_channels_handler(
     Ok(ApiResponse::success(result))
 }
 
+#[utoipa::path(get, path = "/admin/payment/channels", tag = "payments",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Admin payment channels list"))
+)]
 pub async fn admin_list_channels(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -393,6 +443,11 @@ pub async fn admin_list_channels(
     Ok(params.paginate(responses, total))
 }
 
+#[utoipa::path(post, path = "/admin/payment/channels", tag = "payments",
+    security(("bearer_auth" = [])),
+    request_body = CreatePaymentChannelRequest,
+    responses((status = 200, description = "Payment channel created"))
+)]
 pub async fn admin_create_channel(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -411,6 +466,11 @@ pub async fn admin_create_channel(
     Ok(ApiResponse::success(PaymentChannelResponse::from(channel)))
 }
 
+#[utoipa::path(get, path = "/admin/payment/channels/{id}", tag = "payments",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Channel ID")),
+    responses((status = 200, description = "Payment channel detail"))
+)]
 pub async fn admin_get_channel(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -420,6 +480,12 @@ pub async fn admin_get_channel(
     Ok(ApiResponse::success(PaymentChannelResponse::from(channel)))
 }
 
+#[utoipa::path(put, path = "/admin/payment/channels/{id}", tag = "payments",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Channel ID")),
+    request_body = UpdatePaymentChannelRequest,
+    responses((status = 200, description = "Payment channel updated"))
+)]
 pub async fn admin_update_channel(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -440,6 +506,11 @@ pub async fn admin_update_channel(
     Ok(ApiResponse::success(PaymentChannelResponse::from(channel)))
 }
 
+#[utoipa::path(delete, path = "/admin/payment/channels/{id}", tag = "payments",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Channel ID")),
+    responses((status = 200, description = "Payment channel deleted"))
+)]
 pub async fn admin_delete_channel(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -450,6 +521,10 @@ pub async fn admin_delete_channel(
     Ok(ApiResponse::success(()))
 }
 
+#[utoipa::path(get, path = "/admin/payment/orders", tag = "payments",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Admin payment orders list"))
+)]
 pub async fn admin_list_orders(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -469,16 +544,28 @@ pub async fn admin_list_orders(
     Ok(params.paginate(responses, total))
 }
 
+#[utoipa::path(get, path = "/admin/payment/orders/{id}", tag = "payments",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Payment order ID")),
+    responses((status = 200, description = "Payment order detail"))
+)]
 pub async fn admin_get_order(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PaymentOrderResponse>> {
     auth.ensure_admin()?;
-    let order = payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, 0, &id).await?;
+    let order =
+        payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, 0, &id).await?;
     Ok(ApiResponse::success(to_order_response(order)))
 }
 
+#[utoipa::path(post, path = "/admin/payment/orders/{id}/refund", tag = "payments",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Payment order ID")),
+    request_body = CreateRefundRequest,
+    responses((status = 200, description = "Payment order refunded"))
+)]
 pub async fn admin_refund_order(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -505,6 +592,10 @@ pub async fn admin_refund_order(
     Ok(ApiResponse::success(PaymentRefundResponse::from(refund)))
 }
 
+#[utoipa::path(get, path = "/admin/payment/transactions", tag = "payments",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Admin transactions list"))
+)]
 pub async fn admin_list_transactions(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -523,6 +614,10 @@ pub async fn admin_list_transactions(
     Ok(params.paginate(responses, total))
 }
 
+#[utoipa::path(get, path = "/admin/payment/refunds", tag = "payments",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Admin refunds list"))
+)]
 pub async fn admin_list_refunds(
     auth: AuthUser,
     State(state): State<crate::AppState>,

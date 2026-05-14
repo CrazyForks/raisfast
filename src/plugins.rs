@@ -384,21 +384,22 @@ impl PluginManager {
             engine_config.consume_fuel(true);
             engine_config.wasm_component_model(true);
             engine_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
-            wasmtime::Engine::new(&engine_config).expect("failed to create wasmtime engine")
+            wasmtime::Engine::new(&engine_config)
+                .unwrap_or_else(|e| panic!("failed to create wasmtime engine: {e}"))
         };
 
         #[cfg(feature = "plugin-js")]
         let js_engine = JsEngine::new(&config, opts.pool.clone(), opts.event_bus.clone())
             .await
-            .expect("failed to create js engine");
+            .unwrap_or_else(|e| panic!("failed to create js engine: {e}"));
 
         #[cfg(feature = "plugin-lua")]
         let lua_engine = LuaEngine::new(&config, opts.pool.clone(), opts.event_bus.clone())
-            .expect("failed to create lua engine");
+            .unwrap_or_else(|e| panic!("failed to create lua engine: {e}"));
 
         #[cfg(feature = "plugin-rhai")]
         let rhai_engine = RhaiEngine::new(&config, opts.pool.clone(), opts.event_bus.clone())
-            .expect("failed to create rhai engine");
+            .unwrap_or_else(|e| panic!("failed to create rhai engine: {e}"));
 
         let (reload_tx, reload_rx) = tokio::sync::mpsc::channel::<PathBuf>(32);
         let (event_tx, _) = tokio::sync::broadcast::channel::<Arc<PluginEvent>>(256);

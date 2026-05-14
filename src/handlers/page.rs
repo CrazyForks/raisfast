@@ -110,7 +110,7 @@ async fn resolve_page_parent_id(
 // ── DTO ──
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
 pub struct CreatePageRequest {
     #[validate(length(min = 1, max = 200))]
     pub title: String,
@@ -128,7 +128,7 @@ pub struct CreatePageRequest {
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
 pub struct UpdatePageRequest {
     #[validate(length(min = 1, max = 200))]
     pub title: Option<String>,
@@ -161,22 +161,22 @@ pub struct AdminPageListQuery {
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateStatusRequest {
     pub status: PageStatus,
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize)]
-pub struct ReorderRequest {
-    pub items: Vec<ReorderItem>,
-}
-
-#[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ReorderItem {
     pub id: String,
     pub sort_order: i64,
+}
+
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ReorderRequest {
+    pub items: Vec<ReorderItem>,
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -188,6 +188,9 @@ pub struct SitemapEntry {
 
 // ── Public API ──
 
+#[utoipa::path(get, path = "/pages", tag = "pages",
+    responses((status = 200, description = "Published page list"))
+)]
 pub async fn list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -202,6 +205,10 @@ pub async fn list(
     Ok(pagination.paginate(items, total))
 }
 
+#[utoipa::path(get, path = "/pages/{slug}", tag = "pages",
+    params(("slug" = String, Path, description = "Page slug")),
+    responses((status = 200, description = "Page details"))
+)]
 pub async fn get_by_slug(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -211,6 +218,9 @@ pub async fn get_by_slug(
     Ok(ApiResponse::success(page))
 }
 
+#[utoipa::path(get, path = "/pages/sitemap", tag = "pages",
+    responses((status = 200, description = "Sitemap entries"))
+)]
 pub async fn sitemap(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -225,6 +235,10 @@ pub async fn sitemap(
 
 // ── Admin API ──
 
+#[utoipa::path(get, path = "/admin/pages", tag = "pages",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "All pages (admin)"))
+)]
 pub async fn admin_list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -245,6 +259,11 @@ pub async fn admin_list(
     Ok(pagination.paginate(items, total))
 }
 
+#[utoipa::path(get, path = "/admin/pages/{id}", tag = "pages",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Page ID")),
+    responses((status = 200, description = "Page details"))
+)]
 pub async fn admin_get(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -255,6 +274,10 @@ pub async fn admin_get(
     Ok(ApiResponse::success(page))
 }
 
+#[utoipa::path(post, path = "/pages", tag = "pages",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Page created"))
+)]
 pub async fn create(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -291,6 +314,11 @@ pub async fn create(
     Ok(ApiResponse::success(page))
 }
 
+#[utoipa::path(put, path = "/admin/pages/{id}", tag = "pages",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Page ID")),
+    responses((status = 200, description = "Page updated"))
+)]
 pub async fn update(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -322,6 +350,11 @@ pub async fn update(
     Ok(ApiResponse::success(page))
 }
 
+#[utoipa::path(delete, path = "/admin/pages/{id}", tag = "pages",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Page ID")),
+    responses((status = 200, description = "Page deleted"))
+)]
 pub async fn delete(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -332,6 +365,11 @@ pub async fn delete(
     Ok(ApiResponse::success(()))
 }
 
+#[utoipa::path(put, path = "/admin/pages/{id}/status", tag = "pages",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Page ID")),
+    responses((status = 200, description = "Page status updated"))
+)]
 pub async fn update_status(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -343,6 +381,10 @@ pub async fn update_status(
     Ok(ApiResponse::success(page))
 }
 
+#[utoipa::path(put, path = "/admin/pages/reorder", tag = "pages",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Pages reordered"))
+)]
 pub async fn reorder(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -358,6 +400,11 @@ pub async fn reorder(
     Ok(ApiResponse::success(()))
 }
 
+#[utoipa::path(post, path = "/admin/pages/batch", tag = "pages",
+    security(("bearer_auth" = [])),
+    request_body = BatchRequest,
+    responses((status = 200, description = "Batch operation completed"))
+)]
 pub async fn admin_batch(
     auth: AuthUser,
     State(state): State<crate::AppState>,

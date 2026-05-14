@@ -9,9 +9,9 @@ use x509_cert::der::DecodePem as _;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::models::payment_channel::PaymentChannel;
 use crate::models::payment_order::{PaymentOrder, PaymentStatus};
+use crate::payment::PaymentProvider;
 use crate::payment::crypto::aes256gcm_decrypt;
 use crate::payment::provider::{CallbackData, ProviderResponse, ProviderStatus, RefundResponse};
-use crate::payment::PaymentProvider;
 
 const BASE_URL: &str = "https://api.mch.weixin.qq.com";
 
@@ -111,9 +111,8 @@ fn decrypt_credentials(
     encrypt_key: &[u8; 32],
 ) -> AppResult<WechatCredentials> {
     let decrypted = aes256gcm_decrypt(&channel.credentials, encrypt_key)?;
-    serde_json::from_str(&decrypted).map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("wechat credentials parse: {e}"))
-    })
+    serde_json::from_str(&decrypted)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat credentials parse: {e}")))
 }
 
 fn parse_private_key(pem_or_raw: &str) -> AppResult<rsa::RsaPrivateKey> {
@@ -164,10 +163,7 @@ fn parse_platform_cert_pub_key(pem: &str) -> AppResult<rsa::RsaPublicKey> {
         .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat cert public key: {e}")))
 }
 
-fn rsa_sign(
-    message: &str,
-    private_key: &rsa::RsaPrivateKey,
-) -> AppResult<String> {
+fn rsa_sign(message: &str, private_key: &rsa::RsaPrivateKey) -> AppResult<String> {
     let hash = Sha256::digest(message.as_bytes());
     let scheme = rsa::pkcs1v15::Pkcs1v15Sign::new::<Sha256>();
     let sig = private_key
@@ -176,11 +172,7 @@ fn rsa_sign(
     Ok(BASE64.encode(sig))
 }
 
-fn rsa_verify(
-    message: &str,
-    signature_b64: &str,
-    public_key: &rsa::RsaPublicKey,
-) -> AppResult<()> {
+fn rsa_verify(message: &str, signature_b64: &str, public_key: &rsa::RsaPublicKey) -> AppResult<()> {
     let sig_bytes = BASE64
         .decode(signature_b64)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat signature base64 decode: {e}")))?;
@@ -191,11 +183,7 @@ fn rsa_verify(
         .map_err(|_| AppError::BadRequest("wechat signature mismatch".into()))
 }
 
-fn build_auth_header(
-    mchid: &str,
-    serial_no: &str,
-    signature: &str,
-) -> String {
+fn build_auth_header(mchid: &str, serial_no: &str, signature: &str) -> String {
     format!(
         r#"WECHATPAY2-SHA256-RSA2048 mchid="{}",nonce_str="{}",timestamp="{}",serial_no="{}",signature="{}""#,
         mchid,
@@ -211,9 +199,9 @@ fn generate_nonce() -> String {
     let mut bytes = [0u8; 16];
     let _ = getrandom::getrandom(&mut bytes);
     let mut s = String::with_capacity(32);
-    for b in bytes {
-        write!(s, "{b:02x}").unwrap();
-    }
+        for b in bytes {
+            let _ = write!(s, "{b:02x}");
+        }
     s
 }
 
@@ -263,14 +251,16 @@ async fn wechat_request<T: serde::de::DeserializeOwned>(
         req = req.body(b);
     }
 
-    let resp = req.send().await.map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("wechat request: {e}"))
-    })?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat request: {e}")))?;
 
     let status = resp.status();
-    let text = resp.text().await.map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("wechat read body: {e}"))
-    })?;
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat read body: {e}")))?;
 
     if !status.is_success() {
         return Err(AppError::Internal(anyhow::anyhow!(
@@ -391,8 +381,7 @@ impl PaymentProvider for WechatPayProvider {
             provider_order_id, creds.mchid
         );
 
-        let resp: QueryResponse =
-            wechat_request(&creds, &private_key, "GET", &path, None).await?;
+        let resp: QueryResponse = wechat_request(&creds, &private_key, "GET", &path, None).await?;
 
         let status = resp
             .trade_state
@@ -408,11 +397,7 @@ impl PaymentProvider for WechatPayProvider {
         })
     }
 
-    async fn cancel(
-        &self,
-        channel: &PaymentChannel,
-        provider_order_id: &str,
-    ) -> AppResult<()> {
+    async fn cancel(&self, channel: &PaymentChannel, provider_order_id: &str) -> AppResult<()> {
         let creds = decrypt_credentials(channel, &self.encrypt_key)?;
         let private_key = parse_private_key(&creds.private_key)?;
 
@@ -425,14 +410,8 @@ impl PaymentProvider for WechatPayProvider {
         })
         .to_string();
 
-        let _: serde_json::Value = wechat_request(
-            &creds,
-            &private_key,
-            "POST",
-            &path,
-            Some(body_str),
-        )
-        .await?;
+        let _: serde_json::Value =
+            wechat_request(&creds, &private_key, "POST", &path, Some(body_str)).await?;
 
         Ok(())
     }
@@ -485,10 +464,7 @@ impl PaymentProvider for WechatPayProvider {
         .await?;
 
         Ok(RefundResponse {
-            provider_refund_id: resp
-                .refund_id
-                .or(resp.out_refund_no)
-                .unwrap_or(refund_no),
+            provider_refund_id: resp.refund_id.or(resp.out_refund_no).unwrap_or(refund_no),
         })
     }
 
@@ -501,27 +477,20 @@ impl PaymentProvider for WechatPayProvider {
         let wechat_timestamp = headers
             .get("Wechatpay-Timestamp")
             .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| {
-                AppError::BadRequest("wechat: missing Wechatpay-Timestamp".into())
-            })?;
+            .ok_or_else(|| AppError::BadRequest("wechat: missing Wechatpay-Timestamp".into()))?;
         let wechat_nonce = headers
             .get("Wechatpay-Nonce")
             .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| {
-                AppError::BadRequest("wechat: missing Wechatpay-Nonce".into())
-            })?;
+            .ok_or_else(|| AppError::BadRequest("wechat: missing Wechatpay-Nonce".into()))?;
         let wechat_signature = headers
             .get("Wechatpay-Signature")
             .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| {
-                AppError::BadRequest("wechat: missing Wechatpay-Signature".into())
-            })?;
+            .ok_or_else(|| AppError::BadRequest("wechat: missing Wechatpay-Signature".into()))?;
 
         let body_str = std::str::from_utf8(body)
             .map_err(|_| AppError::BadRequest("wechat callback: invalid utf8".into()))?;
 
-        let verify_msg =
-            format!("{wechat_timestamp}\n{wechat_nonce}\n{body_str}\n");
+        let verify_msg = format!("{wechat_timestamp}\n{wechat_nonce}\n{body_str}\n");
 
         let cert_pem = extract_platform_cert(channel)?;
         let pub_key = parse_platform_cert_pub_key(&cert_pem)?;
@@ -531,9 +500,9 @@ impl PaymentProvider for WechatPayProvider {
         let event: WechatCallbackEvent = serde_json::from_str(body_str)
             .map_err(|e| AppError::BadRequest(format!("wechat callback parse: {e}")))?;
 
-        let resource = event.resource.ok_or_else(|| {
-            AppError::BadRequest("wechat callback: missing resource".into())
-        })?;
+        let resource = event
+            .resource
+            .ok_or_else(|| AppError::BadRequest("wechat callback: missing resource".into()))?;
 
         let creds = decrypt_credentials(channel, &self.encrypt_key)?;
         let decrypted = decrypt_callback_resource(
@@ -544,9 +513,7 @@ impl PaymentProvider for WechatPayProvider {
         )?;
 
         let resource_data: DecryptedResource = serde_json::from_str(&decrypted)
-            .map_err(|e| {
-                AppError::BadRequest(format!("wechat resource parse: {e}"))
-            })?;
+            .map_err(|e| AppError::BadRequest(format!("wechat resource parse: {e}")))?;
 
         let status = resource_data
             .trade_state
@@ -554,15 +521,10 @@ impl PaymentProvider for WechatPayProvider {
             .map(trade_state_to_payment)
             .unwrap_or(PaymentStatus::Pending);
 
-        let amount = resource_data
-            .amount
-            .and_then(|a| a.total)
-            .unwrap_or(0);
+        let amount = resource_data.amount.and_then(|a| a.total).unwrap_or(0);
 
         Ok(CallbackData {
-            provider_order_id: resource_data
-                .out_trade_no
-                .unwrap_or_default(),
+            provider_order_id: resource_data.out_trade_no.unwrap_or_default(),
             status,
             amount,
             provider_tx_id: resource_data.transaction_id,

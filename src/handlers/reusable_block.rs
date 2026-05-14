@@ -47,7 +47,7 @@ pub fn routes(registry: &mut crate::server::RouteRegistry) -> axum::Router<crate
     )
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
 pub struct CreateReusableRequest {
     #[validate(length(min = 1, max = 200))]
     pub name: String,
@@ -58,7 +58,7 @@ pub struct CreateReusableRequest {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
 pub struct UpdateReusableRequest {
     #[validate(length(min = 1, max = 200))]
     pub name: Option<String>,
@@ -69,6 +69,10 @@ pub struct UpdateReusableRequest {
     pub description: Option<String>,
 }
 
+#[utoipa::path(get, path = "/admin/reusable-blocks", tag = "reusable_blocks",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Reusable block list"))
+)]
 pub async fn list_reusable(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -78,6 +82,11 @@ pub async fn list_reusable(
     Ok(ApiResponse::success(items))
 }
 
+#[utoipa::path(get, path = "/admin/reusable-blocks/{id}", tag = "reusable_blocks",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Block ID")),
+    responses((status = 200, description = "Reusable block details"))
+)]
 pub async fn get_reusable(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -90,6 +99,10 @@ pub async fn get_reusable(
     Ok(ApiResponse::success(block))
 }
 
+#[utoipa::path(post, path = "/admin/reusable-blocks", tag = "reusable_blocks",
+    security(("bearer_auth" = [])),
+    responses((status = 200, description = "Reusable block created"))
+)]
 pub async fn create_reusable(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -109,6 +122,11 @@ pub async fn create_reusable(
     Ok(ApiResponse::success(block))
 }
 
+#[utoipa::path(put, path = "/admin/reusable-blocks/{id}", tag = "reusable_blocks",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Block ID")),
+    responses((status = 200, description = "Reusable block updated"))
+)]
 pub async fn update_reusable(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -130,6 +148,11 @@ pub async fn update_reusable(
     Ok(ApiResponse::success(block))
 }
 
+#[utoipa::path(delete, path = "/admin/reusable-blocks/{id}", tag = "reusable_blocks",
+    security(("bearer_auth" = [])),
+    params(("id" = String, Path, description = "Block ID")),
+    responses((status = 200, description = "Reusable block deleted"))
+)]
 pub async fn delete_reusable(
     auth: AuthUser,
     State(state): State<crate::AppState>,
@@ -140,6 +163,11 @@ pub async fn delete_reusable(
     Ok(ApiResponse::success(()))
 }
 
+#[utoipa::path(post, path = "/admin/reusable-blocks/batch", tag = "reusable_blocks",
+    security(("bearer_auth" = [])),
+    request_body = BatchRequest,
+    responses((status = 200, description = "Batch operation completed"))
+)]
 pub async fn admin_batch(
     auth: AuthUser,
     State(state): State<crate::AppState>,
