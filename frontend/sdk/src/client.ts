@@ -19,9 +19,12 @@ export function toQueryString(query?: Record<string, string | number | bigint | 
   return result;
 }
 
+export type ApiStyle = "restful" | "simple";
+
 export class HttpClient {
   readonly baseUrl: string;
   readonly authStore: IAuthStore;
+  private _apiStyle: ApiStyle = "restful";
   private _tenantId: string | null = null;
   private _refreshPromise: Promise<string | null> | null = null;
   private _beforeSend: BeforeSendHook | null = null;
@@ -31,6 +34,18 @@ export class HttpClient {
   constructor(baseUrl: string, authStore: IAuthStore) {
     this.baseUrl = baseUrl;
     this.authStore = authStore;
+  }
+
+  get apiStyle(): ApiStyle {
+    return this._apiStyle;
+  }
+
+  set apiStyle(style: ApiStyle) {
+    this._apiStyle = style;
+  }
+
+  get isRestful(): boolean {
+    return this._apiStyle === "restful";
   }
 
   get tenantId(): string | null {
@@ -59,6 +74,34 @@ export class HttpClient {
       controller.abort();
     }
     this._requestControllers.clear();
+  }
+
+  pathForCreate(resource: string): string {
+    return this._apiStyle === "restful" ? resource : `${resource}/create`;
+  }
+
+  methodForCreate(): "POST" {
+    return "POST";
+  }
+
+  pathForUpdate(resource: string, id: string): string {
+    return this._apiStyle === "restful"
+      ? `${resource}/${id}`
+      : `${resource}/${id}/update`;
+  }
+
+  methodForUpdate(): "PUT" | "POST" {
+    return this._apiStyle === "restful" ? "PUT" : "POST";
+  }
+
+  pathForDelete(resource: string, id: string): string {
+    return this._apiStyle === "restful"
+      ? `${resource}/${id}`
+      : `${resource}/${id}/delete`;
+  }
+
+  methodForDelete(): "DELETE" | "POST" {
+    return this._apiStyle === "restful" ? "DELETE" : "POST";
   }
 
   async request<T>(path: string, options: SendOptions = {}): Promise<T> {

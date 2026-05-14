@@ -22,7 +22,11 @@ export class AdminWorkflows {
     data: { name: string; steps: unknown[] },
     options?: RequestOptions,
   ): Promise<Workflow> {
-    return this.http.post<Workflow>("/admin/workflows", data, options);
+    return this.http.request<Workflow>(this.http.pathForCreate("/admin/workflows"), {
+      ...options,
+      method: this.http.methodForCreate(),
+      body: data,
+    });
   }
 
   async get(id: string, options?: RequestOptions): Promise<Workflow> {
@@ -30,7 +34,10 @@ export class AdminWorkflows {
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/admin/workflows/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/admin/workflows", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 
   async start(

@@ -41,7 +41,10 @@ export class AdminMedia {
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/admin/media/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/admin/media", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 
   async batch(

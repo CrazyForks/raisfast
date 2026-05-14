@@ -179,8 +179,10 @@ async fn build_app(
         api_v1,
         &state.content_type_registry,
         &state.protocol_registry,
+        config,
     );
 
+    let restful = config.api_restful;
     for ct in state.content_type_registry.all() {
         let plural = &ct.plural;
         let name = &ct.singular;
@@ -191,19 +193,28 @@ async fn build_app(
                 "content_type",
                 name,
             );
-            registry.record(
-                "PUT",
-                &format!("{}/{}", crate::constants::CMS_PREFIX, name),
-                "content_type",
-                name,
-            );
+            if restful {
+                registry.record(
+                    "PUT",
+                    &format!("{}/{}", crate::constants::CMS_PREFIX, name),
+                    "content_type",
+                    name,
+                );
+            } else {
+                registry.record(
+                    "POST",
+                    &format!("{}/{}/update", crate::constants::CMS_PREFIX, name),
+                    "content_type",
+                    name,
+                );
+            }
             registry.record(
                 "GET",
                 &format!("{}/{}", crate::constants::CMS_ADMIN_PREFIX, name),
                 "content_type",
                 name,
             );
-        } else {
+        } else if restful {
             for (method, suffix) in [
                 ("GET", ""),
                 ("POST", ""),
@@ -218,6 +229,61 @@ async fn build_app(
                     name,
                 );
             }
+            registry.record(
+                "GET",
+                &format!("{}/{}", crate::constants::CMS_ADMIN_PREFIX, plural),
+                "content_type",
+                name,
+            );
+            registry.record(
+                "GET",
+                &format!(
+                    "{}/{}/{{id_or_slug}}",
+                    crate::constants::CMS_ADMIN_PREFIX,
+                    plural
+                ),
+                "content_type",
+                name,
+            );
+        } else {
+            registry.record(
+                "GET",
+                &format!("{}/{}", crate::constants::CMS_PREFIX, plural),
+                "content_type",
+                name,
+            );
+            registry.record(
+                "POST",
+                &format!("{}/{}/create", crate::constants::CMS_PREFIX, plural),
+                "content_type",
+                name,
+            );
+            registry.record(
+                "GET",
+                &format!("{}/{}/{{id_or_slug}}", crate::constants::CMS_PREFIX, plural),
+                "content_type",
+                name,
+            );
+            registry.record(
+                "POST",
+                &format!(
+                    "{}/{}/{{id_or_slug}}/update",
+                    crate::constants::CMS_PREFIX,
+                    plural
+                ),
+                "content_type",
+                name,
+            );
+            registry.record(
+                "POST",
+                &format!(
+                    "{}/{}/{{id_or_slug}}/delete",
+                    crate::constants::CMS_PREFIX,
+                    plural
+                ),
+                "content_type",
+                name,
+            );
             registry.record(
                 "GET",
                 &format!("{}/{}", crate::constants::CMS_ADMIN_PREFIX, plural),
@@ -271,7 +337,7 @@ async fn build_app(
         .route("/readyz", get(health::readiness))
         .route("/metrics", get(metrics::metrics_endpoint))
         .route("/feed.xml", get(rss::feed))
-        .route("/api/v1/brand", get(brand_handler))
+        .route("/api/v1/info", get(server_info_handler))
         .nest(crate::constants::API_PREFIX, api_v1)
         .nest_service("/uploads", ServeDir::new(&upload_dir))
         .nest_service("/static", ServeDir::new(&static_dir))
@@ -977,14 +1043,20 @@ async fn powered_by_middleware(
     response
 }
 
-async fn brand_handler() -> impl IntoResponse {
+async fn server_info_handler(State(state): State<AppState>) -> impl IntoResponse {
     use serde_json::json;
 
+    let api_style = if state.config.api_restful {
+        "restful"
+    } else {
+        "simple"
+    };
     axum::Json(json!({
         "code": 0,
         "data": {
             "name": crate::_brand(),
-            "version": env!("CARGO_PKG_VERSION")
+            "version": env!("CARGO_PKG_VERSION"),
+            "api_style": api_style,
         }
     }))
 }

@@ -52,7 +52,11 @@ export class Posts {
     body: CreatePostBody,
     options?: RequestOptions,
   ): Promise<PostResponse> {
-    return this.http.post<PostResponse>("/posts", body, options);
+    return this.http.request<PostResponse>(this.http.pathForCreate("/posts"), {
+      ...options,
+      method: this.http.methodForCreate(),
+      body,
+    });
   }
 
   async update(
@@ -60,10 +64,17 @@ export class Posts {
     body: UpdatePostBody,
     options?: RequestOptions,
   ): Promise<PostResponse> {
-    return this.http.put<PostResponse>(`/posts/${slug}`, body, options);
+    return this.http.request<PostResponse>(this.http.pathForUpdate("/posts", slug), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body,
+    });
   }
 
   async delete(slug: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/posts/${slug}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/posts", slug), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 }

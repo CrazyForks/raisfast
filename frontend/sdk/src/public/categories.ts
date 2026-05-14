@@ -44,7 +44,11 @@ export class Categories {
     body: CreateCategoryBody,
     options?: RequestOptions,
   ): Promise<Category> {
-    return this.http.post<Category>("/categories", body, options);
+    return this.http.request<Category>(this.http.pathForCreate("/categories"), {
+      ...options,
+      method: this.http.methodForCreate(),
+      body,
+    });
   }
 
   async update(
@@ -52,10 +56,17 @@ export class Categories {
     body: UpdateCategoryBody,
     options?: RequestOptions,
   ): Promise<Category> {
-    return this.http.put<Category>(`/categories/${id}`, body, options);
+    return this.http.request<Category>(this.http.pathForUpdate("/categories", id), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body,
+    });
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/categories/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/categories", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 }

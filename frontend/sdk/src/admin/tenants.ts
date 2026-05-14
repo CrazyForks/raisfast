@@ -32,7 +32,11 @@ export class AdminTenants {
     data: { name: string; slug: string },
     options?: RequestOptions,
   ): Promise<Tenant> {
-    return this.http.post<Tenant>("/admin/tenants", data, options);
+    return this.http.request<Tenant>(this.http.pathForCreate("/admin/tenants"), {
+      ...options,
+      method: this.http.methodForCreate(),
+      body: data,
+    });
   }
 
   async update(
@@ -40,11 +44,18 @@ export class AdminTenants {
     data: Partial<Tenant>,
     options?: RequestOptions,
   ): Promise<Tenant> {
-    return this.http.put<Tenant>(`/admin/tenants/${id}`, data, options);
+    return this.http.request<Tenant>(this.http.pathForUpdate("/admin/tenants", id), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body: data,
+    });
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/admin/tenants/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/admin/tenants", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 
   async batch(

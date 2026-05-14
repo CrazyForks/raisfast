@@ -37,7 +37,11 @@ export class AdminPosts {
     body: CreatePostBody,
     options?: RequestOptions,
   ): Promise<PostResponse> {
-    return this.http.post<PostResponse>("/admin/posts", body, options);
+    return this.http.request<PostResponse>(this.http.pathForCreate("/admin/posts"), {
+      ...options,
+      method: this.http.methodForCreate(),
+      body,
+    });
   }
 
   async update(
@@ -45,11 +49,18 @@ export class AdminPosts {
     body: UpdatePostBody,
     options?: RequestOptions,
   ): Promise<PostResponse> {
-    return this.http.put<PostResponse>(`/admin/posts/${id}`, body, options);
+    return this.http.request<PostResponse>(this.http.pathForUpdate("/admin/posts", id), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body,
+    });
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/admin/posts/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/admin/posts", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 
   async batch(

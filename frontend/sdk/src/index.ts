@@ -13,7 +13,7 @@ export { Pages } from "./public/pages";
 export { Wallets } from "./public/wallets";
 export { Events } from "./public/events";
 export { BaseAuthStore, LocalAuthStore } from "./auth";
-export { HttpClient } from "./client";
+export { HttpClient, type ApiStyle } from "./client";
 export { SDKError } from "./errors";
 export type {
   CreatePostBody,

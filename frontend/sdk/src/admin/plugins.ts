@@ -36,7 +36,10 @@ export class AdminPlugins {
   }
 
   async unload(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/admin/plugins/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/admin/plugins", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 
   async batch(

@@ -21,7 +21,11 @@ export class AdminRBAC {
     data: { name: string; description?: string },
     options?: RequestOptions,
   ): Promise<Role> {
-    return this.http.post<Role>("/admin/rbac/roles", data, options);
+    return this.http.request<Role>(this.http.pathForCreate("/admin/rbac/roles"), {
+      ...options,
+      method: this.http.methodForCreate(),
+      body: data,
+    });
   }
 
   async updateRole(
@@ -29,11 +33,18 @@ export class AdminRBAC {
     data: Partial<Role>,
     options?: RequestOptions,
   ): Promise<Role> {
-    return this.http.put<Role>(`/admin/rbac/roles/${id}`, data, options);
+    return this.http.request<Role>(this.http.pathForUpdate("/admin/rbac/roles", id), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body: data,
+    });
   }
 
   async deleteRole(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/admin/rbac/roles/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/admin/rbac/roles", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 
   async batchRoles(
@@ -58,10 +69,10 @@ export class AdminRBAC {
     permissions: Permission[],
     options?: RequestOptions,
   ): Promise<void> {
-    await this.http.put(
-      `/admin/rbac/roles/${roleId}/permissions`,
-      permissions,
-      options,
-    );
+    await this.http.request<void>(this.http.pathForUpdate("/admin/rbac/roles", `${roleId}/permissions`), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body: permissions,
+    });
   }
 }

@@ -31,7 +31,11 @@ export class AdminCategories {
     body: CreateCategoryRequest,
     options?: RequestOptions,
   ): Promise<Category> {
-    return this.http.post<Category>("/admin/categories", body, options);
+    return this.http.request<Category>(this.http.pathForCreate("/admin/categories"), {
+      ...options,
+      method: this.http.methodForCreate(),
+      body,
+    });
   }
 
   async update(
@@ -39,11 +43,18 @@ export class AdminCategories {
     body: UpdateCategoryRequest,
     options?: RequestOptions,
   ): Promise<Category> {
-    return this.http.put<Category>(`/admin/categories/${id}`, body, options);
+    return this.http.request<Category>(this.http.pathForUpdate("/admin/categories", id), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body,
+    });
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/admin/categories/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/admin/categories", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 
   async batch(

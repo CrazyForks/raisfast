@@ -31,7 +31,11 @@ export class AdminTags {
     body: CreateTagRequest,
     options?: RequestOptions,
   ): Promise<Tag> {
-    return this.http.post<Tag>("/admin/tags", body, options);
+    return this.http.request<Tag>(this.http.pathForCreate("/admin/tags"), {
+      ...options,
+      method: this.http.methodForCreate(),
+      body,
+    });
   }
 
   async update(
@@ -39,11 +43,18 @@ export class AdminTags {
     body: UpdateTagRequest,
     options?: RequestOptions,
   ): Promise<Tag> {
-    return this.http.put<Tag>(`/admin/tags/${id}`, body, options);
+    return this.http.request<Tag>(this.http.pathForUpdate("/admin/tags", id), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body,
+    });
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/admin/tags/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/admin/tags", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 
   async batch(

@@ -98,14 +98,22 @@ export class Auth {
     },
     options?: RequestOptions,
   ): Promise<User> {
-    return this.http.put<User>("/users/me", data, options);
+    return this.http.request<User>(this.http.pathForUpdate("/users", "me"), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body: data,
+    });
   }
 
   async changePassword(
     data: { old_password: string; new_password: string },
     options?: RequestOptions,
   ): Promise<void> {
-    await this.http.put("/users/me/password", data, options);
+    await this.http.request<void>(this.http.pathForUpdate("/users", "me/password"), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body: data,
+    });
   }
 
   async requestPasswordReset(
@@ -210,7 +218,10 @@ export class Auth {
     provider: string,
     options?: RequestOptions,
   ): Promise<void> {
-    await this.http.del(`/auth/oauth/${provider}/unbind`, options);
+    await this.http.request<void>(this.http.pathForDelete("/auth/oauth", `${provider}/unbind`), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 
   async listCredentials(
@@ -227,6 +238,9 @@ export class Auth {
   }
 
   async deleteCredential(id: number, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/auth/credentials/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/auth/credentials", String(id)), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 }

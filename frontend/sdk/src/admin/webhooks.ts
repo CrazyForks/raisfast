@@ -23,7 +23,11 @@ export class AdminWebhooks {
     data: { url: string; events: string[]; description?: string; enabled?: boolean },
     options?: RequestOptions,
   ): Promise<Webhook> {
-    return this.http.post<Webhook>("/admin/webhooks", data, options);
+    return this.http.request<Webhook>(this.http.pathForCreate("/admin/webhooks"), {
+      ...options,
+      method: this.http.methodForCreate(),
+      body: data,
+    });
   }
 
   async get(id: string, options?: RequestOptions): Promise<Webhook> {
@@ -35,11 +39,18 @@ export class AdminWebhooks {
     data: Partial<Webhook>,
     options?: RequestOptions,
   ): Promise<Webhook> {
-    return this.http.put<Webhook>(`/admin/webhooks/${id}`, data, options);
+    return this.http.request<Webhook>(this.http.pathForUpdate("/admin/webhooks", id), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body: data,
+    });
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/admin/webhooks/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/admin/webhooks", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 
   async batch(

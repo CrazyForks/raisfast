@@ -30,11 +30,18 @@ export class AdminComments {
     status: CommentStatus,
     options?: RequestOptions,
   ): Promise<void> {
-    await this.http.put(`/admin/comments/${id}/status`, { status }, options);
+    await this.http.request<void>(this.http.pathForUpdate("/admin/comments/status", id), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body: { status },
+    });
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/admin/comments/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/admin/comments", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 
   async batch(

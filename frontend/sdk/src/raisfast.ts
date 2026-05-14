@@ -1,4 +1,4 @@
-import { HttpClient } from "./client";
+import { HttpClient, type ApiStyle } from "./client";
 import { LocalAuthStore } from "./auth";
 import { Auth } from "./public/auth";
 import { Users } from "./public/users";
@@ -21,6 +21,12 @@ import type {
   ListOptions,
   SendOptions,
 } from "./types";
+
+interface ServerInfo {
+  name: string;
+  version: string;
+  api_style: ApiStyle;
+}
 
 export class RaisFast {
   readonly auth: Auth;
@@ -56,6 +62,18 @@ export class RaisFast {
     this.pages = new Pages(this.http);
     this.wallets = new Wallets(this.http);
     this.events = new Events(this.http.baseUrl);
+  }
+
+  async init(): Promise<void> {
+    try {
+      const res = await fetch(`${this.http.baseUrl}/info`);
+      const json = (await res.json()) as { code: number; data: ServerInfo };
+      if (json.code === 0 && json.data?.api_style) {
+        this.http.apiStyle = json.data.api_style;
+      }
+    } catch {
+      // keep default restful
+    }
   }
 
   collection<T = Record<string, unknown>>(name: string): Collection<T> {

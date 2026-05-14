@@ -35,11 +35,18 @@ export class AdminUsers {
     data: UpdateUserRequest,
     options?: RequestOptions,
   ): Promise<UserResponse> {
-    return this.http.put<UserResponse>(`/admin/users/${id}`, data, options);
+    return this.http.request<UserResponse>(this.http.pathForUpdate("/admin/users", id), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body: data,
+    });
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/admin/users/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/admin/users", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 
   async batch(

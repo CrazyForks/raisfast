@@ -16,14 +16,17 @@ export class AdminTokens {
     data: { name: string; scopes: string[]; expires_at?: string },
     options?: RequestOptions,
   ): Promise<ApiToken & { token: string }> {
-    return this.http.post<ApiToken & { token: string }>(
-      "/tokens",
-      data,
-      options,
-    );
+    return this.http.request<ApiToken & { token: string }>(this.http.pathForCreate("/tokens"), {
+      ...options,
+      method: this.http.methodForCreate(),
+      body: data,
+    });
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/tokens/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/tokens", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 }

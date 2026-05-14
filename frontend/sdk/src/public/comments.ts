@@ -63,10 +63,17 @@ export class Comments {
     status: CommentStatus,
     options?: RequestOptions,
   ): Promise<void> {
-    await this.http.put(`/comments/${id}/status`, { status }, options);
+    await this.http.request<void>(this.http.pathForUpdate("/comments/status", id), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body: { status },
+    });
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/comments/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/comments", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 }

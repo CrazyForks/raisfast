@@ -70,7 +70,11 @@ export class Collection<T = Record<string, unknown>> {
   }
 
   async create(data: Partial<T>, options?: MutateOptions): Promise<T> {
-    return this.http.post<T>(this.prefix, data, options);
+    return this.http.request<T>(this.http.pathForCreate(this.prefix), {
+      ...options,
+      method: this.http.methodForCreate(),
+      body: data,
+    });
   }
 
   async update(
@@ -78,11 +82,18 @@ export class Collection<T = Record<string, unknown>> {
     data: Partial<T>,
     options?: MutateOptions,
   ): Promise<T> {
-    return this.http.put<T>(`${this.prefix}/${id}`, data, options);
+    return this.http.request<T>(this.http.pathForUpdate(this.prefix, id), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body: data,
+    });
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`${this.prefix}/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete(this.prefix, id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 
   async upload(

@@ -30,7 +30,11 @@ export class Tags {
     body: { name: string },
     options?: RequestOptions,
   ): Promise<Tag> {
-    return this.http.post<Tag>("/tags", body, options);
+    return this.http.request<Tag>(this.http.pathForCreate("/tags"), {
+      ...options,
+      method: this.http.methodForCreate(),
+      body,
+    });
   }
 
   async update(
@@ -38,10 +42,17 @@ export class Tags {
     body: { name: string },
     options?: RequestOptions,
   ): Promise<Tag> {
-    return this.http.put<Tag>(`/tags/${id}`, body, options);
+    return this.http.request<Tag>(this.http.pathForUpdate("/tags", id), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body,
+    });
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/tags/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/tags", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 }

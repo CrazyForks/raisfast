@@ -43,7 +43,10 @@ export class Media {
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/media/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/media", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 
   getFileURL(

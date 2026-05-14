@@ -60,7 +60,11 @@ export class AdminPages {
   }
 
   async create(body: CreatePageBody, options?: RequestOptions): Promise<Page> {
-    return this.http.post<Page>("/admin/pages", body, options);
+    return this.http.request<Page>(this.http.pathForCreate("/admin/pages"), {
+      ...options,
+      method: this.http.methodForCreate(),
+      body,
+    });
   }
 
   async update(
@@ -68,7 +72,11 @@ export class AdminPages {
     body: UpdatePageBody,
     options?: RequestOptions,
   ): Promise<Page> {
-    return this.http.put<Page>(`/admin/pages/${id}`, body, options);
+    return this.http.request<Page>(this.http.pathForUpdate("/admin/pages", id), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body,
+    });
   }
 
   async updateStatus(
@@ -76,18 +84,29 @@ export class AdminPages {
     status: PageStatus,
     options?: RequestOptions,
   ): Promise<Page> {
-    return this.http.put<Page>(`/admin/pages/${id}/status`, { status }, options);
+    return this.http.request<Page>(this.http.pathForUpdate("/admin/pages/status", id), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body: { status },
+    });
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/admin/pages/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/admin/pages", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 
   async reorder(
     items: Array<{ id: string; sort_order: number }>,
     options?: RequestOptions,
   ): Promise<void> {
-    await this.http.put("/admin/pages/reorder", { items }, options);
+    await this.http.request<void>(this.http.pathForUpdate("/admin/pages", "reorder"), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body: { items },
+    });
   }
 
   async batch(

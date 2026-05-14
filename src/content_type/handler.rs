@@ -128,20 +128,22 @@ pub struct ListParams {
 /// In addition to standard CRUD routes, also registers version history endpoints for content types with `versioning` enabled.
 pub fn register_content_routes(
     router: axum::Router<AppState>,
-    registry: &crate::content_type::ContentTypeRegistry,
+    ct_registry: &crate::content_type::ContentTypeRegistry,
     protocol_registry: &crate::protocols::ProtocolRegistry,
+    config: &crate::config::app::AppConfig,
 ) -> axum::Router<AppState> {
     let mut api = router;
+    let restful = config.api_restful;
     let cms = crate::constants::CMS_ROUTE;
     let admin_cms = crate::constants::CMS_ADMIN_ROUTE;
 
-    for ct in registry.all() {
+    for ct in ct_registry.all() {
         let plural = ct.plural.clone();
         let singular = ct.singular.clone();
 
         if ct.kind == ContentKind::Single {
-            api = api
-                .route(
+            if restful {
+                api = api.route(
                     &format!("{cms}/{singular}"),
                     axum::routing::get({
                         let singular = singular.clone();
@@ -153,15 +155,34 @@ pub fn register_content_routes(
                             single_update_handler(auth, state, data, singular.clone())
                         }
                     }),
-                )
-                .route(
-                    &format!("{admin_cms}/{singular}"),
-                    axum::routing::get({
-                        let singular = singular.clone();
-                        move |state| admin_single_get_handler(state, singular.clone())
-                    }),
                 );
-        } else {
+            } else {
+                api = api
+                    .route(
+                        &format!("{cms}/{singular}"),
+                        axum::routing::get({
+                            let singular = singular.clone();
+                            move |auth, state| single_get_handler(auth, state, singular.clone())
+                        }),
+                    )
+                    .route(
+                        &format!("{cms}/{singular}/update"),
+                        axum::routing::post({
+                            let singular = singular.clone();
+                            move |auth, state, data| {
+                                single_update_handler(auth, state, data, singular.clone())
+                            }
+                        }),
+                    );
+            }
+            api = api.route(
+                &format!("{admin_cms}/{singular}"),
+                axum::routing::get({
+                    let singular = singular.clone();
+                    move |state| admin_single_get_handler(state, singular.clone())
+                }),
+            );
+        } else if restful {
             api = api
                 .route(
                     &format!("{cms}/{plural}"),
@@ -173,7 +194,9 @@ pub fn register_content_routes(
                     })
                     .post({
                         let singular = singular.clone();
-                        move |auth, state, data| create_handler(auth, state, singular.clone(), data)
+                        move |auth, state, data| {
+                            create_handler(auth, state, singular.clone(), data)
+                        }
                     }),
                 )
                 .route(
@@ -190,7 +213,68 @@ pub fn register_content_routes(
                     })
                     .delete({
                         let singular = singular.clone();
-                        move |auth, state, path| delete_handler(auth, state, path, singular.clone())
+                        move |auth, state, path| {
+                            delete_handler(auth, state, path, singular.clone())
+                        }
+                    }),
+                )
+                .route(
+                    &format!("{admin_cms}/{plural}"),
+                    axum::routing::get({
+                        let singular = singular.clone();
+                        move |state, params| admin_list_handler(state, singular.clone(), params)
+                    }),
+                )
+                .route(
+                    &format!("{admin_cms}/{plural}/{{id_or_slug}}"),
+                    axum::routing::get({
+                        let singular = singular.clone();
+                        move |state, path| admin_get_handler(state, path, singular.clone())
+                    }),
+                );
+        } else {
+            api = api
+                .route(
+                    &format!("{cms}/{plural}"),
+                    axum::routing::get({
+                        let singular = singular.clone();
+                        move |auth, state, params| {
+                            list_handler(auth, state, singular.clone(), params)
+                        }
+                    }),
+                )
+                .route(
+                    &format!("{cms}/{plural}/create"),
+                    axum::routing::post({
+                        let singular = singular.clone();
+                        move |auth, state, data| {
+                            create_handler(auth, state, singular.clone(), data)
+                        }
+                    }),
+                )
+                .route(
+                    &format!("{cms}/{plural}/{{id_or_slug}}"),
+                    axum::routing::get({
+                        let singular = singular.clone();
+                        move |auth, state, path| get_handler(auth, state, path, singular.clone())
+                    }),
+                )
+                .route(
+                    &format!("{cms}/{plural}/{{id_or_slug}}/update"),
+                    axum::routing::post({
+                        let singular = singular.clone();
+                        move |auth, state, path, data| {
+                            update_handler(auth, state, path, data, singular.clone())
+                        }
+                    }),
+                )
+                .route(
+                    &format!("{cms}/{plural}/{{id_or_slug}}/delete"),
+                    axum::routing::post({
+                        let singular = singular.clone();
+                        move |auth, state, path| {
+                            delete_handler(auth, state, path, singular.clone())
+                        }
                     }),
                 )
                 .route(
@@ -246,6 +330,32 @@ fn resolve_content_type(
     None
 }
 
+/// Parse catch-all path into (segment, optional id_or_slug, optional action)
+fn parse_dynamic_path_with_action(
+    path: &str,
+) -> Option<(String, Option<String>, Option<String>)> {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if segments.is_empty() {
+        return None;
+    }
+    let first = segments[0].to_string();
+    match segments.len() {
+        1 => Some((first, None, None)),
+        2 => {
+            let second = segments[1];
+            match second {
+                "create" | "update" | "delete" => Some((first, None, Some(second.to_string()))),
+                _ => Some((first, Some(second.to_string()), None)),
+            }
+        }
+        3 => {
+            let action = segments[2];
+            Some((first, Some(segments[1].to_string()), Some(action.to_string())))
+        }
+        _ => None,
+    }
+}
+
 /// Catch-all dynamic route handler (for content types added after startup)
 pub async fn dynamic_cms_handler(
     auth: AuthUser,
@@ -254,8 +364,25 @@ pub async fn dynamic_cms_handler(
     Path(path): Path<String>,
     Query(params): Query<ListParams>,
     body: Option<Json<Value>>,
-) -> Result<impl IntoResponse, AppError> {
-    let Some((segment, id)) = parse_dynamic_path(&path) else {
+) -> Result<axum::response::Response, AppError> {
+    let restful = state.config.api_restful;
+
+    if restful {
+        dynamic_cms_dispatch_restful(auth, &state, method, &path, params, body).await
+    } else {
+        dynamic_cms_dispatch_simple(auth, &state, method, &path, params, body).await
+    }
+}
+
+async fn dynamic_cms_dispatch_restful(
+    auth: AuthUser,
+    state: &AppState,
+    method: axum::http::Method,
+    path: &str,
+    params: ListParams,
+    body: Option<Json<Value>>,
+) -> Result<axum::response::Response, AppError> {
+    let Some((segment, id)) = parse_dynamic_path(path) else {
         return Err(AppError::not_found("invalid cms path"));
     };
 
@@ -269,14 +396,14 @@ pub async fn dynamic_cms_handler(
         match (method.clone(), id) {
             (axum::http::Method::GET, None) => {
                 check_api_access(ct.api.get.access, &auth)?;
-                let data = do_single_get(&state, &ct, &auth).await?;
+                let data = do_single_get(state, &ct, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             (axum::http::Method::PUT, None) => {
                 check_api_access(ct.api.update.access, &auth)?;
                 let Json(data) =
                     body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
-                let result = do_single_update(&state, &ct, data, &save_ctx, &auth).await?;
+                let result = do_single_update(state, &ct, data, &save_ctx, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
             }
             _ => Err(AppError::not_found(&format!("{method} {path}"))),
@@ -285,14 +412,14 @@ pub async fn dynamic_cms_handler(
         match (method.clone(), id) {
             (axum::http::Method::GET, None) => {
                 check_api_access(ct.api.list.access, &auth)?;
-                let data = do_list(&state, &ct, params, &auth).await?;
+                let data = do_list(state, &ct, params, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             (axum::http::Method::POST, None) => {
                 check_api_access(ct.api.create.access, &auth)?;
                 let Json(data) =
                     body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
-                let result = do_create(&state, &ct, data, &save_ctx).await?;
+                let result = do_create(state, &ct, data, &save_ctx).await?;
                 Ok((
                     StatusCode::CREATED,
                     Json(crate::errors::response::ApiResponse::success(result)),
@@ -301,19 +428,96 @@ pub async fn dynamic_cms_handler(
             }
             (axum::http::Method::GET, Some(id)) => {
                 check_api_access(ct.api.get.access, &auth)?;
-                let data = do_get(&state, &ct, &id, &auth).await?;
+                let data = do_get(state, &ct, &id, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             (axum::http::Method::PUT, Some(id)) => {
                 check_api_access(ct.api.update.access, &auth)?;
                 let Json(data) =
                     body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
-                let result = do_update(&state, &ct, &id, data, &save_ctx, &auth).await?;
+                let result = do_update(state, &ct, &id, data, &save_ctx, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
             }
             (axum::http::Method::DELETE, Some(id)) => {
                 check_api_access(ct.api.delete.access, &auth)?;
-                do_delete(&state, &ct, &id, &auth).await?;
+                do_delete(state, &ct, &id, &auth).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(
+                    json!({"deleted": true}),
+                ))
+                .into_response())
+            }
+            _ => Err(AppError::not_found(&format!("{method} {path}"))),
+        }
+    }
+}
+
+async fn dynamic_cms_dispatch_simple(
+    auth: AuthUser,
+    state: &AppState,
+    method: axum::http::Method,
+    path: &str,
+    params: ListParams,
+    body: Option<Json<Value>>,
+) -> Result<axum::response::Response, AppError> {
+    let Some((segment, id, action)) = parse_dynamic_path_with_action(path) else {
+        return Err(AppError::not_found("invalid cms path"));
+    };
+
+    let Some((ct, is_single)) = resolve_content_type(&state.content_type_registry, &segment) else {
+        return Err(AppError::not_found(&segment));
+    };
+
+    let save_ctx = SaveContext::from_auth(&auth);
+
+    if is_single {
+        match (method.clone(), id, action.as_deref()) {
+            (axum::http::Method::GET, None, None) => {
+                check_api_access(ct.api.get.access, &auth)?;
+                let data = do_single_get(state, &ct, &auth).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
+            }
+            (axum::http::Method::POST, None, Some("update")) => {
+                check_api_access(ct.api.update.access, &auth)?;
+                let Json(data) =
+                    body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
+                let result = do_single_update(state, &ct, data, &save_ctx, &auth).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
+            }
+            _ => Err(AppError::not_found(&format!("{method} {path}"))),
+        }
+    } else {
+        match (method.clone(), id, action.as_deref()) {
+            (axum::http::Method::GET, None, None) => {
+                check_api_access(ct.api.list.access, &auth)?;
+                let data = do_list(state, &ct, params, &auth).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
+            }
+            (axum::http::Method::POST, None, Some("create")) => {
+                check_api_access(ct.api.create.access, &auth)?;
+                let Json(data) =
+                    body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
+                let result = do_create(state, &ct, data, &save_ctx).await?;
+                Ok((
+                    StatusCode::CREATED,
+                    Json(crate::errors::response::ApiResponse::success(result)),
+                )
+                    .into_response())
+            }
+            (axum::http::Method::GET, Some(id), None) => {
+                check_api_access(ct.api.get.access, &auth)?;
+                let data = do_get(state, &ct, &id, &auth).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
+            }
+            (axum::http::Method::POST, Some(id), Some("update")) => {
+                check_api_access(ct.api.update.access, &auth)?;
+                let Json(data) =
+                    body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
+                let result = do_update(state, &ct, &id, data, &save_ctx, &auth).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
+            }
+            (axum::http::Method::POST, Some(id), Some("delete")) => {
+                check_api_access(ct.api.delete.access, &auth)?;
+                do_delete(state, &ct, &id, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(
                     json!({"deleted": true}),
                 ))
@@ -330,8 +534,23 @@ pub async fn dynamic_admin_cms_handler(
     method: axum::http::Method,
     Path(path): Path<String>,
     Query(params): Query<ListParams>,
-) -> Result<impl IntoResponse, AppError> {
-    let Some((segment, id)) = parse_dynamic_path(&path) else {
+) -> Result<axum::response::Response, AppError> {
+    let restful = state.config.api_restful;
+
+    if restful {
+        dynamic_admin_cms_dispatch_restful(&state, method, &path, params).await
+    } else {
+        dynamic_admin_cms_dispatch_simple(&state, method, &path, params).await
+    }
+}
+
+async fn dynamic_admin_cms_dispatch_restful(
+    state: &AppState,
+    method: axum::http::Method,
+    path: &str,
+    params: ListParams,
+) -> Result<axum::response::Response, AppError> {
+    let Some((segment, id)) = parse_dynamic_path(path) else {
         return Err(AppError::not_found("invalid admin cms path"));
     };
 
@@ -342,7 +561,7 @@ pub async fn dynamic_admin_cms_handler(
     if is_single {
         match method.clone() {
             axum::http::Method::GET => {
-                let data = do_admin_single_get(&state, &ct).await?;
+                let data = do_admin_single_get(state, &ct).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             _ => Err(AppError::not_found(&format!("{method} {path}"))),
@@ -350,11 +569,52 @@ pub async fn dynamic_admin_cms_handler(
     } else {
         match (method.clone(), id) {
             (axum::http::Method::GET, None) => {
-                let data = do_admin_list(&state, &ct, params).await?;
+                let data = do_admin_list(state, &ct, params).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             (axum::http::Method::GET, Some(id)) => {
-                let data = do_admin_get(&state, &ct, &id).await?;
+                let data = do_admin_get(state, &ct, &id).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
+            }
+            _ => Err(AppError::not_found(&format!("{method} {path}"))),
+        }
+    }
+}
+
+async fn dynamic_admin_cms_dispatch_simple(
+    state: &AppState,
+    method: axum::http::Method,
+    path: &str,
+    params: ListParams,
+) -> Result<axum::response::Response, AppError> {
+    let Some((segment, id, action)) = parse_dynamic_path_with_action(path) else {
+        return Err(AppError::not_found("invalid admin cms path"));
+    };
+
+    let Some((ct, is_single)) = resolve_content_type(&state.content_type_registry, &segment) else {
+        return Err(AppError::not_found(&segment));
+    };
+
+    if action.is_some() {
+        return Err(AppError::not_found(&format!("{method} {path}")));
+    }
+
+    if is_single {
+        match method.clone() {
+            axum::http::Method::GET => {
+                let data = do_admin_single_get(state, &ct).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
+            }
+            _ => Err(AppError::not_found(&format!("{method} {path}"))),
+        }
+    } else {
+        match (method.clone(), id) {
+            (axum::http::Method::GET, None) => {
+                let data = do_admin_list(state, &ct, params).await?;
+                Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
+            }
+            (axum::http::Method::GET, Some(id)) => {
+                let data = do_admin_get(state, &ct, &id).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             _ => Err(AppError::not_found(&format!("{method} {path}"))),
@@ -1457,6 +1717,53 @@ target = "users"
         let (seg, id) = parse_dynamic_path("products/").unwrap();
         assert_eq!(seg, "products");
         assert!(id.is_none());
+    }
+
+    #[test]
+    fn parse_dynamic_path_with_action_plural_create() {
+        let (seg, id, action) = parse_dynamic_path_with_action("products/create").unwrap();
+        assert_eq!(seg, "products");
+        assert!(id.is_none());
+        assert_eq!(action, Some("create".to_string()));
+    }
+
+    #[test]
+    fn parse_dynamic_path_with_action_id_update() {
+        let (seg, id, action) =
+            parse_dynamic_path_with_action("products/abc-123/update").unwrap();
+        assert_eq!(seg, "products");
+        assert_eq!(id, Some("abc-123".to_string()));
+        assert_eq!(action, Some("update".to_string()));
+    }
+
+    #[test]
+    fn parse_dynamic_path_with_action_id_delete() {
+        let (seg, id, action) =
+            parse_dynamic_path_with_action("products/abc-123/delete").unwrap();
+        assert_eq!(seg, "products");
+        assert_eq!(id, Some("abc-123".to_string()));
+        assert_eq!(action, Some("delete".to_string()));
+    }
+
+    #[test]
+    fn parse_dynamic_path_with_action_no_action() {
+        let (seg, id, action) = parse_dynamic_path_with_action("products/abc-123").unwrap();
+        assert_eq!(seg, "products");
+        assert_eq!(id, Some("abc-123".to_string()));
+        assert!(action.is_none());
+    }
+
+    #[test]
+    fn parse_dynamic_path_with_action_empty() {
+        assert!(parse_dynamic_path_with_action("").is_none());
+    }
+
+    #[test]
+    fn parse_dynamic_path_with_action_update_no_id() {
+        let (seg, id, action) = parse_dynamic_path_with_action("setting/update").unwrap();
+        assert_eq!(seg, "setting");
+        assert!(id.is_none());
+        assert_eq!(action, Some("update".to_string()));
     }
 
     #[test]

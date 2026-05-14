@@ -26,11 +26,11 @@ export class AdminContentTypes {
     schema: ContentTypeSchema,
     options?: RequestOptions,
   ): Promise<ContentTypeSchema> {
-    return this.http.post<ContentTypeSchema>(
-      "/admin/content-types",
-      schema,
-      options,
-    );
+    return this.http.request<ContentTypeSchema>(this.http.pathForCreate("/admin/content-types"), {
+      ...options,
+      method: this.http.methodForCreate(),
+      body: schema,
+    });
   }
 
   async update(
@@ -38,14 +38,17 @@ export class AdminContentTypes {
     schema: Partial<ContentTypeSchema>,
     options?: RequestOptions,
   ): Promise<ContentTypeSchema> {
-    return this.http.put<ContentTypeSchema>(
-      `/admin/content-types/${name}`,
-      schema,
-      options,
-    );
+    return this.http.request<ContentTypeSchema>(this.http.pathForUpdate("/admin/content-types", name), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body: schema,
+    });
   }
 
   async delete(name: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/admin/content-types/${name}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/admin/content-types", name), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 }

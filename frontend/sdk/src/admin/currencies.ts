@@ -31,7 +31,11 @@ export class AdminCurrencies {
     body: CreateCurrencyRequest,
     options?: RequestOptions,
   ): Promise<CurrencyResponse> {
-    return this.http.post<CurrencyResponse>("/admin/currencies", body, options);
+    return this.http.request<CurrencyResponse>(this.http.pathForCreate("/admin/currencies"), {
+      ...options,
+      method: this.http.methodForCreate(),
+      body,
+    });
   }
 
   async update(
@@ -39,10 +43,10 @@ export class AdminCurrencies {
     body: UpdateCurrencyRequest,
     options?: RequestOptions,
   ): Promise<CurrencyResponse> {
-    return this.http.put<CurrencyResponse>(
-      `/admin/currencies/${code}`,
+    return this.http.request<CurrencyResponse>(this.http.pathForUpdate("/admin/currencies", code), {
+      ...options,
+      method: this.http.methodForUpdate(),
       body,
-      options,
-    );
+    });
   }
 }

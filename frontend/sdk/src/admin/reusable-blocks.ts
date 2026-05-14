@@ -42,11 +42,11 @@ export class AdminReusableBlocks {
     body: CreateReusableBlockBody,
     options?: RequestOptions,
   ): Promise<ReusableBlock> {
-    return this.http.post<ReusableBlock>(
-      "/admin/reusable-blocks",
+    return this.http.request<ReusableBlock>(this.http.pathForCreate("/admin/reusable-blocks"), {
+      ...options,
+      method: this.http.methodForCreate(),
       body,
-      options,
-    );
+    });
   }
 
   async update(
@@ -54,15 +54,18 @@ export class AdminReusableBlocks {
     body: UpdateReusableBlockBody,
     options?: RequestOptions,
   ): Promise<ReusableBlock> {
-    return this.http.put<ReusableBlock>(
-      `/admin/reusable-blocks/${id}`,
+    return this.http.request<ReusableBlock>(this.http.pathForUpdate("/admin/reusable-blocks", id), {
+      ...options,
+      method: this.http.methodForUpdate(),
       body,
-      options,
-    );
+    });
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/admin/reusable-blocks/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/admin/reusable-blocks", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 
   async batch(

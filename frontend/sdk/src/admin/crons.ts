@@ -21,7 +21,11 @@ export class AdminCrons {
     data: { name: string; schedule: string; handler: string },
     options?: RequestOptions,
   ): Promise<CronJob> {
-    return this.http.post<CronJob>("/admin/crons", data, options);
+    return this.http.request<CronJob>(this.http.pathForCreate("/admin/crons"), {
+      ...options,
+      method: this.http.methodForCreate(),
+      body: data,
+    });
   }
 
   async get(id: string, options?: RequestOptions): Promise<CronJob> {
@@ -33,11 +37,18 @@ export class AdminCrons {
     data: Partial<CronJob>,
     options?: RequestOptions,
   ): Promise<CronJob> {
-    return this.http.put<CronJob>(`/admin/crons/${id}`, data, options);
+    return this.http.request<CronJob>(this.http.pathForUpdate("/admin/crons", id), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body: data,
+    });
   }
 
   async delete(id: string, options?: RequestOptions): Promise<void> {
-    await this.http.del(`/admin/crons/${id}`, options);
+    await this.http.request<void>(this.http.pathForDelete("/admin/crons", id), {
+      ...options,
+      method: this.http.methodForDelete(),
+    });
   }
 
   async toggle(

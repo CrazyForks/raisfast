@@ -23,14 +23,22 @@ export class Users {
     },
     options?: RequestOptions,
   ): Promise<User> {
-    return this.http.put<User>("/users/me", data, options);
+    return this.http.request<User>(this.http.pathForUpdate("/users", "me"), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body: data,
+    });
   }
 
   async changePassword(
     data: { old_password: string; new_password: string },
     options?: RequestOptions,
   ): Promise<void> {
-    await this.http.put("/users/me/password", data, options);
+    await this.http.request<void>(this.http.pathForUpdate("/users", "me/password"), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body: data,
+    });
   }
 
   async getUser(id: string, options?: RequestOptions): Promise<User> {
@@ -53,6 +61,10 @@ export class Users {
     role: UserRole,
     options?: RequestOptions,
   ): Promise<User> {
-    return this.http.put<User>(`/users/${id}/role`, { role }, options);
+    return this.http.request<User>(this.http.pathForUpdate("/users", `${id}/role`), {
+      ...options,
+      method: this.http.methodForUpdate(),
+      body: { role },
+    });
   }
 }
