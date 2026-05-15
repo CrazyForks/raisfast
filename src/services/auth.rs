@@ -13,14 +13,13 @@ use chrono::Utc;
 use jsonwebtoken::{EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 
+use crate::aspects::engine::AspectEngine;
 use crate::dto::{LoginResponse, RegisterRequest, UpdatePasswordRequest, UserResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::Event;
-use crate::eventbus::EventBus;
 use crate::middleware::auth::AuthUser;
 use crate::models::user::{UserRole, UserStatus};
 use crate::models::user_credential::AuthType;
-use crate::plugins::PluginManager;
 use crate::repositories::{RefreshTokenRepository, UserRepository};
 
 /// JWT token claims (payload).
@@ -170,10 +169,10 @@ pub fn generate_access_token_for_test(user_id: &str, user_int_id: i64, role: Use
 ///
 /// Checks if the email is already registered; if unique, hashes the password and creates
 /// the user record and email credential within a transaction.
-#[tracing::instrument(skip(_user_repo, eventbus), fields(username = tracing::field::Empty))]
+#[tracing::instrument(skip(_user_repo, aspect_engine), fields(username = tracing::field::Empty))]
 pub async fn register(
     _user_repo: &dyn UserRepository,
-    eventbus: &EventBus,
+    aspect_engine: &AspectEngine,
     req: RegisterRequest,
     tenant_id: Option<&str>,
     require_email_verification: bool,
@@ -286,11 +285,14 @@ pub async fn register(
         Ok::<_, crate::errors::app_error::AppError>(user)
     })?;
 
-    eventbus.emit(Event::UserRegistered(user.clone()));
+    aspect_engine.emit(Event::UserRegistered(user.clone()));
 
     if require_email_verification {
         let _ = crate::services::email_verification::trigger_email_verification(
-            pool, eventbus, user.id, &req.email,
+            pool,
+            aspect_engine,
+            user.id,
+            &req.email,
         )
         .await;
     }
@@ -303,12 +305,11 @@ pub async fn register(
 /// Looks up the user via email credential, verifies the password, and on success generates
 /// an access token and a refresh token.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(_user_repo, refresh_token_repo, plugins, eventbus), fields(email = %req.email))]
+#[tracing::instrument(skip(_user_repo, refresh_token_repo, aspect_engine), fields(email = %req.email))]
 pub async fn login(
     _user_repo: &dyn UserRepository,
     refresh_token_repo: &dyn RefreshTokenRepository,
-    plugins: &PluginManager,
-    eventbus: &EventBus,
+    aspect_engine: &AspectEngine,
     pool: &crate::db::Pool,
     req: &crate::dto::LoginRequest,
     jwt_secret: &str,
@@ -329,12 +330,6 @@ pub async fn login(
         &req.password,
         &crate::models::user_credential::extract_password_hash(&cred.credential_data)?,
     )? {
-        plugins
-            .dispatch_action(
-                "on_login",
-                &serde_json::json!({"email": &req.email, "success": false}),
-            )
-            .await;
         return Err(AppError::Unauthorized);
     }
 
@@ -375,14 +370,7 @@ pub async fn login(
         .create_token(user.id, &refresh_token_str, &expires_at.to_rfc3339())
         .await?;
 
-    plugins
-        .dispatch_action(
-            "on_login",
-            &serde_json::json!({"email": &req.email, "success": true, "user_id": &user.document_id}),
-        )
-        .await;
-
-    eventbus.emit(Event::UserLoggedIn {
+    aspect_engine.emit(Event::UserLoggedIn {
         user: user.clone(),
         success: true,
     });

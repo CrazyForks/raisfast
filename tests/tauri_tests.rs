@@ -68,14 +68,14 @@ async fn setup_pool() -> sqlx::SqlitePool {
     pool
 }
 async fn create_test_user(pool: &sqlx::SqlitePool, label: &str) -> (i64, String) {
-    let eventbus = raisfast::eventbus::EventBus::new(16);
+    let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
     let user_repo = SqlxUserRepository::new(pool.clone());
     let req = raisfast::dto::RegisterRequest {
         username: format!("user_{label}"),
         email: format!("{label}@test.com"),
         password: "Password123".into(),
     };
-    let user = auth::register(&user_repo, &eventbus, req, None, false, pool)
+    let user = auth::register(&user_repo, &aspect_engine, req, None, false, pool)
         .await
         .unwrap();
     let row: (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
@@ -125,7 +125,7 @@ label = "优先级"
 async fn tauri_auth_register_service() {
     let pool = setup_pool().await;
     let user_repo = SqlxUserRepository::new(pool.clone());
-    let eventbus = raisfast::eventbus::EventBus::new(16);
+    let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
 
     let req = raisfast::dto::RegisterRequest {
         username: "testuser".into(),
@@ -133,7 +133,7 @@ async fn tauri_auth_register_service() {
         password: "Password123".into(),
     };
 
-    let result = auth::register(&user_repo, &eventbus, req, None, false, &pool).await;
+    let result = auth::register(&user_repo, &aspect_engine, req, None, false, &pool).await;
 
     assert!(
         result.is_ok(),
@@ -148,14 +148,14 @@ async fn tauri_auth_register_service() {
 async fn tauri_auth_register_duplicate_email() {
     let pool = setup_pool().await;
     let user_repo = SqlxUserRepository::new(pool.clone());
-    let eventbus = raisfast::eventbus::EventBus::new(16);
+    let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
 
     let req = raisfast::dto::RegisterRequest {
         username: "user1".into(),
         email: "dup@example.com".into(),
         password: "Password123".into(),
     };
-    auth::register(&user_repo, &eventbus, req, None, false, &pool)
+    auth::register(&user_repo, &aspect_engine, req, None, false, &pool)
         .await
         .unwrap();
 
@@ -164,8 +164,8 @@ async fn tauri_auth_register_duplicate_email() {
         email: "dup@example.com".into(),
         password: "Password456".into(),
     };
-    let eventbus2 = raisfast::eventbus::EventBus::new(16);
-    let result = auth::register(&user_repo, &eventbus2, req2, None, false, &pool).await;
+    let aspect_engine2 = raisfast::aspects::engine::AspectEngine::new();
+    let result = auth::register(&user_repo, &aspect_engine2, req2, None, false, &pool).await;
     assert!(result.is_err(), "duplicate email should fail");
 }
 
@@ -175,15 +175,14 @@ async fn tauri_auth_login_service() {
     let config = test_config();
     let user_repo = SqlxUserRepository::new(pool.clone());
     let refresh_repo = SqlxRefreshTokenRepository::new(pool.clone());
-    let eventbus = raisfast::eventbus::EventBus::new(16);
-    let plugin_mgr = raisfast::plugins::PluginManager::new(Arc::new(config.clone())).await;
+    let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
 
     let reg_req = raisfast::dto::RegisterRequest {
         username: "loginuser".into(),
         email: "login@example.com".into(),
         password: "Password123".into(),
     };
-    auth::register(&user_repo, &eventbus, reg_req, None, false, &pool)
+    auth::register(&user_repo, &aspect_engine, reg_req, None, false, &pool)
         .await
         .unwrap();
 
@@ -191,12 +190,11 @@ async fn tauri_auth_login_service() {
         email: "login@example.com".into(),
         password: "Password123".into(),
     };
-    let eventbus2 = raisfast::eventbus::EventBus::new(16);
+    let aspect_engine2 = raisfast::aspects::engine::AspectEngine::new();
     let result = auth::login(
         &user_repo,
         &refresh_repo,
-        &plugin_mgr,
-        &eventbus2,
+        &aspect_engine2,
         &pool,
         &login_req,
         &config.jwt_secret,
@@ -219,15 +217,14 @@ async fn tauri_auth_login_wrong_password() {
     let config = test_config();
     let user_repo = SqlxUserRepository::new(pool.clone());
     let refresh_repo = SqlxRefreshTokenRepository::new(pool.clone());
-    let eventbus = raisfast::eventbus::EventBus::new(16);
-    let plugin_mgr = raisfast::plugins::PluginManager::new(Arc::new(config.clone())).await;
+    let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
 
     let reg_req = raisfast::dto::RegisterRequest {
         username: "wrongpw".into(),
         email: "wrong@example.com".into(),
         password: "Password123".into(),
     };
-    auth::register(&user_repo, &eventbus, reg_req, None, false, &pool)
+    auth::register(&user_repo, &aspect_engine, reg_req, None, false, &pool)
         .await
         .unwrap();
 
@@ -235,12 +232,11 @@ async fn tauri_auth_login_wrong_password() {
         email: "wrong@example.com".into(),
         password: "WrongPassword".into(),
     };
-    let eventbus2 = raisfast::eventbus::EventBus::new(16);
+    let aspect_engine2 = raisfast::aspects::engine::AspectEngine::new();
     let result = auth::login(
         &user_repo,
         &refresh_repo,
-        &plugin_mgr,
-        &eventbus2,
+        &aspect_engine2,
         &pool,
         &login_req,
         &config.jwt_secret,
@@ -258,14 +254,14 @@ async fn tauri_auth_login_wrong_password() {
 async fn tauri_auth_get_me_service() {
     let pool = setup_pool().await;
     let user_repo = SqlxUserRepository::new(pool.clone());
-    let eventbus = raisfast::eventbus::EventBus::new(16);
+    let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
 
     let reg_req = raisfast::dto::RegisterRequest {
         username: "getme".into(),
         email: "getme@example.com".into(),
         password: "Password123".into(),
     };
-    let user = auth::register(&user_repo, &eventbus, reg_req, None, false, &pool)
+    let user = auth::register(&user_repo, &aspect_engine, reg_req, None, false, &pool)
         .await
         .unwrap();
 
@@ -295,9 +291,6 @@ async fn tauri_post_create_and_list() {
             Arc::new(raisfast::cache::MemoryCache::new()),
             None,
         ));
-    let eventbus = raisfast::eventbus::EventBus::new(16);
-    let config = test_config();
-    let plugin_mgr = raisfast::plugins::PluginManager::new(Arc::new(config.clone())).await;
     let svc = build_post_service(post_repo.clone());
 
     let req = raisfast::dto::CreatePostRequest {
@@ -338,9 +331,6 @@ async fn tauri_post_get_by_slug() {
             Arc::new(raisfast::cache::MemoryCache::new()),
             None,
         ));
-    let eventbus = raisfast::eventbus::EventBus::new(16);
-    let config = test_config();
-    let plugin_mgr = raisfast::plugins::PluginManager::new(Arc::new(config.clone())).await;
     let svc = build_post_service(post_repo.clone());
 
     let req = raisfast::dto::CreatePostRequest {

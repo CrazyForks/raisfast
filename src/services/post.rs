@@ -123,9 +123,7 @@ impl PostServiceImpl {
         auth: &AuthUser,
         req: CreatePostRequest,
     ) -> AppResult<(CreatePostRequest, crate::aspects::Dispatched)> {
-        self.aspect_engine
-            .before_create(self.repo.pool(), "posts", auth, req)
-            .await
+        self.aspect_engine.before_create("posts", auth, req).await
     }
 
     async fn before_update(
@@ -136,7 +134,7 @@ impl PostServiceImpl {
     ) -> AppResult<(UpdatePostRequest, crate::aspects::Dispatched)> {
         crate::policy::PostPolicy::can_update(auth, existing)?;
         self.aspect_engine
-            .before_update(self.repo.pool(), "posts", auth, existing, req)
+            .before_update("posts", auth, existing, req)
             .await
     }
 
@@ -147,7 +145,7 @@ impl PostServiceImpl {
     ) -> AppResult<crate::aspects::Dispatched> {
         crate::policy::PostPolicy::can_delete(auth, existing)?;
         self.aspect_engine
-            .before_delete(self.repo.pool(), "posts", auth, existing)
+            .before_delete("posts", auth, existing)
             .await
     }
 

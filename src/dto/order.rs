@@ -7,7 +7,7 @@ use validator::Validate;
 use super::validate_optional_uuid;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct CreateProductRequest {
     #[validate(length(min = 1, max = 200))]
     pub title: String,
@@ -39,7 +39,7 @@ pub struct CreateProductRequest {
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct UpdateProductRequest {
     #[validate(length(min = 1, max = 200))]
     pub title: Option<String>,
@@ -73,7 +73,7 @@ pub struct UpdateProductRequest {
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone, Validate, ToSchema)]
 pub struct CreateOrderRequest {
     #[validate(length(min = 1))]
     pub items: Vec<CreateOrderItemRequest>,
@@ -86,7 +86,7 @@ pub struct CreateOrderRequest {
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Serialize, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone, Validate, ToSchema)]
 pub struct CreateOrderItemRequest {
     pub product_id: String,
     #[validate(range(min = 1))]

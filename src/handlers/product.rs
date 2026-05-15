@@ -3,7 +3,6 @@ use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
-use crate::services::product;
 use crate::utils::pagination::PaginationParams;
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -86,13 +85,10 @@ pub async fn list_active(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<ProductResponse>>> {
     params.sanitize();
-    let (items, total) = product::list_active_products(
-        state.product_repo.as_ref(),
-        &auth,
-        params.page,
-        params.page_size,
-    )
-    .await?;
+    let (items, total) = state
+        .product_service
+        .list_active(&auth, params.page, params.page_size)
+        .await?;
     let resp: Vec<ProductResponse> = items.into_iter().map(Into::into).collect();
     Ok(params.paginate(resp, total))
 }
@@ -107,7 +103,7 @@ pub async fn get_product(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<ProductResponse>> {
-    let p = product::get_product(state.product_repo.as_ref(), &id, &auth).await?;
+    let p = state.product_service.get(&id, &auth).await?;
     Ok(ApiResponse::success(ProductResponse::from(p)))
 }
 
@@ -122,14 +118,10 @@ pub async fn admin_list(
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<ProductResponse>>> {
     auth.ensure_admin()?;
     params.sanitize();
-    let (items, total) = product::list_admin_products(
-        state.product_repo.as_ref(),
-        &auth,
-        params.page,
-        params.page_size,
-        None,
-    )
-    .await?;
+    let (items, total) = state
+        .product_service
+        .list_admin(&auth, params.page, params.page_size, None)
+        .await?;
     let resp: Vec<ProductResponse> = items.into_iter().map(Into::into).collect();
     Ok(params.paginate(resp, total))
 }
@@ -146,7 +138,7 @@ pub async fn admin_create(
 ) -> AppResult<ApiResponse<ProductResponse>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let p = product::create_product(state.product_repo.as_ref(), &auth, req).await?;
+    let p = state.product_service.create(&auth, req).await?;
     Ok(ApiResponse::success(ProductResponse::from(p)))
 }
 
@@ -164,7 +156,7 @@ pub async fn admin_update(
 ) -> AppResult<ApiResponse<ProductResponse>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let p = product::update_product(state.product_repo.as_ref(), &auth, &id, req).await?;
+    let p = state.product_service.update(&auth, &id, req).await?;
     Ok(ApiResponse::success(ProductResponse::from(p)))
 }
 
@@ -179,6 +171,6 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    product::delete_product(state.product_repo.as_ref(), &id, &auth).await?;
+    state.product_service.delete(&id, &auth).await?;
     Ok(ApiResponse::success(()))
 }

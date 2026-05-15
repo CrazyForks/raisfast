@@ -3,13 +3,11 @@ use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 
-use crate::audit::AuditService;
 use crate::dto::payment::*;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
-use crate::services::payment;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -265,21 +263,17 @@ pub async fn create_payment_order_handler(
     let client_ip = extract_client_ip(&headers);
     let client_language = extract_accept_language(&headers);
     let client_user_agent = extract_user_agent(&headers);
-    let (order, provider_resp) = payment::create_payment_order(
-        &state.pool,
-        state.payment_channel_repo.as_ref(),
-        state.payment_order_repo.as_ref(),
-        state.product_repo.as_ref(),
-        state.order_repo.as_ref(),
-        &auth,
-        user_int_id,
-        req,
-        &state.config,
-        client_ip.as_deref(),
-        client_language.as_deref(),
-        client_user_agent.as_deref(),
-    )
-    .await?;
+    let (order, provider_resp) = state
+        .payment_service
+        .create_payment_order(
+            &auth,
+            user_int_id,
+            req,
+            client_ip.as_deref(),
+            client_language.as_deref(),
+            client_user_agent.as_deref(),
+        )
+        .await?;
     Ok(ApiResponse::success(to_order_response_with_provider(
         order,
         provider_resp,
@@ -298,14 +292,10 @@ pub async fn list_user_orders(
     let _user_id = auth.ensure_authenticated()?;
     let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
     params.sanitize();
-    let (orders, total) = payment::list_user_payment_orders(
-        state.payment_order_repo.as_ref(),
-        &auth,
-        user_int_id,
-        params.page,
-        params.page_size,
-    )
-    .await?;
+    let (orders, total) = state
+        .payment_service
+        .list_user_payment_orders(&auth, user_int_id, params.page, params.page_size)
+        .await?;
     let responses: Vec<PaymentOrderResponse> = orders.into_iter().map(to_order_response).collect();
     Ok(params.paginate(responses, total))
 }
@@ -322,9 +312,10 @@ pub async fn get_payment_order_handler(
 ) -> AppResult<ApiResponse<PaymentOrderResponse>> {
     let _user_id = auth.ensure_authenticated()?;
     let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
-    let order =
-        payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, user_int_id, &id)
-            .await?;
+    let order = state
+        .payment_service
+        .get_payment_order(&auth, user_int_id, &id)
+        .await?;
     Ok(ApiResponse::success(to_order_response(order)))
 }
 
@@ -340,18 +331,10 @@ pub async fn cancel_payment_order_handler(
 ) -> AppResult<ApiResponse<()>> {
     let _user_id = auth.ensure_authenticated()?;
     let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
-    let audit = AuditService::new(state.pool.clone());
-    payment::cancel_payment_order(
-        &state.pool,
-        state.payment_order_repo.as_ref(),
-        state.payment_channel_repo.as_ref(),
-        &auth,
-        &audit,
-        &state.config,
-        &id,
-        user_int_id,
-    )
-    .await?;
+    state
+        .payment_service
+        .cancel_payment_order(&auth, &id, user_int_id)
+        .await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -367,12 +350,9 @@ pub async fn list_order_transactions(
 ) -> AppResult<ApiResponse<Vec<PaymentTransactionResponse>>> {
     let _ = auth.ensure_authenticated()?;
     let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
-    let order =
-        payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, user_int_id, &id)
-            .await?;
     let txs = state
-        .payment_tx_repo
-        .find_by_payment_order_id(order.id, auth.tenant_id())
+        .payment_service
+        .list_order_transactions(&auth, user_int_id, &id)
         .await?;
     let responses: Vec<PaymentTransactionResponse> = txs.into_iter().map(Into::into).collect();
     Ok(ApiResponse::success(responses))
@@ -390,12 +370,9 @@ pub async fn list_order_refunds(
 ) -> AppResult<ApiResponse<Vec<PaymentRefundResponse>>> {
     let _ = auth.ensure_authenticated()?;
     let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
-    let order =
-        payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, user_int_id, &id)
-            .await?;
     let refunds = state
-        .payment_refund_repo
-        .find_by_payment_order_id(order.id, auth.tenant_id())
+        .payment_service
+        .list_order_refunds(&auth, user_int_id, &id)
         .await?;
     let responses: Vec<PaymentRefundResponse> = refunds.into_iter().map(Into::into).collect();
     Ok(ApiResponse::success(responses))
@@ -412,20 +389,10 @@ pub async fn handle_callback(
     headers: HeaderMap,
     body: Bytes,
 ) -> AppResult<ApiResponse<()>> {
-    let audit = AuditService::new(state.pool.clone());
-    payment::handle_callback(
-        &state.pool,
-        state.payment_channel_repo.as_ref(),
-        state.payment_order_repo.as_ref(),
-        state.payment_tx_repo.as_ref(),
-        state.wallet_repo.as_ref(),
-        &audit,
-        &state.config,
-        &channel_doc_id,
-        &headers,
-        &body,
-    )
-    .await?;
+    state
+        .payment_service
+        .handle_callback(&channel_doc_id, &headers, &body)
+        .await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -467,15 +434,15 @@ pub async fn list_available_channels_handler(
     State(state): State<crate::AppState>,
     Query(query): Query<AvailableChannelsQuery>,
 ) -> AppResult<ApiResponse<AvailableChannelsResponse>> {
-    let result = payment::list_available_channels(
-        state.payment_channel_repo.as_ref(),
-        state.order_repo.as_ref(),
-        &auth,
-        &query.order_id,
-        query.country.as_deref(),
-        query.language.as_deref(),
-    )
-    .await?;
+    let result = state
+        .payment_service
+        .list_available_channels(
+            &auth,
+            &query.order_id,
+            query.country.as_deref(),
+            query.language.as_deref(),
+        )
+        .await?;
     Ok(ApiResponse::success(result))
 }
 
@@ -491,8 +458,8 @@ pub async fn admin_list_channels(
     auth.ensure_admin()?;
     params.sanitize();
     let (channels, total) = state
-        .payment_channel_repo
-        .find_all_admin_paginated(auth.tenant_id(), params.page, params.page_size, None)
+        .payment_service
+        .list_admin_channels(&auth, params.page, params.page_size)
         .await?;
     let responses: Vec<PaymentChannelResponse> = channels.into_iter().map(Into::into).collect();
     Ok(params.paginate(responses, total))
@@ -509,15 +476,7 @@ pub async fn admin_create_channel(
     Json(req): Json<CreatePaymentChannelRequest>,
 ) -> AppResult<ApiResponse<PaymentChannelResponse>> {
     validation::validate(&req)?;
-    let audit = AuditService::new(state.pool.clone());
-    let channel = payment::create_channel(
-        state.payment_channel_repo.as_ref(),
-        &auth,
-        &state.config,
-        &audit,
-        req,
-    )
-    .await?;
+    let channel = state.payment_service.create_channel(&auth, req).await?;
     Ok(ApiResponse::success(PaymentChannelResponse::from(channel)))
 }
 
@@ -531,7 +490,7 @@ pub async fn admin_get_channel(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PaymentChannelResponse>> {
-    let channel = payment::get_channel(state.payment_channel_repo.as_ref(), &auth, &id).await?;
+    let channel = state.payment_service.get_channel(&auth, &id).await?;
     Ok(ApiResponse::success(PaymentChannelResponse::from(channel)))
 }
 
@@ -548,16 +507,10 @@ pub async fn admin_update_channel(
     Json(req): Json<UpdatePaymentChannelRequest>,
 ) -> AppResult<ApiResponse<PaymentChannelResponse>> {
     validation::validate(&req)?;
-    let audit = AuditService::new(state.pool.clone());
-    let channel = payment::update_channel(
-        state.payment_channel_repo.as_ref(),
-        &auth,
-        &state.config,
-        &audit,
-        &id,
-        req,
-    )
-    .await?;
+    let channel = state
+        .payment_service
+        .update_channel(&auth, &id, req)
+        .await?;
     Ok(ApiResponse::success(PaymentChannelResponse::from(channel)))
 }
 
@@ -571,8 +524,7 @@ pub async fn admin_delete_channel(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    let audit = AuditService::new(state.pool.clone());
-    payment::delete_channel(state.payment_channel_repo.as_ref(), &auth, &audit, &id).await?;
+    state.payment_service.delete_channel(&auth, &id).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -587,14 +539,10 @@ pub async fn admin_list_orders(
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PaymentOrderResponse>>> {
     auth.ensure_admin()?;
     params.sanitize();
-    let (orders, total) = payment::list_admin_payment_orders(
-        state.payment_order_repo.as_ref(),
-        &auth,
-        params.page,
-        params.page_size,
-        None,
-    )
-    .await?;
+    let (orders, total) = state
+        .payment_service
+        .list_admin_payment_orders(&auth, params.page, params.page_size, None)
+        .await?;
     let responses: Vec<PaymentOrderResponse> = orders.into_iter().map(to_order_response).collect();
     Ok(params.paginate(responses, total))
 }
@@ -610,8 +558,10 @@ pub async fn admin_get_order(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PaymentOrderResponse>> {
     auth.ensure_admin()?;
-    let order =
-        payment::get_payment_order(state.payment_order_repo.as_ref(), &auth, 0, &id).await?;
+    let order = state
+        .payment_service
+        .get_payment_order(&auth, 0, &id)
+        .await?;
     Ok(ApiResponse::success(to_order_response(order)))
 }
 
@@ -629,21 +579,10 @@ pub async fn admin_refund_order(
 ) -> AppResult<ApiResponse<PaymentRefundResponse>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let audit = AuditService::new(state.pool.clone());
-    let refund = payment::refund_payment_order(
-        &state.pool,
-        state.payment_order_repo.as_ref(),
-        state.payment_channel_repo.as_ref(),
-        state.payment_tx_repo.as_ref(),
-        state.payment_refund_repo.as_ref(),
-        state.wallet_repo.as_ref(),
-        &auth,
-        &audit,
-        &state.config,
-        &id,
-        req,
-    )
-    .await?;
+    let refund = state
+        .payment_service
+        .refund_payment_order(&auth, &id, req)
+        .await?;
     Ok(ApiResponse::success(PaymentRefundResponse::from(refund)))
 }
 
@@ -658,13 +597,10 @@ pub async fn admin_list_transactions(
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PaymentTransactionResponse>>> {
     auth.ensure_admin()?;
     params.sanitize();
-    let (txs, total) = payment::list_admin_transactions(
-        state.payment_tx_repo.as_ref(),
-        &auth,
-        params.page,
-        params.page_size,
-    )
-    .await?;
+    let (txs, total) = state
+        .payment_service
+        .list_admin_transactions(&auth, params.page, params.page_size)
+        .await?;
     let responses: Vec<PaymentTransactionResponse> = txs.into_iter().map(Into::into).collect();
     Ok(params.paginate(responses, total))
 }
@@ -680,13 +616,10 @@ pub async fn admin_list_refunds(
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PaymentRefundResponse>>> {
     auth.ensure_admin()?;
     params.sanitize();
-    let (refunds, total) = payment::list_admin_refunds(
-        state.payment_refund_repo.as_ref(),
-        &auth,
-        params.page,
-        params.page_size,
-    )
-    .await?;
+    let (refunds, total) = state
+        .payment_service
+        .list_admin_refunds(&auth, params.page, params.page_size)
+        .await?;
     let responses: Vec<PaymentRefundResponse> = refunds.into_iter().map(Into::into).collect();
     Ok(params.paginate(responses, total))
 }

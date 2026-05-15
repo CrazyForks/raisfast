@@ -10,12 +10,19 @@
 use serde::{Deserialize, Serialize};
 
 use crate::dto::PostResponse;
+use crate::models::category::Category;
 use crate::models::comment::Comment;
 use crate::models::email_verification::EmailVerificationToken;
 use crate::models::media::Media;
+use crate::models::order::Order;
+use crate::models::page::Page;
 use crate::models::password_reset::PasswordResetToken;
+use crate::models::payment_order::PaymentOrder;
 use crate::models::post::Post;
+use crate::models::product::Product;
+use crate::models::tag::Tag;
 use crate::models::user::User;
+use crate::models::wallet_transaction::WalletTransaction;
 
 pub use raisfast_derive::EventMeta;
 
@@ -40,6 +47,68 @@ pub enum Event {
     CommentCreating,
     #[event(table = "comments")]
     CommentCreated(Comment),
+    #[event(table = "comments")]
+    CommentUpdated(Comment),
+    #[event(table = "comments")]
+    CommentDeleted(Comment),
+
+    // ── Tag lifecycle ──
+    #[event(table = "tags")]
+    TagCreated(Tag),
+    #[event(table = "tags")]
+    TagUpdated(Tag),
+    #[event(table = "tags")]
+    TagDeleted(Tag),
+
+    // ── Category lifecycle ──
+    #[event(table = "categories")]
+    CategoryCreated(Category),
+    #[event(table = "categories")]
+    CategoryUpdated(Category),
+    #[event(table = "categories")]
+    CategoryDeleted(Category),
+
+    // ── Page lifecycle ──
+    #[event(table = "pages")]
+    PageCreated(Page),
+    #[event(table = "pages")]
+    PageUpdated(Page),
+    #[event(table = "pages")]
+    PageDeleted(Page),
+
+    // ── Product lifecycle ──
+    #[event(table = "products")]
+    ProductCreated(Product),
+    #[event(table = "products")]
+    ProductUpdated(Product),
+    #[event(table = "products")]
+    ProductDeleted(Product),
+
+    // ── Order lifecycle ──
+    #[event(table = "orders")]
+    OrderCreated(Order),
+    #[event(table = "orders")]
+    OrderPaid(Order),
+    #[event(table = "orders")]
+    OrderShipped(Order),
+    #[event(table = "orders")]
+    OrderCompleted(Order),
+    #[event(table = "orders")]
+    OrderCancelled(Order),
+
+    // ── Payment lifecycle ──
+    #[event(table = "payment_orders")]
+    PaymentOrderCreated(PaymentOrder),
+    #[event(table = "payment_orders")]
+    PaymentPaid(PaymentOrder),
+    #[event(table = "payment_orders")]
+    PaymentRefunded(PaymentOrder),
+
+    // ── Wallet lifecycle ──
+    #[event(table = "wallet_transactions")]
+    WalletCredited(WalletTransaction),
+    #[event(table = "wallet_transactions")]
+    WalletDebited(WalletTransaction),
 
     // ── Generic CMS content lifecycle ──
     ContentCreating,
@@ -65,10 +134,12 @@ pub enum Event {
     MediaDeleted(Media),
 
     // ── Auth ──
+    #[event(table = "users")]
     PasswordResetRequested {
         user: User,
         token: PasswordResetToken,
     },
+    #[event(table = "users")]
     EmailVerificationRequested {
         user_id: i64,
         email: String,

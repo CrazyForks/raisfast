@@ -1,3 +1,8 @@
+use std::sync::Arc;
+
+use async_trait::async_trait;
+
+use crate::aspects::engine::AspectEngine;
 use crate::audit::AuditService;
 use crate::commands::{
     CreatePaymentChannelCmd, CreatePaymentOrderCmd, CreatePaymentRefundCmd,
@@ -6,6 +11,7 @@ use crate::commands::{
 use crate::config::app::AppConfig;
 use crate::dto::payment::*;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::eventbus::Event;
 use crate::middleware::auth::AuthUser;
 use crate::models::payment_channel::PaymentChannel;
 use crate::models::payment_order::{PaymentOrder, PaymentStatus};
@@ -15,10 +21,405 @@ use crate::models::wallet_transaction::{WalletReferenceType, WalletTxType};
 use crate::payment::ProviderResponse;
 use crate::payment::routing::{RoutingContext, select_best_channel, select_channels};
 use crate::repositories::{
-    PaymentChannelRepository, PaymentOrderRepository, PaymentRefundRepository,
-    PaymentTransactionRepository, WalletRepository,
+    OrderRepository, PaymentChannelRepository, PaymentOrderRepository, PaymentRefundRepository,
+    PaymentTransactionRepository, ProductRepository, WalletRepository,
 };
 use base64::Engine;
+
+#[async_trait]
+pub trait PaymentService: Send + Sync {
+    async fn create_channel(
+        &self,
+        auth: &AuthUser,
+        req: CreatePaymentChannelRequest,
+    ) -> AppResult<PaymentChannel>;
+    async fn update_channel(
+        &self,
+        auth: &AuthUser,
+        id: &str,
+        req: UpdatePaymentChannelRequest,
+    ) -> AppResult<PaymentChannel>;
+    async fn delete_channel(&self, auth: &AuthUser, id: &str) -> AppResult<()>;
+    async fn get_channel(&self, auth: &AuthUser, id: &str) -> AppResult<PaymentChannel>;
+    async fn list_channels(&self, auth: &AuthUser) -> AppResult<Vec<PaymentChannel>>;
+    async fn list_available_channels(
+        &self,
+        auth: &AuthUser,
+        order_id: &str,
+        country: Option<&str>,
+        language: Option<&str>,
+    ) -> AppResult<AvailableChannelsResponse>;
+    async fn create_payment_order(
+        &self,
+        auth: &AuthUser,
+        user_id: i64,
+        req: CreatePaymentOrderRequest,
+        client_ip: Option<&str>,
+        client_language: Option<&str>,
+        client_user_agent: Option<&str>,
+    ) -> AppResult<(PaymentOrder, Option<ProviderResponse>)>;
+    async fn cancel_payment_order(&self, auth: &AuthUser, id: &str, user_id: i64) -> AppResult<()>;
+    async fn get_payment_order(
+        &self,
+        auth: &AuthUser,
+        user_id: i64,
+        id: &str,
+    ) -> AppResult<PaymentOrder>;
+    async fn list_user_payment_orders(
+        &self,
+        auth: &AuthUser,
+        user_id: i64,
+        page: i64,
+        page_size: i64,
+    ) -> AppResult<(Vec<PaymentOrder>, i64)>;
+    async fn handle_callback(
+        &self,
+        channel_doc_id: &str,
+        headers: &axum::http::HeaderMap,
+        body: &[u8],
+    ) -> AppResult<PaymentOrder>;
+    async fn refund_payment_order(
+        &self,
+        auth: &AuthUser,
+        id: &str,
+        req: CreateRefundRequest,
+    ) -> AppResult<PaymentRefund>;
+    async fn list_admin_payment_orders(
+        &self,
+        auth: &AuthUser,
+        page: i64,
+        page_size: i64,
+        status: Option<&str>,
+    ) -> AppResult<(Vec<PaymentOrder>, i64)>;
+    async fn list_admin_transactions(
+        &self,
+        auth: &AuthUser,
+        page: i64,
+        page_size: i64,
+    ) -> AppResult<(Vec<PaymentTransaction>, i64)>;
+    async fn list_admin_refunds(
+        &self,
+        auth: &AuthUser,
+        page: i64,
+        page_size: i64,
+    ) -> AppResult<(Vec<PaymentRefund>, i64)>;
+    async fn list_admin_channels(
+        &self,
+        auth: &AuthUser,
+        page: i64,
+        page_size: i64,
+    ) -> AppResult<(Vec<PaymentChannel>, i64)>;
+    async fn list_order_transactions(
+        &self,
+        auth: &AuthUser,
+        user_id: i64,
+        order_id: &str,
+    ) -> AppResult<Vec<PaymentTransaction>>;
+    async fn list_order_refunds(
+        &self,
+        auth: &AuthUser,
+        user_id: i64,
+        order_id: &str,
+    ) -> AppResult<Vec<PaymentRefund>>;
+}
+
+pub struct PaymentServiceImpl {
+    channel_repo: Arc<dyn PaymentChannelRepository>,
+    order_repo: Arc<dyn PaymentOrderRepository>,
+    tx_repo: Arc<dyn PaymentTransactionRepository>,
+    refund_repo: Arc<dyn PaymentRefundRepository>,
+    shop_order_repo: Arc<dyn OrderRepository>,
+    product_repo: Arc<dyn ProductRepository>,
+    wallet_repo: Arc<dyn WalletRepository>,
+    config: Arc<AppConfig>,
+    aspect_engine: Arc<AspectEngine>,
+    pool: Arc<crate::db::Pool>,
+}
+
+impl PaymentServiceImpl {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        channel_repo: Arc<dyn PaymentChannelRepository>,
+        order_repo: Arc<dyn PaymentOrderRepository>,
+        tx_repo: Arc<dyn PaymentTransactionRepository>,
+        refund_repo: Arc<dyn PaymentRefundRepository>,
+        shop_order_repo: Arc<dyn OrderRepository>,
+        product_repo: Arc<dyn ProductRepository>,
+        wallet_repo: Arc<dyn WalletRepository>,
+        config: Arc<AppConfig>,
+        aspect_engine: Arc<AspectEngine>,
+        pool: Arc<crate::db::Pool>,
+    ) -> Self {
+        Self {
+            channel_repo,
+            order_repo,
+            tx_repo,
+            refund_repo,
+            shop_order_repo,
+            product_repo,
+            wallet_repo,
+            config,
+            aspect_engine,
+            pool,
+        }
+    }
+
+    fn after_payment_order_created(&self, order: &PaymentOrder) {
+        self.aspect_engine
+            .emit(Event::PaymentOrderCreated(order.clone()));
+    }
+
+    fn after_payment_paid(&self, order: &PaymentOrder) {
+        self.aspect_engine.emit(Event::PaymentPaid(order.clone()));
+    }
+
+    fn after_payment_refunded(&self, order: &PaymentOrder) {
+        self.aspect_engine
+            .emit(Event::PaymentRefunded(order.clone()));
+    }
+}
+
+#[async_trait]
+impl PaymentService for PaymentServiceImpl {
+    async fn create_channel(
+        &self,
+        auth: &AuthUser,
+        req: CreatePaymentChannelRequest,
+    ) -> AppResult<PaymentChannel> {
+        let audit = AuditService::new((*self.pool).clone());
+        create_channel(self.channel_repo.as_ref(), auth, &self.config, &audit, req).await
+    }
+
+    async fn update_channel(
+        &self,
+        auth: &AuthUser,
+        id: &str,
+        req: UpdatePaymentChannelRequest,
+    ) -> AppResult<PaymentChannel> {
+        let audit = AuditService::new((*self.pool).clone());
+        update_channel(
+            self.channel_repo.as_ref(),
+            auth,
+            &self.config,
+            &audit,
+            id,
+            req,
+        )
+        .await
+    }
+
+    async fn delete_channel(&self, auth: &AuthUser, id: &str) -> AppResult<()> {
+        let audit = AuditService::new((*self.pool).clone());
+        delete_channel(self.channel_repo.as_ref(), auth, &audit, id).await
+    }
+
+    async fn get_channel(&self, auth: &AuthUser, id: &str) -> AppResult<PaymentChannel> {
+        get_channel(self.channel_repo.as_ref(), auth, id).await
+    }
+
+    async fn list_channels(&self, auth: &AuthUser) -> AppResult<Vec<PaymentChannel>> {
+        list_channels(self.channel_repo.as_ref(), auth).await
+    }
+
+    async fn list_available_channels(
+        &self,
+        auth: &AuthUser,
+        order_id: &str,
+        country: Option<&str>,
+        language: Option<&str>,
+    ) -> AppResult<AvailableChannelsResponse> {
+        list_available_channels(
+            self.channel_repo.as_ref(),
+            self.shop_order_repo.as_ref(),
+            auth,
+            order_id,
+            country,
+            language,
+        )
+        .await
+    }
+
+    async fn create_payment_order(
+        &self,
+        auth: &AuthUser,
+        user_id: i64,
+        req: CreatePaymentOrderRequest,
+        client_ip: Option<&str>,
+        client_language: Option<&str>,
+        client_user_agent: Option<&str>,
+    ) -> AppResult<(PaymentOrder, Option<ProviderResponse>)> {
+        let (order, resp) = create_payment_order(
+            &self.pool,
+            self.channel_repo.as_ref(),
+            self.order_repo.as_ref(),
+            self.product_repo.as_ref(),
+            self.shop_order_repo.as_ref(),
+            auth,
+            user_id,
+            req,
+            &self.config,
+            client_ip,
+            client_language,
+            client_user_agent,
+        )
+        .await?;
+        self.after_payment_order_created(&order);
+        Ok((order, resp))
+    }
+
+    async fn cancel_payment_order(&self, auth: &AuthUser, id: &str, user_id: i64) -> AppResult<()> {
+        let audit = AuditService::new((*self.pool).clone());
+        cancel_payment_order(
+            &self.pool,
+            self.order_repo.as_ref(),
+            self.channel_repo.as_ref(),
+            auth,
+            &audit,
+            &self.config,
+            id,
+            user_id,
+        )
+        .await
+    }
+
+    async fn get_payment_order(
+        &self,
+        auth: &AuthUser,
+        user_id: i64,
+        id: &str,
+    ) -> AppResult<PaymentOrder> {
+        get_payment_order(self.order_repo.as_ref(), auth, user_id, id).await
+    }
+
+    async fn list_user_payment_orders(
+        &self,
+        auth: &AuthUser,
+        user_id: i64,
+        page: i64,
+        page_size: i64,
+    ) -> AppResult<(Vec<PaymentOrder>, i64)> {
+        list_user_payment_orders(self.order_repo.as_ref(), auth, user_id, page, page_size).await
+    }
+
+    async fn handle_callback(
+        &self,
+        channel_doc_id: &str,
+        headers: &axum::http::HeaderMap,
+        body: &[u8],
+    ) -> AppResult<PaymentOrder> {
+        let audit = AuditService::new((*self.pool).clone());
+        let order = handle_callback(
+            &self.pool,
+            self.channel_repo.as_ref(),
+            self.order_repo.as_ref(),
+            self.tx_repo.as_ref(),
+            self.wallet_repo.as_ref(),
+            &audit,
+            &self.config,
+            channel_doc_id,
+            headers,
+            body,
+        )
+        .await?;
+        self.after_payment_paid(&order);
+        Ok(order)
+    }
+
+    async fn refund_payment_order(
+        &self,
+        auth: &AuthUser,
+        id: &str,
+        req: CreateRefundRequest,
+    ) -> AppResult<PaymentRefund> {
+        let audit = AuditService::new((*self.pool).clone());
+        let refund = refund_payment_order(
+            &self.pool,
+            self.order_repo.as_ref(),
+            self.channel_repo.as_ref(),
+            self.tx_repo.as_ref(),
+            self.refund_repo.as_ref(),
+            self.wallet_repo.as_ref(),
+            auth,
+            &audit,
+            &self.config,
+            id,
+            req,
+        )
+        .await?;
+        if let Ok(Some(order)) = self
+            .order_repo
+            .find_by_document_id(id, auth.tenant_id())
+            .await
+        {
+            self.after_payment_refunded(&order);
+        }
+        Ok(refund)
+    }
+
+    async fn list_admin_payment_orders(
+        &self,
+        auth: &AuthUser,
+        page: i64,
+        page_size: i64,
+        status: Option<&str>,
+    ) -> AppResult<(Vec<PaymentOrder>, i64)> {
+        list_admin_payment_orders(self.order_repo.as_ref(), auth, page, page_size, status).await
+    }
+
+    async fn list_admin_transactions(
+        &self,
+        auth: &AuthUser,
+        page: i64,
+        page_size: i64,
+    ) -> AppResult<(Vec<PaymentTransaction>, i64)> {
+        list_admin_transactions(self.tx_repo.as_ref(), auth, page, page_size).await
+    }
+
+    async fn list_admin_refunds(
+        &self,
+        auth: &AuthUser,
+        page: i64,
+        page_size: i64,
+    ) -> AppResult<(Vec<PaymentRefund>, i64)> {
+        list_admin_refunds(self.refund_repo.as_ref(), auth, page, page_size).await
+    }
+
+    async fn list_admin_channels(
+        &self,
+        auth: &AuthUser,
+        page: i64,
+        page_size: i64,
+    ) -> AppResult<(Vec<PaymentChannel>, i64)> {
+        auth.ensure_admin()?;
+        self.channel_repo
+            .find_all_admin_paginated(auth.tenant_id(), page, page_size, None)
+            .await
+    }
+
+    async fn list_order_transactions(
+        &self,
+        auth: &AuthUser,
+        user_id: i64,
+        order_id: &str,
+    ) -> AppResult<Vec<PaymentTransaction>> {
+        let order = self.get_payment_order(auth, user_id, order_id).await?;
+        self.tx_repo
+            .find_by_payment_order_id(order.id, auth.tenant_id())
+            .await
+    }
+
+    async fn list_order_refunds(
+        &self,
+        auth: &AuthUser,
+        user_id: i64,
+        order_id: &str,
+    ) -> AppResult<Vec<PaymentRefund>> {
+        let order = self.get_payment_order(auth, user_id, order_id).await?;
+        self.refund_repo
+            .find_by_payment_order_id(order.id, auth.tenant_id())
+            .await
+    }
+}
 
 fn is_unique_violation(err: &AppError) -> bool {
     match err {
@@ -514,7 +915,7 @@ pub async fn handle_callback(
     channel_doc_id: &str,
     headers: &axum::http::HeaderMap,
     body: &[u8],
-) -> AppResult<()> {
+) -> AppResult<PaymentOrder> {
     let channel = channel_repo
         .find_by_document_id(channel_doc_id, None)
         .await?
@@ -555,7 +956,7 @@ pub async fn handle_callback(
     }
 
     if payment_order.status == PaymentStatus::Paid {
-        return Ok(());
+        return Ok(payment_order);
     }
 
     if payment_order.status != PaymentStatus::Pending {
@@ -567,7 +968,7 @@ pub async fn handle_callback(
     }
 
     if callback.status != PaymentStatus::Paid {
-        return Ok(());
+        return Ok(payment_order);
     }
 
     if let Some(ref provider_tx_id) = callback.provider_tx_id
@@ -576,7 +977,7 @@ pub async fn handle_callback(
             .await?
             .is_some()
     {
-        return Ok(());
+        return Ok(payment_order);
     }
 
     crate::in_transaction!(pool, tx, {
@@ -594,7 +995,6 @@ pub async fn handle_callback(
                 "callback for order {} skipped: CAS failed (already processed)",
                 payment_order.document_id
             );
-            return Ok(());
         }
 
         if let Some(ref provider_tx_id) = callback.provider_tx_id {
@@ -667,7 +1067,7 @@ pub async fn handle_callback(
         None
     );
 
-    Ok(())
+    Ok(payment_order)
 }
 
 #[allow(clippy::too_many_arguments)]

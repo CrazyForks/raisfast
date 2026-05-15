@@ -1,11 +1,11 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 use utoipa::ToSchema;
 use validator::Validate;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct CreateTagRequest {
     #[validate(length(min = 1, max = 50))]
     pub name: String,

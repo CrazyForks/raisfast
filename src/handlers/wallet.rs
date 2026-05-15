@@ -203,8 +203,7 @@ pub async fn list_transactions(
         .find_transactions_by_wallet(w.id, params.page, params.page_size)
         .await?;
 
-    let items =
-        crate::services::wallet::tx_list_to_response(state.wallet_repo.as_ref(), rows).await?;
+    let items = state.wallet_service.tx_list_to_response(rows).await?;
     Ok(params.paginate(items, total))
 }
 
@@ -230,8 +229,7 @@ pub async fn list_all_transactions(
         .find_transactions_by_user(user.id, params.page, params.page_size)
         .await?;
 
-    let items =
-        crate::services::wallet::tx_list_to_response(state.wallet_repo.as_ref(), rows).await?;
+    let items = state.wallet_service.tx_list_to_response(rows).await?;
     Ok(params.paginate(items, total))
 }
 
@@ -275,8 +273,7 @@ pub async fn list_all_transactions_admin(
         .wallet_repo
         .find_all_transactions(params.page, params.page_size, auth.tenant_id())
         .await?;
-    let items =
-        crate::services::wallet::tx_list_to_response(state.wallet_repo.as_ref(), rows).await?;
+    let items = state.wallet_service.tx_list_to_response(rows).await?;
     Ok(params.paginate(items, total))
 }
 
@@ -296,21 +293,21 @@ pub async fn admin_credit(
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
 
-    let tx = crate::services::wallet::credit_wallet(
-        state.wallet_repo.as_ref(),
-        &state.pool,
-        user.id,
-        &req.currency,
-        req.amount,
-        WalletTxType::Recharge,
-        &req.transaction_no,
-        req.reference_type.or(Some(WalletReferenceType::Admin)),
-        req.reference_id.as_deref(),
-        req.metadata.as_deref(),
-    )
-    .await?;
+    let tx = state
+        .wallet_service
+        .credit(
+            user.id,
+            &req.currency,
+            req.amount,
+            WalletTxType::Recharge,
+            &req.transaction_no,
+            req.reference_type.or(Some(WalletReferenceType::Admin)),
+            req.reference_id.as_deref(),
+            req.metadata.as_deref(),
+        )
+        .await?;
 
-    let resp = crate::services::wallet::tx_to_response(state.wallet_repo.as_ref(), tx).await?;
+    let resp = state.wallet_service.tx_to_response(tx).await?;
     Ok(ApiResponse::success(resp))
 }
 
@@ -330,21 +327,21 @@ pub async fn admin_debit(
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
 
-    let tx = crate::services::wallet::debit_wallet(
-        state.wallet_repo.as_ref(),
-        &state.pool,
-        user.id,
-        &req.currency,
-        req.amount,
-        WalletTxType::Payment,
-        &req.transaction_no,
-        req.reference_type.or(Some(WalletReferenceType::Admin)),
-        req.reference_id.as_deref(),
-        req.metadata.as_deref(),
-    )
-    .await?;
+    let tx = state
+        .wallet_service
+        .debit(
+            user.id,
+            &req.currency,
+            req.amount,
+            WalletTxType::Payment,
+            &req.transaction_no,
+            req.reference_type.or(Some(WalletReferenceType::Admin)),
+            req.reference_id.as_deref(),
+            req.metadata.as_deref(),
+        )
+        .await?;
 
-    let resp = crate::services::wallet::tx_to_response(state.wallet_repo.as_ref(), tx).await?;
+    let resp = state.wallet_service.tx_to_response(tx).await?;
     Ok(ApiResponse::success(resp))
 }
 
@@ -378,8 +375,7 @@ pub async fn list_user_transactions(
         .find_transactions_by_wallet(w.id, params.page, params.page_size)
         .await?;
 
-    let items =
-        crate::services::wallet::tx_list_to_response(state.wallet_repo.as_ref(), rows).await?;
+    let items = state.wallet_service.tx_list_to_response(rows).await?;
     Ok(params.paginate(items, total))
 }
 
@@ -407,8 +403,7 @@ pub async fn list_user_all_transactions(
         .find_transactions_by_user(user.id, params.page, params.page_size)
         .await?;
 
-    let items =
-        crate::services::wallet::tx_list_to_response(state.wallet_repo.as_ref(), rows).await?;
+    let items = state.wallet_service.tx_list_to_response(rows).await?;
     Ok(params.paginate(items, total))
 }
 
@@ -447,14 +442,11 @@ pub async fn admin_reversal(
         }
     }
 
-    let tx = crate::services::wallet::reverse_transaction(
-        state.wallet_repo.as_ref(),
-        &state.pool,
-        original.id,
-        &req.transaction_no,
-    )
-    .await?;
+    let tx = state
+        .wallet_service
+        .reverse_transaction(original.id, &req.transaction_no)
+        .await?;
 
-    let resp = crate::services::wallet::tx_to_response(state.wallet_repo.as_ref(), tx).await?;
+    let resp = state.wallet_service.tx_to_response(tx).await?;
     Ok(ApiResponse::success(resp))
 }

@@ -8,7 +8,6 @@ use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
-use crate::services::category;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -130,13 +129,10 @@ pub async fn list(
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<crate::models::category::Category>>>
 {
     params.sanitize();
-    let (items, total) = category::list_categories_paginated(
-        state.category_repo.as_ref(),
-        &auth,
-        params.page,
-        params.page_size,
-    )
-    .await?;
+    let (items, total) = state
+        .category_service
+        .list_paginated(&auth, params.page, params.page_size)
+        .await?;
     Ok(params.paginate(items, total))
 }
 
@@ -150,7 +146,7 @@ pub async fn get(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<crate::models::category::Category>> {
-    let cat = category::get_category(state.category_repo.as_ref(), &id, &auth).await?;
+    let cat = state.category_service.get(&id, &auth).await?;
     Ok(ApiResponse::success(cat))
 }
 
@@ -167,7 +163,7 @@ pub async fn create(
 ) -> AppResult<ApiResponse<crate::models::category::Category>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
-    let cat = category::create_category(state.category_repo.as_ref(), &auth, req).await?;
+    let cat = state.category_service.create(&auth, req).await?;
     Ok(ApiResponse::success(cat))
 }
 
@@ -186,7 +182,7 @@ pub async fn update(
 ) -> AppResult<ApiResponse<crate::models::category::Category>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
-    let cat = category::update_category(state.category_repo.as_ref(), &auth, &id, req).await?;
+    let cat = state.category_service.update(&auth, &id, req).await?;
     Ok(ApiResponse::success(cat))
 }
 
@@ -202,7 +198,7 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_author()?;
-    category::delete_category(state.category_repo.as_ref(), &id, &auth).await?;
+    state.category_service.delete(&id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -215,13 +211,10 @@ pub async fn admin_list(
 ) -> AppResult<ApiResponse<PaginatedData<crate::models::category::Category>>> {
     auth.ensure_admin()?;
     params.sanitize();
-    let (items, total) = category::list_categories_paginated(
-        state.category_repo.as_ref(),
-        &auth,
-        params.page,
-        params.page_size,
-    )
-    .await?;
+    let (items, total) = state
+        .category_service
+        .list_paginated(&auth, params.page, params.page_size)
+        .await?;
     Ok(params.paginate(items, total))
 }
 
@@ -232,7 +225,7 @@ pub async fn admin_create(
 ) -> AppResult<ApiResponse<crate::models::category::Category>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let cat = category::create_category(state.category_repo.as_ref(), &auth, req).await?;
+    let cat = state.category_service.create(&auth, req).await?;
     Ok(ApiResponse::success(cat))
 }
 
@@ -244,7 +237,7 @@ pub async fn admin_update(
 ) -> AppResult<ApiResponse<crate::models::category::Category>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let cat = category::update_category(state.category_repo.as_ref(), &auth, &id, req).await?;
+    let cat = state.category_service.update(&auth, &id, req).await?;
     Ok(ApiResponse::success(cat))
 }
 
@@ -254,7 +247,7 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    category::delete_category(state.category_repo.as_ref(), &id, &auth).await?;
+    state.category_service.delete(&id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -268,10 +261,7 @@ pub async fn admin_batch(
     let mut affected = 0usize;
     if req.action == "delete" {
         for id in &req.ids {
-            if category::delete_category(state.category_repo.as_ref(), id, &auth)
-                .await
-                .is_ok()
-            {
+            if state.category_service.delete(id, &auth).await.is_ok() {
                 affected += 1;
             }
         }

@@ -112,19 +112,27 @@ pub struct AppState {
     pub eventbus: EventBus,
     pub post_repo: Arc<dyn PostRepository>,
     pub post_service: Arc<dyn crate::services::post::PostService>,
+    pub page_service: Arc<dyn crate::services::page::PageService>,
     pub user_repo: Arc<dyn UserRepository>,
     pub category_repo: Arc<dyn CategoryRepository>,
+    pub category_service: Arc<dyn crate::services::category::CategoryService>,
     pub tag_repo: Arc<dyn TagRepository>,
+    pub tag_service: Arc<dyn crate::services::tag::TagService>,
     pub comment_repo: Arc<dyn CommentRepository>,
+    pub comment_service: Arc<dyn crate::services::comment::CommentService>,
     pub media_repo: Arc<dyn MediaRepository>,
     pub refresh_token_repo: Arc<dyn RefreshTokenRepository>,
     pub wallet_repo: Arc<dyn WalletRepository>,
+    pub wallet_service: Arc<dyn crate::services::wallet::WalletService>,
     pub product_repo: Arc<dyn ProductRepository>,
+    pub product_service: Arc<dyn crate::services::product::ProductService>,
     pub order_repo: Arc<dyn OrderRepository>,
+    pub order_service: Arc<dyn crate::services::order::OrderService>,
     pub payment_channel_repo: Arc<dyn PaymentChannelRepository>,
     pub payment_order_repo: Arc<dyn PaymentOrderRepository>,
     pub payment_tx_repo: Arc<dyn PaymentTransactionRepository>,
     pub payment_refund_repo: Arc<dyn PaymentRefundRepository>,
+    pub payment_service: Arc<dyn crate::services::payment::PaymentService>,
     pub search: Arc<dyn SearchEngine>,
     pub content_type_registry: Arc<ContentTypeRegistry>,
     pub aspect_engine: Arc<crate::aspects::engine::AspectEngine>,
@@ -206,6 +214,35 @@ pub async fn build_app_state(
 
     let aspect_engine = Arc::new(crate::aspects::engine::AspectEngine::new());
 
+    let order_service: Arc<dyn crate::services::order::OrderService> =
+        Arc::new(crate::services::order::OrderServiceImpl::new(
+            order_repo.clone(),
+            product_repo.clone(),
+            aspect_engine.clone(),
+            Arc::new(pool.clone()),
+        ));
+
+    let wallet_service: Arc<dyn crate::services::wallet::WalletService> =
+        Arc::new(crate::services::wallet::WalletServiceImpl::new(
+            wallet_repo.clone(),
+            aspect_engine.clone(),
+            Arc::new(pool.clone()),
+        ));
+
+    let payment_service: Arc<dyn crate::services::payment::PaymentService> =
+        Arc::new(crate::services::payment::PaymentServiceImpl::new(
+            payment_channel_repo.clone(),
+            payment_order_repo.clone(),
+            payment_tx_repo.clone(),
+            payment_refund_repo.clone(),
+            order_repo.clone(),
+            product_repo.clone(),
+            wallet_repo.clone(),
+            Arc::new(config.clone()),
+            aspect_engine.clone(),
+            Arc::new(pool.clone()),
+        ));
+
     let reserved = config.builtins.reserved_route_segments();
     let protocol_names: Vec<&str> = protocol_registry.names();
     let ct_registry = Arc::new(ContentTypeRegistry::load_from_dir(
@@ -248,6 +285,29 @@ pub async fn build_app_state(
             post_repo.clone(),
             aspect_engine.clone(),
             search.clone(),
+        ));
+
+    let tag_service: Arc<dyn crate::services::tag::TagService> = Arc::new(
+        crate::services::tag::TagServiceImpl::new(tag_repo.clone(), aspect_engine.clone()),
+    );
+    let category_service: Arc<dyn crate::services::category::CategoryService> =
+        Arc::new(crate::services::category::CategoryServiceImpl::new(
+            category_repo.clone(),
+            aspect_engine.clone(),
+        ));
+    let page_service: Arc<dyn crate::services::page::PageService> = Arc::new(
+        crate::services::page::PageServiceImpl::new(Arc::new(pool.clone()), aspect_engine.clone()),
+    );
+    let comment_service: Arc<dyn crate::services::comment::CommentService> =
+        Arc::new(crate::services::comment::CommentServiceImpl::new(
+            post_repo.clone(),
+            comment_repo.clone(),
+            aspect_engine.clone(),
+        ));
+    let product_service: Arc<dyn crate::services::product::ProductService> =
+        Arc::new(crate::services::product::ProductServiceImpl::new(
+            product_repo.clone(),
+            aspect_engine.clone(),
         ));
 
     let options_repo: Arc<dyn crate::repositories::OptionsRepository> = Arc::new(
@@ -297,19 +357,27 @@ pub async fn build_app_state(
         eventbus: eventbus.clone(),
         post_repo,
         post_service,
+        page_service,
         user_repo,
         category_repo,
+        category_service,
         tag_repo,
+        tag_service,
         comment_repo,
+        comment_service,
         media_repo,
         refresh_token_repo,
         wallet_repo,
+        wallet_service,
         product_repo,
+        product_service,
         order_repo,
+        order_service,
         payment_channel_repo,
         payment_order_repo,
         payment_tx_repo,
         payment_refund_repo,
+        payment_service,
         search,
         content_type_registry: ct_registry,
         aspect_engine,

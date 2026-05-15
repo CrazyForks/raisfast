@@ -8,19 +8,7 @@ use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
-use crate::services::tag;
 use crate::utils::pagination::PaginationParams;
-
-async fn dispatch_slug_for_tag(state: &crate::AppState, auth: &AuthUser, name: &str) -> String {
-    match state
-        .aspect_engine
-        .before_create(&state.pool, "tags", auth, serde_json::json!({"name": name}))
-        .await
-    {
-        Ok((_, d)) => d.str_or("slug", || tag::generate_slug(name)),
-        Err(_) => tag::generate_slug(name),
-    }
-}
 
 pub fn routes(
     registry: &mut crate::server::RouteRegistry,
@@ -140,13 +128,10 @@ pub async fn list(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<crate::models::tag::Tag>>> {
     params.sanitize();
-    let (items, total) = tag::list_tags_paginated(
-        state.tag_repo.as_ref(),
-        &auth,
-        params.page,
-        params.page_size,
-    )
-    .await?;
+    let (items, total) = state
+        .tag_service
+        .list_paginated(&auth, params.page, params.page_size)
+        .await?;
     Ok(params.paginate(items, total))
 }
 
@@ -160,7 +145,7 @@ pub async fn get(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
-    let t = tag::get_tag(state.tag_repo.as_ref(), &id, &auth).await?;
+    let t = state.tag_service.get(&id, &auth).await?;
     Ok(ApiResponse::success(t))
 }
 
@@ -177,8 +162,7 @@ pub async fn create(
 ) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
-    let slug = dispatch_slug_for_tag(&state, &auth, &req.name).await;
-    let t = tag::create_tag(state.tag_repo.as_ref(), &auth, req, slug).await?;
+    let t = state.tag_service.create(&auth, req).await?;
     Ok(ApiResponse::success(t))
 }
 
@@ -194,7 +178,7 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_author()?;
-    tag::delete_tag(state.tag_repo.as_ref(), &id, &auth).await?;
+    state.tag_service.delete(&id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -213,8 +197,11 @@ pub async fn update(
 ) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
-    let slug = dispatch_slug_for_tag(&state, &auth, &req.name).await;
-    let t = tag::update_tag(state.tag_repo.as_ref(), &id, &auth, req.name.clone(), slug).await?;
+    let slug = crate::services::tag::generate_slug(&req.name);
+    let t = state
+        .tag_service
+        .update(&auth, &id, req.name.clone(), slug)
+        .await?;
     Ok(ApiResponse::success(t))
 }
 
@@ -227,13 +214,10 @@ pub async fn admin_list(
 ) -> AppResult<ApiResponse<PaginatedData<crate::models::tag::Tag>>> {
     auth.ensure_admin()?;
     params.sanitize();
-    let (items, total) = tag::list_tags_paginated(
-        state.tag_repo.as_ref(),
-        &auth,
-        params.page,
-        params.page_size,
-    )
-    .await?;
+    let (items, total) = state
+        .tag_service
+        .list_paginated(&auth, params.page, params.page_size)
+        .await?;
     Ok(params.paginate(items, total))
 }
 
@@ -244,8 +228,7 @@ pub async fn admin_create(
 ) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let slug = dispatch_slug_for_tag(&state, &auth, &req.name).await;
-    let t = tag::create_tag(state.tag_repo.as_ref(), &auth, req, slug).await?;
+    let t = state.tag_service.create(&auth, req).await?;
     Ok(ApiResponse::success(t))
 }
 
@@ -257,8 +240,11 @@ pub async fn admin_update(
 ) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let slug = dispatch_slug_for_tag(&state, &auth, &req.name).await;
-    let t = tag::update_tag(state.tag_repo.as_ref(), &id, &auth, req.name.clone(), slug).await?;
+    let slug = crate::services::tag::generate_slug(&req.name);
+    let t = state
+        .tag_service
+        .update(&auth, &id, req.name.clone(), slug)
+        .await?;
     Ok(ApiResponse::success(t))
 }
 
@@ -268,7 +254,7 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    tag::delete_tag(state.tag_repo.as_ref(), &id, &auth).await?;
+    state.tag_service.delete(&id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -282,10 +268,7 @@ pub async fn admin_batch(
     let mut affected = 0usize;
     if req.action == "delete" {
         for id in &req.ids {
-            if tag::delete_tag(state.tag_repo.as_ref(), id, &auth)
-                .await
-                .is_ok()
-            {
+            if state.tag_service.delete(id, &auth).await.is_ok() {
                 affected += 1;
             }
         }

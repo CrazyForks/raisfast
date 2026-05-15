@@ -1,12 +1,104 @@
+use std::sync::Arc;
+
+use async_trait::async_trait;
+
+use crate::aspects::engine::AspectEngine;
 use crate::db::dialect::ph;
 use crate::db::pool::DbConnection;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::eventbus::Event;
 use crate::models::currencies;
 use crate::models::wallet;
 use crate::models::wallet::WalletStatus;
 use crate::models::wallet_transaction::WalletTransaction;
 use crate::models::wallet_transaction::{WalletEntryType, WalletReferenceType, WalletTxType};
 use crate::repositories::WalletRepository;
+
+#[async_trait]
+pub trait WalletService: Send + Sync {
+    #[allow(clippy::too_many_arguments)]
+    async fn credit(
+        &self,
+        user_id: i64,
+        currency: &str,
+        amount: i64,
+        tx_type: WalletTxType,
+        transaction_no: &str,
+        reference_type: Option<WalletReferenceType>,
+        reference_id: Option<&str>,
+        metadata: Option<&str>,
+    ) -> AppResult<WalletTransaction>;
+
+    #[allow(clippy::too_many_arguments)]
+    async fn debit(
+        &self,
+        user_id: i64,
+        currency: &str,
+        amount: i64,
+        tx_type: WalletTxType,
+        transaction_no: &str,
+        reference_type: Option<WalletReferenceType>,
+        reference_id: Option<&str>,
+        metadata: Option<&str>,
+    ) -> AppResult<WalletTransaction>;
+
+    #[allow(clippy::too_many_arguments)]
+    async fn transfer(
+        &self,
+        from_user_id: i64,
+        to_user_id: i64,
+        currency: &str,
+        amount: i64,
+        transaction_no: &str,
+        reference_type: Option<WalletReferenceType>,
+        reference_id: Option<&str>,
+        metadata: Option<&str>,
+    ) -> AppResult<(WalletTransaction, WalletTransaction)>;
+
+    async fn reverse_transaction(
+        &self,
+        original_tx_id: i64,
+        transaction_no: &str,
+    ) -> AppResult<WalletTransaction>;
+
+    async fn tx_to_response(
+        &self,
+        tx: WalletTransaction,
+    ) -> AppResult<crate::dto::WalletTransactionResponse>;
+
+    async fn tx_list_to_response(
+        &self,
+        rows: Vec<WalletTransaction>,
+    ) -> AppResult<Vec<crate::dto::WalletTransactionResponse>>;
+}
+
+pub struct WalletServiceImpl {
+    repo: Arc<dyn WalletRepository>,
+    aspect_engine: Arc<AspectEngine>,
+    pool: Arc<crate::db::Pool>,
+}
+
+impl WalletServiceImpl {
+    pub fn new(
+        repo: Arc<dyn WalletRepository>,
+        aspect_engine: Arc<AspectEngine>,
+        pool: Arc<crate::db::Pool>,
+    ) -> Self {
+        Self {
+            repo,
+            aspect_engine,
+            pool,
+        }
+    }
+
+    fn after_credited(&self, tx: &WalletTransaction) {
+        self.aspect_engine.emit(Event::WalletCredited(tx.clone()));
+    }
+
+    fn after_debited(&self, tx: &WalletTransaction) {
+        self.aspect_engine.emit(Event::WalletDebited(tx.clone()));
+    }
+}
 
 async fn ensure_currency_active(tx: &mut DbConnection, currency: &str) -> AppResult<()> {
     currencies::find_by_code_tx(tx, currency)
@@ -650,6 +742,131 @@ pub async fn tx_list_to_response(
         responses.push(resp);
     }
     Ok(responses)
+}
+
+#[async_trait]
+impl WalletService for WalletServiceImpl {
+    async fn credit(
+        &self,
+        user_id: i64,
+        currency: &str,
+        amount: i64,
+        tx_type: WalletTxType,
+        transaction_no: &str,
+        reference_type: Option<WalletReferenceType>,
+        reference_id: Option<&str>,
+        metadata: Option<&str>,
+    ) -> AppResult<WalletTransaction> {
+        let tx = credit_wallet(
+            self.repo.as_ref(),
+            &self.pool,
+            user_id,
+            currency,
+            amount,
+            tx_type,
+            transaction_no,
+            reference_type,
+            reference_id,
+            metadata,
+        )
+        .await?;
+        self.after_credited(&tx);
+        Ok(tx)
+    }
+
+    async fn debit(
+        &self,
+        user_id: i64,
+        currency: &str,
+        amount: i64,
+        tx_type: WalletTxType,
+        transaction_no: &str,
+        reference_type: Option<WalletReferenceType>,
+        reference_id: Option<&str>,
+        metadata: Option<&str>,
+    ) -> AppResult<WalletTransaction> {
+        let tx = debit_wallet(
+            self.repo.as_ref(),
+            &self.pool,
+            user_id,
+            currency,
+            amount,
+            tx_type,
+            transaction_no,
+            reference_type,
+            reference_id,
+            metadata,
+        )
+        .await?;
+        self.after_debited(&tx);
+        Ok(tx)
+    }
+
+    async fn transfer(
+        &self,
+        from_user_id: i64,
+        to_user_id: i64,
+        currency: &str,
+        amount: i64,
+        transaction_no: &str,
+        reference_type: Option<WalletReferenceType>,
+        reference_id: Option<&str>,
+        metadata: Option<&str>,
+    ) -> AppResult<(WalletTransaction, WalletTransaction)> {
+        let (out_tx, in_tx) = transfer(
+            self.repo.as_ref(),
+            &self.pool,
+            from_user_id,
+            to_user_id,
+            currency,
+            amount,
+            transaction_no,
+            reference_type,
+            reference_id,
+            metadata,
+        )
+        .await?;
+        self.after_debited(&out_tx);
+        self.after_credited(&in_tx);
+        Ok((out_tx, in_tx))
+    }
+
+    async fn reverse_transaction(
+        &self,
+        original_tx_id: i64,
+        transaction_no: &str,
+    ) -> AppResult<WalletTransaction> {
+        let tx = reverse_transaction(
+            self.repo.as_ref(),
+            &self.pool,
+            original_tx_id,
+            transaction_no,
+        )
+        .await?;
+        match tx.entry_type {
+            crate::models::wallet_transaction::WalletEntryType::Credit => {
+                self.after_credited(&tx);
+            }
+            crate::models::wallet_transaction::WalletEntryType::Debit => {
+                self.after_debited(&tx);
+            }
+        }
+        Ok(tx)
+    }
+
+    async fn tx_to_response(
+        &self,
+        tx: WalletTransaction,
+    ) -> AppResult<crate::dto::WalletTransactionResponse> {
+        tx_to_response(self.repo.as_ref(), tx).await
+    }
+
+    async fn tx_list_to_response(
+        &self,
+        rows: Vec<WalletTransaction>,
+    ) -> AppResult<Vec<crate::dto::WalletTransactionResponse>> {
+        tx_list_to_response(self.repo.as_ref(), rows).await
+    }
 }
 
 #[cfg(test)]

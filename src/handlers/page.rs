@@ -16,7 +16,7 @@ use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::models::page::PageStatus;
-use crate::services::{page as page_service, post::resolve_doc_id_to_int};
+use crate::services::post::resolve_doc_id_to_int;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -248,9 +248,10 @@ pub async fn list(
 ) -> AppResult<ApiResponse<PaginatedData<crate::models::page::Page>>> {
     let pagination = PaginationParams::from_options(query.page, query.page_size);
 
-    let (items, total) =
-        page_service::list_published(&state.pool, pagination.page, pagination.page_size, &auth)
-            .await?;
+    let (items, total) = state
+        .page_service
+        .list_published(pagination.page, pagination.page_size, &auth)
+        .await?;
 
     Ok(pagination.paginate(items, total))
 }
@@ -264,7 +265,7 @@ pub async fn get_by_slug(
     State(state): State<crate::AppState>,
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<crate::models::page::Page>> {
-    let page = page_service::get_by_slug(&state.pool, &slug, &auth).await?;
+    let page = state.page_service.get_by_slug(&slug, &auth).await?;
     Ok(ApiResponse::success(page))
 }
 
@@ -275,7 +276,9 @@ pub async fn sitemap(
     auth: AuthUser,
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<Vec<SitemapEntry>>> {
-    let entries = page_service::sitemap(&state.pool, &auth)
+    let entries = state
+        .page_service
+        .sitemap(&auth)
         .await?
         .into_iter()
         .map(|(slug, updated_at)| SitemapEntry { slug, updated_at })
@@ -297,14 +300,10 @@ pub async fn admin_list(
     auth.ensure_author()?;
     let pagination = PaginationParams::from_options(query.page, query.page_size);
 
-    let (items, total) = page_service::list_all(
-        &state.pool,
-        pagination.page,
-        pagination.page_size,
-        query.status,
-        &auth,
-    )
-    .await?;
+    let (items, total) = state
+        .page_service
+        .list_all(pagination.page, pagination.page_size, query.status, &auth)
+        .await?;
 
     Ok(pagination.paginate(items, total))
 }
@@ -320,7 +319,7 @@ pub async fn admin_get(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<crate::models::page::Page>> {
     auth.ensure_author()?;
-    let page = page_service::get_by_id(&state.pool, &id, &auth).await?;
+    let page = state.page_service.get_by_id(&id, &auth).await?;
     Ok(ApiResponse::success(page))
 }
 
@@ -360,7 +359,7 @@ pub async fn create(
         cover_image: req.cover_image,
     };
 
-    let page = page_service::create_page(&state.pool, &auth, cmd).await?;
+    let page = state.page_service.create_page(&auth, cmd).await?;
     Ok(ApiResponse::success(page))
 }
 
@@ -396,7 +395,7 @@ pub async fn update(
         updated_by: auth.user_int_id(),
     };
 
-    let page = page_service::update_page(&state.pool, &auth, &id, cmd).await?;
+    let page = state.page_service.update_page(&auth, &id, cmd).await?;
     Ok(ApiResponse::success(page))
 }
 
@@ -411,7 +410,7 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_author()?;
-    page_service::delete_page(&state.pool, &id, &auth).await?;
+    state.page_service.delete_page(&id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -427,7 +426,10 @@ pub async fn update_status(
     Json(req): Json<UpdateStatusRequest>,
 ) -> AppResult<ApiResponse<crate::models::page::Page>> {
     auth.ensure_author()?;
-    let page = page_service::update_status(&state.pool, &id, req.status, &auth).await?;
+    let page = state
+        .page_service
+        .update_status(&id, req.status, &auth)
+        .await?;
     Ok(ApiResponse::success(page))
 }
 
@@ -446,7 +448,7 @@ pub async fn reorder(
         .into_iter()
         .map(|i| (i.id, i.sort_order))
         .collect();
-    page_service::reorder(&state.pool, items, &auth).await?;
+    state.page_service.reorder(items, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -466,10 +468,7 @@ pub async fn admin_batch(
     for id in &req.ids {
         match req.action.as_str() {
             "delete" => {
-                if page_service::delete_page(&state.pool, id, &auth)
-                    .await
-                    .is_ok()
-                {
+                if state.page_service.delete_page(id, &auth).await.is_ok() {
                     affected += 1;
                 }
             }
@@ -479,7 +478,9 @@ pub async fn admin_batch(
                 } else {
                     PageStatus::Draft
                 };
-                if page_service::update_status(&state.pool, id, status, &auth)
+                if state
+                    .page_service
+                    .update_status(id, status, &auth)
                     .await
                     .is_ok()
                 {

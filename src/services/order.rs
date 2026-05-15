@@ -1,6 +1,12 @@
+use std::sync::Arc;
+
+use async_trait::async_trait;
+
+use crate::aspects::engine::AspectEngine;
 use crate::commands::CreateOrderCmd;
 use crate::dto::{CreateOrderRequest, ShipOrderRequest};
 use crate::errors::app_error::{AppError, AppResult};
+use crate::eventbus::Event;
 use crate::middleware::auth::AuthUser;
 use crate::models::order::{Order, OrderStatus};
 use crate::models::order_item::OrderItem;
@@ -10,396 +16,483 @@ use crate::repositories::{OrderRepository, ProductRepository};
 const MAX_ITEMS_PER_ORDER: usize = 100;
 const MAX_QUANTITY: i64 = 10000;
 
-pub async fn create_order(
-    pool: &crate::db::Pool,
-    product_repo: &dyn ProductRepository,
-    _order_repo: &dyn OrderRepository,
-    auth: &AuthUser,
-    user_id: i64,
-    req: CreateOrderRequest,
-) -> AppResult<Order> {
-    if req.items.is_empty() {
-        return Err(AppError::BadRequest("items_empty".into()));
-    }
-    if req.items.len() > MAX_ITEMS_PER_ORDER {
-        return Err(AppError::BadRequest("too_many_items".into()));
-    }
+#[async_trait]
+pub trait OrderService: Send + Sync {
+    async fn create(
+        &self,
+        auth: &AuthUser,
+        user_id: i64,
+        req: CreateOrderRequest,
+    ) -> AppResult<Order>;
+    async fn cancel(&self, auth: &AuthUser, order_id: &str, user_id: i64) -> AppResult<()>;
+    async fn mark_paid(&self, auth: &AuthUser, order_id: &str) -> AppResult<Order>;
+    async fn ship(&self, auth: &AuthUser, order_id: &str, req: &ShipOrderRequest) -> AppResult<()>;
+    async fn confirm_receipt(&self, auth: &AuthUser, order_id: &str, user_id: i64)
+    -> AppResult<()>;
+    async fn refund(&self, auth: &AuthUser, order_id: &str) -> AppResult<()>;
+    async fn admin_cancel(&self, auth: &AuthUser, order_id: &str) -> AppResult<()>;
+    async fn get(&self, auth: &AuthUser, order_id: &str) -> AppResult<(Order, Vec<OrderItem>)>;
+    async fn list_user(
+        &self,
+        auth: &AuthUser,
+        user_id: i64,
+        page: i64,
+        page_size: i64,
+    ) -> AppResult<(Vec<Order>, i64)>;
+    async fn list_admin(
+        &self,
+        auth: &AuthUser,
+        page: i64,
+        page_size: i64,
+        status: Option<&str>,
+    ) -> AppResult<(Vec<Order>, i64)>;
+    async fn update_admin_remark(
+        &self,
+        auth: &AuthUser,
+        order_id: &str,
+        admin_remark: &str,
+    ) -> AppResult<()>;
+    async fn get_stats(&self, auth: &AuthUser) -> AppResult<crate::dto::OrderStatsResponse>;
+}
 
-    let mut order_items_data: Vec<(i64, i64, crate::models::product::Product)> = Vec::new();
-    let mut subtotal: i64 = 0;
+pub struct OrderServiceImpl {
+    repo: Arc<dyn OrderRepository>,
+    product_repo: Arc<dyn ProductRepository>,
+    aspect_engine: Arc<AspectEngine>,
+    pool: Arc<crate::db::Pool>,
+}
 
-    for item in &req.items {
-        if item.quantity > MAX_QUANTITY {
-            return Err(AppError::BadRequest("quantity_exceeds_limit".into()));
+impl OrderServiceImpl {
+    pub fn new(
+        repo: Arc<dyn OrderRepository>,
+        product_repo: Arc<dyn ProductRepository>,
+        aspect_engine: Arc<AspectEngine>,
+        pool: Arc<crate::db::Pool>,
+    ) -> Self {
+        Self {
+            repo,
+            product_repo,
+            aspect_engine,
+            pool,
         }
-        let product = product_repo
-            .find_by_document_id(&item.product_id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("product"))?;
-
-        if product.status != ProductStatus::Active {
-            return Err(AppError::BadRequest("product_not_active".into()));
-        }
-
-        let line_total = product
-            .price
-            .checked_mul(item.quantity)
-            .ok_or_else(|| AppError::BadRequest("line_total_overflow".into()))?;
-        subtotal = subtotal
-            .checked_add(line_total)
-            .ok_or_else(|| AppError::BadRequest("subtotal_overflow".into()))?;
-        order_items_data.push((item.quantity, line_total, product));
     }
 
-    let order_no = format!("ORD-{}", uuid::Uuid::now_v7().to_string().replace('-', ""));
+    async fn before_create(
+        &self,
+        auth: &AuthUser,
+        req: CreateOrderRequest,
+    ) -> AppResult<(CreateOrderRequest, crate::aspects::Dispatched)> {
+        self.aspect_engine.before_create("orders", auth, req).await
+    }
 
-    let currency = req.currency.as_deref().unwrap_or("CNY");
-    let total_amount = subtotal;
+    fn after_created(&self, order: &Order) {
+        self.aspect_engine.emit(Event::OrderCreated(order.clone()));
+    }
 
-    let order = crate::in_transaction!(pool, tx, {
-        let order = crate::models::order::tx_insert(
-            &mut tx,
-            &CreateOrderCmd {
-                user_id,
-                order_no,
-                subtotal,
-                discount_amount: 0,
-                shipping_amount: 0,
-                total_amount,
-                currency: currency.into(),
-                buyer_name: req.buyer_name.clone(),
-                buyer_phone: req.buyer_phone.clone(),
-                buyer_email: req.buyer_email.clone(),
-                shipping_address: req.shipping_address.clone(),
-                remark: req.remark.clone(),
-            },
-            auth.tenant_id(),
-        )
-        .await?;
+    fn after_paid(&self, order: &Order) {
+        self.aspect_engine.emit(Event::OrderPaid(order.clone()));
+    }
 
-        let mut items = Vec::new();
-        for (quantity, line_total, product) in &order_items_data {
-            items.push(crate::commands::CreateOrderItemCmd {
-                order_id: order.id,
-                product_id: Some(product.id),
-                title: product.title.clone(),
-                description: product.description.clone(),
-                unit_price: product.price,
-                quantity: *quantity,
-                subtotal: *line_total,
-                cover_url: product.cover_url.clone(),
-                attributes: product.attributes.clone(),
-            });
+    fn after_shipped(&self, order: &Order) {
+        self.aspect_engine.emit(Event::OrderShipped(order.clone()));
+    }
+
+    fn after_completed(&self, order: &Order) {
+        self.aspect_engine
+            .emit(Event::OrderCompleted(order.clone()));
+    }
+
+    fn after_cancelled(&self, order: &Order) {
+        self.aspect_engine
+            .emit(Event::OrderCancelled(order.clone()));
+    }
+}
+
+#[async_trait]
+impl OrderService for OrderServiceImpl {
+    async fn create(
+        &self,
+        auth: &AuthUser,
+        user_id: i64,
+        req: CreateOrderRequest,
+    ) -> AppResult<Order> {
+        let (req, _d) = self.before_create(auth, req).await?;
+
+        if req.items.is_empty() {
+            return Err(AppError::BadRequest("items_empty".into()));
         }
-        crate::models::order_item::tx_insert_batch(&mut tx, items, auth.tenant_id()).await?;
+        if req.items.len() > MAX_ITEMS_PER_ORDER {
+            return Err(AppError::BadRequest("too_many_items".into()));
+        }
 
+        let mut order_items_data: Vec<(i64, i64, crate::models::product::Product)> = Vec::new();
+        let mut subtotal: i64 = 0;
+
+        for item in &req.items {
+            if item.quantity > MAX_QUANTITY {
+                return Err(AppError::BadRequest("quantity_exceeds_limit".into()));
+            }
+            let product = self
+                .product_repo
+                .find_by_document_id(&item.product_id, auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("product"))?;
+
+            if product.status != ProductStatus::Active {
+                return Err(AppError::BadRequest("product_not_active".into()));
+            }
+
+            let line_total = product
+                .price
+                .checked_mul(item.quantity)
+                .ok_or_else(|| AppError::BadRequest("line_total_overflow".into()))?;
+            subtotal = subtotal
+                .checked_add(line_total)
+                .ok_or_else(|| AppError::BadRequest("subtotal_overflow".into()))?;
+            order_items_data.push((item.quantity, line_total, product));
+        }
+
+        let order_no = format!("ORD-{}", uuid::Uuid::now_v7().to_string().replace('-', ""));
+
+        let currency = req.currency.as_deref().unwrap_or("CNY");
+        let total_amount = subtotal;
+
+        let order = crate::in_transaction!(&self.pool, tx, {
+            let order = crate::models::order::tx_insert(
+                &mut tx,
+                &CreateOrderCmd {
+                    user_id,
+                    order_no,
+                    subtotal,
+                    discount_amount: 0,
+                    shipping_amount: 0,
+                    total_amount,
+                    currency: currency.into(),
+                    buyer_name: req.buyer_name.clone(),
+                    buyer_phone: req.buyer_phone.clone(),
+                    buyer_email: req.buyer_email.clone(),
+                    shipping_address: req.shipping_address.clone(),
+                    remark: req.remark.clone(),
+                },
+                auth.tenant_id(),
+            )
+            .await?;
+
+            let mut items = Vec::new();
+            for (quantity, line_total, product) in &order_items_data {
+                items.push(crate::commands::CreateOrderItemCmd {
+                    order_id: order.id,
+                    product_id: Some(product.id),
+                    title: product.title.clone(),
+                    description: product.description.clone(),
+                    unit_price: product.price,
+                    quantity: *quantity,
+                    subtotal: *line_total,
+                    cover_url: product.cover_url.clone(),
+                    attributes: product.attributes.clone(),
+                });
+            }
+            crate::models::order_item::tx_insert_batch(&mut tx, items, auth.tenant_id()).await?;
+
+            Ok(order)
+        })?;
+
+        self.after_created(&order);
         Ok(order)
-    })?;
-
-    Ok(order)
-}
-
-pub async fn cancel_order(
-    pool: &crate::db::Pool,
-    order_repo: &dyn OrderRepository,
-    auth: &AuthUser,
-    order_id: &str,
-    user_id: i64,
-) -> AppResult<()> {
-    let order = order_repo
-        .find_by_document_id(order_id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("order"))?;
-
-    if order.user_id != user_id {
-        return Err(AppError::Forbidden);
-    }
-    if order.status != OrderStatus::Pending {
-        return Err(AppError::BadRequest("only_pending_can_cancel".into()));
     }
 
-    let result: Result<(), AppError> = async {
-        crate::in_transaction!(pool, tx, {
-            let rows = crate::models::order::tx_update_status_cas(
-                &mut tx,
-                order.id,
-                OrderStatus::Cancelled,
-                Some("cancelled_at"),
-                OrderStatus::Pending,
-            )
-            .await?;
-            if rows == 0 {
-                return Err(AppError::BadRequest("concurrent_status_change".into()));
-            }
-            Ok(())
-        })
-    }
-    .await;
-    result
-}
+    async fn cancel(&self, auth: &AuthUser, order_id: &str, user_id: i64) -> AppResult<()> {
+        let order = self
+            .repo
+            .find_by_document_id(order_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("order"))?;
 
-pub async fn mark_paid(
-    pool: &crate::db::Pool,
-    order_repo: &dyn OrderRepository,
-    auth: &AuthUser,
-    order_id: &str,
-) -> AppResult<Order> {
-    auth.ensure_admin()?;
-    let order = order_repo
-        .find_by_document_id(order_id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("order"))?;
-
-    if order.status != OrderStatus::Pending {
-        return Err(AppError::BadRequest("only_pending_can_pay".into()));
-    }
-
-    let result: Result<(), AppError> = async {
-        crate::in_transaction!(pool, tx, {
-            let rows = crate::models::order::tx_update_status_cas(
-                &mut tx,
-                order.id,
-                OrderStatus::Paid,
-                Some("paid_at"),
-                OrderStatus::Pending,
-            )
-            .await?;
-            if rows == 0 {
-                return Err(AppError::BadRequest("concurrent_status_change".into()));
-            }
-            Ok(())
-        })
-    }
-    .await;
-    result?;
-
-    order_repo
-        .find_by_id(order.id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("order"))
-}
-
-pub async fn ship_order(
-    pool: &crate::db::Pool,
-    order_repo: &dyn OrderRepository,
-    auth: &AuthUser,
-    order_id: &str,
-    req: &ShipOrderRequest,
-) -> AppResult<()> {
-    auth.ensure_admin()?;
-    let order = order_repo
-        .find_by_document_id(order_id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("order"))?;
-
-    if order.status != OrderStatus::Paid {
-        return Err(AppError::BadRequest("only_paid_can_ship".into()));
-    }
-
-    let result: Result<(), AppError> = async {
-        crate::in_transaction!(pool, tx, {
-            let rows = crate::models::order::tx_update_shipped(
-                &mut tx,
-                order.id,
-                req.tracking_no.as_deref(),
-                req.carrier.as_deref(),
-            )
-            .await?;
-            if rows == 0 {
-                return Err(AppError::BadRequest("concurrent_status_change".into()));
-            }
-            Ok(())
-        })
-    }
-    .await;
-    result
-}
-
-pub async fn confirm_receipt(
-    pool: &crate::db::Pool,
-    order_repo: &dyn OrderRepository,
-    auth: &AuthUser,
-    order_id: &str,
-    user_id: i64,
-) -> AppResult<()> {
-    let order = order_repo
-        .find_by_document_id(order_id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("order"))?;
-
-    if order.user_id != user_id {
-        return Err(AppError::Forbidden);
-    }
-    if order.status != OrderStatus::Shipped {
-        return Err(AppError::BadRequest("only_shipped_can_confirm".into()));
-    }
-
-    let result: Result<(), AppError> = async {
-        crate::in_transaction!(pool, tx, {
-            let rows = crate::models::order::tx_update_status_cas(
-                &mut tx,
-                order.id,
-                OrderStatus::Completed,
-                Some("completed_at"),
-                OrderStatus::Shipped,
-            )
-            .await?;
-            if rows == 0 {
-                return Err(AppError::BadRequest("concurrent_status_change".into()));
-            }
-            Ok(())
-        })
-    }
-    .await;
-    result
-}
-
-pub async fn refund_order(
-    pool: &crate::db::Pool,
-    order_repo: &dyn OrderRepository,
-    auth: &AuthUser,
-    order_id: &str,
-) -> AppResult<()> {
-    auth.ensure_admin()?;
-    let order = order_repo
-        .find_by_document_id(order_id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("order"))?;
-
-    if order.status != OrderStatus::Paid && order.status != OrderStatus::Shipped {
-        return Err(AppError::BadRequest(
-            "only_paid_or_shipped_can_refund".into(),
-        ));
-    }
-
-    let result: Result<(), AppError> = async {
-        crate::in_transaction!(pool, tx, {
-            let expected = order.status;
-            let rows = crate::models::order::tx_update_status_cas(
-                &mut tx,
-                order.id,
-                OrderStatus::Refunding,
-                Some("refunding_at"),
-                expected,
-            )
-            .await?;
-            if rows == 0 {
-                return Err(AppError::BadRequest("concurrent_status_change".into()));
-            }
-            Ok(())
-        })
-    }
-    .await;
-    result
-}
-
-pub async fn admin_cancel(
-    pool: &crate::db::Pool,
-    order_repo: &dyn OrderRepository,
-    auth: &AuthUser,
-    order_id: &str,
-) -> AppResult<()> {
-    auth.ensure_admin()?;
-    let order = order_repo
-        .find_by_document_id(order_id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("order"))?;
-
-    if order.status != OrderStatus::Pending && order.status != OrderStatus::Paid {
-        return Err(AppError::BadRequest(
-            "only_pending_or_paid_can_admin_cancel".into(),
-        ));
-    }
-
-    let result: Result<(), AppError> = async {
-        crate::in_transaction!(pool, tx, {
-            let expected = order.status;
-            let rows = crate::models::order::tx_update_status_cas(
-                &mut tx,
-                order.id,
-                OrderStatus::Cancelled,
-                Some("cancelled_at"),
-                expected,
-            )
-            .await?;
-            if rows == 0 {
-                return Err(AppError::BadRequest("concurrent_status_change".into()));
-            }
-            Ok(())
-        })
-    }
-    .await;
-    result
-}
-
-pub async fn get_order(
-    order_repo: &dyn OrderRepository,
-    auth: &AuthUser,
-    order_id: &str,
-) -> AppResult<(Order, Vec<OrderItem>)> {
-    let order = order_repo
-        .find_by_document_id(order_id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("order"))?;
-    if auth.role() != "admin" {
-        let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
-        if order.user_id != user_int_id {
+        if order.user_id != user_id {
             return Err(AppError::Forbidden);
         }
+        if order.status != OrderStatus::Pending {
+            return Err(AppError::BadRequest("only_pending_can_cancel".into()));
+        }
+
+        let result: Result<(), AppError> = async {
+            crate::in_transaction!(&self.pool, tx, {
+                let rows = crate::models::order::tx_update_status_cas(
+                    &mut tx,
+                    order.id,
+                    OrderStatus::Cancelled,
+                    Some("cancelled_at"),
+                    OrderStatus::Pending,
+                )
+                .await?;
+                if rows == 0 {
+                    return Err(AppError::BadRequest("concurrent_status_change".into()));
+                }
+                Ok(())
+            })
+        }
+        .await;
+        result?;
+
+        self.after_cancelled(&order);
+        Ok(())
     }
-    let items = order_repo
-        .find_items_by_order_id(order.id, auth.tenant_id())
-        .await?;
-    Ok((order, items))
-}
 
-pub async fn list_user_orders(
-    order_repo: &dyn OrderRepository,
-    auth: &AuthUser,
-    user_id: i64,
-    page: i64,
-    page_size: i64,
-) -> AppResult<(Vec<Order>, i64)> {
-    order_repo
-        .find_by_user_paginated(user_id, auth.tenant_id(), page, page_size)
-        .await
-}
+    async fn mark_paid(&self, auth: &AuthUser, order_id: &str) -> AppResult<Order> {
+        auth.ensure_admin()?;
+        let order = self
+            .repo
+            .find_by_document_id(order_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("order"))?;
 
-pub async fn list_admin_orders(
-    order_repo: &dyn OrderRepository,
-    auth: &AuthUser,
-    page: i64,
-    page_size: i64,
-    status: Option<&str>,
-) -> AppResult<(Vec<Order>, i64)> {
-    auth.ensure_admin()?;
-    order_repo
-        .find_all_admin_paginated(auth.tenant_id(), page, page_size, status)
-        .await
-}
+        if order.status != OrderStatus::Pending {
+            return Err(AppError::BadRequest("only_pending_can_pay".into()));
+        }
 
-pub async fn update_admin_remark(
-    order_repo: &dyn OrderRepository,
-    auth: &AuthUser,
-    order_id: &str,
-    admin_remark: &str,
-) -> AppResult<()> {
-    auth.ensure_admin()?;
-    let order = order_repo
-        .find_by_document_id(order_id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("order"))?;
-    order_repo
-        .update_admin_remark(order.id, admin_remark, auth.tenant_id())
-        .await
-}
+        let result: Result<(), AppError> = async {
+            crate::in_transaction!(&self.pool, tx, {
+                let rows = crate::models::order::tx_update_status_cas(
+                    &mut tx,
+                    order.id,
+                    OrderStatus::Paid,
+                    Some("paid_at"),
+                    OrderStatus::Pending,
+                )
+                .await?;
+                if rows == 0 {
+                    return Err(AppError::BadRequest("concurrent_status_change".into()));
+                }
+                Ok(())
+            })
+        }
+        .await;
+        result?;
 
-pub async fn get_stats(
-    pool: &crate::db::Pool,
-    auth: &AuthUser,
-) -> AppResult<crate::dto::OrderStatsResponse> {
-    auth.ensure_admin()?;
-    crate::models::order::get_stats_query(pool, auth.tenant_id()).await
+        let paid = self
+            .repo
+            .find_by_id(order.id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("order"))?;
+
+        self.after_paid(&paid);
+        Ok(paid)
+    }
+
+    async fn ship(&self, auth: &AuthUser, order_id: &str, req: &ShipOrderRequest) -> AppResult<()> {
+        auth.ensure_admin()?;
+        let order = self
+            .repo
+            .find_by_document_id(order_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("order"))?;
+
+        if order.status != OrderStatus::Paid {
+            return Err(AppError::BadRequest("only_paid_can_ship".into()));
+        }
+
+        let order_id = order.id;
+        let result: Result<(), AppError> = async {
+            crate::in_transaction!(&self.pool, tx, {
+                let rows = crate::models::order::tx_update_shipped(
+                    &mut tx,
+                    order_id,
+                    req.tracking_no.as_deref(),
+                    req.carrier.as_deref(),
+                )
+                .await?;
+                if rows == 0 {
+                    return Err(AppError::BadRequest("concurrent_status_change".into()));
+                }
+                Ok(())
+            })
+        }
+        .await;
+        result?;
+
+        self.after_shipped(&order);
+        Ok(())
+    }
+
+    async fn confirm_receipt(
+        &self,
+        auth: &AuthUser,
+        order_id: &str,
+        user_id: i64,
+    ) -> AppResult<()> {
+        let order = self
+            .repo
+            .find_by_document_id(order_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("order"))?;
+
+        if order.user_id != user_id {
+            return Err(AppError::Forbidden);
+        }
+        if order.status != OrderStatus::Shipped {
+            return Err(AppError::BadRequest("only_shipped_can_confirm".into()));
+        }
+
+        let result: Result<(), AppError> = async {
+            crate::in_transaction!(&self.pool, tx, {
+                let rows = crate::models::order::tx_update_status_cas(
+                    &mut tx,
+                    order.id,
+                    OrderStatus::Completed,
+                    Some("completed_at"),
+                    OrderStatus::Shipped,
+                )
+                .await?;
+                if rows == 0 {
+                    return Err(AppError::BadRequest("concurrent_status_change".into()));
+                }
+                Ok(())
+            })
+        }
+        .await;
+        result?;
+
+        self.after_completed(&order);
+        Ok(())
+    }
+
+    async fn refund(&self, auth: &AuthUser, order_id: &str) -> AppResult<()> {
+        auth.ensure_admin()?;
+        let order = self
+            .repo
+            .find_by_document_id(order_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("order"))?;
+
+        if order.status != OrderStatus::Paid && order.status != OrderStatus::Shipped {
+            return Err(AppError::BadRequest(
+                "only_paid_or_shipped_can_refund".into(),
+            ));
+        }
+
+        let expected = order.status;
+        let result: Result<(), AppError> = async {
+            crate::in_transaction!(&self.pool, tx, {
+                let rows = crate::models::order::tx_update_status_cas(
+                    &mut tx,
+                    order.id,
+                    OrderStatus::Refunding,
+                    Some("refunding_at"),
+                    expected,
+                )
+                .await?;
+                if rows == 0 {
+                    return Err(AppError::BadRequest("concurrent_status_change".into()));
+                }
+                Ok(())
+            })
+        }
+        .await;
+        result
+    }
+
+    async fn admin_cancel(&self, auth: &AuthUser, order_id: &str) -> AppResult<()> {
+        auth.ensure_admin()?;
+        let order = self
+            .repo
+            .find_by_document_id(order_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("order"))?;
+
+        if order.status != OrderStatus::Pending && order.status != OrderStatus::Paid {
+            return Err(AppError::BadRequest(
+                "only_pending_or_paid_can_admin_cancel".into(),
+            ));
+        }
+
+        let expected = order.status;
+        let result: Result<(), AppError> = async {
+            crate::in_transaction!(&self.pool, tx, {
+                let rows = crate::models::order::tx_update_status_cas(
+                    &mut tx,
+                    order.id,
+                    OrderStatus::Cancelled,
+                    Some("cancelled_at"),
+                    expected,
+                )
+                .await?;
+                if rows == 0 {
+                    return Err(AppError::BadRequest("concurrent_status_change".into()));
+                }
+                Ok(())
+            })
+        }
+        .await;
+        result?;
+        self.after_cancelled(&order);
+        Ok(())
+    }
+
+    async fn get(&self, auth: &AuthUser, order_id: &str) -> AppResult<(Order, Vec<OrderItem>)> {
+        let order = self
+            .repo
+            .find_by_document_id(order_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("order"))?;
+        if auth.role() != "admin" {
+            let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
+            if order.user_id != user_int_id {
+                return Err(AppError::Forbidden);
+            }
+        }
+        let items = self
+            .repo
+            .find_items_by_order_id(order.id, auth.tenant_id())
+            .await?;
+        Ok((order, items))
+    }
+
+    async fn list_user(
+        &self,
+        auth: &AuthUser,
+        user_id: i64,
+        page: i64,
+        page_size: i64,
+    ) -> AppResult<(Vec<Order>, i64)> {
+        self.repo
+            .find_by_user_paginated(user_id, auth.tenant_id(), page, page_size)
+            .await
+    }
+
+    async fn list_admin(
+        &self,
+        auth: &AuthUser,
+        page: i64,
+        page_size: i64,
+        status: Option<&str>,
+    ) -> AppResult<(Vec<Order>, i64)> {
+        auth.ensure_admin()?;
+        self.repo
+            .find_all_admin_paginated(auth.tenant_id(), page, page_size, status)
+            .await
+    }
+
+    async fn update_admin_remark(
+        &self,
+        auth: &AuthUser,
+        order_id: &str,
+        admin_remark: &str,
+    ) -> AppResult<()> {
+        auth.ensure_admin()?;
+        let order = self
+            .repo
+            .find_by_document_id(order_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("order"))?;
+        self.repo
+            .update_admin_remark(order.id, admin_remark, auth.tenant_id())
+            .await
+    }
+
+    async fn get_stats(&self, auth: &AuthUser) -> AppResult<crate::dto::OrderStatsResponse> {
+        auth.ensure_admin()?;
+        crate::models::order::get_stats_query(&self.pool, auth.tenant_id()).await
+    }
 }
 
 #[cfg(test)]
@@ -415,6 +508,15 @@ mod tests {
             .await
             .unwrap();
         pool
+    }
+
+    fn make_service(pool: crate::db::Pool) -> Arc<dyn OrderService> {
+        Arc::new(OrderServiceImpl::new(
+            Arc::new(SqlxOrderRepository::new(pool.clone())),
+            Arc::new(SqlxProductRepository::new(pool.clone())),
+            Arc::new(AspectEngine::new()),
+            Arc::new(pool),
+        ))
     }
 
     fn auth(tid: Option<&str>) -> AuthUser {
@@ -499,36 +601,47 @@ mod tests {
             .unwrap()
     }
 
+    fn make_create_req(prod_doc_id: &str, quantity: i64) -> CreateOrderRequest {
+        CreateOrderRequest {
+            items: vec![CreateOrderItemRequest {
+                product_id: prod_doc_id.to_string(),
+                quantity,
+            }],
+            currency: None,
+            buyer_name: None,
+            buyer_phone: None,
+            buyer_email: None,
+            shipping_address: None,
+            remark: None,
+        }
+    }
+
+    async fn seed_order(
+        svc: &dyn OrderService,
+        pool: &crate::db::Pool,
+        auth: &AuthUser,
+    ) -> (i64, Order) {
+        let uid = seed_user(pool).await;
+        let prod = seed_active_product(pool, "Widget", 1000).await;
+        let order = svc
+            .create(auth, uid, make_create_req(&prod.document_id, 1))
+            .await
+            .unwrap();
+        (uid, order)
+    }
+
     #[tokio::test]
     async fn create_order_basic() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
-        let order = super::create_order(
-            &pool,
-            &product_repo,
-            &order_repo,
-            &a,
-            uid,
-            CreateOrderRequest {
-                items: vec![CreateOrderItemRequest {
-                    product_id: prod.document_id.clone(),
-                    quantity: 2,
-                }],
-                currency: None,
-                buyer_name: None,
-                buyer_phone: None,
-                buyer_email: None,
-                shipping_address: None,
-                remark: None,
-            },
-        )
-        .await
-        .unwrap();
+        let order = svc
+            .create(&a, uid, make_create_req(&prod.document_id, 2))
+            .await
+            .unwrap();
 
         assert_eq!(order.user_id, uid);
         assert_eq!(order.subtotal, 2000);
@@ -536,6 +649,7 @@ mod tests {
         assert_eq!(order.status, OrderStatus::Pending);
         assert!(order.order_no.starts_with("ORD-"));
 
+        let order_repo = SqlxOrderRepository::new(pool);
         let items = order_repo
             .find_items_by_order_id(order.id, None)
             .await
@@ -550,45 +664,43 @@ mod tests {
     #[tokio::test]
     async fn create_order_multiple_items() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
         let uid = seed_user(&pool).await;
         let p1 = seed_active_product(&pool, "Item1", 100).await;
         let p2 = seed_active_product(&pool, "Item2", 200).await;
 
-        let order = super::create_order(
-            &pool,
-            &product_repo,
-            &order_repo,
-            &a,
-            uid,
-            CreateOrderRequest {
-                items: vec![
-                    CreateOrderItemRequest {
-                        product_id: p1.document_id.clone(),
-                        quantity: 3,
-                    },
-                    CreateOrderItemRequest {
-                        product_id: p2.document_id.clone(),
-                        quantity: 1,
-                    },
-                ],
-                currency: Some("USD".into()),
-                buyer_name: Some("John".into()),
-                buyer_phone: None,
-                buyer_email: None,
-                shipping_address: None,
-                remark: None,
-            },
-        )
-        .await
-        .unwrap();
+        let order = svc
+            .create(
+                &a,
+                uid,
+                CreateOrderRequest {
+                    items: vec![
+                        CreateOrderItemRequest {
+                            product_id: p1.document_id.clone(),
+                            quantity: 3,
+                        },
+                        CreateOrderItemRequest {
+                            product_id: p2.document_id.clone(),
+                            quantity: 1,
+                        },
+                    ],
+                    currency: Some("USD".into()),
+                    buyer_name: Some("John".into()),
+                    buyer_phone: None,
+                    buyer_email: None,
+                    shipping_address: None,
+                    remark: None,
+                },
+            )
+            .await
+            .unwrap();
 
         assert_eq!(order.subtotal, 500);
         assert_eq!(order.total_amount, 500);
         assert_eq!(order.currency, "USD");
         assert_eq!(order.buyer_name.unwrap(), "John");
+        let order_repo = SqlxOrderRepository::new(pool);
         let items = order_repo
             .find_items_by_order_id(order.id, None)
             .await
@@ -599,69 +711,62 @@ mod tests {
     #[tokio::test]
     async fn create_order_empty_items_error() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
         let uid = seed_user(&pool).await;
 
-        let err = super::create_order(
-            &pool,
-            &product_repo,
-            &order_repo,
-            &a,
-            uid,
-            CreateOrderRequest {
-                items: vec![],
-                currency: None,
-                buyer_name: None,
-                buyer_phone: None,
-                buyer_email: None,
-                shipping_address: None,
-                remark: None,
-            },
-        )
-        .await
-        .unwrap_err();
+        let err = svc
+            .create(
+                &a,
+                uid,
+                CreateOrderRequest {
+                    items: vec![],
+                    currency: None,
+                    buyer_name: None,
+                    buyer_phone: None,
+                    buyer_email: None,
+                    shipping_address: None,
+                    remark: None,
+                },
+            )
+            .await
+            .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "items_empty"));
     }
 
     #[tokio::test]
     async fn create_order_product_not_found() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
         let uid = seed_user(&pool).await;
 
-        let err = super::create_order(
-            &pool,
-            &product_repo,
-            &order_repo,
-            &a,
-            uid,
-            CreateOrderRequest {
-                items: vec![CreateOrderItemRequest {
-                    product_id: "nonexistent".into(),
-                    quantity: 1,
-                }],
-                currency: None,
-                buyer_name: None,
-                buyer_phone: None,
-                buyer_email: None,
-                shipping_address: None,
-                remark: None,
-            },
-        )
-        .await
-        .unwrap_err();
+        let err = svc
+            .create(
+                &a,
+                uid,
+                CreateOrderRequest {
+                    items: vec![CreateOrderItemRequest {
+                        product_id: "nonexistent".into(),
+                        quantity: 1,
+                    }],
+                    currency: None,
+                    buyer_name: None,
+                    buyer_phone: None,
+                    buyer_email: None,
+                    shipping_address: None,
+                    remark: None,
+                },
+            )
+            .await
+            .unwrap_err();
         assert!(matches!(err, AppError::NotFound(_)));
     }
 
     #[tokio::test]
     async fn create_order_product_not_active() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
         let uid = seed_user(&pool).await;
 
@@ -697,73 +802,22 @@ mod tests {
         .await
         .unwrap();
 
-        let err = super::create_order(
-            &pool,
-            &product_repo,
-            &order_repo,
-            &a,
-            uid,
-            CreateOrderRequest {
-                items: vec![CreateOrderItemRequest {
-                    product_id: draft_product.document_id.clone(),
-                    quantity: 1,
-                }],
-                currency: None,
-                buyer_name: None,
-                buyer_phone: None,
-                buyer_email: None,
-                shipping_address: None,
-                remark: None,
-            },
-        )
-        .await
-        .unwrap_err();
+        let err = svc
+            .create(&a, uid, make_create_req(&draft_product.document_id, 1))
+            .await
+            .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "product_not_active"));
-    }
-
-    async fn seed_order_with_product(
-        pool: &crate::db::Pool,
-        product_repo: &dyn ProductRepository,
-        order_repo: &dyn OrderRepository,
-        auth: &AuthUser,
-    ) -> (i64, Order) {
-        let uid = seed_user(pool).await;
-        let prod = seed_active_product(pool, "Widget", 1000).await;
-        let order = create_order(
-            pool,
-            product_repo,
-            order_repo,
-            auth,
-            uid,
-            CreateOrderRequest {
-                items: vec![CreateOrderItemRequest {
-                    product_id: prod.document_id.clone(),
-                    quantity: 1,
-                }],
-                currency: None,
-                buyer_name: None,
-                buyer_phone: None,
-                buyer_email: None,
-                shipping_address: None,
-                remark: None,
-            },
-        )
-        .await
-        .unwrap();
-        (uid, order)
     }
 
     #[tokio::test]
     async fn cancel_order_success() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
-        let (uid, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
+        let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        super::cancel_order(&pool, &order_repo, &a, &order.document_id, uid)
-            .await
-            .unwrap();
+        svc.cancel(&a, &order.document_id, uid).await.unwrap();
+        let order_repo = SqlxOrderRepository::new(pool);
         let found = order_repo
             .find_by_id(order.id, None)
             .await
@@ -776,47 +830,39 @@ mod tests {
     #[tokio::test]
     async fn cancel_order_wrong_user() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
-        let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
+        let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let err = super::cancel_order(&pool, &order_repo, &a, &order.document_id, 999)
-            .await
-            .unwrap_err();
+        let err = svc.cancel(&a, &order.document_id, 999).await.unwrap_err();
         assert!(matches!(err, AppError::Forbidden));
     }
 
     #[tokio::test]
     async fn cancel_order_wrong_status() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
-        let (uid, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
+        let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
+        let order_repo = SqlxOrderRepository::new(pool);
         order_repo
             .update_status(order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
 
-        let err = super::cancel_order(&pool, &order_repo, &a, &order.document_id, uid)
-            .await
-            .unwrap_err();
+        let err = svc.cancel(&a, &order.document_id, uid).await.unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "only_pending_can_cancel"));
     }
 
     #[tokio::test]
     async fn mark_paid_success() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
-        let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
+        let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let paid = super::mark_paid(&pool, &order_repo, &a, &order.document_id)
-            .await
-            .unwrap();
+        let paid = svc.mark_paid(&a, &order.document_id).await.unwrap();
         assert_eq!(paid.status, OrderStatus::Paid);
         assert!(paid.paid_at.is_some());
     }
@@ -824,37 +870,33 @@ mod tests {
     #[tokio::test]
     async fn mark_paid_wrong_status() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
-        let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
+        let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
+        let order_repo = SqlxOrderRepository::new(pool);
         order_repo
             .update_status(order.id, "cancelled", Some("cancelled_at"), None)
             .await
             .unwrap();
 
-        let err = super::mark_paid(&pool, &order_repo, &a, &order.document_id)
-            .await
-            .unwrap_err();
+        let err = svc.mark_paid(&a, &order.document_id).await.unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "only_pending_can_pay"));
     }
 
     #[tokio::test]
     async fn ship_order_success() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
-        let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
+        let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
+        let order_repo = SqlxOrderRepository::new(pool.clone());
         order_repo
             .update_status(order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
-        super::ship_order(
-            &pool,
-            &order_repo,
+        svc.ship(
             &a,
             &order.document_id,
             &ShipOrderRequest {
@@ -878,34 +920,32 @@ mod tests {
     #[tokio::test]
     async fn ship_order_wrong_status() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
-        let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
+        let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let err = super::ship_order(
-            &pool,
-            &order_repo,
-            &a,
-            &order.document_id,
-            &ShipOrderRequest {
-                tracking_no: None,
-                carrier: None,
-            },
-        )
-        .await
-        .unwrap_err();
+        let err = svc
+            .ship(
+                &a,
+                &order.document_id,
+                &ShipOrderRequest {
+                    tracking_no: None,
+                    carrier: None,
+                },
+            )
+            .await
+            .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "only_paid_can_ship"));
     }
 
     #[tokio::test]
     async fn confirm_receipt_success() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
-        let (uid, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
+        let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
+        let order_repo = SqlxOrderRepository::new(pool);
         order_repo
             .update_status(order.id, "paid", Some("paid_at"), None)
             .await
@@ -915,7 +955,7 @@ mod tests {
             .await
             .unwrap();
 
-        super::confirm_receipt(&pool, &order_repo, &a, &order.document_id, uid)
+        svc.confirm_receipt(&a, &order.document_id, uid)
             .await
             .unwrap();
         let found = order_repo
@@ -930,11 +970,11 @@ mod tests {
     #[tokio::test]
     async fn confirm_receipt_wrong_user() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
-        let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
+        let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
+        let order_repo = SqlxOrderRepository::new(pool);
         order_repo
             .update_status(order.id, "paid", Some("paid_at"), None)
             .await
@@ -944,7 +984,8 @@ mod tests {
             .await
             .unwrap();
 
-        let err = super::confirm_receipt(&pool, &order_repo, &a, &order.document_id, 999)
+        let err = svc
+            .confirm_receipt(&a, &order.document_id, 999)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::Forbidden));
@@ -953,12 +994,12 @@ mod tests {
     #[tokio::test]
     async fn confirm_receipt_wrong_status() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
-        let (uid, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
+        let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let err = super::confirm_receipt(&pool, &order_repo, &a, &order.document_id, uid)
+        let err = svc
+            .confirm_receipt(&a, &order.document_id, uid)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "only_shipped_can_confirm"));
@@ -967,18 +1008,16 @@ mod tests {
     #[tokio::test]
     async fn refund_order_from_paid() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
-        let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
+        let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
+        let order_repo = SqlxOrderRepository::new(pool);
         order_repo
             .update_status(order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
-        super::refund_order(&pool, &order_repo, &a, &order.document_id)
-            .await
-            .unwrap();
+        svc.refund(&a, &order.document_id).await.unwrap();
 
         let found = order_repo
             .find_by_id(order.id, None)
@@ -992,11 +1031,11 @@ mod tests {
     #[tokio::test]
     async fn refund_order_from_shipped() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
-        let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
+        let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
+        let order_repo = SqlxOrderRepository::new(pool);
         order_repo
             .update_status(order.id, "paid", Some("paid_at"), None)
             .await
@@ -1005,9 +1044,7 @@ mod tests {
             .update_shipped(order.id, Some("TRK"), None, None)
             .await
             .unwrap();
-        super::refund_order(&pool, &order_repo, &a, &order.document_id)
-            .await
-            .unwrap();
+        svc.refund(&a, &order.document_id).await.unwrap();
 
         let found = order_repo
             .find_by_id(order.id, None)
@@ -1020,14 +1057,11 @@ mod tests {
     #[tokio::test]
     async fn refund_order_wrong_status() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
-        let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
+        let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let err = super::refund_order(&pool, &order_repo, &a, &order.document_id)
-            .await
-            .unwrap_err();
+        let err = svc.refund(&a, &order.document_id).await.unwrap_err();
         assert!(
             matches!(err, AppError::BadRequest(ref s) if s == "only_paid_or_shipped_can_refund")
         );
@@ -1036,14 +1070,11 @@ mod tests {
     #[tokio::test]
     async fn get_order_with_items() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
-        let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
+        let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let (found_order, items) = super::get_order(&order_repo, &a, &order.document_id)
-            .await
-            .unwrap();
+        let (found_order, items) = svc.get(&a, &order.document_id).await.unwrap();
         assert_eq!(found_order.id, order.id);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Widget");
@@ -1052,51 +1083,26 @@ mod tests {
     #[tokio::test]
     async fn get_order_not_found() {
         let pool = setup_pool().await;
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool);
         let a = auth(None);
-        assert!(
-            super::get_order(&order_repo, &a, "nonexistent")
-                .await
-                .is_err()
-        );
+        assert!(svc.get(&a, "nonexistent").await.is_err());
     }
 
     #[tokio::test]
     async fn list_user_orders() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
         for _ in 0..3 {
-            super::create_order(
-                &pool,
-                &product_repo,
-                &order_repo,
-                &a,
-                uid,
-                CreateOrderRequest {
-                    items: vec![CreateOrderItemRequest {
-                        product_id: prod.document_id.clone(),
-                        quantity: 1,
-                    }],
-                    currency: None,
-                    buyer_name: None,
-                    buyer_phone: None,
-                    buyer_email: None,
-                    shipping_address: None,
-                    remark: None,
-                },
-            )
-            .await
-            .unwrap();
+            svc.create(&a, uid, make_create_req(&prod.document_id, 1))
+                .await
+                .unwrap();
         }
 
-        let (orders, total) = super::list_user_orders(&order_repo, &a, uid, 1, 10)
-            .await
-            .unwrap();
+        let (orders, total) = svc.list_user(&a, uid, 1, 10).await.unwrap();
         assert_eq!(total, 3);
         assert_eq!(orders.len(), 3);
     }
@@ -1104,37 +1110,16 @@ mod tests {
     #[tokio::test]
     async fn list_admin_orders() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
-        super::create_order(
-            &pool,
-            &product_repo,
-            &order_repo,
-            &a,
-            uid,
-            CreateOrderRequest {
-                items: vec![CreateOrderItemRequest {
-                    product_id: prod.document_id.clone(),
-                    quantity: 1,
-                }],
-                currency: None,
-                buyer_name: None,
-                buyer_phone: None,
-                buyer_email: None,
-                shipping_address: None,
-                remark: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        let (orders, total) = super::list_admin_orders(&order_repo, &a, 1, 10, None)
+        svc.create(&a, uid, make_create_req(&prod.document_id, 1))
             .await
             .unwrap();
+
+        let (orders, total) = svc.list_admin(&a, 1, 10, None).await.unwrap();
         assert_eq!(total, 1);
         assert_eq!(orders.len(), 1);
     }
@@ -1142,14 +1127,14 @@ mod tests {
     #[tokio::test]
     async fn update_admin_remark_success() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
-        let (_, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
+        let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        super::update_admin_remark(&order_repo, &a, &order.document_id, "verified")
+        svc.update_admin_remark(&a, &order.document_id, "verified")
             .await
             .unwrap();
+        let order_repo = SqlxOrderRepository::new(pool);
         let found = order_repo
             .find_by_id(order.id, None)
             .await
@@ -1161,56 +1146,22 @@ mod tests {
     #[tokio::test]
     async fn get_stats() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
-        let o1 = super::create_order(
-            &pool,
-            &product_repo,
-            &order_repo,
-            &a,
-            uid,
-            CreateOrderRequest {
-                items: vec![CreateOrderItemRequest {
-                    product_id: prod.document_id.clone(),
-                    quantity: 1,
-                }],
-                currency: None,
-                buyer_name: None,
-                buyer_phone: None,
-                buyer_email: None,
-                shipping_address: None,
-                remark: None,
-            },
-        )
-        .await
-        .unwrap();
+        let o1 = svc
+            .create(&a, uid, make_create_req(&prod.document_id, 1))
+            .await
+            .unwrap();
 
-        let o2 = super::create_order(
-            &pool,
-            &product_repo,
-            &order_repo,
-            &a,
-            uid,
-            CreateOrderRequest {
-                items: vec![CreateOrderItemRequest {
-                    product_id: prod.document_id.clone(),
-                    quantity: 2,
-                }],
-                currency: None,
-                buyer_name: None,
-                buyer_phone: None,
-                buyer_email: None,
-                shipping_address: None,
-                remark: None,
-            },
-        )
-        .await
-        .unwrap();
+        let _o2 = svc
+            .create(&a, uid, make_create_req(&prod.document_id, 2))
+            .await
+            .unwrap();
 
+        let order_repo = SqlxOrderRepository::new(pool);
         order_repo
             .update_status(o1.id, "paid", Some("paid_at"), None)
             .await
@@ -1224,7 +1175,7 @@ mod tests {
             .await
             .unwrap();
 
-        let stats = super::get_stats(&pool, &a).await.unwrap();
+        let stats = svc.get_stats(&a).await.unwrap();
         assert_eq!(stats.total_orders, 2);
         assert_eq!(stats.pending_orders, 1);
         assert_eq!(stats.completed_orders, 1);
@@ -1234,25 +1185,18 @@ mod tests {
     #[tokio::test]
     async fn full_lifecycle_pending_to_completed() {
         let pool = setup_pool().await;
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_repo = SqlxOrderRepository::new(pool.clone());
+        let svc = make_service(pool.clone());
         let a = auth(None);
-        let (uid, order) = seed_order_with_product(&pool, &product_repo, &order_repo, &a).await;
+        let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let (o, items) = super::get_order(&order_repo, &a, &order.document_id)
-            .await
-            .unwrap();
+        let (o, items) = svc.get(&a, &order.document_id).await.unwrap();
         assert_eq!(o.status, OrderStatus::Pending);
         assert_eq!(items.len(), 1);
 
-        let paid = super::mark_paid(&pool, &order_repo, &a, &order.document_id)
-            .await
-            .unwrap();
+        let paid = svc.mark_paid(&a, &order.document_id).await.unwrap();
         assert_eq!(paid.status, OrderStatus::Paid);
 
-        super::ship_order(
-            &pool,
-            &order_repo,
+        svc.ship(
             &a,
             &order.document_id,
             &ShipOrderRequest {
@@ -1263,13 +1207,11 @@ mod tests {
         .await
         .unwrap();
 
-        super::confirm_receipt(&pool, &order_repo, &a, &order.document_id, uid)
+        svc.confirm_receipt(&a, &order.document_id, uid)
             .await
             .unwrap();
 
-        let (final_order, _) = super::get_order(&order_repo, &a, &order.document_id)
-            .await
-            .unwrap();
+        let (final_order, _) = svc.get(&a, &order.document_id).await.unwrap();
         assert_eq!(final_order.status, OrderStatus::Completed);
         assert!(final_order.paid_at.is_some());
         assert!(final_order.completed_at.is_some());

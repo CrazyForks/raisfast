@@ -121,20 +121,64 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
                 Arc::new(NoopSearchEngine),
             ))
         },
+        page_service: Arc::new(raisfast::services::page::PageServiceImpl::new(
+            Arc::new(pool.clone()),
+            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+        )),
         user_repo: Arc::new(SqlxUserRepository::new(pool.clone())),
         category_repo: Arc::new(SqlxCategoryRepository::new(pool.clone())),
+        category_service: Arc::new(raisfast::services::category::CategoryServiceImpl::new(
+            Arc::new(SqlxCategoryRepository::new(pool.clone())),
+            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+        )),
         tag_repo: Arc::new(SqlxTagRepository::new(pool.clone())),
+        tag_service: Arc::new(raisfast::services::tag::TagServiceImpl::new(
+            Arc::new(SqlxTagRepository::new(pool.clone())),
+            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+        )),
         comment_repo: Arc::new(SqlxCommentRepository::new(pool.clone())),
+        comment_service: Arc::new(raisfast::services::comment::CommentServiceImpl::new(
+            Arc::new(CachedPostRepository::new(
+                SqlxPostRepository::new(pool.clone()),
+                Arc::new(MemoryCache::new()),
+                None,
+            )),
+            Arc::new(SqlxCommentRepository::new(pool.clone())),
+            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+        )),
         media_repo: Arc::new(SqlxMediaRepository::new(pool.clone())),
         refresh_token_repo: Arc::new(SqlxRefreshTokenRepository::new(pool.clone())),
         wallet_repo: Arc::new(raisfast::repositories::SqlxWalletRepository::new(
             pool.clone(),
         )),
+        wallet_service: Arc::new(raisfast::services::wallet::WalletServiceImpl::new(
+            Arc::new(raisfast::repositories::SqlxWalletRepository::new(
+                pool.clone(),
+            )),
+            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+            Arc::new(pool.clone()),
+        )),
         product_repo: Arc::new(raisfast::repositories::SqlxProductRepository::new(
             pool.clone(),
         )),
+        product_service: Arc::new(raisfast::services::product::ProductServiceImpl::new(
+            Arc::new(raisfast::repositories::SqlxProductRepository::new(
+                pool.clone(),
+            )),
+            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+        )),
         order_repo: Arc::new(raisfast::repositories::SqlxOrderRepository::new(
             pool.clone(),
+        )),
+        order_service: Arc::new(raisfast::services::order::OrderServiceImpl::new(
+            Arc::new(raisfast::repositories::SqlxOrderRepository::new(
+                pool.clone(),
+            )),
+            Arc::new(raisfast::repositories::SqlxProductRepository::new(
+                pool.clone(),
+            )),
+            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+            Arc::new(pool.clone()),
         )),
         payment_channel_repo: Arc::new(raisfast::repositories::SqlxPaymentChannelRepository::new(
             pool.clone(),
@@ -147,6 +191,30 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         ),
         payment_refund_repo: Arc::new(raisfast::repositories::SqlxPaymentRefundRepository::new(
             pool.clone(),
+        )),
+        payment_service: Arc::new(raisfast::services::payment::PaymentServiceImpl::new(
+            Arc::new(raisfast::repositories::SqlxPaymentChannelRepository::new(
+                pool.clone(),
+            )),
+            Arc::new(raisfast::repositories::SqlxPaymentOrderRepository::new(
+                pool.clone(),
+            )),
+            Arc::new(raisfast::repositories::SqlxPaymentTransactionRepository::new(pool.clone())),
+            Arc::new(raisfast::repositories::SqlxPaymentRefundRepository::new(
+                pool.clone(),
+            )),
+            Arc::new(raisfast::repositories::SqlxOrderRepository::new(
+                pool.clone(),
+            )),
+            Arc::new(raisfast::repositories::SqlxProductRepository::new(
+                pool.clone(),
+            )),
+            Arc::new(raisfast::repositories::SqlxWalletRepository::new(
+                pool.clone(),
+            )),
+            config.clone(),
+            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+            Arc::new(pool.clone()),
         )),
         search: Arc::new(NoopSearchEngine),
         content_type_registry: Arc::new(raisfast::content_type::ContentTypeRegistry::new()),

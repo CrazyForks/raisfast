@@ -9,7 +9,6 @@ use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
-use crate::services::order;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -197,15 +196,7 @@ pub async fn create_order(
         .user_int_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
     validation::validate(&req)?;
-    let o = order::create_order(
-        &state.pool,
-        state.product_repo.as_ref(),
-        state.order_repo.as_ref(),
-        &auth,
-        user_int_id,
-        req,
-    )
-    .await?;
+    let o = state.order_service.create(&auth, user_int_id, req).await?;
     let items = state
         .order_repo
         .find_items_by_order_id(o.id, auth.tenant_id())
@@ -227,14 +218,10 @@ pub async fn list_orders(
         .user_int_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
     params.sanitize();
-    let (orders, total) = order::list_user_orders(
-        state.order_repo.as_ref(),
-        &auth,
-        user_int_id,
-        params.page,
-        params.page_size,
-    )
-    .await?;
+    let (orders, total) = state
+        .order_service
+        .list_user(&auth, user_int_id, params.page, params.page_size)
+        .await?;
     let mut responses = Vec::new();
     for o in orders {
         let items = state
@@ -257,7 +244,7 @@ pub async fn get_order(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<OrderResponse>> {
     auth.ensure_authenticated()?;
-    let (o, items) = order::get_order(state.order_repo.as_ref(), &auth, &id).await?;
+    let (o, items) = state.order_service.get(&auth, &id).await?;
     Ok(ApiResponse::success(to_order_response(o, items)))
 }
 
@@ -277,14 +264,7 @@ pub async fn cancel_order_handler(
     let user_int_id = auth
         .user_int_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
-    order::cancel_order(
-        &state.pool,
-        state.order_repo.as_ref(),
-        &auth,
-        &id,
-        user_int_id,
-    )
-    .await?;
+    state.order_service.cancel(&auth, &id, user_int_id).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -302,14 +282,10 @@ pub async fn confirm_receipt(
     let user_int_id = auth
         .user_int_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
-    order::confirm_receipt(
-        &state.pool,
-        state.order_repo.as_ref(),
-        &auth,
-        &id,
-        user_int_id,
-    )
-    .await?;
+    state
+        .order_service
+        .confirm_receipt(&auth, &id, user_int_id)
+        .await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -324,14 +300,10 @@ pub async fn admin_list(
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<OrderResponse>>> {
     auth.ensure_admin()?;
     params.sanitize();
-    let (orders, total) = order::list_admin_orders(
-        state.order_repo.as_ref(),
-        &auth,
-        params.page,
-        params.page_size,
-        None,
-    )
-    .await?;
+    let (orders, total) = state
+        .order_service
+        .list_admin(&auth, params.page, params.page_size, None)
+        .await?;
     let mut responses = Vec::new();
     for o in orders {
         let items = state
@@ -354,7 +326,7 @@ pub async fn admin_get(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<OrderResponse>> {
     auth.ensure_admin()?;
-    let (o, items) = order::get_order(state.order_repo.as_ref(), &auth, &id).await?;
+    let (o, items) = state.order_service.get(&auth, &id).await?;
     Ok(ApiResponse::success(to_order_response(o, items)))
 }
 
@@ -371,7 +343,7 @@ pub async fn admin_ship(
     Json(req): Json<ShipOrderRequest>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    order::ship_order(&state.pool, state.order_repo.as_ref(), &auth, &id, &req).await?;
+    state.order_service.ship(&auth, &id, &req).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -386,7 +358,7 @@ pub async fn admin_cancel(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    order::admin_cancel(&state.pool, state.order_repo.as_ref(), &auth, &id).await?;
+    state.order_service.admin_cancel(&auth, &id).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -401,7 +373,7 @@ pub async fn admin_pay(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    order::mark_paid(&state.pool, state.order_repo.as_ref(), &auth, &id).await?;
+    state.order_service.mark_paid(&auth, &id).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -416,7 +388,7 @@ pub async fn admin_refund(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    order::refund_order(&state.pool, state.order_repo.as_ref(), &auth, &id).await?;
+    state.order_service.refund(&auth, &id).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -433,7 +405,10 @@ pub async fn admin_update_remark(
     Json(req): Json<UpdateAdminRemarkRequest>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    order::update_admin_remark(state.order_repo.as_ref(), &auth, &id, &req.admin_remark).await?;
+    state
+        .order_service
+        .update_admin_remark(&auth, &id, &req.admin_remark)
+        .await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -446,6 +421,6 @@ pub async fn admin_stats(
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<OrderStatsResponse>> {
     auth.ensure_admin()?;
-    let stats = order::get_stats(&state.pool, &auth).await?;
+    let stats = state.order_service.get_stats(&auth).await?;
     Ok(ApiResponse::success(stats))
 }

@@ -617,57 +617,6 @@ async fn handle_plugin_route(
 }
 
 /// Spawn EventBus background subscriber to forward business events to the plugin system.
-pub fn spawn_event_subscriber(
-    eventbus: crate::eventbus::EventBus,
-    plugins: Arc<crate::plugins::PluginManager>,
-    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
-) {
-    use crate::eventbus::Event;
-
-    let mut rx = eventbus.subscribe();
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                result = rx.recv() => {
-                    match result {
-                        Ok(event) => match event.as_ref() {
-                            Event::PostCreated(_) => {
-                                let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
-                                plugins.dispatch_action("on_post_created", &json).await;
-                            }
-                            Event::PostUpdated(_) => {
-                                let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
-                                plugins.dispatch_action("on_post_updated", &json).await;
-                            }
-                            Event::PostDeleted(_) => {
-                                let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
-                                plugins.dispatch_action("on_post_deleted", &json).await;
-                            }
-                            Event::CommentCreated(_) => {
-                                let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
-                                plugins
-                                    .dispatch_action("on_comment_created", &json)
-                                    .await;
-                            }
-                            _ => {}
-                        },
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                            tracing::warn!("eventbus subscriber lagged, skipped {n} events");
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                            break;
-                        }
-                    }
-                }
-                _ = shutdown_rx.changed() => {
-                    tracing::info!("event subscriber shutting down");
-                    break;
-                }
-            }
-        }
-    });
-}
-
 /// Spawn audit log subscriber to write all business events to the `audit_log` table.
 pub fn spawn_audit_subscriber(
     eventbus: crate::eventbus::EventBus,
@@ -800,14 +749,26 @@ pub fn spawn_audit_subscriber(
     });
 }
 
+/// Derive webhook event type from event metadata.
+///
+/// Format: `{singular_table}.{action}` where action is extracted from `display_name()`
+/// by stripping the PascalCase table prefix (e.g., `PostCreated` → `post.created`).
+fn webhook_event_type(event: &crate::eventbus::Event) -> Option<String> {
+    let table = event.table()?;
+    let singular = table.strip_suffix('s').unwrap_or(table);
+    let display = event.display_name();
+    let prefix = singular[..1].to_uppercase() + &singular[1..];
+    let action = display.strip_prefix(&prefix)?;
+    let action = action[..1].to_ascii_lowercase() + &action[1..];
+    Some(format!("{}.{}", singular, action))
+}
+
 /// Spawn webhook event delivery subscriber
 pub fn spawn_webhook_subscriber(
     eventbus: crate::eventbus::EventBus,
     webhook_service: Arc<crate::webhook::WebhookService>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
-    use crate::eventbus::Event;
-
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
@@ -823,26 +784,15 @@ pub fn spawn_webhook_subscriber(
                 result = rx.recv() => {
                     match result {
                         Ok(event) => {
-                            let event_type = match event.as_ref() {
-                                Event::PostCreated(_) => "post.created",
-                                Event::PostUpdated(_) => "post.updated",
-                                Event::PostDeleted(_) => "post.deleted",
-                                Event::CommentCreated(_) => "comment.created",
-                                Event::UserRegistered(_) => "user.registered",
-                                Event::UserLoggedIn { .. } => "user.loggedIn",
-                                Event::MediaUploaded(_) => "media.uploaded",
-                                Event::MediaDeleted(_) => "media.deleted",
-                                Event::PasswordResetRequested { .. } => "user.passwordResetRequested",
-                                Event::EmailVerificationRequested { .. } => {
-                                    "user.emailVerificationRequested"
-                                }
-                                _ => continue,
+                            let event_type = match webhook_event_type(event.as_ref()) {
+                                Some(t) => t,
+                                None => continue,
                             };
 
                     let payload_value = serde_json::to_value(event.as_ref()).unwrap_or_default();
                     let timestamp = crate::utils::tz::now_utc();
                     let webhook_payload = crate::webhook::model::WebhookPayload {
-                        event: event_type.to_string(),
+                        event: event_type.clone(),
                         data: payload_value,
                         timestamp,
                     };
@@ -866,7 +816,7 @@ pub fn spawn_webhook_subscriber(
                         let events: Vec<String> =
                             serde_json::from_str(&sub.events).unwrap_or_default();
                         if !events.iter().any(|e| {
-                            e == event_type || e == "*" || event_type.starts_with(&format!("{e}."))
+                            e == &event_type || e == "*" || event_type.starts_with(&format!("{e}."))
                         }) {
                             continue;
                         }
@@ -877,6 +827,7 @@ pub fn spawn_webhook_subscriber(
                         );
                         let url = sub.url.clone();
                         let body_clone = body.clone();
+                        let event_type = event_type.clone();
                         let client = client.clone();
                         tokio::spawn(async move {
                             let result = client

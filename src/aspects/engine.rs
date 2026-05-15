@@ -15,11 +15,10 @@ use crate::eventbus::EventBus;
 use crate::plugins::PluginManager;
 
 use super::{
-    AccessCheckContext, AccessFilterContext, Advice, Aspect, ColumnDef, DataAfterCreateContext,
-    DataAfterDeleteContext, DataAfterReadContext, DataAfterUpdateContext, DataBeforeCreateContext,
-    DataBeforeDeleteContext, DataBeforeReadContext, DataBeforeUpdateContext, EventContext,
-    HttpAfterContext, HttpBeforeContext, JoinPointId, Layer, Operation, Pointcut, TargetMatcher,
-    When,
+    Advice, Aspect, ColumnDef, DataAfterCreateContext, DataAfterDeleteContext,
+    DataAfterReadContext, DataAfterUpdateContext, DataBeforeCreateContext, DataBeforeDeleteContext,
+    DataBeforeReadContext, DataBeforeUpdateContext, HttpAfterContext, HttpBeforeContext,
+    JoinPointId, Layer, Operation, Pointcut, TargetMatcher, When,
 };
 
 #[derive(Clone)]
@@ -119,7 +118,6 @@ impl AspectEngine {
     /// Returns `(filtered_data, Dispatched)` — caller gets both the typed result and aspect-modified record.
     pub async fn before_create<T: Clone + serde::Serialize + serde::de::DeserializeOwned + Send>(
         &self,
-        _pool: &crate::db::Pool,
         table: &str,
         auth: &crate::middleware::auth::AuthUser,
         data: T,
@@ -145,7 +143,6 @@ impl AspectEngine {
     /// Returns `(filtered_data, Dispatched)`.
     pub async fn before_update<T: Clone + serde::Serialize + serde::de::DeserializeOwned + Send>(
         &self,
-        _pool: &crate::db::Pool,
         table: &str,
         auth: &crate::middleware::auth::AuthUser,
         old_data: &impl serde::Serialize,
@@ -170,7 +167,6 @@ impl AspectEngine {
     /// Before-delete: aspect data dispatch.
     pub async fn before_delete(
         &self,
-        _pool: &crate::db::Pool,
         table: &str,
         auth: &crate::middleware::auth::AuthUser,
         data: &impl serde::Serialize,
@@ -490,52 +486,6 @@ impl AspectEngine {
         Ok(())
     }
 
-    /// Event Layer: pre-publish interception
-    ///
-    /// Returns `Ok(true)` to continue publishing, `Ok(false)` if blocked by an aspect.
-    pub async fn dispatch_event_before_publish(
-        &self,
-        event_type: &str,
-        ctx: &mut EventContext,
-    ) -> Result<bool, anyhow::Error> {
-        let jp_id = JoinPointId {
-            layer: Layer::Event,
-            operation: Operation::Publish,
-            when: When::Before,
-        };
-        let aspects = self.get_aspects(&jp_id, event_type);
-        for aspect in &aspects {
-            match aspect.on_event_before_publish(ctx).await {
-                Ok(Advice::Continue) => continue,
-                Ok(Advice::Skip) => return Ok(false),
-                Ok(Advice::Return(_)) => return Ok(false),
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(true)
-    }
-
-    /// Event Layer: post-publish notification
-    pub async fn dispatch_event_after_publish(
-        &self,
-        event_type: &str,
-        ctx: &mut EventContext,
-    ) -> Result<(), anyhow::Error> {
-        let jp_id = JoinPointId {
-            layer: Layer::Event,
-            operation: Operation::Publish,
-            when: When::After,
-        };
-        let aspects = self.get_aspects(&jp_id, event_type);
-        for aspect in &aspects {
-            match aspect.on_event_after_publish(ctx).await {
-                Ok(_) => continue,
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(())
-    }
-
     /// HTTP Layer: pre-request interception
     ///
     /// Returns `Ok(None)` to continue processing, `Ok(Some(body))` to short-circuit.
@@ -575,52 +525,6 @@ impl AspectEngine {
         let aspects = self.get_aspects(&jp_id, path);
         for aspect in &aspects {
             match aspect.on_http_after(ctx).await {
-                Ok(_) => continue,
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(())
-    }
-
-    /// Access Layer: permission check interception
-    ///
-    /// Returns `Ok(true)` to allow, `Ok(false)` to deny.
-    pub async fn dispatch_access_check(
-        &self,
-        subject: &str,
-        ctx: &mut AccessCheckContext,
-    ) -> Result<bool, anyhow::Error> {
-        let jp_id = JoinPointId {
-            layer: Layer::Access,
-            operation: Operation::Check,
-            when: When::Before,
-        };
-        let aspects = self.get_aspects(&jp_id, subject);
-        for aspect in &aspects {
-            match aspect.on_access_check(ctx).await {
-                Ok(Advice::Continue) => continue,
-                Ok(Advice::Skip) => return Ok(false),
-                Ok(Advice::Return(_)) => return Ok(false),
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(true)
-    }
-
-    /// Access Layer: data filtering (query condition injection)
-    pub async fn dispatch_access_filter(
-        &self,
-        table: &str,
-        ctx: &mut AccessFilterContext,
-    ) -> Result<(), anyhow::Error> {
-        let jp_id = JoinPointId {
-            layer: Layer::Access,
-            operation: Operation::Filter,
-            when: When::Before,
-        };
-        let aspects = self.get_aspects(&jp_id, table);
-        for aspect in &aspects {
-            match aspect.on_access_filter(ctx).await {
                 Ok(_) => continue,
                 Err(e) => return Err(e),
             }
@@ -1305,358 +1209,6 @@ mod tests {
         assert!(!engine.enable("nonexistent"));
     }
 
-    // ─── Event Layer tests ───
-
-    #[tokio::test]
-    async fn event_before_publish_returns_true_when_no_aspects() {
-        let engine = AspectEngine::new();
-        let mut ctx = EventContext {
-            base: BaseContext::new(None, "default".into(), "now".into()),
-            event_type: "post_created".into(),
-            payload: serde_json::json!({"id": "1"}),
-            table: Some("posts".into()),
-        };
-        let result = engine
-            .dispatch_event_before_publish("post_created", &mut ctx)
-            .await;
-        assert!(result.unwrap());
-    }
-
-    #[tokio::test]
-    async fn event_before_publish_continue_allows_publish() {
-        struct LogEventAspect;
-        #[async_trait::async_trait]
-        impl Aspect for LogEventAspect {
-            fn name(&self) -> &str {
-                "log_event"
-            }
-            fn pointcuts(&self) -> Vec<Pointcut> {
-                vec![Pointcut {
-                    layer: Layer::Event,
-                    operation: Operation::Publish,
-                    when: When::Before,
-                    target: TargetMatcher::All,
-                }]
-            }
-            async fn on_event_before_publish(&self, ctx: &mut EventContext) -> AspectResult {
-                ctx.payload
-                    .as_object_mut()
-                    .unwrap()
-                    .insert("logged".into(), serde_json::Value::Bool(true));
-                Ok(Advice::Continue)
-            }
-        }
-
-        let engine = AspectEngine::new();
-        engine.register(LogEventAspect);
-
-        let mut ctx = EventContext {
-            base: BaseContext::new(None, "default".into(), "now".into()),
-            event_type: "post_created".into(),
-            payload: serde_json::json!({"id": "1"}),
-            table: Some("posts".into()),
-        };
-        let result = engine
-            .dispatch_event_before_publish("post_created", &mut ctx)
-            .await;
-        assert!(result.unwrap());
-        assert_eq!(ctx.payload["logged"], serde_json::Value::Bool(true));
-    }
-
-    #[tokio::test]
-    async fn event_before_publish_skip_blocks_publish() {
-        struct BlockAspect;
-        #[async_trait::async_trait]
-        impl Aspect for BlockAspect {
-            fn name(&self) -> &str {
-                "block_event"
-            }
-            fn pointcuts(&self) -> Vec<Pointcut> {
-                vec![Pointcut {
-                    layer: Layer::Event,
-                    operation: Operation::Publish,
-                    when: When::Before,
-                    target: TargetMatcher::All,
-                }]
-            }
-            async fn on_event_before_publish(&self, _ctx: &mut EventContext) -> AspectResult {
-                Ok(Advice::Skip)
-            }
-        }
-
-        let engine = AspectEngine::new();
-        engine.register(BlockAspect);
-
-        let mut ctx = EventContext {
-            base: BaseContext::new(None, "default".into(), "now".into()),
-            event_type: "post_created".into(),
-            payload: serde_json::json!({}),
-            table: None,
-        };
-        let result = engine
-            .dispatch_event_before_publish("post_created", &mut ctx)
-            .await;
-        assert!(!result.unwrap());
-    }
-
-    #[tokio::test]
-    async fn event_after_publish_dispatches() {
-        struct AfterPublishAspect;
-        #[async_trait::async_trait]
-        impl Aspect for AfterPublishAspect {
-            fn name(&self) -> &str {
-                "after_publish"
-            }
-            fn pointcuts(&self) -> Vec<Pointcut> {
-                vec![Pointcut {
-                    layer: Layer::Event,
-                    operation: Operation::Publish,
-                    when: When::After,
-                    target: TargetMatcher::All,
-                }]
-            }
-            async fn on_event_after_publish(&self, ctx: &mut EventContext) -> AspectResult {
-                ctx.payload
-                    .as_object_mut()
-                    .unwrap()
-                    .insert("after_ran".into(), serde_json::Value::Bool(true));
-                Ok(Advice::Continue)
-            }
-        }
-
-        let engine = AspectEngine::new();
-        engine.register(AfterPublishAspect);
-
-        let mut ctx = EventContext {
-            base: BaseContext::new(None, "default".into(), "now".into()),
-            event_type: "post_created".into(),
-            payload: serde_json::json!({"id": "1"}),
-            table: Some("posts".into()),
-        };
-        engine
-            .dispatch_event_after_publish("post_created", &mut ctx)
-            .await
-            .unwrap();
-        assert_eq!(ctx.payload["after_ran"], serde_json::Value::Bool(true));
-    }
-
-    #[tokio::test]
-    async fn event_target_filtering() {
-        struct PostsOnlyEventAspect;
-        #[async_trait::async_trait]
-        impl Aspect for PostsOnlyEventAspect {
-            fn name(&self) -> &str {
-                "posts_event"
-            }
-            fn pointcuts(&self) -> Vec<Pointcut> {
-                vec![Pointcut {
-                    layer: Layer::Event,
-                    operation: Operation::Publish,
-                    when: When::Before,
-                    target: TargetMatcher::Tables(vec!["post_created".into()]),
-                }]
-            }
-            async fn on_event_before_publish(&self, ctx: &mut EventContext) -> AspectResult {
-                ctx.payload
-                    .as_object_mut()
-                    .unwrap()
-                    .insert("posts_only".into(), serde_json::Value::Bool(true));
-                Ok(Advice::Continue)
-            }
-        }
-
-        let engine = AspectEngine::new();
-        engine.register(PostsOnlyEventAspect);
-
-        let mut ctx = EventContext {
-            base: BaseContext::new(None, "default".into(), "now".into()),
-            event_type: "comment_created".into(),
-            payload: serde_json::json!({}),
-            table: Some("comments".into()),
-        };
-        engine
-            .dispatch_event_before_publish("comment_created", &mut ctx)
-            .await
-            .unwrap();
-        assert!(!ctx.payload.as_object().unwrap().contains_key("posts_only"));
-    }
-
-    // ─── Access Layer tests ───
-
-    #[tokio::test]
-    async fn access_check_allows_when_no_aspects() {
-        let engine = AspectEngine::new();
-        let mut ctx = AccessCheckContext {
-            base: BaseContext::new(Some("u1".into()), "default".into(), "now".into()),
-            route: "/api/v1/admin/posts".into(),
-            method: "PUT".into(),
-            table: Some("posts".into()),
-            action: "update".into(),
-        };
-        let result = engine
-            .dispatch_access_check("posts", &mut ctx)
-            .await
-            .unwrap();
-        assert!(result);
-    }
-
-    #[tokio::test]
-    async fn access_check_skip_denies_access() {
-        struct DenyAspect;
-        #[async_trait::async_trait]
-        impl Aspect for DenyAspect {
-            fn name(&self) -> &str {
-                "deny_all"
-            }
-            fn pointcuts(&self) -> Vec<Pointcut> {
-                vec![Pointcut {
-                    layer: Layer::Access,
-                    operation: Operation::Check,
-                    when: When::Before,
-                    target: TargetMatcher::All,
-                }]
-            }
-            async fn on_access_check(&self, _ctx: &mut AccessCheckContext) -> AspectResult {
-                Ok(Advice::Skip)
-            }
-        }
-
-        let engine = AspectEngine::new();
-        engine.register(DenyAspect);
-
-        let mut ctx = AccessCheckContext {
-            base: BaseContext::new(Some("u1".into()), "default".into(), "now".into()),
-            route: "/api/v1/admin/posts/123".into(),
-            method: "DELETE".into(),
-            table: Some("posts".into()),
-            action: "delete".into(),
-        };
-        let result = engine
-            .dispatch_access_check("posts", &mut ctx)
-            .await
-            .unwrap();
-        assert!(!result);
-    }
-
-    #[tokio::test]
-    async fn access_check_continue_allows() {
-        struct AllowAspect;
-        #[async_trait::async_trait]
-        impl Aspect for AllowAspect {
-            fn name(&self) -> &str {
-                "allow"
-            }
-            fn pointcuts(&self) -> Vec<Pointcut> {
-                vec![Pointcut {
-                    layer: Layer::Access,
-                    operation: Operation::Check,
-                    when: When::Before,
-                    target: TargetMatcher::All,
-                }]
-            }
-            async fn on_access_check(&self, _ctx: &mut AccessCheckContext) -> AspectResult {
-                Ok(Advice::Continue)
-            }
-        }
-
-        let engine = AspectEngine::new();
-        engine.register(AllowAspect);
-
-        let mut ctx = AccessCheckContext {
-            base: BaseContext::new(Some("u1".into()), "default".into(), "now".into()),
-            route: "/api/v1/posts".into(),
-            method: "GET".into(),
-            table: Some("posts".into()),
-            action: "read".into(),
-        };
-        let result = engine
-            .dispatch_access_check("posts", &mut ctx)
-            .await
-            .unwrap();
-        assert!(result);
-    }
-
-    #[tokio::test]
-    async fn access_filter_adds_conditions() {
-        struct TenantFilterAspect;
-        #[async_trait::async_trait]
-        impl Aspect for TenantFilterAspect {
-            fn name(&self) -> &str {
-                "tenant_filter"
-            }
-            fn pointcuts(&self) -> Vec<Pointcut> {
-                vec![Pointcut {
-                    layer: Layer::Access,
-                    operation: Operation::Filter,
-                    when: When::Before,
-                    target: TargetMatcher::All,
-                }]
-            }
-            async fn on_access_filter(&self, ctx: &mut AccessFilterContext) -> AspectResult {
-                ctx.conditions.push("tenant_id = ?".into());
-                ctx.params.push(ctx.base.tenant_id.clone());
-                Ok(Advice::Continue)
-            }
-        }
-
-        let engine = AspectEngine::new();
-        engine.register(TenantFilterAspect);
-
-        let mut ctx = AccessFilterContext {
-            base: BaseContext::new(None, "t1".into(), "now".into()),
-            table: "posts".into(),
-            conditions: vec![],
-            params: vec![],
-        };
-        engine
-            .dispatch_access_filter("posts", &mut ctx)
-            .await
-            .unwrap();
-        assert!(ctx.conditions.contains(&"tenant_id = ?".to_string()));
-        assert!(ctx.params.contains(&"t1".to_string()));
-    }
-
-    #[tokio::test]
-    async fn access_check_error_aborts() {
-        struct FailCheckAspect;
-        #[async_trait::async_trait]
-        impl Aspect for FailCheckAspect {
-            fn name(&self) -> &str {
-                "fail_check"
-            }
-            fn pointcuts(&self) -> Vec<Pointcut> {
-                vec![Pointcut {
-                    layer: Layer::Access,
-                    operation: Operation::Check,
-                    when: When::Before,
-                    target: TargetMatcher::All,
-                }]
-            }
-            async fn on_access_check(&self, _ctx: &mut AccessCheckContext) -> AspectResult {
-                Err(anyhow::anyhow!("rbac lookup failed"))
-            }
-        }
-
-        let engine = AspectEngine::new();
-        engine.register(FailCheckAspect);
-
-        let mut ctx = AccessCheckContext {
-            base: BaseContext::new(None, "default".into(), "now".into()),
-            route: "/api/v1/posts".into(),
-            method: "GET".into(),
-            table: Some("posts".into()),
-            action: "read".into(),
-        };
-        let result = engine.dispatch_access_check("posts", &mut ctx).await;
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("rbac lookup failed")
-        );
-    }
-
     // ─── HTTP Layer tests ───
 
     #[tokio::test]
@@ -1786,81 +1338,5 @@ mod tests {
             .await
             .unwrap();
         assert!(ctx.response_body.is_some());
-    }
-
-    #[tokio::test]
-    async fn event_priority_order() {
-        use std::sync::{Arc, Mutex};
-
-        let log: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-
-        struct LateAspect {
-            log: Arc<Mutex<Vec<String>>>,
-        }
-        #[async_trait::async_trait]
-        impl Aspect for LateAspect {
-            fn name(&self) -> &str {
-                "late"
-            }
-            fn priority(&self) -> i32 {
-                100
-            }
-            fn pointcuts(&self) -> Vec<Pointcut> {
-                vec![Pointcut {
-                    layer: Layer::Event,
-                    operation: Operation::Publish,
-                    when: When::Before,
-                    target: TargetMatcher::All,
-                }]
-            }
-            async fn on_event_before_publish(&self, _ctx: &mut EventContext) -> AspectResult {
-                self.log.lock().unwrap().push("late".into());
-                Ok(Advice::Continue)
-            }
-        }
-
-        struct EarlyAspect {
-            log: Arc<Mutex<Vec<String>>>,
-        }
-        #[async_trait::async_trait]
-        impl Aspect for EarlyAspect {
-            fn name(&self) -> &str {
-                "early"
-            }
-            fn priority(&self) -> i32 {
-                -100
-            }
-            fn pointcuts(&self) -> Vec<Pointcut> {
-                vec![Pointcut {
-                    layer: Layer::Event,
-                    operation: Operation::Publish,
-                    when: When::Before,
-                    target: TargetMatcher::All,
-                }]
-            }
-            async fn on_event_before_publish(&self, _ctx: &mut EventContext) -> AspectResult {
-                self.log.lock().unwrap().push("early".into());
-                Ok(Advice::Continue)
-            }
-        }
-
-        let engine = AspectEngine::new();
-        engine.register(LateAspect { log: log.clone() });
-        engine.register(EarlyAspect { log: log.clone() });
-
-        let mut ctx = EventContext {
-            base: BaseContext::new(None, "default".into(), "now".into()),
-            event_type: "test".into(),
-            payload: serde_json::json!({}),
-            table: None,
-        };
-        engine
-            .dispatch_event_before_publish("test", &mut ctx)
-            .await
-            .unwrap();
-
-        let entries = log.lock().unwrap();
-        assert_eq!(entries[0], "early");
-        assert_eq!(entries[1], "late");
     }
 }

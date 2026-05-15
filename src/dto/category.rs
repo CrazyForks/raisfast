@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 use utoipa::ToSchema;
@@ -7,7 +7,7 @@ use validator::Validate;
 use super::validate_optional_uuid;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct CreateCategoryRequest {
     #[validate(length(min = 1, max = 100))]
     pub name: String,
@@ -18,7 +18,7 @@ pub struct CreateCategoryRequest {
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct UpdateCategoryRequest {
     #[validate(length(min = 1, max = 100))]
     pub name: Option<String>,

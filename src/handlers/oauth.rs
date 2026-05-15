@@ -145,7 +145,7 @@ pub async fn callback(
         &state.config.jwt_secret,
         state.config.jwt_access_expires,
         state.config.jwt_refresh_expires,
-        &state.eventbus,
+        &state.aspect_engine,
     )
     .await?;
 

@@ -2,120 +2,215 @@
 //!
 //! Provides full CRUD business logic for pages, including status management and block validation.
 
+use std::sync::Arc;
+
+use async_trait::async_trait;
+
+use crate::aspects::engine::AspectEngine;
 use crate::commands::{CreatePageCmd, UpdatePageCmd};
 use crate::errors::app_error::{AppError, AppResult};
+use crate::event::Event;
 use crate::middleware::auth::AuthUser;
-use crate::models::page::{self, PageStatus};
+use crate::models::page::{self, Page, PageStatus};
 
-fn validate_blocks_json(blocks: &str) -> AppResult<Vec<page::PageBlock>> {
-    serde_json::from_str(blocks)
-        .map_err(|e| AppError::BadRequest(format!("invalid blocks JSON: {e}")))
+/// Page business logic trait.
+#[async_trait]
+pub trait PageService: Send + Sync {
+    async fn list_published(
+        &self,
+        page_num: i64,
+        page_size: i64,
+        auth: &AuthUser,
+    ) -> AppResult<(Vec<Page>, i64)>;
+    async fn get_by_slug(&self, slug: &str, auth: &AuthUser) -> AppResult<Page>;
+    async fn get_by_id(&self, id: &str, auth: &AuthUser) -> AppResult<Page>;
+    async fn list_all(
+        &self,
+        page_num: i64,
+        page_size: i64,
+        status: Option<PageStatus>,
+        auth: &AuthUser,
+    ) -> AppResult<(Vec<Page>, i64)>;
+    async fn create_page(&self, auth: &AuthUser, cmd: CreatePageCmd) -> AppResult<Page>;
+    async fn update_page(
+        &self,
+        auth: &AuthUser,
+        document_id: &str,
+        cmd: UpdatePageCmd,
+    ) -> AppResult<Page>;
+    async fn delete_page(&self, id: &str, auth: &AuthUser) -> AppResult<()>;
+    async fn update_status(&self, id: &str, status: PageStatus, auth: &AuthUser)
+    -> AppResult<Page>;
+    async fn reorder(&self, items: Vec<(String, i64)>, auth: &AuthUser) -> AppResult<()>;
+    async fn sitemap(&self, auth: &AuthUser) -> AppResult<Vec<(String, Option<String>)>>;
 }
 
-pub async fn list_published(
-    pool: &crate::db::Pool,
-    page_num: i64,
-    page_size: i64,
-    auth: &AuthUser,
-) -> AppResult<(Vec<page::Page>, i64)> {
-    page::list_published(pool, page_num, page_size, auth.tenant_id()).await
+pub struct PageServiceImpl {
+    pool: Arc<crate::db::Pool>,
+    aspect_engine: Arc<AspectEngine>,
 }
 
-pub async fn get_by_slug(
-    pool: &crate::db::Pool,
-    slug: &str,
-    auth: &AuthUser,
-) -> AppResult<page::Page> {
-    page::find_by_slug(pool, slug, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("page"))
-}
-
-pub async fn get_by_id(pool: &crate::db::Pool, id: &str, auth: &AuthUser) -> AppResult<page::Page> {
-    page::find_by_document_id(pool, id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("page"))
-}
-
-pub async fn list_all(
-    pool: &crate::db::Pool,
-    page_num: i64,
-    page_size: i64,
-    status: Option<PageStatus>,
-    auth: &AuthUser,
-) -> AppResult<(Vec<page::Page>, i64)> {
-    page::list_all(pool, page_num, page_size, status, auth.tenant_id()).await
-}
-
-pub async fn create_page(
-    pool: &crate::db::Pool,
-    auth: &AuthUser,
-    cmd: CreatePageCmd,
-) -> AppResult<page::Page> {
-    if let Some(ref blocks) = cmd.blocks {
-        validate_blocks_json(blocks)?;
+impl PageServiceImpl {
+    pub fn new(pool: Arc<crate::db::Pool>, aspect_engine: Arc<AspectEngine>) -> Self {
+        Self {
+            pool,
+            aspect_engine,
+        }
     }
 
-    page::create(pool, &cmd, auth.tenant_id()).await
-}
-
-pub async fn update_page(
-    pool: &crate::db::Pool,
-    auth: &AuthUser,
-    document_id: &str,
-    mut cmd: UpdatePageCmd,
-) -> AppResult<page::Page> {
-    if let Some(ref blocks) = cmd.blocks {
-        validate_blocks_json(blocks)?;
+    fn validate_blocks_json(blocks: &str) -> AppResult<Vec<page::PageBlock>> {
+        serde_json::from_str(blocks)
+            .map_err(|e| AppError::BadRequest(format!("invalid blocks JSON: {e}")))
     }
 
-    let existing = page::find_by_document_id(pool, document_id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("page"))?;
+    async fn before_create(
+        &self,
+        auth: &AuthUser,
+        cmd: CreatePageCmd,
+    ) -> AppResult<(CreatePageCmd, crate::aspects::Dispatched)> {
+        self.aspect_engine.before_create("pages", auth, cmd).await
+    }
 
-    cmd.id = existing.id;
-    page::update(pool, &cmd, auth.tenant_id()).await
+    async fn before_update(
+        &self,
+        auth: &AuthUser,
+        existing: &Page,
+        cmd: UpdatePageCmd,
+    ) -> AppResult<(UpdatePageCmd, crate::aspects::Dispatched)> {
+        self.aspect_engine
+            .before_update("pages", auth, existing, cmd)
+            .await
+    }
+
+    async fn before_delete(
+        &self,
+        auth: &AuthUser,
+        existing: &Page,
+    ) -> AppResult<crate::aspects::Dispatched> {
+        self.aspect_engine
+            .before_delete("pages", auth, existing)
+            .await
+    }
+
+    fn after_created(&self, p: &Page) {
+        self.aspect_engine.emit(Event::PageCreated(p.clone()));
+    }
+
+    fn after_updated(&self, p: &Page) {
+        self.aspect_engine.emit(Event::PageUpdated(p.clone()));
+    }
+
+    fn after_deleted(&self, p: &Page) {
+        self.aspect_engine.emit(Event::PageDeleted(p.clone()));
+    }
 }
 
-pub async fn delete_page(pool: &crate::db::Pool, id: &str, auth: &AuthUser) -> AppResult<()> {
-    let p = page::find_by_document_id(pool, id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("page"))?;
-    page::delete(pool, p.id, auth.tenant_id()).await
-}
+#[async_trait]
+impl PageService for PageServiceImpl {
+    async fn list_published(
+        &self,
+        page_num: i64,
+        page_size: i64,
+        auth: &AuthUser,
+    ) -> AppResult<(Vec<Page>, i64)> {
+        page::list_published(&self.pool, page_num, page_size, auth.tenant_id()).await
+    }
 
-pub async fn update_status(
-    pool: &crate::db::Pool,
-    id: &str,
-    status: PageStatus,
-    auth: &AuthUser,
-) -> AppResult<page::Page> {
-    let p = page::find_by_document_id(pool, id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("page"))?;
-    page::update_status(pool, p.id, status, auth.user_int_id(), auth.tenant_id()).await
-}
+    async fn get_by_slug(&self, slug: &str, auth: &AuthUser) -> AppResult<Page> {
+        page::find_by_slug(&self.pool, slug, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("page"))
+    }
 
-pub async fn reorder(
-    pool: &crate::db::Pool,
-    items: Vec<(String, i64)>,
-    auth: &AuthUser,
-) -> AppResult<()> {
-    let mut resolved = Vec::new();
-    for (doc_id, sort_order) in items {
-        let p = page::find_by_document_id(pool, &doc_id, auth.tenant_id())
+    async fn get_by_id(&self, id: &str, auth: &AuthUser) -> AppResult<Page> {
+        page::find_by_document_id(&self.pool, id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("page"))
+    }
+
+    async fn list_all(
+        &self,
+        page_num: i64,
+        page_size: i64,
+        status: Option<PageStatus>,
+        auth: &AuthUser,
+    ) -> AppResult<(Vec<Page>, i64)> {
+        page::list_all(&self.pool, page_num, page_size, status, auth.tenant_id()).await
+    }
+
+    async fn create_page(&self, auth: &AuthUser, cmd: CreatePageCmd) -> AppResult<Page> {
+        let (cmd, _d) = self.before_create(auth, cmd).await?;
+        if let Some(ref blocks) = cmd.blocks {
+            Self::validate_blocks_json(blocks)?;
+        }
+        let p = page::create(&self.pool, &cmd, auth.tenant_id()).await?;
+        self.after_created(&p);
+        Ok(p)
+    }
+
+    async fn update_page(
+        &self,
+        auth: &AuthUser,
+        document_id: &str,
+        mut cmd: UpdatePageCmd,
+    ) -> AppResult<Page> {
+        let existing = page::find_by_document_id(&self.pool, document_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("page"))?;
-        resolved.push((p.id, sort_order));
-    }
-    page::reorder(pool, &resolved, auth.tenant_id()).await
-}
 
-pub async fn sitemap(
-    pool: &crate::db::Pool,
-    auth: &AuthUser,
-) -> AppResult<Vec<(String, Option<String>)>> {
-    page::list_sitemap(pool, auth.tenant_id()).await
+        cmd.id = existing.id;
+        let (cmd, _d) = self.before_update(auth, &existing, cmd).await?;
+        if let Some(ref blocks) = cmd.blocks {
+            Self::validate_blocks_json(blocks)?;
+        }
+        let updated = page::update(&self.pool, &cmd, auth.tenant_id()).await?;
+        self.after_updated(&updated);
+        Ok(updated)
+    }
+
+    async fn delete_page(&self, id: &str, auth: &AuthUser) -> AppResult<()> {
+        let p = page::find_by_document_id(&self.pool, id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("page"))?;
+        self.before_delete(auth, &p).await?;
+        page::delete(&self.pool, p.id, auth.tenant_id()).await?;
+        self.after_deleted(&p);
+        Ok(())
+    }
+
+    async fn update_status(
+        &self,
+        id: &str,
+        status: PageStatus,
+        auth: &AuthUser,
+    ) -> AppResult<Page> {
+        let p = page::find_by_document_id(&self.pool, id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("page"))?;
+        page::update_status(
+            &self.pool,
+            p.id,
+            status,
+            auth.user_int_id(),
+            auth.tenant_id(),
+        )
+        .await
+    }
+
+    async fn reorder(&self, items: Vec<(String, i64)>, auth: &AuthUser) -> AppResult<()> {
+        let mut resolved = Vec::new();
+        for (doc_id, sort_order) in items {
+            let p = page::find_by_document_id(&self.pool, &doc_id, auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("page"))?;
+            resolved.push((p.id, sort_order));
+        }
+        page::reorder(&self.pool, &resolved, auth.tenant_id()).await
+    }
+
+    async fn sitemap(&self, auth: &AuthUser) -> AppResult<Vec<(String, Option<String>)>> {
+        page::list_sitemap(&self.pool, auth.tenant_id()).await
+    }
 }
 
 #[cfg(test)]
@@ -124,27 +219,27 @@ mod tests {
 
     #[test]
     fn validate_blocks_json_valid_empty() {
-        let blocks = validate_blocks_json("[]").unwrap();
+        let blocks = PageServiceImpl::validate_blocks_json("[]").unwrap();
         assert!(blocks.is_empty());
     }
 
     #[test]
     fn validate_blocks_json_valid_richtext() {
         let json = r#"[{"type":"richtext","content":"hello"}]"#;
-        let blocks = validate_blocks_json(json).unwrap();
+        let blocks = PageServiceImpl::validate_blocks_json(json).unwrap();
         assert_eq!(blocks.len(), 1);
         assert!(matches!(blocks[0], page::PageBlock::Richtext { .. }));
     }
 
     #[test]
     fn validate_blocks_json_invalid() {
-        let result = validate_blocks_json("not json");
+        let result = PageServiceImpl::validate_blocks_json("not json");
         assert!(result.is_err());
     }
 
     #[test]
     fn validate_blocks_json_invalid_structure() {
-        let result = validate_blocks_json(r#"[{"wrong":"field"}]"#);
+        let result = PageServiceImpl::validate_blocks_json(r#"[{"wrong":"field"}]"#);
         assert!(result.is_err());
     }
 }

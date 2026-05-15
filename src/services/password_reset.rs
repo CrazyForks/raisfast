@@ -2,18 +2,16 @@
 
 use chrono::Utc;
 
+use crate::aspects::engine::AspectEngine;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::event::Event;
 use crate::middleware::auth::AuthUser;
 use crate::repositories::UserRepository;
 
-/// Request a password reset.
-///
-/// Finds the user, deletes old tokens, creates a new token, and triggers email sending via EventBus.
-/// Always returns success regardless of whether the user exists (to prevent email enumeration).
 pub async fn forgot_password(
     pool: &crate::db::Pool,
     _user_repo: &dyn UserRepository,
-    eventbus: &crate::eventbus::EventBus,
+    aspect_engine: &AspectEngine,
     email: &str,
     _tenant_id: Option<&str>,
 ) -> AppResult<()> {
@@ -37,7 +35,7 @@ pub async fn forgot_password(
 
     let reset_token = crate::models::password_reset::create(pool, user.id, 3600).await?;
 
-    eventbus.emit(crate::eventbus::Event::PasswordResetRequested {
+    aspect_engine.emit(Event::PasswordResetRequested {
         user: user.clone(),
         token: reset_token,
     });
@@ -193,8 +191,8 @@ mod tests {
         pool
     }
 
-    fn eventbus() -> crate::eventbus::EventBus {
-        crate::eventbus::EventBus::new(16)
+    fn aspect_engine() -> crate::aspects::engine::AspectEngine {
+        crate::aspects::engine::AspectEngine::new()
     }
 
     async fn insert_user(pool: &crate::db::Pool, email: &str) -> crate::models::user::User {
@@ -229,8 +227,8 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "reset@test.com").await;
         let repo = SqlxUserRepository::new(pool.clone());
-        let eb = eventbus();
-        super::forgot_password(&pool, &repo, &eb, "reset@test.com", None)
+        let ae = aspect_engine();
+        super::forgot_password(&pool, &repo, &ae, "reset@test.com", None)
             .await
             .unwrap();
         let sql = format!(
@@ -249,8 +247,8 @@ mod tests {
     async fn forgot_password_nonexistent_user_ok() {
         let pool = setup_pool().await;
         let repo = SqlxUserRepository::new(pool.clone());
-        let eb = eventbus();
-        super::forgot_password(&pool, &repo, &eb, "noone@test.com", None)
+        let ae = aspect_engine();
+        super::forgot_password(&pool, &repo, &ae, "noone@test.com", None)
             .await
             .unwrap();
     }
@@ -270,9 +268,9 @@ mod tests {
     async fn reset_password_weak_password() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "weak@test.com").await;
-        let eb = eventbus();
+        let ae = aspect_engine();
         let repo = SqlxUserRepository::new(pool.clone());
-        super::forgot_password(&pool, &repo, &eb, "weak@test.com", None)
+        super::forgot_password(&pool, &repo, &ae, "weak@test.com", None)
             .await
             .unwrap();
         let sql = format!(

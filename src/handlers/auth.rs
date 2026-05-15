@@ -197,7 +197,7 @@ pub async fn register(
     validation::validate(&req)?;
     let user = auth::register(
         state.user_repo.as_ref(),
-        &state.eventbus,
+        &state.aspect_engine,
         req,
         auth.tenant_id(),
         state.config.require_email_verification,
@@ -221,8 +221,7 @@ pub async fn login(
     let resp = auth::login(
         state.user_repo.as_ref(),
         state.refresh_token_repo.as_ref(),
-        &state.plugins,
-        &state.eventbus,
+        &state.aspect_engine,
         &state.pool,
         &req,
         &state.config.jwt_secret,
@@ -254,7 +253,7 @@ pub async fn resend_verification(
     email_verification::resend_verification(
         &state.pool,
         state.user_repo.as_ref(),
-        &state.eventbus,
+        &state.aspect_engine,
         &req.email,
     )
     .await?;
@@ -312,7 +311,7 @@ pub async fn forgot_password(
     password_reset::forgot_password(
         &state.pool,
         state.user_repo.as_ref(),
-        &state.eventbus,
+        &state.aspect_engine,
         &req.email,
         auth.tenant_id(),
     )

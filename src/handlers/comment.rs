@@ -15,7 +15,6 @@ use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::models::comment::CommentStatus;
-use crate::services::comment as comment_service;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -152,15 +151,10 @@ pub async fn list(
 > {
     let mut p = params;
     p.sanitize();
-    let (comments, total) = comment_service::list_comments_paginated(
-        state.post_repo.as_ref(),
-        state.comment_repo.as_ref(),
-        &slug,
-        p.page,
-        p.page_size,
-        &auth,
-    )
-    .await?;
+    let (comments, total) = state
+        .comment_service
+        .list_paginated(&slug, p.page, p.page_size, &auth)
+        .await?;
     Ok(p.paginate(comments, total))
 }
 
@@ -199,19 +193,17 @@ pub async fn create(
 ) -> AppResult<ApiResponse<crate::models::comment::CommentResponse>> {
     validation::validate(&req)?;
 
-    let comment = comment_service::create_comment(
-        state.post_repo.as_ref(),
-        state.comment_repo.as_ref(),
-        &state.plugins,
-        &state.eventbus,
-        &slug,
-        &auth,
-        &req.content,
-        req.parent_id.as_deref(),
-        None,
-        None,
-    )
-    .await?;
+    let comment = state
+        .comment_service
+        .create(
+            &slug,
+            &auth,
+            &req.content,
+            req.parent_id.as_deref(),
+            None,
+            None,
+        )
+        .await?;
 
     Ok(ApiResponse::success(comment))
 }
@@ -235,19 +227,17 @@ pub async fn create_guest(
         .as_deref()
         .ok_or_else(|| AppError::BadRequest("nickname_required".into()))?;
 
-    let comment = comment_service::create_comment(
-        state.post_repo.as_ref(),
-        state.comment_repo.as_ref(),
-        &state.plugins,
-        &state.eventbus,
-        &slug,
-        &auth,
-        &req.content,
-        req.parent_id.as_deref(),
-        Some(nickname),
-        req.email.as_deref(),
-    )
-    .await?;
+    let comment = state
+        .comment_service
+        .create(
+            &slug,
+            &auth,
+            &req.content,
+            req.parent_id.as_deref(),
+            Some(nickname),
+            req.email.as_deref(),
+        )
+        .await?;
 
     Ok(ApiResponse::success(comment))
 }
@@ -263,7 +253,7 @@ pub async fn delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    comment_service::delete_comment(state.comment_repo.as_ref(), &id, &auth).await?;
+    state.comment_service.delete(&id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -282,7 +272,9 @@ pub async fn update_status(
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    comment_service::update_comment_status(state.comment_repo.as_ref(), &id, req.status, &auth)
+    state
+        .comment_service
+        .update_status(&id, req.status, &auth)
         .await?;
     Ok(ApiResponse::success(()))
 }
@@ -321,7 +313,9 @@ pub async fn admin_update_status(
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    comment_service::update_comment_status(state.comment_repo.as_ref(), &id, req.status, &auth)
+    state
+        .comment_service
+        .update_status(&id, req.status, &auth)
         .await?;
     Ok(ApiResponse::success(()))
 }
@@ -337,7 +331,7 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    comment_service::delete_comment(state.comment_repo.as_ref(), &id, &auth).await?;
+    state.comment_service.delete(&id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -357,10 +351,7 @@ pub async fn admin_batch(
     for id in &req.ids {
         match req.action.as_str() {
             "delete" => {
-                if comment_service::delete_comment(state.comment_repo.as_ref(), id, &auth)
-                    .await
-                    .is_ok()
-                {
+                if state.comment_service.delete(id, &auth).await.is_ok() {
                     affected += 1;
                 }
             }
@@ -371,14 +362,11 @@ pub async fn admin_batch(
                     "spam" => CommentStatus::Spam,
                     _ => unreachable!(),
                 };
-                if comment_service::update_comment_status(
-                    state.comment_repo.as_ref(),
-                    id,
-                    status,
-                    &auth,
-                )
-                .await
-                .is_ok()
+                if state
+                    .comment_service
+                    .update_status(id, status, &auth)
+                    .await
+                    .is_ok()
                 {
                     affected += 1;
                 }

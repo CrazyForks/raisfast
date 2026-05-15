@@ -1,7 +1,10 @@
 //! Page-related commands
 
+use serde::{Deserialize, Serialize};
+
 use crate::models::page::PageStatus;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreatePageCmd {
     pub title: String,
     pub slug: String,
@@ -19,6 +22,7 @@ pub struct CreatePageCmd {
     pub cover_image: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdatePageCmd {
     pub id: i64,
     pub title: Option<String>,

@@ -9,9 +9,11 @@ use chrono::Utc;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
+use crate::aspects::engine::AspectEngine;
 use crate::commands::CreateUserCmd;
 use crate::dto::LoginResponse;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::event::Event;
 use crate::middleware::auth::AuthUser;
 use crate::models::oauth;
 use crate::oauth::{OAuthProviderRegistry, OAuthUserInfo};
@@ -89,7 +91,7 @@ pub async fn handle_callback(
     jwt_secret: &str,
     jwt_access_expires: u64,
     jwt_refresh_expires: u64,
-    eventbus: &crate::eventbus::EventBus,
+    aspect_engine: &AspectEngine,
 ) -> AppResult<OAuthCallbackResult> {
     let provider = registry.get(provider_name).ok_or_else(|| {
         AppError::BadRequest(format!("unsupported OAuth provider: {provider_name}"))
@@ -173,7 +175,7 @@ pub async fn handle_callback(
             )
             .await?;
 
-            eventbus.emit(crate::eventbus::Event::UserLoggedIn {
+            aspect_engine.emit(Event::UserLoggedIn {
                 user: user.clone(),
                 success: true,
             });
@@ -182,7 +184,8 @@ pub async fn handle_callback(
         }
     }
 
-    let user = auto_register_user(pool, user_repo, provider_name, &user_info, eventbus).await?;
+    let user =
+        auto_register_user(pool, user_repo, provider_name, &user_info, aspect_engine).await?;
 
     do_bind_oauth(pool, user.id, provider_name, &token_resp, &user_info).await?;
 
@@ -306,7 +309,7 @@ async fn auto_register_user(
     user_repo: &dyn UserRepository,
     provider_name: &str,
     user_info: &OAuthUserInfo,
-    eventbus: &crate::eventbus::EventBus,
+    aspect_engine: &AspectEngine,
 ) -> AppResult<crate::models::user::User> {
     let base_username = user_info.display_name.clone().unwrap_or_else(|| {
         format!(
@@ -360,7 +363,7 @@ async fn auto_register_user(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch created user")))?;
 
-    eventbus.emit(crate::eventbus::Event::UserRegistered(user.clone()));
+    aspect_engine.emit(Event::UserRegistered(user.clone()));
 
     Ok(user)
 }

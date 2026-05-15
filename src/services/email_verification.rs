@@ -2,17 +2,14 @@
 
 use chrono::Utc;
 
+use crate::aspects::engine::AspectEngine;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::Event;
-use crate::eventbus::EventBus;
 use crate::repositories::UserRepository;
 
-/// Trigger email verification after registration (if enabled in config).
-///
-/// Deletes old tokens, creates a new token, and sends a verification email via EventBus.
 pub async fn trigger_email_verification(
     pool: &crate::db::Pool,
-    eventbus: &EventBus,
+    aspect_engine: &AspectEngine,
     user_id: i64,
     email: &str,
 ) -> AppResult<()> {
@@ -21,7 +18,7 @@ pub async fn trigger_email_verification(
     let verification =
         crate::models::email_verification::create(pool, user_id, email, 86400).await?;
 
-    eventbus.emit(Event::EmailVerificationRequested {
+    aspect_engine.emit(Event::EmailVerificationRequested {
         user_id,
         email: email.to_string(),
         token: verification,
@@ -78,7 +75,7 @@ pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> 
 pub async fn resend_verification(
     pool: &crate::db::Pool,
     _user_repo: &dyn UserRepository,
-    eventbus: &EventBus,
+    aspect_engine: &AspectEngine,
     email: &str,
 ) -> AppResult<()> {
     let cred = crate::models::user_credential::find_by_auth_type_and_identifier(
@@ -93,7 +90,7 @@ pub async fn resend_verification(
         return Err(AppError::BadRequest("email_already_verified".into()));
     }
 
-    trigger_email_verification(pool, eventbus, cred.user_id, &cred.identifier).await
+    trigger_email_verification(pool, aspect_engine, cred.user_id, &cred.identifier).await
 }
 
 #[cfg(test)]
@@ -111,8 +108,8 @@ mod tests {
         pool
     }
 
-    fn eventbus() -> crate::eventbus::EventBus {
-        crate::eventbus::EventBus::new(16)
+    fn aspect_engine() -> crate::aspects::engine::AspectEngine {
+        crate::aspects::engine::AspectEngine::new()
     }
 
     async fn insert_user(pool: &crate::db::Pool, email: &str) -> crate::models::user::User {
@@ -144,8 +141,8 @@ mod tests {
     async fn trigger_email_verification_creates_token() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "verify@test.com").await;
-        let eb = eventbus();
-        super::trigger_email_verification(&pool, &eb, user.id, "verify@test.com")
+        let ae = aspect_engine();
+        super::trigger_email_verification(&pool, &ae, user.id, "verify@test.com")
             .await
             .unwrap();
         let row =
@@ -162,8 +159,8 @@ mod tests {
     async fn trigger_email_verification_replaces_old() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "replace@test.com").await;
-        let eb = eventbus();
-        super::trigger_email_verification(&pool, &eb, user.id, "replace@test.com")
+        let ae = aspect_engine();
+        super::trigger_email_verification(&pool, &ae, user.id, "replace@test.com")
             .await
             .unwrap();
         let sql = format!(
@@ -176,7 +173,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count_before, 1);
-        super::trigger_email_verification(&pool, &eb, user.id, "replace@test.com")
+        super::trigger_email_verification(&pool, &ae, user.id, "replace@test.com")
             .await
             .unwrap();
         let (count_after,): (i64,) = sqlx::query_as(&sql)
@@ -191,8 +188,8 @@ mod tests {
     async fn verify_email_valid_token() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "v@test.com").await;
-        let eb = eventbus();
-        super::trigger_email_verification(&pool, &eb, user.id, "v@test.com")
+        let ae = aspect_engine();
+        super::trigger_email_verification(&pool, &ae, user.id, "v@test.com")
             .await
             .unwrap();
         let sql = format!(
@@ -230,9 +227,9 @@ mod tests {
     async fn resend_verification_success() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "resend@test.com").await;
-        let eb = eventbus();
+        let ae = aspect_engine();
         let repo = SqlxUserRepository::new(pool.clone());
-        super::resend_verification(&pool, &repo, &eb, "resend@test.com")
+        super::resend_verification(&pool, &repo, &ae, "resend@test.com")
             .await
             .unwrap();
         let sql = format!(
@@ -251,8 +248,8 @@ mod tests {
     async fn resend_verification_already_verified() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "verified@test.com").await;
-        let eb = eventbus();
-        super::trigger_email_verification(&pool, &eb, user.id, "verified@test.com")
+        let ae = aspect_engine();
+        super::trigger_email_verification(&pool, &ae, user.id, "verified@test.com")
             .await
             .unwrap();
         let sql = format!(
@@ -266,7 +263,7 @@ mod tests {
             .unwrap();
         super::verify_email(&pool, &token_str).await.unwrap();
         let repo = SqlxUserRepository::new(pool.clone());
-        let err = super::resend_verification(&pool, &repo, &eb, "verified@test.com")
+        let err = super::resend_verification(&pool, &repo, &ae, "verified@test.com")
             .await
             .unwrap_err();
         let msg = err.to_string();
@@ -276,10 +273,10 @@ mod tests {
     #[tokio::test]
     async fn resend_verification_user_not_found() {
         let pool = setup_pool().await;
-        let eb = eventbus();
+        let ae = aspect_engine();
         let repo = SqlxUserRepository::new(pool.clone());
         assert!(
-            super::resend_verification(&pool, &repo, &eb, "nope@no.com")
+            super::resend_verification(&pool, &repo, &ae, "nope@no.com")
                 .await
                 .is_err()
         );

@@ -12,7 +12,7 @@ description = "A high-performance Headless CMS and API engine built with Rust + 
 homepage = "https://github.com/snkzhong/raisfast"
 
 [features]
-default = ["db-sqlite", "search-tantivy", "plugin-js", "plugin-lua", "plugin-rhai", "openapi"]
+default = ["db-sqlite", "search-tantivy", "plugin-js", "plugin-lua", "plugin-rhai", "openapi", "proxy"]
 
 # ── Database backend (pick exactly one) ────────────────────────────
 db-sqlite  = ["sqlx/sqlite"]
@@ -202,3 +202,7 @@ required-features = ["export-types"]
 name = "tauri-app"
 path = "src/bin/tauri-app.rs"
 required-features = ["tauri"]
+
+[[test]]
+name = "proxy_tests"
+required-features = ["proxy"]
