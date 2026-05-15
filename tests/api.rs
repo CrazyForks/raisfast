@@ -122,19 +122,19 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             ))
         },
         page_service: Arc::new(raisfast::services::page::PageServiceImpl::new(
-            Arc::new(pool.clone()),
             Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+            Arc::new(pool.clone()),
         )),
         user_repo: Arc::new(SqlxUserRepository::new(pool.clone())),
         category_repo: Arc::new(SqlxCategoryRepository::new(pool.clone())),
         category_service: Arc::new(raisfast::services::category::CategoryServiceImpl::new(
-            Arc::new(SqlxCategoryRepository::new(pool.clone())),
             Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+            Arc::new(SqlxCategoryRepository::new(pool.clone())),
         )),
         tag_repo: Arc::new(SqlxTagRepository::new(pool.clone())),
         tag_service: Arc::new(raisfast::services::tag::TagServiceImpl::new(
-            Arc::new(SqlxTagRepository::new(pool.clone())),
             Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+            Arc::new(SqlxTagRepository::new(pool.clone())),
         )),
         comment_repo: Arc::new(SqlxCommentRepository::new(pool.clone())),
         comment_service: Arc::new(raisfast::services::comment::CommentServiceImpl::new(
@@ -162,10 +162,10 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             pool.clone(),
         )),
         product_service: Arc::new(raisfast::services::product::ProductServiceImpl::new(
+            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
             Arc::new(raisfast::repositories::SqlxProductRepository::new(
                 pool.clone(),
             )),
-            Arc::new(raisfast::aspects::engine::AspectEngine::new()),
         )),
         order_repo: Arc::new(raisfast::repositories::SqlxOrderRepository::new(
             pool.clone(),

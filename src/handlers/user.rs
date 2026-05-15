@@ -292,7 +292,7 @@ pub async fn admin_update_user(
     };
     let u = state
         .user_repo
-        .update_profile(cmd, auth.tenant_id())
+        .update_profile(&cmd, auth.tenant_id())
         .await?;
     Ok(ApiResponse::success(UserResponse::from_user(u)?))
 }

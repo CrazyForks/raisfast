@@ -5,11 +5,11 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use raisfast_derive::aspect_service;
 
 use crate::aspects::engine::AspectEngine;
 use crate::commands::{CreatePageCmd, UpdatePageCmd};
 use crate::errors::app_error::{AppError, AppResult};
-use crate::event::Event;
 use crate::middleware::auth::AuthUser;
 use crate::models::page::{self, Page, PageStatus};
 
@@ -45,63 +45,17 @@ pub trait PageService: Send + Sync {
     async fn sitemap(&self, auth: &AuthUser) -> AppResult<Vec<(String, Option<String>)>>;
 }
 
+#[aspect_service(entity = "pages", model = Page)]
 pub struct PageServiceImpl {
-    pool: Arc<crate::db::Pool>,
+    #[engine]
     aspect_engine: Arc<AspectEngine>,
+    pool: Arc<crate::db::Pool>,
 }
 
 impl PageServiceImpl {
-    pub fn new(pool: Arc<crate::db::Pool>, aspect_engine: Arc<AspectEngine>) -> Self {
-        Self {
-            pool,
-            aspect_engine,
-        }
-    }
-
     fn validate_blocks_json(blocks: &str) -> AppResult<Vec<page::PageBlock>> {
         serde_json::from_str(blocks)
             .map_err(|e| AppError::BadRequest(format!("invalid blocks JSON: {e}")))
-    }
-
-    async fn before_create(
-        &self,
-        auth: &AuthUser,
-        cmd: CreatePageCmd,
-    ) -> AppResult<(CreatePageCmd, crate::aspects::Dispatched)> {
-        self.aspect_engine.before_create("pages", auth, cmd).await
-    }
-
-    async fn before_update(
-        &self,
-        auth: &AuthUser,
-        existing: &Page,
-        cmd: UpdatePageCmd,
-    ) -> AppResult<(UpdatePageCmd, crate::aspects::Dispatched)> {
-        self.aspect_engine
-            .before_update("pages", auth, existing, cmd)
-            .await
-    }
-
-    async fn before_delete(
-        &self,
-        auth: &AuthUser,
-        existing: &Page,
-    ) -> AppResult<crate::aspects::Dispatched> {
-        self.aspect_engine
-            .before_delete("pages", auth, existing)
-            .await
-    }
-
-    fn after_created(&self, p: &Page) {
-        self.aspect_engine.emit(Event::PageCreated(p.clone()));
-    }
-
-    fn after_updated(&self, p: &Page) {
-        self.aspect_engine.emit(Event::PageUpdated(p.clone()));
-    }
-
-    fn after_deleted(&self, p: &Page) {
-        self.aspect_engine.emit(Event::PageDeleted(p.clone()));
     }
 }
 

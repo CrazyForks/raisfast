@@ -96,7 +96,7 @@ pub async fn verify_sms_and_auth(
             );
             let user = user_repo
                 .create(
-                    crate::commands::CreateUserCmd {
+                    &crate::commands::CreateUserCmd {
                         username,
                         registered_via: crate::models::user::RegisteredVia::Phone,
                     },

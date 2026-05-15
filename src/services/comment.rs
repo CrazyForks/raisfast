@@ -158,7 +158,7 @@ impl CommentService for CommentServiceImpl {
         let c = self
             .comment_repo
             .create(
-                CreateCommentCmd {
+                &CreateCommentCmd {
                     post_id: p.id,
                     created_by: auth.user_int_id(),
                     nickname: filtered.nickname,
@@ -315,7 +315,7 @@ mod tests {
     ) -> crate::models::comment::Comment {
         let repo = SqlxCommentRepository::new(pool.clone());
         repo.create(
-            CreateCommentCmd {
+            &CreateCommentCmd {
                 post_id,
                 created_by: Some(user_id),
                 nickname: None,

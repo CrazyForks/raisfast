@@ -3,13 +3,13 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use raisfast_derive::aspect_service;
 
 use crate::aspects::engine::AspectEngine;
 use crate::aspects::slug_aspect;
 use crate::commands::{CreateProductCmd, UpdateProductCmd};
 use crate::dto::{CreateProductRequest, UpdateProductRequest};
 use crate::errors::app_error::{AppError, AppResult};
-use crate::event::Event;
 use crate::middleware::auth::AuthUser;
 use crate::models::product::Product;
 use crate::repositories::ProductRepository;
@@ -41,61 +41,11 @@ pub trait ProductService: Send + Sync {
     ) -> AppResult<(Vec<Product>, i64)>;
 }
 
+#[aspect_service(entity = "products", model = Product)]
 pub struct ProductServiceImpl {
-    repo: Arc<dyn ProductRepository>,
+    #[engine]
     aspect_engine: Arc<AspectEngine>,
-}
-
-impl ProductServiceImpl {
-    pub fn new(repo: Arc<dyn ProductRepository>, aspect_engine: Arc<AspectEngine>) -> Self {
-        Self {
-            repo,
-            aspect_engine,
-        }
-    }
-
-    async fn before_create(
-        &self,
-        auth: &AuthUser,
-        req: CreateProductRequest,
-    ) -> AppResult<(CreateProductRequest, crate::aspects::Dispatched)> {
-        self.aspect_engine
-            .before_create("products", auth, req)
-            .await
-    }
-
-    async fn before_update(
-        &self,
-        auth: &AuthUser,
-        existing: &Product,
-        req: UpdateProductRequest,
-    ) -> AppResult<(UpdateProductRequest, crate::aspects::Dispatched)> {
-        self.aspect_engine
-            .before_update("products", auth, existing, req)
-            .await
-    }
-
-    async fn before_delete(
-        &self,
-        auth: &AuthUser,
-        existing: &Product,
-    ) -> AppResult<crate::aspects::Dispatched> {
-        self.aspect_engine
-            .before_delete("products", auth, existing)
-            .await
-    }
-
-    fn after_created(&self, p: &Product) {
-        self.aspect_engine.emit(Event::ProductCreated(p.clone()));
-    }
-
-    fn after_updated(&self, p: &Product) {
-        self.aspect_engine.emit(Event::ProductUpdated(p.clone()));
-    }
-
-    fn after_deleted(&self, p: &Product) {
-        self.aspect_engine.emit(Event::ProductDeleted(p.clone()));
-    }
+    repo: Arc<dyn ProductRepository>,
 }
 
 #[async_trait]
@@ -309,8 +259,8 @@ mod tests {
 
     fn make_service(pool: crate::db::Pool) -> Arc<dyn ProductService> {
         Arc::new(ProductServiceImpl::new(
-            Arc::new(SqlxProductRepository::new(pool.clone())),
             Arc::new(AspectEngine::new()),
+            Arc::new(SqlxProductRepository::new(pool.clone())),
         ))
     }
 

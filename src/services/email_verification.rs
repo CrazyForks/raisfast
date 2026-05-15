@@ -116,7 +116,7 @@ mod tests {
         let repo = SqlxUserRepository::new(pool.clone());
         let user = repo
             .create(
-                CreateUserCmd {
+                &CreateUserCmd {
                     username: email.to_string(),
                     registered_via: crate::models::user::RegisteredVia::Email,
                 },

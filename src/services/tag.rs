@@ -3,11 +3,11 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use raisfast_derive::aspect_service;
 
 use crate::aspects::engine::AspectEngine;
 use crate::dto::CreateTagRequest;
 use crate::errors::app_error::{AppError, AppResult};
-use crate::event::Event;
 use crate::middleware::auth::AuthUser;
 use crate::models::tag::Tag;
 use crate::repositories::TagRepository;
@@ -32,59 +32,11 @@ pub trait TagService: Send + Sync {
     ) -> AppResult<(Vec<Tag>, i64)>;
 }
 
+#[aspect_service(entity = "tags", model = Tag)]
 pub struct TagServiceImpl {
-    repo: Arc<dyn TagRepository>,
+    #[engine]
     aspect_engine: Arc<AspectEngine>,
-}
-
-impl TagServiceImpl {
-    pub fn new(repo: Arc<dyn TagRepository>, aspect_engine: Arc<AspectEngine>) -> Self {
-        Self {
-            repo,
-            aspect_engine,
-        }
-    }
-
-    async fn before_create(
-        &self,
-        auth: &AuthUser,
-        req: CreateTagRequest,
-    ) -> AppResult<(CreateTagRequest, crate::aspects::Dispatched)> {
-        self.aspect_engine.before_create("tags", auth, req).await
-    }
-
-    async fn before_update(
-        &self,
-        auth: &AuthUser,
-        existing: &Tag,
-        req: (String, String),
-    ) -> AppResult<((String, String), crate::aspects::Dispatched)> {
-        self.aspect_engine
-            .before_update("tags", auth, existing, req)
-            .await
-    }
-
-    async fn before_delete(
-        &self,
-        auth: &AuthUser,
-        existing: &Tag,
-    ) -> AppResult<crate::aspects::Dispatched> {
-        self.aspect_engine
-            .before_delete("tags", auth, existing)
-            .await
-    }
-
-    fn after_created(&self, tag: &Tag) {
-        self.aspect_engine.emit(Event::TagCreated(tag.clone()));
-    }
-
-    fn after_updated(&self, tag: &Tag) {
-        self.aspect_engine.emit(Event::TagUpdated(tag.clone()));
-    }
-
-    fn after_deleted(&self, tag: &Tag) {
-        self.aspect_engine.emit(Event::TagDeleted(tag.clone()));
-    }
+    repo: Arc<dyn TagRepository>,
 }
 
 #[async_trait]
@@ -182,8 +134,8 @@ mod tests {
 
     fn make_service(pool: crate::db::Pool) -> Arc<dyn TagService> {
         Arc::new(TagServiceImpl::new(
-            Arc::new(SqlxTagRepository::new(pool.clone())),
             Arc::new(AspectEngine::new()),
+            Arc::new(SqlxTagRepository::new(pool.clone())),
         ))
     }
 

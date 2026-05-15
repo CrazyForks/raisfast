@@ -3,13 +3,13 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use raisfast_derive::aspect_service;
 
 use crate::aspects::engine::AspectEngine;
 use crate::aspects::slug_aspect;
 use crate::commands::{CreateCategoryCmd, UpdateCategoryCmd};
 use crate::dto::{CreateCategoryRequest, UpdateCategoryRequest};
 use crate::errors::app_error::{AppError, AppResult};
-use crate::event::Event;
 use crate::middleware::auth::AuthUser;
 use crate::models::category::Category;
 use crate::repositories::CategoryRepository;
@@ -35,61 +35,11 @@ pub trait CategoryService: Send + Sync {
     ) -> AppResult<(Vec<Category>, i64)>;
 }
 
+#[aspect_service(entity = "categories", model = Category)]
 pub struct CategoryServiceImpl {
-    repo: Arc<dyn CategoryRepository>,
+    #[engine]
     aspect_engine: Arc<AspectEngine>,
-}
-
-impl CategoryServiceImpl {
-    pub fn new(repo: Arc<dyn CategoryRepository>, aspect_engine: Arc<AspectEngine>) -> Self {
-        Self {
-            repo,
-            aspect_engine,
-        }
-    }
-
-    async fn before_create(
-        &self,
-        auth: &AuthUser,
-        req: CreateCategoryRequest,
-    ) -> AppResult<(CreateCategoryRequest, crate::aspects::Dispatched)> {
-        self.aspect_engine
-            .before_create("categories", auth, req)
-            .await
-    }
-
-    async fn before_update(
-        &self,
-        auth: &AuthUser,
-        existing: &Category,
-        req: UpdateCategoryRequest,
-    ) -> AppResult<(UpdateCategoryRequest, crate::aspects::Dispatched)> {
-        self.aspect_engine
-            .before_update("categories", auth, existing, req)
-            .await
-    }
-
-    async fn before_delete(
-        &self,
-        auth: &AuthUser,
-        existing: &Category,
-    ) -> AppResult<crate::aspects::Dispatched> {
-        self.aspect_engine
-            .before_delete("categories", auth, existing)
-            .await
-    }
-
-    fn after_created(&self, cat: &Category) {
-        self.aspect_engine.emit(Event::CategoryCreated(cat.clone()));
-    }
-
-    fn after_updated(&self, cat: &Category) {
-        self.aspect_engine.emit(Event::CategoryUpdated(cat.clone()));
-    }
-
-    fn after_deleted(&self, cat: &Category) {
-        self.aspect_engine.emit(Event::CategoryDeleted(cat.clone()));
-    }
+    repo: Arc<dyn CategoryRepository>,
 }
 
 #[async_trait]
@@ -237,8 +187,8 @@ mod tests {
 
     fn make_service(pool: crate::db::Pool) -> Arc<dyn CategoryService> {
         Arc::new(CategoryServiceImpl::new(
-            Arc::new(SqlxCategoryRepository::new(pool.clone())),
             Arc::new(AspectEngine::new()),
+            Arc::new(SqlxCategoryRepository::new(pool.clone())),
         ))
     }
 

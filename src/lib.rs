@@ -287,15 +287,15 @@ pub async fn build_app_state(
         ));
 
     let tag_service: Arc<dyn crate::services::tag::TagService> = Arc::new(
-        crate::services::tag::TagServiceImpl::new(tag_repo.clone(), aspect_engine.clone()),
+        crate::services::tag::TagServiceImpl::new(aspect_engine.clone(), tag_repo.clone()),
     );
     let category_service: Arc<dyn crate::services::category::CategoryService> =
         Arc::new(crate::services::category::CategoryServiceImpl::new(
-            category_repo.clone(),
             aspect_engine.clone(),
+            category_repo.clone(),
         ));
     let page_service: Arc<dyn crate::services::page::PageService> = Arc::new(
-        crate::services::page::PageServiceImpl::new(Arc::new(pool.clone()), aspect_engine.clone()),
+        crate::services::page::PageServiceImpl::new(aspect_engine.clone(), Arc::new(pool.clone())),
     );
     let comment_service: Arc<dyn crate::services::comment::CommentService> =
         Arc::new(crate::services::comment::CommentServiceImpl::new(
@@ -305,8 +305,8 @@ pub async fn build_app_state(
         ));
     let product_service: Arc<dyn crate::services::product::ProductService> =
         Arc::new(crate::services::product::ProductServiceImpl::new(
-            product_repo.clone(),
             aspect_engine.clone(),
+            product_repo.clone(),
         ));
 
     let options_repo: Arc<dyn crate::repositories::OptionsRepository> = Arc::new(

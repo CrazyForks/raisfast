@@ -167,7 +167,7 @@ pub async fn save_file(
 
     let media = media_repo
         .create(
-            CreateMediaCmd {
+            &CreateMediaCmd {
                 user_id: user.id,
                 filename: filename.to_string(),
                 filepath: key.clone(),

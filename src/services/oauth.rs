@@ -323,7 +323,7 @@ async fn auto_register_user(
 
     let user = user_repo
         .create(
-            CreateUserCmd {
+            &CreateUserCmd {
                 username,
                 registered_via: crate::models::user::RegisteredVia::Oauth,
             },

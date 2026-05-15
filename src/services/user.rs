@@ -23,7 +23,7 @@ pub async fn update_me(
 ) -> AppResult<UserResponse> {
     let user = user_repo
         .update_profile(
-            UpdateProfileCmd {
+            &UpdateProfileCmd {
                 id: auth.user_int_id().ok_or(AppError::Unauthorized)?,
                 username: req.username,
                 bio: req.bio,
@@ -93,7 +93,7 @@ mod tests {
     async fn insert_user(pool: &crate::db::Pool, username: &str) -> crate::models::user::User {
         let repo = SqlxUserRepository::new(pool.clone());
         repo.create(
-            crate::commands::CreateUserCmd {
+            &crate::commands::CreateUserCmd {
                 username: username.to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
             },
