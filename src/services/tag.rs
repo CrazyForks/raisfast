@@ -1,17 +1,20 @@
 //! Tag service.
 
-use crate::aspects::slug_aspect;
 use crate::dto::CreateTagRequest;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::repositories::TagRepository;
 
+pub fn generate_slug(name: &str) -> String {
+    crate::aspects::slug_aspect::generate_slug(name)
+}
+
 pub async fn create_tag(
     tag_repo: &dyn TagRepository,
     auth: &AuthUser,
     req: CreateTagRequest,
+    slug: String,
 ) -> AppResult<crate::models::tag::Tag> {
-    let slug = slug_aspect::generate_slug(&req.name);
     tag_repo
         .create(&req.name, &slug, auth.tenant_id(), auth.user_int_id())
         .await
@@ -26,22 +29,6 @@ pub async fn delete_tag(tag_repo: &dyn TagRepository, id: &str, auth: &AuthUser)
     Ok(())
 }
 
-pub async fn update_tag(
-    tag_repo: &dyn TagRepository,
-    id: &str,
-    auth: &AuthUser,
-    name: String,
-) -> AppResult<crate::models::tag::Tag> {
-    let slug = slug_aspect::generate_slug(&name);
-    let tag = tag_repo
-        .find_by_document_id(id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("tag"))?;
-    tag_repo
-        .update(tag.id, &name, &slug, auth.tenant_id())
-        .await
-}
-
 pub async fn get_tag(
     tag_repo: &dyn TagRepository,
     id: &str,
@@ -51,6 +38,22 @@ pub async fn get_tag(
         .find_by_document_id(id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("tag"))
+}
+
+pub async fn update_tag(
+    tag_repo: &dyn TagRepository,
+    id: &str,
+    auth: &AuthUser,
+    name: String,
+    slug: String,
+) -> AppResult<crate::models::tag::Tag> {
+    let tag = tag_repo
+        .find_by_document_id(id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("tag"))?;
+    tag_repo
+        .update(tag.id, &name, &slug, auth.tenant_id())
+        .await
 }
 
 pub async fn list_tags(
@@ -106,6 +109,7 @@ mod tests {
             CreateTagRequest {
                 name: "Rust".into(),
             },
+            super::generate_slug("Rust"),
         )
         .await
         .unwrap();
@@ -127,12 +131,23 @@ mod tests {
         let pool = setup_pool().await;
         let repo = SqlxTagRepository::new(pool.clone());
         let a = auth();
-        let tag = super::create_tag(&repo, &a, CreateTagRequest { name: "Old".into() })
-            .await
-            .unwrap();
-        let updated = super::update_tag(&repo, &tag.document_id, &a, "New".into())
-            .await
-            .unwrap();
+        let tag = super::create_tag(
+            &repo,
+            &a,
+            CreateTagRequest { name: "Old".into() },
+            super::generate_slug("Old"),
+        )
+        .await
+        .unwrap();
+        let updated = super::update_tag(
+            &repo,
+            &tag.document_id,
+            &a,
+            "New".into(),
+            super::generate_slug("New"),
+        )
+        .await
+        .unwrap();
         assert_eq!(updated.name, "New");
         assert_eq!(updated.slug, "new");
     }
@@ -142,9 +157,14 @@ mod tests {
         let pool = setup_pool().await;
         let repo = SqlxTagRepository::new(pool.clone());
         let a = auth();
-        let tag = super::create_tag(&repo, &a, CreateTagRequest { name: "Del".into() })
-            .await
-            .unwrap();
+        let tag = super::create_tag(
+            &repo,
+            &a,
+            CreateTagRequest { name: "Del".into() },
+            super::generate_slug("Del"),
+        )
+        .await
+        .unwrap();
         super::delete_tag(&repo, &tag.document_id, &a)
             .await
             .unwrap();
@@ -166,7 +186,7 @@ mod tests {
         let repo = SqlxTagRepository::new(pool.clone());
         let a = auth();
         assert!(
-            super::update_tag(&repo, "missing", &a, "X".into())
+            super::update_tag(&repo, "missing", &a, "X".into(), super::generate_slug("X"))
                 .await
                 .is_err()
         );
@@ -184,6 +204,7 @@ mod tests {
                 CreateTagRequest {
                     name: format!("Tag{i}"),
                 },
+                super::generate_slug(&format!("Tag{i}")),
             )
             .await
             .unwrap();

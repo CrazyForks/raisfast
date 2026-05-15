@@ -11,6 +11,17 @@ use crate::middleware::auth::AuthUser;
 use crate::services::tag;
 use crate::utils::pagination::PaginationParams;
 
+async fn dispatch_slug_for_tag(state: &crate::AppState, auth: &AuthUser, name: &str) -> String {
+    match state
+        .aspect_engine
+        .before_create(&state.pool, "tags", auth, serde_json::json!({"name": name}))
+        .await
+    {
+        Ok((_, d)) => d.str_or("slug", || tag::generate_slug(name)),
+        Err(_) => tag::generate_slug(name),
+    }
+}
+
 pub fn routes(
     registry: &mut crate::server::RouteRegistry,
     config: &crate::config::app::AppConfig,
@@ -166,7 +177,8 @@ pub async fn create(
 ) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
-    let t = tag::create_tag(state.tag_repo.as_ref(), &auth, req).await?;
+    let slug = dispatch_slug_for_tag(&state, &auth, &req.name).await;
+    let t = tag::create_tag(state.tag_repo.as_ref(), &auth, req, slug).await?;
     Ok(ApiResponse::success(t))
 }
 
@@ -201,7 +213,8 @@ pub async fn update(
 ) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
-    let t = tag::update_tag(state.tag_repo.as_ref(), &id, &auth, req.name).await?;
+    let slug = dispatch_slug_for_tag(&state, &auth, &req.name).await;
+    let t = tag::update_tag(state.tag_repo.as_ref(), &id, &auth, req.name.clone(), slug).await?;
     Ok(ApiResponse::success(t))
 }
 
@@ -231,7 +244,8 @@ pub async fn admin_create(
 ) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let t = tag::create_tag(state.tag_repo.as_ref(), &auth, req).await?;
+    let slug = dispatch_slug_for_tag(&state, &auth, &req.name).await;
+    let t = tag::create_tag(state.tag_repo.as_ref(), &auth, req, slug).await?;
     Ok(ApiResponse::success(t))
 }
 
@@ -243,7 +257,8 @@ pub async fn admin_update(
 ) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let t = tag::update_tag(state.tag_repo.as_ref(), &id, &auth, req.name).await?;
+    let slug = dispatch_slug_for_tag(&state, &auth, &req.name).await;
+    let t = tag::update_tag(state.tag_repo.as_ref(), &id, &auth, req.name.clone(), slug).await?;
     Ok(ApiResponse::success(t))
 }
 

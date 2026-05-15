@@ -174,7 +174,7 @@ pub async fn handle_callback(
             .await?;
 
             eventbus.emit(crate::eventbus::Event::UserLoggedIn {
-                id: user.document_id.clone(),
+                user: user.clone(),
                 success: true,
             });
 
@@ -360,11 +360,7 @@ async fn auto_register_user(
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch created user")))?;
 
-    eventbus.emit(crate::eventbus::Event::UserRegistered {
-        id: user.document_id.clone(),
-        username: user.username.clone(),
-        email,
-    });
+    eventbus.emit(crate::eventbus::Event::UserRegistered(user.clone()));
 
     Ok(user)
 }

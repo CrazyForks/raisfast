@@ -108,6 +108,19 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             Arc::new(MemoryCache::new()),
             None,
         )),
+        post_service: {
+            let _pr: Arc<dyn raisfast::repositories::PostRepository> =
+                Arc::new(CachedPostRepository::new(
+                    SqlxPostRepository::new(pool.clone()),
+                    Arc::new(MemoryCache::new()),
+                    None,
+                ));
+            Arc::new(raisfast::services::post::PostServiceImpl::new(
+                _pr,
+                Arc::new(raisfast::aspects::engine::AspectEngine::new()),
+                Arc::new(NoopSearchEngine),
+            ))
+        },
         user_repo: Arc::new(SqlxUserRepository::new(pool.clone())),
         category_repo: Arc::new(SqlxCategoryRepository::new(pool.clone())),
         tag_repo: Arc::new(SqlxTagRepository::new(pool.clone())),

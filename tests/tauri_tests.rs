@@ -11,7 +11,15 @@ use raisfast::content_type::repository::{ContentQuery, ContentRepository, SaveCo
 use raisfast::content_type::schema::ContentTypeSchema;
 use raisfast::db::tenant;
 use raisfast::repositories::*;
-use raisfast::services::{auth, options, post, stats, user};
+use raisfast::services::post::{PostService, PostServiceImpl};
+use raisfast::services::{auth, options, stats, user};
+
+fn build_post_service(post_repo: Arc<dyn PostRepository>) -> Arc<dyn PostService> {
+    let engine = Arc::new(raisfast::aspects::engine::AspectEngine::new());
+    let search: Arc<dyn raisfast::search::SearchEngine> =
+        Arc::new(raisfast::search::NoopSearchEngine);
+    Arc::new(PostServiceImpl::new(post_repo, engine, search))
+}
 
 fn with_timestamps(data: serde_json::Value) -> serde_json::Value {
     let mut obj = data
@@ -290,6 +298,7 @@ async fn tauri_post_create_and_list() {
     let eventbus = raisfast::eventbus::EventBus::new(16);
     let config = test_config();
     let plugin_mgr = raisfast::plugins::PluginManager::new(Arc::new(config.clone())).await;
+    let svc = build_post_service(post_repo.clone());
 
     let req = raisfast::dto::CreatePostRequest {
         title: "Test Post".into(),
@@ -307,26 +316,12 @@ async fn tauri_post_create_and_list() {
         raisfast::models::user::UserRole::Author,
         None,
     );
-    let created = post::create_post(post_repo.as_ref(), &plugin_mgr, &eventbus, &auth, req)
-        .await
-        .unwrap();
+    let created = svc.create(&auth, req).await.unwrap();
 
     assert_eq!(created.title, "Test Post");
     assert_eq!(created.created_by, author_int_id);
 
-    let (items, total) = post::list_posts(
-        post_repo.as_ref(),
-        1,
-        20,
-        None,
-        None,
-        None,
-        &plugin_mgr,
-        None,
-        &auth,
-    )
-    .await
-    .unwrap();
+    let (items, total) = svc.list(&auth, 1, 20, None, None, None).await.unwrap();
 
     assert_eq!(total, 1);
     assert_eq!(items[0].title, "Test Post");
@@ -346,6 +341,7 @@ async fn tauri_post_get_by_slug() {
     let eventbus = raisfast::eventbus::EventBus::new(16);
     let config = test_config();
     let plugin_mgr = raisfast::plugins::PluginManager::new(Arc::new(config.clone())).await;
+    let svc = build_post_service(post_repo.clone());
 
     let req = raisfast::dto::CreatePostRequest {
         title: "Slug Test".into(),
@@ -363,13 +359,9 @@ async fn tauri_post_get_by_slug() {
         raisfast::models::user::UserRole::Author,
         None,
     );
-    let created = post::create_post(post_repo.as_ref(), &plugin_mgr, &eventbus, &auth, req)
-        .await
-        .unwrap();
+    let created = svc.create(&auth, req).await.unwrap();
 
-    let found = post::get_post(post_repo.as_ref(), &created.slug, &plugin_mgr, &auth)
-        .await
-        .unwrap();
+    let found = svc.get(&auth, &created.slug).await.unwrap();
 
     assert_eq!(found.id, created.id);
     assert_eq!(found.title, "Slug Test");

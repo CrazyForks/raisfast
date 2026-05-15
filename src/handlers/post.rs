@@ -16,9 +16,26 @@ use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::models::post::PostStatus;
-use crate::services::post as post_service;
+use crate::services::post::{self as post_service};
 use crate::utils::pagination::PaginationParams;
 
+#[derive(Debug, Deserialize)]
+pub struct PostListQuery {
+    pub page: Option<i64>,
+    pub page_size: Option<i64>,
+    pub category_id: Option<String>,
+    pub tag_id: Option<String>,
+    pub q: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AdminPostListQuery {
+    pub page: Option<i64>,
+    pub page_size: Option<i64>,
+    pub status: Option<PostStatus>,
+}
+
+#[allow(clippy::let_and_return)]
 pub fn routes(
     registry: &mut crate::server::RouteRegistry,
     config: &crate::config::app::AppConfig,
@@ -61,7 +78,7 @@ pub fn routes(
         restful,
         "/posts/{slug}",
         put,
-        update,
+        self::update,
         "system public",
         "posts"
     );
@@ -75,35 +92,45 @@ pub fn routes(
         "system public",
         "posts"
     );
+    r
+}
+
+#[allow(clippy::let_and_return)]
+pub fn admin_routes(
+    registry: &mut crate::server::RouteRegistry,
+    config: &crate::config::app::AppConfig,
+) -> axum::Router<crate::AppState> {
+    let restful = config.api_restful;
+    let r = axum::Router::new();
     let r = reg_route!(
         r,
         registry,
         restful,
         "/admin/posts",
         get,
-        admin_list,
+        self::admin_list,
         "system admin",
-        "admin/posts"
+        "posts"
     );
     let r = reg_route!(
         r,
         registry,
         restful,
         "/admin/posts",
-        create,
-        admin_create,
+        post,
+        self::admin_create,
         "system admin",
-        "admin/posts"
+        "posts"
     );
     let r = reg_route!(
         r,
         registry,
         restful,
-        "/admin/posts/{id}",
+        "/admin/posts/{slug}",
         get,
-        admin_get,
+        self::admin_get,
         "system admin",
-        "admin/posts"
+        "posts"
     );
     let r = reg_route!(
         r,
@@ -111,9 +138,9 @@ pub fn routes(
         restful,
         "/admin/posts/{id}",
         put,
-        admin_update,
+        self::admin_update,
         "system admin",
-        "admin/posts"
+        "posts"
     );
     let r = reg_route!(
         r,
@@ -121,41 +148,24 @@ pub fn routes(
         restful,
         "/admin/posts/{id}",
         delete,
-        admin_delete,
+        self::admin_delete,
         "system admin",
-        "admin/posts"
+        "posts"
     );
-    reg_route!(
+    let r = reg_route!(
         r,
         registry,
         restful,
         "/admin/posts/batch",
         post,
-        admin_batch,
+        self::admin_batch,
         "system admin",
-        "admin/posts"
-    )
+        "posts"
+    );
+    r
 }
 
-#[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize, Default)]
-pub struct PostListQuery {
-    pub page: Option<i64>,
-    pub page_size: Option<i64>,
-    pub category_id: Option<String>,
-    pub tag_id: Option<String>,
-    pub q: Option<String>,
-}
-
-#[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Deserialize, Default)]
-pub struct AdminPostListQuery {
-    pub page: Option<i64>,
-    pub page_size: Option<i64>,
-    pub status: Option<PostStatus>,
-}
-
-/// Get published post list (paginated)
+/// List published posts
 ///
 /// - **Method/Path:** `GET /api/posts`
 /// - **Auth:** Not required
@@ -183,18 +193,17 @@ pub async fn list(
         None
     };
 
-    let (posts, total) = post_service::list_posts(
-        state.post_repo.as_ref(),
-        pagination.page,
-        pagination.page_size,
-        cat_id,
-        tg_id,
-        query.q.as_deref(),
-        &state.plugins,
-        Some(state.search.as_ref()),
-        &auth,
-    )
-    .await?;
+    let (posts, total) = state
+        .post_service
+        .list(
+            &auth,
+            pagination.page,
+            pagination.page_size,
+            cat_id,
+            tg_id,
+            query.q.as_deref(),
+        )
+        .await?;
 
     Ok(pagination.paginate(posts, total))
 }
@@ -214,8 +223,7 @@ pub async fn get(
     State(state): State<crate::AppState>,
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<PostResponse>> {
-    let post =
-        post_service::get_post(state.post_repo.as_ref(), &slug, &state.plugins, &auth).await?;
+    let post = state.post_service.get(&auth, &slug).await?;
     Ok(ApiResponse::success(post))
 }
 
@@ -238,14 +246,7 @@ pub async fn create(
 ) -> AppResult<ApiResponse<PostResponse>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
-    let post = post_service::create_post(
-        state.post_repo.as_ref(),
-        &state.plugins,
-        &state.eventbus,
-        &auth,
-        req,
-    )
-    .await?;
+    let post = state.post_service.create(&auth, req).await?;
     Ok(ApiResponse::success(post))
 }
 
@@ -269,15 +270,7 @@ pub async fn update(
     Json(req): Json<UpdatePostRequest>,
 ) -> AppResult<ApiResponse<PostResponse>> {
     validation::validate(&req)?;
-    let post = post_service::update_post(
-        state.post_repo.as_ref(),
-        &state.plugins,
-        &state.eventbus,
-        &slug,
-        &auth,
-        req,
-    )
-    .await?;
+    let post = state.post_service.update(&auth, &slug, req).await?;
     Ok(ApiResponse::success(post))
 }
 
@@ -297,14 +290,7 @@ pub async fn delete(
     State(state): State<crate::AppState>,
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    post_service::delete_post(
-        state.post_repo.as_ref(),
-        &state.plugins,
-        &state.eventbus,
-        &slug,
-        &auth,
-    )
-    .await?;
+    state.post_service.delete(&auth, &slug).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -318,14 +304,7 @@ pub async fn admin_create(
 ) -> AppResult<ApiResponse<PostResponse>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let post = post_service::create_post(
-        state.post_repo.as_ref(),
-        &state.plugins,
-        &state.eventbus,
-        &auth,
-        req,
-    )
-    .await?;
+    let post = state.post_service.create(&auth, req).await?;
     Ok(ApiResponse::success(post))
 }
 
@@ -338,15 +317,7 @@ pub async fn admin_update(
 ) -> AppResult<ApiResponse<PostResponse>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let post = post_service::admin_update_post(
-        state.post_repo.as_ref(),
-        &state.plugins,
-        &state.eventbus,
-        &id,
-        &auth,
-        req,
-    )
-    .await?;
+    let post = state.post_service.admin_update(&auth, &id, req).await?;
     Ok(ApiResponse::success(post))
 }
 
@@ -357,14 +328,7 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    post_service::admin_delete_post(
-        state.post_repo.as_ref(),
-        &state.plugins,
-        &state.eventbus,
-        &id,
-        &auth,
-    )
-    .await?;
+    state.post_service.admin_delete(&auth, &id).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -380,9 +344,7 @@ pub async fn admin_get(
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<PostResponse>> {
     auth.ensure_author()?;
-    let post =
-        post_service::get_post_any_status(state.post_repo.as_ref(), &slug, &state.plugins, &auth)
-            .await?;
+    let post = state.post_service.get_any_status(&auth, &slug).await?;
     Ok(ApiResponse::success(post))
 }
 
@@ -400,18 +362,10 @@ pub async fn admin_list(
     auth.ensure_author()?;
     let pagination = PaginationParams::from_options(query.page, query.page_size);
 
-    let (posts, total) = post_service::list_posts(
-        state.post_repo.as_ref(),
-        pagination.page,
-        pagination.page_size,
-        None,
-        None,
-        None,
-        &state.plugins,
-        Some(state.search.as_ref()),
-        &auth,
-    )
-    .await?;
+    let (posts, total) = state
+        .post_service
+        .list_all(&auth, pagination.page, pagination.page_size, query.status)
+        .await?;
 
     Ok(pagination.paginate(posts, total))
 }
@@ -424,15 +378,10 @@ pub async fn admin_batch(
 ) -> AppResult<ApiResponse<BatchResponse>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let affected = post_service::batch_posts(
-        state.post_repo.as_ref(),
-        &state.plugins,
-        &state.eventbus,
-        &req.action,
-        &req.ids,
-        &auth,
-    )
-    .await?;
+    let affected = state
+        .post_service
+        .batch(&auth, &req.action, &req.ids)
+        .await?;
     Ok(ApiResponse::success(BatchResponse::new(
         &req.action,
         affected,

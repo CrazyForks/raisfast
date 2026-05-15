@@ -38,9 +38,8 @@ pub async fn forgot_password(
     let reset_token = crate::models::password_reset::create(pool, user.id, 3600).await?;
 
     eventbus.emit(crate::eventbus::Event::PasswordResetRequested {
-        user_id: user.document_id,
-        email: email.to_string(),
-        reset_token: reset_token.token,
+        user: user.clone(),
+        token: reset_token,
     });
 
     Ok(())

@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::dto::{LoginResponse, RegisterRequest, UpdatePasswordRequest, UserResponse};
 use crate::errors::app_error::{AppError, AppResult};
-use crate::eventbus::{Event, EventBus};
+use crate::event::Event;
+use crate::eventbus::EventBus;
 use crate::middleware::auth::AuthUser;
 use crate::models::user::{UserRole, UserStatus};
 use crate::models::user_credential::AuthType;
@@ -285,11 +286,7 @@ pub async fn register(
         Ok::<_, crate::errors::app_error::AppError>(user)
     })?;
 
-    eventbus.emit(Event::UserRegistered {
-        id: user.document_id.clone(),
-        username: user.username.clone(),
-        email: req.email.clone(),
-    });
+    eventbus.emit(Event::UserRegistered(user.clone()));
 
     if require_email_verification {
         let _ = crate::services::email_verification::trigger_email_verification(
@@ -386,7 +383,7 @@ pub async fn login(
         .await;
 
     eventbus.emit(Event::UserLoggedIn {
-        id: user.document_id.clone(),
+        user: user.clone(),
         success: true,
     });
 

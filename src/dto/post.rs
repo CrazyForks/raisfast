@@ -40,7 +40,7 @@ pub struct UpdatePostRequest {
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Serialize, Clone, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 #[non_exhaustive]
 pub struct PostResponse {
     pub id: String,

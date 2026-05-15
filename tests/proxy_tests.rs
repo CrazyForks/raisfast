@@ -3,7 +3,7 @@
 //! 启动真实的 TCP 后端服务器，验证 proxy 的完整请求转发链路。
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 
 use http_body_util::BodyExt;
 use http_body_util::Full;
@@ -17,7 +17,6 @@ use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 
 use raisfast::proxy::config::TenantSection;
-use raisfast::proxy::handler::handle_proxy_request;
 use raisfast::proxy::router::RouterTable;
 
 type BoxBody = http_body_util::combinators::BoxBody<Bytes, hyper::Error>;
@@ -172,7 +171,7 @@ async fn no_backend_returns_502() {
     let _stream = TcpStream::connect(&backend_addr).await.unwrap();
     // 不注册任何路由
 
-    let resp = send_http_request(&backend_addr, "GET", "/api/test", "unknown.example.com").await;
+    let _resp = send_http_request(&backend_addr, "GET", "/api/test", "unknown.example.com").await;
     // 这里直接测 router 层面
     assert!(router.find("unknown.example.com", "/api/test").is_none());
 }

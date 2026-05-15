@@ -188,6 +188,22 @@ impl BaseContext {
 
 pub type Record = serde_json::Map<String, Value>;
 
+/// Result of an aspect data dispatch, with convenience methods for reading fields.
+pub struct Dispatched(pub Record);
+
+impl Dispatched {
+    pub fn str(&self, key: &str) -> Option<String> {
+        self.0
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    }
+
+    pub fn str_or<F: FnOnce() -> String>(&self, key: &str, default: F) -> String {
+        self.str(key).unwrap_or_else(default)
+    }
+}
+
 pub struct DataBeforeCreateContext {
     pub base: BaseContext,
     pub table: String,

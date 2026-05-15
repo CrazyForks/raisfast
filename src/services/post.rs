@@ -7,16 +7,20 @@
 //! - Excerpt extraction via ExcerptAspect
 //! - Post response assembly (with tags and author info)
 
+use std::sync::Arc;
+
+use async_trait::async_trait;
 use slug::slugify;
 
+use crate::aspects::engine::AspectEngine;
 use crate::aspects::slug_aspect;
 use crate::commands::{CreatePostCmd, FindPublishedQuery, UpdatePostCmd};
 use crate::dto::{CreatePostRequest, PostResponse, UpdatePostRequest};
 use crate::errors::app_error::{AppError, AppResult};
-use crate::eventbus::{Event, EventBus};
+use crate::event::*;
 use crate::middleware::auth::AuthUser;
 use crate::models::post::{PostJoinedRow, PostStatus};
-use crate::plugins::{HookPoint, PluginManager};
+use crate::policy::Policy;
 use crate::repositories::PostRepository;
 use crate::search::SearchEngine;
 
@@ -53,10 +57,481 @@ pub async fn resolve_doc_id_to_int(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("resolve doc_id in {table} failed: {e}")))
 }
 
+// ─── Trait ───
+
+#[async_trait]
+pub trait PostService: Send + Sync {
+    async fn create(&self, auth: &AuthUser, req: CreatePostRequest) -> AppResult<PostResponse>;
+    async fn update(
+        &self,
+        auth: &AuthUser,
+        slug: &str,
+        req: UpdatePostRequest,
+    ) -> AppResult<PostResponse>;
+    async fn delete(&self, auth: &AuthUser, slug: &str) -> AppResult<()>;
+    async fn get(&self, auth: &AuthUser, slug: &str) -> AppResult<PostResponse>;
+    async fn get_any_status(&self, auth: &AuthUser, slug: &str) -> AppResult<PostResponse>;
+    async fn list(
+        &self,
+        auth: &AuthUser,
+        page: i64,
+        page_size: i64,
+        category_id: Option<i64>,
+        tag_id: Option<i64>,
+        q: Option<&str>,
+    ) -> AppResult<(Vec<PostResponse>, i64)>;
+    async fn list_all(
+        &self,
+        auth: &AuthUser,
+        page: i64,
+        page_size: i64,
+        status: Option<PostStatus>,
+    ) -> AppResult<(Vec<PostResponse>, i64)>;
+    async fn admin_update(
+        &self,
+        auth: &AuthUser,
+        id: &str,
+        req: UpdatePostRequest,
+    ) -> AppResult<PostResponse>;
+    async fn admin_delete(&self, auth: &AuthUser, id: &str) -> AppResult<()>;
+    async fn batch(&self, auth: &AuthUser, action: &str, ids: &[String]) -> AppResult<usize>;
+}
+
+// ─── Implementation ───
+
+pub struct PostServiceImpl {
+    repo: Arc<dyn PostRepository>,
+    aspect_engine: Arc<AspectEngine>,
+    search: Arc<dyn SearchEngine>,
+}
+
+impl PostServiceImpl {
+    pub fn new(
+        repo: Arc<dyn PostRepository>,
+        aspect_engine: Arc<AspectEngine>,
+        search: Arc<dyn SearchEngine>,
+    ) -> Self {
+        Self {
+            repo,
+            aspect_engine,
+            search,
+        }
+    }
+
+    async fn before_create(
+        &self,
+        auth: &AuthUser,
+        req: CreatePostRequest,
+    ) -> AppResult<(CreatePostRequest, crate::aspects::Dispatched)> {
+        self.aspect_engine
+            .before_create(self.repo.pool(), "posts", auth, req)
+            .await
+    }
+
+    async fn before_update(
+        &self,
+        auth: &AuthUser,
+        existing: &crate::models::post::Post,
+        req: UpdatePostRequest,
+    ) -> AppResult<(UpdatePostRequest, crate::aspects::Dispatched)> {
+        crate::policy::PostPolicy::can_update(auth, existing)?;
+        self.aspect_engine
+            .before_update(self.repo.pool(), "posts", auth, existing, req)
+            .await
+    }
+
+    async fn before_delete(
+        &self,
+        auth: &AuthUser,
+        existing: &crate::models::post::Post,
+    ) -> AppResult<crate::aspects::Dispatched> {
+        crate::policy::PostPolicy::can_delete(auth, existing)?;
+        self.aspect_engine
+            .before_delete(self.repo.pool(), "posts", auth, existing)
+            .await
+    }
+
+    fn after_created(&self, resp: &PostResponse) {
+        self.aspect_engine.emit(Event::PostCreated(resp.clone()));
+    }
+
+    fn after_updated(&self, existing: &crate::models::post::Post) {
+        self.aspect_engine
+            .emit(Event::PostUpdated(existing.clone()));
+    }
+
+    fn after_deleted(&self, existing: &crate::models::post::Post) {
+        self.aspect_engine
+            .emit(Event::PostDeleted(existing.clone()));
+    }
+}
+
+#[async_trait]
+impl PostService for PostServiceImpl {
+    #[tracing::instrument(skip(self), fields(slug = tracing::field::Empty))]
+    async fn create(&self, auth: &AuthUser, req: CreatePostRequest) -> AppResult<PostResponse> {
+        let (req, d) = self.before_create(auth, req).await?;
+        let status = req.status.unwrap_or(PostStatus::Draft);
+
+        let slug = d.str_or("slug", || slug_aspect::make_unique_slug(&req.title));
+        let excerpt = d.str_or("excerpt", || {
+            crate::aspects::excerpt_aspect::extract_excerpt(&req.content, 200)
+        });
+
+        let category_id = if let Some(ref doc_id) = req.category_id {
+            resolve_doc_id_to_int(self.repo.pool(), "categories", doc_id, auth.tenant_id()).await?
+        } else {
+            None
+        };
+        let tag_ids = match req.tag_ids {
+            Some(ref ids) => {
+                let mut resolved = Vec::new();
+                for doc_id in ids {
+                    if let Some(int_id) =
+                        resolve_doc_id_to_int(self.repo.pool(), "tags", doc_id, auth.tenant_id())
+                            .await?
+                    {
+                        resolved.push(int_id);
+                    }
+                }
+                Some(resolved)
+            }
+            None => None,
+        };
+
+        let cmd = CreatePostCmd {
+            title: req.title,
+            slug,
+            content: req.content,
+            excerpt: Some(excerpt),
+            cover_image: req.cover_image,
+            status,
+            created_by: auth.user_int_id().ok_or(AppError::Unauthorized)?,
+            updated_by: auth.user_int_id(),
+            category_id,
+            tag_ids,
+        };
+        let p = self.repo.create(cmd, auth.tenant_id()).await?;
+
+        let author_name =
+            crate::models::post::get_author_name(self.repo.pool(), p.created_by, auth.tenant_id())
+                .await
+                .ok()
+                .flatten();
+
+        let category_name = if let Some(cat_id) = p.category_id {
+            crate::models::post::get_category_name(self.repo.pool(), cat_id, auth.tenant_id())
+                .await
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
+
+        let tags = self
+            .repo
+            .get_post_tags(p.id, auth.tenant_id())
+            .await
+            .unwrap_or_default();
+
+        let resp = build_response_from_post(&p, author_name, category_name, tags).await?;
+        tracing::Span::current().record("slug", &resp.slug);
+        self.after_created(&resp);
+        Ok(resp)
+    }
+
+    async fn update(
+        &self,
+        auth: &AuthUser,
+        slug: &str,
+        req: UpdatePostRequest,
+    ) -> AppResult<PostResponse> {
+        let existing = self
+            .repo
+            .find_by_slug(slug, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("post"))?;
+
+        let existing_id = existing.id;
+        let (req, d) = self.before_update(auth, &existing, req).await?;
+        let resp = self
+            .update_inner(existing_id, existing, req, d, auth)
+            .await?;
+        let updated = self
+            .repo
+            .find_by_id(existing_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("post"))?;
+        self.after_updated(&updated);
+        Ok(resp)
+    }
+
+    async fn delete(&self, auth: &AuthUser, slug: &str) -> AppResult<()> {
+        let existing = self
+            .repo
+            .find_by_slug(slug, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("post"))?;
+
+        self.before_delete(auth, &existing).await?;
+
+        self.repo.delete(existing.id, auth.tenant_id()).await?;
+        self.after_deleted(&existing);
+        Ok(())
+    }
+
+    async fn get(&self, auth: &AuthUser, slug: &str) -> AppResult<PostResponse> {
+        let row = self
+            .repo
+            .increment_view_count_joined(slug, auth.tenant_id())
+            .await?;
+        let tags = self
+            .repo
+            .get_post_tags(row.id, auth.tenant_id())
+            .await
+            .unwrap_or_default();
+        joined_row_to_response(row, tags).await
+    }
+
+    async fn get_any_status(&self, auth: &AuthUser, slug: &str) -> AppResult<PostResponse> {
+        let post = self.repo.find_by_slug(slug, auth.tenant_id()).await?;
+        let post = post.ok_or_else(|| AppError::not_found("post not found"))?;
+        let row = self
+            .repo
+            .find_joined_by_id(post.id, auth.tenant_id())
+            .await?;
+        let tags = self
+            .repo
+            .get_post_tags(row.id, auth.tenant_id())
+            .await
+            .unwrap_or_default();
+        joined_row_to_response(row, tags).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn list(
+        &self,
+        auth: &AuthUser,
+        page: i64,
+        page_size: i64,
+        category_id: Option<i64>,
+        tag_id: Option<i64>,
+        q: Option<&str>,
+    ) -> AppResult<(Vec<PostResponse>, i64)> {
+        list_posts_inner(
+            self.repo.as_ref(),
+            page,
+            page_size,
+            category_id,
+            tag_id,
+            q,
+            Some(self.search.as_ref()),
+            auth,
+        )
+        .await
+    }
+
+    async fn list_all(
+        &self,
+        auth: &AuthUser,
+        page: i64,
+        page_size: i64,
+        status: Option<PostStatus>,
+    ) -> AppResult<(Vec<PostResponse>, i64)> {
+        list_all_posts_inner(self.repo.as_ref(), page, page_size, status, auth).await
+    }
+
+    async fn admin_update(
+        &self,
+        auth: &AuthUser,
+        id: &str,
+        req: UpdatePostRequest,
+    ) -> AppResult<PostResponse> {
+        let int_id = resolve_doc_id_to_int(self.repo.pool(), "posts", id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("post"))?;
+
+        let existing = self
+            .repo
+            .find_by_id(int_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("post"))?;
+
+        let (req, d) = self.before_update(auth, &existing, req).await?;
+        let resp = self
+            .update_inner(int_id, existing.clone(), req, d, auth)
+            .await?;
+        let updated = self
+            .repo
+            .find_by_id(int_id, auth.tenant_id())
+            .await?
+            .unwrap_or(existing);
+        self.after_updated(&updated);
+        Ok(resp)
+    }
+
+    async fn admin_delete(&self, auth: &AuthUser, id: &str) -> AppResult<()> {
+        let int_id = resolve_doc_id_to_int(self.repo.pool(), "posts", id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("post"))?;
+
+        let existing = self
+            .repo
+            .find_by_id(int_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("post"))?;
+
+        self.before_delete(auth, &existing).await?;
+
+        self.repo.delete(int_id, auth.tenant_id()).await?;
+        self.after_deleted(&existing);
+        Ok(())
+    }
+
+    async fn batch(&self, auth: &AuthUser, action: &str, ids: &[String]) -> AppResult<usize> {
+        let mut affected = 0usize;
+        for doc_id in ids {
+            let Some(int_id) =
+                resolve_doc_id_to_int(self.repo.pool(), "posts", doc_id, auth.tenant_id()).await?
+            else {
+                continue;
+            };
+
+            match action {
+                "delete" => {
+                    let Ok(existing) = self.repo.find_by_id(int_id, auth.tenant_id()).await else {
+                        continue;
+                    };
+                    let Some(existing) = existing else {
+                        continue;
+                    };
+                    if self.before_delete(auth, &existing).await.is_err() {
+                        continue;
+                    }
+                    if self.repo.delete(int_id, auth.tenant_id()).await.is_ok() {
+                        self.after_deleted(&existing);
+                        affected += 1;
+                    }
+                }
+                "publish" | "unpublish" => {
+                    let status = if action == "publish" {
+                        PostStatus::Published
+                    } else {
+                        PostStatus::Draft
+                    };
+                    if let Some(post) = self.repo.find_by_id(int_id, auth.tenant_id()).await? {
+                        let (req, _d) = self
+                            .before_update(
+                                auth,
+                                &post,
+                                UpdatePostRequest {
+                                    title: None,
+                                    content: None,
+                                    excerpt: None,
+                                    cover_image: None,
+                                    status: Some(status),
+                                    category_id: None,
+                                    tag_ids: None,
+                                },
+                            )
+                            .await?;
+                        let cmd = UpdatePostCmd {
+                            id: post.id,
+                            title: None,
+                            slug: None,
+                            content: None,
+                            excerpt: None,
+                            cover_image: None,
+                            status: req.status,
+                            category_id: None,
+                            tag_ids: None,
+                            updated_by: auth.user_int_id(),
+                        };
+                        if self.repo.update(cmd, auth.tenant_id()).await.is_ok() {
+                            self.after_updated(&post);
+                            affected += 1;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(affected)
+    }
+}
+
+impl PostServiceImpl {
+    async fn update_inner(
+        &self,
+        id: i64,
+        existing: crate::models::post::Post,
+        req: UpdatePostRequest,
+        mut d: crate::aspects::Dispatched,
+        auth: &AuthUser,
+    ) -> AppResult<PostResponse> {
+        let content = req.content.as_deref().unwrap_or(&existing.content);
+        let new_slug = req
+            .title
+            .as_ref()
+            .map(slugify)
+            .filter(|s| s != &existing.slug);
+        if let Some(slug_str) = new_slug.as_deref() {
+            AspectEngine::set_dispatched_field(
+                &mut d,
+                "slug",
+                slug_aspect::make_unique_slug(slug_str),
+            );
+        }
+
+        let slug = d.str("slug");
+        let excerpt = d.str_or("excerpt", || {
+            crate::aspects::excerpt_aspect::extract_excerpt(content, 200)
+        });
+
+        let category_id = if let Some(ref doc_id) = req.category_id {
+            resolve_doc_id_to_int(self.repo.pool(), "categories", doc_id, auth.tenant_id()).await?
+        } else {
+            None
+        };
+        let tag_ids = match req.tag_ids {
+            Some(ref ids) => {
+                let mut resolved = Vec::new();
+                for doc_id in ids {
+                    if let Some(int_id) =
+                        resolve_doc_id_to_int(self.repo.pool(), "tags", doc_id, auth.tenant_id())
+                            .await?
+                    {
+                        resolved.push(int_id);
+                    }
+                }
+                Some(resolved)
+            }
+            None => None,
+        };
+
+        let cmd = UpdatePostCmd {
+            id,
+            title: req.title,
+            slug,
+            content: Some(content.to_string()),
+            excerpt: Some(excerpt),
+            cover_image: req.cover_image,
+            status: req.status,
+            category_id,
+            tag_ids,
+            updated_by: auth.user_int_id(),
+        };
+        self.repo.update(cmd, auth.tenant_id()).await?;
+
+        build_post_response_from_repo(self.repo.as_ref(), id, auth).await
+    }
+}
+
+// ─── Private helpers ───
+
 async fn joined_row_to_response(
     r: PostJoinedRow,
     tags: Vec<crate::models::post::TagBrief>,
-    _plugins: &PluginManager,
 ) -> AppResult<PostResponse> {
     let status = r.status;
     let comment_status = r.comment_status;
@@ -139,7 +614,6 @@ async fn build_response_from_post(
 async fn build_post_response_from_repo(
     repo: &dyn PostRepository,
     id: i64,
-    plugins: &PluginManager,
     auth: &AuthUser,
 ) -> AppResult<PostResponse> {
     let row = repo.find_joined_by_id(id, auth.tenant_id()).await?;
@@ -147,355 +621,17 @@ async fn build_post_response_from_repo(
         .get_post_tags(row.id, auth.tenant_id())
         .await
         .unwrap_or_default();
-    joined_row_to_response(row, tags, plugins).await
-}
-
-fn generate_slug_and_excerpt(
-    title: &str,
-    content: &str,
-    slug_override: Option<&str>,
-    excerpt_override: Option<&str>,
-) -> (String, String) {
-    let slug = slug_override
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| slug_aspect::make_unique_slug(title));
-    let excerpt = excerpt_override
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| crate::aspects::excerpt_aspect::extract_excerpt(content, 200));
-    (slug, excerpt)
-}
-
-#[tracing::instrument(skip(repo, plugins, eventbus), fields(slug = tracing::field::Empty))]
-#[allow(clippy::too_many_arguments)]
-pub async fn create_post(
-    repo: &dyn PostRepository,
-    plugins: &PluginManager,
-    eventbus: &EventBus,
-    auth: &AuthUser,
-    req: CreatePostRequest,
-) -> AppResult<PostResponse> {
-    let user_id = auth.user_id().unwrap_or_default();
-
-    let req = plugins
-        .dispatch_filter(HookPoint::PostCreating, req)
-        .await?;
-    let status = req.status.unwrap_or(PostStatus::Draft);
-    let (slug, excerpt) =
-        generate_slug_and_excerpt(&req.title, &req.content, None, req.excerpt.as_deref());
-
-    let category_id = if let Some(ref doc_id) = req.category_id {
-        resolve_doc_id_to_int(repo.pool(), "categories", doc_id, auth.tenant_id()).await?
-    } else {
-        None
-    };
-    let tag_ids = match req.tag_ids {
-        Some(ref ids) => {
-            let mut resolved = Vec::new();
-            for doc_id in ids {
-                if let Some(int_id) =
-                    resolve_doc_id_to_int(repo.pool(), "tags", doc_id, auth.tenant_id()).await?
-                {
-                    resolved.push(int_id);
-                }
-            }
-            Some(resolved)
-        }
-        None => None,
-    };
-
-    let cmd = CreatePostCmd {
-        title: req.title,
-        slug,
-        content: req.content,
-        excerpt: Some(excerpt),
-        cover_image: req.cover_image,
-        status,
-        created_by: auth.user_int_id().ok_or(AppError::Unauthorized)?,
-        updated_by: auth.user_int_id(),
-        category_id,
-        tag_ids,
-    };
-    let p = repo.create(cmd, auth.tenant_id()).await?;
-
-    let author_name =
-        crate::models::post::get_author_name(repo.pool(), p.created_by, auth.tenant_id())
-            .await
-            .ok()
-            .flatten();
-
-    let category_name = if let Some(cat_id) = p.category_id {
-        crate::models::post::get_category_name(repo.pool(), cat_id, auth.tenant_id())
-            .await
-            .ok()
-            .flatten()
-    } else {
-        None
-    };
-
-    let tags = repo
-        .get_post_tags(p.id, auth.tenant_id())
-        .await
-        .unwrap_or_default();
-
-    let resp = build_response_from_post(&p, author_name, category_name, tags).await?;
-    tracing::Span::current().record("slug", &resp.slug);
-    eventbus.emit(Event::PostCreated {
-        id: p.document_id.clone(),
-        slug: resp.slug.clone(),
-        title: resp.title.clone(),
-        author_id: user_id.to_string(),
-    });
-    Ok(resp)
-}
-
-pub async fn admin_update_post(
-    repo: &dyn PostRepository,
-    plugins: &PluginManager,
-    eventbus: &EventBus,
-    id: &str,
-    auth: &AuthUser,
-    req: UpdatePostRequest,
-) -> AppResult<PostResponse> {
-    let int_id = resolve_doc_id_to_int(repo.pool(), "posts", id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("post"))?;
-
-    let resp = update_post_inner(repo, plugins, int_id, req, auth).await?;
-    eventbus.emit(Event::PostUpdated {
-        id: id.to_string(),
-        slug: resp.slug.clone(),
-    });
-    Ok(resp)
-}
-
-pub async fn admin_delete_post(
-    repo: &dyn PostRepository,
-    _plugins: &PluginManager,
-    eventbus: &EventBus,
-    id: &str,
-    auth: &AuthUser,
-) -> AppResult<()> {
-    let int_id = resolve_doc_id_to_int(repo.pool(), "posts", id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("post"))?;
-
-    delete_post_inner(repo, int_id, auth).await?;
-    eventbus.emit(Event::PostDeleted {
-        id: id.to_string(),
-        slug: String::new(),
-    });
-    Ok(())
-}
-
-pub async fn batch_posts(
-    repo: &dyn PostRepository,
-    _plugins: &PluginManager,
-    eventbus: &EventBus,
-    action: &str,
-    ids: &[String],
-    auth: &AuthUser,
-) -> AppResult<usize> {
-    let mut affected = 0usize;
-    for doc_id in ids {
-        let Some(int_id) =
-            resolve_doc_id_to_int(repo.pool(), "posts", doc_id, auth.tenant_id()).await?
-        else {
-            continue;
-        };
-
-        match action {
-            "delete" => {
-                if delete_post_inner(repo, int_id, auth).await.is_ok() {
-                    eventbus.emit(Event::PostDeleted {
-                        id: doc_id.clone(),
-                        slug: String::new(),
-                    });
-                    affected += 1;
-                }
-            }
-            "publish" | "unpublish" => {
-                let status = if action == "publish" {
-                    PostStatus::Published
-                } else {
-                    PostStatus::Draft
-                };
-                if let Some(post) = repo.find_by_id(int_id, auth.tenant_id()).await? {
-                    let cmd = UpdatePostCmd {
-                        id: post.id,
-                        title: None,
-                        slug: None,
-                        content: None,
-                        excerpt: None,
-                        cover_image: None,
-                        status: Some(status),
-                        category_id: None,
-                        tag_ids: None,
-                        updated_by: auth.user_int_id(),
-                    };
-                    if repo.update(cmd, auth.tenant_id()).await.is_ok() {
-                        affected += 1;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(affected)
-}
-
-async fn update_post_inner(
-    repo: &dyn PostRepository,
-    plugins: &PluginManager,
-    id: i64,
-    req: UpdatePostRequest,
-    auth: &AuthUser,
-) -> AppResult<PostResponse> {
-    let req = plugins
-        .dispatch_filter(HookPoint::PostUpdating, req)
-        .await?;
-
-    let existing = repo
-        .find_by_id(id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("post"))?;
-
-    let content = req.content.as_deref().unwrap_or(&existing.content);
-    let new_slug = req
-        .title
-        .as_ref()
-        .map(slugify)
-        .filter(|s| s != &existing.slug);
-
-    let slug: Option<String> = new_slug.as_deref().map(slug_aspect::make_unique_slug);
-    let excerpt = req
-        .excerpt
-        .clone()
-        .unwrap_or_else(|| crate::aspects::excerpt_aspect::extract_excerpt(content, 200));
-
-    let category_id = if let Some(ref doc_id) = req.category_id {
-        resolve_doc_id_to_int(repo.pool(), "categories", doc_id, auth.tenant_id()).await?
-    } else {
-        None
-    };
-    let tag_ids = match req.tag_ids {
-        Some(ref ids) => {
-            let mut resolved = Vec::new();
-            for doc_id in ids {
-                if let Some(int_id) =
-                    resolve_doc_id_to_int(repo.pool(), "tags", doc_id, auth.tenant_id()).await?
-                {
-                    resolved.push(int_id);
-                }
-            }
-            Some(resolved)
-        }
-        None => None,
-    };
-
-    let cmd = UpdatePostCmd {
-        id: existing.id,
-        title: req.title,
-        slug,
-        content: Some(content.to_string()),
-        excerpt: Some(excerpt),
-        cover_image: req.cover_image,
-        status: req.status,
-        category_id,
-        tag_ids,
-        updated_by: auth.user_int_id(),
-    };
-    repo.update(cmd, auth.tenant_id()).await?;
-
-    build_post_response_from_repo(repo, id, plugins, auth).await
-}
-
-async fn delete_post_inner(repo: &dyn PostRepository, id: i64, _auth: &AuthUser) -> AppResult<()> {
-    repo.delete(id, _auth.tenant_id()).await?;
-    Ok(())
+    joined_row_to_response(row, tags).await
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn update_post(
-    repo: &dyn PostRepository,
-    plugins: &PluginManager,
-    eventbus: &EventBus,
-    slug: &str,
-    auth: &AuthUser,
-    req: UpdatePostRequest,
-) -> AppResult<PostResponse> {
-    let existing = repo
-        .find_by_slug(slug, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("post"))?;
-
-    crate::utils::auth::require_owner_or_admin(
-        auth.role(),
-        auth.user_int_id().ok_or(AppError::Unauthorized)?,
-        existing.created_by,
-    )?;
-
-    let resp = update_post_inner(repo, plugins, existing.id, req, auth).await?;
-    eventbus.emit(Event::PostUpdated {
-        id: existing.document_id.clone(),
-        slug: resp.slug.clone(),
-    });
-    Ok(resp)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn delete_post(
-    repo: &dyn PostRepository,
-    _plugins: &PluginManager,
-    eventbus: &EventBus,
-    slug: &str,
-    auth: &AuthUser,
-) -> AppResult<()> {
-    let existing = repo
-        .find_by_slug(slug, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("post"))?;
-
-    crate::utils::auth::require_owner_or_admin(
-        auth.role(),
-        auth.user_int_id().ok_or(AppError::Unauthorized)?,
-        existing.created_by,
-    )?;
-
-    let doc_id = existing.document_id.clone();
-    let slug_val = slug.to_string();
-    delete_post_inner(repo, existing.id, auth).await?;
-    eventbus.emit(Event::PostDeleted {
-        id: doc_id,
-        slug: slug_val,
-    });
-    Ok(())
-}
-
-pub async fn get_post(
-    repo: &dyn PostRepository,
-    slug: &str,
-    plugins: &PluginManager,
-    auth: &AuthUser,
-) -> AppResult<PostResponse> {
-    let row = repo
-        .increment_view_count_joined(slug, auth.tenant_id())
-        .await?;
-    let tags = repo
-        .get_post_tags(row.id, auth.tenant_id())
-        .await
-        .unwrap_or_default();
-    joined_row_to_response(row, tags, plugins).await
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn list_posts(
+async fn list_posts_inner(
     repo: &dyn PostRepository,
     page: i64,
     page_size: i64,
     category_id: Option<i64>,
     tag_id: Option<i64>,
     q: Option<&str>,
-    _plugins: &PluginManager,
     search: Option<&dyn SearchEngine>,
     auth: &AuthUser,
 ) -> AppResult<(Vec<PostResponse>, i64)> {
@@ -639,29 +775,11 @@ pub async fn list_posts(
     Ok((responses, total))
 }
 
-pub async fn get_post_any_status(
-    repo: &dyn PostRepository,
-    slug: &str,
-    plugins: &PluginManager,
-    auth: &AuthUser,
-) -> AppResult<PostResponse> {
-    let post = repo.find_by_slug(slug, auth.tenant_id()).await?;
-    let post =
-        post.ok_or_else(|| crate::errors::app_error::AppError::not_found("post not found"))?;
-    let row = repo.find_joined_by_id(post.id, auth.tenant_id()).await?;
-    let tags = repo
-        .get_post_tags(row.id, auth.tenant_id())
-        .await
-        .unwrap_or_default();
-    joined_row_to_response(row, tags, plugins).await
-}
-
-pub async fn list_all_posts(
+async fn list_all_posts_inner(
     repo: &dyn PostRepository,
     page: i64,
     page_size: i64,
     status: Option<PostStatus>,
-    _plugins: &PluginManager,
     auth: &AuthUser,
 ) -> AppResult<(Vec<PostResponse>, i64)> {
     let (rows, total) = repo
@@ -714,6 +832,8 @@ pub async fn list_all_posts(
 
     Ok((responses, total))
 }
+
+// ─── Tests ───
 
 #[cfg(test)]
 mod tests {

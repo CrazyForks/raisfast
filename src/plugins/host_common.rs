@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use crate::config::app::AppConfig;
 use crate::db::{DbArguments, DbConnection, DbPoolConnection, DbQueryResult, Pool};
-use crate::eventbus::{Event, EventBus};
+use crate::event::Event;
+use crate::eventbus::EventBus;
 use crate::plugins::Permissions;
 use crate::plugins::permissions::PermissionChecker;
 use crate::plugins::vfs::VirtualFs;

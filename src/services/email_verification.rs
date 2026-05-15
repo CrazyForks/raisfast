@@ -3,7 +3,8 @@
 use chrono::Utc;
 
 use crate::errors::app_error::{AppError, AppResult};
-use crate::eventbus::{Event, EventBus};
+use crate::event::Event;
+use crate::eventbus::EventBus;
 use crate::repositories::UserRepository;
 
 /// Trigger email verification after registration (if enabled in config).
@@ -21,9 +22,9 @@ pub async fn trigger_email_verification(
         crate::models::email_verification::create(pool, user_id, email, 86400).await?;
 
     eventbus.emit(Event::EmailVerificationRequested {
-        user_id: user_id.to_string(),
+        user_id,
         email: email.to_string(),
-        verify_token: verification.token,
+        token: verification,
     });
 
     Ok(())

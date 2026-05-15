@@ -5,10 +5,12 @@
 
 use crate::commands::CreateCommentCmd;
 use crate::errors::app_error::{AppError, AppResult};
-use crate::eventbus::{Event, EventBus};
+use crate::event::Event;
+use crate::eventbus::EventBus;
 use crate::middleware::auth::AuthUser;
 use crate::models::comment::{self, CommentResponse, CommentStatus};
 use crate::plugins::{HookPoint, PluginManager};
+use crate::policy::Policy;
 use crate::repositories::{CommentRepository, PostRepository};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -96,11 +98,7 @@ pub async fn create_comment(
         )
         .await?;
 
-    eventbus.emit(Event::CommentCreated {
-        id: c.document_id.clone(),
-        post_slug: post_slug.to_string(),
-        author_name: c.nickname.clone().unwrap_or_default(),
-    });
+    eventbus.emit(Event::CommentCreated(c.clone()));
 
     Ok(CommentResponse {
         id: c.id,
@@ -145,11 +143,7 @@ pub async fn delete_comment(
         .await?
         .ok_or_else(|| AppError::not_found("comment"))?;
 
-    crate::utils::auth::require_owner_or_admin_opt(
-        auth.role(),
-        auth.user_int_id().ok_or(AppError::Unauthorized)?,
-        c.created_by,
-    )?;
+    crate::policy::CommentPolicy::can_delete(auth, &c)?;
 
     comment_repo.delete(c.id, auth.tenant_id()).await?;
     Ok(())

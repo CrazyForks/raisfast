@@ -224,7 +224,7 @@ mod tests {
         let mut old = Record::new();
         old.insert("content".into(), json!("Old content here"));
 
-        let mut new = Record::new();
+        let new = Record::new();
 
         let mut ctx = DataBeforeUpdateContext {
             base: BaseContext::new(None, "default".into(), "now".into()),

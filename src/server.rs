@@ -632,19 +632,19 @@ pub fn spawn_event_subscriber(
                 result = rx.recv() => {
                     match result {
                         Ok(event) => match event.as_ref() {
-                            Event::PostCreated { .. } => {
+                            Event::PostCreated(_) => {
                                 let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
                                 plugins.dispatch_action(HookPoint::PostCreated, &json).await;
                             }
-                            Event::PostUpdated { .. } => {
+                            Event::PostUpdated(_) => {
                                 let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
                                 plugins.dispatch_action(HookPoint::PostUpdated, &json).await;
                             }
-                            Event::PostDeleted { .. } => {
+                            Event::PostDeleted(_) => {
                                 let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
                                 plugins.dispatch_action(HookPoint::PostDeleted, &json).await;
                             }
-                            Event::CommentCreated { .. } => {
+                            Event::CommentCreated(_) => {
                                 let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
                                 plugins
                                     .dispatch_action(HookPoint::CommentCreated, &json)
@@ -694,92 +694,75 @@ pub fn spawn_audit_subscriber(
                         Option<i64>,
                         Option<String>,
                     ) = match event.as_ref() {
-                        Event::PostCreated {
-                            id,
-                            title,
-                            author_id,
-                            ..
-                        } => (
+                        Event::PostCreated(data) => (
                             "create",
                             "post",
-                            id.clone(),
-                            author_id.parse().ok(),
-                            Some(format!("title={title}")),
+                            data.id.clone(),
+                            Some(data.created_by),
+                            Some(format!("title={}", data.title)),
                         ),
-                        Event::PostUpdated { id, slug } => (
+                        Event::PostUpdated(data) => (
                             "update",
                             "post",
-                            id.clone(),
+                            data.id.to_string(),
                             None,
-                            Some(format!("slug={slug}")),
+                            Some(format!("slug={}", data.slug)),
                         ),
-                        Event::PostDeleted { id, slug } => (
+                        Event::PostDeleted(data) => (
                             "delete",
                             "post",
-                            id.clone(),
+                            data.document_id.clone(),
                             None,
-                            Some(format!("slug={slug}")),
+                            Some(format!("slug={}", data.slug)),
                         ),
-                        Event::CommentCreated {
-                            id, author_name, ..
-                        } => (
+                        Event::CommentCreated(data) => (
                             "create",
                             "comment",
-                            id.clone(),
+                            data.document_id.clone(),
                             None,
-                            Some(format!("author={author_name}")),
+                            Some(format!("author={}", data.nickname.clone().unwrap_or_default())),
                         ),
-                        Event::CommentDeleted { id } => {
-                            ("delete", "comment", id.clone(), None, None)
-                        }
-                        Event::ContentCreated {
-                            content_type, id, ..
-                        } => ("create", content_type.as_str(), id.clone(), None, None),
-                        Event::ContentUpdated { content_type, id } => {
-                            ("update", content_type.as_str(), id.clone(), None, None)
-                        }
-                        Event::ContentDeleted { content_type, id } => {
-                            ("delete", content_type.as_str(), id.clone(), None, None)
-                        }
-                        Event::UserRegistered { id, username, .. } => (
+                        Event::UserRegistered(data) => (
                             "register",
                             "user",
-                            id.clone(),
+                            data.document_id.clone(),
                             None,
-                            Some(format!("username={username}")),
+                            Some(format!("username={}", data.username)),
                         ),
-                        Event::UserLoggedIn { id, success } => (
+                        Event::UserLoggedIn { user, success } => (
                             "login",
                             "user",
-                            id.clone(),
-                            id.parse().ok(),
-                            Some(format!("success={success}")),
+                            user.document_id.clone(),
+                            Some(user.id),
+                            Some(format!("success={}", success)),
                         ),
-                        Event::MediaUploaded {
-                            id,
-                            filename,
-                            uploader_id,
-                        } => (
+                        Event::MediaUploaded(data) => (
                             "upload",
                             "media",
-                            id.clone(),
-                            uploader_id.parse().ok(),
-                            Some(format!("filename={filename}")),
+                            data.document_id.clone(),
+                            Some(data.user_id),
+                            Some(format!("filename={}", data.filename)),
                         ),
-                        Event::MediaDeleted { id } => ("delete", "media", id.clone(), None, None),
-                        Event::PasswordResetRequested { user_id, email, .. } => (
+                        Event::MediaDeleted(data) => (
+                            "delete",
+                            "media",
+                            data.document_id.clone(),
+                            None,
+                            None,
+                        ),
+                        Event::PasswordResetRequested { user, token: _ } => (
                             "password_reset_request",
                             "user",
-                            user_id.clone(),
+                            user.document_id.clone(),
                             None,
-                            Some(format!("email={email}")),
+                            Some(format!("username={}", user.username)),
                         ),
                         Event::EmailVerificationRequested { user_id, email, .. } => (
                             "email_verification_request",
                             "user",
-                            user_id.clone(),
+                            user_id.to_string(),
                             None,
-                            Some(format!("email={email}")),
+                            Some(format!("email={}", email)),
                         ),
                         _ => continue,
                     };
@@ -842,30 +825,20 @@ pub fn spawn_webhook_subscriber(
                     match result {
                         Ok(event) => {
                             let event_type = match event.as_ref() {
-                                Event::PostCreated { .. } => "post.created",
-                                Event::PostUpdated { .. } => "post.updated",
-                        Event::PostDeleted { .. } => "post.deleted",
-                        Event::CommentCreated { .. } => "comment.created",
-                        Event::CommentDeleted { .. } => "comment.deleted",
-                        Event::ContentCreated { .. } => {
-                            continue;
-                        }
-                        Event::ContentUpdated { .. } => {
-                            continue;
-                        }
-                        Event::ContentDeleted { .. } => {
-                            continue;
-                        }
-                        Event::UserRegistered { .. } => "user.registered",
-                        Event::UserLoggedIn { .. } => "user.loggedIn",
-                        Event::MediaUploaded { .. } => "media.uploaded",
-                        Event::MediaDeleted { .. } => "media.deleted",
-                        Event::PasswordResetRequested { .. } => "user.passwordResetRequested",
-                        Event::EmailVerificationRequested { .. } => {
-                            "user.emailVerificationRequested"
-                        }
-                        _ => continue,
-                    };
+                                Event::PostCreated(_) => "post.created",
+                                Event::PostUpdated(_) => "post.updated",
+                                Event::PostDeleted(_) => "post.deleted",
+                                Event::CommentCreated(_) => "comment.created",
+                                Event::UserRegistered(_) => "user.registered",
+                                Event::UserLoggedIn { .. } => "user.loggedIn",
+                                Event::MediaUploaded(_) => "media.uploaded",
+                                Event::MediaDeleted(_) => "media.deleted",
+                                Event::PasswordResetRequested { .. } => "user.passwordResetRequested",
+                                Event::EmailVerificationRequested { .. } => {
+                                    "user.emailVerificationRequested"
+                                }
+                                _ => continue,
+                            };
 
                     let payload_value = serde_json::to_value(event.as_ref()).unwrap_or_default();
                     let timestamp = crate::utils::tz::now_utc();

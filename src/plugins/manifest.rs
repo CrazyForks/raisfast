@@ -261,6 +261,38 @@ impl HookPoint {
         }
     }
 
+    /// Map table name to the before-create HookPoint.
+    #[must_use]
+    pub fn before_create_for_table(table: &str) -> Option<HookPoint> {
+        match table {
+            "posts" => Some(HookPoint::PostCreating),
+            "comments" => Some(HookPoint::CommentCreating),
+            _ => Some(HookPoint::ContentCreating),
+        }
+    }
+
+    /// Map table name to the before-update HookPoint.
+    #[must_use]
+    pub fn before_update_for_table(table: &str) -> Option<HookPoint> {
+        match table {
+            "posts" => Some(HookPoint::PostUpdating),
+            _ => Some(HookPoint::ContentUpdating),
+        }
+    }
+
+    /// Map an Event to the after-event HookPoint for plugin dispatch.
+    #[must_use]
+    pub fn from_event(event: &crate::event::Event) -> Option<HookPoint> {
+        use crate::event::Event;
+        match event {
+            Event::PostCreated(_) => Some(HookPoint::PostCreated),
+            Event::PostUpdated(_) => Some(HookPoint::PostUpdated),
+            Event::PostDeleted(_) => Some(HookPoint::PostDeleted),
+            Event::CommentCreated(_) => Some(HookPoint::CommentCreated),
+            _ => None,
+        }
+    }
+
     /// Returns all hook points for iteration/testing
     #[must_use]
     pub fn all() -> &'static [HookPoint] {

@@ -1,5 +1,6 @@
 //! Email verification token model and database queries
 
+use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 use crate::db::dialect::ph;
@@ -8,7 +9,7 @@ use crate::utils::id;
 use crate::utils::tz::Timestamp;
 
 /// Email verification token database row model
-#[derive(Debug, FromRow)]
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
 pub struct EmailVerificationToken {
     pub id: i64,

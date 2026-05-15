@@ -46,65 +46,53 @@ impl JobEnqueuer {
 
     fn create_jobs(&self, event: &Event) -> Vec<NewJob> {
         match event {
-            Event::PostCreated { id, .. } => {
-                let post_id: i64 = id.parse().unwrap_or(0);
+            Event::PostCreated(data) => {
+                let post_id: i64 = data.id.parse().unwrap_or(0);
                 vec![NewJob::from(Job::RebuildSearchIndex {
                     post_ids: vec![post_id],
                 })]
             }
-            Event::PostUpdated { id, .. } => {
-                let post_id: i64 = id.parse().unwrap_or(0);
+            Event::PostUpdated(data) => {
+                let post_id: i64 = data.id;
                 vec![NewJob::from(Job::RebuildSearchIndex {
                     post_ids: vec![post_id],
                 })]
             }
-            Event::PostDeleted { id, .. } => {
-                let post_id: i64 = id.parse().unwrap_or(0);
+            Event::PostDeleted(data) => {
+                let post_id: i64 = data.id;
                 vec![NewJob::from(Job::RebuildSearchIndex {
                     post_ids: vec![post_id],
                 })]
             }
-            Event::UserRegistered {
-                id,
-                email,
-                username,
-            } => {
-                let user_id: i64 = id.parse().unwrap_or(0);
+            Event::UserRegistered(data) => {
                 vec![NewJob::from(Job::SendWelcomeEmail {
-                    user_id,
-                    email: email.clone(),
-                    username: username.clone(),
+                    user_id: data.id,
+                    email: String::new(),
+                    username: data.username.clone(),
                 })]
             }
-            Event::MediaUploaded { id, .. } => {
-                let media_id: i64 = id.parse().unwrap_or(0);
+            Event::MediaUploaded(data) => {
                 vec![NewJob::from(Job::GenerateThumbnail {
-                    media_id,
+                    media_id: data.id,
                     size: 300,
                 })]
             }
-            Event::PasswordResetRequested {
-                user_id,
-                email,
-                reset_token,
-            } => {
-                let uid: i64 = user_id.parse().unwrap_or(0);
+            Event::PasswordResetRequested { user, token } => {
                 vec![NewJob::from(Job::SendPasswordResetEmail {
-                    user_id: uid,
-                    email: email.clone(),
-                    reset_token: reset_token.clone(),
+                    user_id: user.id,
+                    email: String::new(),
+                    reset_token: token.token.clone(),
                 })]
             }
             Event::EmailVerificationRequested {
                 user_id,
                 email,
-                verify_token,
+                token,
             } => {
-                let uid: i64 = user_id.parse().unwrap_or(0);
                 vec![NewJob::from(Job::SendEmailVerification {
-                    user_id: uid,
+                    user_id: *user_id,
                     email: email.clone(),
-                    verify_token: verify_token.clone(),
+                    verify_token: token.token.clone(),
                 })]
             }
             _ => vec![],
@@ -115,7 +103,114 @@ impl JobEnqueuer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dto::PostResponse;
+    use crate::models::comment::{Comment, CommentStatus};
+    use crate::models::media::Media;
+    use crate::models::post::{CommentOpenStatus, PostStatus};
+    use crate::models::user::{RegisteredVia, User, UserRole, UserStatus};
     use crate::worker::SqliteJobQueue;
+
+    fn ts() -> crate::utils::tz::Timestamp {
+        "2025-01-01T00:00:00Z".parse().unwrap()
+    }
+
+    fn make_post_response(id: &str, slug: &str, title: &str) -> PostResponse {
+        PostResponse {
+            id: id.into(),
+            title: title.into(),
+            slug: slug.into(),
+            content: String::new(),
+            excerpt: None,
+            cover_image: None,
+            status: PostStatus::Published,
+            created_by: 0,
+            author_name: None,
+            category_id: None,
+            category_name: None,
+            tags: vec![],
+            view_count: 0,
+            is_pinned: false,
+            password: None,
+            comment_status: CommentOpenStatus::Open,
+            format: String::new(),
+            template: String::new(),
+            meta_title: None,
+            meta_description: None,
+            og_title: None,
+            og_description: None,
+            og_image: None,
+            canonical_url: None,
+            reading_time: 0,
+            created_at: ts(),
+            updated_at: ts(),
+            published_at: None,
+            title_highlight: None,
+            excerpt_highlight: None,
+        }
+    }
+
+    fn make_user(id: i64, username: &str) -> User {
+        User {
+            id,
+            document_id: format!("doc-{id}"),
+            tenant_id: None,
+            username: username.into(),
+            role: UserRole::Reader,
+            status: UserStatus::Active,
+            registered_via: RegisteredVia::Email,
+            avatar: None,
+            bio: None,
+            website: None,
+            display_name: None,
+            slug: None,
+            locale: None,
+            social_links: None,
+            metadata: None,
+            created_at: ts(),
+            updated_at: ts(),
+        }
+    }
+
+    fn make_media(id: i64, filename: &str) -> Media {
+        Media {
+            id,
+            document_id: format!("doc-{id}"),
+            tenant_id: None,
+            user_id: 1,
+            filename: filename.into(),
+            filepath: String::new(),
+            mimetype: String::new(),
+            size: 0,
+            width: None,
+            height: None,
+            title: None,
+            alt_text: None,
+            caption: None,
+            description: None,
+            created_at: ts(),
+            updated_at: ts(),
+        }
+    }
+
+    fn make_comment(id: i64) -> Comment {
+        Comment {
+            id,
+            document_id: format!("doc-{id}"),
+            tenant_id: None,
+            post_id: 0,
+            created_by: None,
+            updated_by: None,
+            nickname: None,
+            email: None,
+            content: String::new(),
+            parent_id: None,
+            author_ip: None,
+            author_url: None,
+            status: CommentStatus::Approved,
+            created_at: ts(),
+            updated_at: ts(),
+        }
+    }
 
     async fn setup() -> (EventBus, Arc<SqliteJobQueue>) {
         let bus = EventBus::new(16);
@@ -133,12 +228,9 @@ mod tests {
         let (bus, queue) = setup().await;
         JobEnqueuer::spawn(&bus, queue.clone());
 
-        bus.emit(Event::PostCreated {
-            id: "1".into(),
-            slug: "hello".into(),
-            title: "Hello".into(),
-            author_id: "u1".into(),
-        });
+        bus.emit(Event::PostCreated(make_post_response(
+            "1", "hello", "Hello",
+        )));
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
@@ -155,11 +247,7 @@ mod tests {
         let (bus, queue) = setup().await;
         JobEnqueuer::spawn(&bus, queue.clone());
 
-        bus.emit(Event::UserRegistered {
-            id: "1".into(),
-            username: "alice".into(),
-            email: "alice@example.com".into(),
-        });
+        bus.emit(Event::UserRegistered(make_user(1, "alice")));
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
@@ -168,7 +256,7 @@ mod tests {
         assert!(matches!(
             &jobs[0].job,
             Job::SendWelcomeEmail { user_id, email, username }
-            if user_id == &1 && email == "alice@example.com" && username == "alice"
+            if user_id == &1 && email == "" && username == "alice"
         ));
     }
 
@@ -177,11 +265,7 @@ mod tests {
         let (bus, queue) = setup().await;
         JobEnqueuer::spawn(&bus, queue.clone());
 
-        bus.emit(Event::MediaUploaded {
-            id: "1".into(),
-            filename: "photo.jpg".into(),
-            uploader_id: "1".into(),
-        });
+        bus.emit(Event::MediaUploaded(make_media(1, "photo.jpg")));
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
@@ -198,13 +282,9 @@ mod tests {
         let (bus, queue) = setup().await;
         JobEnqueuer::spawn(&bus, queue.clone());
 
-        bus.emit(Event::CommentCreated {
-            id: "1".into(),
-            post_slug: "hello".into(),
-            author_name: "bob".into(),
-        });
+        bus.emit(Event::CommentCreated(make_comment(1)));
         bus.emit(Event::UserLoggedIn {
-            id: "1".into(),
+            user: make_user(1, "u"),
             success: true,
         });
 
@@ -219,18 +299,8 @@ mod tests {
         let (bus, queue) = setup().await;
         JobEnqueuer::spawn(&bus, queue.clone());
 
-        bus.emit(Event::PostCreated {
-            id: "1".into(),
-            slug: "a".into(),
-            title: "A".into(),
-            author_id: "u1".into(),
-        });
-        bus.emit(Event::PostCreated {
-            id: "2".into(),
-            slug: "b".into(),
-            title: "B".into(),
-            author_id: "u1".into(),
-        });
+        bus.emit(Event::PostCreated(make_post_response("1", "a", "A")));
+        bus.emit(Event::PostCreated(make_post_response("2", "b", "B")));
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 

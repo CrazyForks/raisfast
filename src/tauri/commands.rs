@@ -89,19 +89,19 @@ pub async fn post_list(
         crate::models::user::UserRole::Reader,
         None,
     );
-    let (items, total) = crate::services::post::list_posts(
-        state.0.post_repo.as_ref(),
-        page.unwrap_or(1),
-        page_size.unwrap_or(20),
-        None,
-        None,
-        None,
-        &state.0.plugins,
-        Some(state.0.search.as_ref()),
-        &auth,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    let (items, total) = state
+        .0
+        .post_service
+        .list(
+            &auth,
+            page.unwrap_or(1),
+            page_size.unwrap_or(20),
+            None,
+            None,
+            None,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({
         "items": items,
@@ -122,7 +122,10 @@ pub async fn post_get(
         crate::models::user::UserRole::Reader,
         None,
     );
-    crate::services::post::get_post(state.0.post_repo.as_ref(), &slug, &state.0.plugins, &auth)
+    state
+        .0
+        .post_service
+        .get(&auth, &slug)
         .await
         .map_err(|e| e.to_string())
         .map(|r| serde_json::to_value(r).unwrap_or_default())
@@ -150,16 +153,13 @@ pub async fn post_create(
         crate::models::user::UserRole::Author,
         None,
     );
-    crate::services::post::create_post(
-        state.0.post_repo.as_ref(),
-        &state.0.plugins,
-        &state.0.eventbus,
-        &auth,
-        req,
-    )
-    .await
-    .map_err(|e| e.to_string())
-    .map(|r| serde_json::to_value(r).unwrap_or_default())
+    state
+        .0
+        .post_service
+        .create(&auth, req)
+        .await
+        .map_err(|e| e.to_string())
+        .map(|r| serde_json::to_value(r).unwrap_or_default())
 }
 
 // ── CMS Content Types ─────────────────────────────────────────────
