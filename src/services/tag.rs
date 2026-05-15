@@ -7,10 +7,9 @@ use raisfast_derive::aspect_service;
 
 use crate::aspects::engine::AspectEngine;
 use crate::dto::CreateTagRequest;
-use crate::errors::app_error::{AppError, AppResult};
+use crate::errors::app_error::AppResult;
 use crate::middleware::auth::AuthUser;
 use crate::models::tag::Tag;
-use crate::repositories::TagRepository;
 
 pub fn generate_slug(name: &str) -> String {
     crate::aspects::slug_aspect::generate_slug(name)
@@ -36,7 +35,7 @@ pub trait TagService: Send + Sync {
 pub struct TagServiceImpl {
     #[engine]
     aspect_engine: Arc<AspectEngine>,
-    repo: Arc<dyn TagRepository>,
+    pool: Arc<crate::db::Pool>,
 }
 
 #[async_trait]
@@ -44,10 +43,14 @@ impl TagService for TagServiceImpl {
     async fn create(&self, auth: &AuthUser, req: CreateTagRequest) -> AppResult<Tag> {
         let (req, _d) = self.before_create(auth, req).await?;
         let slug = generate_slug(&req.name);
-        let tag = self
-            .repo
-            .create(&req.name, &slug, auth.tenant_id(), auth.user_int_id())
-            .await?;
+        let tag = crate::models::tag::create(
+            &self.pool,
+            &req.name,
+            &slug,
+            auth.tenant_id(),
+            auth.user_int_id(),
+        )
+        .await?;
         self.after_created(&tag);
         Ok(tag)
     }
@@ -59,41 +62,28 @@ impl TagService for TagServiceImpl {
         name: String,
         slug: String,
     ) -> AppResult<Tag> {
-        let tag = self
-            .repo
-            .find_by_document_id(id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("tag"))?;
+        let tag = crate::models::tag::find_by_document_id(&self.pool, id, auth.tenant_id()).await?;
         let ((name, slug), _d) = self.before_update(auth, &tag, (name, slug)).await?;
-        let updated = self
-            .repo
-            .update(tag.id, &name, &slug, auth.tenant_id())
-            .await?;
+        let updated =
+            crate::models::tag::update(&self.pool, tag.id, &name, &slug, auth.tenant_id()).await?;
         self.after_updated(&updated);
         Ok(updated)
     }
 
     async fn delete(&self, id: &str, auth: &AuthUser) -> AppResult<()> {
-        let tag = self
-            .repo
-            .find_by_document_id(id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("tag"))?;
+        let tag = crate::models::tag::find_by_document_id(&self.pool, id, auth.tenant_id()).await?;
         self.before_delete(auth, &tag).await?;
-        self.repo.delete(tag.id, auth.tenant_id()).await?;
+        crate::models::tag::delete(&self.pool, tag.id, auth.tenant_id()).await?;
         self.after_deleted(&tag);
         Ok(())
     }
 
     async fn get(&self, id: &str, auth: &AuthUser) -> AppResult<Tag> {
-        self.repo
-            .find_by_document_id(id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("tag"))
+        crate::models::tag::find_by_document_id(&self.pool, id, auth.tenant_id()).await
     }
 
     async fn list(&self, auth: &AuthUser) -> AppResult<Vec<Tag>> {
-        self.repo.find_all(auth.tenant_id()).await
+        crate::models::tag::find_all(&self.pool, auth.tenant_id()).await
     }
 
     async fn list_paginated(
@@ -102,9 +92,7 @@ impl TagService for TagServiceImpl {
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<Tag>, i64)> {
-        self.repo
-            .find_paginated(auth.tenant_id(), page, page_size)
-            .await
+        crate::models::tag::find_paginated(&self.pool, auth.tenant_id(), page, page_size).await
     }
 }
 
@@ -112,7 +100,6 @@ impl TagService for TagServiceImpl {
 mod tests {
     use super::*;
     use crate::dto::CreateTagRequest;
-    use crate::repositories::sqlx_tag::SqlxTagRepository;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -130,7 +117,7 @@ mod tests {
     fn make_service(pool: crate::db::Pool) -> Arc<dyn TagService> {
         Arc::new(TagServiceImpl::new(
             Arc::new(AspectEngine::new()),
-            Arc::new(SqlxTagRepository::new(pool.clone())),
+            Arc::new(pool),
         ))
     }
 

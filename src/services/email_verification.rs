@@ -5,7 +5,6 @@ use chrono::Utc;
 use crate::aspects::engine::AspectEngine;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::Event;
-use crate::repositories::UserRepository;
 
 pub async fn trigger_email_verification(
     pool: &crate::db::Pool,
@@ -74,7 +73,6 @@ pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> 
 /// Only unverified users can request a resend. Rate limiting is handled similarly to sms_codes.
 pub async fn resend_verification(
     pool: &crate::db::Pool,
-    _user_repo: &dyn UserRepository,
     aspect_engine: &AspectEngine,
     email: &str,
 ) -> AppResult<()> {
@@ -97,7 +95,6 @@ pub async fn resend_verification(
 mod tests {
     use super::*;
     use crate::commands::CreateUserCmd;
-    use crate::repositories::sqlx_user::SqlxUserRepository;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -108,17 +105,16 @@ mod tests {
     }
 
     async fn insert_user(pool: &crate::db::Pool, email: &str) -> crate::models::user::User {
-        let repo = SqlxUserRepository::new(pool.clone());
-        let user = repo
-            .create(
-                &CreateUserCmd {
-                    username: email.to_string(),
-                    registered_via: crate::models::user::RegisteredVia::Email,
-                },
-                None,
-            )
-            .await
-            .unwrap();
+        let user = crate::models::user::create(
+            pool,
+            &CreateUserCmd {
+                username: email.to_string(),
+                registered_via: crate::models::user::RegisteredVia::Email,
+            },
+            None,
+        )
+        .await
+        .unwrap();
         crate::models::user_credential::create(
             pool,
             user.id,
@@ -223,8 +219,7 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "resend@test.com").await;
         let ae = aspect_engine();
-        let repo = SqlxUserRepository::new(pool.clone());
-        super::resend_verification(&pool, &repo, &ae, "resend@test.com")
+        super::resend_verification(&pool, &ae, "resend@test.com")
             .await
             .unwrap();
         let sql = format!(
@@ -257,8 +252,7 @@ mod tests {
             .await
             .unwrap();
         super::verify_email(&pool, &token_str).await.unwrap();
-        let repo = SqlxUserRepository::new(pool.clone());
-        let err = super::resend_verification(&pool, &repo, &ae, "verified@test.com")
+        let err = super::resend_verification(&pool, &ae, "verified@test.com")
             .await
             .unwrap_err();
         let msg = err.to_string();
@@ -269,9 +263,8 @@ mod tests {
     async fn resend_verification_user_not_found() {
         let pool = setup_pool().await;
         let ae = aspect_engine();
-        let repo = SqlxUserRepository::new(pool.clone());
         assert!(
-            super::resend_verification(&pool, &repo, &ae, "nope@no.com")
+            super::resend_verification(&pool, &ae, "nope@no.com")
                 .await
                 .is_err()
         );

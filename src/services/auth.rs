@@ -20,7 +20,6 @@ use crate::event::Event;
 use crate::middleware::auth::AuthUser;
 use crate::models::user::{UserRole, UserStatus};
 use crate::models::user_credential::AuthType;
-use crate::repositories::{RefreshTokenRepository, UserRepository};
 
 /// JWT token claims (payload).
 ///
@@ -169,9 +168,8 @@ pub fn generate_access_token_for_test(user_id: &str, user_int_id: i64, role: Use
 ///
 /// Checks if the email is already registered; if unique, hashes the password and creates
 /// the user record and email credential within a transaction.
-#[tracing::instrument(skip(_user_repo, aspect_engine), fields(username = tracing::field::Empty))]
+#[tracing::instrument(skip(aspect_engine), fields(username = tracing::field::Empty))]
 pub async fn register(
-    _user_repo: &dyn UserRepository,
     aspect_engine: &AspectEngine,
     req: RegisterRequest,
     tenant_id: Option<&str>,
@@ -305,10 +303,8 @@ pub async fn register(
 /// Looks up the user via email credential, verifies the password, and on success generates
 /// an access token and a refresh token.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(_user_repo, refresh_token_repo, aspect_engine), fields(email = %req.email))]
+#[tracing::instrument(skip(aspect_engine), fields(email = %req.email))]
 pub async fn login(
-    _user_repo: &dyn UserRepository,
-    refresh_token_repo: &dyn RefreshTokenRepository,
     aspect_engine: &AspectEngine,
     pool: &crate::db::Pool,
     req: &crate::dto::LoginRequest,
@@ -366,9 +362,13 @@ pub async fn login(
     let refresh_token_str = generate_refresh_token_string_internal()?;
 
     let expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
-    refresh_token_repo
-        .create_token(user.id, &refresh_token_str, &expires_at.to_rfc3339())
-        .await?;
+    crate::models::refresh_token::create_token(
+        pool,
+        user.id,
+        &refresh_token_str,
+        &expires_at.to_rfc3339(),
+    )
+    .await?;
 
     aspect_engine.emit(Event::UserLoggedIn {
         user: user.clone(),
@@ -389,8 +389,6 @@ pub async fn login(
 /// the old refresh token and generates new access and refresh tokens, ensuring atomicity.
 #[allow(clippy::too_many_arguments)]
 pub async fn refresh(
-    _user_repo: &dyn UserRepository,
-    refresh_token_repo: &dyn RefreshTokenRepository,
     pool: &crate::db::Pool,
     refresh_token_str: &str,
     jwt_secret: &str,
@@ -398,13 +396,12 @@ pub async fn refresh(
     jwt_refresh_expires: u64,
     tenant_id: Option<&str>,
 ) -> AppResult<LoginResponse> {
-    let stored = refresh_token_repo
-        .find_by_token(refresh_token_str)
+    let stored = crate::models::refresh_token::find_by_token(pool, refresh_token_str)
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
 
     if stored.expires_at < Utc::now() {
-        let _ = refresh_token_repo.delete_by_token(refresh_token_str).await;
+        let _ = crate::models::refresh_token::delete_by_token(pool, refresh_token_str).await;
         return Err(AppError::Unauthorized);
     }
 
@@ -467,16 +464,12 @@ pub async fn refresh(
 /// User logout.
 ///
 /// Deletes all refresh tokens for the user, invalidating sessions across all devices.
-pub async fn logout(
-    pool: &crate::db::Pool,
-    refresh_token_repo: &dyn RefreshTokenRepository,
-    auth: &AuthUser,
-) -> AppResult<()> {
+pub async fn logout(pool: &crate::db::Pool, auth: &AuthUser) -> AppResult<()> {
     let user_id = auth.ensure_authenticated()?;
     let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
-    refresh_token_repo.delete_by_user(user.id).await
+    crate::models::refresh_token::delete_by_user(pool, user.id).await
 }
 
 /// Change password.
@@ -484,15 +477,13 @@ pub async fn logout(
 /// After verifying the old password is correct, replaces the old hash with the new password hash,
 /// and deletes all refresh tokens to invalidate all existing sessions.
 pub async fn change_password(
-    user_repo: &dyn UserRepository,
     pool: &crate::db::Pool,
     auth: &AuthUser,
     req: UpdatePasswordRequest,
 ) -> AppResult<()> {
     let user_id = auth.ensure_authenticated()?;
     let tenant_id = auth.tenant_id();
-    let _user = user_repo
-        .find_by_id(user_id, tenant_id)
+    let _user = crate::models::user::find_by_id(pool, user_id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
 

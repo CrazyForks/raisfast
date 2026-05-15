@@ -10,15 +10,14 @@ use raisfast::config::app::AppConfig;
 use raisfast::content_type::repository::{ContentQuery, ContentRepository, SaveContext};
 use raisfast::content_type::schema::ContentTypeSchema;
 use raisfast::db::tenant;
-use raisfast::repositories::*;
 use raisfast::services::post::{PostService, PostServiceImpl};
 use raisfast::services::{auth, options, stats, user};
 
-fn build_post_service(post_repo: Arc<dyn PostRepository>) -> Arc<dyn PostService> {
+fn build_post_service(pool: Arc<sqlx::SqlitePool>) -> Arc<dyn PostService> {
     let engine = Arc::new(raisfast::aspects::engine::AspectEngine::new());
     let search: Arc<dyn raisfast::search::SearchEngine> =
         Arc::new(raisfast::search::NoopSearchEngine);
-    Arc::new(PostServiceImpl::new(post_repo, engine, search))
+    Arc::new(PostServiceImpl::new(pool, engine, search))
 }
 
 fn with_timestamps(data: serde_json::Value) -> serde_json::Value {
@@ -69,13 +68,12 @@ async fn setup_pool() -> sqlx::SqlitePool {
 }
 async fn create_test_user(pool: &sqlx::SqlitePool, label: &str) -> (i64, String) {
     let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
-    let user_repo = SqlxUserRepository::new(pool.clone());
     let req = raisfast::dto::RegisterRequest {
         username: format!("user_{label}"),
         email: format!("{label}@test.com"),
         password: "Password123".into(),
     };
-    let user = auth::register(&user_repo, &aspect_engine, req, None, false, pool)
+    let user = auth::register(&aspect_engine, req, None, false, pool)
         .await
         .unwrap();
     let row: (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
@@ -124,7 +122,6 @@ label = "优先级"
 #[tokio::test]
 async fn tauri_auth_register_service() {
     let pool = setup_pool().await;
-    let user_repo = SqlxUserRepository::new(pool.clone());
     let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
 
     let req = raisfast::dto::RegisterRequest {
@@ -133,7 +130,7 @@ async fn tauri_auth_register_service() {
         password: "Password123".into(),
     };
 
-    let result = auth::register(&user_repo, &aspect_engine, req, None, false, &pool).await;
+    let result = auth::register(&aspect_engine, req, None, false, &pool).await;
 
     assert!(
         result.is_ok(),
@@ -147,7 +144,6 @@ async fn tauri_auth_register_service() {
 #[tokio::test]
 async fn tauri_auth_register_duplicate_email() {
     let pool = setup_pool().await;
-    let user_repo = SqlxUserRepository::new(pool.clone());
     let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
 
     let req = raisfast::dto::RegisterRequest {
@@ -155,7 +151,7 @@ async fn tauri_auth_register_duplicate_email() {
         email: "dup@example.com".into(),
         password: "Password123".into(),
     };
-    auth::register(&user_repo, &aspect_engine, req, None, false, &pool)
+    auth::register(&aspect_engine, req, None, false, &pool)
         .await
         .unwrap();
 
@@ -165,7 +161,7 @@ async fn tauri_auth_register_duplicate_email() {
         password: "Password456".into(),
     };
     let aspect_engine2 = raisfast::aspects::engine::AspectEngine::new();
-    let result = auth::register(&user_repo, &aspect_engine2, req2, None, false, &pool).await;
+    let result = auth::register(&aspect_engine2, req2, None, false, &pool).await;
     assert!(result.is_err(), "duplicate email should fail");
 }
 
@@ -173,8 +169,6 @@ async fn tauri_auth_register_duplicate_email() {
 async fn tauri_auth_login_service() {
     let pool = setup_pool().await;
     let config = test_config();
-    let user_repo = SqlxUserRepository::new(pool.clone());
-    let refresh_repo = SqlxRefreshTokenRepository::new(pool.clone());
     let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
 
     let reg_req = raisfast::dto::RegisterRequest {
@@ -182,7 +176,7 @@ async fn tauri_auth_login_service() {
         email: "login@example.com".into(),
         password: "Password123".into(),
     };
-    auth::register(&user_repo, &aspect_engine, reg_req, None, false, &pool)
+    auth::register(&aspect_engine, reg_req, None, false, &pool)
         .await
         .unwrap();
 
@@ -192,8 +186,6 @@ async fn tauri_auth_login_service() {
     };
     let aspect_engine2 = raisfast::aspects::engine::AspectEngine::new();
     let result = auth::login(
-        &user_repo,
-        &refresh_repo,
         &aspect_engine2,
         &pool,
         &login_req,
@@ -215,8 +207,6 @@ async fn tauri_auth_login_service() {
 async fn tauri_auth_login_wrong_password() {
     let pool = setup_pool().await;
     let config = test_config();
-    let user_repo = SqlxUserRepository::new(pool.clone());
-    let refresh_repo = SqlxRefreshTokenRepository::new(pool.clone());
     let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
 
     let reg_req = raisfast::dto::RegisterRequest {
@@ -224,7 +214,7 @@ async fn tauri_auth_login_wrong_password() {
         email: "wrong@example.com".into(),
         password: "Password123".into(),
     };
-    auth::register(&user_repo, &aspect_engine, reg_req, None, false, &pool)
+    auth::register(&aspect_engine, reg_req, None, false, &pool)
         .await
         .unwrap();
 
@@ -234,8 +224,6 @@ async fn tauri_auth_login_wrong_password() {
     };
     let aspect_engine2 = raisfast::aspects::engine::AspectEngine::new();
     let result = auth::login(
-        &user_repo,
-        &refresh_repo,
         &aspect_engine2,
         &pool,
         &login_req,
@@ -253,7 +241,6 @@ async fn tauri_auth_login_wrong_password() {
 #[tokio::test]
 async fn tauri_auth_get_me_service() {
     let pool = setup_pool().await;
-    let user_repo = SqlxUserRepository::new(pool.clone());
     let aspect_engine = raisfast::aspects::engine::AspectEngine::new();
 
     let reg_req = raisfast::dto::RegisterRequest {
@@ -261,7 +248,7 @@ async fn tauri_auth_get_me_service() {
         email: "getme@example.com".into(),
         password: "Password123".into(),
     };
-    let user = auth::register(&user_repo, &aspect_engine, reg_req, None, false, &pool)
+    let user = auth::register(&aspect_engine, reg_req, None, false, &pool)
         .await
         .unwrap();
 
@@ -271,7 +258,7 @@ async fn tauri_auth_get_me_service() {
         raisfast::models::user::UserRole::Author,
         None,
     );
-    let result = user::get_me(&user_repo, &auth).await;
+    let result = user::get_me(&pool, &auth).await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap().id, user.id);
 }
@@ -284,14 +271,7 @@ async fn tauri_auth_get_me_service() {
 async fn tauri_post_create_and_list() {
     let pool = setup_pool().await;
     let (author_int_id, author_doc_id) = create_test_user(&pool, "author-001").await;
-    let sqlx_repo = SqlxPostRepository::new(pool.clone());
-    let post_repo: Arc<dyn PostRepository> =
-        Arc::new(raisfast::repositories::CachedPostRepository::new(
-            sqlx_repo,
-            Arc::new(raisfast::cache::MemoryCache::new()),
-            None,
-        ));
-    let svc = build_post_service(post_repo.clone());
+    let svc = build_post_service(Arc::new(pool.clone()));
 
     let req = raisfast::dto::CreatePostRequest {
         title: "Test Post".into(),
@@ -324,14 +304,7 @@ async fn tauri_post_create_and_list() {
 async fn tauri_post_get_by_slug() {
     let pool = setup_pool().await;
     let (author_int_id, author_doc_id) = create_test_user(&pool, "author-002").await;
-    let sqlx_repo = SqlxPostRepository::new(pool.clone());
-    let post_repo: Arc<dyn PostRepository> =
-        Arc::new(raisfast::repositories::CachedPostRepository::new(
-            sqlx_repo,
-            Arc::new(raisfast::cache::MemoryCache::new()),
-            None,
-        ));
-    let svc = build_post_service(post_repo.clone());
+    let svc = build_post_service(Arc::new(pool.clone()));
 
     let req = raisfast::dto::CreatePostRequest {
         title: "Slug Test".into(),
@@ -597,8 +570,7 @@ label = "内容"
 #[tokio::test]
 async fn tauri_options_set_and_get() {
     let pool = setup_pool().await;
-    let repo: Arc<dyn OptionsRepository> = Arc::new(SqlxOptionsRepository::new(pool));
-    let svc = options::OptionsService::new(repo, false).await;
+    let svc = options::OptionsService::new(Arc::new(pool), false).await;
 
     svc.set("site.title", serde_json::json!("My Blog"))
         .await
@@ -611,8 +583,7 @@ async fn tauri_options_set_and_get() {
 #[tokio::test]
 async fn tauri_options_get_nonexistent() {
     let pool = setup_pool().await;
-    let repo: Arc<dyn OptionsRepository> = Arc::new(SqlxOptionsRepository::new(pool));
-    let svc = options::OptionsService::new(repo, false).await;
+    let svc = options::OptionsService::new(Arc::new(pool), false).await;
 
     let val = svc.get("nonexistent.key").await;
     assert!(val.is_none());
@@ -621,8 +592,7 @@ async fn tauri_options_get_nonexistent() {
 #[tokio::test]
 async fn tauri_options_overwrite() {
     let pool = setup_pool().await;
-    let repo: Arc<dyn OptionsRepository> = Arc::new(SqlxOptionsRepository::new(pool));
-    let svc = options::OptionsService::new(repo, false).await;
+    let svc = options::OptionsService::new(Arc::new(pool), false).await;
 
     svc.set("key1", serde_json::json!("value1")).await.unwrap();
     svc.set("key1", serde_json::json!("value2")).await.unwrap();

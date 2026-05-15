@@ -10,7 +10,6 @@ use crate::commands::CreateMediaCmd;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::media;
-use crate::repositories::MediaRepository;
 use crate::storage::Storage;
 
 /// Whitelist of allowed upload MIME types.
@@ -111,7 +110,6 @@ pub(crate) fn mime_to_ext(content_type: &str) -> &'static str {
 #[allow(clippy::too_many_arguments)]
 pub async fn save_file(
     storage: &dyn Storage,
-    media_repo: &dyn MediaRepository,
     pool: &crate::db::Pool,
     auth: &AuthUser,
     max_size: usize,
@@ -165,20 +163,20 @@ pub async fn save_file(
         .await?
         .ok_or(AppError::Unauthorized)?;
 
-    let media = media_repo
-        .create(
-            &CreateMediaCmd {
-                user_id: user.id,
-                filename: filename.to_string(),
-                filepath: key.clone(),
-                mimetype: content_type.to_string(),
-                size: data.len() as i64,
-                width,
-                height,
-            },
-            tenant_id,
-        )
-        .await?;
+    let media = media::create(
+        pool,
+        &CreateMediaCmd {
+            user_id: user.id,
+            filename: filename.to_string(),
+            filepath: key.clone(),
+            mimetype: content_type.to_string(),
+            size: data.len() as i64,
+            width,
+            height,
+        },
+        tenant_id,
+    )
+    .await?;
 
     Ok(media)
 }
@@ -205,7 +203,6 @@ fn parse_image_dimensions(data: &[u8]) -> (Option<i32>, Option<i32>) {
 
 /// Paginated query for a user's media files.
 pub async fn list(
-    media_repo: &dyn MediaRepository,
     pool: &crate::db::Pool,
     auth: &AuthUser,
     page: i64,
@@ -215,25 +212,20 @@ pub async fn list(
     let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
-    media_repo
-        .find_all(user.id, page, page_size, auth.tenant_id())
-        .await
+    media::find_all(pool, user.id, page, page_size, auth.tenant_id()).await
 }
 
 pub async fn admin_list(
-    media_repo: &dyn MediaRepository,
+    pool: &crate::db::Pool,
     page: i64,
     page_size: i64,
     auth: &AuthUser,
 ) -> AppResult<(Vec<media::Media>, i64)> {
-    media_repo
-        .find_all_admin(page, page_size, auth.tenant_id())
-        .await
+    media::find_all_admin(pool, page, page_size, auth.tenant_id()).await
 }
 
 pub async fn admin_delete_media(
     storage: &dyn Storage,
-    media_repo: &dyn MediaRepository,
     pool: &crate::db::Pool,
     media_id: &str,
     auth: &AuthUser,
@@ -257,7 +249,7 @@ pub async fn admin_delete_media(
         .await?
         .ok_or_else(|| AppError::not_found("media"))?;
 
-    media_repo.delete(media_pk, auth.tenant_id()).await?;
+    media::delete(pool, media_pk, auth.tenant_id()).await?;
 
     if let Err(e) = storage.delete(&m.filepath).await {
         tracing::warn!(key = %m.filepath, error = %e, "failed to delete file from storage");
@@ -272,7 +264,6 @@ pub async fn admin_delete_media(
 /// then deletes the file via [`Storage`].
 pub async fn delete_media(
     storage: &dyn Storage,
-    media_repo: &dyn MediaRepository,
     pool: &crate::db::Pool,
     media_id: &str,
     auth: &AuthUser,
@@ -305,7 +296,7 @@ pub async fn delete_media(
         return Err(AppError::Forbidden);
     }
 
-    media_repo.delete(media_pk, auth.tenant_id()).await?;
+    media::delete(pool, media_pk, auth.tenant_id()).await?;
 
     if let Err(e) = storage.delete(&m.filepath).await {
         tracing::warn!(key = %m.filepath, error = %e, "failed to delete file from storage");
@@ -315,16 +306,12 @@ pub async fn delete_media(
 }
 
 /// Get storage statistics
-pub async fn stats(
-    media_repo: &dyn MediaRepository,
-    pool: &crate::db::Pool,
-    auth: &AuthUser,
-) -> AppResult<media::MediaStats> {
+pub async fn stats(pool: &crate::db::Pool, auth: &AuthUser) -> AppResult<media::MediaStats> {
     let user_id = auth.ensure_authenticated()?;
     let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
-    media_repo.stats(user.id, auth.tenant_id()).await
+    media::stats(pool, user.id, auth.tenant_id()).await
 }
 
 /// Validate whether the file's actual content magic bytes match the declared Content-Type.

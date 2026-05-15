@@ -4,48 +4,46 @@ use crate::commands::UpdateProfileCmd;
 use crate::dto::{UpdateUserRequest, UserResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
-use crate::repositories::UserRepository;
 
 /// Get the current user's profile.
-pub async fn get_me(user_repo: &dyn UserRepository, auth: &AuthUser) -> AppResult<UserResponse> {
-    let user = user_repo
-        .find_by_id(auth.ensure_authenticated()?, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("user"))?;
+pub async fn get_me(pool: &crate::db::Pool, auth: &AuthUser) -> AppResult<UserResponse> {
+    let user =
+        crate::models::user::find_by_id(pool, auth.ensure_authenticated()?, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("user"))?;
     UserResponse::from_user(user)
 }
 
 /// Update the current user's profile (username, bio, website, avatar).
 pub async fn update_me(
-    user_repo: &dyn UserRepository,
+    pool: &crate::db::Pool,
     auth: &AuthUser,
     req: UpdateUserRequest,
 ) -> AppResult<UserResponse> {
-    let user = user_repo
-        .update_profile(
-            &UpdateProfileCmd {
-                id: auth.user_int_id().ok_or(AppError::Unauthorized)?,
-                username: req.username,
-                bio: req.bio,
-                website: req.website,
-                avatar: req.avatar,
-                social_links: req.social_links,
-                metadata: req.metadata,
-            },
-            auth.tenant_id(),
-        )
-        .await?;
+    let user = crate::models::user::update_profile(
+        pool,
+        &UpdateProfileCmd {
+            id: auth.user_int_id().ok_or(AppError::Unauthorized)?,
+            username: req.username,
+            bio: req.bio,
+            website: req.website,
+            avatar: req.avatar,
+            social_links: req.social_links,
+            metadata: req.metadata,
+        },
+        auth.tenant_id(),
+    )
+    .await?;
     UserResponse::from_user(user)
 }
 
 /// Get a specific user's public profile.
 pub async fn get_public_user(
-    user_repo: &dyn UserRepository,
+    pool: &crate::db::Pool,
     id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<UserResponse> {
-    let user = user_repo
-        .find_by_id(id, tenant_id)
+    let user = crate::models::user::find_by_id(pool, id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
     UserResponse::from_user(user)
@@ -55,12 +53,12 @@ pub async fn get_public_user(
 ///
 /// Returns a list of user responses and the total record count.
 pub async fn list_users(
-    user_repo: &dyn UserRepository,
+    pool: &crate::db::Pool,
     page: i64,
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<UserResponse>, i64)> {
-    let (users, total) = user_repo.find_all(page, page_size, tenant_id).await?;
+    let (users, total) = crate::models::user::find_all(pool, page, page_size, tenant_id).await?;
     let responses: AppResult<Vec<UserResponse>> =
         users.into_iter().map(UserResponse::from_user).collect();
     Ok((responses?, total))
@@ -70,7 +68,6 @@ pub async fn list_users(
 mod tests {
     use super::*;
     use crate::dto::UpdateUserRequest;
-    use crate::repositories::sqlx_user::SqlxUserRepository;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -86,8 +83,8 @@ mod tests {
     }
 
     async fn insert_user(pool: &crate::db::Pool, username: &str) -> crate::models::user::User {
-        let repo = SqlxUserRepository::new(pool.clone());
-        repo.create(
+        crate::models::user::create(
+            pool,
             &crate::commands::CreateUserCmd {
                 username: username.to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
@@ -102,30 +99,27 @@ mod tests {
     async fn get_me_returns_user() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "meuser").await;
-        let repo = SqlxUserRepository::new(pool.clone());
         let a = AuthUser::from_parts(
             Some(user.document_id.clone()),
             Some(user.id),
             crate::models::user::UserRole::Admin,
             None,
         );
-        let resp = super::get_me(&repo, &a).await.unwrap();
+        let resp = super::get_me(&pool, &a).await.unwrap();
         assert_eq!(resp.username, "meuser");
     }
 
     #[tokio::test]
     async fn get_me_not_found() {
         let pool = setup_pool().await;
-        let repo = SqlxUserRepository::new(pool.clone());
         let a = auth("ghost");
-        assert!(super::get_me(&repo, &a).await.is_err());
+        assert!(super::get_me(&pool, &a).await.is_err());
     }
 
     #[tokio::test]
     async fn update_me_changes_bio() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "upduser").await;
-        let repo = SqlxUserRepository::new(pool.clone());
         let a = AuthUser::from_parts(
             Some(user.document_id.clone()),
             Some(user.id),
@@ -133,7 +127,7 @@ mod tests {
             None,
         );
         let resp = super::update_me(
-            &repo,
+            &pool,
             &a,
             UpdateUserRequest {
                 username: None,
@@ -153,8 +147,7 @@ mod tests {
     async fn get_public_user_found() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "pubuser").await;
-        let repo = SqlxUserRepository::new(pool.clone());
-        let resp = super::get_public_user(&repo, &user.document_id, None)
+        let resp = super::get_public_user(&pool, &user.document_id, None)
             .await
             .unwrap();
         assert_eq!(resp.username, "pubuser");
@@ -163,9 +156,8 @@ mod tests {
     #[tokio::test]
     async fn get_public_user_not_found() {
         let pool = setup_pool().await;
-        let repo = SqlxUserRepository::new(pool.clone());
         assert!(
-            super::get_public_user(&repo, "missing", None)
+            super::get_public_user(&pool, "missing", None)
                 .await
                 .is_err()
         );
@@ -176,8 +168,7 @@ mod tests {
         let pool = setup_pool().await;
         insert_user(&pool, "user_a").await;
         insert_user(&pool, "user_b").await;
-        let repo = SqlxUserRepository::new(pool.clone());
-        let (users, total) = super::list_users(&repo, 1, 10, None).await.unwrap();
+        let (users, total) = super::list_users(&pool, 1, 10, None).await.unwrap();
         assert_eq!(total, 2);
         assert_eq!(users.len(), 2);
     }

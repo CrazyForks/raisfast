@@ -11,7 +11,6 @@ use crate::middleware::auth::AuthUser;
 use crate::models::order::{Order, OrderStatus};
 use crate::models::order_item::OrderItem;
 use crate::models::product::ProductStatus;
-use crate::repositories::{OrderRepository, ProductRepository};
 
 const MAX_ITEMS_PER_ORDER: usize = 100;
 const MAX_QUANTITY: i64 = 10000;
@@ -56,22 +55,13 @@ pub trait OrderService: Send + Sync {
 }
 
 pub struct OrderServiceImpl {
-    repo: Arc<dyn OrderRepository>,
-    product_repo: Arc<dyn ProductRepository>,
     aspect_engine: Arc<AspectEngine>,
     pool: Arc<crate::db::Pool>,
 }
 
 impl OrderServiceImpl {
-    pub fn new(
-        repo: Arc<dyn OrderRepository>,
-        product_repo: Arc<dyn ProductRepository>,
-        aspect_engine: Arc<AspectEngine>,
-        pool: Arc<crate::db::Pool>,
-    ) -> Self {
+    pub fn new(aspect_engine: Arc<AspectEngine>, pool: Arc<crate::db::Pool>) -> Self {
         Self {
-            repo,
-            product_repo,
             aspect_engine,
             pool,
         }
@@ -132,11 +122,13 @@ impl OrderService for OrderServiceImpl {
             if item.quantity > MAX_QUANTITY {
                 return Err(AppError::BadRequest("quantity_exceeds_limit".into()));
             }
-            let product = self
-                .product_repo
-                .find_by_document_id(&item.product_id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("product"))?;
+            let product = crate::models::product::find_by_document_id(
+                &self.pool,
+                &item.product_id,
+                auth.tenant_id(),
+            )
+            .await?
+            .ok_or_else(|| AppError::not_found("product"))?;
 
             if product.status != ProductStatus::Active {
                 return Err(AppError::BadRequest("product_not_active".into()));
@@ -202,11 +194,10 @@ impl OrderService for OrderServiceImpl {
     }
 
     async fn cancel(&self, auth: &AuthUser, order_id: &str, user_id: i64) -> AppResult<()> {
-        let order = self
-            .repo
-            .find_by_document_id(order_id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("order"))?;
+        let order =
+            crate::models::order::find_by_document_id(&self.pool, order_id, auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("order"))?;
 
         if order.user_id != user_id {
             return Err(AppError::Forbidden);
@@ -244,11 +235,10 @@ impl OrderService for OrderServiceImpl {
 
     async fn mark_paid(&self, auth: &AuthUser, order_id: &str) -> AppResult<Order> {
         auth.ensure_admin()?;
-        let order = self
-            .repo
-            .find_by_document_id(order_id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("order"))?;
+        let order =
+            crate::models::order::find_by_document_id(&self.pool, order_id, auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("order"))?;
 
         if order.status != OrderStatus::Pending {
             return Err(AppError::BadRequest("only_pending_can_pay".into()));
@@ -277,9 +267,7 @@ impl OrderService for OrderServiceImpl {
         .await;
         result?;
 
-        let paid = self
-            .repo
-            .find_by_id(order.id, auth.tenant_id())
+        let paid = crate::models::order::find_by_id(&self.pool, order.id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("order"))?;
 
@@ -289,11 +277,10 @@ impl OrderService for OrderServiceImpl {
 
     async fn ship(&self, auth: &AuthUser, order_id: &str, req: &ShipOrderRequest) -> AppResult<()> {
         auth.ensure_admin()?;
-        let order = self
-            .repo
-            .find_by_document_id(order_id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("order"))?;
+        let order =
+            crate::models::order::find_by_document_id(&self.pool, order_id, auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("order"))?;
 
         if order.status != OrderStatus::Paid {
             return Err(AppError::BadRequest("only_paid_can_ship".into()));
@@ -332,11 +319,10 @@ impl OrderService for OrderServiceImpl {
         order_id: &str,
         user_id: i64,
     ) -> AppResult<()> {
-        let order = self
-            .repo
-            .find_by_document_id(order_id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("order"))?;
+        let order =
+            crate::models::order::find_by_document_id(&self.pool, order_id, auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("order"))?;
 
         if order.user_id != user_id {
             return Err(AppError::Forbidden);
@@ -374,11 +360,10 @@ impl OrderService for OrderServiceImpl {
 
     async fn refund(&self, auth: &AuthUser, order_id: &str) -> AppResult<()> {
         auth.ensure_admin()?;
-        let order = self
-            .repo
-            .find_by_document_id(order_id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("order"))?;
+        let order =
+            crate::models::order::find_by_document_id(&self.pool, order_id, auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("order"))?;
 
         if order.status != OrderStatus::Paid && order.status != OrderStatus::Shipped {
             return Err(AppError::BadRequest(
@@ -413,11 +398,10 @@ impl OrderService for OrderServiceImpl {
 
     async fn admin_cancel(&self, auth: &AuthUser, order_id: &str) -> AppResult<()> {
         auth.ensure_admin()?;
-        let order = self
-            .repo
-            .find_by_document_id(order_id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("order"))?;
+        let order =
+            crate::models::order::find_by_document_id(&self.pool, order_id, auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("order"))?;
 
         if order.status != OrderStatus::Pending && order.status != OrderStatus::Paid {
             return Err(AppError::BadRequest(
@@ -453,21 +437,19 @@ impl OrderService for OrderServiceImpl {
     }
 
     async fn get(&self, auth: &AuthUser, order_id: &str) -> AppResult<(Order, Vec<OrderItem>)> {
-        let order = self
-            .repo
-            .find_by_document_id(order_id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("order"))?;
+        let order =
+            crate::models::order::find_by_document_id(&self.pool, order_id, auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("order"))?;
         if auth.role() != "admin" {
             let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
             if order.user_id != user_int_id {
                 return Err(AppError::Forbidden);
             }
         }
-        let items = self
-            .repo
-            .find_items_by_order_id(order.id, auth.tenant_id())
-            .await?;
+        let items =
+            crate::models::order_item::find_by_order_id(&self.pool, order.id, auth.tenant_id())
+                .await?;
         Ok((order, items))
     }
 
@@ -478,9 +460,14 @@ impl OrderService for OrderServiceImpl {
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<Order>, i64)> {
-        self.repo
-            .find_by_user_paginated(user_id, auth.tenant_id(), page, page_size)
-            .await
+        crate::models::order::find_by_user_paginated(
+            &self.pool,
+            user_id,
+            auth.tenant_id(),
+            page,
+            page_size,
+        )
+        .await
     }
 
     async fn list_admin(
@@ -491,9 +478,14 @@ impl OrderService for OrderServiceImpl {
         status: Option<&str>,
     ) -> AppResult<(Vec<Order>, i64)> {
         auth.ensure_admin()?;
-        self.repo
-            .find_all_admin_paginated(auth.tenant_id(), page, page_size, status)
-            .await
+        crate::models::order::find_all_admin_paginated(
+            &self.pool,
+            auth.tenant_id(),
+            page,
+            page_size,
+            status,
+        )
+        .await
     }
 
     async fn update_admin_remark(
@@ -503,14 +495,17 @@ impl OrderService for OrderServiceImpl {
         admin_remark: &str,
     ) -> AppResult<()> {
         auth.ensure_admin()?;
-        let order = self
-            .repo
-            .find_by_document_id(order_id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("order"))?;
-        self.repo
-            .update_admin_remark(order.id, admin_remark, auth.tenant_id())
-            .await
+        let order =
+            crate::models::order::find_by_document_id(&self.pool, order_id, auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("order"))?;
+        crate::models::order::update_admin_remark(
+            &self.pool,
+            order.id,
+            admin_remark,
+            auth.tenant_id(),
+        )
+        .await
     }
 
     async fn get_stats(&self, auth: &AuthUser) -> AppResult<crate::dto::OrderStatsResponse> {
@@ -523,7 +518,6 @@ impl OrderService for OrderServiceImpl {
 mod tests {
     use super::*;
     use crate::dto::{CreateOrderItemRequest, ShipOrderRequest};
-    use crate::repositories::sqlx_order::{SqlxOrderRepository, SqlxProductRepository};
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -531,8 +525,6 @@ mod tests {
 
     fn make_service(pool: crate::db::Pool) -> Arc<dyn OrderService> {
         Arc::new(OrderServiceImpl::new(
-            Arc::new(SqlxOrderRepository::new(pool.clone())),
-            Arc::new(SqlxProductRepository::new(pool.clone())),
             Arc::new(AspectEngine::new()),
             Arc::new(pool),
         ))
@@ -668,9 +660,7 @@ mod tests {
         assert_eq!(order.status, OrderStatus::Pending);
         assert!(order.order_no.starts_with("ORD-"));
 
-        let order_repo = SqlxOrderRepository::new(pool);
-        let items = order_repo
-            .find_items_by_order_id(order.id, None)
+        let items = crate::models::order_item::find_by_order_id(&pool, order.id, None)
             .await
             .unwrap();
         assert_eq!(items.len(), 1);
@@ -719,9 +709,7 @@ mod tests {
         assert_eq!(order.total_amount, 500);
         assert_eq!(order.currency, "USD");
         assert_eq!(order.buyer_name.unwrap(), "John");
-        let order_repo = SqlxOrderRepository::new(pool);
-        let items = order_repo
-            .find_items_by_order_id(order.id, None)
+        let items = crate::models::order_item::find_by_order_id(&pool, order.id, None)
             .await
             .unwrap();
         assert_eq!(items.len(), 2);
@@ -836,9 +824,7 @@ mod tests {
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
         svc.cancel(&a, &order.document_id, uid).await.unwrap();
-        let order_repo = SqlxOrderRepository::new(pool);
-        let found = order_repo
-            .find_by_id(order.id, None)
+        let found = crate::models::order::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -864,9 +850,7 @@ mod tests {
         let a = auth(None);
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let order_repo = SqlxOrderRepository::new(pool);
-        order_repo
-            .update_status(order.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
 
@@ -893,11 +877,15 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let order_repo = SqlxOrderRepository::new(pool);
-        order_repo
-            .update_status(order.id, "cancelled", Some("cancelled_at"), None)
-            .await
-            .unwrap();
+        crate::models::order::update_status(
+            &pool,
+            order.id,
+            "cancelled",
+            Some("cancelled_at"),
+            None,
+        )
+        .await
+        .unwrap();
 
         let err = svc.mark_paid(&a, &order.document_id).await.unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "only_pending_can_pay"));
@@ -910,9 +898,7 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let order_repo = SqlxOrderRepository::new(pool.clone());
-        order_repo
-            .update_status(order.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool.clone(), order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
         svc.ship(
@@ -926,8 +912,7 @@ mod tests {
         .await
         .unwrap();
 
-        let found = order_repo
-            .find_by_id(order.id, None)
+        let found = crate::models::order::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -964,21 +949,17 @@ mod tests {
         let a = auth(None);
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let order_repo = SqlxOrderRepository::new(pool);
-        order_repo
-            .update_status(order.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
-        order_repo
-            .update_shipped(order.id, Some("TRK"), Some("UPS"), None)
+        crate::models::order::update_shipped(&pool, order.id, Some("TRK"), Some("UPS"), None)
             .await
             .unwrap();
 
         svc.confirm_receipt(&a, &order.document_id, uid)
             .await
             .unwrap();
-        let found = order_repo
-            .find_by_id(order.id, None)
+        let found = crate::models::order::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -993,13 +974,10 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let order_repo = SqlxOrderRepository::new(pool);
-        order_repo
-            .update_status(order.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
-        order_repo
-            .update_shipped(order.id, Some("TRK"), Some("UPS"), None)
+        crate::models::order::update_shipped(&pool, order.id, Some("TRK"), Some("UPS"), None)
             .await
             .unwrap();
 
@@ -1031,15 +1009,12 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let order_repo = SqlxOrderRepository::new(pool);
-        order_repo
-            .update_status(order.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
         svc.refund(&a, &order.document_id).await.unwrap();
 
-        let found = order_repo
-            .find_by_id(order.id, None)
+        let found = crate::models::order::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -1054,19 +1029,15 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let order_repo = SqlxOrderRepository::new(pool);
-        order_repo
-            .update_status(order.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
-        order_repo
-            .update_shipped(order.id, Some("TRK"), None, None)
+        crate::models::order::update_shipped(&pool, order.id, Some("TRK"), None, None)
             .await
             .unwrap();
         svc.refund(&a, &order.document_id).await.unwrap();
 
-        let found = order_repo
-            .find_by_id(order.id, None)
+        let found = crate::models::order::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -1153,9 +1124,7 @@ mod tests {
         svc.update_admin_remark(&a, &order.document_id, "verified")
             .await
             .unwrap();
-        let order_repo = SqlxOrderRepository::new(pool);
-        let found = order_repo
-            .find_by_id(order.id, None)
+        let found = crate::models::order::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -1180,17 +1149,13 @@ mod tests {
             .await
             .unwrap();
 
-        let order_repo = SqlxOrderRepository::new(pool);
-        order_repo
-            .update_status(o1.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, o1.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
-        order_repo
-            .update_status(o1.id, "shipped", None, None)
+        crate::models::order::update_status(&pool, o1.id, "shipped", None, None)
             .await
             .unwrap();
-        order_repo
-            .update_status(o1.id, "completed", Some("completed_at"), None)
+        crate::models::order::update_status(&pool, o1.id, "completed", Some("completed_at"), None)
             .await
             .unwrap();
 

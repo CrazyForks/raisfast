@@ -12,7 +12,6 @@ use serde_json::Value;
 use crate::commands::CreatePermissionCmd;
 use crate::errors::app_error::AppError;
 use crate::models::rbac::{Permission, Role};
-use crate::repositories::RbacRepository;
 use crate::utils::tz::Timestamp;
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -71,61 +70,60 @@ fn perm_to_view(p: &Permission) -> PermissionView {
 
 /// RBAC service
 pub struct RbacService {
-    repo: Arc<dyn RbacRepository>,
+    pool: Arc<crate::db::Pool>,
 }
 
 impl RbacService {
     /// Create a `RbacService` instance
-    pub fn new(repo: Arc<dyn RbacRepository>) -> Self {
-        Self { repo }
+    pub fn new(pool: Arc<crate::db::Pool>) -> Self {
+        Self { pool }
     }
 
     /// List all roles
     pub async fn list_roles(&self) -> Result<Vec<Role>, AppError> {
-        self.repo.list_roles().await
+        crate::models::rbac::list_roles(&self.pool).await
     }
 
     /// Get a role by ID
     pub async fn get_role(&self, id: &str) -> Result<Option<Role>, AppError> {
-        self.repo.find_role_by_id(id).await
+        crate::models::rbac::find_role_by_id(&self.pool, id).await
     }
 
     /// Create a role
     pub async fn create_role(&self, req: &CreateRoleRequest) -> Result<Role, AppError> {
         let (id, _now) = crate::utils::id::new_document_id_and_timestamp();
-        self.repo
-            .create_role(&id, &req.name, req.description.as_deref())
+        crate::models::rbac::create_role(&self.pool, &id, &req.name, req.description.as_deref())
             .await
     }
 
     /// Update a role
     pub async fn update_role(&self, id: &str, req: &UpdateRoleRequest) -> Result<Role, AppError> {
-        self.repo
-            .update_role(id, req.name.as_deref(), req.description.as_deref())
-            .await
+        crate::models::rbac::update_role(
+            &self.pool,
+            id,
+            req.name.as_deref(),
+            req.description.as_deref(),
+        )
+        .await
     }
 
     /// Delete a role (system roles cannot be deleted)
     pub async fn delete_role(&self, id: &str) -> Result<(), AppError> {
-        let role = self
-            .repo
-            .find_role_by_id(id)
+        let role = crate::models::rbac::find_role_by_id(&self.pool, id)
             .await?
             .ok_or_else(|| AppError::not_found(&format!("role/{id}")))?;
         if role.is_system {
             return Err(AppError::BadRequest("cannot delete system role".into()));
         }
-        self.repo.delete_role(id).await
+        crate::models::rbac::delete_role(&self.pool, id).await
     }
 
     /// Get all permissions for a role (fields/conditions deserialized from JSON)
     pub async fn get_permissions(&self, role_id: &str) -> Result<Vec<PermissionView>, AppError> {
-        let role = self
-            .repo
-            .find_role_by_id(role_id)
+        let role = crate::models::rbac::find_role_by_id(&self.pool, role_id)
             .await?
             .ok_or_else(|| AppError::not_found(&format!("role/{role_id}")))?;
-        let perms = self.repo.find_permissions_by_role_id(role.id).await?;
+        let perms = crate::models::rbac::find_permissions_by_role_id(&self.pool, role.id).await?;
         Ok(perms.iter().map(perm_to_view).collect())
     }
 
@@ -134,12 +132,10 @@ impl RbacService {
         role_id: &str,
         entries: &[PermissionEntry],
     ) -> Result<Vec<PermissionView>, AppError> {
-        let role = self
-            .repo
-            .find_role_by_id(role_id)
+        let role = crate::models::rbac::find_role_by_id(&self.pool, role_id)
             .await?
             .ok_or_else(|| AppError::not_found(&format!("role/{role_id}")))?;
-        self.repo.delete_permissions_by_role_id(role.id).await?;
+        crate::models::rbac::delete_permissions_by_role_id(&self.pool, role.id).await?;
 
         for entry in entries {
             let fields_json = entry
@@ -151,15 +147,17 @@ impl RbacService {
                 .as_ref()
                 .map(|c| serde_json::to_string(c).unwrap_or_default());
 
-            self.repo
-                .insert_permission(&CreatePermissionCmd {
+            crate::models::rbac::insert_permission(
+                &self.pool,
+                &CreatePermissionCmd {
                     role_id: role.id,
                     action: entry.action.clone(),
                     subject: entry.subject.clone(),
                     fields: fields_json,
                     conditions: conditions_json,
-                })
-                .await?;
+                },
+            )
+            .await?;
         }
         self.get_permissions(role_id).await
     }
@@ -192,7 +190,7 @@ impl RbacService {
 
     /// Get role ID by role name
     pub async fn get_role_id_by_name(&self, name: &str) -> Result<Option<i64>, AppError> {
-        self.repo.find_role_id_by_name(name).await
+        crate::models::rbac::find_role_id_by_name(&self.pool, name).await
     }
 }
 

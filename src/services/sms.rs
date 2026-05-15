@@ -5,7 +5,6 @@ use chrono::Utc;
 use crate::dto::LoginResponse;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
-use crate::repositories::{RefreshTokenRepository, UserRepository};
 
 /// Send an SMS verification code.
 ///
@@ -46,8 +45,6 @@ pub async fn send_sms_code(
 /// After successful verification: if the phone number is already registered, log in directly; otherwise, auto-create a user and log in.
 #[allow(clippy::too_many_arguments)]
 pub async fn verify_sms_and_auth(
-    user_repo: &dyn UserRepository,
-    refresh_token_repo: &dyn RefreshTokenRepository,
     pool: &crate::db::Pool,
     phone: &str,
     code: &str,
@@ -94,15 +91,15 @@ pub async fn verify_sms_and_auth(
                 "user_{}",
                 &phone.replace(|c: char| !c.is_ascii_alphanumeric(), "")
             );
-            let user = user_repo
-                .create(
-                    &crate::commands::CreateUserCmd {
-                        username,
-                        registered_via: crate::models::user::RegisteredVia::Phone,
-                    },
-                    None,
-                )
-                .await?;
+            let user = crate::models::user::create(
+                pool,
+                &crate::commands::CreateUserCmd {
+                    username,
+                    registered_via: crate::models::user::RegisteredVia::Phone,
+                },
+                None,
+            )
+            .await?;
             crate::models::user_credential::create(
                 pool,
                 user.id,
@@ -130,9 +127,13 @@ pub async fn verify_sms_and_auth(
     let refresh_token_str = crate::services::auth::generate_refresh_token_string_internal()?;
 
     let expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
-    refresh_token_repo
-        .create_token(user.id, &refresh_token_str, &expires_at.to_rfc3339())
-        .await?;
+    crate::models::refresh_token::create_token(
+        pool,
+        user.id,
+        &refresh_token_str,
+        &expires_at.to_rfc3339(),
+    )
+    .await?;
 
     Ok(LoginResponse {
         access_token,
@@ -144,7 +145,6 @@ pub async fn verify_sms_and_auth(
 
 /// Bind a phone number for a logged-in user.
 pub async fn bind_phone(
-    _user_repo: &dyn UserRepository,
     pool: &crate::db::Pool,
     auth: &AuthUser,
     phone: &str,

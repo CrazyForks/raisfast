@@ -14,7 +14,6 @@ use ts_rs::TS;
 
 use crate::errors::app_error::AppError;
 use crate::models::options::OptionRow;
-use crate::repositories::OptionsRepository;
 
 /// Parse a configuration value string from the database into a `serde_json::Value`
 fn parse_value(value_str: &str) -> Value {
@@ -67,14 +66,14 @@ impl From<&OptionRow> for OptionEntry {
 /// Site options service
 pub struct OptionsService {
     cache: Arc<RwLock<HashMap<String, OptionEntry>>>,
-    repo: Arc<dyn OptionsRepository>,
+    pool: Arc<crate::db::Pool>,
 }
 
 impl OptionsService {
-    pub async fn new(repo: Arc<dyn OptionsRepository>, _builtin_tenantable: bool) -> Self {
+    pub async fn new(pool: Arc<crate::db::Pool>, _builtin_tenantable: bool) -> Self {
         let service = Self {
             cache: Arc::new(RwLock::new(HashMap::new())),
-            repo,
+            pool,
         };
         if let Err(e) = service.load_autoload().await {
             tracing::error!("failed to autoload options: {}", e);
@@ -87,7 +86,7 @@ impl OptionsService {
     }
 
     async fn load_autoload(&self) -> Result<(), AppError> {
-        let rows = self.repo.find_autoload().await?;
+        let rows = crate::models::options::find_autoload(&self.pool).await?;
 
         let mut cache = self.cache.write().await;
         cache.clear();
@@ -110,12 +109,11 @@ impl OptionsService {
         if let Some(entry) = self.cache.read().await.get(key).cloned() {
             return Some(entry);
         }
-        let row: crate::models::options::OptionRow = self
-            .repo
-            .find_by_key(key, self.tenant_arg())
-            .await
-            .ok()
-            .flatten()?;
+        let row: crate::models::options::OptionRow =
+            crate::models::options::find_by_key(&self.pool, key, self.tenant_arg())
+                .await
+                .ok()
+                .flatten()?;
         let entry = OptionEntry::from(&row);
         self.cache
             .write()
@@ -129,8 +127,7 @@ impl OptionsService {
         let value_str = serde_json::to_string(&value)
             .map_err(|e| AppError::Internal(anyhow::anyhow!("json serialize failed: {e}")))?;
 
-        self.repo
-            .upsert_value(key, &value_str, self.tenant_arg())
+        crate::models::options::upsert_value(&self.pool, key, &value_str, self.tenant_arg())
             .await?;
 
         {
@@ -162,8 +159,7 @@ impl OptionsService {
         for (key, value) in &sorted {
             let value_str = serde_json::to_string(value)
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("json serialize failed: {e}")))?;
-            self.repo
-                .upsert_value(key, &value_str, self.tenant_arg())
+            crate::models::options::upsert_value(&self.pool, key, &value_str, self.tenant_arg())
                 .await?;
         }
 
@@ -177,14 +173,14 @@ impl OptionsService {
 
     /// Delete an option
     pub async fn delete(&self, key: &str) -> Result<(), AppError> {
-        self.repo.delete_by_key(key, self.tenant_arg()).await?;
+        crate::models::options::delete_by_key(&self.pool, key, self.tenant_arg()).await?;
         self.cache.write().await.remove(key);
         Ok(())
     }
 
     /// Get all options (organized by group)
     pub async fn get_grouped(&self) -> Result<Vec<OptionGroup>, AppError> {
-        let rows = self.repo.find_all(self.tenant_arg()).await?;
+        let rows = crate::models::options::find_all(&self.pool, self.tenant_arg()).await?;
         let mut group_map: HashMap<String, Vec<OptionEntry>> = HashMap::new();
         let mut group_labels: HashMap<String, String> = HashMap::new();
         let mut group_order: Vec<String> = Vec::new();
@@ -228,11 +224,10 @@ impl OptionsService {
 
     /// Get public options (including metadata, organized by group)
     pub async fn get_public_grouped(&self) -> Vec<OptionGroup> {
-        let rows: Vec<crate::models::options::OptionRow> = self
-            .repo
-            .find_all(self.tenant_arg())
-            .await
-            .unwrap_or_default();
+        let rows: Vec<crate::models::options::OptionRow> =
+            crate::models::options::find_all(&self.pool, self.tenant_arg())
+                .await
+                .unwrap_or_default();
         let mut group_map: HashMap<String, Vec<OptionEntry>> = HashMap::new();
         let mut group_order: Vec<String> = Vec::new();
 

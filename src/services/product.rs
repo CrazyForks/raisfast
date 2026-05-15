@@ -12,7 +12,6 @@ use crate::dto::{CreateProductRequest, UpdateProductRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::product::Product;
-use crate::repositories::ProductRepository;
 
 /// Product business logic trait.
 #[async_trait]
@@ -45,7 +44,7 @@ pub trait ProductService: Send + Sync {
 pub struct ProductServiceImpl {
     #[engine]
     aspect_engine: Arc<AspectEngine>,
-    repo: Arc<dyn ProductRepository>,
+    pool: Arc<crate::db::Pool>,
 }
 
 #[async_trait]
@@ -57,37 +56,36 @@ impl ProductService for ProductServiceImpl {
         let currency = req.currency.as_deref().unwrap_or("CNY");
         let generated_slug = slug_aspect::generate_slug(&req.title);
         let slug = req.slug.as_deref().or(Some(generated_slug.as_str()));
-        let p = self
-            .repo
-            .insert(
-                &CreateProductCmd {
-                    category_id: None,
-                    title: req.title,
-                    description: req.description,
-                    cover_url: req.cover_url,
-                    product_type: product_type.to_string(),
-                    fulfillment_type: fulfillment_type.to_string(),
-                    delivery_hook: req.delivery_hook,
-                    weight: req.weight,
-                    price: req.price,
-                    currency: currency.to_string(),
-                    attributes: req.attributes,
-                    sort_order: req.sort_order.unwrap_or(0),
-                    slug: slug.map(|s| s.to_string()),
-                    content: req.content,
-                    image_ids: req.image_ids,
-                    original_price: req.original_price,
-                    specs: req.specs,
-                    unit: req.unit.as_deref().unwrap_or("piece").to_string(),
-                    min_purchase: req.min_purchase.unwrap_or(1),
-                    max_purchase: req.max_purchase,
-                    virtual_sales: req.virtual_sales.unwrap_or(0),
-                    meta_title: req.meta_title,
-                    meta_description: req.meta_description,
-                },
-                auth.tenant_id(),
-            )
-            .await?;
+        let p = crate::models::product::insert(
+            &self.pool,
+            &CreateProductCmd {
+                category_id: None,
+                title: req.title,
+                description: req.description,
+                cover_url: req.cover_url,
+                product_type: product_type.to_string(),
+                fulfillment_type: fulfillment_type.to_string(),
+                delivery_hook: req.delivery_hook,
+                weight: req.weight,
+                price: req.price,
+                currency: currency.to_string(),
+                attributes: req.attributes,
+                sort_order: req.sort_order.unwrap_or(0),
+                slug: slug.map(|s| s.to_string()),
+                content: req.content,
+                image_ids: req.image_ids,
+                original_price: req.original_price,
+                specs: req.specs,
+                unit: req.unit.as_deref().unwrap_or("piece").to_string(),
+                min_purchase: req.min_purchase.unwrap_or(1),
+                max_purchase: req.max_purchase,
+                virtual_sales: req.virtual_sales.unwrap_or(0),
+                meta_title: req.meta_title,
+                meta_description: req.meta_description,
+            },
+            auth.tenant_id(),
+        )
+        .await?;
         self.after_created(&p);
         Ok(p)
     }
@@ -98,11 +96,10 @@ impl ProductService for ProductServiceImpl {
         id: &str,
         req: UpdateProductRequest,
     ) -> AppResult<Product> {
-        let existing = self
-            .repo
-            .find_by_document_id(id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("product"))?;
+        let existing =
+            crate::models::product::find_by_document_id(&self.pool, id, auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("product"))?;
 
         let (req, _d) = self.before_update(auth, &existing, req).await?;
 
@@ -139,50 +136,47 @@ impl ProductService for ProductServiceImpl {
             existing_published_at_str.as_deref()
         };
 
-        let updated = self
-            .repo
-            .update(
-                &UpdateProductCmd {
-                    id: existing.id,
-                    category_id: None,
-                    title: title.to_string(),
-                    description: req.description.or(existing.description),
-                    cover_url: req.cover_url.or(existing.cover_url),
-                    product_type: product_type.to_string(),
-                    fulfillment_type: fulfillment_type.to_string(),
-                    delivery_hook: req.delivery_hook.or(existing.delivery_hook),
-                    weight: req.weight.or(existing.weight),
-                    price,
-                    currency: currency.to_string(),
-                    status: status.to_string(),
-                    attributes: req.attributes.or(existing.attributes),
-                    sort_order,
-                    slug: slug.map(|s| s.to_string()),
-                    content: req.content.or(existing.content),
-                    image_ids: req.image_ids.or(existing.image_ids),
-                    original_price: req.original_price.or(existing.original_price),
-                    specs: req.specs.or(existing.specs),
-                    unit: unit.to_string(),
-                    min_purchase,
-                    max_purchase: req.max_purchase.or(existing.max_purchase),
-                    total_sales,
-                    virtual_sales,
-                    meta_title: req.meta_title.or(existing.meta_title),
-                    meta_description: req.meta_description.or(existing.meta_description),
-                    published_at: published_at.map(|s| s.to_string()),
-                    version: req.version,
-                },
-                auth.tenant_id(),
-            )
-            .await?;
+        let updated = crate::models::product::update(
+            &self.pool,
+            &UpdateProductCmd {
+                id: existing.id,
+                category_id: None,
+                title: title.to_string(),
+                description: req.description.or(existing.description),
+                cover_url: req.cover_url.or(existing.cover_url),
+                product_type: product_type.to_string(),
+                fulfillment_type: fulfillment_type.to_string(),
+                delivery_hook: req.delivery_hook.or(existing.delivery_hook),
+                weight: req.weight.or(existing.weight),
+                price,
+                currency: currency.to_string(),
+                status: status.to_string(),
+                attributes: req.attributes.or(existing.attributes),
+                sort_order,
+                slug: slug.map(|s| s.to_string()),
+                content: req.content.or(existing.content),
+                image_ids: req.image_ids.or(existing.image_ids),
+                original_price: req.original_price.or(existing.original_price),
+                specs: req.specs.or(existing.specs),
+                unit: unit.to_string(),
+                min_purchase,
+                max_purchase: req.max_purchase.or(existing.max_purchase),
+                total_sales,
+                virtual_sales,
+                meta_title: req.meta_title.or(existing.meta_title),
+                meta_description: req.meta_description.or(existing.meta_description),
+                published_at: published_at.map(|s| s.to_string()),
+                version: req.version,
+            },
+            auth.tenant_id(),
+        )
+        .await?;
 
         if !updated {
             return Err(AppError::Conflict("version_conflict".into()));
         }
 
-        let result = self
-            .repo
-            .find_by_id(existing.id, auth.tenant_id())
+        let result = crate::models::product::find_by_id(&self.pool, existing.id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("product"))?;
         self.after_updated(&result);
@@ -190,22 +184,18 @@ impl ProductService for ProductServiceImpl {
     }
 
     async fn delete(&self, id: &str, auth: &AuthUser) -> AppResult<()> {
-        let existing = self
-            .repo
-            .find_by_document_id(id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("product"))?;
+        let existing =
+            crate::models::product::find_by_document_id(&self.pool, id, auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("product"))?;
         self.before_delete(auth, &existing).await?;
-        self.repo
-            .delete_by_id(existing.id, auth.tenant_id())
-            .await?;
+        crate::models::product::delete_by_id(&self.pool, existing.id, auth.tenant_id()).await?;
         self.after_deleted(&existing);
         Ok(())
     }
 
     async fn get(&self, id: &str, auth: &AuthUser) -> AppResult<Product> {
-        self.repo
-            .find_by_document_id(id, auth.tenant_id())
+        crate::models::product::find_by_document_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("product"))
     }
@@ -216,8 +206,7 @@ impl ProductService for ProductServiceImpl {
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<Product>, i64)> {
-        self.repo
-            .find_active_paginated(auth.tenant_id(), page, page_size)
+        crate::models::product::find_active_paginated(&self.pool, auth.tenant_id(), page, page_size)
             .await
     }
 
@@ -228,16 +217,20 @@ impl ProductService for ProductServiceImpl {
         page_size: i64,
         status: Option<&str>,
     ) -> AppResult<(Vec<Product>, i64)> {
-        self.repo
-            .find_all_admin(auth.tenant_id(), page, page_size, status)
-            .await
+        crate::models::product::find_all_admin(
+            &self.pool,
+            auth.tenant_id(),
+            page,
+            page_size,
+            status,
+        )
+        .await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repositories::sqlx_order::SqlxProductRepository;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -255,7 +248,7 @@ mod tests {
     fn make_service(pool: crate::db::Pool) -> Arc<dyn ProductService> {
         Arc::new(ProductServiceImpl::new(
             Arc::new(AspectEngine::new()),
-            Arc::new(SqlxProductRepository::new(pool.clone())),
+            Arc::new(pool),
         ))
     }
 

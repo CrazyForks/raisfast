@@ -12,7 +12,6 @@ use crate::dto::{CreateCategoryRequest, UpdateCategoryRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::category::Category;
-use crate::repositories::CategoryRepository;
 
 /// Category business logic trait.
 #[async_trait]
@@ -39,7 +38,7 @@ pub trait CategoryService: Send + Sync {
 pub struct CategoryServiceImpl {
     #[engine]
     aspect_engine: Arc<AspectEngine>,
-    repo: Arc<dyn CategoryRepository>,
+    pool: Arc<crate::db::Pool>,
 }
 
 #[async_trait]
@@ -51,28 +50,23 @@ impl CategoryService for CategoryServiceImpl {
             if doc_id.parse::<i64>().is_ok() {
                 doc_id.parse::<i64>().ok()
             } else {
-                self.repo
-                    .find_by_document_id(doc_id, auth.tenant_id())
+                crate::models::category::find_by_document_id(&self.pool, doc_id, auth.tenant_id())
                     .await?
                     .map(|c| c.id)
             }
         } else {
             None
         };
-        let cat = self
-            .repo
-            .create(
-                CreateCategoryCmd {
-                    name: req.name,
-                    slug,
-                    description: req.description,
-                    parent_id,
-                    sort_order: req.sort_order.unwrap_or(0),
-                },
-                auth.tenant_id(),
-                auth.user_int_id(),
-            )
-            .await?;
+        let cmd = CreateCategoryCmd {
+            name: req.name,
+            slug,
+            description: req.description,
+            parent_id,
+            sort_order: req.sort_order.unwrap_or(0),
+        };
+        let cat =
+            crate::models::category::create(&self.pool, &cmd, auth.tenant_id(), auth.user_int_id())
+                .await?;
         self.after_created(&cat);
         Ok(cat)
     }
@@ -83,11 +77,10 @@ impl CategoryService for CategoryServiceImpl {
         id: &str,
         req: UpdateCategoryRequest,
     ) -> AppResult<Category> {
-        let existing = self
-            .repo
-            .find_by_document_id(id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("category"))?;
+        let existing =
+            crate::models::category::find_by_document_id(&self.pool, id, auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("category"))?;
         let (req, _d) = self.before_update(auth, &existing, req).await?;
         let new_slug = req
             .name
@@ -99,54 +92,47 @@ impl CategoryService for CategoryServiceImpl {
             if doc_id.parse::<i64>().is_ok() {
                 doc_id.parse::<i64>().ok()
             } else {
-                self.repo
-                    .find_by_document_id(doc_id, auth.tenant_id())
+                crate::models::category::find_by_document_id(&self.pool, doc_id, auth.tenant_id())
                     .await?
                     .map(|c| c.id)
             }
         } else {
             None
         };
-        let updated = self
-            .repo
-            .update(
-                UpdateCategoryCmd {
-                    id: existing.id,
-                    name: req.name,
-                    slug: Some(new_slug),
-                    description: req.description,
-                    parent_id,
-                    sort_order: req.sort_order,
-                },
-                auth.tenant_id(),
-                auth.user_int_id(),
-            )
-            .await?;
+        let cmd = UpdateCategoryCmd {
+            id: existing.id,
+            name: req.name,
+            slug: Some(new_slug),
+            description: req.description,
+            parent_id,
+            sort_order: req.sort_order,
+        };
+        let updated =
+            crate::models::category::update(&self.pool, &cmd, auth.tenant_id(), auth.user_int_id())
+                .await?;
         self.after_updated(&updated);
         Ok(updated)
     }
 
     async fn delete(&self, id: &str, auth: &AuthUser) -> AppResult<()> {
-        let existing = self
-            .repo
-            .find_by_document_id(id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("category"))?;
+        let existing =
+            crate::models::category::find_by_document_id(&self.pool, id, auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("category"))?;
         self.before_delete(auth, &existing).await?;
-        self.repo.delete(existing.id, auth.tenant_id()).await?;
+        crate::models::category::delete(&self.pool, existing.id, auth.tenant_id()).await?;
         self.after_deleted(&existing);
         Ok(())
     }
 
     async fn get(&self, id: &str, auth: &AuthUser) -> AppResult<Category> {
-        self.repo
-            .find_by_document_id(id, auth.tenant_id())
+        crate::models::category::find_by_document_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("category"))
     }
 
     async fn list(&self, auth: &AuthUser) -> AppResult<Vec<Category>> {
-        self.repo.find_all(auth.tenant_id()).await
+        crate::models::category::find_all(&self.pool, auth.tenant_id()).await
     }
 
     async fn list_paginated(
@@ -155,9 +141,7 @@ impl CategoryService for CategoryServiceImpl {
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<Category>, i64)> {
-        self.repo
-            .find_paginated(auth.tenant_id(), page, page_size)
-            .await
+        crate::models::category::find_paginated(&self.pool, auth.tenant_id(), page, page_size).await
     }
 }
 
@@ -165,7 +149,6 @@ impl CategoryService for CategoryServiceImpl {
 mod tests {
     use super::*;
     use crate::dto::CreateCategoryRequest;
-    use crate::repositories::sqlx_category::SqlxCategoryRepository;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -183,7 +166,7 @@ mod tests {
     fn make_service(pool: crate::db::Pool) -> Arc<dyn CategoryService> {
         Arc::new(CategoryServiceImpl::new(
             Arc::new(AspectEngine::new()),
-            Arc::new(SqlxCategoryRepository::new(pool.clone())),
+            Arc::new(pool),
         ))
     }
 

@@ -12,7 +12,6 @@ use crate::models::wallet;
 use crate::models::wallet::WalletStatus;
 use crate::models::wallet_transaction::WalletTransaction;
 use crate::models::wallet_transaction::{WalletEntryType, WalletReferenceType, WalletTxType};
-use crate::repositories::WalletRepository;
 
 #[async_trait]
 pub trait WalletService: Send + Sync {
@@ -73,19 +72,13 @@ pub trait WalletService: Send + Sync {
 }
 
 pub struct WalletServiceImpl {
-    repo: Arc<dyn WalletRepository>,
     aspect_engine: Arc<AspectEngine>,
     pool: Arc<crate::db::Pool>,
 }
 
 impl WalletServiceImpl {
-    pub fn new(
-        repo: Arc<dyn WalletRepository>,
-        aspect_engine: Arc<AspectEngine>,
-        pool: Arc<crate::db::Pool>,
-    ) -> Self {
+    pub fn new(aspect_engine: Arc<AspectEngine>, pool: Arc<crate::db::Pool>) -> Self {
         Self {
-            repo,
             aspect_engine,
             pool,
         }
@@ -336,7 +329,6 @@ async fn reverse_single_tx(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn credit_wallet(
-    repo: &dyn WalletRepository,
     pool: &crate::db::Pool,
     user_id: i64,
     currency: &str,
@@ -351,7 +343,9 @@ pub async fn credit_wallet(
         return Err(AppError::BadRequest("amount_must_be_positive".into()));
     }
 
-    if let Some(existing) = repo.find_tx_by_transaction_no(transaction_no).await? {
+    if let Some(existing) =
+        crate::models::wallet_transaction::find_tx_by_transaction_no(pool, transaction_no).await?
+    {
         return Ok(existing);
     }
 
@@ -395,7 +389,6 @@ pub async fn credit_wallet(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn debit_wallet(
-    repo: &dyn WalletRepository,
     pool: &crate::db::Pool,
     user_id: i64,
     currency: &str,
@@ -410,7 +403,9 @@ pub async fn debit_wallet(
         return Err(AppError::BadRequest("amount_must_be_positive".into()));
     }
 
-    if let Some(existing) = repo.find_tx_by_transaction_no(transaction_no).await? {
+    if let Some(existing) =
+        crate::models::wallet_transaction::find_tx_by_transaction_no(pool, transaction_no).await?
+    {
         return Ok(existing);
     }
 
@@ -454,7 +449,6 @@ pub async fn debit_wallet(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn transfer(
-    repo: &dyn WalletRepository,
     pool: &crate::db::Pool,
     from_user_id: i64,
     to_user_id: i64,
@@ -475,9 +469,12 @@ pub async fn transfer(
         ));
     }
 
-    if let Some(existing) = repo.find_tx_by_transaction_no(transaction_no).await? {
+    if let Some(existing) =
+        crate::models::wallet_transaction::find_tx_by_transaction_no(pool, transaction_no).await?
+    {
         let pair_no = format!("{transaction_no}_in");
-        let incoming = repo.find_tx_by_transaction_no(&pair_no).await?;
+        let incoming =
+            crate::models::wallet_transaction::find_tx_by_transaction_no(pool, &pair_no).await?;
         let incoming = incoming
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("transfer pair incomplete")))?;
         return Ok((existing, incoming));
@@ -572,12 +569,13 @@ pub async fn transfer(
 }
 
 pub async fn reverse_transaction(
-    repo: &dyn WalletRepository,
     pool: &crate::db::Pool,
     original_tx_id: i64,
     transaction_no: &str,
 ) -> AppResult<WalletTransaction> {
-    if let Some(existing) = repo.find_tx_by_transaction_no(transaction_no).await? {
+    if let Some(existing) =
+        crate::models::wallet_transaction::find_tx_by_transaction_no(pool, transaction_no).await?
+    {
         return Ok(existing);
     }
 
@@ -703,11 +701,11 @@ async fn insert_tx(
 }
 
 async fn enrich_related_id(
-    repo: &dyn WalletRepository,
+    pool: &crate::db::Pool,
     related_id: Option<i64>,
 ) -> AppResult<Option<String>> {
     if let Some(rid) = related_id
-        && let Some(related) = repo.find_tx_by_id(rid).await?
+        && let Some(related) = crate::models::wallet_transaction::find_tx_by_id(pool, rid).await?
     {
         return Ok(Some(related.document_id));
     }
@@ -715,22 +713,23 @@ async fn enrich_related_id(
 }
 
 pub async fn tx_to_response(
-    repo: &dyn WalletRepository,
+    pool: &crate::db::Pool,
     tx: WalletTransaction,
 ) -> AppResult<crate::dto::WalletTransactionResponse> {
-    let related_doc_id = enrich_related_id(repo, tx.related_tx_id).await?;
+    let related_doc_id = enrich_related_id(pool, tx.related_tx_id).await?;
     let mut resp = crate::dto::WalletTransactionResponse::from_tx(tx)?;
     resp.related_tx_id = related_doc_id;
     Ok(resp)
 }
 
 pub async fn tx_list_to_response(
-    repo: &dyn WalletRepository,
+    pool: &crate::db::Pool,
     rows: Vec<WalletTransaction>,
 ) -> AppResult<Vec<crate::dto::WalletTransactionResponse>> {
     let related_ids: Vec<i64> = rows.iter().filter_map(|r| r.related_tx_id).collect();
 
-    let doc_id_map = repo.find_document_ids_by_ids(&related_ids).await?;
+    let doc_id_map =
+        crate::models::wallet_transaction::find_document_ids_by_ids(pool, &related_ids).await?;
 
     let mut responses = Vec::with_capacity(rows.len());
     for row in rows {
@@ -758,7 +757,6 @@ impl WalletService for WalletServiceImpl {
         metadata: Option<&str>,
     ) -> AppResult<WalletTransaction> {
         let tx = credit_wallet(
-            self.repo.as_ref(),
             &self.pool,
             user_id,
             currency,
@@ -786,7 +784,6 @@ impl WalletService for WalletServiceImpl {
         metadata: Option<&str>,
     ) -> AppResult<WalletTransaction> {
         let tx = debit_wallet(
-            self.repo.as_ref(),
             &self.pool,
             user_id,
             currency,
@@ -814,7 +811,6 @@ impl WalletService for WalletServiceImpl {
         metadata: Option<&str>,
     ) -> AppResult<(WalletTransaction, WalletTransaction)> {
         let (out_tx, in_tx) = transfer(
-            self.repo.as_ref(),
             &self.pool,
             from_user_id,
             to_user_id,
@@ -836,13 +832,7 @@ impl WalletService for WalletServiceImpl {
         original_tx_id: i64,
         transaction_no: &str,
     ) -> AppResult<WalletTransaction> {
-        let tx = reverse_transaction(
-            self.repo.as_ref(),
-            &self.pool,
-            original_tx_id,
-            transaction_no,
-        )
-        .await?;
+        let tx = reverse_transaction(&self.pool, original_tx_id, transaction_no).await?;
         match tx.entry_type {
             crate::models::wallet_transaction::WalletEntryType::Credit => {
                 self.after_credited(&tx);
@@ -858,14 +848,14 @@ impl WalletService for WalletServiceImpl {
         &self,
         tx: WalletTransaction,
     ) -> AppResult<crate::dto::WalletTransactionResponse> {
-        tx_to_response(self.repo.as_ref(), tx).await
+        tx_to_response(&self.pool, tx).await
     }
 
     async fn tx_list_to_response(
         &self,
         rows: Vec<WalletTransaction>,
     ) -> AppResult<Vec<crate::dto::WalletTransactionResponse>> {
-        tx_list_to_response(self.repo.as_ref(), rows).await
+        tx_list_to_response(&self.pool, rows).await
     }
 }
 
@@ -873,7 +863,6 @@ impl WalletService for WalletServiceImpl {
 mod tests {
     use super::*;
     use crate::errors::app_error::AppError;
-    use crate::repositories::sqlx_wallet::SqlxWalletRepository;
 
     struct TestContext {
         pool: crate::db::Pool,
@@ -932,10 +921,6 @@ mod tests {
         }
     }
 
-    fn setup_repo(pool: &crate::db::Pool) -> SqlxWalletRepository {
-        SqlxWalletRepository::new(pool.clone())
-    }
-
     async fn seed_currencies(pool: &crate::db::Pool) {
         crate::models::currencies::create(pool, "CNY", "Chinese Yuan", 2)
             .await
@@ -967,12 +952,10 @@ mod tests {
     #[tokio::test]
     async fn credit_normal() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
         let tx_no = new_tx_no();
 
         let tx = credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1001,7 +984,6 @@ mod tests {
     #[tokio::test]
     async fn credit_auto_creates_wallet() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
         assert!(
@@ -1011,37 +993,8 @@ mod tests {
                 .is_none()
         );
 
-        credit_wallet(
-            &repo,
-            &ctx,
-            user.id,
-            "CNY",
-            100,
-            T::Recharge,
-            &new_tx_no(),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-        let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(w.balance, 100);
-    }
-
-    #[tokio::test]
-    async fn credit_idempotent() {
-        let ctx = setup().await;
-        let repo = setup_repo(&ctx);
-        let user = insert_user(&ctx).await;
         let tx_no = new_tx_no();
-
         let tx1 = credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1056,7 +1009,6 @@ mod tests {
         .unwrap();
 
         let tx2 = credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1081,11 +1033,9 @@ mod tests {
     #[tokio::test]
     async fn credit_amount_zero_rejected() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
         let err = credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1108,11 +1058,9 @@ mod tests {
     #[tokio::test]
     async fn credit_negative_amount_rejected() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
         let err = credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1135,11 +1083,9 @@ mod tests {
     #[tokio::test]
     async fn credit_multiple_accumulates() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
         credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1153,7 +1099,6 @@ mod tests {
         .await
         .unwrap();
         credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1179,11 +1124,9 @@ mod tests {
     #[tokio::test]
     async fn debit_normal() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
         credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1198,7 +1141,6 @@ mod tests {
         .unwrap();
 
         let tx = debit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1226,11 +1168,9 @@ mod tests {
     #[tokio::test]
     async fn debit_insufficient_balance() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
         credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1245,7 +1185,6 @@ mod tests {
         .unwrap();
 
         let err = debit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1276,11 +1215,9 @@ mod tests {
     #[tokio::test]
     async fn debit_exact_balance() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
         credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1295,7 +1232,6 @@ mod tests {
         .unwrap();
 
         let tx = debit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1314,12 +1250,10 @@ mod tests {
     #[tokio::test]
     async fn debit_idempotent() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
         let tx_no = new_tx_no();
 
         credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1334,7 +1268,6 @@ mod tests {
         .unwrap();
 
         let tx1 = debit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1348,7 +1281,6 @@ mod tests {
         .await
         .unwrap();
         let tx2 = debit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1373,11 +1305,9 @@ mod tests {
     #[tokio::test]
     async fn debit_amount_must_be_positive() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
         let err = debit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1400,11 +1330,9 @@ mod tests {
     #[tokio::test]
     async fn debit_no_wallet_auto_creates_then_fails_insufficient() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
         let err = debit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1431,12 +1359,10 @@ mod tests {
     #[tokio::test]
     async fn transfer_normal() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let from_user = insert_user(&ctx).await;
         let to_user = insert_user(&ctx).await;
 
         credit_wallet(
-            &repo,
             &ctx,
             from_user.id,
             "CNY",
@@ -1452,7 +1378,6 @@ mod tests {
 
         let tx_no = new_tx_no();
         let (out_tx, in_tx) = transfer(
-            &repo,
             &ctx,
             from_user.id,
             to_user.id,
@@ -1491,12 +1416,10 @@ mod tests {
     #[tokio::test]
     async fn transfer_insufficient_balance() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let from_user = insert_user(&ctx).await;
         let to_user = insert_user(&ctx).await;
 
         credit_wallet(
-            &repo,
             &ctx,
             from_user.id,
             "CNY",
@@ -1511,7 +1434,6 @@ mod tests {
         .unwrap();
 
         let err = transfer(
-            &repo,
             &ctx,
             from_user.id,
             to_user.id,
@@ -1536,11 +1458,9 @@ mod tests {
     #[tokio::test]
     async fn transfer_to_self_rejected() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
         credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1555,7 +1475,6 @@ mod tests {
         .unwrap();
 
         let err = transfer(
-            &repo,
             &ctx,
             user.id,
             user.id,
@@ -1578,12 +1497,10 @@ mod tests {
     #[tokio::test]
     async fn transfer_idempotent() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let from_user = insert_user(&ctx).await;
         let to_user = insert_user(&ctx).await;
 
         credit_wallet(
-            &repo,
             &ctx,
             from_user.id,
             "CNY",
@@ -1599,7 +1516,6 @@ mod tests {
 
         let tx_no = new_tx_no();
         let (out1, in1) = transfer(
-            &repo,
             &ctx,
             from_user.id,
             to_user.id,
@@ -1613,7 +1529,6 @@ mod tests {
         .await
         .unwrap();
         let (out2, in2) = transfer(
-            &repo,
             &ctx,
             from_user.id,
             to_user.id,
@@ -1640,12 +1555,10 @@ mod tests {
     #[tokio::test]
     async fn transfer_amount_must_be_positive() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let from_user = insert_user(&ctx).await;
         let to_user = insert_user(&ctx).await;
 
         let err = transfer(
-            &repo,
             &ctx,
             from_user.id,
             to_user.id,
@@ -1670,11 +1583,9 @@ mod tests {
     #[tokio::test]
     async fn reverse_credit() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
         let original = credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1688,7 +1599,7 @@ mod tests {
         .await
         .unwrap();
 
-        let rev_tx = reverse_transaction(&repo, &ctx, original.id, &new_tx_no())
+        let rev_tx = reverse_transaction(&ctx, original.id, &new_tx_no())
             .await
             .unwrap();
 
@@ -1707,11 +1618,9 @@ mod tests {
     #[tokio::test]
     async fn reverse_debit() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
         credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1726,7 +1635,6 @@ mod tests {
         .unwrap();
 
         let original = debit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1740,7 +1648,7 @@ mod tests {
         .await
         .unwrap();
 
-        let rev_tx = reverse_transaction(&repo, &ctx, original.id, &new_tx_no())
+        let rev_tx = reverse_transaction(&ctx, original.id, &new_tx_no())
             .await
             .unwrap();
 
@@ -1758,11 +1666,9 @@ mod tests {
     #[tokio::test]
     async fn reverse_idempotent() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
         let original = credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1777,10 +1683,10 @@ mod tests {
         .unwrap();
 
         let rev_no = new_tx_no();
-        let rev1 = reverse_transaction(&repo, &ctx, original.id, &rev_no)
+        let rev1 = reverse_transaction(&ctx, original.id, &rev_no)
             .await
             .unwrap();
-        let rev2 = reverse_transaction(&repo, &ctx, original.id, &rev_no)
+        let rev2 = reverse_transaction(&ctx, original.id, &rev_no)
             .await
             .unwrap();
         assert_eq!(rev1.transaction_no, rev2.transaction_no);
@@ -1789,11 +1695,9 @@ mod tests {
     #[tokio::test]
     async fn reverse_cannot_reverse_reversal() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
         let original = credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1806,11 +1710,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let rev = reverse_transaction(&repo, &ctx, original.id, &new_tx_no())
+        let rev = reverse_transaction(&ctx, original.id, &new_tx_no())
             .await
             .unwrap();
 
-        let err = reverse_transaction(&repo, &ctx, rev.id, &new_tx_no())
+        let err = reverse_transaction(&ctx, rev.id, &new_tx_no())
             .await
             .unwrap_err();
 
@@ -1823,11 +1727,9 @@ mod tests {
     #[tokio::test]
     async fn reverse_already_reversed_rejected() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
         let original = credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1840,11 +1742,11 @@ mod tests {
         )
         .await
         .unwrap();
-        reverse_transaction(&repo, &ctx, original.id, &new_tx_no())
+        reverse_transaction(&ctx, original.id, &new_tx_no())
             .await
             .unwrap();
 
-        let err = reverse_transaction(&repo, &ctx, original.id, &new_tx_no())
+        let err = reverse_transaction(&ctx, original.id, &new_tx_no())
             .await
             .unwrap_err();
 
@@ -1857,11 +1759,9 @@ mod tests {
     #[tokio::test]
     async fn reverse_insufficient_balance_for_debit_reversal() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let user = insert_user(&ctx).await;
 
         credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1875,7 +1775,6 @@ mod tests {
         .await
         .unwrap();
         let credit_tx = credit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1889,7 +1788,6 @@ mod tests {
         .await
         .unwrap();
         debit_wallet(
-            &repo,
             &ctx,
             user.id,
             "CNY",
@@ -1903,7 +1801,7 @@ mod tests {
         .await
         .unwrap();
 
-        let err = reverse_transaction(&repo, &ctx, credit_tx.id, &new_tx_no())
+        let err = reverse_transaction(&ctx, credit_tx.id, &new_tx_no())
             .await
             .unwrap_err();
 
@@ -1916,9 +1814,8 @@ mod tests {
     #[tokio::test]
     async fn reverse_nonexistent_transaction() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
 
-        let err = reverse_transaction(&repo, &ctx, 99999, &new_tx_no())
+        let err = reverse_transaction(&ctx, 99999, &new_tx_no())
             .await
             .unwrap_err();
 
@@ -1933,12 +1830,10 @@ mod tests {
     #[tokio::test]
     async fn reverse_transfer_reverses_both_legs() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let from_user = insert_user(&ctx).await;
         let to_user = insert_user(&ctx).await;
 
         credit_wallet(
-            &repo,
             &ctx,
             from_user.id,
             "CNY",
@@ -1954,7 +1849,6 @@ mod tests {
 
         let tx_no = new_tx_no();
         let (out_tx, _in_tx) = transfer(
-            &repo,
             &ctx,
             from_user.id,
             to_user.id,
@@ -1969,9 +1863,7 @@ mod tests {
         .unwrap();
 
         let rev_no = new_tx_no();
-        let rev = reverse_transaction(&repo, &ctx, out_tx.id, &rev_no)
-            .await
-            .unwrap();
+        let rev = reverse_transaction(&ctx, out_tx.id, &rev_no).await.unwrap();
 
         assert_eq!(rev.entry_type, E::Credit);
         assert_eq!(rev.amount, 300);
@@ -1994,12 +1886,10 @@ mod tests {
     #[tokio::test]
     async fn reverse_transfer_in_also_reverses_both_legs() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let from_user = insert_user(&ctx).await;
         let to_user = insert_user(&ctx).await;
 
         credit_wallet(
-            &repo,
             &ctx,
             from_user.id,
             "CNY",
@@ -2015,7 +1905,6 @@ mod tests {
 
         let tx_no = new_tx_no();
         let (_out_tx, in_tx) = transfer(
-            &repo,
             &ctx,
             from_user.id,
             to_user.id,
@@ -2029,7 +1918,7 @@ mod tests {
         .await
         .unwrap();
 
-        let rev = reverse_transaction(&repo, &ctx, in_tx.id, &new_tx_no())
+        let rev = reverse_transaction(&ctx, in_tx.id, &new_tx_no())
             .await
             .unwrap();
         assert_eq!(rev.tx_type, T::Refund);
@@ -2050,12 +1939,10 @@ mod tests {
     #[tokio::test]
     async fn reverse_transfer_insufficient_receiver_balance() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let from_user = insert_user(&ctx).await;
         let to_user = insert_user(&ctx).await;
 
         credit_wallet(
-            &repo,
             &ctx,
             from_user.id,
             "CNY",
@@ -2071,7 +1958,6 @@ mod tests {
 
         let tx_no = new_tx_no();
         let (out_tx, _in_tx) = transfer(
-            &repo,
             &ctx,
             from_user.id,
             to_user.id,
@@ -2087,7 +1973,6 @@ mod tests {
 
         // receiver spends the money
         debit_wallet(
-            &repo,
             &ctx,
             to_user.id,
             "CNY",
@@ -2101,7 +1986,7 @@ mod tests {
         .await
         .unwrap();
 
-        let err = reverse_transaction(&repo, &ctx, out_tx.id, &new_tx_no())
+        let err = reverse_transaction(&ctx, out_tx.id, &new_tx_no())
             .await
             .unwrap_err();
 
@@ -2114,12 +1999,10 @@ mod tests {
     #[tokio::test]
     async fn reverse_transfer_pair_already_reversed() {
         let ctx = setup().await;
-        let repo = setup_repo(&ctx);
         let from_user = insert_user(&ctx).await;
         let to_user = insert_user(&ctx).await;
 
         credit_wallet(
-            &repo,
             &ctx,
             from_user.id,
             "CNY",
@@ -2135,7 +2018,6 @@ mod tests {
 
         let tx_no = new_tx_no();
         let (out_tx, in_tx) = transfer(
-            &repo,
             &ctx,
             from_user.id,
             to_user.id,
@@ -2150,12 +2032,12 @@ mod tests {
         .unwrap();
 
         // reverse the out_tx first
-        reverse_transaction(&repo, &ctx, out_tx.id, &new_tx_no())
+        reverse_transaction(&ctx, out_tx.id, &new_tx_no())
             .await
             .unwrap();
 
         // trying to reverse in_tx should fail because it was already reversed as part of the pair
-        let err = reverse_transaction(&repo, &ctx, in_tx.id, &new_tx_no())
+        let err = reverse_transaction(&ctx, in_tx.id, &new_tx_no())
             .await
             .unwrap_err();
 

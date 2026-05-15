@@ -19,10 +19,6 @@ use crate::models::payment_transaction::PaymentTransaction;
 use crate::models::wallet_transaction::{WalletReferenceType, WalletTxType};
 use crate::payment::ProviderResponse;
 use crate::payment::routing::{RoutingContext, select_best_channel, select_channels};
-use crate::repositories::{
-    OrderRepository, PaymentChannelRepository, PaymentOrderRepository, PaymentRefundRepository,
-    PaymentTransactionRepository, ProductRepository, WalletRepository,
-};
 use crate::services::audit::AuditService;
 use base64::Engine;
 
@@ -124,40 +120,18 @@ pub trait PaymentService: Send + Sync {
 }
 
 pub struct PaymentServiceImpl {
-    channel_repo: Arc<dyn PaymentChannelRepository>,
-    order_repo: Arc<dyn PaymentOrderRepository>,
-    tx_repo: Arc<dyn PaymentTransactionRepository>,
-    refund_repo: Arc<dyn PaymentRefundRepository>,
-    shop_order_repo: Arc<dyn OrderRepository>,
-    product_repo: Arc<dyn ProductRepository>,
-    wallet_repo: Arc<dyn WalletRepository>,
     config: Arc<AppConfig>,
     aspect_engine: Arc<AspectEngine>,
     pool: Arc<crate::db::Pool>,
 }
 
 impl PaymentServiceImpl {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        channel_repo: Arc<dyn PaymentChannelRepository>,
-        order_repo: Arc<dyn PaymentOrderRepository>,
-        tx_repo: Arc<dyn PaymentTransactionRepository>,
-        refund_repo: Arc<dyn PaymentRefundRepository>,
-        shop_order_repo: Arc<dyn OrderRepository>,
-        product_repo: Arc<dyn ProductRepository>,
-        wallet_repo: Arc<dyn WalletRepository>,
         config: Arc<AppConfig>,
         aspect_engine: Arc<AspectEngine>,
         pool: Arc<crate::db::Pool>,
     ) -> Self {
         Self {
-            channel_repo,
-            order_repo,
-            tx_repo,
-            refund_repo,
-            shop_order_repo,
-            product_repo,
-            wallet_repo,
             config,
             aspect_engine,
             pool,
@@ -187,7 +161,7 @@ impl PaymentService for PaymentServiceImpl {
         req: CreatePaymentChannelRequest,
     ) -> AppResult<PaymentChannel> {
         let audit = AuditService::new((*self.pool).clone());
-        create_channel(self.channel_repo.as_ref(), auth, &self.config, &audit, req).await
+        create_channel(&self.pool, auth, &self.config, &audit, req).await
     }
 
     async fn update_channel(
@@ -197,28 +171,20 @@ impl PaymentService for PaymentServiceImpl {
         req: UpdatePaymentChannelRequest,
     ) -> AppResult<PaymentChannel> {
         let audit = AuditService::new((*self.pool).clone());
-        update_channel(
-            self.channel_repo.as_ref(),
-            auth,
-            &self.config,
-            &audit,
-            id,
-            req,
-        )
-        .await
+        update_channel(&self.pool, auth, &self.config, &audit, id, req).await
     }
 
     async fn delete_channel(&self, auth: &AuthUser, id: &str) -> AppResult<()> {
         let audit = AuditService::new((*self.pool).clone());
-        delete_channel(self.channel_repo.as_ref(), auth, &audit, id).await
+        delete_channel(&self.pool, auth, &audit, id).await
     }
 
     async fn get_channel(&self, auth: &AuthUser, id: &str) -> AppResult<PaymentChannel> {
-        get_channel(self.channel_repo.as_ref(), auth, id).await
+        get_channel(&self.pool, auth, id).await
     }
 
     async fn list_channels(&self, auth: &AuthUser) -> AppResult<Vec<PaymentChannel>> {
-        list_channels(self.channel_repo.as_ref(), auth).await
+        list_channels(&self.pool, auth).await
     }
 
     async fn list_available_channels(
@@ -228,15 +194,7 @@ impl PaymentService for PaymentServiceImpl {
         country: Option<&str>,
         language: Option<&str>,
     ) -> AppResult<AvailableChannelsResponse> {
-        list_available_channels(
-            self.channel_repo.as_ref(),
-            self.shop_order_repo.as_ref(),
-            auth,
-            order_id,
-            country,
-            language,
-        )
-        .await
+        list_available_channels(&self.pool, auth, order_id, country, language).await
     }
 
     async fn create_payment_order(
@@ -250,10 +208,6 @@ impl PaymentService for PaymentServiceImpl {
     ) -> AppResult<(PaymentOrder, Option<ProviderResponse>)> {
         let (order, resp) = create_payment_order(
             &self.pool,
-            self.channel_repo.as_ref(),
-            self.order_repo.as_ref(),
-            self.product_repo.as_ref(),
-            self.shop_order_repo.as_ref(),
             auth,
             user_id,
             req,
@@ -269,17 +223,7 @@ impl PaymentService for PaymentServiceImpl {
 
     async fn cancel_payment_order(&self, auth: &AuthUser, id: &str, user_id: i64) -> AppResult<()> {
         let audit = AuditService::new((*self.pool).clone());
-        cancel_payment_order(
-            &self.pool,
-            self.order_repo.as_ref(),
-            self.channel_repo.as_ref(),
-            auth,
-            &audit,
-            &self.config,
-            id,
-            user_id,
-        )
-        .await
+        cancel_payment_order(&self.pool, auth, &audit, &self.config, id, user_id).await
     }
 
     async fn get_payment_order(
@@ -288,7 +232,7 @@ impl PaymentService for PaymentServiceImpl {
         user_id: i64,
         id: &str,
     ) -> AppResult<PaymentOrder> {
-        get_payment_order(self.order_repo.as_ref(), auth, user_id, id).await
+        get_payment_order(&self.pool, auth, user_id, id).await
     }
 
     async fn list_user_payment_orders(
@@ -298,7 +242,7 @@ impl PaymentService for PaymentServiceImpl {
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<PaymentOrder>, i64)> {
-        list_user_payment_orders(self.order_repo.as_ref(), auth, user_id, page, page_size).await
+        list_user_payment_orders(&self.pool, auth, user_id, page, page_size).await
     }
 
     async fn handle_callback(
@@ -310,10 +254,6 @@ impl PaymentService for PaymentServiceImpl {
         let audit = AuditService::new((*self.pool).clone());
         let order = handle_callback(
             &self.pool,
-            self.channel_repo.as_ref(),
-            self.order_repo.as_ref(),
-            self.tx_repo.as_ref(),
-            self.wallet_repo.as_ref(),
             &audit,
             &self.config,
             channel_doc_id,
@@ -332,24 +272,10 @@ impl PaymentService for PaymentServiceImpl {
         req: CreateRefundRequest,
     ) -> AppResult<PaymentRefund> {
         let audit = AuditService::new((*self.pool).clone());
-        let refund = refund_payment_order(
-            &self.pool,
-            self.order_repo.as_ref(),
-            self.channel_repo.as_ref(),
-            self.tx_repo.as_ref(),
-            self.refund_repo.as_ref(),
-            self.wallet_repo.as_ref(),
-            auth,
-            &audit,
-            &self.config,
-            id,
-            req,
-        )
-        .await?;
-        if let Ok(Some(order)) = self
-            .order_repo
-            .find_by_document_id(id, auth.tenant_id())
-            .await
+        let refund = refund_payment_order(&self.pool, auth, &audit, &self.config, id, req).await?;
+        if let Ok(Some(order)) =
+            crate::models::payment_order::find_by_document_id(&self.pool, id, auth.tenant_id())
+                .await
         {
             self.after_payment_refunded(&order);
         }
@@ -363,7 +289,7 @@ impl PaymentService for PaymentServiceImpl {
         page_size: i64,
         status: Option<&str>,
     ) -> AppResult<(Vec<PaymentOrder>, i64)> {
-        list_admin_payment_orders(self.order_repo.as_ref(), auth, page, page_size, status).await
+        list_admin_payment_orders(&self.pool, auth, page, page_size, status).await
     }
 
     async fn list_admin_transactions(
@@ -372,7 +298,7 @@ impl PaymentService for PaymentServiceImpl {
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<PaymentTransaction>, i64)> {
-        list_admin_transactions(self.tx_repo.as_ref(), auth, page, page_size).await
+        list_admin_transactions(&self.pool, auth, page, page_size).await
     }
 
     async fn list_admin_refunds(
@@ -381,7 +307,7 @@ impl PaymentService for PaymentServiceImpl {
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<PaymentRefund>, i64)> {
-        list_admin_refunds(self.refund_repo.as_ref(), auth, page, page_size).await
+        list_admin_refunds(&self.pool, auth, page, page_size).await
     }
 
     async fn list_admin_channels(
@@ -391,9 +317,14 @@ impl PaymentService for PaymentServiceImpl {
         page_size: i64,
     ) -> AppResult<(Vec<PaymentChannel>, i64)> {
         auth.ensure_admin()?;
-        self.channel_repo
-            .find_all_admin_paginated(auth.tenant_id(), page, page_size, None)
-            .await
+        crate::models::payment_channel::find_all_admin_paginated(
+            &self.pool,
+            auth.tenant_id(),
+            page,
+            page_size,
+            None,
+        )
+        .await
     }
 
     async fn list_order_transactions(
@@ -403,9 +334,12 @@ impl PaymentService for PaymentServiceImpl {
         order_id: &str,
     ) -> AppResult<Vec<PaymentTransaction>> {
         let order = self.get_payment_order(auth, user_id, order_id).await?;
-        self.tx_repo
-            .find_by_payment_order_id(order.id, auth.tenant_id())
-            .await
+        crate::models::payment_transaction::find_by_payment_order_id(
+            &self.pool,
+            order.id,
+            auth.tenant_id(),
+        )
+        .await
     }
 
     async fn list_order_refunds(
@@ -415,9 +349,12 @@ impl PaymentService for PaymentServiceImpl {
         order_id: &str,
     ) -> AppResult<Vec<PaymentRefund>> {
         let order = self.get_payment_order(auth, user_id, order_id).await?;
-        self.refund_repo
-            .find_by_payment_order_id(order.id, auth.tenant_id())
-            .await
+        crate::models::payment_refund::find_by_payment_order_id(
+            &self.pool,
+            order.id,
+            auth.tenant_id(),
+        )
+        .await
     }
 }
 
@@ -464,7 +401,7 @@ macro_rules! audit_log {
 }
 
 pub async fn create_channel(
-    channel_repo: &dyn PaymentChannelRepository,
+    pool: &crate::db::Pool,
     auth: &AuthUser,
     config: &AppConfig,
     audit: &AuditService,
@@ -487,7 +424,7 @@ pub async fn create_channel(
         is_active: true,
         sort_order: req.sort_order.unwrap_or(0),
     };
-    let channel = channel_repo.insert(&cmd, auth.tenant_id()).await?;
+    let channel = crate::models::payment_channel::insert(pool, &cmd, auth.tenant_id()).await?;
     audit_log!(
         audit,
         auth.tenant_id().unwrap_or(""),
@@ -504,7 +441,7 @@ pub async fn create_channel(
 }
 
 pub async fn update_channel(
-    channel_repo: &dyn PaymentChannelRepository,
+    pool: &crate::db::Pool,
     auth: &AuthUser,
     config: &AppConfig,
     audit: &AuditService,
@@ -512,8 +449,7 @@ pub async fn update_channel(
     req: UpdatePaymentChannelRequest,
 ) -> AppResult<PaymentChannel> {
     auth.ensure_admin()?;
-    let channel = channel_repo
-        .find_by_document_id(id, auth.tenant_id())
+    let channel = crate::models::payment_channel::find_by_document_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))?;
 
@@ -531,30 +467,29 @@ pub async fn update_channel(
         None => channel.webhook_secret.clone(),
     };
 
-    let updated = channel_repo
-        .update(
-            &crate::commands::UpdatePaymentChannelCmd {
-                id: channel.id,
-                provider: channel.provider.clone(),
-                name: req.name.clone().unwrap_or(channel.name.clone()),
-                is_live: req.is_live.unwrap_or(channel.is_live != 0),
-                credentials: encrypted_credentials,
-                webhook_secret: encrypted_webhook_secret,
-                settings: req.settings.clone().or(channel.settings.clone()),
-                is_active: req.is_active.unwrap_or(channel.is_active != 0),
-                sort_order: req.sort_order.unwrap_or(channel.sort_order),
-                version: req.version,
-            },
-            auth.tenant_id(),
-        )
-        .await?;
+    let updated = crate::models::payment_channel::update(
+        pool,
+        &crate::commands::UpdatePaymentChannelCmd {
+            id: channel.id,
+            provider: channel.provider.clone(),
+            name: req.name.clone().unwrap_or(channel.name.clone()),
+            is_live: req.is_live.unwrap_or(channel.is_live != 0),
+            credentials: encrypted_credentials,
+            webhook_secret: encrypted_webhook_secret,
+            settings: req.settings.clone().or(channel.settings.clone()),
+            is_active: req.is_active.unwrap_or(channel.is_active != 0),
+            sort_order: req.sort_order.unwrap_or(channel.sort_order),
+            version: req.version,
+        },
+        auth.tenant_id(),
+    )
+    .await?;
 
     if !updated {
         return Err(AppError::Conflict("version_conflict".into()));
     }
 
-    let result = channel_repo
-        .find_by_id(channel.id, auth.tenant_id())
+    let result = crate::models::payment_channel::find_by_id(pool, channel.id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))?;
 
@@ -575,19 +510,17 @@ pub async fn update_channel(
 }
 
 pub async fn delete_channel(
-    channel_repo: &dyn PaymentChannelRepository,
+    pool: &crate::db::Pool,
     auth: &AuthUser,
     audit: &AuditService,
     id: &str,
 ) -> AppResult<()> {
     auth.ensure_admin()?;
-    let channel = channel_repo
-        .find_by_document_id(id, auth.tenant_id())
+    let channel = crate::models::payment_channel::find_by_document_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))?;
-    let deleted = channel_repo
-        .delete_by_id(channel.id, auth.tenant_id())
-        .await?;
+    let deleted =
+        crate::models::payment_channel::delete_by_id(pool, channel.id, auth.tenant_id()).await?;
     if !deleted {
         return Err(AppError::not_found("payment_channel"));
     }
@@ -607,28 +540,26 @@ pub async fn delete_channel(
 }
 
 pub async fn get_channel(
-    channel_repo: &dyn PaymentChannelRepository,
+    pool: &crate::db::Pool,
     auth: &AuthUser,
     id: &str,
 ) -> AppResult<PaymentChannel> {
     auth.ensure_admin()?;
-    channel_repo
-        .find_by_document_id(id, auth.tenant_id())
+    crate::models::payment_channel::find_by_document_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))
 }
 
 pub async fn list_channels(
-    channel_repo: &dyn PaymentChannelRepository,
+    pool: &crate::db::Pool,
     auth: &AuthUser,
 ) -> AppResult<Vec<PaymentChannel>> {
     auth.ensure_admin()?;
-    channel_repo.find_all_active(auth.tenant_id()).await
+    crate::models::payment_channel::find_all_active(pool, auth.tenant_id()).await
 }
 
 pub async fn list_available_channels(
-    channel_repo: &dyn PaymentChannelRepository,
-    order_order_repo: &dyn crate::repositories::OrderRepository,
+    pool: &crate::db::Pool,
     auth: &AuthUser,
     order_id: &str,
     country: Option<&str>,
@@ -636,12 +567,11 @@ pub async fn list_available_channels(
 ) -> AppResult<AvailableChannelsResponse> {
     let _ = auth.ensure_authenticated()?;
 
-    let order = order_order_repo
-        .find_by_document_id(order_id, auth.tenant_id())
+    let order = crate::models::order::find_by_document_id(pool, order_id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("order"))?;
 
-    let active = channel_repo.find_all_active(auth.tenant_id()).await?;
+    let active = crate::models::payment_channel::find_all_active(pool, auth.tenant_id()).await?;
     let ctx = RoutingContext {
         currency: order.currency.clone(),
         country: country.map(String::from),
@@ -673,11 +603,7 @@ pub async fn list_available_channels(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn create_payment_order(
-    _pool: &crate::db::Pool,
-    channel_repo: &dyn PaymentChannelRepository,
-    order_repo: &dyn PaymentOrderRepository,
-    _product_repo: &dyn crate::repositories::ProductRepository,
-    order_order_repo: &dyn crate::repositories::OrderRepository,
+    pool: &crate::db::Pool,
     auth: &AuthUser,
     user_id: i64,
     req: CreatePaymentOrderRequest,
@@ -688,8 +614,7 @@ pub async fn create_payment_order(
 ) -> AppResult<(PaymentOrder, Option<ProviderResponse>)> {
     let _ = auth.ensure_authenticated()?;
 
-    let order = order_order_repo
-        .find_by_document_id(&req.order_id, auth.tenant_id())
+    let order = crate::models::order::find_by_document_id(pool, &req.order_id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("order"))?;
 
@@ -702,16 +627,20 @@ pub async fn create_payment_order(
     }
 
     let (channel, channel_selected_by) = if let Some(ref channel_doc_id) = req.channel_id {
-        let ch = channel_repo
-            .find_by_document_id(channel_doc_id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("payment_channel"))?;
+        let ch = crate::models::payment_channel::find_by_document_id(
+            pool,
+            channel_doc_id,
+            auth.tenant_id(),
+        )
+        .await?
+        .ok_or_else(|| AppError::not_found("payment_channel"))?;
         if ch.is_active == 0 {
             return Err(AppError::BadRequest("channel_inactive".into()));
         }
         (ch, "manual")
     } else {
-        let active = channel_repo.find_all_active(auth.tenant_id()).await?;
+        let active =
+            crate::models::payment_channel::find_all_active(pool, auth.tenant_id()).await?;
         let ctx = RoutingContext {
             currency: order.currency.clone(),
             country: req.country.clone(),
@@ -726,9 +655,8 @@ pub async fn create_payment_order(
 
     let idempotency_key = format!("{}_{}", order.document_id, channel.document_id);
 
-    if let Some(existing) = order_repo
-        .find_by_idempotency_key(&idempotency_key, None)
-        .await?
+    if let Some(existing) =
+        crate::models::payment_order::find_by_idempotency_key(pool, &idempotency_key, None).await?
     {
         return Ok((existing, None));
     }
@@ -755,19 +683,23 @@ pub async fn create_payment_order(
         metadata: req.metadata.clone(),
     };
 
-    let payment_order = match order_repo.insert(&cmd, auth.tenant_id()).await {
-        Ok(po) => po,
-        Err(e) => {
-            if is_unique_violation(&e)
-                && let Some(existing) = order_repo
-                    .find_by_idempotency_key(&idempotency_key, None)
+    let payment_order =
+        match crate::models::payment_order::insert(pool, &cmd, auth.tenant_id()).await {
+            Ok(po) => po,
+            Err(e) => {
+                if is_unique_violation(&e)
+                    && let Some(existing) = crate::models::payment_order::find_by_idempotency_key(
+                        pool,
+                        &idempotency_key,
+                        None,
+                    )
                     .await?
-            {
-                return Ok((existing, None));
+                {
+                    return Ok((existing, None));
+                }
+                return Err(e);
             }
-            return Err(e);
-        }
-    };
+        };
 
     let key = get_encrypt_key(config)?;
     let provider = crate::payment::providers::get_provider(&channel.provider, &key)?;
@@ -776,14 +708,14 @@ pub async fn create_payment_order(
         .await
     {
         Ok(resp) => {
-            if let Err(e) = order_repo
-                .update_provider_order_id(
-                    payment_order.id,
-                    &resp.provider_order_id,
-                    None,
-                    auth.tenant_id(),
-                )
-                .await
+            if let Err(e) = crate::models::payment_order::update_provider_order_id(
+                pool,
+                payment_order.id,
+                &resp.provider_order_id,
+                None,
+                auth.tenant_id(),
+            )
+            .await
             {
                 tracing::warn!("failed to save provider_order_id: {e}");
             }
@@ -804,8 +736,6 @@ pub async fn create_payment_order(
 #[allow(clippy::too_many_arguments)]
 pub async fn cancel_payment_order(
     pool: &crate::db::Pool,
-    order_repo: &dyn PaymentOrderRepository,
-    channel_repo: &dyn PaymentChannelRepository,
     auth: &AuthUser,
     audit: &AuditService,
     config: &AppConfig,
@@ -813,8 +743,7 @@ pub async fn cancel_payment_order(
     user_id: i64,
 ) -> AppResult<()> {
     let _ = auth.ensure_authenticated()?;
-    let order = order_repo
-        .find_by_document_id(id, auth.tenant_id())
+    let order = crate::models::payment_order::find_by_document_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_order"))?;
 
@@ -828,9 +757,9 @@ pub async fn cancel_payment_order(
     if let Some(ref provider_order_id) = order.provider_order_id
         && let Ok(key) = get_encrypt_key(config)
     {
-        let channel = channel_repo
-            .find_by_id(order.channel_id, auth.tenant_id())
-            .await?;
+        let channel =
+            crate::models::payment_channel::find_by_id(pool, order.channel_id, auth.tenant_id())
+                .await?;
         if let Some(ch) = channel
             && let Ok(provider) = crate::payment::providers::get_provider(&order.provider, &key)
             && let Err(e) = provider.cancel(&ch, provider_order_id).await
@@ -874,14 +803,13 @@ pub async fn cancel_payment_order(
 }
 
 pub async fn get_payment_order(
-    order_repo: &dyn PaymentOrderRepository,
+    pool: &crate::db::Pool,
     auth: &AuthUser,
     user_id: i64,
     id: &str,
 ) -> AppResult<PaymentOrder> {
     let _ = auth.ensure_authenticated()?;
-    let order = order_repo
-        .find_by_document_id(id, auth.tenant_id())
+    let order = crate::models::payment_order::find_by_document_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_order"))?;
     if auth.role() != "admin" && order.user_id != user_id {
@@ -891,33 +819,33 @@ pub async fn get_payment_order(
 }
 
 pub async fn list_user_payment_orders(
-    order_repo: &dyn PaymentOrderRepository,
+    pool: &crate::db::Pool,
     auth: &AuthUser,
     user_id: i64,
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<PaymentOrder>, i64)> {
     let _ = auth.ensure_authenticated()?;
-    order_repo
-        .find_by_user_paginated(user_id, auth.tenant_id(), page, page_size)
-        .await
+    crate::models::payment_order::find_by_user_paginated(
+        pool,
+        user_id,
+        auth.tenant_id(),
+        page,
+        page_size,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_callback(
     pool: &crate::db::Pool,
-    channel_repo: &dyn PaymentChannelRepository,
-    order_repo: &dyn PaymentOrderRepository,
-    tx_repo: &dyn PaymentTransactionRepository,
-    wallet_repo: &dyn WalletRepository,
     audit: &AuditService,
     config: &AppConfig,
     channel_doc_id: &str,
     headers: &axum::http::HeaderMap,
     body: &[u8],
 ) -> AppResult<PaymentOrder> {
-    let channel = channel_repo
-        .find_by_document_id(channel_doc_id, None)
+    let channel = crate::models::payment_channel::find_by_document_id(pool, channel_doc_id, None)
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))?;
 
@@ -946,10 +874,13 @@ pub async fn handle_callback(
         }
     };
 
-    let payment_order = order_repo
-        .find_by_provider_order_id(&callback.provider_order_id, None)
-        .await?
-        .ok_or_else(|| AppError::not_found("payment_order"))?;
+    let payment_order = crate::models::payment_order::find_by_provider_order_id(
+        pool,
+        &callback.provider_order_id,
+        None,
+    )
+    .await?
+    .ok_or_else(|| AppError::not_found("payment_order"))?;
 
     if payment_order.channel_id != channel.id {
         return Err(AppError::BadRequest("channel_order_mismatch".into()));
@@ -972,8 +903,7 @@ pub async fn handle_callback(
     }
 
     if let Some(ref provider_tx_id) = callback.provider_tx_id
-        && tx_repo
-            .find_by_provider_tx_id(provider_tx_id, None)
+        && crate::models::payment_transaction::find_by_provider_tx_id(pool, provider_tx_id, None)
             .await?
             .is_some()
     {
@@ -1052,8 +982,6 @@ pub async fn handle_callback(
         Ok(())
     })?;
 
-    let _ = wallet_repo;
-
     audit_log!(
         audit,
         "",
@@ -1073,11 +1001,6 @@ pub async fn handle_callback(
 #[allow(clippy::too_many_arguments)]
 pub async fn refund_payment_order(
     pool: &crate::db::Pool,
-    order_repo: &dyn PaymentOrderRepository,
-    channel_repo: &dyn PaymentChannelRepository,
-    _tx_repo: &dyn PaymentTransactionRepository,
-    _refund_repo: &dyn PaymentRefundRepository,
-    wallet_repo: &dyn WalletRepository,
     auth: &AuthUser,
     audit: &AuditService,
     config: &AppConfig,
@@ -1085,10 +1008,10 @@ pub async fn refund_payment_order(
     req: CreateRefundRequest,
 ) -> AppResult<PaymentRefund> {
     auth.ensure_admin()?;
-    let payment_order = order_repo
-        .find_by_document_id(id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("payment_order"))?;
+    let payment_order =
+        crate::models::payment_order::find_by_document_id(pool, id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("payment_order"))?;
 
     if payment_order.status != PaymentStatus::Paid
         && payment_order.status != PaymentStatus::PartiallyRefunded
@@ -1113,10 +1036,13 @@ pub async fn refund_payment_order(
             payment_order.provider_order_id
         {
             let key = get_encrypt_key(config)?;
-            let channel = channel_repo
-                .find_by_id(payment_order.channel_id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("payment_channel"))?;
+            let channel = crate::models::payment_channel::find_by_id(
+                pool,
+                payment_order.channel_id,
+                auth.tenant_id(),
+            )
+            .await?
+            .ok_or_else(|| AppError::not_found("payment_channel"))?;
             let provider = crate::payment::providers::get_provider(&payment_order.provider, &key)?;
             let result = provider
                 .refund(
@@ -1224,8 +1150,6 @@ pub async fn refund_payment_order(
         Ok(refund)
     })?;
 
-    let _ = wallet_repo;
-
     audit_log!(
         audit,
         auth.tenant_id().unwrap_or(""),
@@ -1258,49 +1182,57 @@ pub async fn refund_payment_order(
 }
 
 pub async fn list_admin_payment_orders(
-    order_repo: &dyn PaymentOrderRepository,
+    pool: &crate::db::Pool,
     auth: &AuthUser,
     page: i64,
     page_size: i64,
     status: Option<&str>,
 ) -> AppResult<(Vec<PaymentOrder>, i64)> {
     auth.ensure_admin()?;
-    order_repo
-        .find_all_admin_paginated(auth.tenant_id(), page, page_size, status)
-        .await
+    crate::models::payment_order::find_all_admin_paginated(
+        pool,
+        auth.tenant_id(),
+        page,
+        page_size,
+        status,
+    )
+    .await
 }
 
 pub async fn list_admin_transactions(
-    tx_repo: &dyn PaymentTransactionRepository,
+    pool: &crate::db::Pool,
     auth: &AuthUser,
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<PaymentTransaction>, i64)> {
     auth.ensure_admin()?;
-    tx_repo
-        .find_all_admin_paginated(auth.tenant_id(), page, page_size)
-        .await
+    crate::models::payment_transaction::find_all_admin_paginated(
+        pool,
+        auth.tenant_id(),
+        page,
+        page_size,
+    )
+    .await
 }
 
 pub async fn list_admin_refunds(
-    refund_repo: &dyn PaymentRefundRepository,
+    pool: &crate::db::Pool,
     auth: &AuthUser,
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<PaymentRefund>, i64)> {
     auth.ensure_admin()?;
-    refund_repo
-        .find_all_admin_paginated(auth.tenant_id(), page, page_size)
+    crate::models::payment_refund::find_all_admin_paginated(pool, auth.tenant_id(), page, page_size)
         .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::CreateOrderCmd;
     use crate::config::app::AppConfig;
     use crate::models::currencies;
     use crate::models::payment_order::PaymentStatus;
-    use crate::repositories::*;
 
     async fn setup_pool() -> crate::db::Pool {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
@@ -1471,11 +1403,6 @@ mod tests {
         let channel = seed_channel(&pool, "stripe").await;
         let order = seed_order(&pool, owner_id, 1000, "CNY").await;
 
-        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_order_repo = SqlxOrderRepository::new(pool.clone());
-
         let other_auth = user_auth(other_id);
         let req = CreatePaymentOrderRequest {
             order_id: order.document_id.clone(),
@@ -1489,10 +1416,6 @@ mod tests {
 
         let result = super::create_payment_order(
             &pool,
-            &channel_repo,
-            &order_repo,
-            &product_repo,
-            &order_order_repo,
             &other_auth,
             other_id,
             req,
@@ -1520,11 +1443,6 @@ mod tests {
         let channel = seed_channel(&pool, "stripe").await;
         let order = seed_order(&pool, owner_id, 1000, "CNY").await;
 
-        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_order_repo = SqlxOrderRepository::new(pool.clone());
-
         let owner_auth = user_auth(owner_id);
         let req = CreatePaymentOrderRequest {
             order_id: order.document_id.clone(),
@@ -1538,10 +1456,6 @@ mod tests {
 
         let result = super::create_payment_order(
             &pool,
-            &channel_repo,
-            &order_repo,
-            &product_repo,
-            &order_order_repo,
             &owner_auth,
             owner_id,
             req,
@@ -1567,11 +1481,6 @@ mod tests {
         let channel = seed_channel(&pool, "creem").await;
         let order = seed_order(&pool, owner_id, 0, "CNY").await;
 
-        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_order_repo = SqlxOrderRepository::new(pool.clone());
-
         let owner_auth = user_auth(owner_id);
         let req = CreatePaymentOrderRequest {
             order_id: order.document_id.clone(),
@@ -1585,10 +1494,6 @@ mod tests {
 
         let result = super::create_payment_order(
             &pool,
-            &channel_repo,
-            &order_repo,
-            &product_repo,
-            &order_order_repo,
             &owner_auth,
             owner_id,
             req,
@@ -1615,11 +1520,8 @@ mod tests {
         let channel = seed_channel(&pool, "stripe").await;
         let po = seed_payment_order(&pool, owner_id, channel.id, 500, "CNY").await;
 
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
-
         let other_auth = user_auth(other_id);
-        let result =
-            super::get_payment_order(&order_repo, &other_auth, other_id, &po.document_id).await;
+        let result = super::get_payment_order(&pool, &other_auth, other_id, &po.document_id).await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1636,11 +1538,8 @@ mod tests {
         let channel = seed_channel(&pool, "stripe").await;
         let po = seed_payment_order(&pool, owner_id, channel.id, 500, "CNY").await;
 
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
-
         let owner_auth = user_auth(owner_id);
-        let result =
-            super::get_payment_order(&order_repo, &owner_auth, owner_id, &po.document_id).await;
+        let result = super::get_payment_order(&pool, &owner_auth, owner_id, &po.document_id).await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().amount, 500);
@@ -1655,8 +1554,6 @@ mod tests {
         let channel = seed_channel(&pool, "stripe").await;
         let po = seed_payment_order(&pool, owner_id, channel.id, 500, "CNY").await;
 
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
-
         let admin_auth_user = AuthUser::from_parts(
             Some(format!("a{admin_id}")),
             Some(admin_id),
@@ -1664,8 +1561,7 @@ mod tests {
             None,
         );
         let result =
-            super::get_payment_order(&order_repo, &admin_auth_user, admin_id, &po.document_id)
-                .await;
+            super::get_payment_order(&pool, &admin_auth_user, admin_id, &po.document_id).await;
 
         assert!(result.is_ok());
     }
@@ -1680,15 +1576,11 @@ mod tests {
         let channel = seed_channel(&pool, "stripe").await;
         let po = seed_payment_order(&pool, owner_id, channel.id, 500, "CNY").await;
 
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
-        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
         let audit = AuditService::new(pool.clone());
 
         let other_auth = user_auth(other_id);
         let result = super::cancel_payment_order(
             &pool,
-            &order_repo,
-            &channel_repo,
             &other_auth,
             &audit,
             &config,
@@ -1713,15 +1605,11 @@ mod tests {
         let channel = seed_channel(&pool, "stripe").await;
         let po = seed_payment_order(&pool, owner_id, channel.id, 500, "CNY").await;
 
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
-        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
         let audit = AuditService::new(pool.clone());
 
         let owner_auth = user_auth(owner_id);
         super::cancel_payment_order(
             &pool,
-            &order_repo,
-            &channel_repo,
             &owner_auth,
             &audit,
             &config,
@@ -1760,15 +1648,11 @@ mod tests {
         assert_eq!(rows, 1);
         tx.commit().await.unwrap();
 
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
-        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
         let audit = AuditService::new(pool.clone());
 
         let owner_auth = user_auth(owner_id);
         let result = super::cancel_payment_order(
             &pool,
-            &order_repo,
-            &channel_repo,
             &owner_auth,
             &audit,
             &config,
@@ -1793,11 +1677,6 @@ mod tests {
         let channel = seed_channel(&pool, "stripe").await;
         let po = seed_payment_order(&pool, admin_id, channel.id, 1000, "CNY").await;
 
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
-        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
-        let tx_repo = SqlxPaymentTransactionRepository::new(pool.clone());
-        let refund_repo = SqlxPaymentRefundRepository::new(pool.clone());
-        let wallet_repo = SqlxWalletRepository::new(pool.clone());
         let audit = AuditService::new(pool.clone());
 
         let admin_auth_user = AuthUser::from_parts(
@@ -1808,11 +1687,6 @@ mod tests {
         );
         let result = super::refund_payment_order(
             &pool,
-            &order_repo,
-            &channel_repo,
-            &tx_repo,
-            &refund_repo,
-            &wallet_repo,
             &admin_auth_user,
             &audit,
             &config,
@@ -1854,9 +1728,7 @@ mod tests {
         assert_eq!(rows, 1);
         tx.commit().await.unwrap();
 
-        let wallet_repo = SqlxWalletRepository::new(pool.clone());
         crate::services::wallet::credit_wallet(
-            &wallet_repo,
             &pool,
             user_id,
             "CNY",
@@ -1870,10 +1742,6 @@ mod tests {
         .await
         .unwrap();
 
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
-        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
-        let tx_repo = SqlxPaymentTransactionRepository::new(pool.clone());
-        let refund_repo = SqlxPaymentRefundRepository::new(pool.clone());
         let audit = AuditService::new(pool.clone());
 
         let admin_auth_user = AuthUser::from_parts(
@@ -1884,11 +1752,6 @@ mod tests {
         );
         let result = super::refund_payment_order(
             &pool,
-            &order_repo,
-            &channel_repo,
-            &tx_repo,
-            &refund_repo,
-            &wallet_repo,
             &admin_auth_user,
             &audit,
             &config,
@@ -1930,9 +1793,7 @@ mod tests {
         assert_eq!(rows, 1);
         tx.commit().await.unwrap();
 
-        let wallet_repo = SqlxWalletRepository::new(pool.clone());
         crate::services::wallet::credit_wallet(
-            &wallet_repo,
             &pool,
             user_id,
             "CNY",
@@ -1946,10 +1807,6 @@ mod tests {
         .await
         .unwrap();
 
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
-        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
-        let tx_repo = SqlxPaymentTransactionRepository::new(pool.clone());
-        let refund_repo = SqlxPaymentRefundRepository::new(pool.clone());
         let audit = AuditService::new(pool.clone());
 
         let admin_auth_user = AuthUser::from_parts(
@@ -1961,11 +1818,6 @@ mod tests {
 
         let refund1 = super::refund_payment_order(
             &pool,
-            &order_repo,
-            &channel_repo,
-            &tx_repo,
-            &refund_repo,
-            &wallet_repo,
             &admin_auth_user,
             &audit,
             &config,
@@ -1987,11 +1839,6 @@ mod tests {
 
         let refund2 = super::refund_payment_order(
             &pool,
-            &order_repo,
-            &channel_repo,
-            &tx_repo,
-            &refund_repo,
-            &wallet_repo,
             &admin_auth_user,
             &audit,
             &config,
@@ -2030,18 +1877,10 @@ mod tests {
         .await
         .unwrap();
 
-        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
-        let tx_repo = SqlxPaymentTransactionRepository::new(pool.clone());
-        let wallet_repo = SqlxWalletRepository::new(pool.clone());
         let audit = AuditService::new(pool.clone());
 
         let result = super::handle_callback(
             &pool,
-            &channel_repo,
-            &order_repo,
-            &tx_repo,
-            &wallet_repo,
             &audit,
             &config,
             &channel_b.document_id,
@@ -2080,18 +1919,10 @@ mod tests {
         assert_eq!(rows, 1);
         tx.commit().await.unwrap();
 
-        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
-        let tx_repo = SqlxPaymentTransactionRepository::new(pool.clone());
-        let wallet_repo = SqlxWalletRepository::new(pool.clone());
         let audit = AuditService::new(pool.clone());
 
         let result = super::handle_callback(
             &pool,
-            &channel_repo,
-            &order_repo,
-            &tx_repo,
-            &wallet_repo,
             &audit,
             &config,
             &channel.document_id,
@@ -2149,7 +1980,6 @@ mod tests {
         let channel = seed_channel(&pool, "creem").await;
         let order = seed_order(&pool, user_id, 1000, "CNY").await;
 
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
         let idem_key = format!("{}_{}", order.document_id, channel.document_id);
 
         crate::models::payment_order::insert(
@@ -2178,8 +2008,7 @@ mod tests {
         .await
         .unwrap();
 
-        let found = order_repo
-            .find_by_idempotency_key(&idem_key, None)
+        let found = crate::models::payment_order::find_by_idempotency_key(&pool, &idem_key, None)
             .await
             .unwrap();
         assert!(found.is_some());
@@ -2228,13 +2057,10 @@ mod tests {
         .unwrap();
 
         let order = seed_order(&pool, user_id, 1000, "CNY").await;
-        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
-        let order_order_repo = SqlxOrderRepository::new(pool.clone());
         let auth = user_auth(user_id);
 
         let result = super::list_available_channels(
-            &channel_repo,
-            &order_order_repo,
+            &pool,
             &auth,
             &order.document_id,
             Some("CN"),
@@ -2276,20 +2102,11 @@ mod tests {
         .unwrap();
 
         let order = seed_order(&pool, user_id, 1000, "JPY").await;
-        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
-        let order_order_repo = SqlxOrderRepository::new(pool.clone());
         let auth = user_auth(user_id);
 
-        let result = super::list_available_channels(
-            &channel_repo,
-            &order_order_repo,
-            &auth,
-            &order.document_id,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        let result = super::list_available_channels(&pool, &auth, &order.document_id, None, None)
+            .await
+            .unwrap();
 
         assert!(result.channels.is_empty());
         assert!(result.recommended_channel_id.is_none());
@@ -2300,19 +2117,10 @@ mod tests {
         let pool = setup_pool().await;
         let user_id = seed_user(&pool).await;
 
-        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
-        let order_order_repo = SqlxOrderRepository::new(pool.clone());
         let auth = user_auth(user_id);
 
-        let result = super::list_available_channels(
-            &channel_repo,
-            &order_order_repo,
-            &auth,
-            "nonexistent_order",
-            None,
-            None,
-        )
-        .await;
+        let result =
+            super::list_available_channels(&pool, &auth, "nonexistent_order", None, None).await;
 
         assert!(result.is_err());
     }
@@ -2341,10 +2149,6 @@ mod tests {
         .unwrap();
 
         let order = seed_order(&pool, user_id, 1000, "CNY").await;
-        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_order_repo = SqlxOrderRepository::new(pool.clone());
 
         let auth = user_auth(user_id);
         let req = CreatePaymentOrderRequest {
@@ -2359,10 +2163,6 @@ mod tests {
 
         let result = super::create_payment_order(
             &pool,
-            &channel_repo,
-            &order_repo,
-            &product_repo,
-            &order_order_repo,
             &auth,
             user_id,
             req,
@@ -2393,10 +2193,6 @@ mod tests {
         let user_id = seed_user(&pool).await;
 
         let order = seed_order(&pool, user_id, 1000, "JPY").await;
-        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_order_repo = SqlxOrderRepository::new(pool.clone());
 
         let auth = user_auth(user_id);
         let req = CreatePaymentOrderRequest {
@@ -2409,21 +2205,9 @@ mod tests {
             metadata: None,
         };
 
-        let result = super::create_payment_order(
-            &pool,
-            &channel_repo,
-            &order_repo,
-            &product_repo,
-            &order_order_repo,
-            &auth,
-            user_id,
-            req,
-            &config,
-            None,
-            None,
-            None,
-        )
-        .await;
+        let result =
+            super::create_payment_order(&pool, &auth, user_id, req, &config, None, None, None)
+                .await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -2442,11 +2226,6 @@ mod tests {
         let ch = seed_channel(&pool, "stripe").await;
         let order = seed_order(&pool, user_id, 1000, "CNY").await;
 
-        let channel_repo = SqlxPaymentChannelRepository::new(pool.clone());
-        let order_repo = SqlxPaymentOrderRepository::new(pool.clone());
-        let product_repo = SqlxProductRepository::new(pool.clone());
-        let order_order_repo = SqlxOrderRepository::new(pool.clone());
-
         let auth = user_auth(user_id);
         let req = CreatePaymentOrderRequest {
             order_id: order.document_id.clone(),
@@ -2460,10 +2239,6 @@ mod tests {
 
         let result = super::create_payment_order(
             &pool,
-            &channel_repo,
-            &order_repo,
-            &product_repo,
-            &order_order_repo,
             &auth,
             user_id,
             req,

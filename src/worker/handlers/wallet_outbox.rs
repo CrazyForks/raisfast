@@ -47,12 +47,9 @@ impl JobHandler for ProcessWalletOutboxHandler {
                 continue;
             }
 
-            let wallet_repo = crate::repositories::SqlxWalletRepository::new(self.pool.clone());
-
             let result = match entry.entry_type.as_str() {
                 "credit" => {
                     crate::services::wallet::credit_wallet(
-                        &wallet_repo,
                         &self.pool,
                         entry.user_id,
                         &entry.currency,
@@ -70,7 +67,6 @@ impl JobHandler for ProcessWalletOutboxHandler {
                 }
                 "debit" => {
                     crate::services::wallet::debit_wallet(
-                        &wallet_repo,
                         &self.pool,
                         entry.user_id,
                         &entry.currency,

@@ -6,11 +6,9 @@ use crate::aspects::engine::AspectEngine;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::Event;
 use crate::middleware::auth::AuthUser;
-use crate::repositories::UserRepository;
 
 pub async fn forgot_password(
     pool: &crate::db::Pool,
-    _user_repo: &dyn UserRepository,
     aspect_engine: &AspectEngine,
     email: &str,
     _tenant_id: Option<&str>,
@@ -48,7 +46,6 @@ pub async fn forgot_password(
 /// Validates the token (unused and not expired), updates the credential password, marks the token as used,
 /// and deletes all refresh tokens to invalidate old sessions.
 pub async fn reset_password(
-    _user_repo: &dyn UserRepository,
     pool: &crate::db::Pool,
     token: &str,
     new_password: &str,
@@ -124,7 +121,6 @@ pub async fn reset_password(
 ///
 /// A logged-in user (registered via OAuth, with no password) sets a password. No old password verification required.
 pub async fn set_password(
-    user_repo: &dyn UserRepository,
     pool: &crate::db::Pool,
     auth: &AuthUser,
     email: &str,
@@ -132,8 +128,7 @@ pub async fn set_password(
 ) -> AppResult<()> {
     let user_id = auth.ensure_authenticated()?;
     let tenant_id = auth.tenant_id();
-    let user = user_repo
-        .find_by_id(user_id, tenant_id)
+    let user = crate::models::user::find_by_id(pool, user_id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
 
@@ -180,7 +175,6 @@ pub async fn set_password(
 mod tests {
     use super::*;
     use crate::commands::CreateUserCmd;
-    use crate::repositories::sqlx_user::SqlxUserRepository;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -191,17 +185,16 @@ mod tests {
     }
 
     async fn insert_user(pool: &crate::db::Pool, email: &str) -> crate::models::user::User {
-        let repo = SqlxUserRepository::new(pool.clone());
-        let user = repo
-            .create(
-                &CreateUserCmd {
-                    username: email.to_string(),
-                    registered_via: crate::models::user::RegisteredVia::Email,
-                },
-                None,
-            )
-            .await
-            .unwrap();
+        let user = crate::models::user::create(
+            pool,
+            &CreateUserCmd {
+                username: email.to_string(),
+                registered_via: crate::models::user::RegisteredVia::Email,
+            },
+            None,
+        )
+        .await
+        .unwrap();
         crate::models::user_credential::create(
             pool,
             user.id,
@@ -221,9 +214,8 @@ mod tests {
     async fn forgot_password_existing_user() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "reset@test.com").await;
-        let repo = SqlxUserRepository::new(pool.clone());
         let ae = aspect_engine();
-        super::forgot_password(&pool, &repo, &ae, "reset@test.com", None)
+        super::forgot_password(&pool, &ae, "reset@test.com", None)
             .await
             .unwrap();
         let sql = format!(
@@ -241,9 +233,8 @@ mod tests {
     #[tokio::test]
     async fn forgot_password_nonexistent_user_ok() {
         let pool = setup_pool().await;
-        let repo = SqlxUserRepository::new(pool.clone());
         let ae = aspect_engine();
-        super::forgot_password(&pool, &repo, &ae, "noone@test.com", None)
+        super::forgot_password(&pool, &ae, "noone@test.com", None)
             .await
             .unwrap();
     }
@@ -251,8 +242,7 @@ mod tests {
     #[tokio::test]
     async fn reset_password_invalid_token() {
         let pool = setup_pool().await;
-        let repo = SqlxUserRepository::new(pool.clone());
-        let err = super::reset_password(&repo, &pool, "bad-token", "NewPass1", None)
+        let err = super::reset_password(&pool, "bad-token", "NewPass1", None)
             .await
             .unwrap_err();
         let msg = err.to_string();
@@ -264,8 +254,7 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "weak@test.com").await;
         let ae = aspect_engine();
-        let repo = SqlxUserRepository::new(pool.clone());
-        super::forgot_password(&pool, &repo, &ae, "weak@test.com", None)
+        super::forgot_password(&pool, &ae, "weak@test.com", None)
             .await
             .unwrap();
         let sql = format!(
@@ -277,7 +266,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        let err = super::reset_password(&repo, &pool, &token_str, "short", None)
+        let err = super::reset_password(&pool, &token_str, "short", None)
             .await
             .unwrap_err();
         let msg = err.to_string();
@@ -287,17 +276,16 @@ mod tests {
     #[tokio::test]
     async fn set_password_oauth_user() {
         let pool = setup_pool().await;
-        let repo = SqlxUserRepository::new(pool.clone());
-        let user = repo
-            .create(
-                &CreateUserCmd {
-                    username: "oauthu".into(),
-                    registered_via: crate::models::user::RegisteredVia::Oauth,
-                },
-                None,
-            )
-            .await
-            .unwrap();
+        let user = crate::models::user::create(
+            &pool,
+            &CreateUserCmd {
+                username: "oauthu".into(),
+                registered_via: crate::models::user::RegisteredVia::Oauth,
+            },
+            None,
+        )
+        .await
+        .unwrap();
         crate::models::user_credential::create(
             &pool,
             user.id,
@@ -314,7 +302,7 @@ mod tests {
             crate::models::user::UserRole::Author,
             None,
         );
-        super::set_password(&repo, &pool, &a, "oauth@test.com", "StrongPass1")
+        super::set_password(&pool, &a, "oauth@test.com", "StrongPass1")
             .await
             .unwrap();
     }
@@ -323,14 +311,13 @@ mod tests {
     async fn set_password_already_set_rejected() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "already@test.com").await;
-        let repo = SqlxUserRepository::new(pool.clone());
         let a = AuthUser::from_parts(
             Some(user.document_id.clone()),
             Some(user.id),
             crate::models::user::UserRole::Author,
             None,
         );
-        let err = super::set_password(&repo, &pool, &a, "already@test.com", "NewPass1")
+        let err = super::set_password(&pool, &a, "already@test.com", "NewPass1")
             .await
             .unwrap_err();
         let msg = err.to_string();

@@ -196,7 +196,6 @@ pub async fn register(
     }
     validation::validate(&req)?;
     let user = auth::register(
-        state.user_repo.as_ref(),
         &state.aspect_engine,
         req,
         auth.tenant_id(),
@@ -219,8 +218,6 @@ pub async fn login(
 ) -> AppResult<ApiResponse<crate::dto::LoginResponse>> {
     validation::validate(&req)?;
     let resp = auth::login(
-        state.user_repo.as_ref(),
-        state.refresh_token_repo.as_ref(),
         &state.aspect_engine,
         &state.pool,
         &req,
@@ -250,13 +247,7 @@ pub async fn resend_verification(
     Json(req): Json<ResendVerificationRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
-    email_verification::resend_verification(
-        &state.pool,
-        state.user_repo.as_ref(),
-        &state.aspect_engine,
-        &req.email,
-    )
-    .await?;
+    email_verification::resend_verification(&state.pool, &state.aspect_engine, &req.email).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -271,8 +262,6 @@ pub async fn refresh(
 ) -> AppResult<ApiResponse<crate::dto::LoginResponse>> {
     validation::validate(&req)?;
     let resp = auth::refresh(
-        state.user_repo.as_ref(),
-        state.refresh_token_repo.as_ref(),
         &state.pool,
         &req.refresh_token,
         &state.config.jwt_secret,
@@ -293,7 +282,7 @@ pub async fn logout(
     State(state): State<crate::AppState>,
     auth: AuthUser,
 ) -> AppResult<ApiResponse<()>> {
-    auth::logout(&state.pool, state.refresh_token_repo.as_ref(), &auth).await?;
+    auth::logout(&state.pool, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -310,7 +299,6 @@ pub async fn forgot_password(
     validation::validate(&req)?;
     password_reset::forgot_password(
         &state.pool,
-        state.user_repo.as_ref(),
         &state.aspect_engine,
         &req.email,
         auth.tenant_id(),
@@ -329,14 +317,7 @@ pub async fn reset_password(
     Json(req): Json<ResetPasswordRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
-    password_reset::reset_password(
-        state.user_repo.as_ref(),
-        &state.pool,
-        &req.token,
-        &req.new_password,
-        None,
-    )
-    .await?;
+    password_reset::reset_password(&state.pool, &req.token, &req.new_password, None).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -352,14 +333,7 @@ pub async fn set_password(
     Json(req): Json<SetPasswordRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
-    password_reset::set_password(
-        state.user_repo.as_ref(),
-        &state.pool,
-        &auth,
-        &req.email,
-        &req.new_password,
-    )
-    .await?;
+    password_reset::set_password(&state.pool, &auth, &req.email, &req.new_password).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -402,8 +376,6 @@ pub async fn verify_sms(
 ) -> AppResult<ApiResponse<crate::dto::LoginResponse>> {
     validation::validate(&req)?;
     let resp = sms::verify_sms_and_auth(
-        state.user_repo.as_ref(),
-        state.refresh_token_repo.as_ref(),
         &state.pool,
         &req.phone,
         &req.code,
@@ -423,14 +395,7 @@ pub async fn bind_phone(
     Json(req): Json<BindPhoneRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
-    sms::bind_phone(
-        state.user_repo.as_ref(),
-        &state.pool,
-        &auth,
-        &req.phone,
-        &req.code,
-    )
-    .await?;
+    sms::bind_phone(&state.pool, &auth, &req.phone, &req.code).await?;
     Ok(ApiResponse::success(()))
 }
 

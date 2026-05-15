@@ -17,7 +17,6 @@ use crate::event::Event;
 use crate::middleware::auth::AuthUser;
 use crate::models::oauth;
 use crate::oauth::{OAuthProviderRegistry, OAuthUserInfo};
-use crate::repositories::{RefreshTokenRepository, UserRepository};
 use crate::utils::tz::Timestamp;
 
 /// Initiate OAuth authorization
@@ -83,8 +82,6 @@ pub enum OAuthCallbackResult {
 pub async fn handle_callback(
     pool: &crate::db::Pool,
     registry: &OAuthProviderRegistry,
-    user_repo: &dyn UserRepository,
-    refresh_token_repo: &dyn RefreshTokenRepository,
     provider_name: &str,
     code: &str,
     state: &str,
@@ -122,7 +119,7 @@ pub async fn handle_callback(
 
         let login_resp = create_login_response_for_user(
             &user,
-            refresh_token_repo,
+            pool,
             jwt_secret,
             jwt_access_expires,
             jwt_refresh_expires,
@@ -143,7 +140,7 @@ pub async fn handle_callback(
 
         let login_resp = create_login_response_for_user(
             &user,
-            refresh_token_repo,
+            pool,
             jwt_secret,
             jwt_access_expires,
             jwt_refresh_expires,
@@ -168,7 +165,7 @@ pub async fn handle_callback(
 
             let login_resp = create_login_response_for_user(
                 &user,
-                refresh_token_repo,
+                pool,
                 jwt_secret,
                 jwt_access_expires,
                 jwt_refresh_expires,
@@ -184,14 +181,13 @@ pub async fn handle_callback(
         }
     }
 
-    let user =
-        auto_register_user(pool, user_repo, provider_name, &user_info, aspect_engine).await?;
+    let user = auto_register_user(pool, provider_name, &user_info, aspect_engine).await?;
 
     do_bind_oauth(pool, user.id, provider_name, &token_resp, &user_info).await?;
 
     let login_resp = create_login_response_for_user(
         &user,
-        refresh_token_repo,
+        pool,
         jwt_secret,
         jwt_access_expires,
         jwt_refresh_expires,
@@ -271,7 +267,7 @@ pub struct OAuthBindingInfo {
 /// Generate JWT + refresh token with full user data
 async fn create_login_response_for_user(
     user: &crate::models::user::User,
-    refresh_token_repo: &dyn RefreshTokenRepository,
+    pool: &crate::db::Pool,
     jwt_secret: &str,
     jwt_access_expires: u64,
     jwt_refresh_expires: u64,
@@ -291,9 +287,13 @@ async fn create_login_response_for_user(
     let refresh_token_str = crate::services::auth::generate_refresh_token_string_internal()?;
     let expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
 
-    refresh_token_repo
-        .create_token(user.id, &refresh_token_str, &expires_at.to_rfc3339())
-        .await?;
+    crate::models::refresh_token::create_token(
+        pool,
+        user.id,
+        &refresh_token_str,
+        &expires_at.to_rfc3339(),
+    )
+    .await?;
 
     Ok(LoginResponse {
         access_token,
@@ -306,7 +306,6 @@ async fn create_login_response_for_user(
 /// Auto-register a new user
 async fn auto_register_user(
     pool: &crate::db::Pool,
-    user_repo: &dyn UserRepository,
     provider_name: &str,
     user_info: &OAuthUserInfo,
     aspect_engine: &AspectEngine,
@@ -321,15 +320,15 @@ async fn auto_register_user(
     let username = ensure_unique_username(pool, &base_username).await?;
     let email = user_info.email.clone().unwrap_or_default();
 
-    let user = user_repo
-        .create(
-            &CreateUserCmd {
-                username,
-                registered_via: crate::models::user::RegisteredVia::Oauth,
-            },
-            None,
-        )
-        .await?;
+    let user = crate::models::user::create(
+        pool,
+        &CreateUserCmd {
+            username,
+            registered_via: crate::models::user::RegisteredVia::Oauth,
+        },
+        None,
+    )
+    .await?;
 
     if let Some(avatar) = &user_info.avatar_url {
         let now = crate::utils::tz::now_utc();

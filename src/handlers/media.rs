@@ -127,7 +127,6 @@ pub async fn upload(
 
     let media = media_service::save_file(
         state.storage.as_ref(),
-        state.media_repo.as_ref(),
         &state.pool,
         &auth,
         state.config.max_upload_size,
@@ -154,14 +153,8 @@ pub async fn list(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<PaginatedData<crate::dto::MediaResponse>>> {
     params.sanitize();
-    let (items, total) = media_service::list(
-        state.media_repo.as_ref(),
-        &state.pool,
-        &auth,
-        params.page,
-        params.page_size,
-    )
-    .await?;
+    let (items, total) =
+        media_service::list(&state.pool, &auth, params.page, params.page_size).await?;
 
     let storage = state.storage.as_ref();
     let responses = futures::future::join_all(items.iter().map(|m| async {
@@ -184,14 +177,7 @@ pub async fn delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    media_service::delete_media(
-        state.storage.as_ref(),
-        state.media_repo.as_ref(),
-        &state.pool,
-        &id,
-        &auth,
-    )
-    .await?;
+    media_service::delete_media(state.storage.as_ref(), &state.pool, &id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -203,7 +189,7 @@ pub async fn stats(
     auth: AuthUser,
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<crate::dto::MediaStatsResponse>> {
-    let s = media_service::stats(state.media_repo.as_ref(), &state.pool, &auth).await?;
+    let s = media_service::stats(&state.pool, &auth).await?;
     Ok(ApiResponse::success(crate::dto::stats_to_response(&s)))
 }
 
@@ -237,7 +223,6 @@ pub async fn admin_upload(
 
     let media = media_service::save_file(
         state.storage.as_ref(),
-        state.media_repo.as_ref(),
         &state.pool,
         &auth,
         state.config.max_upload_size,
@@ -265,13 +250,8 @@ pub async fn admin_list(
 ) -> AppResult<ApiResponse<PaginatedData<crate::dto::MediaResponse>>> {
     auth.ensure_admin()?;
     params.sanitize();
-    let (items, total) = media_service::admin_list(
-        state.media_repo.as_ref(),
-        params.page,
-        params.page_size,
-        &auth,
-    )
-    .await?;
+    let (items, total) =
+        media_service::admin_list(&state.pool, params.page, params.page_size, &auth).await?;
 
     let storage = state.storage.as_ref();
     let responses = futures::future::join_all(items.iter().map(|m| async {
@@ -294,14 +274,7 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    media_service::admin_delete_media(
-        state.storage.as_ref(),
-        state.media_repo.as_ref(),
-        &state.pool,
-        &id,
-        &auth,
-    )
-    .await?;
+    media_service::admin_delete_media(state.storage.as_ref(), &state.pool, &id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -320,15 +293,9 @@ pub async fn admin_batch(
     let mut affected = 0usize;
     if req.action == "delete" {
         for id in &req.ids {
-            if media_service::admin_delete_media(
-                state.storage.as_ref(),
-                state.media_repo.as_ref(),
-                &state.pool,
-                id,
-                &auth,
-            )
-            .await
-            .is_ok()
+            if media_service::admin_delete_media(state.storage.as_ref(), &state.pool, id, &auth)
+                .await
+                .is_ok()
             {
                 affected += 1;
             }

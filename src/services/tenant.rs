@@ -9,7 +9,6 @@ use serde_json::Value;
 
 use crate::errors::app_error::AppError;
 use crate::models::tenant::{Tenant, TenantStatus};
-use crate::repositories::TenantRepository;
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateTenantRequest {
@@ -28,28 +27,27 @@ pub struct UpdateTenantRequest {
 
 /// Tenant service
 pub struct TenantService {
-    repo: Arc<dyn TenantRepository>,
+    pool: Arc<crate::db::Pool>,
 }
 
 impl TenantService {
-    /// Create a `TenantService` instance
-    pub fn new(repo: Arc<dyn TenantRepository>) -> Self {
-        Self { repo }
+    pub fn new(pool: Arc<crate::db::Pool>) -> Self {
+        Self { pool }
     }
 
     /// List all tenants
     pub async fn list(&self) -> Result<Vec<Tenant>, AppError> {
-        self.repo.find_all().await
+        crate::models::tenant::find_all(&self.pool).await
     }
 
     /// Get a tenant by ID
     pub async fn get(&self, id: &str) -> Result<Option<Tenant>, AppError> {
-        self.repo.find_by_id(id).await
+        crate::models::tenant::find_by_id(&self.pool, id).await
     }
 
     /// Get a tenant by domain
     pub async fn get_by_domain(&self, domain: &str) -> Result<Option<Tenant>, AppError> {
-        self.repo.find_by_domain(domain).await
+        crate::models::tenant::find_by_domain(&self.pool, domain).await
     }
 
     /// Create a tenant
@@ -59,8 +57,7 @@ impl TenantService {
             || "{}".into(),
             |c| serde_json::to_string(c).unwrap_or_else(|_| "{}".into()),
         );
-        self.repo
-            .create(&id, &req.name, req.domain.as_deref(), &config)
+        crate::models::tenant::create(&self.pool, &id, &req.name, req.domain.as_deref(), &config)
             .await
     }
 
@@ -76,15 +73,15 @@ impl TenantService {
             .map(TenantStatus::from_str)
             .transpose()
             .map_err(AppError::BadRequest)?;
-        self.repo
-            .update(
-                id,
-                req.name.as_deref(),
-                req.domain.as_deref(),
-                config.as_deref(),
-                status,
-            )
-            .await
+        crate::models::tenant::update(
+            &self.pool,
+            id,
+            req.name.as_deref(),
+            req.domain.as_deref(),
+            config.as_deref(),
+            status,
+        )
+        .await
     }
 
     /// Delete a tenant (the default tenant cannot be deleted)
@@ -92,13 +89,13 @@ impl TenantService {
         if id == crate::constants::DEFAULT_TENANT {
             return Err(AppError::BadRequest("cannot delete default tenant".into()));
         }
-        self.repo.delete(id).await
+        crate::models::tenant::delete(&self.pool, id).await
     }
 
     /// Resolve tenant ID (from header or default value)
     pub async fn resolve_tenant_id(&self, tenant_id: Option<&str>) -> Result<String, AppError> {
         let id = crate::db::tenant::resolve_tenant(tenant_id);
-        let tenant = self.repo.find_by_id(id).await?;
+        let tenant = crate::models::tenant::find_by_id(&self.pool, id).await?;
         match tenant {
             Some(t) if t.status == TenantStatus::Active => Ok(t.document_id),
             Some(_) => Err(AppError::BadRequest("tenant is not active".into())),
@@ -110,7 +107,6 @@ impl TenantService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repositories::sqlx_tenant::SqlxTenantRepository;
 
     async fn setup_pool() -> crate::db::Pool {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
@@ -126,7 +122,7 @@ mod tests {
     }
 
     fn svc(pool: crate::db::Pool) -> TenantService {
-        TenantService::new(std::sync::Arc::new(SqlxTenantRepository::new(pool)))
+        TenantService::new(Arc::new(pool))
     }
 
     #[tokio::test]

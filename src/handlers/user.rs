@@ -142,7 +142,7 @@ pub async fn get_me(
     auth: AuthUser,
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<UserResponse>> {
-    let u = user::get_me(state.user_repo.as_ref(), &auth).await?;
+    let u = user::get_me(&state.pool, &auth).await?;
     Ok(ApiResponse::success(u))
 }
 
@@ -158,7 +158,7 @@ pub async fn update_me(
     Json(req): Json<UpdateUserRequest>,
 ) -> AppResult<ApiResponse<UserResponse>> {
     validation::validate(&req)?;
-    let u = user::update_me(state.user_repo.as_ref(), &auth, req).await?;
+    let u = user::update_me(&state.pool, &auth, req).await?;
     Ok(ApiResponse::success(u))
 }
 
@@ -174,7 +174,7 @@ pub async fn change_password(
     Json(req): Json<UpdatePasswordRequest>,
 ) -> AppResult<ApiResponse<()>> {
     validation::validate(&req)?;
-    auth::change_password(state.user_repo.as_ref(), &state.pool, &auth, req).await?;
+    auth::change_password(&state.pool, &auth, req).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -189,7 +189,7 @@ pub async fn get_user(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<UserResponse>> {
-    let u = user::get_public_user(state.user_repo.as_ref(), &id, auth.tenant_id()).await?;
+    let u = user::get_public_user(&state.pool, &id, auth.tenant_id()).await?;
     Ok(ApiResponse::success(u))
 }
 
@@ -205,13 +205,8 @@ pub async fn list_users(
 ) -> AppResult<ApiResponse<PaginatedData<UserResponse>>> {
     auth.ensure_admin()?;
     params.sanitize();
-    let (users, total) = user::list_users(
-        state.user_repo.as_ref(),
-        params.page,
-        params.page_size,
-        auth.tenant_id(),
-    )
-    .await?;
+    let (users, total) =
+        user::list_users(&state.pool, params.page, params.page_size, auth.tenant_id()).await?;
     Ok(params.paginate(users, total))
 }
 
@@ -230,10 +225,7 @@ pub async fn update_role(
 ) -> AppResult<ApiResponse<UserResponse>> {
     auth.ensure_admin()?;
 
-    let u = state
-        .user_repo
-        .update_role(&id, req.role, auth.tenant_id())
-        .await?;
+    let u = crate::models::user::update_role(&state.pool, &id, req.role, auth.tenant_id()).await?;
     Ok(ApiResponse::success(UserResponse::from_user(u)?))
 }
 
@@ -246,13 +238,8 @@ pub async fn admin_list_users(
 ) -> AppResult<ApiResponse<PaginatedData<UserResponse>>> {
     auth.ensure_admin()?;
     params.sanitize();
-    let (users, total) = user::list_users(
-        state.user_repo.as_ref(),
-        params.page,
-        params.page_size,
-        auth.tenant_id(),
-    )
-    .await?;
+    let (users, total) =
+        user::list_users(&state.pool, params.page, params.page_size, auth.tenant_id()).await?;
     Ok(params.paginate(users, total))
 }
 
@@ -262,7 +249,7 @@ pub async fn admin_get_user(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<UserResponse>> {
     auth.ensure_admin()?;
-    let u = user::get_public_user(state.user_repo.as_ref(), &id, auth.tenant_id()).await?;
+    let u = user::get_public_user(&state.pool, &id, auth.tenant_id()).await?;
     Ok(ApiResponse::success(u))
 }
 
@@ -276,9 +263,7 @@ pub async fn admin_update_user(
     validation::validate(&req)?;
     let cmd = crate::commands::UpdateProfileCmd {
         id: {
-            let user = state
-                .user_repo
-                .find_by_id(&id, auth.tenant_id())
+            let user = crate::models::user::find_by_id(&state.pool, &id, auth.tenant_id())
                 .await?
                 .ok_or_else(|| crate::errors::app_error::AppError::not_found("user"))?;
             user.id
@@ -290,10 +275,7 @@ pub async fn admin_update_user(
         social_links: req.social_links,
         metadata: req.metadata,
     };
-    let u = state
-        .user_repo
-        .update_profile(&cmd, auth.tenant_id())
-        .await?;
+    let u = crate::models::user::update_profile(&state.pool, &cmd, auth.tenant_id()).await?;
     Ok(ApiResponse::success(UserResponse::from_user(u)?))
 }
 
@@ -326,21 +308,27 @@ pub async fn admin_batch_users(
                 }
             }
             "disable" => {
-                if state
-                    .user_repo
-                    .update_role(uid, crate::models::user::UserRole::Reader, auth.tenant_id())
-                    .await
-                    .is_ok()
+                if crate::models::user::update_role(
+                    &state.pool,
+                    uid,
+                    crate::models::user::UserRole::Reader,
+                    auth.tenant_id(),
+                )
+                .await
+                .is_ok()
                 {
                     affected += 1;
                 }
             }
             "enable" => {
-                if state
-                    .user_repo
-                    .update_role(uid, crate::models::user::UserRole::Reader, auth.tenant_id())
-                    .await
-                    .is_ok()
+                if crate::models::user::update_role(
+                    &state.pool,
+                    uid,
+                    crate::models::user::UserRole::Reader,
+                    auth.tenant_id(),
+                )
+                .await
+                .is_ok()
                 {
                     affected += 1;
                 }
@@ -349,9 +337,7 @@ pub async fn admin_batch_users(
                 let Some(role) = req.role else {
                     continue;
                 };
-                if state
-                    .user_repo
-                    .update_role(uid, role, auth.tenant_id())
+                if crate::models::user::update_role(&state.pool, uid, role, auth.tenant_id())
                     .await
                     .is_ok()
                 {

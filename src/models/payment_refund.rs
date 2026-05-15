@@ -200,6 +200,38 @@ pub async fn sum_refunded_by_order(
     Ok(total)
 }
 
+pub async fn find_all_admin_paginated(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+    page: i64,
+    page_size: i64,
+) -> AppResult<(Vec<PaymentRefund>, i64)> {
+    let offset = (page - 1) * page_size;
+    let tenant_ph = tenant_filter_ph(tenant_id, 1);
+    let count_sql = format!(
+        "SELECT COUNT(*) as count FROM payment_refunds WHERE 1=1{}",
+        tenant_ph
+    );
+    let mut cq = sqlx::query_as::<_, (i64,)>(&count_sql);
+    if let Some(tid) = tenant_id {
+        cq = cq.bind(tid);
+    }
+    let (total,): (i64,) = cq.fetch_one(pool).await?;
+    let base = usize::from(tenant_id.is_some()) + 1;
+    let sql = format!(
+        "SELECT * FROM payment_refunds WHERE 1=1{} ORDER BY created_at DESC LIMIT {} OFFSET {}",
+        tenant_ph,
+        ph(base),
+        ph(base + 1)
+    );
+    let mut dq = sqlx::query_as::<_, PaymentRefund>(&sql);
+    if let Some(tid) = tenant_id {
+        dq = dq.bind(tid);
+    }
+    let rows = dq.bind(page_size).bind(offset).fetch_all(pool).await?;
+    Ok((rows, total))
+}
+
 pub async fn tx_insert(
     tx: &mut crate::db::pool::DbConnection,
     cmd: &crate::commands::CreatePaymentRefundCmd,

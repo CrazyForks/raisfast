@@ -2,7 +2,7 @@
 //!
 //! A high-performance full-stack development platform built with Rust + Axum,
 //! supporting `SQLite` / `PostgreSQL` / `MySQL`.
-//! Architecture layers: Handler → Service → Repository → Model → DB.
+//! Architecture layers: Handler → Service → Model → DB.
 //!
 //! Supports two runtime modes:
 //! - **server** — Standalone HTTP server (Axum)
@@ -36,7 +36,6 @@ pub mod payment;
 pub mod plugins;
 pub mod policy;
 pub mod protocols;
-pub mod repositories;
 pub mod search;
 pub mod server;
 pub mod services;
@@ -78,12 +77,6 @@ use eventbus::EventBus;
 use notifier::{EmailSender, SmsSender};
 use oauth::OAuthProviderRegistry;
 use plugins::PluginManager;
-use repositories::{
-    CategoryRepository, CommentRepository, MediaRepository, OrderRepository,
-    PaymentChannelRepository, PaymentOrderRepository, PaymentRefundRepository,
-    PaymentTransactionRepository, PostRepository, ProductRepository, RefreshTokenRepository,
-    TagRepository, UserRepository, WalletRepository,
-};
 use search::SearchEngine;
 use services::audit::AuditService;
 use services::options::OptionsService;
@@ -100,8 +93,7 @@ rust_i18n::i18n!("locales", fallback = "en");
 
 /// Application global shared state
 ///
-/// Injected into all handlers via axum `State`. All Repositories are stored as trait objects,
-/// supporting runtime implementation replacement (cache decorators, mocks, etc.).
+/// Injected into all handlers via axum `State`.
 #[derive(Clone)]
 pub struct AppState {
     pub pool: Pool,
@@ -109,28 +101,14 @@ pub struct AppState {
     pub jwt_decoding_key: jsonwebtoken::DecodingKey,
     pub plugins: Arc<PluginManager>,
     pub eventbus: EventBus,
-    pub post_repo: Arc<dyn PostRepository>,
     pub post_service: Arc<dyn crate::services::post::PostService>,
     pub page_service: Arc<dyn crate::services::page::PageService>,
-    pub user_repo: Arc<dyn UserRepository>,
-    pub category_repo: Arc<dyn CategoryRepository>,
     pub category_service: Arc<dyn crate::services::category::CategoryService>,
-    pub tag_repo: Arc<dyn TagRepository>,
     pub tag_service: Arc<dyn crate::services::tag::TagService>,
-    pub comment_repo: Arc<dyn CommentRepository>,
     pub comment_service: Arc<dyn crate::services::comment::CommentService>,
-    pub media_repo: Arc<dyn MediaRepository>,
-    pub refresh_token_repo: Arc<dyn RefreshTokenRepository>,
-    pub wallet_repo: Arc<dyn WalletRepository>,
     pub wallet_service: Arc<dyn crate::services::wallet::WalletService>,
-    pub product_repo: Arc<dyn ProductRepository>,
     pub product_service: Arc<dyn crate::services::product::ProductService>,
-    pub order_repo: Arc<dyn OrderRepository>,
     pub order_service: Arc<dyn crate::services::order::OrderService>,
-    pub payment_channel_repo: Arc<dyn PaymentChannelRepository>,
-    pub payment_order_repo: Arc<dyn PaymentOrderRepository>,
-    pub payment_tx_repo: Arc<dyn PaymentTransactionRepository>,
-    pub payment_refund_repo: Arc<dyn PaymentRefundRepository>,
     pub payment_service: Arc<dyn crate::services::payment::PaymentService>,
     pub search: Arc<dyn SearchEngine>,
     pub content_type_registry: Arc<ContentTypeRegistry>,
@@ -161,49 +139,7 @@ pub async fn build_app_state(
     crate::db::connection::ensure_schema(&pool).await?;
     let eventbus = EventBus::new(256);
 
-    let sqlx_repo = crate::repositories::SqlxPostRepository::new(pool.clone());
     let cache: Arc<dyn crate::cache::CacheStore> = Arc::new(crate::cache::MemoryCache::new());
-    let post_repo: Arc<dyn PostRepository> = Arc::new(
-        crate::repositories::CachedPostRepository::new(sqlx_repo, cache.clone(), None),
-    );
-
-    let user_repo: Arc<dyn UserRepository> =
-        Arc::new(crate::repositories::SqlxUserRepository::new(pool.clone()));
-    let category_repo: Arc<dyn crate::repositories::CategoryRepository> = Arc::new(
-        crate::repositories::SqlxCategoryRepository::new(pool.clone()),
-    );
-    let tag_repo: Arc<dyn crate::repositories::TagRepository> =
-        Arc::new(crate::repositories::SqlxTagRepository::new(pool.clone()));
-    let comment_repo: Arc<dyn crate::repositories::CommentRepository> = Arc::new(
-        crate::repositories::SqlxCommentRepository::new(pool.clone()),
-    );
-    let media_repo: Arc<dyn crate::repositories::MediaRepository> =
-        Arc::new(crate::repositories::SqlxMediaRepository::new(pool.clone()));
-    let refresh_token_repo: Arc<dyn crate::repositories::RefreshTokenRepository> = Arc::new(
-        crate::repositories::SqlxRefreshTokenRepository::new(pool.clone()),
-    );
-
-    let wallet_repo: Arc<dyn crate::repositories::WalletRepository> =
-        Arc::new(crate::repositories::SqlxWalletRepository::new(pool.clone()));
-
-    let product_repo: Arc<dyn crate::repositories::ProductRepository> = Arc::new(
-        crate::repositories::SqlxProductRepository::new(pool.clone()),
-    );
-    let order_repo: Arc<dyn crate::repositories::OrderRepository> =
-        Arc::new(crate::repositories::SqlxOrderRepository::new(pool.clone()));
-
-    let payment_channel_repo: Arc<dyn crate::repositories::PaymentChannelRepository> = Arc::new(
-        crate::repositories::SqlxPaymentChannelRepository::new(pool.clone()),
-    );
-    let payment_order_repo: Arc<dyn crate::repositories::PaymentOrderRepository> = Arc::new(
-        crate::repositories::SqlxPaymentOrderRepository::new(pool.clone()),
-    );
-    let payment_tx_repo: Arc<dyn crate::repositories::PaymentTransactionRepository> = Arc::new(
-        crate::repositories::SqlxPaymentTransactionRepository::new(pool.clone()),
-    );
-    let payment_refund_repo: Arc<dyn crate::repositories::PaymentRefundRepository> = Arc::new(
-        crate::repositories::SqlxPaymentRefundRepository::new(pool.clone()),
-    );
 
     let search: Arc<dyn SearchEngine> = build_search_engine(config);
 
@@ -215,28 +151,18 @@ pub async fn build_app_state(
 
     let order_service: Arc<dyn crate::services::order::OrderService> =
         Arc::new(crate::services::order::OrderServiceImpl::new(
-            order_repo.clone(),
-            product_repo.clone(),
             aspect_engine.clone(),
             Arc::new(pool.clone()),
         ));
 
     let wallet_service: Arc<dyn crate::services::wallet::WalletService> =
         Arc::new(crate::services::wallet::WalletServiceImpl::new(
-            wallet_repo.clone(),
             aspect_engine.clone(),
             Arc::new(pool.clone()),
         ));
 
     let payment_service: Arc<dyn crate::services::payment::PaymentService> =
         Arc::new(crate::services::payment::PaymentServiceImpl::new(
-            payment_channel_repo.clone(),
-            payment_order_repo.clone(),
-            payment_tx_repo.clone(),
-            payment_refund_repo.clone(),
-            order_repo.clone(),
-            product_repo.clone(),
-            wallet_repo.clone(),
             Arc::new(config.clone()),
             aspect_engine.clone(),
             Arc::new(pool.clone()),
@@ -281,61 +207,45 @@ pub async fn build_app_state(
 
     let post_service: Arc<dyn crate::services::post::PostService> =
         Arc::new(crate::services::post::PostServiceImpl::new(
-            post_repo.clone(),
+            Arc::new(pool.clone()),
             aspect_engine.clone(),
             search.clone(),
         ));
 
     let tag_service: Arc<dyn crate::services::tag::TagService> = Arc::new(
-        crate::services::tag::TagServiceImpl::new(aspect_engine.clone(), tag_repo.clone()),
+        crate::services::tag::TagServiceImpl::new(aspect_engine.clone(), Arc::new(pool.clone())),
     );
     let category_service: Arc<dyn crate::services::category::CategoryService> =
         Arc::new(crate::services::category::CategoryServiceImpl::new(
             aspect_engine.clone(),
-            category_repo.clone(),
+            Arc::new(pool.clone()),
         ));
     let page_service: Arc<dyn crate::services::page::PageService> = Arc::new(
         crate::services::page::PageServiceImpl::new(aspect_engine.clone(), Arc::new(pool.clone())),
     );
     let comment_service: Arc<dyn crate::services::comment::CommentService> =
         Arc::new(crate::services::comment::CommentServiceImpl::new(
-            post_repo.clone(),
-            comment_repo.clone(),
+            Arc::new(pool.clone()),
             aspect_engine.clone(),
         ));
     let product_service: Arc<dyn crate::services::product::ProductService> =
         Arc::new(crate::services::product::ProductServiceImpl::new(
             aspect_engine.clone(),
-            product_repo.clone(),
+            Arc::new(pool.clone()),
         ));
 
-    let options_repo: Arc<dyn crate::repositories::OptionsRepository> = Arc::new(
-        crate::repositories::SqlxOptionsRepository::new(pool.clone()),
-    );
     let options_service =
-        Arc::new(OptionsService::new(options_repo, config.builtin_tenantable).await);
+        Arc::new(OptionsService::new(Arc::new(pool.clone()), config.builtin_tenantable).await);
 
-    let rbac_repo: Arc<dyn crate::repositories::RbacRepository> =
-        Arc::new(crate::repositories::SqlxRbacRepository::new(pool.clone()));
-    let rbac_service = Arc::new(RbacService::new(rbac_repo));
+    let rbac_service = Arc::new(RbacService::new(Arc::new(pool.clone())));
 
-    let tenant_repo: Arc<dyn crate::repositories::TenantRepository> =
-        Arc::new(crate::repositories::SqlxTenantRepository::new(pool.clone()));
-    let tenant_service = Arc::new(TenantService::new(tenant_repo));
+    let tenant_service = Arc::new(TenantService::new(Arc::new(pool.clone())));
     let audit_service = Arc::new(crate::services::audit::AuditService::new(pool.clone()));
     let webhook_service = Arc::new(crate::webhook::WebhookService::new(pool.clone()));
 
     let storage = crate::storage::create_storage(config)?;
 
     let services = ServiceRegistry::new();
-    services.insert(post_repo.clone());
-    services.insert(user_repo.clone());
-    services.insert(category_repo.clone());
-    services.insert(tag_repo.clone());
-    services.insert(comment_repo.clone());
-    services.insert(media_repo.clone());
-    services.insert(refresh_token_repo.clone());
-    services.insert(wallet_repo.clone());
     services.insert(search.clone());
     services.insert(aspect_engine.clone());
     services.insert(protocol_registry.clone());
@@ -354,28 +264,14 @@ pub async fn build_app_state(
         jwt_decoding_key: jsonwebtoken::DecodingKey::from_secret(config.jwt_secret.as_bytes()),
         plugins: plugin_manager,
         eventbus: eventbus.clone(),
-        post_repo,
         post_service,
         page_service,
-        user_repo,
-        category_repo,
         category_service,
-        tag_repo,
         tag_service,
-        comment_repo,
         comment_service,
-        media_repo,
-        refresh_token_repo,
-        wallet_repo,
         wallet_service,
-        product_repo,
         product_service,
-        order_repo,
         order_service,
-        payment_channel_repo,
-        payment_order_repo,
-        payment_tx_repo,
-        payment_refund_repo,
         payment_service,
         search,
         content_type_registry: ct_registry,

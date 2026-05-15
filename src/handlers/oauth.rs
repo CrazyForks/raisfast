@@ -137,8 +137,6 @@ pub async fn callback(
     let result = oauth::handle_callback(
         &state.pool,
         state.oauth_registry.as_ref(),
-        state.user_repo.as_ref(),
-        state.refresh_token_repo.as_ref(),
         &provider,
         &query.code,
         &query.state,
