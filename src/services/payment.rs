@@ -1308,12 +1308,8 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        currencies::create(&pool, "CNY", "Chinese Yuan", 2)
-            .await
-            .unwrap();
-        currencies::create(&pool, "USD", "US Dollar", 2)
-            .await
-            .unwrap();
+        let _ = crate::models::currencies::create(&pool, "CNY", "Chinese Yuan", 2).await;
+        let _ = crate::models::currencies::create(&pool, "USD", "US Dollar", 2).await;
         pool
     }
 

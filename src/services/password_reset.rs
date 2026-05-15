@@ -183,12 +183,7 @@ mod tests {
     use crate::repositories::sqlx_user::SqlxUserRepository;
 
     async fn setup_pool() -> crate::db::Pool {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        pool
+        crate::test_pool!()
     }
 
     fn aspect_engine() -> crate::aspects::engine::AspectEngine {

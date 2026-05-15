@@ -237,12 +237,7 @@ mod tests {
     use super::*;
 
     async fn setup_pool() -> crate::db::Pool {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        pool
+        crate::test_pool!()
     }
 
     fn test_cache() -> std::sync::Arc<dyn crate::cache::CacheStore> {

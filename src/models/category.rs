@@ -268,12 +268,7 @@ mod tests {
     use crate::commands::category::UpdateCategoryCmd;
 
     async fn setup_pool() -> crate::db::Pool {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        pool
+        crate::test_pool!()
     }
 
     fn make_cmd(name: &str) -> CreateCategoryCmd {

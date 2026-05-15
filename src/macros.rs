@@ -293,3 +293,16 @@ macro_rules! define_enum {
         }
     };
 }
+
+/// Create an in-memory SQLite test pool with schema applied.
+#[macro_export]
+macro_rules! test_pool {
+    () => {{
+        let pool = $crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query($crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }};
+}
