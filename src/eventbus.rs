@@ -205,10 +205,9 @@ mod tests {
     }
 
     #[test]
-    fn event_name_and_phase() {
+    fn event_name_and_metadata() {
         let e = Event::PostCreated(make_post_response("1", "s", "t"));
-        assert_eq!(e.name(), "post_created");
-        assert_eq!(e.phase(), crate::event::Phase::After);
+        assert_eq!(e.name(), "on_post_created");
         assert_eq!(e.table(), Some("posts"));
         assert_eq!(e.display_name(), "PostCreated");
     }

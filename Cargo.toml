@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "raisfast-derive"]
+resolver = "3"
+
 [package]
 name = "raisfast"
 version = "0.1.0"
@@ -182,6 +186,7 @@ utoipa-swagger-ui = { version = "9", features = ["axum"], optional = true }
 # TypeScript type generation
 ts-rs = { version = "12", optional = true, features = ["chrono-impl"] }
 inventory = "0.3.24"
+raisfast-derive = { path = "raisfast-derive" }
 
 [dev-dependencies]
 http-body-util = "0.1.3"

@@ -12,7 +12,6 @@ use crate::constants::DEFAULT_TENANT;
 use crate::errors::app_error::AppResult;
 use crate::event::Event;
 use crate::eventbus::EventBus;
-use crate::plugins::HookPoint;
 use crate::plugins::PluginManager;
 
 use super::{
@@ -91,10 +90,12 @@ impl AspectEngine {
         let Some(plugins) = self.plugins() else {
             return Ok(data);
         };
-        let Some(hp) = HookPoint::before_create_for_table(table) else {
-            return Ok(data);
+        let hook = match table {
+            "posts" => Event::PostCreating,
+            "comments" => Event::CommentCreating,
+            _ => Event::ContentCreating,
         };
-        plugins.dispatch_filter(hp, data).await
+        plugins.dispatch_filter(&hook, data).await
     }
 
     async fn filter_updating<T: Clone + serde::Serialize + serde::de::DeserializeOwned + Send>(
@@ -105,10 +106,11 @@ impl AspectEngine {
         let Some(plugins) = self.plugins() else {
             return Ok(data);
         };
-        let Some(hp) = HookPoint::before_update_for_table(table) else {
-            return Ok(data);
+        let hook = match table {
+            "posts" => Event::PostUpdating,
+            _ => Event::ContentUpdating,
         };
-        plugins.dispatch_filter(hp, data).await
+        plugins.dispatch_filter(&hook, data).await
     }
 
     /// Before-create: plugin filter + aspect data dispatch.
@@ -204,13 +206,12 @@ impl AspectEngine {
         if let Some(eventbus) = self.eventbus() {
             eventbus.emit(event.clone());
         }
-        if let Some(plugins) = self.plugins()
-            && let Some(hp) = HookPoint::from_event(&event)
-        {
-            let plugins = Arc::clone(plugins);
+        if let Some(plugins) = self.plugins() {
+            let hook_name = event.name();
             let json = serde_json::to_value(&event).unwrap_or_default();
+            let plugins = Arc::clone(plugins);
             tokio::spawn(async move {
-                plugins.dispatch_action(hp, &json).await;
+                plugins.dispatch_action(&hook_name, &json).await;
             });
         }
     }

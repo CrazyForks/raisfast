@@ -21,6 +21,7 @@ use super::schema::{ContentKind, ContentTypeSchema, FieldType, RelationType, che
 use crate::AppState;
 use crate::constants::*;
 use crate::errors::app_error::AppError;
+use crate::event::Event;
 use crate::middleware::auth::AuthUser;
 
 pub fn routes(
@@ -884,7 +885,7 @@ pub async fn do_get(
     state
         .plugins
         .dispatch_action(
-            crate::plugins::HookPoint::ContentViewed,
+            "on_content_viewed",
             &json!({
                 "content_type": ct.singular,
                 "id": result.get(COL_DOCUMENT_ID).and_then(|v| v.as_str()).unwrap_or(""),
@@ -915,7 +916,7 @@ pub async fn do_create(
     });
     let filtered = state
         .plugins
-        .dispatch_filter(crate::plugins::HookPoint::ContentCreating, hook_data)
+        .dispatch_filter(&Event::ContentCreating, hook_data)
         .await?;
 
     let mut data = filtered.get("data").cloned().unwrap_or(data);
@@ -970,7 +971,7 @@ pub async fn do_create(
     state
         .plugins
         .dispatch_action(
-            crate::plugins::HookPoint::ContentCreated,
+            "on_content_created",
             &json!({
                 "content_type": ct.singular,
                 "id": id,
@@ -1023,7 +1024,7 @@ pub async fn do_update(
     });
     let filtered = state
         .plugins
-        .dispatch_filter(crate::plugins::HookPoint::ContentUpdating, hook_data)
+        .dispatch_filter(&Event::ContentUpdating, hook_data)
         .await?;
 
     let mut data = filtered.get("data").cloned().unwrap_or(data);
@@ -1073,7 +1074,7 @@ pub async fn do_update(
     state
         .plugins
         .dispatch_action(
-            crate::plugins::HookPoint::ContentUpdated,
+            "on_content_updated",
             &json!({
                 "content_type": ct.singular,
                 "id": id,
@@ -1164,7 +1165,7 @@ pub async fn do_delete(
     state
         .plugins
         .dispatch_action(
-            crate::plugins::HookPoint::ContentDeleted,
+            "on_content_deleted",
             &json!({
                 "content_type": ct.singular,
                 "id": id,

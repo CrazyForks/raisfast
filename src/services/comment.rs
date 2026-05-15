@@ -9,7 +9,7 @@ use crate::event::Event;
 use crate::eventbus::EventBus;
 use crate::middleware::auth::AuthUser;
 use crate::models::comment::{self, CommentResponse, CommentStatus};
-use crate::plugins::{HookPoint, PluginManager};
+use crate::plugins::PluginManager;
 use crate::policy::Policy;
 use crate::repositories::{CommentRepository, PostRepository};
 
@@ -66,7 +66,7 @@ pub async fn create_comment(
     };
 
     let filtered = plugins
-        .dispatch_filter(HookPoint::CommentCreating, comment_input)
+        .dispatch_filter(&Event::CommentCreating, comment_input)
         .await?;
 
     let parent_id = if let Some(ref doc_id) = filtered.parent_id {

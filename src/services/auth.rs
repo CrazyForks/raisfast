@@ -20,7 +20,7 @@ use crate::eventbus::EventBus;
 use crate::middleware::auth::AuthUser;
 use crate::models::user::{UserRole, UserStatus};
 use crate::models::user_credential::AuthType;
-use crate::plugins::{HookPoint, PluginManager};
+use crate::plugins::PluginManager;
 use crate::repositories::{RefreshTokenRepository, UserRepository};
 
 /// JWT token claims (payload).
@@ -331,7 +331,7 @@ pub async fn login(
     )? {
         plugins
             .dispatch_action(
-                HookPoint::OnLogin,
+                "on_login",
                 &serde_json::json!({"email": &req.email, "success": false}),
             )
             .await;
@@ -377,7 +377,7 @@ pub async fn login(
 
     plugins
         .dispatch_action(
-            HookPoint::OnLogin,
+            "on_login",
             &serde_json::json!({"email": &req.email, "success": true, "user_id": &user.document_id}),
         )
         .await;

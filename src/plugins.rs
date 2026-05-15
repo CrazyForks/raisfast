@@ -41,7 +41,7 @@ pub mod permissions;
 pub mod sdk_v1;
 pub mod vfs;
 
-pub use manifest::{CronEntry, HookConfig, HookPoint, Permissions, PluginManifest, RouteDef};
+pub use manifest::{CronEntry, HookConfig, Permissions, PluginManifest, RouteDef};
 pub use permissions::PermissionChecker;
 
 use std::collections::HashMap;
@@ -1089,12 +1089,12 @@ impl PluginManager {
     /// Dispatch Filter-type hooks (chain invocation)
     pub async fn dispatch_filter<T: Clone + Serialize + DeserializeOwned + Send>(
         &self,
-        hook: HookPoint,
+        hook: &crate::event::Event,
         input: T,
     ) -> AppResult<T> {
-        let func_name = hook.wasm_func_name();
+        let func_name = hook.name();
         let content_type = self.extract_content_type(&input);
-        self.dispatch_filter_inner(func_name, input, content_type.as_deref())
+        self.dispatch_filter_inner(&func_name, input, content_type.as_deref())
             .await
     }
 
@@ -1103,12 +1103,11 @@ impl PluginManager {
         T: Clone + Serialize + DeserializeOwned + Send,
     >(
         &self,
-        hook: HookPoint,
+        hook: &crate::event::Event,
         input: T,
         content_type: &str,
     ) -> AppResult<T> {
-        let func_name = hook.wasm_func_name();
-        self.dispatch_filter_inner(func_name, input, Some(content_type))
+        self.dispatch_filter_inner(&hook.name(), input, Some(content_type))
             .await
     }
 
@@ -1212,22 +1211,20 @@ impl PluginManager {
     }
 
     /// Dispatch Action-type hooks (sequential execution, return value ignored)
-    pub async fn dispatch_action<T: Serialize>(&self, hook: HookPoint, data: &T) {
-        let func_name = hook.wasm_func_name();
+    pub async fn dispatch_action<T: Serialize>(&self, hook: &str, data: &T) {
         let content_type = self.extract_content_type(data);
-        self.dispatch_action_inner(func_name, data, content_type.as_deref())
+        self.dispatch_action_inner(hook, data, content_type.as_deref())
             .await
     }
 
     /// Dispatch Action-type hooks with explicit content_type
     pub async fn dispatch_action_with_content_type<T: Serialize>(
         &self,
-        hook: HookPoint,
+        hook: &str,
         data: &T,
         content_type: &str,
     ) {
-        let func_name = hook.wasm_func_name();
-        self.dispatch_action_inner(func_name, data, Some(content_type))
+        self.dispatch_action_inner(hook, data, Some(content_type))
             .await
     }
 
@@ -1910,6 +1907,7 @@ fn topological_sort(manifests: &HashMap<String, PluginManifest>) -> Vec<String> 
 mod tests {
     use super::*;
     use crate::config::app::AppConfig;
+    use crate::event::Event;
 
     fn test_config() -> Arc<AppConfig> {
         Arc::new(AppConfig::test_defaults())
@@ -1998,7 +1996,7 @@ mod tests {
         let mgr = PluginManager::new(config).await;
         let input = serde_json::json!({"title": "hello", "content": "world"});
         let result: serde_json::Value = mgr
-            .dispatch_filter(HookPoint::PostCreating, input.clone())
+            .dispatch_filter(&Event::PostCreating, input.clone())
             .await
             .unwrap();
         assert_eq!(result, input);
@@ -2008,7 +2006,7 @@ mod tests {
     async fn dispatch_action_with_no_plugins_does_nothing() {
         let config = test_config();
         let mgr = PluginManager::new(config).await;
-        mgr.dispatch_action(HookPoint::PostCreated, &serde_json::json!({"id": "123"}))
+        mgr.dispatch_action("on_post_created", &serde_json::json!({"id": "123"}))
             .await;
     }
 
@@ -2106,7 +2104,7 @@ export function on_post_creating(inputJson) {
 
         let input = serde_json::json!({"title": "hello", "content": "world"});
         let result: serde_json::Value = mgr
-            .dispatch_filter(HookPoint::PostCreating, input)
+            .dispatch_filter(&Event::PostCreating, input)
             .await
             .unwrap();
         assert_eq!(result["title"], "HELLO");
@@ -2187,7 +2185,7 @@ export function on_post_created(dataJson) {
         config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
         let mgr = PluginManager::new(Arc::new(config)).await;
 
-        mgr.dispatch_action(HookPoint::PostCreated, &serde_json::json!({"id": "abc"}))
+        mgr.dispatch_action("on_post_created", &serde_json::json!({"id": "abc"}))
             .await;
     }
 
@@ -2329,7 +2327,7 @@ export function on_post_creating(inputJson) {
 
         let input = serde_json::json!({"title": "hello"});
         let result: serde_json::Value = mgr
-            .dispatch_filter(HookPoint::PostCreating, input)
+            .dispatch_filter(&Event::PostCreating, input)
             .await
             .unwrap();
         assert_eq!(result["env"], "test");
@@ -2409,7 +2407,7 @@ Plugin = {
 
         let input = serde_json::json!({"title": "hello", "content": "world"});
         let result: serde_json::Value = mgr
-            .dispatch_filter(HookPoint::PostCreating, input)
+            .dispatch_filter(&Event::PostCreating, input)
             .await
             .unwrap();
         assert_eq!(result["title"], "HELLO");
@@ -2492,7 +2490,7 @@ Plugin = {
         config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
         let mgr = PluginManager::new(Arc::new(config)).await;
 
-        mgr.dispatch_action(HookPoint::PostCreated, &serde_json::json!({"id": "abc"}))
+        mgr.dispatch_action("on_post_created", &serde_json::json!({"id": "abc"}))
             .await;
     }
 
@@ -2583,7 +2581,7 @@ Plugin = {
 
         let input = serde_json::json!({"title": "hello"});
         let result: serde_json::Value = mgr
-            .dispatch_filter(HookPoint::PostCreating, input)
+            .dispatch_filter(&Event::PostCreating, input)
             .await
             .unwrap();
         assert_eq!(result["env"], "test");
@@ -2854,18 +2852,13 @@ Plugin = {
         });
 
         let result: serde_json::Value = mgr
-            .dispatch_filter(HookPoint::PostCreating, input.clone())
+            .dispatch_filter(&Event::PostCreating, input.clone())
             .await
             .unwrap();
         assert_eq!(result["cache_hit"], serde_json::Value::Null);
         assert!(result["stats"].is_null());
 
-        let result: serde_json::Value = mgr
-            .dispatch_filter(HookPoint::PostCreated, input.clone())
-            .await
-            .unwrap();
-        assert!(result["file_stat"].is_string());
-        assert!(result["cache_files"].is_string());
+        mgr.dispatch_action("on_post_created", &input).await;
 
         let vfs_plugin_dir = vfs_root.join("com.test.lua-vfs");
         let cache_file = vfs_plugin_dir.join("cache/hello-world.txt");
@@ -2877,22 +2870,19 @@ Plugin = {
         assert!(stats_file.exists());
 
         let result: serde_json::Value = mgr
-            .dispatch_filter(HookPoint::PostCreating, input.clone())
+            .dispatch_filter(&Event::PostCreating, input.clone())
             .await
             .unwrap();
         assert_eq!(result["cache_hit"], true);
         assert!(result["stats"].is_string());
 
         let delete_input = serde_json::json!({"slug": "hello-world"});
-        let _result: serde_json::Value = mgr
-            .dispatch_filter(HookPoint::PostDeleted, delete_input)
-            .await
-            .unwrap();
+        mgr.dispatch_action("on_post_deleted", &delete_input).await;
         assert!(!cache_file.exists());
 
         let check_input = serde_json::json!({"slug": "hello-world"});
         let result: serde_json::Value = mgr
-            .dispatch_filter(HookPoint::PostCreating, check_input)
+            .dispatch_filter(&Event::PostCreating, check_input)
             .await
             .unwrap();
         assert!(result["cache_hit"].is_null());
@@ -3078,7 +3068,7 @@ end
         assert!(!digest.enabled);
 
         mgr.dispatch_action(
-            HookPoint::CronTick,
+            "on_cron_tick",
             &serde_json::json!({
                 "job_type": "cleanup_sessions",
                 "payload": {"max_age_hours": 12},
@@ -3168,7 +3158,7 @@ fn on_post_creating(input) {
 
         let input = serde_json::json!({"title": "hello", "content": "world"});
         let result: serde_json::Value = mgr
-            .dispatch_filter(HookPoint::PostCreating, input)
+            .dispatch_filter(&Event::PostCreating, input)
             .await
             .unwrap();
         assert_eq!(result["title"], "HELLO");
@@ -3247,7 +3237,7 @@ fn on_post_created(data_json) {
         config.plugin_dir = Some(dir.path().to_string_lossy().to_string());
         let mgr = PluginManager::new(Arc::new(config)).await;
 
-        mgr.dispatch_action(HookPoint::PostCreated, &serde_json::json!({"id": "abc"}))
+        mgr.dispatch_action("on_post_created", &serde_json::json!({"id": "abc"}))
             .await;
     }
 
@@ -3373,7 +3363,7 @@ fn on_post_creating(input) {
             "content": "This is a test post to verify the Rhai plugin engine works correctly with the full plugin lifecycle."
         });
         let result: serde_json::Value = mgr
-            .dispatch_filter(HookPoint::PostCreating, input)
+            .dispatch_filter(&Event::PostCreating, input)
             .await
             .unwrap();
 
@@ -3522,10 +3512,10 @@ fn on_post_created(data) {
             "content": "Hello world"
         });
         let created1: serde_json::Value = mgr
-            .dispatch_filter(HookPoint::PostCreating, input1)
+            .dispatch_filter(&Event::PostCreating, input1)
             .await
             .unwrap();
-        mgr.dispatch_action(HookPoint::PostCreated, &created1).await;
+        mgr.dispatch_action("on_post_created", &created1).await;
 
         // Verify VFS cache file was written
         let vfs_plugin = vfs_root.join("com.raisfast.seo-vfs");
@@ -3545,10 +3535,10 @@ fn on_post_created(data) {
             "content": "Another post"
         });
         let created2: serde_json::Value = mgr
-            .dispatch_filter(HookPoint::PostCreating, input2)
+            .dispatch_filter(&Event::PostCreating, input2)
             .await
             .unwrap();
-        mgr.dispatch_action(HookPoint::PostCreated, &created2).await;
+        mgr.dispatch_action("on_post_created", &created2).await;
 
         // Verify counter incremented
         assert_eq!(

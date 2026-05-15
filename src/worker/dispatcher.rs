@@ -8,7 +8,6 @@
 use std::sync::Arc;
 
 use crate::errors::app_error::AppResult;
-use crate::plugins::HookPoint;
 use crate::plugins::PluginManager;
 
 use super::Job;
@@ -47,9 +46,7 @@ impl PluginCronDispatcher {
             job.job_type()
         );
 
-        self.plugins
-            .dispatch_action(HookPoint::CronTick, &payload)
-            .await;
+        self.plugins.dispatch_action("on_cron_tick", &payload).await;
 
         Ok(())
     }

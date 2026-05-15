@@ -623,7 +623,6 @@ pub fn spawn_event_subscriber(
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
     use crate::eventbus::Event;
-    use crate::plugins::HookPoint;
 
     let mut rx = eventbus.subscribe();
     tokio::spawn(async move {
@@ -634,20 +633,20 @@ pub fn spawn_event_subscriber(
                         Ok(event) => match event.as_ref() {
                             Event::PostCreated(_) => {
                                 let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
-                                plugins.dispatch_action(HookPoint::PostCreated, &json).await;
+                                plugins.dispatch_action("on_post_created", &json).await;
                             }
                             Event::PostUpdated(_) => {
                                 let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
-                                plugins.dispatch_action(HookPoint::PostUpdated, &json).await;
+                                plugins.dispatch_action("on_post_updated", &json).await;
                             }
                             Event::PostDeleted(_) => {
                                 let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
-                                plugins.dispatch_action(HookPoint::PostDeleted, &json).await;
+                                plugins.dispatch_action("on_post_deleted", &json).await;
                             }
                             Event::CommentCreated(_) => {
                                 let json = serde_json::to_value(event.as_ref()).unwrap_or_default();
                                 plugins
-                                    .dispatch_action(HookPoint::CommentCreated, &json)
+                                    .dispatch_action("on_comment_created", &json)
                                     .await;
                             }
                             _ => {}
