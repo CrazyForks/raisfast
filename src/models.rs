@@ -18,6 +18,7 @@
 //! - [`refresh_token`] — Refresh token model and queries
 
 pub mod api_token;
+pub mod audit_log;
 pub mod category;
 pub mod comment;
 pub mod content_revision;

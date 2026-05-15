@@ -6,7 +6,7 @@ use crate::aspects::engine::AspectEngine;
 use crate::commands::CreateOrderCmd;
 use crate::dto::{CreateOrderRequest, ShipOrderRequest};
 use crate::errors::app_error::{AppError, AppResult};
-use crate::eventbus::Event;
+use crate::event::Event;
 use crate::middleware::auth::AuthUser;
 use crate::models::order::{Order, OrderStatus};
 use crate::models::order_item::OrderItem;
@@ -215,6 +215,10 @@ impl OrderService for OrderServiceImpl {
             return Err(AppError::BadRequest("only_pending_can_cancel".into()));
         }
 
+        self.aspect_engine
+            .before_update("orders", auth, &order, OrderStatus::Cancelled)
+            .await?;
+
         let result: Result<(), AppError> = async {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_status_cas(
@@ -249,6 +253,10 @@ impl OrderService for OrderServiceImpl {
         if order.status != OrderStatus::Pending {
             return Err(AppError::BadRequest("only_pending_can_pay".into()));
         }
+
+        self.aspect_engine
+            .before_update("orders", auth, &order, OrderStatus::Paid)
+            .await?;
 
         let result: Result<(), AppError> = async {
             crate::in_transaction!(&self.pool, tx, {
@@ -290,6 +298,10 @@ impl OrderService for OrderServiceImpl {
         if order.status != OrderStatus::Paid {
             return Err(AppError::BadRequest("only_paid_can_ship".into()));
         }
+
+        self.aspect_engine
+            .before_update("orders", auth, &order, OrderStatus::Shipped)
+            .await?;
 
         let order_id = order.id;
         let result: Result<(), AppError> = async {
@@ -333,6 +345,10 @@ impl OrderService for OrderServiceImpl {
             return Err(AppError::BadRequest("only_shipped_can_confirm".into()));
         }
 
+        self.aspect_engine
+            .before_update("orders", auth, &order, OrderStatus::Completed)
+            .await?;
+
         let result: Result<(), AppError> = async {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_status_cas(
@@ -370,6 +386,10 @@ impl OrderService for OrderServiceImpl {
             ));
         }
 
+        self.aspect_engine
+            .before_update("orders", auth, &order, OrderStatus::Refunding)
+            .await?;
+
         let expected = order.status;
         let result: Result<(), AppError> = async {
             crate::in_transaction!(&self.pool, tx, {
@@ -404,6 +424,10 @@ impl OrderService for OrderServiceImpl {
                 "only_pending_or_paid_can_admin_cancel".into(),
             ));
         }
+
+        self.aspect_engine
+            .before_update("orders", auth, &order, OrderStatus::Cancelled)
+            .await?;
 
         let expected = order.status;
         let result: Result<(), AppError> = async {

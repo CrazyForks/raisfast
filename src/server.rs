@@ -162,7 +162,7 @@ async fn build_app(
         .merge(stats::routes(&mut registry, config))
         .merge(options::routes(&mut registry, config))
         .merge(tenant::routes(&mut registry, config))
-        .merge(crate::audit::handler::routes(&mut registry, config))
+        .merge(crate::handlers::audit::routes(&mut registry, config))
         .merge(crate::webhook::handler::routes(&mut registry, config))
         .merge(crate::content_type::handler::routes(&mut registry, config));
 
@@ -620,12 +620,10 @@ async fn handle_plugin_route(
 /// Spawn audit log subscriber to write all business events to the `audit_log` table.
 pub fn spawn_audit_subscriber(
     eventbus: crate::eventbus::EventBus,
-    audit: Arc<crate::audit::AuditService>,
+    audit: Arc<crate::services::audit::AuditService>,
     tenant_service: Arc<crate::services::tenant::TenantService>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
-    use crate::eventbus::Event;
-
     let mut rx = eventbus.subscribe();
     tokio::spawn(async move {
         let default_tenant: &str = DEFAULT_TENANT;
@@ -635,101 +633,25 @@ pub fn spawn_audit_subscriber(
                 result = rx.recv() => {
                     match result {
                         Ok(event) => {
-                    let (action, subject, subject_id, actor_id, detail): (
-                        &str,
-                        &str,
-                        String,
-                        Option<i64>,
-                        Option<String>,
-                    ) = match event.as_ref() {
-                        Event::PostCreated(data) => (
-                            "create",
-                            "post",
-                            data.id.clone(),
-                            Some(data.created_by),
-                            Some(format!("title={}", data.title)),
-                        ),
-                        Event::PostUpdated(data) => (
-                            "update",
-                            "post",
-                            data.id.to_string(),
-                            None,
-                            Some(format!("slug={}", data.slug)),
-                        ),
-                        Event::PostDeleted(data) => (
-                            "delete",
-                            "post",
-                            data.document_id.clone(),
-                            None,
-                            Some(format!("slug={}", data.slug)),
-                        ),
-                        Event::CommentCreated(data) => (
-                            "create",
-                            "comment",
-                            data.document_id.clone(),
-                            None,
-                            Some(format!("author={}", data.nickname.clone().unwrap_or_default())),
-                        ),
-                        Event::UserRegistered(data) => (
-                            "register",
-                            "user",
-                            data.document_id.clone(),
-                            None,
-                            Some(format!("username={}", data.username)),
-                        ),
-                        Event::UserLoggedIn { user, success } => (
-                            "login",
-                            "user",
-                            user.document_id.clone(),
-                            Some(user.id),
-                            Some(format!("success={}", success)),
-                        ),
-                        Event::MediaUploaded(data) => (
-                            "upload",
-                            "media",
-                            data.document_id.clone(),
-                            Some(data.user_id),
-                            Some(format!("filename={}", data.filename)),
-                        ),
-                        Event::MediaDeleted(data) => (
-                            "delete",
-                            "media",
-                            data.document_id.clone(),
-                            None,
-                            None,
-                        ),
-                        Event::PasswordResetRequested { user, token: _ } => (
-                            "password_reset_request",
-                            "user",
-                            user.document_id.clone(),
-                            None,
-                            Some(format!("username={}", user.username)),
-                        ),
-                        Event::EmailVerificationRequested { user_id, email, .. } => (
-                            "email_verification_request",
-                            "user",
-                            user_id.to_string(),
-                            None,
-                            Some(format!("email={}", email)),
-                        ),
-                        _ => continue,
+                    let Some(info) = event.audit_info() else {
+                        continue;
                     };
 
                     if let Err(e) = audit
                         .log(
                             default_tenant,
-                            actor_id,
+                            info.actor_id,
                             None,
-                            action,
-                            subject,
-                            Some(&subject_id),
-                            detail.as_deref(),
+                            &info.action,
+                            &info.subject,
+                            Some(&info.subject_id),
+                            info.detail.as_deref(),
                             None,
                             None,
                         )
                         .await
                     {
-                        tracing::warn!(%action, %subject, error = %e, "failed to write audit log");
+                        tracing::warn!(action = %info.action, subject = %info.subject, error = %e, "failed to write audit log");
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -757,7 +679,16 @@ fn webhook_event_type(event: &crate::eventbus::Event) -> Option<String> {
     let table = event.table()?;
     let singular = table.strip_suffix('s').unwrap_or(table);
     let display = event.display_name();
-    let prefix = singular[..1].to_uppercase() + &singular[1..];
+    let prefix: String = singular
+        .split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect();
     let action = display.strip_prefix(&prefix)?;
     let action = action[..1].to_ascii_lowercase() + &action[1..];
     Some(format!("{}.{}", singular, action))
@@ -773,8 +704,8 @@ pub fn spawn_webhook_subscriber(
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .unwrap_or_else(|e| {
-            tracing::error!("webhook http client init failed: {e}");
-            panic!("webhook client failure");
+            tracing::error!("webhook http client init failed: {e}; using default client");
+            reqwest::Client::new()
         });
 
     let mut rx = eventbus.subscribe();

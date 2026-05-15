@@ -43,8 +43,9 @@ pub async fn list(
     State(state): State<AppState>,
     Query(mut params): Query<PaginationParams>,
     Query(filter): Query<AuditFilter>,
-) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<crate::audit::model::AuditEntry>>>
-{
+) -> AppResult<
+    ApiResponse<crate::errors::response::PaginatedData<crate::models::audit_log::AuditEntry>>,
+> {
     auth.ensure_admin()?;
     params.sanitize();
     let (items, total) = state
@@ -65,7 +66,7 @@ pub async fn get(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> AppResult<ApiResponse<crate::audit::model::AuditEntry>> {
+) -> AppResult<ApiResponse<crate::models::audit_log::AuditEntry>> {
     auth.ensure_admin()?;
     let entry = state.audit.get(id).await?;
     Ok(ApiResponse::success(entry))

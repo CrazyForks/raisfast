@@ -16,7 +16,6 @@ mod macros;
 
 pub mod app;
 pub mod aspects;
-pub mod audit;
 pub mod cache;
 pub mod commands;
 pub mod config;
@@ -72,7 +71,6 @@ pub(crate) fn _brand() -> String {
 }
 
 use app::ServiceRegistry;
-use audit::AuditService;
 use config::app::AppConfig;
 use content_type::ContentTypeRegistry;
 use db::Pool;
@@ -87,6 +85,7 @@ use repositories::{
     TagRepository, UserRepository, WalletRepository,
 };
 use search::SearchEngine;
+use services::audit::AuditService;
 use services::options::OptionsService;
 use services::rbac::RbacService;
 use services::tenant::TenantService;
@@ -323,7 +322,7 @@ pub async fn build_app_state(
     let tenant_repo: Arc<dyn crate::repositories::TenantRepository> =
         Arc::new(crate::repositories::SqlxTenantRepository::new(pool.clone()));
     let tenant_service = Arc::new(TenantService::new(tenant_repo));
-    let audit_service = Arc::new(crate::audit::AuditService::new(pool.clone()));
+    let audit_service = Arc::new(crate::services::audit::AuditService::new(pool.clone()));
     let webhook_service = Arc::new(crate::webhook::WebhookService::new(pool.clone()));
 
     let storage = crate::storage::create_storage(config)?;

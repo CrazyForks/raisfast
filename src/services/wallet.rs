@@ -6,7 +6,7 @@ use crate::aspects::engine::AspectEngine;
 use crate::db::dialect::ph;
 use crate::db::pool::DbConnection;
 use crate::errors::app_error::{AppError, AppResult};
-use crate::eventbus::Event;
+use crate::event::Event;
 use crate::models::currencies;
 use crate::models::wallet;
 use crate::models::wallet::WalletStatus;

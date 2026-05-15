@@ -246,7 +246,7 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
         tenant: Arc::new(raisfast::services::tenant::TenantService::new(Arc::new(
             SqlxTenantRepository::new(pool.clone()),
         ))),
-        audit: Arc::new(raisfast::audit::AuditService::new(pool.clone())),
+        audit: Arc::new(raisfast::services::audit::AuditService::new(pool.clone())),
         webhook: Arc::new(raisfast::webhook::WebhookService::new(pool.clone())),
         workflow: Arc::new(raisfast::workflow::WorkflowService::new(pool.clone())),
         storage: raisfast::storage::create_storage(&config).expect("failed to create storage"),
@@ -355,8 +355,8 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
                 .put(h_tenant::update_tenant)
                 .delete(h_tenant::delete_tenant),
         )
-        .route("/admin/audit", get(raisfast::audit::handler::list))
-        .route("/admin/audit/{id}", get(raisfast::audit::handler::get))
+        .route("/admin/audit", get(raisfast::handlers::audit::list))
+        .route("/admin/audit/{id}", get(raisfast::handlers::audit::get))
         .route(
             "/admin/webhooks",
             get(raisfast::webhook::handler::list).post(raisfast::webhook::handler::create),

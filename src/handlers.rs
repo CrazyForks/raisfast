@@ -18,6 +18,7 @@
 //! - [`health`] — Health check
 
 pub mod api_token;
+pub mod audit;
 pub mod auth;
 pub mod category;
 pub mod comment;

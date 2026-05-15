@@ -3,7 +3,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::aspects::engine::AspectEngine;
-use crate::audit::AuditService;
 use crate::commands::{
     CreatePaymentChannelCmd, CreatePaymentOrderCmd, CreatePaymentRefundCmd,
     CreatePaymentTransactionCmd, CreateWalletOutboxCmd,
@@ -11,7 +10,7 @@ use crate::commands::{
 use crate::config::app::AppConfig;
 use crate::dto::payment::*;
 use crate::errors::app_error::{AppError, AppResult};
-use crate::eventbus::Event;
+use crate::event::Event;
 use crate::middleware::auth::AuthUser;
 use crate::models::payment_channel::PaymentChannel;
 use crate::models::payment_order::{PaymentOrder, PaymentStatus};
@@ -24,6 +23,7 @@ use crate::repositories::{
     OrderRepository, PaymentChannelRepository, PaymentOrderRepository, PaymentRefundRepository,
     PaymentTransactionRepository, ProductRepository, WalletRepository,
 };
+use crate::services::audit::AuditService;
 use base64::Engine;
 
 #[async_trait]

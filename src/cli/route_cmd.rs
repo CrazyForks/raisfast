@@ -40,7 +40,7 @@ fn collect_routes(config: &AppConfig) -> Vec<RouteInfo> {
     let _ = raisfast::handlers::stats::routes(&mut registry, config);
     let _ = raisfast::handlers::options::routes(&mut registry, config);
     let _ = raisfast::handlers::tenant::routes(&mut registry, config);
-    let _ = raisfast::audit::handler::routes(&mut registry, config);
+    let _ = raisfast::handlers::audit::routes(&mut registry, config);
     let _ = raisfast::webhook::handler::routes(&mut registry, config);
     let _ = raisfast::content_type::handler::routes(&mut registry, config);
 

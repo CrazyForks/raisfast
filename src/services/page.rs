@@ -187,14 +187,19 @@ impl PageService for PageServiceImpl {
         let p = page::find_by_document_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("page"))?;
-        page::update_status(
+        self.aspect_engine
+            .before_update("pages", auth, &p, status)
+            .await?;
+        let updated = page::update_status(
             &self.pool,
             p.id,
             status,
             auth.user_int_id(),
             auth.tenant_id(),
         )
-        .await
+        .await?;
+        self.after_updated(&updated);
+        Ok(updated)
     }
 
     async fn reorder(&self, items: Vec<(String, i64)>, auth: &AuthUser) -> AppResult<()> {

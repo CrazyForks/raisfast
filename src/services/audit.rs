@@ -1,8 +1,8 @@
 //! Audit log service
 
-use crate::audit::model::{self, AuditEntry};
 use crate::db::Pool;
 use crate::errors::app_error::AppResult;
+use crate::models::audit_log::{self, AuditEntry};
 
 /// Audit log service
 pub struct AuditService {
@@ -44,7 +44,7 @@ impl AuditService {
             user_agent: user_agent.map(|s| s.to_string()),
             created_at: now,
         };
-        model::insert(&self.pool, &entry).await
+        audit_log::insert(&self.pool, &entry).await
     }
 
     pub async fn list(
@@ -55,10 +55,10 @@ impl AuditService {
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<AuditEntry>, i64)> {
-        model::find_paginated(&self.pool, tenant_id, action, actor_id, page, page_size).await
+        audit_log::find_paginated(&self.pool, tenant_id, action, actor_id, page, page_size).await
     }
 
     pub async fn get(&self, id: i64) -> AppResult<AuditEntry> {
-        model::find_by_id(&self.pool, id).await
+        audit_log::find_by_id(&self.pool, id).await
     }
 }

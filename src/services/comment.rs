@@ -230,6 +230,9 @@ impl CommentService for CommentServiceImpl {
             .find_by_document_id(comment_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("comment"))?;
+        self.aspect_engine
+            .before_update("comments", auth, &c, status)
+            .await?;
         self.comment_repo
             .update_status(c.id, status, auth.tenant_id())
             .await?;

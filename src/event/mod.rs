@@ -4,8 +4,10 @@
 //! `name()` uses `on_` prefix which doubles as the WASM function name.
 //! `display_name()` returns PascalCase for SSE/frontend.
 //! `table()` returns the DB table if applicable.
+//! `audit_info()` auto-derives audit fields from table + display_name + serde payload.
 //!
 //! Adding a new event: add variant + optional `#[event(table = "...", name = "...")]`.
+//! Audit logging is automatic for any event with a `table` attribute.
 
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +27,14 @@ use crate::models::user::User;
 use crate::models::wallet_transaction::WalletTransaction;
 
 pub use raisfast_derive::EventMeta;
+
+pub struct AuditInfo {
+    pub action: String,
+    pub subject: String,
+    pub subject_id: String,
+    pub actor_id: Option<i64>,
+    pub detail: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, EventMeta)]
 #[non_exhaustive]
@@ -162,6 +172,131 @@ pub enum Event {
         event_type: String,
         data: serde_json::Value,
     },
+}
+
+impl Event {
+    fn snake_to_pascal(s: &str) -> String {
+        s.split('_')
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => String::new(),
+                }
+            })
+            .collect()
+    }
+
+    fn generic_audit_info(&self) -> Option<AuditInfo> {
+        let table = self.table()?;
+        let singular = table.strip_suffix('s').unwrap_or(table);
+        let display = self.display_name();
+        let prefix = Self::snake_to_pascal(singular);
+        let remainder = display.strip_prefix(&prefix)?;
+        let action = remainder[..1].to_ascii_lowercase() + &remainder[1..];
+        let subject = singular.to_string();
+
+        let value = serde_json::to_value(self).ok()?;
+        let data = value.get("data")?;
+
+        let subject_id = data
+            .get("document_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let actor_id = data
+            .get("user_id")
+            .and_then(|v| v.as_i64())
+            .or_else(|| data.get("created_by").and_then(|v| v.as_i64()));
+
+        Some(AuditInfo {
+            action,
+            subject,
+            subject_id,
+            actor_id,
+            detail: None,
+        })
+    }
+
+    pub fn audit_info(&self) -> Option<AuditInfo> {
+        match self {
+            Event::PostCreated(data) => Some(AuditInfo {
+                action: "create".into(),
+                subject: "post".into(),
+                subject_id: data.id.clone(),
+                actor_id: Some(data.created_by),
+                detail: Some(format!("title={}", data.title)),
+            }),
+            Event::PostUpdated(data) => Some(AuditInfo {
+                action: "update".into(),
+                subject: "post".into(),
+                subject_id: data.document_id.clone(),
+                actor_id: None,
+                detail: Some(format!("slug={}", data.slug)),
+            }),
+            Event::PostDeleted(data) => Some(AuditInfo {
+                action: "delete".into(),
+                subject: "post".into(),
+                subject_id: data.document_id.clone(),
+                actor_id: None,
+                detail: Some(format!("slug={}", data.slug)),
+            }),
+            Event::CommentCreated(data) => Some(AuditInfo {
+                action: "create".into(),
+                subject: "comment".into(),
+                subject_id: data.document_id.clone(),
+                actor_id: None,
+                detail: Some(format!(
+                    "author={}",
+                    data.nickname.clone().unwrap_or_default()
+                )),
+            }),
+            Event::UserRegistered(data) => Some(AuditInfo {
+                action: "register".into(),
+                subject: "user".into(),
+                subject_id: data.document_id.clone(),
+                actor_id: None,
+                detail: Some(format!("username={}", data.username)),
+            }),
+            Event::UserLoggedIn { user, success } => Some(AuditInfo {
+                action: "login".into(),
+                subject: "user".into(),
+                subject_id: user.document_id.clone(),
+                actor_id: Some(user.id),
+                detail: Some(format!("success={}", success)),
+            }),
+            Event::MediaUploaded(data) => Some(AuditInfo {
+                action: "upload".into(),
+                subject: "media".into(),
+                subject_id: data.document_id.clone(),
+                actor_id: Some(data.user_id),
+                detail: Some(format!("filename={}", data.filename)),
+            }),
+            Event::MediaDeleted(data) => Some(AuditInfo {
+                action: "delete".into(),
+                subject: "media".into(),
+                subject_id: data.document_id.clone(),
+                actor_id: None,
+                detail: None,
+            }),
+            Event::PasswordResetRequested { user, token: _ } => Some(AuditInfo {
+                action: "password_reset_request".into(),
+                subject: "user".into(),
+                subject_id: user.document_id.clone(),
+                actor_id: None,
+                detail: Some(format!("username={}", user.username)),
+            }),
+            Event::EmailVerificationRequested { user_id, email, .. } => Some(AuditInfo {
+                action: "email_verification_request".into(),
+                subject: "user".into(),
+                subject_id: user_id.to_string(),
+                actor_id: None,
+                detail: Some(format!("email={}", email)),
+            }),
+            _ => self.generic_audit_info(),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -7,6 +7,7 @@
 //! - Responsible for data validation, permission checks, and business rule enforcement.
 
 pub mod api_token;
+pub mod audit;
 pub mod auth;
 pub mod category;
 pub mod comment;
