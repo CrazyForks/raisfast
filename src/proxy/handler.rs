@@ -1,6 +1,6 @@
-//! HTTP 反向代理核心。
+//! HTTP reverse proxy core.
 //!
-//! 接收前端请求，根据路由表查找后端，流式转发请求和响应。
+//! Receives frontend requests, looks up backends via the routing table, and streams requests and responses.
 
 use std::sync::Arc;
 
@@ -25,7 +25,7 @@ fn full(data: impl Into<Bytes>) -> ResBody {
         .boxed()
 }
 
-/// 代理错误类型。
+/// Proxy error types.
 #[derive(Debug, thiserror::Error)]
 pub enum ProxyError {
     #[error("no backend found for this request")]
@@ -76,7 +76,7 @@ impl From<ProxyError> for Response<ResBody> {
     }
 }
 
-/// 处理一个代理请求。
+/// Handle a proxy request.
 pub async fn handle_proxy_request(
     req: Request<Incoming>,
     router: &Arc<RouterTable>,

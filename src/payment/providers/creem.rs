@@ -72,7 +72,7 @@ fn decrypt_credentials(
 ) -> AppResult<CreemCredentials> {
     let decrypted = aes256gcm_decrypt(&channel.credentials, encrypt_key)?;
     serde_json::from_str(&decrypted)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("creem credentials parse: {e}")))
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("creem credentials parse")))
 }
 
 fn base_url(creds: &CreemCredentials) -> &str {
@@ -94,7 +94,7 @@ fn creem_status_to_payment(status: &str) -> PaymentStatus {
 }
 
 fn creem_error(e: reqwest::Error) -> AppError {
-    AppError::Internal(anyhow::anyhow!("creem api: {e}"))
+    AppError::Internal(anyhow::Error::from(e).context("creem api"))
 }
 
 async fn do_create_checkout(
@@ -161,7 +161,7 @@ async fn do_get_checkout(
 
 fn verify_signature(body: &[u8], signature: &str, webhook_secret: &str) -> AppResult<()> {
     let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("hmac init: {e}")))?;
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("hmac init")))?;
     mac.update(body);
     let expected = hex::encode(mac.finalize().into_bytes());
     if !expected.eq_ignore_ascii_case(signature) {

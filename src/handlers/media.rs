@@ -109,7 +109,7 @@ pub async fn upload(
     let field = multipart
         .next_field()
         .await
-        .map_err(|_| AppError::BadRequest("multipart_read_failed".into()))?
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("multipart read failed")))?
         .ok_or_else(|| AppError::BadRequest("no_file".into()))?;
 
     let filename = field.file_name().unwrap_or("unknown").to_string();
@@ -121,7 +121,7 @@ pub async fn upload(
     let data = field
         .bytes()
         .await
-        .map_err(|_| AppError::BadRequest("file_data_read_failed".into()))?;
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("file data read failed")))?;
 
     let bucket = "blog";
 
@@ -208,7 +208,7 @@ pub async fn admin_upload(
     let field = multipart
         .next_field()
         .await
-        .map_err(|_| AppError::BadRequest("multipart_read_failed".into()))?
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("multipart read failed")))?
         .ok_or_else(|| AppError::BadRequest("no_file".into()))?;
 
     let filename = field.file_name().unwrap_or("unknown").to_string();
@@ -219,7 +219,7 @@ pub async fn admin_upload(
     let data = field
         .bytes()
         .await
-        .map_err(|_| AppError::BadRequest("file_data_read_failed".into()))?;
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("file data read failed")))?;
 
     let media = media_service::save_file(
         state.storage.as_ref(),

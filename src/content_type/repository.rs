@@ -168,10 +168,7 @@ impl ContentRepository {
             for p in &params {
                 count_q = count_q.bind(value_to_string(p));
             }
-            count_q
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("count query failed: {e}")))?
+            count_q.fetch_one(&self.pool).await?
         };
 
         let order_sql = build_order_by(query.sort.as_deref(), ct);
@@ -189,10 +186,7 @@ impl ContentRepository {
             for p in &params {
                 data_q = data_q.bind(value_to_string(p));
             }
-            data_q
-                .fetch_all(&self.pool)
-                .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("data query failed: {e}")))?
+            data_q.fetch_all(&self.pool).await?
         };
 
         let mut items: Vec<Value> = rows.iter().map(|row| row_to_value(row, &columns)).collect();
@@ -241,10 +235,7 @@ impl ContentRepository {
             q = q.bind(tid);
         }
 
-        let row = q
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+        let row = q.fetch_optional(&self.pool).await?;
 
         let mut result = row.map(|r| row_to_value(&r, &columns));
 
@@ -289,10 +280,7 @@ impl ContentRepository {
             q = q.bind(tid);
         }
 
-        let row = q
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+        let row = q.fetch_optional(&self.pool).await?;
 
         if let Some(r) = row {
             let mut result = row_to_value(&r, &columns);
@@ -357,10 +345,7 @@ impl ContentRepository {
             q = q.bind(tid);
         }
 
-        let row = q
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+        let row = q.fetch_optional(&self.pool).await?;
 
         let mut result = row.map(|r| row_to_value(&r, &columns));
 
@@ -382,11 +367,7 @@ impl ContentRepository {
         tenant_id: Option<&str>,
         _save_ctx: &SaveContext,
     ) -> Result<Value, AppError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("begin tx: {e}")))?;
+        let mut tx = self.pool.begin().await?;
 
         super::validation::validate_create_tx(&self.pool, ct, &data).await?;
         let document_id = crate::utils::id::new_document_id();
@@ -502,10 +483,7 @@ impl ContentRepository {
             query = query.bind(v);
         }
 
-        query
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("insert failed: {e}")))?;
+        query.execute(&mut *tx).await?;
 
         let source_int_id: i64 = {
             let id_sql = format!(
@@ -516,8 +494,7 @@ impl ContentRepository {
             sqlx::query_scalar::<_, i64>(&id_sql)
                 .bind(&document_id)
                 .fetch_one(&mut *tx)
-                .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("fetch int_id failed: {e}")))?
+                .await?
         };
 
         for (field_name, through_table, target_table, source_col, target_col) in &junction_fields {
@@ -548,16 +525,13 @@ impl ContentRepository {
                     .bind(source_int_id)
                     .bind(target_int_id)
                     .execute(&mut *tx)
-                    .await
-                    .map_err(|e| {
-                        AppError::Internal(anyhow::anyhow!("junction insert failed: {e}"))
-                    })?;
+                    .await?;
             }
         }
 
         tx.commit()
             .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("commit failed: {e}")))?;
+            .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("commit failed")))?;
 
         let columns = ct.column_names(None, true);
         let select_cols = columns.join(", ");
@@ -569,8 +543,7 @@ impl ContentRepository {
         let row = sqlx::query(&sql)
             .bind(&document_id)
             .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+            .await?;
 
         row.map(|r| row_to_value(&r, &columns))
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created record not found")))
@@ -602,11 +575,7 @@ impl ContentRepository {
             tracing::warn!("failed to create revision for {}: {e}", ct.singular);
         }
 
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("begin tx: {e}")))?;
+        let mut tx = self.pool.begin().await?;
 
         super::validation::validate_update_tx(&self.pool, ct, id, &data).await?;
 
@@ -675,8 +644,7 @@ impl ContentRepository {
             sqlx::query_scalar::<_, i64>(&id_sql)
                 .bind(id)
                 .fetch_optional(&mut *tx)
-                .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("fetch int_id failed: {e}")))?
+                .await?
                 .ok_or_else(|| AppError::not_found(&format!("{}/{}", ct.singular, id)))?
         };
 
@@ -759,7 +727,7 @@ impl ContentRepository {
             let result = query
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("update failed: {e}")))?;
+                .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("update failed")))?;
 
             if let Some(ref lock_col) = decl.lock_column
                 && result.rows_affected() == 0
@@ -791,7 +759,9 @@ impl ContentRepository {
                 .bind(source_int_id)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("junction delete failed: {e}")))?;
+                .map_err(|e| {
+                    AppError::Internal(anyhow::Error::from(e).context("junction delete failed"))
+                })?;
 
             let doc_ids = extract_document_ids(val);
             if doc_ids.is_empty() {
@@ -808,16 +778,13 @@ impl ContentRepository {
                     .bind(source_int_id)
                     .bind(target_int_id)
                     .execute(&mut *tx)
-                    .await
-                    .map_err(|e| {
-                        AppError::Internal(anyhow::anyhow!("junction insert failed: {e}"))
-                    })?;
+                    .await?;
             }
         }
 
         tx.commit()
             .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("commit failed: {e}")))?;
+            .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("commit failed")))?;
 
         self.find_by_id(ct, id, tenant_id, true)
             .await
@@ -874,7 +841,7 @@ impl ContentRepository {
             query
                 .execute(&self.pool)
                 .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("delete failed: {e}")))?;
+                .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("delete failed")))?;
         } else {
             let sql = format!(
                 "DELETE FROM {} WHERE {}",
@@ -888,7 +855,7 @@ impl ContentRepository {
             query
                 .execute(&self.pool)
                 .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("delete failed: {e}")))?;
+                .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("delete failed")))?;
         }
 
         let protocol_names: Vec<String> =
@@ -954,10 +921,9 @@ impl ContentRepository {
             query = query.bind(tid.as_str());
         }
 
-        query
-            .execute(&self.pool)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("soft_delete failed: {e}")))?;
+        query.execute(&self.pool).await.map_err(|e| {
+            AppError::Internal(anyhow::Error::from(e).context("soft_delete failed"))
+        })?;
 
         Ok(())
     }
@@ -983,7 +949,9 @@ impl ContentRepository {
                 .execute(&self.pool)
                 .await
                 .map_err(|e| {
-                    AppError::Internal(anyhow::anyhow!("CREATE TABLE {} failed: {}", ct.table, e))
+                    AppError::Internal(
+                        anyhow::Error::from(e).context(format!("CREATE TABLE {} failed", ct.table)),
+                    )
                 })?;
 
             tracing::info!("created table: {}", ct.table);
@@ -996,11 +964,10 @@ impl ContentRepository {
                 for sql in &alter_stmts {
                     tracing::info!("syncing column: {}", sql);
                     sqlx::query(sql).execute(&self.pool).await.map_err(|e| {
-                        AppError::Internal(anyhow::anyhow!(
-                            "ALTER TABLE {} failed: {}",
-                            ct.table,
-                            e
-                        ))
+                        AppError::Internal(
+                            anyhow::Error::from(e)
+                                .context(format!("ALTER TABLE {} failed", ct.table)),
+                        )
                     })?;
                 }
                 tracing::info!(
@@ -1016,7 +983,9 @@ impl ContentRepository {
                 .execute(&self.pool)
                 .await
                 .map_err(|e| {
-                    AppError::Internal(anyhow::anyhow!("CREATE junction table failed: {e}"))
+                    AppError::Internal(
+                        anyhow::Error::from(e).context("CREATE junction table failed"),
+                    )
                 })?;
         }
 
@@ -1034,10 +1003,7 @@ impl ContentRepository {
     async fn fetch_columns(&self, table: &str) -> Result<Vec<String>, AppError> {
         let (sql, col_index): (String, usize) = fetch_columns_sql(table)?;
 
-        let rows = sqlx::query(&sql)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+        let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
 
         let mut columns = Vec::new();
         for row in &rows {
@@ -1235,8 +1201,7 @@ pub(crate) async fn resolve_document_id_to_int_id(
     let result = sqlx::query_scalar::<_, i64>(&sql)
         .bind(document_id)
         .fetch_optional(pool)
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("resolve document_id failed: {e}")))?;
+        .await?;
     Ok(result)
 }
 
@@ -1264,9 +1229,7 @@ async fn resolve_document_ids_batch(
     for id in document_ids {
         q = q.bind(id);
     }
-    let rows = q.fetch_all(pool).await.map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("batch resolve document_ids failed: {e}"))
-    })?;
+    let rows = q.fetch_all(pool).await?;
     let mut lookup: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     for row in &rows {
         let int_id: i64 = row.try_get(COL_ID).unwrap_or(0);

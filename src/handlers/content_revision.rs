@@ -68,7 +68,7 @@ pub async fn get_revision(
 
     let rev_id: i64 = revision_id
         .parse()
-        .map_err(|_| AppError::BadRequest("invalid revision_id".into()))?;
+        .map_err(|e| AppError::BadRequest(format!("invalid revision_id: {e}")))?;
 
     let revision =
         crate::services::content_revision::get_revision(&state.pool, &ct.singular, &id, rev_id)
@@ -109,7 +109,7 @@ pub async fn restore_revision(
 
     let rev_id: i64 = revision_id
         .parse()
-        .map_err(|_| AppError::BadRequest("invalid revision_id".into()))?;
+        .map_err(|e| AppError::BadRequest(format!("invalid revision_id: {e}")))?;
 
     let snapshot =
         crate::services::content_revision::restore_revision(&state.pool, &ct.singular, &id, rev_id)
@@ -148,10 +148,10 @@ pub async fn diff_revisions(
 
     let rev_a_id: i64 = rev_a
         .parse()
-        .map_err(|_| AppError::BadRequest("invalid revision_id".into()))?;
+        .map_err(|e| AppError::BadRequest(format!("invalid revision_id: {e}")))?;
     let rev_b_id: i64 = rev_b
         .parse()
-        .map_err(|_| AppError::BadRequest("invalid revision_id".into()))?;
+        .map_err(|e| AppError::BadRequest(format!("invalid revision_id: {e}")))?;
 
     let result = crate::services::content_revision::diff_revisions(
         &state.pool,

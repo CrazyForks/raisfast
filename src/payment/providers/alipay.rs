@@ -105,7 +105,7 @@ fn decrypt_credentials(
 ) -> AppResult<AlipayCredentials> {
     let decrypted = aes256gcm_decrypt(&channel.credentials, encrypt_key)?;
     serde_json::from_str(&decrypted)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay credentials parse: {e}")))
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("alipay credentials parse")))
 }
 
 fn parse_private_key(pem_or_raw: &str) -> AppResult<rsa::RsaPrivateKey> {
@@ -118,7 +118,7 @@ fn parse_private_key(pem_or_raw: &str) -> AppResult<rsa::RsaPrivateKey> {
         )
     };
     rsa::RsaPrivateKey::from_pkcs1_pem(&pem)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay private key parse: {e}")))
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("alipay private key parse")))
 }
 
 fn parse_public_key(pem_or_raw: &str) -> AppResult<rsa::RsaPublicKey> {
@@ -131,7 +131,7 @@ fn parse_public_key(pem_or_raw: &str) -> AppResult<rsa::RsaPublicKey> {
         )
     };
     rsa::RsaPublicKey::from_public_key_pem(&pem)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay public key parse: {e}")))
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("alipay public key parse")))
 }
 
 fn gateway_url(creds: &AlipayCredentials) -> &str {
@@ -147,15 +147,16 @@ fn sign_data(data: &[u8], private_key: &rsa::RsaPrivateKey) -> AppResult<Vec<u8>
     let scheme = Pkcs1v15Sign::new::<Sha256>();
     private_key
         .sign(scheme, &hash)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay sign: {e}")))
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("alipay sign")))
 }
 
 fn verify_data(data: &[u8], sig_bytes: &[u8], public_key: &rsa::RsaPublicKey) -> AppResult<()> {
     let hash = Sha256::digest(data);
     let scheme = Pkcs1v15Sign::new::<Sha256>();
-    public_key
-        .verify(scheme, &hash, sig_bytes)
-        .map_err(|_| AppError::BadRequest("alipay callback signature mismatch".into()))
+    public_key.verify(scheme, &hash, sig_bytes).map_err(|e| {
+        tracing::warn!("alipay signature verification failed: {e}");
+        AppError::BadRequest("alipay callback signature mismatch".into())
+    })
 }
 
 fn build_signing_string(params: &BTreeMap<String, String>) -> String {
@@ -180,9 +181,9 @@ fn verify_signature(
     signature_b64: &str,
     public_key: &rsa::RsaPublicKey,
 ) -> AppResult<()> {
-    let sig_bytes = BASE64
-        .decode(signature_b64)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay signature base64 decode: {e}")))?;
+    let sig_bytes = BASE64.decode(signature_b64).map_err(|e| {
+        AppError::Internal(anyhow::Error::from(e).context("alipay signature base64 decode"))
+    })?;
     let signing_str = build_signing_string(params);
     verify_data(signing_str.as_bytes(), &sig_bytes, public_key)
 }
@@ -241,7 +242,7 @@ async fn call_alipay(
         .form(&form)
         .send()
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay request: {e}")))?;
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("alipay request")))?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -253,7 +254,7 @@ async fn call_alipay(
 
     resp.text()
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay read body: {e}")))
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("alipay read body")))
 }
 
 fn extract_alipay_public_key(channel: &PaymentChannel) -> AppResult<String> {
@@ -297,13 +298,15 @@ impl PaymentProvider for AlipayProvider {
             subject: order.title.clone(),
             timeout_express: Some("30m".to_string()),
         };
-        let biz_json = serde_json::to_string(&biz)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("biz_content serialize: {e}")))?;
+        let biz_json = serde_json::to_string(&biz).map_err(|e| {
+            AppError::Internal(anyhow::Error::from(e).context("biz_content serialize"))
+        })?;
 
         let body = call_alipay(&creds, &private_key, "alipay.trade.precreate", &biz_json).await?;
 
-        let resp: AlipayResponse<PrecreateResult> = serde_json::from_str(&body)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay response parse: {e}")))?;
+        let resp: AlipayResponse<PrecreateResult> = serde_json::from_str(&body).map_err(|e| {
+            AppError::Internal(anyhow::Error::from(e).context("alipay response parse"))
+        })?;
 
         let result = resp.precreate.ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!("alipay: missing precreate response"))
@@ -338,13 +341,15 @@ impl PaymentProvider for AlipayProvider {
         let biz = QueryBizContent {
             out_trade_no: provider_order_id.to_string(),
         };
-        let biz_json = serde_json::to_string(&biz)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("biz_content serialize: {e}")))?;
+        let biz_json = serde_json::to_string(&biz).map_err(|e| {
+            AppError::Internal(anyhow::Error::from(e).context("biz_content serialize"))
+        })?;
 
         let body = call_alipay(&creds, &private_key, "alipay.trade.query", &biz_json).await?;
 
-        let resp: AlipayResponse<QueryResult> = serde_json::from_str(&body)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay response parse: {e}")))?;
+        let resp: AlipayResponse<QueryResult> = serde_json::from_str(&body).map_err(|e| {
+            AppError::Internal(anyhow::Error::from(e).context("alipay response parse"))
+        })?;
 
         let result = resp
             .query
@@ -380,13 +385,15 @@ impl PaymentProvider for AlipayProvider {
         let biz = CancelBizContent {
             out_trade_no: provider_order_id.to_string(),
         };
-        let biz_json = serde_json::to_string(&biz)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("biz_content serialize: {e}")))?;
+        let biz_json = serde_json::to_string(&biz).map_err(|e| {
+            AppError::Internal(anyhow::Error::from(e).context("biz_content serialize"))
+        })?;
 
         let body = call_alipay(&creds, &private_key, "alipay.trade.cancel", &biz_json).await?;
 
-        let resp: AlipayResponse<CancelResult> = serde_json::from_str(&body)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay response parse: {e}")))?;
+        let resp: AlipayResponse<CancelResult> = serde_json::from_str(&body).map_err(|e| {
+            AppError::Internal(anyhow::Error::from(e).context("alipay response parse"))
+        })?;
 
         let result = resp.cancel.ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!("alipay: missing cancel response"))
@@ -416,13 +423,15 @@ impl PaymentProvider for AlipayProvider {
             out_request_no: Some(refund_no.clone()),
             refund_reason: reason.map(String::from),
         };
-        let biz_json = serde_json::to_string(&biz)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("biz_content serialize: {e}")))?;
+        let biz_json = serde_json::to_string(&biz).map_err(|e| {
+            AppError::Internal(anyhow::Error::from(e).context("biz_content serialize"))
+        })?;
 
         let body = call_alipay(&creds, &private_key, "alipay.trade.refund", &biz_json).await?;
 
-        let resp: AlipayResponse<RefundResult> = serde_json::from_str(&body)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("alipay response parse: {e}")))?;
+        let resp: AlipayResponse<RefundResult> = serde_json::from_str(&body).map_err(|e| {
+            AppError::Internal(anyhow::Error::from(e).context("alipay response parse"))
+        })?;
 
         let result = resp.refund.ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!("alipay: missing refund response"))
@@ -447,7 +456,7 @@ impl PaymentProvider for AlipayProvider {
         body: &[u8],
     ) -> AppResult<CallbackData> {
         let body_str = std::str::from_utf8(body)
-            .map_err(|_| AppError::BadRequest("alipay callback: invalid utf8".into()))?;
+            .map_err(|e| AppError::BadRequest(format!("alipay callback: invalid utf8: {e}")))?;
 
         let params: BTreeMap<String, String> = serde_urlencoded::from_str(body_str)
             .map_err(|e| AppError::BadRequest(format!("alipay callback parse: {e}")))?;

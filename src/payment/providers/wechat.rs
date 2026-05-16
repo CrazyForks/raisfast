@@ -112,7 +112,7 @@ fn decrypt_credentials(
 ) -> AppResult<WechatCredentials> {
     let decrypted = aes256gcm_decrypt(&channel.credentials, encrypt_key)?;
     serde_json::from_str(&decrypted)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat credentials parse: {e}")))
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("wechat credentials parse")))
 }
 
 fn parse_private_key(pem_or_raw: &str) -> AppResult<rsa::RsaPrivateKey> {
@@ -125,7 +125,7 @@ fn parse_private_key(pem_or_raw: &str) -> AppResult<rsa::RsaPrivateKey> {
         )
     };
     rsa::RsaPrivateKey::from_pkcs1_pem(&pem)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat private key parse: {e}")))
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("wechat private key parse")))
 }
 
 fn extract_platform_cert(channel: &PaymentChannel) -> AppResult<String> {
@@ -150,7 +150,7 @@ fn parse_platform_cert_pub_key(pem: &str) -> AppResult<rsa::RsaPublicKey> {
         )
     };
     let cert = x509_cert::Certificate::from_pem(pem_str)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat cert parse: {e}")))?;
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("wechat cert parse")))?;
     let pub_key_bytes = cert
         .tbs_certificate
         .subject_public_key_info
@@ -160,7 +160,7 @@ fn parse_platform_cert_pub_key(pem: &str) -> AppResult<rsa::RsaPublicKey> {
             AppError::Internal(anyhow::anyhow!("wechat cert: invalid public key bitstring"))
         })?;
     rsa::RsaPublicKey::from_public_key_der(pub_key_bytes)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat cert public key: {e}")))
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("wechat cert public key")))
 }
 
 fn rsa_sign(message: &str, private_key: &rsa::RsaPrivateKey) -> AppResult<String> {
@@ -168,19 +168,20 @@ fn rsa_sign(message: &str, private_key: &rsa::RsaPrivateKey) -> AppResult<String
     let scheme = rsa::pkcs1v15::Pkcs1v15Sign::new::<Sha256>();
     let sig = private_key
         .sign(scheme, &hash)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat sign: {e}")))?;
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("wechat sign")))?;
     Ok(BASE64.encode(sig))
 }
 
 fn rsa_verify(message: &str, signature_b64: &str, public_key: &rsa::RsaPublicKey) -> AppResult<()> {
-    let sig_bytes = BASE64
-        .decode(signature_b64)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat signature base64 decode: {e}")))?;
+    let sig_bytes = BASE64.decode(signature_b64).map_err(|e| {
+        AppError::Internal(anyhow::Error::from(e).context("wechat signature base64 decode"))
+    })?;
     let hash = Sha256::digest(message.as_bytes());
     let scheme = rsa::pkcs1v15::Pkcs1v15Sign::new::<Sha256>();
-    public_key
-        .verify(scheme, &hash, &sig_bytes)
-        .map_err(|_| AppError::BadRequest("wechat signature mismatch".into()))
+    public_key.verify(scheme, &hash, &sig_bytes).map_err(|e| {
+        tracing::warn!("wechat signature verification failed: {e}");
+        AppError::BadRequest("wechat signature mismatch".into())
+    })
 }
 
 fn build_auth_header(mchid: &str, serial_no: &str, signature: &str) -> String {
@@ -254,13 +255,13 @@ async fn wechat_request<T: serde::de::DeserializeOwned>(
     let resp = req
         .send()
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat request: {e}")))?;
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("wechat request")))?;
 
     let status = resp.status();
     let text = resp
         .text()
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat read body: {e}")))?;
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("wechat read body")))?;
 
     if !status.is_success() {
         return Err(AppError::Internal(anyhow::anyhow!(
@@ -269,7 +270,7 @@ async fn wechat_request<T: serde::de::DeserializeOwned>(
     }
 
     serde_json::from_str::<T>(&text)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat response parse: {e}")))
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("wechat response parse")))
 }
 
 fn decrypt_callback_resource(
@@ -283,10 +284,10 @@ fn decrypt_callback_resource(
 
     let key = Sha256::digest(api_key.as_bytes());
     let cipher = Aes256Gcm::new_from_slice(&key)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat aes init: {e}")))?;
-    let ciphertext = BASE64
-        .decode(ciphertext_b64)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat resource base64 decode: {e}")))?;
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("wechat aes init")))?;
+    let ciphertext = BASE64.decode(ciphertext_b64).map_err(|e| {
+        AppError::Internal(anyhow::Error::from(e).context("wechat resource base64 decode"))
+    })?;
     let nonce = Nonce::from_slice(nonce.as_bytes());
     let plaintext = cipher
         .decrypt(
@@ -296,9 +297,11 @@ fn decrypt_callback_resource(
                 aad: associated_data.as_bytes(),
             },
         )
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat resource decrypt: {e}")))?;
+        .map_err(|e| {
+            AppError::Internal(anyhow::Error::from(e).context("wechat resource decrypt"))
+        })?;
     String::from_utf8(plaintext)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat resource utf8: {e}")))
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("wechat resource utf8")))
 }
 
 fn extract_notify_url(channel: &PaymentChannel) -> Option<String> {
@@ -348,8 +351,9 @@ impl PaymentProvider for WechatPayProvider {
                 currency: order.currency.to_uppercase(),
             },
         };
-        let body_str = serde_json::to_string(&req)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat request serialize: {e}")))?;
+        let body_str = serde_json::to_string(&req).map_err(|e| {
+            AppError::Internal(anyhow::Error::from(e).context("wechat request serialize"))
+        })?;
 
         let resp: NativeResponse = wechat_request(
             &creds,
@@ -451,8 +455,9 @@ impl PaymentProvider for WechatPayProvider {
             },
             reason: reason.map(String::from),
         };
-        let body_str = serde_json::to_string(&body)
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("wechat refund serialize: {e}")))?;
+        let body_str = serde_json::to_string(&body).map_err(|e| {
+            AppError::Internal(anyhow::Error::from(e).context("wechat refund serialize"))
+        })?;
 
         let resp: RefundResponseData = wechat_request(
             &creds,
@@ -488,7 +493,7 @@ impl PaymentProvider for WechatPayProvider {
             .ok_or_else(|| AppError::BadRequest("wechat: missing Wechatpay-Signature".into()))?;
 
         let body_str = std::str::from_utf8(body)
-            .map_err(|_| AppError::BadRequest("wechat callback: invalid utf8".into()))?;
+            .map_err(|e| AppError::BadRequest(format!("wechat callback: invalid utf8: {e}")))?;
 
         let verify_msg = format!("{wechat_timestamp}\n{wechat_nonce}\n{body_str}\n");
 

@@ -79,7 +79,7 @@ impl OAuthProvider for GitHubProvider {
             .send()
             .await
             .map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("GitHub token exchange failed: {e}"))
+                AppError::Internal(anyhow::Error::from(e).context("GitHub token exchange failed"))
             })?;
 
         if !resp.status().is_success() {
@@ -91,7 +91,7 @@ impl OAuthProvider for GitHubProvider {
         }
 
         resp.json::<OAuthTokenResponse>().await.map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("GitHub token response parse failed: {e}"))
+            AppError::Internal(anyhow::Error::from(e).context("GitHub token response parse failed"))
         })
     }
 
@@ -109,7 +109,9 @@ impl OAuthProvider for GitHubProvider {
             .send()
             .await
             .map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("GitHub user info request failed: {e}"))
+                AppError::Internal(
+                    anyhow::Error::from(e).context("GitHub user info request failed"),
+                )
             })?;
 
         if !resp.status().is_success() {
@@ -121,7 +123,7 @@ impl OAuthProvider for GitHubProvider {
         }
 
         let profile: serde_json::Value = resp.json().await.map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("GitHub user info parse failed: {e}"))
+            AppError::Internal(anyhow::Error::from(e).context("GitHub user info parse failed"))
         })?;
 
         let provider_user_id = profile["id"]

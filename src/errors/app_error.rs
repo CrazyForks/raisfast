@@ -221,10 +221,10 @@ impl IntoResponse for AppError {
             | StatusCode::FORBIDDEN
             | StatusCode::NOT_FOUND
             | StatusCode::CONFLICT => {
-                tracing::warn!(%code, %message, "client error");
+                tracing::warn!(%code, %message, error = %self, "client error");
             }
             _ => {
-                tracing::error!(%code, %message, "server error");
+                tracing::error!(%code, %message, error = %self, "server error");
             }
         }
 
@@ -274,7 +274,8 @@ impl From<sqlx::Error> for AppError {
             sqlx::Error::RowNotFound => AppError::NotFound("resource".into()),
             sqlx::Error::Database(ref e) => {
                 let msg = e.to_string();
-                if msg.contains("UNIQUE constraint failed") {
+                if msg.contains("UNIQUE constraint failed") || msg.contains("duplicate key value") {
+                    tracing::warn!(constraint = ?e.constraint(), "unique constraint violation");
                     AppError::Conflict("duplicate_entry".into())
                 } else {
                     AppError::Internal(err.into())

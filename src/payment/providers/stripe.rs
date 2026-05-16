@@ -18,8 +18,9 @@ struct StripeCredentials {
 
 fn create_client(credentials: &str, encrypt_key: &[u8; 32]) -> AppResult<stripe::Client> {
     let decrypted = aes256gcm_decrypt(credentials, encrypt_key)?;
-    let creds: StripeCredentials = serde_json::from_str(&decrypted)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("stripe credentials parse: {e}")))?;
+    let creds: StripeCredentials = serde_json::from_str(&decrypted).map_err(|e| {
+        AppError::Internal(anyhow::Error::from(e).context("stripe credentials parse"))
+    })?;
     Ok(stripe::Client::new(&creds.secret_key))
 }
 
@@ -44,7 +45,7 @@ fn map_stripe_status(status: &stripe::PaymentIntentStatus) -> PaymentStatus {
 }
 
 fn stripe_error(e: stripe::StripeError) -> AppError {
-    AppError::Internal(anyhow::anyhow!("stripe: {e}"))
+    AppError::Internal(anyhow::Error::from(e).context("stripe"))
 }
 
 pub struct StripeProvider {
@@ -107,7 +108,7 @@ impl PaymentProvider for StripeProvider {
         let client = create_client(&channel.credentials, &self.encrypt_key)?;
         let id: stripe::PaymentIntentId = provider_order_id
             .parse()
-            .map_err(|_| AppError::BadRequest("invalid stripe payment intent id".into()))?;
+            .map_err(|e| AppError::BadRequest(format!("invalid stripe payment intent id: {e}")))?;
 
         let pi = stripe::PaymentIntent::retrieve(&client, &id, &[])
             .await
@@ -143,7 +144,7 @@ impl PaymentProvider for StripeProvider {
         let client = create_client(&channel.credentials, &self.encrypt_key)?;
         let pi_id: stripe::PaymentIntentId = provider_order_id
             .parse()
-            .map_err(|_| AppError::BadRequest("invalid stripe payment intent id".into()))?;
+            .map_err(|e| AppError::BadRequest(format!("invalid stripe payment intent id: {e}")))?;
 
         let mut params = stripe::CreateRefund::new();
         params.payment_intent = Some(pi_id);
@@ -175,7 +176,7 @@ impl PaymentProvider for StripeProvider {
         let webhook_secret = decrypt_webhook_secret(channel, &self.encrypt_key)?;
 
         let payload = std::str::from_utf8(body)
-            .map_err(|_| AppError::BadRequest("invalid utf8 body".into()))?;
+            .map_err(|e| AppError::BadRequest(format!("invalid utf8 body: {e}")))?;
 
         let event = stripe::Webhook::construct_event(payload, sig_header, &webhook_secret)
             .map_err(|e| AppError::BadRequest(format!("stripe webhook verification: {e}")))?;

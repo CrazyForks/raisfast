@@ -50,7 +50,7 @@ impl OAuthProvider for GoogleProvider {
             .send()
             .await
             .map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("Google token exchange failed: {e}"))
+                AppError::Internal(anyhow::Error::from(e).context("Google token exchange failed"))
             })?;
 
         if !resp.status().is_success() {
@@ -62,7 +62,7 @@ impl OAuthProvider for GoogleProvider {
         }
 
         resp.json::<OAuthTokenResponse>().await.map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("Google token response parse failed: {e}"))
+            AppError::Internal(anyhow::Error::from(e).context("Google token response parse failed"))
         })
     }
 
@@ -77,7 +77,9 @@ impl OAuthProvider for GoogleProvider {
             .send()
             .await
             .map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("Google user info request failed: {e}"))
+                AppError::Internal(
+                    anyhow::Error::from(e).context("Google user info request failed"),
+                )
             })?;
 
         if !resp.status().is_success() {
@@ -89,7 +91,7 @@ impl OAuthProvider for GoogleProvider {
         }
 
         let profile: serde_json::Value = resp.json().await.map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("Google user info parse failed: {e}"))
+            AppError::Internal(anyhow::Error::from(e).context("Google user info parse failed"))
         })?;
 
         let provider_user_id = profile["sub"].as_str().unwrap_or_default().to_string();

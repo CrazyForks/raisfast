@@ -1,6 +1,6 @@
-//! 并发安全路由表。
+//! Concurrency-safe routing table.
 //!
-//! 维护 Host/Prefix → Backend 的映射，支持运行时动态增删。
+//! Maintains Host/Prefix → Backend mapping with runtime dynamic add/remove.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -12,7 +12,7 @@ use dashmap::DashMap;
 
 use crate::proxy::config::TenantSection;
 
-/// 后端地址。
+/// Backend address.
 #[derive(Debug, Clone)]
 pub enum BackendAddr {
     UnixSocket(PathBuf),
@@ -28,26 +28,26 @@ impl std::fmt::Display for BackendAddr {
     }
 }
 
-/// 后端实例。
+/// Backend instance.
 #[derive(Debug, Clone)]
 pub struct Backend {
-    /// 租户名称。
+    /// Tenant name.
     pub name: String,
-    /// 后端地址。
+    /// Backend address.
     pub addr: BackendAddr,
-    /// 是否健康。
+    /// Whether the backend is healthy.
     pub healthy: Arc<AtomicBool>,
-    /// 连接超时。
+    /// Connection timeout.
     pub connect_timeout: Duration,
-    /// 读取超时。
+    /// Read timeout.
     pub read_timeout: Duration,
 }
 
-/// 并发安全路由表。
+/// Concurrency-safe routing table.
 pub struct RouterTable {
-    /// Host → Backend（精确匹配）。
+    /// Host → Backend (exact match).
     by_host: DashMap<String, Arc<Backend>>,
-    /// Prefix → Backend（最长前缀匹配）。
+    /// Prefix → Backend (longest prefix match).
     by_prefix: DashMap<String, Arc<Backend>>,
 }
 
@@ -58,7 +58,7 @@ impl Default for RouterTable {
 }
 
 impl RouterTable {
-    /// 创建空路由表。
+    /// Create an empty routing table.
     pub fn new() -> Self {
         Self {
             by_host: DashMap::new(),
@@ -66,7 +66,7 @@ impl RouterTable {
         }
     }
 
-    /// 从租户配置批量加载。
+    /// Batch load from tenant configs.
     pub fn load_from_tenants(&self, tenants: &[TenantSection]) {
         for t in tenants {
             if !t.enabled {
@@ -108,13 +108,13 @@ impl RouterTable {
         }
     }
 
-    /// 按 Host 查找后端。
+    /// Find backend by Host.
     pub fn find_by_host(&self, host: &str) -> Option<Arc<Backend>> {
         let host = host.split(':').next().unwrap_or(host);
         self.by_host.get(host).map(|r| r.value().clone())
     }
 
-    /// 按路径前缀查找后端（最长前缀匹配）。
+    /// Find backend by path prefix (longest prefix match).
     pub fn find_by_prefix(&self, path: &str) -> Option<Arc<Backend>> {
         let mut best: Option<Arc<Backend>> = None;
         let mut best_len = 0;
@@ -128,13 +128,13 @@ impl RouterTable {
         best
     }
 
-    /// 综合查找：先 Host，再 Prefix。
+    /// Combined lookup: Host first, then Prefix.
     pub fn find(&self, host: &str, path: &str) -> Option<Arc<Backend>> {
         self.find_by_host(host)
             .or_else(|| self.find_by_prefix(path))
     }
 
-    /// 添加或更新租户路由。
+    /// Add or update tenant route.
     pub fn upsert(&self, tenant: &TenantSection) -> anyhow::Result<()> {
         let addr = parse_backend(&tenant.backend)?;
         let backend = Arc::new(Backend {
@@ -159,13 +159,13 @@ impl RouterTable {
         Ok(())
     }
 
-    /// 移除租户路由。
+    /// Remove tenant route.
     pub fn remove(&self, name: &str) {
         self.by_host.retain(|_, b| b.name != name);
         self.by_prefix.retain(|_, b| b.name != name);
     }
 
-    /// 列出所有后端。
+    /// List all backends.
     pub fn all_backends(&self) -> Vec<Arc<Backend>> {
         let mut seen = std::collections::HashSet::new();
         let mut result = Vec::new();
@@ -182,20 +182,20 @@ impl RouterTable {
         result
     }
 
-    /// 路由条目数量。
+    /// Number of route entries.
     pub fn len(&self) -> usize {
         self.by_host.len() + self.by_prefix.len()
     }
 
-    /// 是否为空。
+    /// Whether the table is empty.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 }
 
-/// 解析后端地址字符串。
+/// Parse backend address string.
 ///
-/// 支持格式：
+/// Supported formats:
 /// - `unix:/path/to/socket`
 /// - `127.0.0.1:9901`
 fn parse_backend(s: &str) -> anyhow::Result<BackendAddr> {

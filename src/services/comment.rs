@@ -108,7 +108,7 @@ impl CommentService for CommentServiceImpl {
         if let Some(pid_str) = parent_id {
             let pid: i64 = pid_str
                 .parse()
-                .map_err(|_| AppError::BadRequest("invalid parent_id".into()))?;
+                .map_err(|e| AppError::BadRequest(format!("invalid parent_id: {e}")))?;
             let all_comments =
                 comment::find_approved_by_post(&self.pool, p.id, auth.tenant_id()).await?;
             let parent = all_comments

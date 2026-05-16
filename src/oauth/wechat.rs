@@ -65,11 +65,11 @@ impl OAuthProvider for WechatProvider {
         );
 
         let resp = client.get(&url).send().await.map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("WeChat token exchange failed: {e}"))
+            AppError::Internal(anyhow::Error::from(e).context("WeChat token exchange failed"))
         })?;
 
         let body: serde_json::Value = resp.json().await.map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("WeChat token response parse failed: {e}"))
+            AppError::Internal(anyhow::Error::from(e).context("WeChat token response parse failed"))
         })?;
 
         if let Some(errcode) = body["errcode"].as_i64() {
@@ -109,11 +109,11 @@ impl OAuthProvider for WechatProvider {
 
         let client = super::http_client();
         let resp = client.get(&url).send().await.map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("WeChat user info request failed: {e}"))
+            AppError::Internal(anyhow::Error::from(e).context("WeChat user info request failed"))
         })?;
 
         let profile: serde_json::Value = resp.json().await.map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("WeChat user info parse failed: {e}"))
+            AppError::Internal(anyhow::Error::from(e).context("WeChat user info parse failed"))
         })?;
 
         if let Some(errcode) = profile["errcode"].as_i64() {

@@ -1,7 +1,7 @@
-//! 内置反向代理模块（多租户）。
+//! Built-in reverse proxy module (multi-tenant).
 //!
-//! 替代 nginx/caddy，实现 raisfast 单二进制多租户部署。
-//! 根据 Host 头或路径前缀将请求分发到后端实例（Unix socket / TCP）。
+//! Replaces nginx/caddy for single-binary multi-tenant deployment.
+//! Routes requests to backend instances (Unix socket / TCP) based on Host header or path prefix.
 
 pub mod config;
 pub mod handler;
@@ -18,7 +18,7 @@ use tokio::net::TcpListener;
 use config::ProxyConfig;
 use router::RouterTable;
 
-/// 启动 proxy 服务器。
+/// Start the proxy server.
 pub async fn start(config_path: &str) -> anyhow::Result<()> {
     let path = std::path::Path::new(config_path);
     let proxy_config = ProxyConfig::load(path)?;

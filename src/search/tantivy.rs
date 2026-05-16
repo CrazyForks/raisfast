@@ -314,12 +314,20 @@ mod tests {
     #[tokio::test]
     async fn index_and_search() {
         let e = TantivyEngine::open_in_memory().unwrap();
-        e.index_post(&sp("p1", "Rust编程入门", "Rust是一门安全的系统编程语言"))
-            .await
-            .unwrap();
-        e.index_post(&sp("p2", "Go语言教程", "Go是Google开发的编程语言"))
-            .await
-            .unwrap();
+        e.index_post(&sp(
+            "p1",
+            "Rust Programming Introduction",
+            "Rust is a safe systems programming language",
+        ))
+        .await
+        .unwrap();
+        e.index_post(&sp(
+            "p2",
+            "Go Language Tutorial",
+            "Go is a programming language developed by Google",
+        ))
+        .await
+        .unwrap();
         let (r, t) = e.search("Rust", 1, 10).await.unwrap();
         assert_eq!(t, 1);
         assert_eq!(r[0].post_id, "p1");
@@ -328,13 +336,21 @@ mod tests {
     #[tokio::test]
     async fn search_chinese() {
         let e = TantivyEngine::open_in_memory().unwrap();
-        e.index_post(&sp("p1", "深入理解Rust", "Rust的所有权系统是其核心特性"))
-            .await
-            .unwrap();
-        e.index_post(&sp("p2", "Rust实战", "通过实战项目学习Rust"))
-            .await
-            .unwrap();
-        let (r, t) = e.search("所有权", 1, 10).await.unwrap();
+        e.index_post(&sp(
+            "p1",
+            "Understanding Rust in Depth",
+            "Rust ownership system is its core feature",
+        ))
+        .await
+        .unwrap();
+        e.index_post(&sp(
+            "p2",
+            "Rust in Practice",
+            "Learn Rust through practical projects",
+        ))
+        .await
+        .unwrap();
+        let (r, t) = e.search("ownership", 1, 10).await.unwrap();
         assert_eq!(t, 1);
         assert_eq!(r[0].post_id, "p1");
     }
@@ -343,25 +359,27 @@ mod tests {
     async fn batch_index() {
         let e = TantivyEngine::open_in_memory().unwrap();
         e.index_posts(&[
-            sp("p1", "标题一", "内容一"),
-            sp("p2", "标题二", "内容二"),
-            sp("p3", "标题三", "内容三"),
+            sp("p1", "Title One", "Content One"),
+            sp("p2", "Title Two", "Content Two"),
+            sp("p3", "Title Three", "Content Three"),
         ])
         .await
         .unwrap();
-        let (_r, t) = e.search("标题", 1, 10).await.unwrap();
+        let (_r, t) = e.search("Title", 1, 10).await.unwrap();
         assert_eq!(t, 3);
     }
 
     #[tokio::test]
     async fn delete_post() {
         let e = TantivyEngine::open_in_memory().unwrap();
-        e.index_post(&sp("p1", "Rust入门", "Rust编程"))
+        e.index_post(&sp("p1", "Rust Getting Started", "Rust Programming"))
             .await
             .unwrap();
-        e.index_post(&sp("p2", "Go入门", "Go编程")).await.unwrap();
+        e.index_post(&sp("p2", "Go Getting Started", "Go Programming"))
+            .await
+            .unwrap();
         e.delete_post("p1").await.unwrap();
-        let (r, t) = e.search("入门", 1, 10).await.unwrap();
+        let (r, t) = e.search("getting started", 1, 10).await.unwrap();
         assert_eq!(t, 1);
         assert_eq!(r[0].post_id, "p2");
     }
@@ -369,15 +387,17 @@ mod tests {
     #[tokio::test]
     async fn rebuild_all() {
         let e = TantivyEngine::open_in_memory().unwrap();
-        e.index_post(&sp("p1", "旧文章", "旧内容")).await.unwrap();
+        e.index_post(&sp("p1", "Old Article", "Old Content"))
+            .await
+            .unwrap();
         e.rebuild_all(&[
-            sp("p2", "新文章A", "新内容A"),
-            sp("p3", "新文章B", "新内容B"),
+            sp("p2", "New Article A", "New Content A"),
+            sp("p3", "New Article B", "New Content B"),
         ])
         .await
         .unwrap();
-        assert_eq!(e.search("旧", 1, 10).await.unwrap().1, 0);
-        assert_eq!(e.search("新文章", 1, 10).await.unwrap().1, 2);
+        assert_eq!(e.search("Old", 1, 10).await.unwrap().1, 0);
+        assert_eq!(e.search("New Article", 1, 10).await.unwrap().1, 2);
     }
 
     #[tokio::test]
@@ -387,33 +407,37 @@ mod tests {
             .map(|i| {
                 sp(
                     &format!("p{i}"),
-                    &format!("测试文章{i}"),
-                    &format!("内容{i}"),
+                    &format!("Test Article {i}"),
+                    &format!("Content {i}"),
                 )
             })
             .collect();
         e.index_posts(&posts).await.unwrap();
-        assert_eq!(e.search("测试", 1, 2).await.unwrap().1, 5);
-        assert_eq!(e.search("测试", 1, 2).await.unwrap().0.len(), 2);
-        assert_eq!(e.search("测试", 3, 2).await.unwrap().0.len(), 1);
+        assert_eq!(e.search("Test", 1, 2).await.unwrap().1, 5);
+        assert_eq!(e.search("Test", 1, 2).await.unwrap().0.len(), 2);
+        assert_eq!(e.search("Test", 3, 2).await.unwrap().0.len(), 1);
     }
 
     #[tokio::test]
     async fn update_existing() {
         let e = TantivyEngine::open_in_memory().unwrap();
-        e.index_post(&sp("p1", "原标题", "原内容")).await.unwrap();
-        e.index_post(&sp("p1", "新标题", "新内容")).await.unwrap();
-        assert_eq!(e.search("原标题", 1, 10).await.unwrap().1, 0);
-        assert_eq!(e.search("新标题", 1, 10).await.unwrap().1, 1);
+        e.index_post(&sp("p1", "Old Heading", "Old body"))
+            .await
+            .unwrap();
+        e.index_post(&sp("p1", "Fresh Entry", "Fresh body"))
+            .await
+            .unwrap();
+        assert_eq!(e.search("Old Heading", 1, 10).await.unwrap().1, 0);
+        assert_eq!(e.search("Fresh Entry", 1, 10).await.unwrap().1, 1);
     }
 
     #[tokio::test]
     async fn no_results() {
         let e = TantivyEngine::open_in_memory().unwrap();
-        e.index_post(&sp("p1", "Rust入门", "Rust编程"))
+        e.index_post(&sp("p1", "Rust Getting Started", "Rust Programming"))
             .await
             .unwrap();
-        let (r, t) = e.search("不存在xyz", 1, 10).await.unwrap();
+        let (r, t) = e.search("nonexistent xyz", 1, 10).await.unwrap();
         assert_eq!(t, 0);
         assert!(r.is_empty());
     }
@@ -421,9 +445,13 @@ mod tests {
     #[tokio::test]
     async fn highlight_in_result() {
         let e = TantivyEngine::open_in_memory().unwrap();
-        e.index_post(&sp("p1", "Rust编程语言", "Rust是一门现代系统编程语言"))
-            .await
-            .unwrap();
+        e.index_post(&sp(
+            "p1",
+            "Rust Programming Language",
+            "Rust is a modern systems programming language",
+        ))
+        .await
+        .unwrap();
         let (r, _) = e.search("Rust", 1, 10).await.unwrap();
         assert!(
             r[0].title_highlight
@@ -436,40 +464,43 @@ mod tests {
     #[test]
     fn highlight_unit() {
         assert_eq!(
-            super::super::highlight_text("Rust", "学习Rust编程"),
-            "学习<em>Rust</em>编程"
+            super::super::highlight_text("Rust", "Learn Rust Programming"),
+            "Learn <em>Rust</em> Programming"
         );
     }
 
     #[test]
     fn highlight_multi_word() {
-        let result = super::super::highlight_text("Rust 语言", "Rust语言教程和Rust实践");
+        let result = super::super::highlight_text(
+            "Rust language",
+            "Rust language tutorial and Rust practice",
+        );
         assert!(result.contains("<em>Rust</em>"));
-        assert!(result.contains("<em>语言</em>"));
+        assert!(result.contains("<em>language</em>"));
     }
 
     #[test]
     fn highlight_case_insensitive() {
-        let result = super::super::highlight_text("rust", "学习RUST编程");
+        let result = super::super::highlight_text("rust", "Learn RUST Programming");
         assert!(result.contains("<em>"));
     }
 
     #[test]
     fn highlight_no_match() {
-        let text = "这是一段普通文本";
+        let text = "This is plain text";
         assert_eq!(super::super::highlight_text("xyz", text), text);
     }
 
     #[test]
     fn excerpt_unit() {
-        let c = "这是一段很长的内容，其中包含了关键词Rust，后面的内容应该被截断。";
+        let c = "This is a long piece of content that contains the keyword Rust, and the rest should be truncated.";
         let e = super::super::make_excerpt(c, "Rust", 50);
         assert!(e.unwrap().contains("Rust"));
     }
 
     #[test]
     fn excerpt_short_content() {
-        let c = "短内容Rust测试";
+        let c = "Short content Rust test";
         let e = super::super::make_excerpt(c, "Rust", 200);
         let result = e.unwrap();
         assert!(result.contains("Rust"));
@@ -478,27 +509,27 @@ mod tests {
 
     #[test]
     fn excerpt_keyword_at_start() {
-        let c = "Rust位于开头的测试内容后面还有很多文字填充";
+        let c = "Rust at the beginning of test content followed by lots of filler text";
         let e = super::super::make_excerpt(c, "Rust", 20);
         assert!(e.unwrap().contains("Rust"));
     }
 
     #[test]
     fn excerpt_keyword_at_end() {
-        let c = "这是一段前面的内容最后才是关键词Rust";
+        let c = "This is some preceding content and the keyword Rust at the end";
         let e = super::super::make_excerpt(c, "Rust", 20);
         assert!(e.unwrap().contains("Rust"));
     }
 
     #[test]
     fn excerpt_no_match_returns_none() {
-        let c = "没有关键词的文本";
+        let c = "Text without any keyword";
         assert!(super::super::make_excerpt(c, "xyz", 50).is_none());
     }
 
     #[test]
     fn excerpt_multi_word_query_uses_first() {
-        let c = "内容中包含First关键词和Second关键词";
+        let c = "Content contains First keyword and Second keyword";
         let e = super::super::make_excerpt(c, "First Second", 50);
         assert!(e.unwrap().contains("First"));
     }
@@ -520,9 +551,9 @@ mod tests {
     #[tokio::test]
     async fn rebuild_all_empty() {
         let e = TantivyEngine::open_in_memory().unwrap();
-        e.index_post(&sp("p1", "文章", "内容")).await.unwrap();
+        e.index_post(&sp("p1", "Article", "Content")).await.unwrap();
         e.rebuild_all(&[]).await.unwrap();
-        assert_eq!(e.search("文章", 1, 10).await.unwrap().1, 0);
+        assert_eq!(e.search("Article", 1, 10).await.unwrap().1, 0);
     }
 
     #[tokio::test]
@@ -545,9 +576,13 @@ mod tests {
     #[tokio::test]
     async fn search_result_has_highlights() {
         let e = TantivyEngine::open_in_memory().unwrap();
-        e.index_post(&sp("p1", "Rust编程语言", "Rust是一门现代系统编程语言"))
-            .await
-            .unwrap();
+        e.index_post(&sp(
+            "p1",
+            "Rust Programming Language",
+            "Rust is a modern systems programming language",
+        ))
+        .await
+        .unwrap();
         let (r, _) = e.search("Rust", 1, 10).await.unwrap();
         assert_eq!(r.len(), 1);
         assert!(r[0].title_highlight.is_some());
@@ -557,7 +592,7 @@ mod tests {
     #[tokio::test]
     async fn search_result_post_id_matches() {
         let e = TantivyEngine::open_in_memory().unwrap();
-        e.index_post(&sp("abc-123", "标题", "内容包含关键字match"))
+        e.index_post(&sp("abc-123", "Title", "Content contains keyword match"))
             .await
             .unwrap();
         let (r, _) = e.search("match", 1, 10).await.unwrap();
@@ -568,7 +603,13 @@ mod tests {
     async fn search_page_zero_treated_as_page_one() {
         let e = TantivyEngine::open_in_memory().unwrap();
         let posts: Vec<SearchablePost> = (0..5)
-            .map(|i| sp(&format!("p{i}"), &format!("Rust{i}"), &format!("内容{i}")))
+            .map(|i| {
+                sp(
+                    &format!("p{i}"),
+                    &format!("Rust{i}"),
+                    &format!("Content {i}"),
+                )
+            })
             .collect();
         e.index_posts(&posts).await.unwrap();
         let (r, t) = e.search("Rust", 0, 2).await.unwrap();
@@ -580,7 +621,13 @@ mod tests {
     async fn search_negative_page_treated_as_page_one() {
         let e = TantivyEngine::open_in_memory().unwrap();
         let posts: Vec<SearchablePost> = (0..5)
-            .map(|i| sp(&format!("p{i}"), &format!("Rust{i}"), &format!("内容{i}")))
+            .map(|i| {
+                sp(
+                    &format!("p{i}"),
+                    &format!("Rust{i}"),
+                    &format!("Content {i}"),
+                )
+            })
             .collect();
         e.index_posts(&posts).await.unwrap();
         let (r, t) = e.search("Rust", -1, 2).await.unwrap();
@@ -598,12 +645,20 @@ mod tests {
     #[tokio::test]
     async fn search_mixed_chinese_english() {
         let e = TantivyEngine::open_in_memory().unwrap();
-        e.index_post(&sp("p1", "Rust编程入门指南", "从零开始学习Rust编程语言"))
-            .await
-            .unwrap();
-        e.index_post(&sp("p2", "Python数据分析", "使用Python进行数据分析"))
-            .await
-            .unwrap();
+        e.index_post(&sp(
+            "p1",
+            "Rust Programming Getting Started Guide",
+            "Learn Rust programming language from scratch",
+        ))
+        .await
+        .unwrap();
+        e.index_post(&sp(
+            "p2",
+            "Python Data Analysis",
+            "Using Python for data analysis",
+        ))
+        .await
+        .unwrap();
         let (r, t) = e.search("Rust", 1, 10).await.unwrap();
         assert_eq!(t, 1);
         assert_eq!(r[0].post_id, "p1");
@@ -612,9 +667,13 @@ mod tests {
     #[tokio::test]
     async fn search_content_field() {
         let e = TantivyEngine::open_in_memory().unwrap();
-        e.index_post(&sp("p1", "普通标题", "这篇内容包含特别的关键字Titanic"))
-            .await
-            .unwrap();
+        e.index_post(&sp(
+            "p1",
+            "Plain Title",
+            "This content contains the special keyword Titanic",
+        ))
+        .await
+        .unwrap();
         let (r, t) = e.search("Titanic", 1, 10).await.unwrap();
         assert_eq!(t, 1);
         assert_eq!(r[0].post_id, "p1");
@@ -627,13 +686,13 @@ mod tests {
             .map(|i| {
                 sp(
                     &format!("p{i}"),
-                    &format!("批量文章{i}"),
-                    &format!("批量内容{i}"),
+                    &format!("Batch Article {i}"),
+                    &format!("Batch Content {i}"),
                 )
             })
             .collect();
         e.index_posts(&posts).await.unwrap();
-        let (_, t) = e.search("批量", 1, 10).await.unwrap();
+        let (_, t) = e.search("Batch", 1, 10).await.unwrap();
         assert_eq!(t, 100);
     }
 }

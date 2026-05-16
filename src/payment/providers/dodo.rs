@@ -33,7 +33,7 @@ fn decrypt_credentials(
 ) -> AppResult<DodoCredentials> {
     let decrypted = aes256gcm_decrypt(&channel.credentials, encrypt_key)?;
     serde_json::from_str(&decrypted)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("dodo credentials parse: {e}")))
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("dodo credentials parse")))
 }
 
 fn base_url(creds: &DodoCredentials) -> &str {
@@ -55,7 +55,7 @@ fn dodo_status_to_payment(status: &str) -> PaymentStatus {
 }
 
 fn dodo_error(e: reqwest::Error) -> AppError {
-    AppError::Internal(anyhow::anyhow!("dodo api: {e}"))
+    AppError::Internal(anyhow::Error::from(e).context("dodo api"))
 }
 
 fn extract_product_id(channel: &PaymentChannel) -> AppResult<String> {
@@ -273,12 +273,12 @@ fn verify_webhook_signature(
 ) -> AppResult<()> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("system time: {e}")))?
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("system time")))?
         .as_secs();
 
     let ts: u64 = timestamp
         .parse()
-        .map_err(|_| AppError::BadRequest("dodo webhook: invalid timestamp".into()))?;
+        .map_err(|e| AppError::BadRequest(format!("dodo webhook: invalid timestamp: {e}")))?;
 
     if now.abs_diff(ts) > WEBHOOK_TOLERANCE_SECS {
         return Err(AppError::BadRequest(
@@ -287,7 +287,7 @@ fn verify_webhook_signature(
     }
 
     let mut mac = HmacSha256::new_from_slice(webhook_secret.as_bytes())
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("hmac init: {e}")))?;
+        .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("hmac init")))?;
     mac.update(webhook_id.as_bytes());
     mac.update(b".");
     mac.update(timestamp.as_bytes());

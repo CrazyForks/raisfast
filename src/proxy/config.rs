@@ -1,85 +1,85 @@
-//! Proxy 模块配置加载。
+//! Proxy module configuration loading.
 //!
-//! 加载 `proxy.toml` 和 `tenants/*.toml`，提供类型安全的配置结构。
+//! Loads `proxy.toml` and `tenants/*.toml`, providing type-safe configuration structs.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use serde::Deserialize;
 
-/// Proxy 全局配置。
+/// Proxy global configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProxyConfig {
     pub proxy: ProxySection,
 }
 
-/// `[proxy]` 段。
+/// `[proxy]` section.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProxySection {
-    /// HTTP 监听地址（默认 `0.0.0.0:80`）。
+    /// HTTP listen address (default `0.0.0.0:80`).
     #[serde(default = "default_listen_http")]
     pub listen_http: String,
-    /// HTTPS 监听地址（默认 `0.0.0.0:443`）。
+    /// HTTPS listen address (default `0.0.0.0:443`).
     #[serde(default = "default_listen_https")]
     pub listen_https: String,
-    /// 证书存储目录。
+    /// Certificate storage directory.
     #[serde(default = "default_acme_dir")]
     pub acme_dir: PathBuf,
-    /// ACME 注册邮箱。
+    /// ACME registration email.
     pub acme_email: Option<String>,
-    /// ACME 目录 URL（默认 Let's Encrypt 生产环境）。
+    /// ACME directory URL (default Let's Encrypt production).
     #[serde(default = "default_acme_directory")]
     pub acme_directory: String,
-    /// 是否自动 HTTP→HTTPS 重定向。
+    /// Whether to auto-redirect HTTP to HTTPS.
     #[serde(default = "default_true")]
     pub redirect_http_to_https: bool,
-    /// 管理 API 监听地址。
+    /// Admin API listen address.
     #[serde(default = "default_admin_listen")]
     pub admin_listen: String,
-    /// 管理 API 密钥。
+    /// Admin API secret key.
     #[serde(default = "default_admin_secret")]
     pub admin_secret: String,
-    /// 租户配置文件目录。
+    /// Tenant configuration file directory.
     #[serde(default = "default_tenants_dir")]
     pub tenants_dir: PathBuf,
-    /// 健康检查间隔（秒）。
+    /// Health check interval (seconds).
     #[serde(default = "default_health_check_interval")]
     pub health_check_interval_secs: u64,
-    /// 日志目录。
+    /// Log directory.
     #[serde(default = "default_log_dir")]
     pub log_dir: PathBuf,
 }
 
-/// 单个租户配置。
+/// Single tenant configuration.
 ///
-/// 每个租户一个 TOML 文件，放在 `tenants_dir` 下。
+/// One TOML file per tenant, placed under `tenants_dir`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TenantConfig {
     pub tenant: TenantSection,
 }
 
-/// `[tenant]` 段。
+/// `[tenant]` section.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TenantSection {
-    /// 租户名称（唯一标识）。
+    /// Tenant name (unique identifier).
     pub name: String,
-    /// 子域名匹配（如 `user1.api.example.com`）。
+    /// Subdomain match (e.g. `user1.api.example.com`).
     pub host: Option<String>,
-    /// 路径前缀匹配（如 `/user1`）。
+    /// Path prefix match (e.g. `/user1`).
     pub prefix: Option<String>,
-    /// 后端地址（`unix:/path/to.sock` 或 `127.0.0.1:9901`）。
+    /// Backend address (`unix:/path/to.sock` or `127.0.0.1:9901`).
     pub backend: String,
-    /// 自定义 TLS 证书路径。
+    /// Custom TLS certificate path.
     pub tls_cert: Option<PathBuf>,
-    /// 自定义 TLS 私钥路径。
+    /// Custom TLS private key path.
     pub tls_key: Option<PathBuf>,
-    /// 连接后端超时（毫秒）。
+    /// Backend connection timeout (milliseconds).
     #[serde(default = "default_connect_timeout")]
     pub connect_timeout_ms: u64,
-    /// 读取后端响应超时（毫秒）。
+    /// Backend response read timeout (milliseconds).
     #[serde(default = "default_read_timeout")]
     pub read_timeout_ms: u64,
-    /// 是否启用。
+    /// Whether the tenant is enabled.
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
@@ -133,31 +133,31 @@ fn default_read_timeout() -> u64 {
 }
 
 impl ProxyConfig {
-    /// 从 TOML 文件加载配置。
+    /// Load configuration from a TOML file.
     pub fn load(path: &std::path::Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let config: Self = toml::from_str(&content)?;
         Ok(config)
     }
 
-    /// 解析 HTTP 监听地址。
+    /// Parse HTTP listen address.
     pub fn http_addr(&self) -> anyhow::Result<SocketAddr> {
         self.proxy.listen_http.parse().map_err(Into::into)
     }
 
-    /// 解析 HTTPS 监听地址。
+    /// Parse HTTPS listen address.
     pub fn https_addr(&self) -> anyhow::Result<SocketAddr> {
         self.proxy.listen_https.parse().map_err(Into::into)
     }
 
-    /// 解析管理 API 监听地址。
+    /// Parse admin API listen address.
     pub fn admin_addr(&self) -> anyhow::Result<SocketAddr> {
         self.proxy.admin_listen.parse().map_err(Into::into)
     }
 }
 
 impl TenantConfig {
-    /// 从 TOML 文件加载租户配置。
+    /// Load tenant configuration from a TOML file.
     pub fn load(path: &std::path::Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let config: Self = toml::from_str(&content)?;
@@ -165,7 +165,7 @@ impl TenantConfig {
     }
 }
 
-/// 加载 tenants_dir 下所有 .toml 文件。
+/// Load all .toml files under tenants_dir.
 pub fn load_all_tenants(dir: &std::path::Path) -> Vec<(PathBuf, TenantConfig)> {
     let mut tenants = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
