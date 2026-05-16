@@ -157,78 +157,41 @@ pub async fn create_tx(
     } else {
         None
     };
-    match tenant_id {
-        Some(tid) => {
-            let sql = format!(
-                "INSERT INTO posts (document_id, tenant_id, title, slug, content, excerpt, cover_image, status, created_by, updated_by, category_id, published_at, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10),
-                ph(11),
-                ph(12),
-                ph(13),
-                ph(14)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(tid)
-                .bind(&cmd.title)
-                .bind(&cmd.slug)
-                .bind(&cmd.content)
-                .bind(&cmd.excerpt)
-                .bind(&cmd.cover_image)
-                .bind(cmd.status)
-                .bind(cmd.created_by)
-                .bind(cmd.updated_by)
-                .bind(cmd.category_id)
-                .bind(published_at)
-                .bind(now)
-                .bind(now)
-                .execute(&mut **tx)
-                .await?;
-        }
-        None => {
-            let sql = format!(
-                "INSERT INTO posts (document_id, title, slug, content, excerpt, cover_image, status, created_by, updated_by, category_id, published_at, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10),
-                ph(11),
-                ph(12),
-                ph(13)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(&cmd.title)
-                .bind(&cmd.slug)
-                .bind(&cmd.content)
-                .bind(&cmd.excerpt)
-                .bind(&cmd.cover_image)
-                .bind(cmd.status)
-                .bind(cmd.created_by)
-                .bind(cmd.updated_by)
-                .bind(cmd.category_id)
-                .bind(published_at)
-                .bind(now)
-                .bind(now)
-                .execute(&mut **tx)
-                .await?;
-        }
-    }
+    tenant_insert!(
+        &mut **tx,
+        "posts",
+        [
+            "document_id",
+            "title",
+            "slug",
+            "content",
+            "excerpt",
+            "cover_image",
+            "status",
+            "created_by",
+            "updated_by",
+            "category_id",
+            "published_at",
+            "created_at",
+            "updated_at"
+        ],
+        [
+            &document_id,
+            &cmd.title,
+            &cmd.slug,
+            &cmd.content,
+            &cmd.excerpt,
+            &cmd.cover_image,
+            cmd.status,
+            cmd.created_by,
+            cmd.updated_by,
+            cmd.category_id,
+            published_at,
+            now,
+            now
+        ],
+        tenant_id
+    )?;
 
     let created = find_by_document_id_tx(tx, &document_id, tenant_id)
         .await?

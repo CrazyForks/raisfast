@@ -107,49 +107,37 @@ pub async fn create(
 ) -> AppResult<Comment> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
-    match tenant_id {
-        Some(tid) => {
-            let vals = (1..=12).map(ph).collect::<Vec<_>>().join(", ");
-            let sql = format!(
-                "INSERT INTO comments (document_id, tenant_id, post_id, created_by, updated_by, nickname, email, content, parent_id, created_at, updated_at, status) VALUES ({vals})"
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(tid)
-                .bind(cmd.post_id)
-                .bind(cmd.created_by)
-                .bind(cmd.created_by)
-                .bind(&cmd.nickname)
-                .bind(&cmd.email)
-                .bind(&cmd.content)
-                .bind(cmd.parent_id)
-                .bind(now)
-                .bind(now)
-                .bind(CommentStatus::Pending)
-                .execute(pool)
-                .await?;
-        }
-        None => {
-            let vals = (1..=11).map(ph).collect::<Vec<_>>().join(", ");
-            let sql = format!(
-                "INSERT INTO comments (document_id, post_id, created_by, updated_by, nickname, email, content, parent_id, created_at, updated_at, status) VALUES ({vals})"
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(cmd.post_id)
-                .bind(cmd.created_by)
-                .bind(cmd.created_by)
-                .bind(&cmd.nickname)
-                .bind(&cmd.email)
-                .bind(&cmd.content)
-                .bind(cmd.parent_id)
-                .bind(now)
-                .bind(now)
-                .bind(CommentStatus::Pending)
-                .execute(pool)
-                .await?;
-        }
-    }
+    tenant_insert!(
+        pool,
+        "comments",
+        [
+            "document_id",
+            "post_id",
+            "created_by",
+            "updated_by",
+            "nickname",
+            "email",
+            "content",
+            "parent_id",
+            "created_at",
+            "updated_at",
+            "status"
+        ],
+        [
+            &document_id,
+            cmd.post_id,
+            cmd.created_by,
+            cmd.created_by,
+            &cmd.nickname,
+            &cmd.email,
+            &cmd.content,
+            cmd.parent_id,
+            now,
+            now,
+            CommentStatus::Pending
+        ],
+        tenant_id
+    )?;
 
     find_by_document_id(pool, &document_id, tenant_id)
         .await?
@@ -292,18 +280,12 @@ pub async fn update_status(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    let filter = tenant_filter_ph(tenant_id, 3);
-    let sql = format!(
-        "UPDATE comments SET status = {}, updated_at = {} WHERE id = {}{filter}",
-        ph(1),
-        ph(2),
-        ph(3)
-    );
-    let mut q = sqlx::query(&sql).bind(status).bind(now).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let result = q.execute(pool).await?;
+    let result = tenant_update!(pool, "comments",
+        ["status", "updated_at"],
+        [status, &now],
+        "id" => id,
+        tenant_id
+    )?;
 
     AppError::expect_affected(&result, "comment")
 }

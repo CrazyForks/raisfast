@@ -149,62 +149,38 @@ pub async fn insert(
     let document_id = uuid::Uuid::now_v7().to_string();
     let is_live_val = if cmd.is_live { 1_i64 } else { 0_i64 };
     let is_active_val = if cmd.is_active { 1_i64 } else { 0_i64 };
-    match tenant_id {
-        Some(tid) => {
-            let sql = format!(
-                "INSERT INTO payment_channels (document_id, tenant_id, provider, name, is_live, credentials, webhook_secret, settings, is_active, sort_order, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(tid)
-                .bind(&cmd.provider)
-                .bind(&cmd.name)
-                .bind(is_live_val)
-                .bind(&cmd.credentials)
-                .bind(&cmd.webhook_secret)
-                .bind(&cmd.settings)
-                .bind(is_active_val)
-                .bind(cmd.sort_order)
-                .execute(pool)
-                .await?;
-        }
-        None => {
-            let sql = format!(
-                "INSERT INTO payment_channels (document_id, provider, name, is_live, credentials, webhook_secret, settings, is_active, sort_order, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(&cmd.provider)
-                .bind(&cmd.name)
-                .bind(is_live_val)
-                .bind(&cmd.credentials)
-                .bind(&cmd.webhook_secret)
-                .bind(&cmd.settings)
-                .bind(is_active_val)
-                .bind(cmd.sort_order)
-                .execute(pool)
-                .await?;
-        }
-    }
+    let now = crate::utils::tz::now_utc();
+    tenant_insert!(
+        pool,
+        "payment_channels",
+        [
+            "document_id",
+            "provider",
+            "name",
+            "is_live",
+            "credentials",
+            "webhook_secret",
+            "settings",
+            "is_active",
+            "sort_order",
+            "created_at",
+            "updated_at"
+        ],
+        [
+            &document_id,
+            &cmd.provider,
+            &cmd.name,
+            is_live_val,
+            &cmd.credentials,
+            &cmd.webhook_secret,
+            &cmd.settings,
+            is_active_val,
+            cmd.sort_order,
+            &now,
+            &now
+        ],
+        tenant_id
+    )?;
     find_by_document_id(pool, &document_id, tenant_id)
         .await?
         .ok_or_else(|| {

@@ -43,66 +43,42 @@ pub async fn tx_insert(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let document_id = uuid::Uuid::now_v7().to_string();
-    match tenant_id {
-        Some(tid) => {
-            let sql = format!(
-                "INSERT INTO wallet_outbox (document_id, user_id, currency, amount, entry_type, tx_type, transaction_no, reference_type, reference_id, metadata, tenant_id, status, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, 'pending', datetime('now'), datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10),
-                ph(11)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(cmd.user_id)
-                .bind(&cmd.currency)
-                .bind(cmd.amount)
-                .bind(&cmd.entry_type)
-                .bind(cmd.tx_type)
-                .bind(&cmd.transaction_no)
-                .bind(cmd.reference_type)
-                .bind(&cmd.reference_id)
-                .bind(&cmd.metadata)
-                .bind(tid)
-                .execute(&mut *tx)
-                .await?;
-        }
-        None => {
-            let sql = format!(
-                "INSERT INTO wallet_outbox (document_id, user_id, currency, amount, entry_type, tx_type, transaction_no, reference_type, reference_id, metadata, status, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, 'pending', datetime('now'), datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(cmd.user_id)
-                .bind(&cmd.currency)
-                .bind(cmd.amount)
-                .bind(&cmd.entry_type)
-                .bind(cmd.tx_type)
-                .bind(&cmd.transaction_no)
-                .bind(cmd.reference_type)
-                .bind(&cmd.reference_id)
-                .bind(&cmd.metadata)
-                .execute(&mut *tx)
-                .await?;
-        }
-    }
+    let now = crate::utils::tz::now_utc();
+    tenant_insert!(
+        &mut *tx,
+        "wallet_outbox",
+        [
+            "document_id",
+            "user_id",
+            "currency",
+            "amount",
+            "entry_type",
+            "tx_type",
+            "transaction_no",
+            "reference_type",
+            "reference_id",
+            "metadata",
+            "status",
+            "created_at",
+            "updated_at"
+        ],
+        [
+            &document_id,
+            cmd.user_id,
+            &cmd.currency,
+            cmd.amount,
+            &cmd.entry_type,
+            cmd.tx_type,
+            &cmd.transaction_no,
+            cmd.reference_type,
+            &cmd.reference_id,
+            &cmd.metadata,
+            OutboxStatus::Pending,
+            &now,
+            &now
+        ],
+        tenant_id
+    )?;
     Ok(())
 }
 

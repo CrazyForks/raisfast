@@ -913,9 +913,7 @@ impl ContentRepository {
 
         let mut query = sqlx::query(&sql);
         query = query.bind(deleted_at);
-        if let Some(by) = deleted_by {
-            query = query.bind(by);
-        }
+        bind_tenant!(query, deleted_by);
         query = query.bind(id);
         if let Some(ref tid) = tid {
             query = query.bind(tid.as_str());

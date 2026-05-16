@@ -447,63 +447,51 @@ pub async fn create(
         None
     };
 
-    match tenant_id {
-        Some(tid) => {
-            let vals = (1..=19).map(ph).collect::<Vec<_>>().join(", ");
-            let sql = format!(
-                "INSERT INTO pages (document_id, tenant_id, title, slug, content, blocks, meta_title, meta_description, og_image, template, parent_id, sort_order, status, created_by, updated_by, cover_image, published_at, created_at, updated_at) VALUES ({vals})"
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(tid)
-                .bind(&cmd.title)
-                .bind(&cmd.slug)
-                .bind(&cmd.content)
-                .bind(&cmd.blocks)
-                .bind(&cmd.meta_title)
-                .bind(&cmd.meta_description)
-                .bind(&cmd.og_image)
-                .bind(&cmd.template)
-                .bind(cmd.parent_id)
-                .bind(cmd.sort_order)
-                .bind(cmd.status)
-                .bind(cmd.created_by)
-                .bind(cmd.created_by)
-                .bind(&cmd.cover_image)
-                .bind(published_at)
-                .bind(now)
-                .bind(now)
-                .execute(pool)
-                .await?;
-        }
-        None => {
-            let vals = (1..=18).map(ph).collect::<Vec<_>>().join(", ");
-            let sql = format!(
-                "INSERT INTO pages (document_id, title, slug, content, blocks, meta_title, meta_description, og_image, template, parent_id, sort_order, status, created_by, updated_by, cover_image, published_at, created_at, updated_at) VALUES ({vals})"
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(&cmd.title)
-                .bind(&cmd.slug)
-                .bind(&cmd.content)
-                .bind(&cmd.blocks)
-                .bind(&cmd.meta_title)
-                .bind(&cmd.meta_description)
-                .bind(&cmd.og_image)
-                .bind(&cmd.template)
-                .bind(cmd.parent_id)
-                .bind(cmd.sort_order)
-                .bind(cmd.status)
-                .bind(cmd.created_by)
-                .bind(cmd.created_by)
-                .bind(&cmd.cover_image)
-                .bind(published_at)
-                .bind(now)
-                .bind(now)
-                .execute(pool)
-                .await?;
-        }
-    }
+    tenant_insert!(
+        pool,
+        "pages",
+        [
+            "document_id",
+            "title",
+            "slug",
+            "content",
+            "blocks",
+            "meta_title",
+            "meta_description",
+            "og_image",
+            "template",
+            "parent_id",
+            "sort_order",
+            "status",
+            "created_by",
+            "updated_by",
+            "cover_image",
+            "published_at",
+            "created_at",
+            "updated_at"
+        ],
+        [
+            &document_id,
+            &cmd.title,
+            &cmd.slug,
+            &cmd.content,
+            &cmd.blocks,
+            &cmd.meta_title,
+            &cmd.meta_description,
+            &cmd.og_image,
+            &cmd.template,
+            cmd.parent_id,
+            cmd.sort_order,
+            cmd.status,
+            cmd.created_by,
+            cmd.created_by,
+            &cmd.cover_image,
+            published_at,
+            now,
+            now
+        ],
+        tenant_id
+    )?;
 
     find_by_document_id(pool, &document_id, tenant_id)
         .await?

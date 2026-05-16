@@ -196,53 +196,29 @@ pub async fn register(
     let registered_via = crate::models::user::RegisteredVia::Email;
 
     let user = in_transaction!(pool, tx, {
-        match tenant_id {
-            Some(tid) => {
-                let vals = (1..=5)
-                    .map(crate::db::dialect::ph)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let sql = format!(
-                    "INSERT INTO users (document_id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, {}, {}, {})",
-                    crate::db::dialect::ph(6),
-                    crate::db::dialect::ph(7),
-                    crate::db::dialect::ph(8)
-                );
-                sqlx::query(&sql)
-                    .bind(&document_id)
-                    .bind(tid)
-                    .bind(&req.username)
-                    .bind(now)
-                    .bind(now)
-                    .bind(UserRole::Reader)
-                    .bind(UserStatus::Active)
-                    .bind(registered_via)
-                    .execute(&mut *tx)
-                    .await?;
-            }
-            None => {
-                let vals = (1..=4)
-                    .map(crate::db::dialect::ph)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let sql = format!(
-                    "INSERT INTO users (document_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, {}, {}, {})",
-                    crate::db::dialect::ph(5),
-                    crate::db::dialect::ph(6),
-                    crate::db::dialect::ph(7)
-                );
-                sqlx::query(&sql)
-                    .bind(&document_id)
-                    .bind(&req.username)
-                    .bind(now)
-                    .bind(now)
-                    .bind(UserRole::Reader)
-                    .bind(UserStatus::Active)
-                    .bind(registered_via)
-                    .execute(&mut *tx)
-                    .await?;
-            }
-        }
+        tenant_insert!(
+            &mut *tx,
+            "users",
+            [
+                "document_id",
+                "username",
+                "created_at",
+                "updated_at",
+                "role",
+                "status",
+                "registered_via"
+            ],
+            [
+                &document_id,
+                &req.username,
+                now,
+                now,
+                UserRole::Reader,
+                UserStatus::Active,
+                registered_via
+            ],
+            tenant_id
+        )?;
 
         let filter = crate::db::tenant::tenant_filter_ph(tenant_id, 2);
         let sql = format!(

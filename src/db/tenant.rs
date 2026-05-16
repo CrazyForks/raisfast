@@ -178,6 +178,37 @@ pub fn tenant_filter_aliased(alias: &str, tenant_id: Option<&str>) -> String {
     }
 }
 
+/// Build an INSERT SQL statement with optional `tenant_id` column.
+///
+/// When `tenant_id` is `Some`, appends `tenant_id` to the column list
+/// and adds one more placeholder. The caller must call `bind_tenant!`
+/// after binding all user columns.
+///
+/// # Example
+///
+/// ```ignore
+/// let sql = insert_sql("tags", &["document_id", "name", "slug"], tenant_id);
+/// let mut q = sqlx::query(&sql).bind(&doc_id).bind(name).bind(slug);
+/// bind_tenant!(q, tenant_id);
+/// q.execute(pool).await?;
+/// ```
+pub fn insert_sql(table: &str, columns: &[&str], tenant_id: Option<&str>) -> String {
+    assert!(
+        super::dialect::is_safe_identifier(table),
+        "unsafe table name: {table}"
+    );
+    let mut cols: Vec<&str> = columns.to_vec();
+    if tenant_id.is_some() {
+        cols.push(COL_TENANT_ID);
+    }
+    let phs: Vec<String> = (1..=cols.len()).map(super::dialect::ph).collect();
+    format!(
+        "INSERT INTO {table} ({}) VALUES ({})",
+        cols.join(", "),
+        phs.join(", ")
+    )
+}
+
 /// Placeholder-safe version of [`tenant_filter_aliased`].
 pub fn tenant_filter_aliased_ph(alias: &str, tenant_id: Option<&str>, idx: usize) -> String {
     match tenant_id {

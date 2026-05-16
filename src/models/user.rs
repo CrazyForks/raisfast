@@ -136,47 +136,29 @@ pub async fn create(
 ) -> AppResult<User> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
-    match tenant_id {
-        Some(tid) => {
-            let vals = (1..=5).map(ph).collect::<Vec<_>>().join(", ");
-            let sql = format!(
-                "INSERT INTO users (document_id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, {}, {}, {})",
-                ph(6),
-                ph(7),
-                ph(8)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(tid)
-                .bind(&cmd.username)
-                .bind(now)
-                .bind(now)
-                .bind(UserRole::Reader)
-                .bind(UserStatus::Active)
-                .bind(cmd.registered_via)
-                .execute(pool)
-                .await?;
-        }
-        None => {
-            let vals = (1..=4).map(ph).collect::<Vec<_>>().join(", ");
-            let sql = format!(
-                "INSERT INTO users (document_id, username, created_at, updated_at, role, status, registered_via) VALUES ({vals}, {}, {}, {})",
-                ph(5),
-                ph(6),
-                ph(7)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(&cmd.username)
-                .bind(now)
-                .bind(now)
-                .bind(UserRole::Reader)
-                .bind(UserStatus::Active)
-                .bind(cmd.registered_via)
-                .execute(pool)
-                .await?;
-        }
-    }
+    tenant_insert!(
+        pool,
+        "users",
+        [
+            "document_id",
+            "username",
+            "created_at",
+            "updated_at",
+            "role",
+            "status",
+            "registered_via"
+        ],
+        [
+            &document_id,
+            &cmd.username,
+            now,
+            now,
+            UserRole::Reader,
+            UserStatus::Active,
+            cmd.registered_via
+        ],
+        tenant_id
+    )?;
 
     let filter = tenant_filter_ph(tenant_id, 2);
     let sql = format!("SELECT * FROM users WHERE document_id = {}{filter}", ph(1));
@@ -227,31 +209,12 @@ pub async fn update_profile(
         .map(|v| serde_json::to_string(v).unwrap_or_default())
         .or_else(|| user.metadata.clone());
     let now = crate::utils::tz::now_utc();
-    let filter = tenant_filter_ph(tenant_id, 9);
-    let sql = format!(
-        "UPDATE users SET username = {}, bio = {}, website = {}, avatar = {}, social_links = {}, metadata = {}, updated_at = {} WHERE id = {}{filter}",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7),
-        ph(8)
-    );
-    let mut q = sqlx::query(&sql)
-        .bind(username)
-        .bind(bio)
-        .bind(website)
-        .bind(avatar)
-        .bind(social_links)
-        .bind(metadata)
-        .bind(now)
-        .bind(user.id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.execute(pool).await?;
+    tenant_update!(pool, "users",
+        ["username", "bio", "website", "avatar", "social_links", "metadata", "updated_at"],
+        [username, bio, website, avatar, social_links, metadata, &now],
+        "id" => user.id,
+        tenant_id
+    )?;
     find_by_pk(pool, cmd.id, tenant_id)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch updated user")))
@@ -294,18 +257,12 @@ pub async fn update_role(
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
     let now = crate::utils::tz::now_utc();
-    let filter = tenant_filter_ph(tenant_id, 3);
-    let sql = format!(
-        "UPDATE users SET role = {}, updated_at = {} WHERE document_id = {}{filter}",
-        ph(1),
-        ph(2),
-        ph(3)
-    );
-    let mut q = sqlx::query(&sql).bind(role).bind(now).bind(document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let result = q.execute(pool).await?;
+    let result = tenant_update!(pool, "users",
+        ["role", "updated_at"],
+        [role, &now],
+        "document_id" => document_id,
+        tenant_id
+    )?;
     AppError::expect_affected(&result, "user")?;
     find_by_id(pool, document_id, tenant_id)
         .await?

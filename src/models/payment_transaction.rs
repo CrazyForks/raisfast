@@ -150,66 +150,38 @@ pub async fn insert(
     tenant_id: Option<&str>,
 ) -> AppResult<PaymentTransaction> {
     let document_id = uuid::Uuid::now_v7().to_string();
-    match tenant_id {
-        Some(tid) => {
-            let sql = format!(
-                "INSERT INTO payment_transactions (document_id, tenant_id, payment_order_id, order_id, user_id, tx_type, amount, currency, provider_tx_id, status, raw_payload, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10),
-                ph(11)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(tid)
-                .bind(cmd.payment_order_id)
-                .bind(&cmd.order_id)
-                .bind(cmd.user_id)
-                .bind(&cmd.tx_type)
-                .bind(cmd.amount)
-                .bind(&cmd.currency)
-                .bind(&cmd.provider_tx_id)
-                .bind(&cmd.status)
-                .bind(&cmd.raw_payload)
-                .execute(pool)
-                .await?;
-        }
-        None => {
-            let sql = format!(
-                "INSERT INTO payment_transactions (document_id, payment_order_id, order_id, user_id, tx_type, amount, currency, provider_tx_id, status, raw_payload, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(cmd.payment_order_id)
-                .bind(&cmd.order_id)
-                .bind(cmd.user_id)
-                .bind(&cmd.tx_type)
-                .bind(cmd.amount)
-                .bind(&cmd.currency)
-                .bind(&cmd.provider_tx_id)
-                .bind(&cmd.status)
-                .bind(&cmd.raw_payload)
-                .execute(pool)
-                .await?;
-        }
-    }
+    let now = crate::utils::tz::now_utc();
+    tenant_insert!(
+        pool,
+        "payment_transactions",
+        [
+            "document_id",
+            "payment_order_id",
+            "order_id",
+            "user_id",
+            "tx_type",
+            "amount",
+            "currency",
+            "provider_tx_id",
+            "status",
+            "raw_payload",
+            "created_at"
+        ],
+        [
+            &document_id,
+            cmd.payment_order_id,
+            &cmd.order_id,
+            cmd.user_id,
+            &cmd.tx_type,
+            cmd.amount,
+            &cmd.currency,
+            &cmd.provider_tx_id,
+            &cmd.status,
+            &cmd.raw_payload,
+            &now
+        ],
+        tenant_id
+    )?;
     find_by_document_id(pool, &document_id, tenant_id)
         .await?
         .ok_or_else(|| {
@@ -225,63 +197,38 @@ pub async fn tx_insert(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let document_id = uuid::Uuid::now_v7().to_string();
-    if let Some(tid) = tenant_id {
-        let sql = format!(
-            "INSERT INTO payment_transactions (document_id, payment_order_id, order_id, user_id, tx_type, amount, currency, provider_tx_id, status, raw_payload, tenant_id, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-            ph(1),
-            ph(2),
-            ph(3),
-            ph(4),
-            ph(5),
-            ph(6),
-            ph(7),
-            ph(8),
-            ph(9),
-            ph(10),
-            ph(11)
-        );
-        sqlx::query(&sql)
-            .bind(&document_id)
-            .bind(cmd.payment_order_id)
-            .bind(&cmd.order_id)
-            .bind(cmd.user_id)
-            .bind(&cmd.tx_type)
-            .bind(cmd.amount)
-            .bind(&cmd.currency)
-            .bind(&cmd.provider_tx_id)
-            .bind(&cmd.status)
-            .bind(&cmd.raw_payload)
-            .bind(tid)
-            .execute(&mut *tx)
-            .await?;
-    } else {
-        let sql = format!(
-            "INSERT INTO payment_transactions (document_id, payment_order_id, order_id, user_id, tx_type, amount, currency, provider_tx_id, status, raw_payload, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'))",
-            ph(1),
-            ph(2),
-            ph(3),
-            ph(4),
-            ph(5),
-            ph(6),
-            ph(7),
-            ph(8),
-            ph(9),
-            ph(10)
-        );
-        sqlx::query(&sql)
-            .bind(&document_id)
-            .bind(cmd.payment_order_id)
-            .bind(&cmd.order_id)
-            .bind(cmd.user_id)
-            .bind(&cmd.tx_type)
-            .bind(cmd.amount)
-            .bind(&cmd.currency)
-            .bind(&cmd.provider_tx_id)
-            .bind(&cmd.status)
-            .bind(&cmd.raw_payload)
-            .execute(&mut *tx)
-            .await?;
-    }
+    let now = crate::utils::tz::now_utc();
+    tenant_insert!(
+        &mut *tx,
+        "payment_transactions",
+        [
+            "document_id",
+            "payment_order_id",
+            "order_id",
+            "user_id",
+            "tx_type",
+            "amount",
+            "currency",
+            "provider_tx_id",
+            "status",
+            "raw_payload",
+            "created_at"
+        ],
+        [
+            &document_id,
+            cmd.payment_order_id,
+            &cmd.order_id,
+            cmd.user_id,
+            &cmd.tx_type,
+            cmd.amount,
+            &cmd.currency,
+            &cmd.provider_tx_id,
+            &cmd.status,
+            &cmd.raw_payload,
+            &now
+        ],
+        tenant_id
+    )?;
     Ok(())
 }
 

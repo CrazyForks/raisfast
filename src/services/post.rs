@@ -48,9 +48,7 @@ pub async fn resolve_doc_id_to_int(
         crate::db::dialect::ph(1)
     );
     let mut q = sqlx::query_scalar::<_, i64>(&sql).bind(doc_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
+    bind_tenant!(q, tenant_id);
     q.fetch_optional(pool)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("resolve doc_id in {table} failed: {e}")))

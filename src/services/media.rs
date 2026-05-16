@@ -236,9 +236,7 @@ pub async fn admin_delete_media(
         crate::db::tenant::tenant_filter_ph(auth.tenant_id(), 2)
     );
     let mut q = sqlx::query_as::<_, (i64,)>(&sql).bind(media_id);
-    if let Some(tid) = auth.tenant_id() {
-        q = q.bind(tid);
-    }
+    bind_tenant!(q, auth.tenant_id());
     let (media_pk,): (i64,) = q
         .fetch_optional(pool)
         .await
@@ -279,9 +277,7 @@ pub async fn delete_media(
         crate::db::tenant::tenant_filter_ph(auth.tenant_id(), 2)
     );
     let mut q = sqlx::query_as::<_, (i64,)>(&sql).bind(media_id);
-    if let Some(tid) = auth.tenant_id() {
-        q = q.bind(tid);
-    }
+    bind_tenant!(q, auth.tenant_id());
     let (media_pk,): (i64,) = q
         .fetch_optional(pool)
         .await

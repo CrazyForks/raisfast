@@ -44,9 +44,7 @@ pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppRes
         tenant_filter_ph(tenant_id, 1)
     );
     let mut q = sqlx::query_as::<_, Tag>(&sql);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
+    bind_tenant!(q, tenant_id);
     let tags = q.fetch_all(pool).await?;
     Ok(tags)
 }
@@ -64,9 +62,7 @@ pub async fn find_paginated(
         tenant_filter_ph(tenant_id, 1)
     );
     let mut cq = sqlx::query_scalar::<_, i64>(&count_sql);
-    if let Some(tid) = tenant_id {
-        cq = cq.bind(tid);
-    }
+    bind_tenant!(cq, tenant_id);
     let total = cq.fetch_one(pool).await?;
 
     let base = usize::from(tenant_id.is_some()) + 1;
@@ -77,9 +73,7 @@ pub async fn find_paginated(
         ph(base + 1)
     );
     let mut dq = sqlx::query_as::<_, Tag>(&data_sql);
-    if let Some(tid) = tenant_id {
-        dq = dq.bind(tid);
-    }
+    bind_tenant!(dq, tenant_id);
     dq = dq.bind(page_size).bind(offset);
     let items = dq.fetch_all(pool).await?;
 
@@ -97,9 +91,7 @@ pub async fn find_by_id(
         tenant_filter_ph(tenant_id, 2)
     );
     let mut q = sqlx::query_as::<_, Tag>(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
+    bind_tenant!(q, tenant_id);
     q.fetch_one(pool).await.map_err(Into::into)
 }
 
@@ -114,9 +106,7 @@ pub async fn find_by_document_id(
         tenant_filter_ph(tenant_id, 2)
     );
     let mut q = sqlx::query_as::<_, Tag>(&sql).bind(document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
+    bind_tenant!(q, tenant_id);
     q.fetch_one(pool).await.map_err(Into::into)
 }
 
@@ -129,54 +119,21 @@ pub async fn create(
 ) -> AppResult<Tag> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
-    match tenant_id {
-        Some(tid) => {
-            let sql = format!(
-                "INSERT INTO tags (document_id, tenant_id, name, slug, created_by, updated_by, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(tid)
-                .bind(name)
-                .bind(slug)
-                .bind(created_by)
-                .bind(created_by)
-                .bind(now)
-                .bind(now)
-                .execute(pool)
-                .await?;
-        }
-        None => {
-            let sql = format!(
-                "INSERT INTO tags (document_id, name, slug, created_by, updated_by, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(name)
-                .bind(slug)
-                .bind(created_by)
-                .bind(created_by)
-                .bind(now)
-                .bind(now)
-                .execute(pool)
-                .await?;
-        }
-    }
+    tenant_insert!(
+        pool,
+        "tags",
+        [
+            "document_id",
+            "name",
+            "slug",
+            "created_by",
+            "updated_by",
+            "created_at",
+            "updated_at"
+        ],
+        [&document_id, name, slug, created_by, created_by, &now, &now],
+        tenant_id
+    )?;
 
     find_by_document_id(pool, &document_id, tenant_id).await
 }
@@ -188,9 +145,7 @@ pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) ->
         tenant_filter_ph(tenant_id, 2)
     );
     let mut q = sqlx::query(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
+    bind_tenant!(q, tenant_id);
     let result = q.execute(pool).await?;
 
     AppError::expect_affected(&result, "tag")
@@ -204,19 +159,12 @@ pub async fn update(
     tenant_id: Option<&str>,
 ) -> AppResult<Tag> {
     let now = crate::utils::tz::now_utc();
-    let sql = format!(
-        "UPDATE tags SET name = {}, slug = {}, updated_at = {} WHERE id = {}{}",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        tenant_filter_ph(tenant_id, 5)
-    );
-    let mut q = sqlx::query(&sql).bind(name).bind(slug).bind(now).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let result = q.execute(pool).await?;
+    let result = tenant_update!(pool, "tags",
+        ["name", "slug", "updated_at"],
+        [name, slug, &now],
+        "id" => id,
+        tenant_id
+    )?;
     AppError::expect_affected(&result, "tag")?;
     find_by_id(pool, id, tenant_id).await
 }

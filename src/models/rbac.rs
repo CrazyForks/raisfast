@@ -131,12 +131,8 @@ pub async fn update_role(
     );
     let mut q = sqlx::query(sql.as_ref());
     q = q.bind(now);
-    if let Some(n) = name {
-        q = q.bind(n);
-    }
-    if let Some(d) = description {
-        q = q.bind(d);
-    }
+    bind_tenant!(q, name);
+    bind_tenant!(q, description);
     q = q.bind(document_id);
     q.execute(pool).await?;
 

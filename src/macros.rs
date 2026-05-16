@@ -294,6 +294,110 @@ macro_rules! define_enum {
     };
 }
 
+/// Bind tenant_id to a query if Some, no-op if None.
+///
+/// Replaces the repeated 3-line pattern:
+/// ```ignore
+/// if let Some(tid) = tenant_id {
+///     q = q.bind(tid);
+/// }
+/// ```
+///
+/// # Examples
+///
+/// ```ignore
+/// let mut q = sqlx::query_as::<_, Tag>(&sql).bind(id);
+/// bind_tenant!(q, tenant_id);
+/// q.fetch_one(pool).await?
+/// ```
+#[macro_export]
+macro_rules! bind_tenant {
+    ($q:ident, $tenant_id:expr) => {
+        if let Some(_tid) = $tenant_id {
+            $q = $q.bind(_tid);
+        }
+    };
+}
+
+/// Execute a tenant-aware INSERT in one call.
+///
+/// Generates `INSERT INTO table (col1, col2, ...) VALUES (?, ?, ...)` with
+/// optional `tenant_id` column appended and bound automatically.
+///
+/// # Syntax
+///
+/// ```ignore
+/// tenant_insert!(pool, "table", ["col1", "col2", ...], [val1, val2, ...], tenant_id)?;
+/// ```
+///
+/// # Example
+///
+/// ```ignore
+/// tenant_insert!(pool, "tags",
+///     ["document_id", "name", "slug", "created_by", "updated_by", "created_at", "updated_at"],
+///     [&document_id, name, slug, created_by, created_by, &now, &now],
+///     tenant_id
+/// )?;
+/// ```
+#[macro_export]
+macro_rules! tenant_insert {
+    ($pool:expr, $table:literal, [$($col:literal),* $(,)?], [$($val:expr),* $(,)?], $tenant_id:expr) => {{
+        let sql = $crate::db::tenant::insert_sql($table, &[$($col),*], $tenant_id);
+        let mut _q = sqlx::query(&sql)$(.bind($val))*;
+        $crate::bind_tenant!(_q, $tenant_id);
+        _q.execute($pool).await
+    }};
+}
+
+/// Execute a tenant-aware UPDATE in one call.
+///
+/// Generates `UPDATE table SET col1=?, col2=? ... WHERE pk_col=? [AND tenant_id=?]`
+/// with optional tenant filter appended and bound automatically.
+///
+/// # Syntax
+///
+/// ```ignore
+/// tenant_update!(pool, "table",
+///     ["col1", "col2", ...],
+///     [val1, val2, ...],
+///     "pk_col" => pk_val,
+///     tenant_id
+/// )?;
+/// ```
+///
+/// # Example
+///
+/// ```ignore
+/// tenant_update!(pool, "tags",
+///     ["name", "slug", "updated_at"],
+///     [name, slug, &now],
+///     "id" => tag_id,
+///     tenant_id
+/// )?;
+/// ```
+#[macro_export]
+macro_rules! tenant_update {
+    ($pool:expr, $table:literal, [$($col:literal),* $(,)?], [$($val:expr),* $(,)?], $pk_col:literal => $pk_val:expr, $tenant_id:expr) => {{
+        let _n = [&$($col),*].len();
+        let _pk_ph = $crate::db::dialect::ph(_n + 1);
+        let _t_ph = $crate::db::tenant::tenant_filter_ph($tenant_id, _n + 2);
+        let _sets: Vec<&str> = vec![$($col),*];
+        let _phs: Vec<String> = (1..=_n).map($crate::db::dialect::ph).collect();
+        let _sql = format!(
+            "UPDATE {} SET {} WHERE {} = {}{}",
+            $table,
+            _sets.iter().zip(_phs.iter()).map(|(c, p)| format!("{c} = {p}")).collect::<Vec<_>>().join(", "),
+            $pk_col,
+            _pk_ph,
+            _t_ph,
+        );
+        let mut _q = sqlx::query(&_sql)$(.bind($val))*;
+        _q = _q.bind($pk_val);
+        $crate::bind_tenant!(_q, $tenant_id);
+        _q.execute($pool).await
+    }};
+}
+
 /// Create an in-memory SQLite test pool with schema applied.
 #[macro_export]
 macro_rules! test_pool {

@@ -134,18 +134,10 @@ pub async fn update(
     );
     let mut q = sqlx::query(&sql);
     q = q.bind(now);
-    if let Some(n) = name {
-        q = q.bind(n);
-    }
-    if let Some(d) = domain {
-        q = q.bind(d);
-    }
-    if let Some(c) = config {
-        q = q.bind(c);
-    }
-    if let Some(s) = status {
-        q = q.bind(s);
-    }
+    bind_tenant!(q, name);
+    bind_tenant!(q, domain);
+    bind_tenant!(q, config);
+    bind_tenant!(q, status);
     q = q.bind(document_id);
     q.execute(pool).await?;
 

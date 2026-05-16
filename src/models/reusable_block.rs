@@ -81,45 +81,33 @@ pub async fn create_reusable(
     tenant_id: Option<&str>,
 ) -> AppResult<ReusableBlock> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
-    match tenant_id {
-        Some(tid) => {
-            let vals = (1..=10).map(ph).collect::<Vec<_>>().join(", ");
-            let sql = format!(
-                "INSERT INTO reusable_blocks (document_id, tenant_id, name, block_type, content, description, created_by, updated_by, created_at, updated_at) VALUES ({vals})"
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(tid)
-                .bind(&cmd.name)
-                .bind(&cmd.block_type)
-                .bind(&cmd.content)
-                .bind(&cmd.description)
-                .bind(cmd.created_by)
-                .bind(cmd.created_by)
-                .bind(now)
-                .bind(now)
-                .execute(pool)
-                .await?;
-        }
-        None => {
-            let vals = (1..=9).map(ph).collect::<Vec<_>>().join(", ");
-            let sql = format!(
-                "INSERT INTO reusable_blocks (document_id, name, block_type, content, description, created_by, updated_by, created_at, updated_at) VALUES ({vals})"
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(&cmd.name)
-                .bind(&cmd.block_type)
-                .bind(&cmd.content)
-                .bind(&cmd.description)
-                .bind(cmd.created_by)
-                .bind(cmd.created_by)
-                .bind(now)
-                .bind(now)
-                .execute(pool)
-                .await?;
-        }
-    }
+    tenant_insert!(
+        pool,
+        "reusable_blocks",
+        [
+            "document_id",
+            "name",
+            "block_type",
+            "content",
+            "description",
+            "created_by",
+            "updated_by",
+            "created_at",
+            "updated_at"
+        ],
+        [
+            &document_id,
+            &cmd.name,
+            &cmd.block_type,
+            &cmd.content,
+            &cmd.description,
+            cmd.created_by,
+            cmd.created_by,
+            now,
+            now
+        ],
+        tenant_id
+    )?;
 
     find_reusable_by_document_id(pool, &document_id, tenant_id)
         .await?

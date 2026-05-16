@@ -245,9 +245,7 @@ impl StatsService {
         );
 
         let mut post_q = sqlx::query_as::<_, (Option<String>, String, String)>(&post_sql);
-        if let Some(tid) = tenant_id {
-            post_q = post_q.bind(tid);
-        }
+        bind_tenant!(post_q, tenant_id);
         let posts = post_q
             .fetch_all(&self.pool)
             .await
@@ -268,9 +266,7 @@ impl StatsService {
         );
 
         let mut comment_q = sqlx::query_as::<_, (Option<String>, String)>(&comment_sql);
-        if let Some(tid) = tenant_id {
-            comment_q = comment_q.bind(tid);
-        }
+        bind_tenant!(comment_q, tenant_id);
         let comments = comment_q
             .fetch_all(&self.pool)
             .await

@@ -45,62 +45,33 @@ pub async fn create(
 ) -> AppResult<Media> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
-    match tenant_id {
-        Some(tid) => {
-            let sql = format!(
-                "INSERT INTO media (document_id, tenant_id, user_id, filename, filepath, mimetype, size, width, height, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(tid)
-                .bind(cmd.user_id)
-                .bind(&cmd.filename)
-                .bind(&cmd.filepath)
-                .bind(&cmd.mimetype)
-                .bind(cmd.size)
-                .bind(cmd.width)
-                .bind(cmd.height)
-                .bind(now)
-                .execute(pool)
-                .await?;
-        }
-        None => {
-            let sql = format!(
-                "INSERT INTO media (document_id, user_id, filename, filepath, mimetype, size, width, height, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(cmd.user_id)
-                .bind(&cmd.filename)
-                .bind(&cmd.filepath)
-                .bind(&cmd.mimetype)
-                .bind(cmd.size)
-                .bind(cmd.width)
-                .bind(cmd.height)
-                .bind(now)
-                .execute(pool)
-                .await?;
-        }
-    }
+    tenant_insert!(
+        pool,
+        "media",
+        [
+            "document_id",
+            "user_id",
+            "filename",
+            "filepath",
+            "mimetype",
+            "size",
+            "width",
+            "height",
+            "created_at"
+        ],
+        [
+            &document_id,
+            cmd.user_id,
+            &cmd.filename,
+            &cmd.filepath,
+            &cmd.mimetype,
+            cmd.size,
+            cmd.width,
+            cmd.height,
+            now
+        ],
+        tenant_id
+    )?;
 
     let sql = format!(
         "SELECT * FROM media WHERE document_id = {}{}",

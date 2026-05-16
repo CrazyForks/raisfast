@@ -86,70 +86,42 @@ pub async fn insert(
     tenant_id: Option<&str>,
 ) -> AppResult<PaymentRefund> {
     let document_id = uuid::Uuid::now_v7().to_string();
-    match tenant_id {
-        Some(tid) => {
-            let sql = format!(
-                "INSERT INTO payment_refunds (document_id, tenant_id, payment_order_id, order_id, user_id, amount, currency, reason, provider_refund_id, status, payment_tx_id, metadata, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10),
-                ph(11),
-                ph(12)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(tid)
-                .bind(cmd.payment_order_id)
-                .bind(&cmd.order_id)
-                .bind(cmd.user_id)
-                .bind(cmd.amount)
-                .bind(&cmd.currency)
-                .bind(&cmd.reason)
-                .bind(&cmd.provider_refund_id)
-                .bind(&cmd.status)
-                .bind(cmd.payment_tx_id)
-                .bind(&cmd.metadata)
-                .execute(pool)
-                .await?;
-        }
-        None => {
-            let sql = format!(
-                "INSERT INTO payment_refunds (document_id, payment_order_id, order_id, user_id, amount, currency, reason, provider_refund_id, status, payment_tx_id, metadata, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4),
-                ph(5),
-                ph(6),
-                ph(7),
-                ph(8),
-                ph(9),
-                ph(10),
-                ph(11)
-            );
-            sqlx::query(&sql)
-                .bind(&document_id)
-                .bind(cmd.payment_order_id)
-                .bind(&cmd.order_id)
-                .bind(cmd.user_id)
-                .bind(cmd.amount)
-                .bind(&cmd.currency)
-                .bind(&cmd.reason)
-                .bind(&cmd.provider_refund_id)
-                .bind(&cmd.status)
-                .bind(cmd.payment_tx_id)
-                .bind(&cmd.metadata)
-                .execute(pool)
-                .await?;
-        }
-    }
+    let now = crate::utils::tz::now_utc();
+    tenant_insert!(
+        pool,
+        "payment_refunds",
+        [
+            "document_id",
+            "payment_order_id",
+            "order_id",
+            "user_id",
+            "amount",
+            "currency",
+            "reason",
+            "provider_refund_id",
+            "status",
+            "payment_tx_id",
+            "metadata",
+            "created_at",
+            "updated_at"
+        ],
+        [
+            &document_id,
+            cmd.payment_order_id,
+            &cmd.order_id,
+            cmd.user_id,
+            cmd.amount,
+            &cmd.currency,
+            &cmd.reason,
+            &cmd.provider_refund_id,
+            &cmd.status,
+            cmd.payment_tx_id,
+            &cmd.metadata,
+            &now,
+            &now
+        ],
+        tenant_id
+    )?;
     let sql2 = format!(
         "SELECT * FROM payment_refunds WHERE document_id = {}{}",
         ph(1),
@@ -238,63 +210,40 @@ pub async fn tx_insert(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let document_id = uuid::Uuid::now_v7().to_string();
-    if let Some(tid) = tenant_id {
-        let sql = format!(
-            "INSERT INTO payment_refunds (document_id, payment_order_id, order_id, user_id, amount, currency, reason, provider_refund_id, status, metadata, tenant_id, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-            ph(1),
-            ph(2),
-            ph(3),
-            ph(4),
-            ph(5),
-            ph(6),
-            ph(7),
-            ph(8),
-            ph(9),
-            ph(10),
-            ph(11)
-        );
-        sqlx::query(&sql)
-            .bind(&document_id)
-            .bind(cmd.payment_order_id)
-            .bind(&cmd.order_id)
-            .bind(cmd.user_id)
-            .bind(cmd.amount)
-            .bind(&cmd.currency)
-            .bind(&cmd.reason)
-            .bind(&cmd.provider_refund_id)
-            .bind(&cmd.status)
-            .bind(&cmd.metadata)
-            .bind(tid)
-            .execute(&mut *tx)
-            .await?;
-    } else {
-        let sql = format!(
-            "INSERT INTO payment_refunds (document_id, payment_order_id, order_id, user_id, amount, currency, reason, provider_refund_id, status, metadata, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, datetime('now'), datetime('now'))",
-            ph(1),
-            ph(2),
-            ph(3),
-            ph(4),
-            ph(5),
-            ph(6),
-            ph(7),
-            ph(8),
-            ph(9),
-            ph(10)
-        );
-        sqlx::query(&sql)
-            .bind(&document_id)
-            .bind(cmd.payment_order_id)
-            .bind(&cmd.order_id)
-            .bind(cmd.user_id)
-            .bind(cmd.amount)
-            .bind(&cmd.currency)
-            .bind(&cmd.reason)
-            .bind(&cmd.provider_refund_id)
-            .bind(&cmd.status)
-            .bind(&cmd.metadata)
-            .execute(&mut *tx)
-            .await?;
-    }
+    let now = crate::utils::tz::now_utc();
+    tenant_insert!(
+        &mut *tx,
+        "payment_refunds",
+        [
+            "document_id",
+            "payment_order_id",
+            "order_id",
+            "user_id",
+            "amount",
+            "currency",
+            "reason",
+            "provider_refund_id",
+            "status",
+            "metadata",
+            "created_at",
+            "updated_at"
+        ],
+        [
+            &document_id,
+            cmd.payment_order_id,
+            &cmd.order_id,
+            cmd.user_id,
+            cmd.amount,
+            &cmd.currency,
+            &cmd.reason,
+            &cmd.provider_refund_id,
+            &cmd.status,
+            &cmd.metadata,
+            &now,
+            &now
+        ],
+        tenant_id
+    )?;
     Ok(())
 }
 
