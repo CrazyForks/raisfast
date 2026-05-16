@@ -31,7 +31,7 @@ async fn seed_user_get_doc_id(app: &mut axum::Router, tag: u64) -> (String, Stri
 #[tokio::test]
 async fn admin_credit_creates_wallet() {
     let tag = unique_tag();
-    let (mut app, state, tok) = setup_admin().await;
+    let (mut app, _state, tok) = setup_admin().await;
     let (_user_tok, user_doc_id) = seed_user_get_doc_id(&mut app, tag).await;
 
     let (status, body) = send(
@@ -56,7 +56,7 @@ async fn admin_credit_creates_wallet() {
 #[tokio::test]
 async fn admin_debit_deducts_balance() {
     let tag = unique_tag();
-    let (mut app, state, tok) = setup_admin().await;
+    let (mut app, _state, tok) = setup_admin().await;
     let (_user_tok, user_doc_id) = seed_user_get_doc_id(&mut app, tag).await;
 
     let _ = send(
@@ -96,7 +96,7 @@ async fn admin_debit_deducts_balance() {
 #[tokio::test]
 async fn user_list_wallets_after_credit() {
     let tag = unique_tag();
-    let (mut app, state, tok) = setup_admin().await;
+    let (mut app, _state, tok) = setup_admin().await;
     let (user_tok, user_doc_id) = seed_user_get_doc_id(&mut app, tag).await;
 
     let _ = send(
@@ -125,7 +125,7 @@ async fn user_list_wallets_after_credit() {
 #[tokio::test]
 async fn user_get_wallet_by_currency() {
     let tag = unique_tag();
-    let (mut app, state, tok) = setup_admin().await;
+    let (mut app, _state, tok) = setup_admin().await;
     let (user_tok, user_doc_id) = seed_user_get_doc_id(&mut app, tag).await;
 
     let _ = send(
@@ -152,7 +152,7 @@ async fn user_get_wallet_by_currency() {
 #[tokio::test]
 async fn admin_list_all_wallets() {
     let tag = unique_tag();
-    let (mut app, state, tok) = setup_admin().await;
+    let (mut app, _state, tok) = setup_admin().await;
     let (_user_tok, user_doc_id) = seed_user_get_doc_id(&mut app, tag).await;
 
     let _ = send(
@@ -183,7 +183,7 @@ async fn admin_list_all_wallets() {
 #[tokio::test]
 async fn admin_reversal_restores_balance() {
     let tag = unique_tag();
-    let (mut app, state, tok) = setup_admin().await;
+    let (mut app, _state, tok) = setup_admin().await;
     let (_user_tok, user_doc_id) = seed_user_get_doc_id(&mut app, tag).await;
 
     let (_, credit_body) = send(
@@ -219,7 +219,7 @@ async fn admin_reversal_restores_balance() {
 #[tokio::test]
 async fn user_list_transactions() {
     let tag = unique_tag();
-    let (mut app, state, tok) = setup_admin().await;
+    let (mut app, _state, tok) = setup_admin().await;
     let (user_tok, user_doc_id) = seed_user_get_doc_id(&mut app, tag).await;
 
     let _ = send(
@@ -253,7 +253,7 @@ async fn user_list_transactions() {
 #[tokio::test]
 async fn debit_insufficient_balance_rejected() {
     let tag = unique_tag();
-    let (mut app, state, tok) = setup_admin().await;
+    let (mut app, _state, tok) = setup_admin().await;
     let (_user_tok, user_doc_id) = seed_user_get_doc_id(&mut app, tag).await;
 
     let (status, _) = send(

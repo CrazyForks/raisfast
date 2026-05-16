@@ -1,9 +1,14 @@
 //! User profile management service.
 
+use std::sync::Arc;
+
+use async_trait::async_trait;
+
 use crate::commands::UpdateProfileCmd;
 use crate::dto::{UpdateUserRequest, UserResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
+use crate::models::user::{User, UserRole};
 
 /// Get the current user's profile.
 pub async fn get_me(pool: &crate::db::Pool, auth: &AuthUser) -> AppResult<UserResponse> {
@@ -62,6 +67,93 @@ pub async fn list_users(
     let responses: AppResult<Vec<UserResponse>> =
         users.into_iter().map(UserResponse::from_user).collect();
     Ok((responses?, total))
+}
+
+#[async_trait]
+pub trait UserService: Send + Sync {
+    async fn update_role(
+        &self,
+        user_doc_id: &str,
+        role: UserRole,
+        tenant_id: Option<&str>,
+    ) -> AppResult<User>;
+
+    async fn admin_update_user(
+        &self,
+        user_doc_id: &str,
+        req: &UpdateUserRequest,
+        tenant_id: Option<&str>,
+    ) -> AppResult<User>;
+
+    async fn delete_user(&self, user_doc_id: &str, tenant_id: Option<&str>) -> AppResult<()>;
+
+    async fn batch_update_roles(
+        &self,
+        operations: &[(String, UserRole)],
+        tenant_id: Option<&str>,
+    ) -> AppResult<Vec<bool>>;
+}
+
+pub struct UserServiceImpl {
+    pool: Arc<crate::db::Pool>,
+}
+
+impl UserServiceImpl {
+    pub fn new(pool: Arc<crate::db::Pool>) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl UserService for UserServiceImpl {
+    async fn update_role(
+        &self,
+        user_doc_id: &str,
+        role: UserRole,
+        tenant_id: Option<&str>,
+    ) -> AppResult<User> {
+        crate::models::user::update_role(&self.pool, user_doc_id, role, tenant_id).await
+    }
+
+    async fn admin_update_user(
+        &self,
+        user_doc_id: &str,
+        req: &UpdateUserRequest,
+        tenant_id: Option<&str>,
+    ) -> AppResult<User> {
+        let user = crate::models::user::find_by_id(&self.pool, user_doc_id, tenant_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("user"))?;
+        let cmd = UpdateProfileCmd {
+            id: user.id,
+            username: req.username.clone(),
+            bio: req.bio.clone(),
+            website: req.website.clone(),
+            avatar: req.avatar.clone(),
+            social_links: req.social_links.clone(),
+            metadata: req.metadata.clone(),
+        };
+        crate::models::user::update_profile(&self.pool, &cmd, tenant_id).await
+    }
+
+    async fn delete_user(&self, user_doc_id: &str, tenant_id: Option<&str>) -> AppResult<()> {
+        crate::models::user::delete_by_document_id(&self.pool, user_doc_id, tenant_id).await
+    }
+
+    async fn batch_update_roles(
+        &self,
+        operations: &[(String, UserRole)],
+        tenant_id: Option<&str>,
+    ) -> AppResult<Vec<bool>> {
+        let mut results = Vec::with_capacity(operations.len());
+        for (doc_id, role) in operations {
+            let ok = crate::models::user::update_role(&self.pool, doc_id, *role, tenant_id)
+                .await
+                .is_ok();
+            results.push(ok);
+        }
+        Ok(results)
+    }
 }
 
 #[cfg(test)]

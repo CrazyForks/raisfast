@@ -1706,7 +1706,6 @@ fn parse_include(s: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::content_type::schema::ContentTypeSchema;
-    use std::sync::Arc;
 
     fn parse_ct() -> ContentTypeSchema {
         ContentTypeSchema::parse_from_str(
@@ -1829,7 +1828,7 @@ type = "text"
 "#,
         )
         .unwrap();
-        let mut reg = crate::protocols::ProtocolRegistry::new();
+        let reg = crate::protocols::ProtocolRegistry::new();
         let _ = registry.register(ct, &Default::default(), &[], &[], &reg);
         let (found, is_single) = resolve_content_type(&registry, "setting").unwrap();
         assert!(is_single);

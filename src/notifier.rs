@@ -8,6 +8,17 @@
 pub mod email;
 pub mod sms;
 
+/// HTTP request timeout for notification service calls (seconds)
+const NOTIFICATION_TIMEOUT_SECS: u64 = 10;
+
+/// Build a reqwest client with notification-appropriate timeout
+pub(crate) fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(NOTIFICATION_TIMEOUT_SECS))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 use std::sync::Arc;
 
 use serde_json::Value;

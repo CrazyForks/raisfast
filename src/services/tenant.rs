@@ -130,7 +130,7 @@ mod tests {
         let pool = setup_pool().await;
         let s = svc(pool);
         let list = s.list().await.unwrap();
-        assert!(list.len() >= 1);
+        assert!(!list.is_empty());
         assert!(list.iter().any(|t| t.name == "Default"));
     }
 

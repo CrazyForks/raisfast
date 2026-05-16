@@ -74,8 +74,8 @@ async fn create_user_in_tenant(
         .bind(int_id)
         .bind(email)
         .bind(&cred_data)
-        .bind(&cred_now)
-        .bind(&cred_now)
+        .bind(cred_now)
+        .bind(cred_now)
         .execute(pool)
         .await
         .unwrap();

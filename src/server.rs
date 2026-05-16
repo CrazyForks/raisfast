@@ -705,7 +705,10 @@ pub fn spawn_webhook_subscriber(
         .build()
         .unwrap_or_else(|e| {
             tracing::error!("webhook http client init failed: {e}; using default client");
-            reqwest::Client::new()
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new())
         });
 
     let mut rx = eventbus.subscribe();

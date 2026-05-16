@@ -196,9 +196,7 @@ pub async fn create_order(
         .user_int_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
     validation::validate(&req)?;
-    let o = state.order_service.create(&auth, user_int_id, req).await?;
-    let items =
-        crate::models::order_item::find_by_order_id(&state.pool, o.id, auth.tenant_id()).await?;
+    let (o, items) = state.order_service.create(&auth, user_int_id, req).await?;
     Ok(ApiResponse::success(to_order_response(o, items)))
 }
 
@@ -220,13 +218,10 @@ pub async fn list_orders(
         .order_service
         .list_user(&auth, user_int_id, params.page, params.page_size)
         .await?;
-    let mut responses = Vec::new();
-    for o in orders {
-        let items =
-            crate::models::order_item::find_by_order_id(&state.pool, o.id, auth.tenant_id())
-                .await?;
-        responses.push(to_order_response(o, items));
-    }
+    let responses: Vec<_> = orders
+        .into_iter()
+        .map(|(o, items)| to_order_response(o, items))
+        .collect();
     Ok(params.paginate(responses, total))
 }
 
@@ -301,13 +296,10 @@ pub async fn admin_list(
         .order_service
         .list_admin(&auth, params.page, params.page_size, None)
         .await?;
-    let mut responses = Vec::new();
-    for o in orders {
-        let items =
-            crate::models::order_item::find_by_order_id(&state.pool, o.id, auth.tenant_id())
-                .await?;
-        responses.push(to_order_response(o, items));
-    }
+    let responses: Vec<_> = orders
+        .into_iter()
+        .map(|(o, items)| to_order_response(o, items))
+        .collect();
     Ok(params.paginate(responses, total))
 }
 

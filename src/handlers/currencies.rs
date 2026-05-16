@@ -6,7 +6,7 @@ use crate::errors::app_error::AppError;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
-use crate::models::currencies;
+use crate::services::currencies as svc;
 
 pub fn routes(
     registry: &mut crate::server::RouteRegistry,
@@ -65,7 +65,7 @@ pub async fn list_currencies(
     State(state): State<crate::AppState>,
 ) -> Result<ApiResponse<Vec<CurrencyResponse>>, AppError> {
     auth.ensure_admin()?;
-    let rows = currencies::find_all(&state.pool).await?;
+    let rows = svc::list(&state.pool).await?;
     Ok(ApiResponse::success(
         rows.into_iter().map(CurrencyResponse::from).collect(),
     ))
@@ -82,9 +82,7 @@ pub async fn get_currency(
     Path(code): Path<String>,
 ) -> Result<ApiResponse<CurrencyResponse>, AppError> {
     auth.ensure_admin()?;
-    let c = currencies::find_by_code(&state.pool, &code)
-        .await?
-        .ok_or_else(|| AppError::not_found("currency"))?;
+    let c = svc::get_by_code(&state.pool, &code).await?;
     Ok(ApiResponse::success(CurrencyResponse::from(c)))
 }
 
@@ -101,12 +99,7 @@ pub async fn create_currency(
     auth.ensure_admin()?;
     validation::validate(&req)?;
     let decimals = req.decimals.unwrap_or(2);
-    if !(0..=18).contains(&decimals) {
-        return Err(AppError::BadRequest(
-            "decimals must be between 0 and 18".into(),
-        ));
-    }
-    let c = currencies::create(&state.pool, &req.code, &req.name, decimals).await?;
+    let c = svc::create(&state.pool, &req.code, &req.name, decimals).await?;
     Ok(ApiResponse::success(CurrencyResponse::from(c)))
 }
 
@@ -124,8 +117,7 @@ pub async fn update_currency(
 ) -> Result<ApiResponse<CurrencyResponse>, AppError> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let c = currencies::update(&state.pool, &code, req.name.as_deref(), req.is_active)
-        .await?
-        .ok_or_else(|| AppError::not_found("currency"))?;
+    svc::update(&state.pool, &code, req.name.as_deref(), req.is_active).await?;
+    let c = svc::get_by_code(&state.pool, &code).await?;
     Ok(ApiResponse::success(CurrencyResponse::from(c)))
 }

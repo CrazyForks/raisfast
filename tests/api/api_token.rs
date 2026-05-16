@@ -207,8 +207,8 @@ async fn delete_token_non_owner_forbidden() {
         .bind(reader_int_id)
         .bind("reader-token@test.com")
         .bind(&cred_data)
-        .bind(&cred_now)
-        .bind(&cred_now)
+        .bind(cred_now)
+        .bind(cred_now)
         .execute(&pool)
         .await
         .unwrap();
@@ -256,8 +256,8 @@ async fn admin_can_delete_other_users_token() {
         .bind(reader_int_id)
         .bind("reader-admin-del@test.com")
         .bind(&cred_data)
-        .bind(&cred_now)
-        .bind(&cred_now)
+        .bind(cred_now)
+        .bind(cred_now)
         .execute(&pool)
         .await
         .unwrap();
@@ -529,8 +529,8 @@ async fn each_user_sees_only_own_tokens() {
         .bind(reader_int_id)
         .bind("isolation@test.com")
         .bind(&cred_data)
-        .bind(&cred_now)
-        .bind(&cred_now)
+        .bind(cred_now)
+        .bind(cred_now)
         .execute(&pool)
         .await
         .unwrap();

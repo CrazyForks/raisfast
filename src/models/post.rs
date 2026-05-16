@@ -765,7 +765,7 @@ mod tests {
                 excerpt: None,
                 cover_image: None,
                 status: status.parse().unwrap(),
-                created_by: created_by,
+                created_by,
                 updated_by: Some(created_by),
                 category_id: None,
                 tag_ids: None,

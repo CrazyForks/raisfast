@@ -200,7 +200,7 @@ async fn admin_ship_order() {
     let order_id = create_body["data"]["id"].as_str().unwrap();
 
     let order_int_id: i64 = sqlx::query_scalar("SELECT id FROM orders WHERE document_id = ?")
-        .bind(&order_id)
+        .bind(order_id)
         .fetch_one(&state.pool)
         .await
         .unwrap();

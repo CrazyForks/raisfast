@@ -12,6 +12,7 @@ use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
+use crate::models::user::UserRole;
 use crate::services::{auth, user};
 use crate::utils::pagination::PaginationParams;
 
@@ -225,7 +226,10 @@ pub async fn update_role(
 ) -> AppResult<ApiResponse<UserResponse>> {
     auth.ensure_admin()?;
 
-    let u = crate::models::user::update_role(&state.pool, &id, req.role, auth.tenant_id()).await?;
+    let u = state
+        .user_service
+        .update_role(&id, req.role, auth.tenant_id())
+        .await?;
     Ok(ApiResponse::success(UserResponse::from_user(u)?))
 }
 
@@ -261,21 +265,10 @@ pub async fn admin_update_user(
 ) -> AppResult<ApiResponse<UserResponse>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let cmd = crate::commands::UpdateProfileCmd {
-        id: {
-            let user = crate::models::user::find_by_id(&state.pool, &id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| crate::errors::app_error::AppError::not_found("user"))?;
-            user.id
-        },
-        username: req.username,
-        bio: req.bio,
-        website: req.website,
-        avatar: req.avatar,
-        social_links: req.social_links,
-        metadata: req.metadata,
-    };
-    let u = crate::models::user::update_profile(&state.pool, &cmd, auth.tenant_id()).await?;
+    let u = state
+        .user_service
+        .admin_update_user(&id, &req, auth.tenant_id())
+        .await?;
     Ok(ApiResponse::success(UserResponse::from_user(u)?))
 }
 
@@ -285,7 +278,10 @@ pub async fn admin_delete_user(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    crate::models::user::delete_by_document_id(&state.pool, &id, auth.tenant_id()).await?;
+    state
+        .user_service
+        .delete_user(&id, auth.tenant_id())
+        .await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -300,35 +296,21 @@ pub async fn admin_batch_users(
     for uid in &req.ids {
         match req.action.as_str() {
             "delete" => {
-                if crate::models::user::delete_by_document_id(&state.pool, uid, auth.tenant_id())
+                if state
+                    .user_service
+                    .delete_user(uid, auth.tenant_id())
                     .await
                     .is_ok()
                 {
                     affected += 1;
                 }
             }
-            "disable" => {
-                if crate::models::user::update_role(
-                    &state.pool,
-                    uid,
-                    crate::models::user::UserRole::Reader,
-                    auth.tenant_id(),
-                )
-                .await
-                .is_ok()
-                {
-                    affected += 1;
-                }
-            }
-            "enable" => {
-                if crate::models::user::update_role(
-                    &state.pool,
-                    uid,
-                    crate::models::user::UserRole::Reader,
-                    auth.tenant_id(),
-                )
-                .await
-                .is_ok()
+            "disable" | "enable" => {
+                if state
+                    .user_service
+                    .update_role(uid, UserRole::Reader, auth.tenant_id())
+                    .await
+                    .is_ok()
                 {
                     affected += 1;
                 }
@@ -337,7 +319,9 @@ pub async fn admin_batch_users(
                 let Some(role) = req.role else {
                     continue;
                 };
-                if crate::models::user::update_role(&state.pool, uid, role, auth.tenant_id())
+                if state
+                    .user_service
+                    .update_role(uid, role, auth.tenant_id())
                     .await
                     .is_ok()
                 {

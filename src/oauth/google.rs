@@ -37,7 +37,7 @@ impl OAuthProvider for GoogleProvider {
         code: &str,
         code_verifier: &str,
     ) -> AppResult<OAuthTokenResponse> {
-        let resp = reqwest::Client::new()
+        let resp = super::http_client()
             .post("https://oauth2.googleapis.com/token")
             .header("Accept", "application/json")
             .json(&serde_json::json!({
@@ -67,7 +67,7 @@ impl OAuthProvider for GoogleProvider {
     }
 
     async fn fetch_user_info(&self, access_token: &str) -> AppResult<OAuthUserInfo> {
-        let resp = reqwest::Client::new()
+        let resp = super::http_client()
             .get("https://www.googleapis.com/oauth2/v2/userinfo")
             .header(
                 crate::constants::HEADER_AUTHORIZATION,

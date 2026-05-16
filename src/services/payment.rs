@@ -1028,7 +1028,11 @@ pub async fn refund_payment_order(
             auth.tenant_id(),
         )
         .await?;
-        if already_refunded_in_tx + req.amount > payment_order.amount {
+        if already_refunded_in_tx
+            .checked_add(req.amount)
+            .ok_or_else(|| AppError::BadRequest("refund_amount_overflow".into()))?
+            > payment_order.amount
+        {
             return Err(AppError::BadRequest("refund_exceeds_payment".into()));
         }
 
@@ -1231,7 +1235,6 @@ mod tests {
     use super::*;
     use crate::commands::CreateOrderCmd;
     use crate::config::app::AppConfig;
-    use crate::models::currencies;
     use crate::models::payment_order::PaymentStatus;
 
     async fn setup_pool() -> crate::db::Pool {
@@ -1253,6 +1256,7 @@ mod tests {
         c
     }
 
+    #[allow(dead_code)]
     fn admin_auth() -> AuthUser {
         AuthUser::from_parts(
             Some("admin".to_string()),
@@ -2131,7 +2135,7 @@ mod tests {
         let config = test_config();
         let user_id = seed_user(&pool).await;
 
-        let ch = crate::models::payment_channel::insert(
+        let _ch = crate::models::payment_channel::insert(
             &pool,
             &CreatePaymentChannelCmd {
                 provider: "stripe".into(),

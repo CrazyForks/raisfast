@@ -94,6 +94,11 @@ pub trait PostService: Send + Sync {
     ) -> AppResult<PostResponse>;
     async fn admin_delete(&self, auth: &AuthUser, id: &str) -> AppResult<()>;
     async fn batch(&self, auth: &AuthUser, action: &str, ids: &[String]) -> AppResult<usize>;
+    async fn list_recent_published(
+        &self,
+        limit: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<Vec<PostJoinedRow>>;
 }
 
 // ─── Implementation ───
@@ -440,6 +445,18 @@ impl PostService for PostServiceImpl {
             }
         }
         Ok(affected)
+    }
+
+    async fn list_recent_published(
+        &self,
+        limit: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<Vec<PostJoinedRow>> {
+        let (rows, _) = crate::models::post::find_published_joined(
+            &self.pool, 1, limit, None, None, None, tenant_id,
+        )
+        .await?;
+        Ok(rows)
     }
 }
 

@@ -235,7 +235,7 @@ async fn call_alipay(
     let mut form = params.clone();
     form.insert("sign".to_string(), sign);
 
-    let client = reqwest::Client::new();
+    let client = super::http_client();
     let resp = client
         .post(gateway_url(creds))
         .form(&form)

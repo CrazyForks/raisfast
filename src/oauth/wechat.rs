@@ -57,7 +57,7 @@ impl OAuthProvider for WechatProvider {
         code: &str,
         _code_verifier: &str,
     ) -> AppResult<OAuthTokenResponse> {
-        let client = reqwest::Client::new();
+        let client = super::http_client();
 
         let url = format!(
             "https://api.weixin.qq.com/sns/oauth2/access_token?appid={}&secret={}&code={}&grant_type=authorization_code",
@@ -107,7 +107,7 @@ impl OAuthProvider for WechatProvider {
             "https://api.weixin.qq.com/sns/userinfo?access_token={access_token}&openid={openid}"
         );
 
-        let client = reqwest::Client::new();
+        let client = super::http_client();
         let resp = client.get(&url).send().await.map_err(|e| {
             AppError::Internal(anyhow::anyhow!("WeChat user info request failed: {e}"))
         })?;

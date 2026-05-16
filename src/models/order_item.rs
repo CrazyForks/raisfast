@@ -227,8 +227,6 @@ pub async fn tx_insert_batch(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
     }

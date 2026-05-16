@@ -43,6 +43,7 @@ async fn setup() -> Ctx {
     }
 }
 
+#[allow(dead_code)]
 async fn create_draft_post(app: &mut axum::Router, tok: &str) -> String {
     let (_, body) = send(
         app,

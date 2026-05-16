@@ -171,13 +171,10 @@ pub async fn list_all(
     auth.ensure_admin()?;
     let mut p = params;
     p.sanitize();
-    let (comments, total) = crate::models::comment::find_all_paginated(
-        &state.pool,
-        p.page,
-        p.page_size,
-        auth.tenant_id(),
-    )
-    .await?;
+    let (comments, total) = state
+        .comment_service
+        .list_all_paginated(p.page, p.page_size, auth.tenant_id())
+        .await?;
     Ok(p.paginate(comments, total))
 }
 
@@ -295,13 +292,10 @@ pub async fn admin_list(
 ) -> AppResult<ApiResponse<PaginatedData<crate::models::comment::AdminCommentRow>>> {
     auth.ensure_admin()?;
     let pagination = PaginationParams::from_options(query.page, query.page_size);
-    let (comments, total) = crate::models::comment::find_all_paginated(
-        &state.pool,
-        pagination.page,
-        pagination.page_size,
-        auth.tenant_id(),
-    )
-    .await?;
+    let (comments, total) = state
+        .comment_service
+        .list_all_paginated(pagination.page, pagination.page_size, auth.tenant_id())
+        .await?;
     Ok(pagination.paginate(comments, total))
 }
 

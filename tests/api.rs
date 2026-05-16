@@ -15,7 +15,6 @@ use axum::middleware::from_fn;
 use axum::routing::{delete, get, post as http_post, put};
 use http_body_util::BodyExt;
 use raisfast::AppState;
-use raisfast::cache::MemoryCache;
 use raisfast::config::app::AppConfig;
 use raisfast::handlers::{
     api_token as h_token, auth as h_auth, category as h_cat, comment as h_cmt, cron as h_cron,
@@ -136,6 +135,9 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             Arc::new(raisfast::aspects::engine::AspectEngine::new()),
             Arc::new(pool.clone()),
         )),
+        user_service: Arc::new(raisfast::services::user::UserServiceImpl::new(Arc::new(
+            pool.clone(),
+        ))),
         search: Arc::new(NoopSearchEngine),
         content_type_registry: Arc::new(raisfast::content_type::ContentTypeRegistry::new()),
         aspect_engine: {
@@ -610,8 +612,8 @@ pub(crate) async fn create_admin(pool: &raisfast::db::Pool) -> (i64, String) {
         .bind(int_id)
         .bind("admin@test.com")
         .bind(&cred_data)
-        .bind(&cred_now)
-        .bind(&cred_now)
+        .bind(cred_now)
+        .bind(cred_now)
         .execute(pool)
         .await
         .unwrap();
@@ -646,8 +648,8 @@ pub(crate) async fn create_author(pool: &raisfast::db::Pool) -> (i64, String) {
         .bind(int_id)
         .bind("author@test.com")
         .bind(&cred_data)
-        .bind(&cred_now)
-        .bind(&cred_now)
+        .bind(cred_now)
+        .bind(cred_now)
         .execute(pool)
         .await
         .unwrap();

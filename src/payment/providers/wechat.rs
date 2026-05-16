@@ -231,7 +231,7 @@ async fn wechat_request<T: serde::de::DeserializeOwned>(
     let auth = build_auth_header(&creds.mchid, &creds.serial_no, &signature);
 
     let url = format!("{BASE_URL}{path}");
-    let client = reqwest::Client::new();
+    let client = super::http_client();
 
     let mut req = match method {
         "GET" => client.get(&url),

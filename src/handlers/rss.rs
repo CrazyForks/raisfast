@@ -8,7 +8,6 @@ use axum::response::Response;
 
 use crate::errors::app_error::AppResult;
 use crate::middleware::locale::current_locale;
-use crate::models::post;
 
 /// RSS feed
 ///
@@ -23,9 +22,7 @@ use crate::models::post;
 pub async fn feed(State(state): State<crate::AppState>) -> AppResult<Response> {
     let locale = current_locale();
     rust_i18n::set_locale(&locale);
-    let posts = post::find_published_joined(&state.pool, 1, 20, None, None, None, None)
-        .await?
-        .0;
+    let posts = state.post_service.list_recent_published(20, None).await?;
 
     let base_url = &state.config.base_url;
 

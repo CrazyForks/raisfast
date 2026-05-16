@@ -113,7 +113,7 @@ async fn do_create_checkout(
         body.success_url = Some(url.to_string());
     }
 
-    let client = reqwest::Client::new();
+    let client = super::http_client();
     let resp = client
         .post(&url)
         .header("x-api-key", &creds.api_key)
@@ -138,7 +138,7 @@ async fn do_get_checkout(
     checkout_id: &str,
 ) -> AppResult<CheckoutDetailResponse> {
     let url = format!("{}/checkouts/{checkout_id}", base_url(creds));
-    let client = reqwest::Client::new();
+    let client = super::http_client();
     let resp = client
         .get(&url)
         .header("x-api-key", &creds.api_key)

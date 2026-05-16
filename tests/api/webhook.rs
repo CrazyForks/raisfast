@@ -36,9 +36,9 @@ async fn create_success() {
     assert!(status.is_success(), "create: {status} {body:?}");
     assert_eq!(body["code"], 0);
     assert_eq!(body["data"]["url"], "https://example.com/hook");
-    assert!(body["data"]["secret"].as_str().unwrap().len() > 0);
+    assert!(!body["data"]["secret"].as_str().unwrap().is_empty());
     assert_eq!(body["data"]["enabled"], true);
-    assert!(body["data"]["document_id"].as_str().unwrap().len() > 0);
+    assert!(!body["data"]["document_id"].as_str().unwrap().is_empty());
 }
 
 #[tokio::test]

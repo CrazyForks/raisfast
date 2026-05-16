@@ -101,7 +101,7 @@ impl ReconcilePaymentsHandler {
                 status.status, order.document_id, order.amount
             );
             tracing::error!("[reconcile_payments] critical: {detail}");
-            let _ = audit
+            if let Err(audit_err) = audit
                 .log(
                     "",
                     None,
@@ -113,7 +113,10 @@ impl ReconcilePaymentsHandler {
                     None,
                     None,
                 )
-                .await;
+                .await
+            {
+                tracing::error!("[reconcile_payments] audit log failed: {audit_err}");
+            }
             return Ok(false);
         }
 
@@ -125,7 +128,7 @@ impl ReconcilePaymentsHandler {
                 order.amount, provider_amount, order.document_id
             );
             tracing::error!("[reconcile_payments] critical: {detail}");
-            let _ = audit
+            if let Err(audit_err) = audit
                 .log(
                     "",
                     None,
@@ -137,7 +140,10 @@ impl ReconcilePaymentsHandler {
                     None,
                     None,
                 )
-                .await;
+                .await
+            {
+                tracing::error!("[reconcile_payments] audit log failed: {audit_err}");
+            }
             return Ok(false);
         }
 

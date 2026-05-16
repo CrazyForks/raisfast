@@ -10,7 +10,6 @@ use axum::extract::{Path, State};
 use serde_json::json;
 
 use crate::AppState;
-use crate::constants::COL_ID;
 use crate::content_type::repository::ContentRepository;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
@@ -36,12 +35,13 @@ pub async fn list_revisions(
         ));
     }
 
-    let summaries =
-        crate::models::content_revision::list_revisions(&state.pool, &ct.singular, &id).await?;
+    let (summaries, total) =
+        crate::services::content_revision::list_revisions(&state.pool, &ct.singular, &id, 0, 0)
+            .await?;
 
     Ok(ApiResponse::success(json!({
         "items": summaries,
-        "total": summaries.len(),
+        "total": total,
     })))
 }
 
@@ -71,9 +71,8 @@ pub async fn get_revision(
         .map_err(|_| AppError::BadRequest("invalid revision_id".into()))?;
 
     let revision =
-        crate::models::content_revision::get_revision(&state.pool, &ct.singular, &id, rev_id)
-            .await?
-            .ok_or_else(|| AppError::not_found(&revision_id))?;
+        crate::services::content_revision::get_revision(&state.pool, &ct.singular, &id, rev_id)
+            .await?;
 
     let snapshot: serde_json::Value = serde_json::from_str(&revision.snapshot)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("snapshot parse: {e}")))?;
@@ -112,19 +111,9 @@ pub async fn restore_revision(
         .parse()
         .map_err(|_| AppError::BadRequest("invalid revision_id".into()))?;
 
-    let revision =
-        crate::models::content_revision::get_revision(&state.pool, &ct.singular, &id, rev_id)
-            .await?
-            .ok_or_else(|| AppError::not_found(&revision_id))?;
-
-    let mut snapshot: serde_json::Value = serde_json::from_str(&revision.snapshot)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("snapshot parse: {e}")))?;
-
-    if let Some(obj) = snapshot.as_object_mut() {
-        obj.remove(COL_ID);
-        obj.remove("created_at");
-        obj.remove("updated_at");
-    }
+    let snapshot =
+        crate::services::content_revision::restore_revision(&state.pool, &ct.singular, &id, rev_id)
+            .await?;
 
     let repo = ContentRepository::new(state.pool.clone());
     let result = repo
@@ -164,33 +153,27 @@ pub async fn diff_revisions(
         .parse()
         .map_err(|_| AppError::BadRequest("invalid revision_id".into()))?;
 
-    let a = crate::models::content_revision::get_revision(&state.pool, &ct.singular, &id, rev_a_id)
-        .await?
-        .ok_or_else(|| AppError::not_found(&format!("revision {rev_a}")))?;
-
-    let b = crate::models::content_revision::get_revision(&state.pool, &ct.singular, &id, rev_b_id)
-        .await?
-        .ok_or_else(|| AppError::not_found(&format!("revision {rev_b}")))?;
-
-    let snap_a: serde_json::Value = serde_json::from_str(&a.snapshot)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("snapshot A parse: {e}")))?;
-    let snap_b: serde_json::Value = serde_json::from_str(&b.snapshot)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("snapshot B parse: {e}")))?;
-
-    let diff = crate::models::content_revision::compute_diff(&snap_a, &snap_b);
+    let result = crate::services::content_revision::diff_revisions(
+        &state.pool,
+        &ct.singular,
+        &id,
+        rev_a_id,
+        rev_b_id,
+    )
+    .await?;
 
     Ok(ApiResponse::success(json!({
         "revision_a": {
-            "id": a.id,
-            "revision_number": a.revision_number,
-            "created_at": a.created_at,
+            "id": result.revision_a.id,
+            "revision_number": result.revision_a.revision_number,
+            "created_at": result.revision_a.created_at,
         },
         "revision_b": {
-            "id": b.id,
-            "revision_number": b.revision_number,
-            "created_at": b.created_at,
+            "id": result.revision_b.id,
+            "revision_number": result.revision_b.revision_number,
+            "created_at": result.revision_b.created_at,
         },
-        "diff": diff,
+        "diff": result.diff,
     })))
 }
 

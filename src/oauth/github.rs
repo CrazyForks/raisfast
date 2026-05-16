@@ -66,7 +66,7 @@ impl OAuthProvider for GitHubProvider {
         code: &str,
         code_verifier: &str,
     ) -> AppResult<OAuthTokenResponse> {
-        let client = reqwest::Client::new();
+        let client = super::http_client();
         let resp = client
             .post("https://github.com/login/oauth/access_token")
             .header("Accept", "application/json")
@@ -96,7 +96,7 @@ impl OAuthProvider for GitHubProvider {
     }
 
     async fn fetch_user_info(&self, access_token: &str) -> AppResult<OAuthUserInfo> {
-        let client = reqwest::Client::new();
+        let client = super::http_client();
 
         let resp = client
             .get("https://api.github.com/user")

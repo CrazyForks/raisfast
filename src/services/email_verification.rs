@@ -93,7 +93,6 @@ pub async fn resend_verification(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::commands::CreateUserCmd;
 
     async fn setup_pool() -> crate::db::Pool {

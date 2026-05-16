@@ -57,7 +57,7 @@ impl SmsSender for AliyunSender {
             .map(|v| v.to_string())
             .unwrap_or_else(|| format!(r#"{{"code":"{}"}}"#, msg.content));
 
-        let client = reqwest::Client::new();
+        let client = crate::notifier::http_client();
 
         let mut form = vec![
             ("Action", "SendSms".to_string()),
@@ -133,7 +133,7 @@ impl TwilioSender {
 #[async_trait::async_trait]
 impl SmsSender for TwilioSender {
     async fn send(&self, msg: &SmsMessage) -> anyhow::Result<()> {
-        let client = reqwest::Client::new();
+        let client = crate::notifier::http_client();
 
         let url = format!(
             "https://api.twilio.com/2010-04-01/Accounts/{}/Messages.json",

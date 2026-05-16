@@ -106,6 +106,7 @@ pub struct AppState {
     pub category_service: Arc<dyn crate::services::category::CategoryService>,
     pub tag_service: Arc<dyn crate::services::tag::TagService>,
     pub comment_service: Arc<dyn crate::services::comment::CommentService>,
+    pub user_service: Arc<dyn crate::services::user::UserService>,
     pub wallet_service: Arc<dyn crate::services::wallet::WalletService>,
     pub product_service: Arc<dyn crate::services::product::ProductService>,
     pub order_service: Arc<dyn crate::services::order::OrderService>,
@@ -148,6 +149,10 @@ pub async fn build_app_state(
     let protocol_registry = Arc::new(protocol_registry);
 
     let aspect_engine = Arc::new(crate::aspects::engine::AspectEngine::new());
+
+    let user_service: Arc<dyn crate::services::user::UserService> = Arc::new(
+        crate::services::user::UserServiceImpl::new(Arc::new(pool.clone())),
+    );
 
     let order_service: Arc<dyn crate::services::order::OrderService> =
         Arc::new(crate::services::order::OrderServiceImpl::new(
@@ -245,18 +250,19 @@ pub async fn build_app_state(
 
     let storage = crate::storage::create_storage(config)?;
 
-    let services = ServiceRegistry::new();
-    services.insert(search.clone());
-    services.insert(aspect_engine.clone());
-    services.insert(protocol_registry.clone());
-    services.insert(ct_registry.clone());
-    services.insert(options_service.clone());
-    services.insert(rbac_service.clone());
-    services.insert(tenant_service.clone());
-    services.insert(audit_service.clone());
-    services.insert(webhook_service.clone());
-    services.insert(cache.clone());
-    services.insert(storage.clone());
+    let mut svc_builder = app::ServiceRegistryBuilder::new();
+    svc_builder.register(search.clone());
+    svc_builder.register(aspect_engine.clone());
+    svc_builder.register(protocol_registry.clone());
+    svc_builder.register(ct_registry.clone());
+    svc_builder.register(options_service.clone());
+    svc_builder.register(rbac_service.clone());
+    svc_builder.register(tenant_service.clone());
+    svc_builder.register(audit_service.clone());
+    svc_builder.register(webhook_service.clone());
+    svc_builder.register(cache.clone());
+    svc_builder.register(storage.clone());
+    let services = svc_builder.build();
 
     let state = AppState {
         pool: pool.clone(),
@@ -269,6 +275,7 @@ pub async fn build_app_state(
         category_service,
         tag_service,
         comment_service,
+        user_service,
         wallet_service,
         product_service,
         order_service,

@@ -12,7 +12,7 @@ use crate::commands::CreateCommentCmd;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::Event;
 use crate::middleware::auth::AuthUser;
-use crate::models::comment::{self, CommentResponse, CommentStatus};
+use crate::models::comment::{self, AdminCommentRow, CommentResponse, CommentStatus};
 use crate::policy::Policy;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -49,6 +49,12 @@ pub trait CommentService: Send + Sync {
         status: CommentStatus,
         auth: &AuthUser,
     ) -> AppResult<()>;
+    async fn list_all_paginated(
+        &self,
+        page: i64,
+        page_size: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<(Vec<AdminCommentRow>, i64)>;
 }
 
 pub struct CommentServiceImpl {
@@ -221,6 +227,15 @@ impl CommentService for CommentServiceImpl {
         comment::update_status(&self.pool, c.id, status, auth.tenant_id()).await?;
         self.after_updated(&c);
         Ok(())
+    }
+
+    async fn list_all_paginated(
+        &self,
+        page: i64,
+        page_size: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<(Vec<AdminCommentRow>, i64)> {
+        comment::find_all_paginated(&self.pool, page, page_size, tenant_id).await
     }
 }
 

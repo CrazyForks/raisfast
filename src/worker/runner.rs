@@ -46,6 +46,7 @@ impl WorkerRunner {
             tokio::spawn(async move {
                 tracing::info!("worker-{i} started");
                 runner.run(i).await;
+                tracing::error!("worker-{i} exited unexpectedly");
             });
         }
     }

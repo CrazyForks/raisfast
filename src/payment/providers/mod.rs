@@ -16,6 +16,35 @@ pub mod wechat;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::payment::PaymentProvider;
 
+#[cfg(any(
+    feature = "payment-alipay",
+    feature = "payment-creem",
+    feature = "payment-dodo",
+    feature = "payment-stripe",
+    feature = "payment-wechat"
+))]
+mod shared {
+    /// HTTP request timeout for payment gateway calls (seconds)
+    const PAYMENT_TIMEOUT_SECS: u64 = 15;
+
+    /// Build a reqwest client with payment-appropriate timeout
+    pub(crate) fn http_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(PAYMENT_TIMEOUT_SECS))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    }
+}
+
+#[cfg(any(
+    feature = "payment-alipay",
+    feature = "payment-creem",
+    feature = "payment-dodo",
+    feature = "payment-stripe",
+    feature = "payment-wechat"
+))]
+pub(crate) use shared::http_client;
+
 pub fn get_provider(
     provider_name: &str,
     encrypt_key: &[u8; 32],

@@ -191,7 +191,7 @@ async fn do_create_checkout(
         metadata: Some(metadata),
     };
 
-    let client = reqwest::Client::new();
+    let client = super::http_client();
     let resp = client
         .post(&url)
         .bearer_auth(&creds.api_key)
@@ -213,7 +213,7 @@ async fn do_create_checkout(
 
 async fn do_get_payment(creds: &DodoCredentials, payment_id: &str) -> AppResult<PaymentResponse> {
     let url = format!("{}/payments/{payment_id}", base_url(creds));
-    let client = reqwest::Client::new();
+    let client = super::http_client();
     let resp = client
         .get(&url)
         .bearer_auth(&creds.api_key)
@@ -244,7 +244,7 @@ async fn do_create_refund(
         reason: reason.map(String::from),
     };
 
-    let client = reqwest::Client::new();
+    let client = super::http_client();
     let resp = client
         .post(&url)
         .bearer_auth(&creds.api_key)

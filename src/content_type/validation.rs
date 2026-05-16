@@ -691,7 +691,7 @@ immutable = true
 
     #[test]
     fn check_type_float_accepts_int_and_float() {
-        assert!(check_type(&FieldType::Float, &json!(3.14)).is_ok());
+        assert!(check_type(&FieldType::Float, &json!(3.15)).is_ok());
         assert!(check_type(&FieldType::Float, &json!(42)).is_ok());
         assert!(check_type(&FieldType::Float, &json!("42")).is_err());
     }

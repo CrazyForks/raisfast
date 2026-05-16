@@ -167,9 +167,12 @@ pub async fn delete_token(
     if !is_admin && token.user_id != user.id {
         return Err(AppError::Forbidden);
     }
-    let _ = cache
+    if let Err(e) = cache
         .delete(&format!("{CACHE_PREFIX}{}", token.token_hash))
-        .await;
+        .await
+    {
+        tracing::warn!("api_token cache delete on revoke: {e}");
+    }
     api_token::delete_by_id(pool, token_id).await
 }
 
@@ -204,8 +207,12 @@ pub async fn verify_api_token(
     if let Some(ref exp) = token.expires_at
         && exp < &chrono::Utc::now()
     {
-        let _ = api_token::delete_by_id(pool, &token.document_id).await;
-        let _ = cache.delete(&cache_key).await;
+        if let Err(e) = api_token::delete_by_id(pool, &token.document_id).await {
+            tracing::warn!("api_token delete expired: {e}");
+        }
+        if let Err(e) = cache.delete(&cache_key).await {
+            tracing::warn!("api_token cache delete expired: {e}");
+        }
         return Err(AppError::Unauthorized);
     }
 
@@ -216,7 +223,9 @@ pub async fn verify_api_token(
     let scopes: Vec<String> = serde_json::from_str(&token.scopes).unwrap_or_default();
     let role = scope_to_role(&scopes);
 
-    let _ = api_token::touch_last_used(pool, token.id).await;
+    if let Err(e) = api_token::touch_last_used(pool, token.id).await {
+        tracing::debug!("api_token touch_last_used: {e}");
+    }
 
     let cached_auth = CachedTokenAuth {
         user_id: user.document_id.clone(),
@@ -225,8 +234,10 @@ pub async fn verify_api_token(
         tenant_id: user.tenant_id.clone(),
         expires_at: token.expires_at,
     };
-    if let Ok(json) = serde_json::to_string(&cached_auth) {
-        let _ = cache.set(&cache_key, &json, Some(CACHE_TTL)).await;
+    if let Ok(json) = serde_json::to_string(&cached_auth)
+        && let Err(e) = cache.set(&cache_key, &json, Some(CACHE_TTL)).await
+    {
+        tracing::debug!("api_token cache set: {e}");
     }
 
     Ok((user.document_id, user.id, role, user.tenant_id))

@@ -27,7 +27,7 @@ async fn set_get_delete_option() {
     let (mut app, _) = test_app().await;
     let tok = admin_token();
 
-    let key = format!("test.{}", uuid::Uuid::now_v7().to_string());
+    let key = format!("test.{}", uuid::Uuid::now_v7());
 
     let (status, body) = send(
         &mut app,

@@ -127,8 +127,6 @@ pub fn routes(
     )
 }
 
-// ── User-facing ──
-
 #[utoipa::path(get, path = "/wallets", tag = "wallets",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "User wallets list"))
@@ -138,11 +136,10 @@ pub async fn list_wallets(
     State(state): State<crate::AppState>,
 ) -> Result<ApiResponse<Vec<dto::WalletResponse>>, AppError> {
     let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(&state.pool, user_id, auth.tenant_id())
-        .await?
-        .ok_or(AppError::Unauthorized)?;
-
-    let wallets = crate::models::wallet::find_by_user(&state.pool, user.id).await?;
+    let wallets = state
+        .wallet_service
+        .list_wallets_by_user(user_id, auth.tenant_id())
+        .await?;
     let items: Vec<dto::WalletResponse> = wallets
         .into_iter()
         .map(dto::WalletResponse::from_wallet)
@@ -161,13 +158,10 @@ pub async fn get_wallet(
     Path(currency): Path<String>,
 ) -> Result<ApiResponse<dto::WalletResponse>, AppError> {
     let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(&state.pool, user_id, auth.tenant_id())
-        .await?
-        .ok_or(AppError::Unauthorized)?;
-
-    let w = crate::models::wallet::find_by_user_and_currency(&state.pool, user.id, &currency)
-        .await?
-        .ok_or_else(|| AppError::not_found("wallet"))?;
+    let w = state
+        .wallet_service
+        .get_wallet_by_currency(user_id, &currency, auth.tenant_id())
+        .await?;
     Ok(ApiResponse::success(dto::WalletResponse::from_wallet(w)?))
 }
 
@@ -186,22 +180,16 @@ pub async fn list_transactions(
     AppError,
 > {
     let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(&state.pool, user_id, auth.tenant_id())
-        .await?
-        .ok_or(AppError::Unauthorized)?;
-
-    let w = crate::models::wallet::find_by_user_and_currency(&state.pool, user.id, &currency)
-        .await?
-        .ok_or_else(|| AppError::not_found("wallet"))?;
-
-    let (rows, total) = crate::models::wallet_transaction::find_transactions_by_wallet(
-        &state.pool,
-        w.id,
-        params.page,
-        params.page_size,
-    )
-    .await?;
-
+    let (rows, total) = state
+        .wallet_service
+        .list_transactions_by_wallet(
+            user_id,
+            &currency,
+            params.page,
+            params.page_size,
+            auth.tenant_id(),
+        )
+        .await?;
     let items = state.wallet_service.tx_list_to_response(rows).await?;
     Ok(params.paginate(items, total))
 }
@@ -219,23 +207,13 @@ pub async fn list_all_transactions(
     AppError,
 > {
     let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(&state.pool, user_id, auth.tenant_id())
-        .await?
-        .ok_or(AppError::Unauthorized)?;
-
-    let (rows, total) = crate::models::wallet_transaction::find_transactions_by_user(
-        &state.pool,
-        user.id,
-        params.page,
-        params.page_size,
-    )
-    .await?;
-
+    let (rows, total) = state
+        .wallet_service
+        .list_transactions_by_user(user_id, params.page, params.page_size, auth.tenant_id())
+        .await?;
     let items = state.wallet_service.tx_list_to_response(rows).await?;
     Ok(params.paginate(items, total))
 }
-
-// ── Admin ──
 
 #[utoipa::path(get, path = "/admin/wallets", tag = "wallets",
     security(("bearer_auth" = [])),
@@ -247,13 +225,10 @@ pub async fn list_all_wallets(
     Query(params): Query<PaginationParams>,
 ) -> Result<ApiResponse<crate::errors::response::PaginatedData<dto::WalletResponse>>, AppError> {
     auth.ensure_admin()?;
-    let (rows, total) = crate::models::wallet::find_all_wallets(
-        &state.pool,
-        params.page,
-        params.page_size,
-        auth.tenant_id(),
-    )
-    .await?;
+    let (rows, total) = state
+        .wallet_service
+        .list_all_wallets(params.page, params.page_size, auth.tenant_id())
+        .await?;
     let items: Vec<dto::WalletResponse> = rows
         .into_iter()
         .map(dto::WalletResponse::from_wallet)
@@ -274,13 +249,10 @@ pub async fn list_all_transactions_admin(
     AppError,
 > {
     auth.ensure_admin()?;
-    let (rows, total) = crate::models::wallet_transaction::find_all_transactions(
-        &state.pool,
-        params.page,
-        params.page_size,
-        auth.tenant_id(),
-    )
-    .await?;
+    let (rows, total) = state
+        .wallet_service
+        .list_all_transactions(params.page, params.page_size, auth.tenant_id())
+        .await?;
     let items = state.wallet_service.tx_list_to_response(rows).await?;
     Ok(params.paginate(items, total))
 }
@@ -297,14 +269,15 @@ pub async fn admin_credit(
 ) -> Result<ApiResponse<dto::WalletTransactionResponse>, AppError> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let user = crate::models::user::find_by_id(&state.pool, &req.user_id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("user"))?;
+    let user_id = state
+        .wallet_service
+        .find_user_int_id(&req.user_id, auth.tenant_id())
+        .await?;
 
     let tx = state
         .wallet_service
         .credit(
-            user.id,
+            user_id,
             &req.currency,
             req.amount,
             WalletTxType::Recharge,
@@ -331,14 +304,15 @@ pub async fn admin_debit(
 ) -> Result<ApiResponse<dto::WalletTransactionResponse>, AppError> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let user = crate::models::user::find_by_id(&state.pool, &req.user_id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("user"))?;
+    let user_id = state
+        .wallet_service
+        .find_user_int_id(&req.user_id, auth.tenant_id())
+        .await?;
 
     let tx = state
         .wallet_service
         .debit(
-            user.id,
+            user_id,
             &req.currency,
             req.amount,
             WalletTxType::Payment,
@@ -368,21 +342,16 @@ pub async fn list_user_transactions(
     AppError,
 > {
     auth.ensure_admin()?;
-    let user = crate::models::user::find_by_id(&state.pool, &user_doc_id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("user"))?;
-
-    let w = crate::models::wallet::find_by_user_and_currency(&state.pool, user.id, &currency)
-        .await?
-        .ok_or_else(|| AppError::not_found("wallet"))?;
-
-    let (rows, total) = crate::models::wallet_transaction::find_transactions_by_wallet(
-        &state.pool,
-        w.id,
-        params.page,
-        params.page_size,
-    )
-    .await?;
+    let (rows, total) = state
+        .wallet_service
+        .list_transactions_by_wallet(
+            &user_doc_id,
+            &currency,
+            params.page,
+            params.page_size,
+            auth.tenant_id(),
+        )
+        .await?;
 
     let items = state.wallet_service.tx_list_to_response(rows).await?;
     Ok(params.paginate(items, total))
@@ -403,17 +372,15 @@ pub async fn list_user_all_transactions(
     AppError,
 > {
     auth.ensure_admin()?;
-    let user = crate::models::user::find_by_id(&state.pool, &user_doc_id, auth.tenant_id())
-        .await?
-        .ok_or_else(|| AppError::not_found("user"))?;
-
-    let (rows, total) = crate::models::wallet_transaction::find_transactions_by_user(
-        &state.pool,
-        user.id,
-        params.page,
-        params.page_size,
-    )
-    .await?;
+    let (rows, total) = state
+        .wallet_service
+        .list_transactions_by_user(
+            &user_doc_id,
+            params.page,
+            params.page_size,
+            auth.tenant_id(),
+        )
+        .await?;
 
     let items = state.wallet_service.tx_list_to_response(rows).await?;
     Ok(params.paginate(items, total))
@@ -434,22 +401,10 @@ pub async fn admin_reversal(
     auth.ensure_admin()?;
     validation::validate(&req)?;
 
-    let original =
-        crate::models::wallet_transaction::find_tx_by_document_id(&state.pool, &tx_doc_id)
-            .await?
-            .ok_or_else(|| AppError::not_found("transaction"))?;
-
-    if let Some(tid) = auth.tenant_id() {
-        let wallet = crate::models::wallet::find_by_id(&state.pool, original.wallet_id)
-            .await?
-            .ok_or_else(|| AppError::not_found("wallet"))?;
-        let user =
-            crate::models::user::find_by_id(&state.pool, &wallet.user_id.to_string(), Some(tid))
-                .await?;
-        if user.is_none() {
-            return Err(AppError::not_found("transaction"));
-        }
-    }
+    let original = state
+        .wallet_service
+        .find_tx_by_document_id(&tx_doc_id, auth.tenant_id())
+        .await?;
 
     let tx = state
         .wallet_service

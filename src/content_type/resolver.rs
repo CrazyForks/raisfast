@@ -339,7 +339,13 @@ async fn fetch_column_names(pool: &Pool, table: &str) -> Vec<String> {
         return vec![COL_ID.into()];
     }
 
-    let (sql, col_index) = super::repository::fetch_columns_sql(table);
+    let (sql, col_index) = match super::repository::fetch_columns_sql(table) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(table, "fetch_columns_sql error: {e}");
+            return vec![COL_ID.into()];
+        }
+    };
     let cols: Vec<String> = sqlx::query(&sql)
         .fetch_all(pool)
         .await

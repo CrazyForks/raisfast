@@ -22,7 +22,7 @@ pub trait OrderService: Send + Sync {
         auth: &AuthUser,
         user_id: i64,
         req: CreateOrderRequest,
-    ) -> AppResult<Order>;
+    ) -> AppResult<(Order, Vec<OrderItem>)>;
     async fn cancel(&self, auth: &AuthUser, order_id: &str, user_id: i64) -> AppResult<()>;
     async fn mark_paid(&self, auth: &AuthUser, order_id: &str) -> AppResult<Order>;
     async fn ship(&self, auth: &AuthUser, order_id: &str, req: &ShipOrderRequest) -> AppResult<()>;
@@ -37,14 +37,14 @@ pub trait OrderService: Send + Sync {
         user_id: i64,
         page: i64,
         page_size: i64,
-    ) -> AppResult<(Vec<Order>, i64)>;
+    ) -> AppResult<(Vec<(Order, Vec<OrderItem>)>, i64)>;
     async fn list_admin(
         &self,
         auth: &AuthUser,
         page: i64,
         page_size: i64,
         status: Option<&str>,
-    ) -> AppResult<(Vec<Order>, i64)>;
+    ) -> AppResult<(Vec<(Order, Vec<OrderItem>)>, i64)>;
     async fn update_admin_remark(
         &self,
         auth: &AuthUser,
@@ -105,7 +105,7 @@ impl OrderService for OrderServiceImpl {
         auth: &AuthUser,
         user_id: i64,
         req: CreateOrderRequest,
-    ) -> AppResult<Order> {
+    ) -> AppResult<(Order, Vec<OrderItem>)> {
         let (req, _d) = self.before_create(auth, req).await?;
 
         if req.items.is_empty() {
@@ -190,7 +190,10 @@ impl OrderService for OrderServiceImpl {
         })?;
 
         self.after_created(&order);
-        Ok(order)
+        let items =
+            crate::models::order_item::find_by_order_id(&self.pool, order.id, auth.tenant_id())
+                .await?;
+        Ok((order, items))
     }
 
     async fn cancel(&self, auth: &AuthUser, order_id: &str, user_id: i64) -> AppResult<()> {
@@ -459,15 +462,23 @@ impl OrderService for OrderServiceImpl {
         user_id: i64,
         page: i64,
         page_size: i64,
-    ) -> AppResult<(Vec<Order>, i64)> {
-        crate::models::order::find_by_user_paginated(
+    ) -> AppResult<(Vec<(Order, Vec<OrderItem>)>, i64)> {
+        let (orders, total) = crate::models::order::find_by_user_paginated(
             &self.pool,
             user_id,
             auth.tenant_id(),
             page,
             page_size,
         )
-        .await
+        .await?;
+        let mut result = Vec::with_capacity(orders.len());
+        for o in orders {
+            let items =
+                crate::models::order_item::find_by_order_id(&self.pool, o.id, auth.tenant_id())
+                    .await?;
+            result.push((o, items));
+        }
+        Ok((result, total))
     }
 
     async fn list_admin(
@@ -476,16 +487,24 @@ impl OrderService for OrderServiceImpl {
         page: i64,
         page_size: i64,
         status: Option<&str>,
-    ) -> AppResult<(Vec<Order>, i64)> {
+    ) -> AppResult<(Vec<(Order, Vec<OrderItem>)>, i64)> {
         auth.ensure_admin()?;
-        crate::models::order::find_all_admin_paginated(
+        let (orders, total) = crate::models::order::find_all_admin_paginated(
             &self.pool,
             auth.tenant_id(),
             page,
             page_size,
             status,
         )
-        .await
+        .await?;
+        let mut result = Vec::with_capacity(orders.len());
+        for o in orders {
+            let items =
+                crate::models::order_item::find_by_order_id(&self.pool, o.id, auth.tenant_id())
+                    .await?;
+            result.push((o, items));
+        }
+        Ok((result, total))
     }
 
     async fn update_admin_remark(
@@ -539,6 +558,7 @@ mod tests {
         )
     }
 
+    #[allow(dead_code)]
     fn auth_with_id(user_int_id: i64) -> AuthUser {
         AuthUser::from_parts(
             Some(format!("u{user_int_id}")),
@@ -634,7 +654,7 @@ mod tests {
     ) -> (i64, Order) {
         let uid = seed_user(pool).await;
         let prod = seed_active_product(pool, "Widget", 1000).await;
-        let order = svc
+        let (order, _) = svc
             .create(auth, uid, make_create_req(&prod.document_id, 1))
             .await
             .unwrap();
@@ -649,7 +669,7 @@ mod tests {
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
-        let order = svc
+        let (order, items) = svc
             .create(&a, uid, make_create_req(&prod.document_id, 2))
             .await
             .unwrap();
@@ -660,9 +680,6 @@ mod tests {
         assert_eq!(order.status, OrderStatus::Pending);
         assert!(order.order_no.starts_with("ORD-"));
 
-        let items = crate::models::order_item::find_by_order_id(&pool, order.id, None)
-            .await
-            .unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Widget");
         assert_eq!(items[0].unit_price, 1000);
@@ -679,7 +696,7 @@ mod tests {
         let p1 = seed_active_product(&pool, "Item1", 100).await;
         let p2 = seed_active_product(&pool, "Item2", 200).await;
 
-        let order = svc
+        let (order, items) = svc
             .create(
                 &a,
                 uid,
@@ -709,9 +726,6 @@ mod tests {
         assert_eq!(order.total_amount, 500);
         assert_eq!(order.currency, "USD");
         assert_eq!(order.buyer_name.unwrap(), "John");
-        let items = crate::models::order_item::find_by_order_id(&pool, order.id, None)
-            .await
-            .unwrap();
         assert_eq!(items.len(), 2);
     }
 
@@ -1092,9 +1106,9 @@ mod tests {
                 .unwrap();
         }
 
-        let (orders, total) = svc.list_user(&a, uid, 1, 10).await.unwrap();
+        let (orders_with_items, total) = svc.list_user(&a, uid, 1, 10).await.unwrap();
         assert_eq!(total, 3);
-        assert_eq!(orders.len(), 3);
+        assert_eq!(orders_with_items.len(), 3);
     }
 
     #[tokio::test]
@@ -1109,9 +1123,9 @@ mod tests {
             .await
             .unwrap();
 
-        let (orders, total) = svc.list_admin(&a, 1, 10, None).await.unwrap();
+        let (orders_with_items, total) = svc.list_admin(&a, 1, 10, None).await.unwrap();
         assert_eq!(total, 1);
-        assert_eq!(orders.len(), 1);
+        assert_eq!(orders_with_items.len(), 1);
     }
 
     #[tokio::test]
@@ -1139,12 +1153,12 @@ mod tests {
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
-        let o1 = svc
+        let (o1, _) = svc
             .create(&a, uid, make_create_req(&prod.document_id, 1))
             .await
             .unwrap();
 
-        let _o2 = svc
+        let (_o2, _) = svc
             .create(&a, uid, make_create_req(&prod.document_id, 2))
             .await
             .unwrap();

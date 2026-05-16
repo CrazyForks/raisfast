@@ -13,6 +13,17 @@ pub mod github;
 pub mod google;
 pub mod wechat;
 
+/// HTTP request timeout for OAuth provider calls (seconds)
+const OAUTH_TIMEOUT_SECS: u64 = 10;
+
+/// Build a reqwest client with OAuth-appropriate timeout
+pub(crate) fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(OAUTH_TIMEOUT_SECS))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 use std::collections::HashMap;
 
 use base64::Engine;

@@ -369,7 +369,7 @@ mod tests {
         bus_emit.emit(Event::CommentCreated(make_comment(1)));
         bus_emit.emit(Event::PostDeleted(make_post(1, "test")));
 
-        let allowed = vec!["PostCreated".to_string()];
+        let allowed = ["PostCreated".to_string()];
         let mut received = Vec::new();
         for _ in 0..3 {
             let event = tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv())
@@ -400,7 +400,7 @@ mod tests {
             success: true,
         });
 
-        let allowed = vec!["PostCreated".to_string(), "CommentCreated".to_string()];
+        let allowed = ["PostCreated".to_string(), "CommentCreated".to_string()];
         let mut received = Vec::new();
         for _ in 0..3 {
             let event = tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv())

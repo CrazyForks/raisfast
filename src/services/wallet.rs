@@ -69,6 +69,58 @@ pub trait WalletService: Send + Sync {
         &self,
         rows: Vec<WalletTransaction>,
     ) -> AppResult<Vec<crate::dto::WalletTransactionResponse>>;
+
+    async fn find_user_int_id(&self, user_doc_id: &str, tenant_id: Option<&str>) -> AppResult<i64>;
+
+    async fn list_wallets_by_user(
+        &self,
+        user_doc_id: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<Vec<crate::models::wallet::Wallet>>;
+
+    async fn get_wallet_by_currency(
+        &self,
+        user_doc_id: &str,
+        currency: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<crate::models::wallet::Wallet>;
+
+    async fn list_transactions_by_wallet(
+        &self,
+        user_doc_id: &str,
+        currency: &str,
+        page: i64,
+        page_size: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<(Vec<WalletTransaction>, i64)>;
+
+    async fn list_transactions_by_user(
+        &self,
+        user_doc_id: &str,
+        page: i64,
+        page_size: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<(Vec<WalletTransaction>, i64)>;
+
+    async fn list_all_wallets(
+        &self,
+        page: i64,
+        page_size: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<(Vec<crate::models::wallet::Wallet>, i64)>;
+
+    async fn list_all_transactions(
+        &self,
+        page: i64,
+        page_size: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<(Vec<WalletTransaction>, i64)>;
+
+    async fn find_tx_by_document_id(
+        &self,
+        tx_doc_id: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<WalletTransaction>;
 }
 
 pub struct WalletServiceImpl {
@@ -857,6 +909,109 @@ impl WalletService for WalletServiceImpl {
     ) -> AppResult<Vec<crate::dto::WalletTransactionResponse>> {
         tx_list_to_response(&self.pool, rows).await
     }
+
+    async fn find_user_int_id(&self, user_doc_id: &str, tenant_id: Option<&str>) -> AppResult<i64> {
+        let user = crate::models::user::find_by_id(&self.pool, user_doc_id, tenant_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("user"))?;
+        Ok(user.id)
+    }
+
+    async fn list_wallets_by_user(
+        &self,
+        user_doc_id: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<Vec<crate::models::wallet::Wallet>> {
+        let user_id = self.find_user_int_id(user_doc_id, tenant_id).await?;
+        crate::models::wallet::find_by_user(&self.pool, user_id).await
+    }
+
+    async fn get_wallet_by_currency(
+        &self,
+        user_doc_id: &str,
+        currency: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<crate::models::wallet::Wallet> {
+        let user_id = self.find_user_int_id(user_doc_id, tenant_id).await?;
+        crate::models::wallet::find_by_user_and_currency(&self.pool, user_id, currency)
+            .await?
+            .ok_or_else(|| AppError::not_found("wallet"))
+    }
+
+    async fn list_transactions_by_wallet(
+        &self,
+        user_doc_id: &str,
+        currency: &str,
+        page: i64,
+        page_size: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<(Vec<WalletTransaction>, i64)> {
+        let user_id = self.find_user_int_id(user_doc_id, tenant_id).await?;
+        let w = crate::models::wallet::find_by_user_and_currency(&self.pool, user_id, currency)
+            .await?
+            .ok_or_else(|| AppError::not_found("wallet"))?;
+        crate::models::wallet_transaction::find_transactions_by_wallet(
+            &self.pool, w.id, page, page_size,
+        )
+        .await
+    }
+
+    async fn list_transactions_by_user(
+        &self,
+        user_doc_id: &str,
+        page: i64,
+        page_size: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<(Vec<WalletTransaction>, i64)> {
+        let user_id = self.find_user_int_id(user_doc_id, tenant_id).await?;
+        crate::models::wallet_transaction::find_transactions_by_user(
+            &self.pool, user_id, page, page_size,
+        )
+        .await
+    }
+
+    async fn list_all_wallets(
+        &self,
+        page: i64,
+        page_size: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<(Vec<crate::models::wallet::Wallet>, i64)> {
+        crate::models::wallet::find_all_wallets(&self.pool, page, page_size, tenant_id).await
+    }
+
+    async fn list_all_transactions(
+        &self,
+        page: i64,
+        page_size: i64,
+        tenant_id: Option<&str>,
+    ) -> AppResult<(Vec<WalletTransaction>, i64)> {
+        crate::models::wallet_transaction::find_all_transactions(
+            &self.pool, page, page_size, tenant_id,
+        )
+        .await
+    }
+
+    async fn find_tx_by_document_id(
+        &self,
+        tx_doc_id: &str,
+        tenant_id: Option<&str>,
+    ) -> AppResult<WalletTransaction> {
+        let tx = crate::models::wallet_transaction::find_tx_by_document_id(&self.pool, tx_doc_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("transaction"))?;
+        if let Some(tid) = tenant_id {
+            let wallet = crate::models::wallet::find_by_id(&self.pool, tx.wallet_id)
+                .await?
+                .ok_or_else(|| AppError::not_found("wallet"))?;
+            let user =
+                crate::models::user::find_by_id(&self.pool, &wallet.user_id.to_string(), Some(tid))
+                    .await?;
+            if user.is_none() {
+                return Err(AppError::not_found("transaction"));
+            }
+        }
+        Ok(tx)
+    }
 }
 
 #[cfg(test)]
@@ -921,6 +1076,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     async fn seed_currencies(pool: &crate::db::Pool) {
         crate::models::currencies::create(pool, "CNY", "Chinese Yuan", 2)
             .await

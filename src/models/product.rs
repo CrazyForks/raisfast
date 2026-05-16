@@ -5,7 +5,7 @@ use ts_rs::TS;
 use crate::commands::{CreateProductCmd, UpdateProductCmd};
 use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
-use crate::errors::app_error::AppResult;
+use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -330,8 +330,12 @@ pub async fn insert(
         }
     }
     find_by_document_id(pool, &document_id, tenant_id)
-        .await
-        .map(|o| o.unwrap())
+        .await?
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "product not found after insert: {document_id}"
+            ))
+        })
 }
 
 pub async fn update(
@@ -465,7 +469,6 @@ mod tests {
         )
         .await
         .unwrap()
-        .into()
     }
 
     async fn set_status(pool: &crate::db::Pool, id: i64, status: &str) {

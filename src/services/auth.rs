@@ -285,14 +285,16 @@ pub async fn register(
 
     aspect_engine.emit(Event::UserRegistered(user.clone()));
 
-    if require_email_verification {
-        let _ = crate::services::email_verification::trigger_email_verification(
+    if require_email_verification
+        && let Err(e) = crate::services::email_verification::trigger_email_verification(
             pool,
             aspect_engine,
             user.id,
             &req.email,
         )
-        .await;
+        .await
+    {
+        tracing::error!("failed to send email verification: {e}");
     }
 
     UserResponse::from_user(user)

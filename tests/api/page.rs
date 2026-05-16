@@ -152,7 +152,7 @@ async fn admin_list_pages() {
 
 #[tokio::test]
 async fn update_page_status() {
-    let (mut app, state, tok) = admin_author().await;
+    let (mut app, _state, tok) = admin_author().await;
     let (_, create_body) = send(
         &mut app,
         post_json_auth(

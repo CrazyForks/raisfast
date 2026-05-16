@@ -1,102 +1,124 @@
-//! Service Locator — type-safe component registry for AppState.
+//! Service Locator — type-safe, lock-free component registry for AppState.
 //!
-//! Provides [`ServiceRegistry`] for registering and resolving `Arc<T>` components
-//! by type. Used to construct `AppState` in a declarative style.
+//! Two-phase design:
+//! 1. **Build phase**: [`ServiceRegistryBuilder`] accepts `Arc<T>` registrations.
+//! 2. **Runtime phase**: [`ServiceRegistry`] is frozen, read-only, lock-free.
 //!
 //! # Example
 //!
 //! ```ignore
-//! let mut registry = ServiceRegistry::new();
-//! registry.insert(Arc::new(SqlxUserRepository::new(pool)) as Arc<dyn UserRepository>);
-//! let repo: Arc<dyn UserRepository> = registry.resolve::<dyn UserRepository>();
+//! let mut builder = ServiceRegistryBuilder::new();
+//! builder.register(Arc::new(my_service) as Arc<dyn MyTrait>);
+//! let registry = builder.build();
+//!
+//! // Lock-free, infallible resolve:
+//! let svc: Arc<dyn MyTrait> = registry.resolve::<dyn MyTrait>();
 //! ```
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-#[derive(Default)]
-struct RegistryInner {
+/// Build-phase registry — mutable, not `Clone`, consumed by [`build`](ServiceRegistryBuilder::build).
+pub struct ServiceRegistryBuilder {
     map: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
-/// Type-safe heterogeneous container for `Arc<T>` services.
-///
-/// Stores `Arc<T>` values keyed by `TypeId::of::<T>()`. Both concrete types
-/// and trait objects (`Arc<dyn Trait>`) are supported. Cheaply `Clone`able
-/// (inner data is behind `Arc`).
-#[derive(Default, Clone)]
-pub struct ServiceRegistry {
-    inner: Arc<std::sync::RwLock<RegistryInner>>,
+impl Default for ServiceRegistryBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
-impl ServiceRegistry {
-    /// Create an empty registry.
+impl ServiceRegistryBuilder {
+    /// Create an empty builder.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            map: HashMap::new(),
+        }
     }
 
     /// Register a service. The key is `T` (the outermost type of the `Arc`).
     ///
     /// For trait objects, use the `as Arc<dyn Trait>` cast at the call site.
-    pub fn insert<T: Send + Sync + 'static + ?Sized>(&self, service: Arc<T>) {
-        self.inner
-            .write()
-            .unwrap_or_else(|e| panic!("ServiceRegistry write lock poisoned: {e}"))
-            .map
-            .insert(TypeId::of::<T>(), Box::new(service));
+    pub fn register<T: Send + Sync + 'static + ?Sized>(&mut self, service: Arc<T>) {
+        self.map.insert(TypeId::of::<T>(), Box::new(service));
+    }
+
+    /// Freeze into a read-only [`ServiceRegistry`].
+    pub fn build(self) -> ServiceRegistry {
+        ServiceRegistry {
+            map: Arc::new(self.map),
+        }
+    }
+}
+
+/// Read-only, lock-free type-safe heterogeneous container for `Arc<T>` services.
+///
+/// Stores `Arc<T>` values keyed by `TypeId::of::<T>()`. Both concrete types
+/// and trait objects (`Arc<dyn Trait>`) are supported. Cheaply `Clone`able
+/// (inner data is behind `Arc`).
+///
+/// Use [`ServiceRegistryBuilder`] to construct, then call [`resolve`] at runtime.
+/// Resolve is infallible — if a type was registered, it will be found.
+/// For optional resolution, use [`try_resolve`].
+#[derive(Clone, Default)]
+pub struct ServiceRegistry {
+    map: Arc<HashMap<TypeId, Box<dyn Any + Send + Sync>>>,
+}
+
+impl ServiceRegistry {
+    /// Create an empty (frozen) registry.
+    ///
+    /// Prefer [`ServiceRegistryBuilder::build`] for populated registries.
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Resolve a previously registered service.
     ///
+    /// Returns `None` if `T` was not registered.
+    pub fn try_resolve<T: 'static + ?Sized>(&self) -> Option<Arc<T>> {
+        self.map
+            .get(&TypeId::of::<T>())
+            .and_then(|boxed| boxed.downcast_ref::<Arc<T>>().cloned())
+    }
+
+    /// Resolve a previously registered service.
+    ///
+    /// Infallible when used with types registered during build phase.
+    /// For optional resolution, use [`try_resolve`].
+    ///
     /// # Panics
     ///
-    /// Panics if `T` was not registered or if the lock is poisoned.
+    /// Only panics if `T` was never registered — a programming error
+    /// that should be caught during development.
     pub fn resolve<T: 'static + ?Sized>(&self) -> Arc<T> {
-        let guard = self
-            .inner
-            .read()
-            .unwrap_or_else(|e| panic!("ServiceRegistry read lock poisoned: {e}"));
-        let Some(boxed) = guard.map.get(&TypeId::of::<T>()) else {
+        self.try_resolve().unwrap_or_else(|| {
             let type_name = std::any::type_name::<T>();
-            panic!("ServiceRegistry: no service registered for type `{type_name}`");
-        };
-        boxed.downcast_ref::<Arc<T>>().cloned().unwrap_or_else(|| {
-            panic!(
-                "ServiceRegistry: type mismatch for `{}`",
-                std::any::type_name::<T>()
-            )
+            panic!("ServiceRegistry: no service registered for type `{type_name}`")
         })
     }
 
     /// Check if a service of type `T` has been registered.
     pub fn contains<T: 'static + ?Sized>(&self) -> bool {
-        self.inner
-            .read()
-            .unwrap_or_else(|e| panic!("ServiceRegistry read lock poisoned: {e}"))
-            .map
-            .contains_key(&TypeId::of::<T>())
+        self.map.contains_key(&TypeId::of::<T>())
     }
 
     /// Number of registered services.
     pub fn len(&self) -> usize {
-        self.inner
-            .read()
-            .unwrap_or_else(|e| panic!("ServiceRegistry read lock poisoned: {e}"))
-            .map
-            .len()
+        self.map.len()
     }
 
     /// Whether the registry is empty.
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.map.is_empty()
     }
 }
 
 /// Convenience macro to resolve a service from `AppState.services`.
 ///
 /// ```ignore
-/// let repo: Arc<dyn UserRepository> = resolve!(state, dyn UserRepository);
 /// let svc: Arc<PostService> = resolve!(state, PostService);
 /// ```
 #[macro_export]
@@ -123,24 +145,27 @@ mod tests {
 
     #[test]
     fn insert_and_resolve_concrete() {
-        let reg = ServiceRegistry::new();
-        reg.insert(Arc::new(42i32));
+        let mut builder = ServiceRegistryBuilder::new();
+        builder.register(Arc::new(42i32));
+        let reg = builder.build();
         let val: Arc<i32> = reg.resolve::<i32>();
         assert_eq!(*val, 42);
     }
 
     #[test]
     fn insert_and_resolve_trait_object() {
-        let reg = ServiceRegistry::new();
-        reg.insert(Arc::new(English) as Arc<dyn Greeting>);
+        let mut builder = ServiceRegistryBuilder::new();
+        builder.register(Arc::new(English) as Arc<dyn Greeting>);
+        let reg = builder.build();
         let svc: Arc<dyn Greeting> = reg.resolve::<dyn Greeting>();
         assert_eq!(svc.greet(), "hello");
     }
 
     #[test]
     fn clone_shares_data() {
-        let reg = ServiceRegistry::new();
-        reg.insert(Arc::new("shared".to_string()));
+        let mut builder = ServiceRegistryBuilder::new();
+        builder.register(Arc::new("shared".to_string()));
+        let reg = builder.build();
         let cloned = reg.clone();
         let val: Arc<String> = cloned.resolve::<String>();
         assert_eq!(&*val, "shared");
@@ -148,17 +173,21 @@ mod tests {
 
     #[test]
     fn contains_check() {
-        let reg = ServiceRegistry::new();
+        let reg = ServiceRegistryBuilder::new().build();
         assert!(!reg.contains::<i32>());
-        reg.insert(Arc::new(1i32));
+        let mut builder = ServiceRegistryBuilder::new();
+        builder.register(Arc::new(1i32));
+        let reg = builder.build();
         assert!(reg.contains::<i32>());
     }
 
     #[test]
     fn len_and_is_empty() {
-        let reg = ServiceRegistry::new();
+        let reg = ServiceRegistryBuilder::new().build();
         assert!(reg.is_empty());
-        reg.insert(Arc::new(1i32));
+        let mut builder = ServiceRegistryBuilder::new();
+        builder.register(Arc::new(1i32));
+        let reg = builder.build();
         assert_eq!(reg.len(), 1);
         assert!(!reg.is_empty());
     }
@@ -166,15 +195,22 @@ mod tests {
     #[test]
     #[should_panic(expected = "no service registered")]
     fn resolve_missing_panics() {
-        let reg = ServiceRegistry::new();
+        let reg = ServiceRegistryBuilder::new().build();
         let _: Arc<i32> = reg.resolve::<i32>();
     }
 
     #[test]
+    fn try_resolve_missing_returns_none() {
+        let reg = ServiceRegistryBuilder::new().build();
+        assert!(reg.try_resolve::<i32>().is_none());
+    }
+
+    #[test]
     fn insert_overwrites() {
-        let reg = ServiceRegistry::new();
-        reg.insert(Arc::new(1i32));
-        reg.insert(Arc::new(2i32));
+        let mut builder = ServiceRegistryBuilder::new();
+        builder.register(Arc::new(1i32));
+        builder.register(Arc::new(2i32));
+        let reg = builder.build();
         let val: Arc<i32> = reg.resolve::<i32>();
         assert_eq!(*val, 2);
     }

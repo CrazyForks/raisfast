@@ -126,7 +126,7 @@ impl SendGridSender {
 #[async_trait::async_trait]
 impl EmailSender for SendGridSender {
     async fn send(&self, msg: &EmailMessage) -> anyhow::Result<()> {
-        let client = reqwest::Client::new();
+        let client = crate::notifier::http_client();
 
         let mut payload = serde_json::json!({
             "personalizations": [{
@@ -198,7 +198,7 @@ impl ResendSender {
 #[async_trait::async_trait]
 impl EmailSender for ResendSender {
     async fn send(&self, msg: &EmailMessage) -> anyhow::Result<()> {
-        let client = reqwest::Client::new();
+        let client = crate::notifier::http_client();
 
         let mut from_field = serde_json::json!({ "email": self.from });
         if let Some(name) = &self.from_name {
@@ -274,7 +274,7 @@ impl AliyunDirectMailSender {
 #[async_trait::async_trait]
 impl EmailSender for AliyunDirectMailSender {
     async fn send(&self, msg: &EmailMessage) -> anyhow::Result<()> {
-        let client = reqwest::Client::new();
+        let client = crate::notifier::http_client();
 
         let endpoint = format!("https://dm.{}.aliyuncs.com", self.region);
 
@@ -377,7 +377,7 @@ impl TencentSesSender {
 #[async_trait::async_trait]
 impl EmailSender for TencentSesSender {
     async fn send(&self, msg: &EmailMessage) -> anyhow::Result<()> {
-        let client = reqwest::Client::new();
+        let client = crate::notifier::http_client();
 
         let host = format!("ses.{}.tencentcloudapi.com", self.region);
         let url = format!("https://{host}");

@@ -590,15 +590,16 @@ impl ContentRepository {
     ) -> Result<Value, AppError> {
         if ct.declaration().snapshot_before_update
             && let Some(current) = self.find_by_id(ct, id, tenant_id, true).await?
-        {
-            let _ = crate::models::content_revision::create_revision(
+            && let Err(e) = crate::models::content_revision::create_revision(
                 &self.pool,
                 &ct.singular,
                 id,
                 &current,
                 None,
             )
-            .await;
+            .await
+        {
+            tracing::warn!("failed to create revision for {}: {e}", ct.singular);
         }
 
         let mut tx = self
@@ -1031,7 +1032,7 @@ impl ContentRepository {
 
     /// Query existing column names of a table
     async fn fetch_columns(&self, table: &str) -> Result<Vec<String>, AppError> {
-        let (sql, col_index): (String, usize) = fetch_columns_sql(table);
+        let (sql, col_index): (String, usize) = fetch_columns_sql(table)?;
 
         let rows = sqlx::query(&sql)
             .fetch_all(&self.pool)
@@ -1291,38 +1292,36 @@ async fn resolve_document_ids_batch(
 /// - `SQLite` `PRAGMA table_info`: column name is in column 2 (index=1)
 /// - PostgreSQL/MySQL `information_schema`: column name is in column 1 (index=0)
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if the table name contains invalid characters (table names come from schema definitions
-/// and should have been validated before this point).
-pub(crate) fn fetch_columns_sql(table: &str) -> (String, usize) {
-    assert!(
-        crate::db::dialect::is_safe_identifier(table),
-        "invalid table name: {table}"
-    );
+/// Returns `AppError::BadRequest` if the table name contains invalid characters.
+pub(crate) fn fetch_columns_sql(table: &str) -> Result<(String, usize), AppError> {
+    if !crate::db::dialect::is_safe_identifier(table) {
+        return Err(AppError::BadRequest(format!("invalid table name: {table}")));
+    }
     #[cfg(feature = "db-sqlite")]
     {
-        (format!("PRAGMA table_info({table})"), 1)
+        Ok((format!("PRAGMA table_info({table})"), 1))
     }
     #[cfg(feature = "db-postgres")]
     {
-        (
+        Ok((
             format!(
                 "SELECT column_name FROM information_schema.columns WHERE table_name = '{}'",
                 table
             ),
             0,
-        )
+        ))
     }
     #[cfg(feature = "db-mysql")]
     {
-        (
+        Ok((
             format!(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = '{}'",
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = '{}'",
                 table
             ),
             0,
-        )
+        ))
     }
 }
 
@@ -1471,7 +1470,7 @@ type = "text"
 
     #[test]
     fn fetch_columns_sql_sqlite() {
-        let (sql, idx) = fetch_columns_sql("my_table");
+        let (sql, idx) = fetch_columns_sql("my_table").unwrap();
         assert!(sql.contains("my_table"));
         assert_eq!(idx, 1);
     }

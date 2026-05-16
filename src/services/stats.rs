@@ -63,6 +63,7 @@ impl StatsService {
         table: &str,
         tenant_id: Option<&str>,
     ) -> Result<Value, AppError> {
+        validate_table_name(table)?;
         let tf = crate::db::tenant::tenant_filter_ph(tenant_id, 1);
 
         let has_status = has_column(&self.pool, table, "status").await;
@@ -116,6 +117,7 @@ impl StatsService {
         days: i64,
         tenant_id: Option<&str>,
     ) -> Result<Value, AppError> {
+        validate_table_name(table)?;
         let days = days.clamp(1, 365);
         let has_ts = has_column(&self.pool, table, "created_at").await;
         let has_tenant = crate::db::tenant::has_tenant_id(&self.pool, table).await;
@@ -192,6 +194,7 @@ impl StatsService {
         table: &str,
         tenant_id: Option<&str>,
     ) -> Result<serde_json::Map<String, Value>, AppError> {
+        validate_table_name(table)?;
         let has_status = has_column(&self.pool, table, "status").await;
         if !has_status {
             return Ok(serde_json::Map::new());
@@ -299,10 +302,7 @@ async fn count_table(
     tenant_filter: &str,
     tenant_id: Option<&str>,
 ) -> Result<i64, AppError> {
-    assert!(
-        crate::db::dialect::is_safe_identifier(table),
-        "unsafe table name: {table}"
-    );
+    validate_table_name(table)?;
     let sql = format!("SELECT COUNT(*) FROM {table} WHERE 1=1{tenant_filter}");
     let mut q = sqlx::query_scalar::<_, i64>(&sql);
     if tenant_id.is_some() {
@@ -387,6 +387,14 @@ async fn get_content_tables(pool: &Pool) -> Result<Vec<String>, AppError> {
 /// Date truncation expression (truncate to day)
 fn date_trunc_day_expr(col: &str) -> String {
     crate::db::dialect::date_trunc_day(col)
+}
+
+fn validate_table_name(table: &str) -> Result<(), AppError> {
+    if crate::db::dialect::is_safe_identifier(table) {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest(format!("invalid table name: {table}")))
+    }
 }
 
 #[cfg(test)]

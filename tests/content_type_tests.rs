@@ -1292,7 +1292,7 @@ required = true
     let row: (String, i64) = sqlx::query_as(
         "SELECT deleted_at, deleted_by FROM ct_soft_deleted_by WHERE document_id = ?",
     )
-    .bind(&id)
+    .bind(id)
     .fetch_one(&pool)
     .await
     .unwrap();

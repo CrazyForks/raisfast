@@ -31,6 +31,7 @@ impl JobEnqueuer {
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
+            tracing::error!("job enqueuer exited unexpectedly");
         });
     }
 
@@ -256,7 +257,7 @@ mod tests {
         assert!(matches!(
             &jobs[0].job,
             Job::SendWelcomeEmail { user_id, email, username }
-            if user_id == &1 && email == "" && username == "alice"
+            if user_id == &1 && email.is_empty() && username == "alice"
         ));
     }
 
