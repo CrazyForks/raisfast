@@ -235,13 +235,16 @@ pub async fn admin_delete_media(
         crate::db::dialect::ph(1),
         crate::db::tenant::tenant_filter_ph(auth.tenant_id(), 2)
     );
-    let mut q = sqlx::query_as::<_, (i64,)>(&sql).bind(media_id);
-    bind_tenant!(q, auth.tenant_id());
-    let (media_pk,): (i64,) = q
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
-        .ok_or_else(|| AppError::not_found("media"))?;
+    let (media_pk,): (i64,) = tenant_query!(
+        pool,
+        (i64,),
+        &sql,
+        [media_id],
+        auth.tenant_id(),
+        fetch_optional
+    )
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
+    .ok_or_else(|| AppError::not_found("media"))?;
 
     let m = crate::models::media::find_by_id(pool, media_pk, auth.tenant_id())
         .await?
@@ -271,18 +274,21 @@ pub async fn delete_media(
         .await?
         .ok_or(AppError::Unauthorized)?;
 
-    let sql = format!(
+    let sql2 = format!(
         "SELECT id FROM media WHERE document_id = {}{}",
         crate::db::dialect::ph(1),
         crate::db::tenant::tenant_filter_ph(auth.tenant_id(), 2)
     );
-    let mut q = sqlx::query_as::<_, (i64,)>(&sql).bind(media_id);
-    bind_tenant!(q, auth.tenant_id());
-    let (media_pk,): (i64,) = q
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
-        .ok_or_else(|| AppError::not_found("media"))?;
+    let (media_pk,): (i64,) = tenant_query!(
+        pool,
+        (i64,),
+        &sql2,
+        [media_id],
+        auth.tenant_id(),
+        fetch_optional
+    )
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
+    .ok_or_else(|| AppError::not_found("media"))?;
 
     let m = crate::models::media::find_by_id(pool, media_pk, auth.tenant_id())
         .await?

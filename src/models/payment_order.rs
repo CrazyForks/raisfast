@@ -78,16 +78,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentOrder>> {
-    let sql = format!(
-        "SELECT * FROM payment_orders WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, PaymentOrder>(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_optional(pool).await.map_err(Into::into)
+    tenant_find!(pool, "payment_orders" => PaymentOrder, "id" => id, tenant_id).map_err(Into::into)
 }
 
 pub async fn find_by_document_id(
@@ -95,16 +86,8 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentOrder>> {
-    let sql = format!(
-        "SELECT * FROM payment_orders WHERE document_id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, PaymentOrder>(&sql).bind(document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_optional(pool).await.map_err(Into::into)
+    tenant_find!(pool, "payment_orders" => PaymentOrder, "document_id" => document_id, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn find_by_idempotency_key(
@@ -112,16 +95,8 @@ pub async fn find_by_idempotency_key(
     key: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentOrder>> {
-    let sql = format!(
-        "SELECT * FROM payment_orders WHERE idempotency_key = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, PaymentOrder>(&sql).bind(key);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_optional(pool).await.map_err(Into::into)
+    tenant_find!(pool, "payment_orders" => PaymentOrder, "idempotency_key" => key, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn find_by_provider_order_id(
@@ -129,16 +104,7 @@ pub async fn find_by_provider_order_id(
     provider_order_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentOrder>> {
-    let sql = format!(
-        "SELECT * FROM payment_orders WHERE provider_order_id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, PaymentOrder>(&sql).bind(provider_order_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_optional(pool).await.map_err(Into::into)
+    tenant_find!(pool, "payment_orders" => PaymentOrder, "provider_order_id" => provider_order_id, tenant_id).map_err(Into::into)
 }
 
 pub async fn find_by_user_paginated(
@@ -148,6 +114,7 @@ pub async fn find_by_user_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<PaymentOrder>, i64)> {
+    check_schema!("payment_orders", "user_id", "created_at");
     let offset = (page - 1) * page_size;
     let tenant_ph = tenant_filter_ph(tenant_id, 2);
     let count_sql = format!(
@@ -155,11 +122,8 @@ pub async fn find_by_user_paginated(
         ph(1),
         tenant_ph
     );
-    let mut cq = sqlx::query_as::<_, (i64,)>(&count_sql).bind(user_id);
-    if let Some(tid) = tenant_id {
-        cq = cq.bind(tid);
-    }
-    let (total,): (i64,) = cq.fetch_one(pool).await?;
+    let (total,): (i64,) =
+        tenant_query!(pool, (i64,), &count_sql, [user_id], tenant_id, fetch_one)?;
     let base = usize::from(tenant_id.is_some()) + 2;
     let sql = format!(
         "SELECT * FROM payment_orders WHERE user_id = {}{} ORDER BY created_at DESC LIMIT {} OFFSET {}",
@@ -183,6 +147,7 @@ pub async fn find_all_admin_paginated(
     page_size: i64,
     status: Option<&str>,
 ) -> AppResult<(Vec<PaymentOrder>, i64)> {
+    check_schema!("payment_orders", "status", "created_at");
     let offset = (page - 1) * page_size;
     let tenant_ph = tenant_filter_ph(tenant_id, 1);
     let has_tenant = tenant_id.is_some();
@@ -249,48 +214,26 @@ pub async fn insert(
         pool,
         "payment_orders",
         [
-            "document_id",
-            "user_id",
-            "order_id",
-            "title",
-            "amount",
-            "currency",
-            "channel_id",
-            "provider",
-            "reference_type",
-            "reference_id",
-            "return_url",
-            "idempotency_key",
-            "client_ip",
-            "client_language",
-            "client_country",
-            "client_user_agent",
-            "channel_selected_by",
-            "metadata",
-            "created_at",
-            "updated_at"
-        ],
-        [
-            &document_id,
-            cmd.user_id,
-            &cmd.order_id,
-            &cmd.title,
-            cmd.amount,
-            &cmd.currency,
-            cmd.channel_id,
-            &cmd.provider,
-            &cmd.reference_type,
-            &cmd.reference_id,
-            &cmd.return_url,
-            &cmd.idempotency_key,
-            &cmd.client_ip,
-            &cmd.client_language,
-            &cmd.client_country,
-            &cmd.client_user_agent,
-            &cmd.channel_selected_by,
-            &cmd.metadata,
-            &now,
-            &now
+            "document_id" => &document_id,
+            "user_id" => cmd.user_id,
+            "order_id" => &cmd.order_id,
+            "title" => &cmd.title,
+            "amount" => cmd.amount,
+            "currency" => &cmd.currency,
+            "channel_id" => cmd.channel_id,
+            "provider" => &cmd.provider,
+            "reference_type" => &cmd.reference_type,
+            "reference_id" => &cmd.reference_id,
+            "return_url" => &cmd.return_url,
+            "idempotency_key" => &cmd.idempotency_key,
+            "client_ip" => &cmd.client_ip,
+            "client_language" => &cmd.client_language,
+            "client_country" => &cmd.client_country,
+            "client_user_agent" => &cmd.client_user_agent,
+            "channel_selected_by" => &cmd.channel_selected_by,
+            "metadata" => &cmd.metadata,
+            "created_at" => &now,
+            "updated_at" => &now
         ],
         tenant_id
     )?;
@@ -310,21 +253,13 @@ pub async fn update_provider_order_id(
     provider_data: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let sql = format!(
-        "UPDATE payment_orders SET provider_order_id = {}, provider_data = {}, updated_at = datetime('now') WHERE id = {}{}",
-        ph(1),
-        ph(2),
-        ph(3),
-        tenant_filter_ph(tenant_id, 4)
-    );
-    let mut q = sqlx::query(&sql)
-        .bind(provider_order_id)
-        .bind(provider_data)
-        .bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.execute(pool).await?;
+    crate::tenant_update!(
+        pool, "payment_orders",
+        bind: ["provider_order_id" => provider_order_id, "provider_data" => provider_data],
+        raw: ["updated_at" => "datetime('now')"],
+        where: "id" => id,
+        tenant: tenant_id
+    )?;
     Ok(())
 }
 
@@ -335,6 +270,7 @@ pub async fn tx_update_status_cas(
     timestamp_col: Option<&str>,
     expected_status: PaymentStatus,
 ) -> AppResult<u64> {
+    check_schema!("payment_orders", "status", "updated_at", "version", "id");
     let sql = if let Some(col) = timestamp_col {
         format!(
             "UPDATE payment_orders SET status = {}, {} = datetime('now'), updated_at = datetime('now'), version = version + 1 WHERE id = {} AND status = {}",

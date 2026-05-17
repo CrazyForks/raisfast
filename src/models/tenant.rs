@@ -34,6 +34,17 @@ pub struct Tenant {
 
 /// Query all tenants
 pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Tenant>> {
+    check_schema!(
+        "tenants",
+        "id",
+        "document_id",
+        "name",
+        "domain",
+        "config",
+        "status",
+        "created_at",
+        "updated_at"
+    );
     let tenants = sqlx::query_as::<_, Tenant>("SELECT * FROM tenants ORDER BY name")
         .fetch_all(pool)
         .await?;
@@ -42,21 +53,13 @@ pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Tenant>> {
 
 /// Find a tenant by document_id
 pub async fn find_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<Option<Tenant>> {
-    let sql = format!("SELECT * FROM tenants WHERE document_id = {}", ph(1));
-    let tenant = sqlx::query_as::<_, Tenant>(&sql)
-        .bind(document_id)
-        .fetch_optional(pool)
-        .await?;
+    let tenant = crud_find!(pool, "tenants" => Tenant, "document_id" => document_id)?;
     Ok(tenant)
 }
 
 /// Find a tenant by domain
 pub async fn find_by_domain(pool: &crate::db::Pool, domain: &str) -> AppResult<Option<Tenant>> {
-    let sql = format!("SELECT * FROM tenants WHERE domain = {}", ph(1));
-    let tenant = sqlx::query_as::<_, Tenant>(&sql)
-        .bind(domain)
-        .fetch_optional(pool)
-        .await?;
+    let tenant = crud_find!(pool, "tenants" => Tenant, "domain" => domain)?;
     Ok(tenant)
 }
 
@@ -68,6 +71,16 @@ pub async fn create(
     domain: Option<&str>,
     config: &str,
 ) -> AppResult<Tenant> {
+    check_schema!(
+        "tenants",
+        "document_id",
+        "name",
+        "domain",
+        "config",
+        "status",
+        "created_at",
+        "updated_at"
+    );
     let now = crate::utils::tz::now_utc();
     let sql = format!(
         "INSERT INTO tenants (document_id, name, domain, config, status, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
@@ -105,6 +118,15 @@ pub async fn update(
     config: Option<&str>,
     status: Option<TenantStatus>,
 ) -> AppResult<Tenant> {
+    check_schema!(
+        "tenants",
+        "document_id",
+        "name",
+        "domain",
+        "config",
+        "status",
+        "updated_at"
+    );
     let mut sets = Vec::new();
     let mut idx = 1usize;
     let now = crate::utils::tz::now_utc();
@@ -134,10 +156,10 @@ pub async fn update(
     );
     let mut q = sqlx::query(&sql);
     q = q.bind(now);
-    bind_tenant!(q, name);
-    bind_tenant!(q, domain);
-    bind_tenant!(q, config);
-    bind_tenant!(q, status);
+    bind_optional!(q, name);
+    bind_optional!(q, domain);
+    bind_optional!(q, config);
+    bind_optional!(q, status);
     q = q.bind(document_id);
     q.execute(pool).await?;
 
@@ -148,8 +170,7 @@ pub async fn update(
 
 /// Delete a tenant
 pub async fn delete(pool: &crate::db::Pool, document_id: &str) -> AppResult<()> {
-    let sql = format!("DELETE FROM tenants WHERE document_id = {}", ph(1));
-    sqlx::query(&sql).bind(document_id).execute(pool).await?;
+    crud_delete!(pool, "tenants", "document_id" => document_id)?;
     Ok(())
 }
 

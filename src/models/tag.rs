@@ -43,9 +43,7 @@ pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppRes
         "SELECT * FROM tags WHERE 1=1{} ORDER BY name",
         tenant_filter_ph(tenant_id, 1)
     );
-    let mut q = sqlx::query_as::<_, Tag>(&sql);
-    bind_tenant!(q, tenant_id);
-    let tags = q.fetch_all(pool).await?;
+    let tags = tenant_query!(pool, Tag, &sql, [], tenant_id, fetch_all)?;
     Ok(tags)
 }
 
@@ -55,15 +53,14 @@ pub async fn find_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<Tag>, i64)> {
+    check_schema!("tags", "name");
     let offset = (page - 1).max(0) * page_size;
 
     let count_sql = format!(
         "SELECT COUNT(*) FROM tags WHERE 1=1{}",
         tenant_filter_ph(tenant_id, 1)
     );
-    let mut cq = sqlx::query_scalar::<_, i64>(&count_sql);
-    bind_tenant!(cq, tenant_id);
-    let total = cq.fetch_one(pool).await?;
+    let total: i64 = tenant_scalar!(pool, i64, &count_sql, [], tenant_id, fetch_one)?;
 
     let base = usize::from(tenant_id.is_some()) + 1;
     let data_sql = format!(
@@ -85,14 +82,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Tag> {
-    let sql = format!(
-        "SELECT * FROM tags WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, Tag>(&sql).bind(id);
-    bind_tenant!(q, tenant_id);
-    q.fetch_one(pool).await.map_err(Into::into)
+    tenant_find_one!(pool, "tags" => Tag, "id" => id, tenant_id).map_err(Into::into)
 }
 
 pub async fn find_by_document_id(
@@ -100,14 +90,8 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Tag> {
-    let sql = format!(
-        "SELECT * FROM tags WHERE document_id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, Tag>(&sql).bind(document_id);
-    bind_tenant!(q, tenant_id);
-    q.fetch_one(pool).await.map_err(Into::into)
+    tenant_find_one!(pool, "tags" => Tag, "document_id" => document_id, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn create(
@@ -123,15 +107,14 @@ pub async fn create(
         pool,
         "tags",
         [
-            "document_id",
-            "name",
-            "slug",
-            "created_by",
-            "updated_by",
-            "created_at",
-            "updated_at"
+            "document_id" => &document_id,
+            "name" => name,
+            "slug" => slug,
+            "created_by" => created_by,
+            "updated_by" => created_by,
+            "created_at" => &now,
+            "updated_at" => &now
         ],
-        [&document_id, name, slug, created_by, created_by, &now, &now],
         tenant_id
     )?;
 
@@ -139,15 +122,7 @@ pub async fn create(
 }
 
 pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
-    let sql = format!(
-        "DELETE FROM tags WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query(&sql).bind(id);
-    bind_tenant!(q, tenant_id);
-    let result = q.execute(pool).await?;
-
+    let result = tenant_delete!(pool, "tags", "id" => id, tenant_id)?;
     AppError::expect_affected(&result, "tag")
 }
 
@@ -160,10 +135,9 @@ pub async fn update(
 ) -> AppResult<Tag> {
     let now = crate::utils::tz::now_utc();
     let result = tenant_update!(pool, "tags",
-        ["name", "slug", "updated_at"],
-        [name, slug, &now],
-        "id" => id,
-        tenant_id
+        bind: ["name" => name, "slug" => slug, "updated_at" => &now],
+        where: "id" => id,
+        tenant: tenant_id
     )?;
     AppError::expect_affected(&result, "tag")?;
     find_by_id(pool, id, tenant_id).await

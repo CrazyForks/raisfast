@@ -59,36 +59,17 @@ pub async fn create_revision(
     let snapshot_str = serde_json::to_string(snapshot)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("snapshot serialize: {e}")))?;
 
-    let sql = format!(
-        "INSERT INTO content_revisions (document_id, content_type, record_id, revision_number, snapshot, created_by, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7),
-    );
-    sqlx::query(&sql)
-        .bind(&document_id)
-        .bind(content_type)
-        .bind(record_id)
-        .bind(next_rev)
-        .bind(&snapshot_str)
-        .bind(created_by)
-        .bind(now)
-        .execute(pool)
-        .await?;
+    crud_insert!(pool, "content_revisions", [
+        "document_id" => &document_id,
+        "content_type" => content_type,
+        "record_id" => record_id,
+        "revision_number" => next_rev,
+        "snapshot" => &snapshot_str,
+        "created_by" => created_by,
+        "created_at" => now,
+    ])?;
 
-    let sql = format!(
-        "SELECT * FROM content_revisions WHERE document_id = {}",
-        ph(1)
-    );
-    let row = sqlx::query_as::<_, ContentRevision>(&sql)
-        .bind(&document_id)
-        .fetch_one(pool)
-        .await?;
-    Ok(row)
+    Ok(crud_find_one!(pool, "content_revisions" => ContentRevision, "document_id" => &document_id)?)
 }
 
 async fn next_revision_number(
@@ -96,6 +77,12 @@ async fn next_revision_number(
     content_type: &str,
     record_id: &str,
 ) -> AppResult<i64> {
+    check_schema!(
+        "content_revisions",
+        "revision_number",
+        "content_type",
+        "record_id"
+    );
     let sql = format!(
         "SELECT COALESCE(MAX(revision_number), 0) FROM content_revisions WHERE content_type = {} AND record_id = {}",
         ph(1),
@@ -115,6 +102,15 @@ pub async fn list_revisions(
     content_type: &str,
     record_id: &str,
 ) -> AppResult<Vec<RevisionSummary>> {
+    check_schema!(
+        "content_revisions",
+        "id",
+        "revision_number",
+        "created_by",
+        "created_at",
+        "content_type",
+        "record_id"
+    );
     let sql = format!(
         "SELECT id, revision_number, created_by, created_at FROM content_revisions WHERE content_type = {} AND record_id = {} ORDER BY revision_number DESC",
         ph(1),
@@ -143,6 +139,7 @@ pub async fn get_revision(
     record_id: &str,
     revision_id: i64,
 ) -> AppResult<Option<ContentRevision>> {
+    check_schema!("content_revisions", "id", "content_type", "record_id");
     let sql = format!(
         "SELECT * FROM content_revisions WHERE id = {} AND content_type = {} AND record_id = {}",
         ph(1),
@@ -204,6 +201,7 @@ pub async fn delete_revisions(
     content_type: &str,
     record_id: &str,
 ) -> AppResult<u64> {
+    check_schema!("content_revisions", "content_type", "record_id");
     let sql = format!(
         "DELETE FROM content_revisions WHERE content_type = {} AND record_id = {}",
         ph(1),

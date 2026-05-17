@@ -72,14 +72,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Comment>> {
-    let filter = tenant_filter_ph(tenant_id, 2);
-    let sql = format!("SELECT * FROM comments WHERE id = {}{filter}", ph(1));
-    let mut q = sqlx::query_as::<_, Comment>(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let comment = q.fetch_optional(pool).await?;
-    Ok(comment)
+    Ok(tenant_find!(pool, "comments" => Comment, "id" => id, tenant_id)?)
 }
 
 pub async fn find_by_document_id(
@@ -87,17 +80,7 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Comment>> {
-    let filter = tenant_filter_ph(tenant_id, 2);
-    let sql = format!(
-        "SELECT * FROM comments WHERE document_id = {}{filter}",
-        ph(1)
-    );
-    let mut q = sqlx::query_as::<_, Comment>(&sql).bind(document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let comment = q.fetch_optional(pool).await?;
-    Ok(comment)
+    Ok(tenant_find!(pool, "comments" => Comment, "document_id" => document_id, tenant_id)?)
 }
 
 pub async fn create(
@@ -111,30 +94,17 @@ pub async fn create(
         pool,
         "comments",
         [
-            "document_id",
-            "post_id",
-            "created_by",
-            "updated_by",
-            "nickname",
-            "email",
-            "content",
-            "parent_id",
-            "created_at",
-            "updated_at",
-            "status"
-        ],
-        [
-            &document_id,
-            cmd.post_id,
-            cmd.created_by,
-            cmd.created_by,
-            &cmd.nickname,
-            &cmd.email,
-            &cmd.content,
-            cmd.parent_id,
-            now,
-            now,
-            CommentStatus::Pending
+            "document_id" => &document_id,
+            "post_id" => cmd.post_id,
+            "created_by" => cmd.created_by,
+            "updated_by" => cmd.created_by,
+            "nickname" => &cmd.nickname,
+            "email" => &cmd.email,
+            "content" => &cmd.content,
+            "parent_id" => cmd.parent_id,
+            "created_at" => now,
+            "updated_at" => now,
+            "status" => CommentStatus::Pending
         ],
         tenant_id
     )?;
@@ -155,13 +125,14 @@ pub async fn find_approved_by_post(
         ph(1),
         ph(2)
     );
-    let mut q = sqlx::query_as::<_, Comment>(&sql)
-        .bind(post_id)
-        .bind(CommentStatus::Approved);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let comments = q.fetch_all(pool).await?;
+    let comments = tenant_query!(
+        pool,
+        Comment,
+        &sql,
+        [post_id, CommentStatus::Approved],
+        tenant_id,
+        fetch_all
+    )?;
     Ok(comments)
 }
 
@@ -172,6 +143,7 @@ pub async fn find_approved_by_post_paginated(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Comment>, i64)> {
+    check_schema!("comments", "post_id", "status", "created_at");
     let offset = (page - 1) * page_size;
     let filter = tenant_filter_ph(tenant_id, 3);
     let base = usize::from(tenant_id.is_some());
@@ -218,11 +190,7 @@ pub async fn find_all_by_post(
         "SELECT * FROM comments WHERE post_id = {}{filter} ORDER BY created_at ASC",
         ph(1)
     );
-    let mut q = sqlx::query_as::<_, Comment>(&sql).bind(post_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let comments = q.fetch_all(pool).await?;
+    let comments = tenant_query!(pool, Comment, &sql, [post_id], tenant_id, fetch_all)?;
     Ok(comments)
 }
 
@@ -247,6 +215,19 @@ pub async fn find_all_paginated(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<AdminCommentRow>, i64)> {
+    check_schema!(
+        "comments",
+        "id",
+        "post_id",
+        "created_by",
+        "nickname",
+        "email",
+        "content",
+        "parent_id",
+        "status",
+        "created_at"
+    );
+    check_schema!("posts", "id", "title");
     let offset = (page - 1) * page_size;
     let filter = tenant_filter_aliased_ph("c", tenant_id, 1);
     let base = usize::from(tenant_id.is_some());
@@ -281,24 +262,16 @@ pub async fn update_status(
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     let result = tenant_update!(pool, "comments",
-        ["status", "updated_at"],
-        [status, &now],
-        "id" => id,
-        tenant_id
+        bind: ["status" => status, "updated_at" => &now],
+        where: "id" => id,
+        tenant: tenant_id
     )?;
 
     AppError::expect_affected(&result, "comment")
 }
 
 pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
-    let filter = tenant_filter_ph(tenant_id, 2);
-    let sql = format!("DELETE FROM comments WHERE id = {}{filter}", ph(1));
-    let mut q = sqlx::query(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let result = q.execute(pool).await?;
-
+    let result = tenant_delete!(pool, "comments", "id" => id, tenant_id)?;
     AppError::expect_affected(&result, "comment")
 }
 

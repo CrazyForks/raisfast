@@ -41,24 +41,14 @@ pub async fn create(
 
     let expires_at = crate::utils::tz::now_utc() + chrono::Duration::seconds(expires_in_secs);
 
-    let sql = format!(
-        "INSERT INTO email_verification_tokens (document_id, user_id, token, email, expires_at, created_at) VALUES ({}, {}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-    );
-    sqlx::query(&sql)
-        .bind(&document_id)
-        .bind(user_id)
-        .bind(&token)
-        .bind(email)
-        .bind(expires_at)
-        .bind(now)
-        .execute(pool)
-        .await?;
+    crud_insert!(pool, "email_verification_tokens", [
+        "document_id" => &document_id,
+        "user_id" => user_id,
+        "token" => &token,
+        "email" => email,
+        "expires_at" => expires_at,
+        "created_at" => now
+    ])?;
 
     find_by_token(pool, &token).await?.ok_or_else(|| {
         crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
@@ -72,6 +62,7 @@ pub async fn find_by_token(
     pool: &crate::db::Pool,
     token: &str,
 ) -> AppResult<Option<EmailVerificationToken>> {
+    check_schema!("email_verification_tokens", "token", "verified_at");
     let sql = format!(
         "SELECT * FROM email_verification_tokens WHERE token = {} AND verified_at IS NULL",
         ph(1),
@@ -86,17 +77,16 @@ pub async fn find_by_token(
 /// Mark a token as verified
 pub async fn mark_verified(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    let sql = format!(
-        "UPDATE email_verification_tokens SET verified_at = {} WHERE id = {}",
-        ph(1),
-        ph(2),
-    );
-    sqlx::query(&sql).bind(now).bind(id).execute(pool).await?;
+    crud_update!(pool, "email_verification_tokens",
+        bind: ["verified_at" => now],
+        where: "id" => id
+    )?;
     Ok(())
 }
 
 /// Delete all unused verification tokens for a user
 pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<()> {
+    check_schema!("email_verification_tokens", "user_id", "verified_at");
     let sql = format!(
         "DELETE FROM email_verification_tokens WHERE user_id = {} AND verified_at IS NULL",
         ph(1),
@@ -107,6 +97,7 @@ pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: i64) -> AppR
 
 /// Clean up expired verification tokens
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
+    check_schema!("email_verification_tokens", "expires_at", "verified_at");
     let now = crate::utils::tz::now_utc();
     let sql = format!(
         "DELETE FROM email_verification_tokens WHERE expires_at < {} AND verified_at IS NULL",

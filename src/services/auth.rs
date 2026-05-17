@@ -178,6 +178,18 @@ pub async fn register(
     require_email_verification: bool,
     pool: &crate::db::Pool,
 ) -> AppResult<UserResponse> {
+    check_schema!("users", "document_id");
+    check_schema!(
+        "user_credentials",
+        "document_id",
+        "user_id",
+        "auth_type",
+        "identifier",
+        "credential_data",
+        "verified",
+        "created_at",
+        "updated_at"
+    );
     if crate::models::user_credential::find_by_auth_type_and_identifier(
         pool,
         AuthType::Email,
@@ -200,22 +212,13 @@ pub async fn register(
             &mut *tx,
             "users",
             [
-                "document_id",
-                "username",
-                "created_at",
-                "updated_at",
-                "role",
-                "status",
-                "registered_via"
-            ],
-            [
-                &document_id,
-                &req.username,
-                now,
-                now,
-                UserRole::Reader,
-                UserStatus::Active,
-                registered_via
+                "document_id" => &document_id,
+                "username" => &req.username,
+                "created_at" => now,
+                "updated_at" => now,
+                "role" => UserRole::Reader,
+                "status" => UserStatus::Active,
+                "registered_via" => registered_via
             ],
             tenant_id
         )?;
@@ -376,6 +379,14 @@ pub async fn refresh(
     jwt_refresh_expires: u64,
     tenant_id: Option<&str>,
 ) -> AppResult<LoginResponse> {
+    check_schema!(
+        "refresh_tokens",
+        "token",
+        "document_id",
+        "user_id",
+        "expires_at",
+        "created_at"
+    );
     let stored = crate::models::refresh_token::find_by_token(pool, refresh_token_str)
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
@@ -461,6 +472,7 @@ pub async fn change_password(
     auth: &AuthUser,
     req: UpdatePasswordRequest,
 ) -> AppResult<()> {
+    check_schema!("refresh_tokens", "user_id");
     let user_id = auth.ensure_authenticated()?;
     let tenant_id = auth.tenant_id();
     let _user = crate::models::user::find_by_id(pool, user_id, tenant_id)

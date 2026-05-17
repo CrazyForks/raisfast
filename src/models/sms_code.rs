@@ -53,47 +53,24 @@ pub async fn create(
     let expires_at =
         crate::utils::tz::now_utc() + chrono::Duration::seconds(expires_in_secs as i64);
 
-    let sql = format!(
-        "INSERT INTO sms_codes (document_id, phone, code, purpose, expires_at, ip_address, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7),
-    );
-    sqlx::query(&sql)
-        .bind(&document_id)
-        .bind(phone)
-        .bind(code)
-        .bind(purpose)
-        .bind(expires_at)
-        .bind(ip_address)
-        .bind(now)
-        .execute(pool)
-        .await?;
+    crud_insert!(pool, "sms_codes", [
+        "document_id" => &document_id,
+        "phone" => phone,
+        "code" => code,
+        "purpose" => purpose,
+        "expires_at" => expires_at,
+        "ip_address" => ip_address,
+        "created_at" => now
+    ])?;
 
-    let sql2 = format!("SELECT * FROM sms_codes WHERE document_id = {}", ph(1));
-    sqlx::query_as::<_, SmsCode>(&sql2)
-        .bind(&document_id)
-        .fetch_optional(pool)
-        .await?
-        .ok_or_else(|| {
-            crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
-                "failed to fetch sms code"
-            ))
-        })
+    crud_find!(pool, "sms_codes" => SmsCode, "document_id" => &document_id)?.ok_or_else(|| {
+        crate::errors::app_error::AppError::Internal(anyhow::anyhow!("failed to fetch sms code"))
+    })
 }
 
 /// Find a verification code by ID
 pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<Option<SmsCode>> {
-    let sql = format!("SELECT * FROM sms_codes WHERE id = {}", ph(1));
-    let row = sqlx::query_as::<_, SmsCode>(&sql)
-        .bind(id)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row)
+    Ok(crud_find!(pool, "sms_codes" => SmsCode, "id" => id)?)
 }
 
 /// Find the most recent unverified code for a phone number
@@ -102,6 +79,7 @@ pub async fn find_latest_unverified(
     phone: &str,
     purpose: &str,
 ) -> AppResult<Option<SmsCode>> {
+    check_schema!("sms_codes", "phone", "purpose", "verified_at", "created_at");
     let sql = format!(
         "SELECT * FROM sms_codes WHERE phone = {} AND purpose = {} AND verified_at IS NULL ORDER BY created_at DESC LIMIT 1",
         ph(1),
@@ -122,6 +100,7 @@ pub async fn is_rate_limited(
     purpose: &str,
     within_secs: u64,
 ) -> AppResult<bool> {
+    check_schema!("sms_codes", "phone", "purpose", "created_at");
     let cutoff = crate::utils::tz::now_utc() - chrono::Duration::seconds(within_secs as i64);
     let sql = format!(
         "SELECT COUNT(*) as cnt FROM sms_codes WHERE phone = {} AND purpose = {} AND created_at > {}",
@@ -161,21 +140,19 @@ pub async fn verify_code(
     }
 
     if sms.code != input_code {
-        let sql = format!(
-            "UPDATE sms_codes SET attempts = attempts + 1 WHERE id = {}",
-            ph(1),
-        );
-        sqlx::query(&sql).bind(id).execute(pool).await?;
+        crud_update!(pool, "sms_codes",
+            bind: [],
+            raw: ["attempts" => "attempts + 1"],
+            where: "id" => id
+        )?;
         return Ok(VerifyResult::WrongCode);
     }
 
     let now = crate::utils::tz::now_utc();
-    let sql = format!(
-        "UPDATE sms_codes SET verified_at = {} WHERE id = {}",
-        ph(1),
-        ph(2),
-    );
-    sqlx::query(&sql).bind(now).bind(id).execute(pool).await?;
+    crud_update!(pool, "sms_codes",
+        bind: ["verified_at" => now],
+        where: "id" => id
+    )?;
 
     Ok(VerifyResult::Verified)
 }
@@ -192,6 +169,7 @@ pub enum VerifyResult {
 
 /// Clean up expired verification code records
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
+    check_schema!("sms_codes", "expires_at");
     let now = crate::utils::tz::now_utc();
     let sql = format!("DELETE FROM sms_codes WHERE expires_at < {}", ph(1));
     let result = sqlx::query(&sql).bind(now).execute(pool).await?;

@@ -30,6 +30,7 @@ pub async fn find_by_user_and_currency(
     user_id: i64,
     currency: &str,
 ) -> AppResult<Option<Wallet>> {
+    check_schema!("wallets", "user_id", "currency");
     let sql = format!(
         "SELECT * FROM wallets WHERE user_id = {} AND currency = {}",
         ph(1),
@@ -44,48 +45,23 @@ pub async fn find_by_user_and_currency(
 }
 
 pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<Option<Wallet>> {
-    let sql = format!("SELECT * FROM wallets WHERE id = {}", ph(1));
-    sqlx::query_as::<_, Wallet>(&sql)
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(Into::into)
+    crud_find!(pool, "wallets" => Wallet, "id" => id).map_err(Into::into)
 }
 
 pub async fn find_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<Vec<Wallet>> {
-    let sql = format!("SELECT * FROM wallets WHERE user_id = {}", ph(1));
-    sqlx::query_as::<_, Wallet>(&sql)
-        .bind(user_id)
-        .fetch_all(pool)
-        .await
-        .map_err(Into::into)
+    crud_find_all!(pool, "wallets" => Wallet, "user_id" => user_id).map_err(Into::into)
 }
 
 pub async fn create(pool: &crate::db::Pool, user_id: i64, currency: &str) -> AppResult<Wallet> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
-    let sql = format!(
-        "INSERT INTO wallets (document_id, user_id, currency, created_at, updated_at) VALUES ({}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5)
-    );
-    sqlx::query(&sql)
-        .bind(&document_id)
-        .bind(user_id)
-        .bind(currency)
-        .bind(now)
-        .bind(now)
-        .execute(pool)
-        .await?;
-
-    let sql = format!("SELECT * FROM wallets WHERE document_id = {}", ph(1));
-    sqlx::query_as::<_, Wallet>(&sql)
-        .bind(&document_id)
-        .fetch_one(pool)
-        .await
-        .map_err(Into::into)
+    crud_insert!(pool, "wallets", [
+        "document_id" => &document_id,
+        "user_id" => user_id,
+        "currency" => currency,
+        "created_at" => now,
+        "updated_at" => now
+    ])?;
+    crud_find_one!(pool, "wallets" => Wallet, "document_id" => &document_id).map_err(Into::into)
 }
 
 pub async fn find_or_create(
@@ -105,6 +81,7 @@ pub async fn find_all_wallets(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Wallet>, i64)> {
+    check_schema!("wallets", "tenant_id", "created_at");
     let offset = (page - 1) * page_size;
     let (total,): (i64,) = if let Some(tid) = tenant_id {
         sqlx::query_as(&format!(

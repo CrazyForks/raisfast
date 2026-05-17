@@ -88,12 +88,7 @@ pub fn encode_metadata(meta: &Option<UserMetadata>) -> Option<String> {
 
 /// Find user by username
 pub async fn find_by_username(pool: &crate::db::Pool, username: &str) -> AppResult<Option<User>> {
-    let sql = format!("SELECT * FROM users WHERE username = {}", ph(1));
-    let user = sqlx::query_as::<_, User>(&sql)
-        .bind(username)
-        .fetch_optional(pool)
-        .await?;
-    Ok(user)
+    Ok(crud_find!(pool, "users" => User, "username" => username)?)
 }
 
 /// Find user by document_id (external API)
@@ -102,14 +97,7 @@ pub async fn find_by_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<User>> {
-    let filter = tenant_filter_ph(tenant_id, 2);
-    let sql = format!("SELECT * FROM users WHERE document_id = {}{filter}", ph(1));
-    let mut q = sqlx::query_as::<_, User>(&sql).bind(document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let user = q.fetch_optional(pool).await?;
-    Ok(user)
+    Ok(tenant_find!(pool, "users" => User, "document_id" => document_id, tenant_id)?)
 }
 
 /// Find user by integer primary key (internal FK lookup)
@@ -118,14 +106,7 @@ pub async fn find_by_pk(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<User>> {
-    let filter = tenant_filter_ph(tenant_id, 2);
-    let sql = format!("SELECT * FROM users WHERE id = {}{filter}", ph(1));
-    let mut q = sqlx::query_as::<_, User>(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let user = q.fetch_optional(pool).await?;
-    Ok(user)
+    Ok(tenant_find!(pool, "users" => User, "id" => id, tenant_id)?)
 }
 
 /// Create a new user
@@ -140,35 +121,18 @@ pub async fn create(
         pool,
         "users",
         [
-            "document_id",
-            "username",
-            "created_at",
-            "updated_at",
-            "role",
-            "status",
-            "registered_via"
-        ],
-        [
-            &document_id,
-            &cmd.username,
-            now,
-            now,
-            UserRole::Reader,
-            UserStatus::Active,
-            cmd.registered_via
+            "document_id" => &document_id,
+            "username" => &cmd.username,
+            "created_at" => now,
+            "updated_at" => now,
+            "role" => UserRole::Reader,
+            "status" => UserStatus::Active,
+            "registered_via" => cmd.registered_via
         ],
         tenant_id
     )?;
 
-    let filter = tenant_filter_ph(tenant_id, 2);
-    let sql = format!("SELECT * FROM users WHERE document_id = {}{filter}", ph(1));
-    let mut q = sqlx::query_as::<_, User>(&sql).bind(&document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let user = q
-        .fetch_optional(pool)
-        .await?
+    let user = tenant_find!(pool, "users" => User, "document_id" => &document_id, tenant_id)?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch newly created user")))?;
     Ok(user)
 }
@@ -210,10 +174,9 @@ pub async fn update_profile(
         .or_else(|| user.metadata.clone());
     let now = crate::utils::tz::now_utc();
     tenant_update!(pool, "users",
-        ["username", "bio", "website", "avatar", "social_links", "metadata", "updated_at"],
-        [username, bio, website, avatar, social_links, metadata, &now],
-        "id" => user.id,
-        tenant_id
+        bind: ["username" => username, "bio" => bio, "website" => website, "avatar" => avatar, "social_links" => social_links, "metadata" => metadata, "updated_at" => &now],
+        where: "id" => user.id,
+        tenant: tenant_id
     )?;
     find_by_pk(pool, cmd.id, tenant_id)
         .await?
@@ -227,6 +190,7 @@ pub async fn find_all(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<User>, i64)> {
+    check_schema!("users", "created_at");
     let offset = (page - 1) * page_size;
     let filter = tenant_filter_ph(tenant_id, 1);
     let base = usize::from(tenant_id.is_some());
@@ -241,11 +205,7 @@ pub async fn find_all(
     }
     let users = q.bind(page_size).bind(offset).fetch_all(pool).await?;
     let count_q = format!("SELECT COUNT(*) FROM users WHERE 1=1{filter}");
-    let mut q2 = sqlx::query_as::<_, (i64,)>(&count_q);
-    if let Some(tid) = tenant_id {
-        q2 = q2.bind(tid);
-    }
-    let total = q2.fetch_one(pool).await?;
+    let total = tenant_query!(pool, (i64,), &count_q, [], tenant_id, fetch_one)?;
     Ok((users, total.0))
 }
 
@@ -258,10 +218,9 @@ pub async fn update_role(
 ) -> AppResult<User> {
     let now = crate::utils::tz::now_utc();
     let result = tenant_update!(pool, "users",
-        ["role", "updated_at"],
-        [role, &now],
-        "document_id" => document_id,
-        tenant_id
+        bind: ["role" => role, "updated_at" => &now],
+        where: "document_id" => document_id,
+        tenant: tenant_id
     )?;
     AppError::expect_affected(&result, "user")?;
     find_by_id(pool, document_id, tenant_id)
@@ -274,6 +233,7 @@ pub async fn delete_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
+    check_schema!("users", "document_id");
     let sql = format!(
         "DELETE FROM users WHERE document_id = {}{}",
         ph(1),

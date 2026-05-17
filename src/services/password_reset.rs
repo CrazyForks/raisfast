@@ -51,6 +51,16 @@ pub async fn reset_password(
     new_password: &str,
     _tenant_id: Option<&str>,
 ) -> AppResult<()> {
+    check_schema!(
+        "user_credentials",
+        "id",
+        "auth_type",
+        "user_id",
+        "credential_data",
+        "updated_at"
+    );
+    check_schema!("password_reset_tokens", "used_at", "id");
+    check_schema!("refresh_tokens", "user_id");
     let reset_token = crate::models::password_reset::find_by_token(pool, token)
         .await?
         .ok_or_else(|| AppError::BadRequest("invalid_or_expired_token".into()))?;

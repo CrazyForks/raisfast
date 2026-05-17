@@ -1007,6 +1007,7 @@ pub async fn refund_payment_order(
     id: &str,
     req: CreateRefundRequest,
 ) -> AppResult<PaymentRefund> {
+    check_schema!("payment_refunds", "provider_refund_id");
     auth.ensure_admin()?;
     let payment_order =
         crate::models::payment_order::find_by_document_id(pool, id, auth.tenant_id())

@@ -30,6 +30,14 @@ pub async fn trigger_email_verification(
 ///
 /// Validates the token, marks it as used, and updates user_credentials.verified = 1.
 pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> {
+    check_schema!("email_verification_tokens", "verified_at", "id");
+    check_schema!(
+        "user_credentials",
+        "verified",
+        "updated_at",
+        "user_id",
+        "auth_type"
+    );
     let verification = crate::models::email_verification::find_by_token(pool, token)
         .await?
         .ok_or_else(|| AppError::BadRequest("invalid_or_expired_token".into()))?;

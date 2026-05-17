@@ -46,11 +46,7 @@ pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppRes
         "SELECT * FROM categories WHERE 1=1{} ORDER BY sort_order, name",
         tenant_filter_ph(tenant_id, 1)
     );
-    let mut q = sqlx::query_as::<_, Category>(&sql);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let categories = q.fetch_all(pool).await?;
+    let categories = tenant_query!(pool, Category, &sql, [], tenant_id, fetch_all)?;
     Ok(categories)
 }
 
@@ -60,6 +56,7 @@ pub async fn find_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<Category>, i64)> {
+    check_schema!("categories", "sort_order", "name");
     let offset = (page - 1).max(0) * page_size;
 
     let count_sql = format!(
@@ -94,16 +91,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Category> {
-    let sql = format!(
-        "SELECT * FROM categories WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, Category>(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_one(pool).await.map_err(Into::into)
+    tenant_find_one!(pool, "categories" => Category, "id" => id, tenant_id).map_err(Into::into)
 }
 
 pub async fn find_by_document_id(
@@ -111,16 +99,8 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Category>> {
-    let sql = format!(
-        "SELECT * FROM categories WHERE document_id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, Category>(&sql).bind(document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_optional(pool).await.map_err(Into::into)
+    tenant_find!(pool, "categories" => Category, "document_id" => document_id, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn create(
@@ -135,28 +115,16 @@ pub async fn create(
         pool,
         "categories",
         [
-            "document_id",
-            "name",
-            "slug",
-            "description",
-            "parent_id",
-            "sort_order",
-            "created_by",
-            "updated_by",
-            "created_at",
-            "updated_at"
-        ],
-        [
-            &document_id,
-            &cmd.name,
-            &cmd.slug,
-            &cmd.description,
-            cmd.parent_id,
-            cmd.sort_order,
-            created_by,
-            created_by,
-            now,
-            now
+            "document_id" => &document_id,
+            "name" => &cmd.name,
+            "slug" => &cmd.slug,
+            "description" => &cmd.description,
+            "parent_id" => cmd.parent_id,
+            "sort_order" => cmd.sort_order,
+            "created_by" => created_by,
+            "updated_by" => created_by,
+            "created_at" => now,
+            "updated_at" => now
         ],
         tenant_id
     )?;
@@ -187,27 +155,16 @@ pub async fn update(
 
     let now = crate::utils::tz::now_utc();
     tenant_update!(pool, "categories",
-        ["name", "slug", "description", "parent_id", "sort_order", "updated_by", "updated_at"],
-        [name, slug, desc, parent, sort, updated_by, &now],
-        "id" => cat_id,
-        tenant_id
+        bind: ["name" => name, "slug" => slug, "description" => desc, "parent_id" => parent, "sort_order" => sort, "updated_by" => updated_by, "updated_at" => &now],
+        where: "id" => cat_id,
+        tenant: tenant_id
     )?;
 
     find_by_id(pool, cat_id, tenant_id).await
 }
 
 pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
-    let sql = format!(
-        "DELETE FROM categories WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let result = q.execute(pool).await?;
-
+    let result = tenant_delete!(pool, "categories", "id" => id, tenant_id)?;
     AppError::expect_affected(&result, "category")
 }
 

@@ -37,11 +37,15 @@ pub async fn find_by_id(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    let mut q = sqlx::query_as::<_, PaymentTransaction>(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_optional(pool).await.map_err(Into::into)
+    tenant_query!(
+        pool,
+        PaymentTransaction,
+        &sql,
+        [id],
+        tenant_id,
+        fetch_optional
+    )
+    .map_err(Into::into)
 }
 
 pub async fn find_by_payment_order_id(
@@ -54,11 +58,15 @@ pub async fn find_by_payment_order_id(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    let mut q = sqlx::query_as::<_, PaymentTransaction>(&sql).bind(payment_order_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_all(pool).await.map_err(Into::into)
+    tenant_query!(
+        pool,
+        PaymentTransaction,
+        &sql,
+        [payment_order_id],
+        tenant_id,
+        fetch_all
+    )
+    .map_err(Into::into)
 }
 
 pub async fn find_by_order_id(
@@ -71,11 +79,15 @@ pub async fn find_by_order_id(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    let mut q = sqlx::query_as::<_, PaymentTransaction>(&sql).bind(order_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_all(pool).await.map_err(Into::into)
+    tenant_query!(
+        pool,
+        PaymentTransaction,
+        &sql,
+        [order_id],
+        tenant_id,
+        fetch_all
+    )
+    .map_err(Into::into)
 }
 
 pub async fn find_by_provider_tx_id(
@@ -88,11 +100,15 @@ pub async fn find_by_provider_tx_id(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    let mut q = sqlx::query_as::<_, PaymentTransaction>(&sql).bind(provider_tx_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_optional(pool).await.map_err(Into::into)
+    tenant_query!(
+        pool,
+        PaymentTransaction,
+        &sql,
+        [provider_tx_id],
+        tenant_id,
+        fetch_optional
+    )
+    .map_err(Into::into)
 }
 
 async fn find_by_document_id(
@@ -105,11 +121,15 @@ async fn find_by_document_id(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    let mut q = sqlx::query_as::<_, PaymentTransaction>(&sql).bind(document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_optional(pool).await.map_err(Into::into)
+    tenant_query!(
+        pool,
+        PaymentTransaction,
+        &sql,
+        [document_id],
+        tenant_id,
+        fetch_optional
+    )
+    .map_err(Into::into)
 }
 
 pub async fn find_all_admin_paginated(
@@ -118,17 +138,14 @@ pub async fn find_all_admin_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<PaymentTransaction>, i64)> {
+    check_schema!("payment_transactions", "created_at");
     let offset = (page - 1) * page_size;
     let tenant_ph = tenant_filter_ph(tenant_id, 1);
     let count_sql = format!(
         "SELECT COUNT(*) as count FROM payment_transactions WHERE 1=1{}",
         tenant_ph
     );
-    let mut cq = sqlx::query_as::<_, (i64,)>(&count_sql);
-    if let Some(tid) = tenant_id {
-        cq = cq.bind(tid);
-    }
-    let (total,): (i64,) = cq.fetch_one(pool).await?;
+    let (total,): (i64,) = tenant_query!(pool, (i64,), &count_sql, [], tenant_id, fetch_one)?;
     let base = usize::from(tenant_id.is_some()) + 1;
     let sql = format!(
         "SELECT * FROM payment_transactions WHERE 1=1{} ORDER BY created_at DESC LIMIT {} OFFSET {}",
@@ -155,30 +172,17 @@ pub async fn insert(
         pool,
         "payment_transactions",
         [
-            "document_id",
-            "payment_order_id",
-            "order_id",
-            "user_id",
-            "tx_type",
-            "amount",
-            "currency",
-            "provider_tx_id",
-            "status",
-            "raw_payload",
-            "created_at"
-        ],
-        [
-            &document_id,
-            cmd.payment_order_id,
-            &cmd.order_id,
-            cmd.user_id,
-            &cmd.tx_type,
-            cmd.amount,
-            &cmd.currency,
-            &cmd.provider_tx_id,
-            &cmd.status,
-            &cmd.raw_payload,
-            &now
+            "document_id" => &document_id,
+            "payment_order_id" => cmd.payment_order_id,
+            "order_id" => &cmd.order_id,
+            "user_id" => cmd.user_id,
+            "tx_type" => &cmd.tx_type,
+            "amount" => cmd.amount,
+            "currency" => &cmd.currency,
+            "provider_tx_id" => &cmd.provider_tx_id,
+            "status" => &cmd.status,
+            "raw_payload" => &cmd.raw_payload,
+            "created_at" => &now
         ],
         tenant_id
     )?;
@@ -202,30 +206,17 @@ pub async fn tx_insert(
         &mut *tx,
         "payment_transactions",
         [
-            "document_id",
-            "payment_order_id",
-            "order_id",
-            "user_id",
-            "tx_type",
-            "amount",
-            "currency",
-            "provider_tx_id",
-            "status",
-            "raw_payload",
-            "created_at"
-        ],
-        [
-            &document_id,
-            cmd.payment_order_id,
-            &cmd.order_id,
-            cmd.user_id,
-            &cmd.tx_type,
-            cmd.amount,
-            &cmd.currency,
-            &cmd.provider_tx_id,
-            &cmd.status,
-            &cmd.raw_payload,
-            &now
+            "document_id" => &document_id,
+            "payment_order_id" => cmd.payment_order_id,
+            "order_id" => &cmd.order_id,
+            "user_id" => cmd.user_id,
+            "tx_type" => &cmd.tx_type,
+            "amount" => cmd.amount,
+            "currency" => &cmd.currency,
+            "provider_tx_id" => &cmd.provider_tx_id,
+            "status" => &cmd.status,
+            "raw_payload" => &cmd.raw_payload,
+            "created_at" => &now
         ],
         tenant_id
     )?;

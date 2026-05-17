@@ -19,18 +19,14 @@ pub struct Currency {
 }
 
 pub async fn find_by_code(pool: &crate::db::Pool, code: &str) -> AppResult<Option<Currency>> {
-    let sql = format!("SELECT * FROM currencies WHERE code = {}", ph(1));
-    sqlx::query_as::<_, Currency>(&sql)
-        .bind(code)
-        .fetch_optional(pool)
-        .await
-        .map_err(Into::into)
+    crud_find!(pool, "currencies" => Currency, "code" => code).map_err(Into::into)
 }
 
 pub async fn find_active_by_code(
     pool: &crate::db::Pool,
     code: &str,
 ) -> AppResult<Option<Currency>> {
+    check_schema!("currencies", "code", "is_active");
     let sql = format!(
         "SELECT * FROM currencies WHERE code = {} AND is_active = 1",
         ph(1)
@@ -46,6 +42,7 @@ pub async fn find_by_code_tx(
     tx: &mut crate::db::pool::DbConnection,
     code: &str,
 ) -> AppResult<Option<Currency>> {
+    check_schema!("currencies", "code", "is_active");
     let sql = format!(
         "SELECT * FROM currencies WHERE code = {} AND is_active = 1",
         ph(1)
@@ -58,6 +55,18 @@ pub async fn find_by_code_tx(
 }
 
 pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Currency>> {
+    check_schema!(
+        "currencies",
+        "id",
+        "document_id",
+        "code",
+        "name",
+        "decimals",
+        "is_active",
+        "version",
+        "created_at",
+        "updated_at"
+    );
     let sql = "SELECT * FROM currencies ORDER BY code";
     sqlx::query_as::<_, Currency>(sql)
         .fetch_all(pool)
@@ -71,6 +80,15 @@ pub async fn create(
     name: &str,
     decimals: i64,
 ) -> AppResult<Currency> {
+    check_schema!(
+        "currencies",
+        "document_id",
+        "code",
+        "name",
+        "decimals",
+        "created_at",
+        "updated_at"
+    );
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
     let sql = format!(
         "INSERT INTO currencies (document_id, code, name, decimals, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {})",
@@ -105,6 +123,15 @@ pub async fn update(
     name: Option<&str>,
     is_active: Option<bool>,
 ) -> AppResult<Option<Currency>> {
+    check_schema!(
+        "currencies",
+        "id",
+        "code",
+        "name",
+        "is_active",
+        "version",
+        "updated_at"
+    );
     let existing = find_by_code(pool, code).await?;
     let existing = match existing {
         Some(e) => e,
@@ -143,6 +170,8 @@ pub async fn update(
 }
 
 pub async fn delete_by_code(pool: &crate::db::Pool, code: &str) -> AppResult<bool> {
+    check_schema!("currencies", "id", "code");
+    check_schema!("wallets", "currency");
     let existing = find_by_code(pool, code).await?;
     let existing = match existing {
         Some(e) => e,

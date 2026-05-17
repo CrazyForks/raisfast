@@ -41,6 +41,16 @@ pub struct Permission {
 
 /// List all roles
 pub async fn list_roles(pool: &crate::db::Pool) -> AppResult<Vec<Role>> {
+    check_schema!(
+        "roles",
+        "id",
+        "document_id",
+        "name",
+        "description",
+        "is_system",
+        "created_at",
+        "updated_at"
+    );
     let roles = sqlx::query_as::<_, Role>(
         "SELECT id, document_id, name, description, is_system, created_at, updated_at FROM roles ORDER BY name",
     )
@@ -51,19 +61,13 @@ pub async fn list_roles(pool: &crate::db::Pool) -> AppResult<Vec<Role>> {
 
 /// Find role by document_id
 pub async fn find_role_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<Option<Role>> {
-    let sql = format!(
-        "SELECT id, document_id, name, description, is_system, created_at, updated_at FROM roles WHERE document_id = {}",
-        ph(1)
-    );
-    let role = sqlx::query_as::<_, Role>(&sql)
-        .bind(document_id)
-        .fetch_optional(pool)
-        .await?;
+    let role = crud_find!(pool, "roles" => Role, "document_id" => document_id)?;
     Ok(role)
 }
 
 /// Find role ID by role name (returns integer PK)
 pub async fn find_role_id_by_name(pool: &crate::db::Pool, name: &str) -> AppResult<Option<i64>> {
+    check_schema!("roles", "id", "name");
     let sql = format!("SELECT id FROM roles WHERE name = {}", ph(1));
     let row = sqlx::query_as::<_, (i64,)>(&sql)
         .bind(name)
@@ -79,6 +83,15 @@ pub async fn create_role(
     name: &str,
     description: Option<&str>,
 ) -> AppResult<Role> {
+    check_schema!(
+        "roles",
+        "document_id",
+        "name",
+        "description",
+        "is_system",
+        "created_at",
+        "updated_at"
+    );
     let now = crate::utils::tz::now_utc();
     let sql = format!(
         "INSERT INTO roles (document_id, name, description, is_system, created_at, updated_at) VALUES ({}, {}, {}, 0, {}, {})",
@@ -110,6 +123,7 @@ pub async fn update_role(
     name: Option<&str>,
     description: Option<&str>,
 ) -> AppResult<Role> {
+    check_schema!("roles", "document_id", "name", "description", "updated_at");
     let mut sets = Vec::new();
     let mut idx = 1;
     let now = crate::utils::tz::now_utc();
@@ -131,8 +145,8 @@ pub async fn update_role(
     );
     let mut q = sqlx::query(sql.as_ref());
     q = q.bind(now);
-    bind_tenant!(q, name);
-    bind_tenant!(q, description);
+    bind_optional!(q, name);
+    bind_optional!(q, description);
     q = q.bind(document_id);
     q.execute(pool).await?;
 
@@ -143,8 +157,7 @@ pub async fn update_role(
 
 /// Delete role
 pub async fn delete_role(pool: &crate::db::Pool, document_id: &str) -> AppResult<()> {
-    let sql = format!("DELETE FROM roles WHERE document_id = {}", ph(1));
-    sqlx::query(&sql).bind(document_id).execute(pool).await?;
+    crud_delete!(pool, "roles", "document_id" => document_id)?;
     Ok(())
 }
 
@@ -153,6 +166,17 @@ pub async fn find_permissions_by_role_id(
     pool: &crate::db::Pool,
     role_id: i64,
 ) -> AppResult<Vec<Permission>> {
+    check_schema!(
+        "permissions",
+        "id",
+        "document_id",
+        "role_id",
+        "action",
+        "subject",
+        "fields",
+        "conditions",
+        "created_at"
+    );
     let sql = format!(
         "SELECT id, document_id, role_id, action, subject, fields, conditions, created_at FROM permissions WHERE role_id = {} ORDER BY action",
         ph(1)
@@ -166,34 +190,22 @@ pub async fn find_permissions_by_role_id(
 
 /// Delete all permissions for a role
 pub async fn delete_permissions_by_role_id(pool: &crate::db::Pool, role_id: i64) -> AppResult<()> {
-    let sql = format!("DELETE FROM permissions WHERE role_id = {}", ph(1));
-    sqlx::query(&sql).bind(role_id).execute(pool).await?;
+    crud_delete!(pool, "permissions", "role_id" => role_id)?;
     Ok(())
 }
 
 /// Insert a single permission
 pub async fn insert_permission(pool: &crate::db::Pool, cmd: &CreatePermissionCmd) -> AppResult<()> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
-    let sql = format!(
-        "INSERT INTO permissions (document_id, role_id, action, subject, fields, conditions, created_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7)
-    );
-    sqlx::query(&sql)
-        .bind(&document_id)
-        .bind(cmd.role_id)
-        .bind(&cmd.action)
-        .bind(&cmd.subject)
-        .bind(&cmd.fields)
-        .bind(&cmd.conditions)
-        .bind(now)
-        .execute(pool)
-        .await?;
+    crud_insert!(pool, "permissions", [
+        "document_id" => &document_id,
+        "role_id" => cmd.role_id,
+        "action" => &cmd.action,
+        "subject" => &cmd.subject,
+        "fields" => cmd.fields.clone(),
+        "conditions" => cmd.conditions.clone(),
+        "created_at" => now,
+    ])?;
     Ok(())
 }
 

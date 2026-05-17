@@ -34,16 +34,8 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentRefund>> {
-    let sql = format!(
-        "SELECT * FROM payment_refunds WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, PaymentRefund>(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_optional(pool).await.map_err(Into::into)
+    tenant_find!(pool, "payment_refunds" => PaymentRefund, "id" => id, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn find_by_payment_order_id(
@@ -56,11 +48,15 @@ pub async fn find_by_payment_order_id(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    let mut q = sqlx::query_as::<_, PaymentRefund>(&sql).bind(payment_order_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_all(pool).await.map_err(Into::into)
+    tenant_query!(
+        pool,
+        PaymentRefund,
+        &sql,
+        [payment_order_id],
+        tenant_id,
+        fetch_all
+    )
+    .map_err(Into::into)
 }
 
 pub async fn find_by_order_id(
@@ -73,11 +69,7 @@ pub async fn find_by_order_id(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    let mut q = sqlx::query_as::<_, PaymentRefund>(&sql).bind(order_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_all(pool).await.map_err(Into::into)
+    tenant_query!(pool, PaymentRefund, &sql, [order_id], tenant_id, fetch_all).map_err(Into::into)
 }
 
 pub async fn insert(
@@ -91,47 +83,23 @@ pub async fn insert(
         pool,
         "payment_refunds",
         [
-            "document_id",
-            "payment_order_id",
-            "order_id",
-            "user_id",
-            "amount",
-            "currency",
-            "reason",
-            "provider_refund_id",
-            "status",
-            "payment_tx_id",
-            "metadata",
-            "created_at",
-            "updated_at"
-        ],
-        [
-            &document_id,
-            cmd.payment_order_id,
-            &cmd.order_id,
-            cmd.user_id,
-            cmd.amount,
-            &cmd.currency,
-            &cmd.reason,
-            &cmd.provider_refund_id,
-            &cmd.status,
-            cmd.payment_tx_id,
-            &cmd.metadata,
-            &now,
-            &now
+            "document_id" => &document_id,
+            "payment_order_id" => cmd.payment_order_id,
+            "order_id" => &cmd.order_id,
+            "user_id" => cmd.user_id,
+            "amount" => cmd.amount,
+            "currency" => &cmd.currency,
+            "reason" => &cmd.reason,
+            "provider_refund_id" => &cmd.provider_refund_id,
+            "status" => &cmd.status,
+            "payment_tx_id" => cmd.payment_tx_id,
+            "metadata" => &cmd.metadata,
+            "created_at" => &now,
+            "updated_at" => &now
         ],
         tenant_id
     )?;
-    let sql2 = format!(
-        "SELECT * FROM payment_refunds WHERE document_id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, PaymentRefund>(&sql2).bind(&document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_one(pool).await.map_err(Into::into)
+    tenant_find_one!(pool, "payment_refunds" => PaymentRefund, "document_id" => &document_id, tenant_id).map_err(Into::into)
 }
 
 pub async fn update_status(
@@ -140,17 +108,13 @@ pub async fn update_status(
     status: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let sql = format!(
-        "UPDATE payment_refunds SET status = {}, updated_at = datetime('now') WHERE id = {}{}",
-        ph(1),
-        ph(2),
-        tenant_filter_ph(tenant_id, 3)
-    );
-    let mut q = sqlx::query(&sql).bind(status).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.execute(pool).await?;
+    crate::tenant_update!(
+        pool, "payment_refunds",
+        bind: ["status" => status],
+        raw: ["updated_at" => "datetime('now')"],
+        where: "id" => id,
+        tenant: tenant_id
+    )?;
     Ok(())
 }
 
@@ -164,11 +128,7 @@ pub async fn sum_refunded_by_order(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    let mut q = sqlx::query_as::<_, (i64,)>(&sql).bind(payment_order_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let (total,) = q.fetch_one(pool).await?;
+    let (total,) = tenant_query!(pool, (i64,), &sql, [payment_order_id], tenant_id, fetch_one)?;
     Ok(total)
 }
 
@@ -178,17 +138,14 @@ pub async fn find_all_admin_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<PaymentRefund>, i64)> {
+    check_schema!("payment_refunds", "created_at");
     let offset = (page - 1) * page_size;
     let tenant_ph = tenant_filter_ph(tenant_id, 1);
     let count_sql = format!(
         "SELECT COUNT(*) as count FROM payment_refunds WHERE 1=1{}",
         tenant_ph
     );
-    let mut cq = sqlx::query_as::<_, (i64,)>(&count_sql);
-    if let Some(tid) = tenant_id {
-        cq = cq.bind(tid);
-    }
-    let (total,): (i64,) = cq.fetch_one(pool).await?;
+    let (total,): (i64,) = tenant_query!(pool, (i64,), &count_sql, [], tenant_id, fetch_one)?;
     let base = usize::from(tenant_id.is_some()) + 1;
     let sql = format!(
         "SELECT * FROM payment_refunds WHERE 1=1{} ORDER BY created_at DESC LIMIT {} OFFSET {}",
@@ -215,32 +172,18 @@ pub async fn tx_insert(
         &mut *tx,
         "payment_refunds",
         [
-            "document_id",
-            "payment_order_id",
-            "order_id",
-            "user_id",
-            "amount",
-            "currency",
-            "reason",
-            "provider_refund_id",
-            "status",
-            "metadata",
-            "created_at",
-            "updated_at"
-        ],
-        [
-            &document_id,
-            cmd.payment_order_id,
-            &cmd.order_id,
-            cmd.user_id,
-            cmd.amount,
-            &cmd.currency,
-            &cmd.reason,
-            &cmd.provider_refund_id,
-            &cmd.status,
-            &cmd.metadata,
-            &now,
-            &now
+            "document_id" => &document_id,
+            "payment_order_id" => cmd.payment_order_id,
+            "order_id" => &cmd.order_id,
+            "user_id" => cmd.user_id,
+            "amount" => cmd.amount,
+            "currency" => &cmd.currency,
+            "reason" => &cmd.reason,
+            "provider_refund_id" => &cmd.provider_refund_id,
+            "status" => &cmd.status,
+            "metadata" => &cmd.metadata,
+            "created_at" => &now,
+            "updated_at" => &now
         ],
         tenant_id
     )?;
@@ -264,11 +207,14 @@ pub async fn tx_sum_refunded_by_order(
             ph(1)
         )
     };
-    let mut q = sqlx::query_as::<_, (i64,)>(&sql).bind(payment_order_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let (total,) = q.fetch_one(&mut *tx).await?;
+    let (total,) = tenant_query!(
+        &mut *tx,
+        (i64,),
+        &sql,
+        [payment_order_id],
+        tenant_id,
+        fetch_one
+    )?;
     Ok(total)
 }
 
@@ -276,6 +222,7 @@ pub async fn tx_find_by_document_id(
     tx: &mut crate::db::pool::DbConnection,
     document_id: &str,
 ) -> AppResult<Option<PaymentRefund>> {
+    check_schema!("payment_refunds", "document_id");
     let sql = format!(
         "SELECT * FROM payment_refunds WHERE document_id = {}",
         ph(1)

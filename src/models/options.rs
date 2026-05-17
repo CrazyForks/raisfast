@@ -110,6 +110,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> for OptionRow {
 
 /// Query all autoload options (preloaded at startup)
 pub async fn find_autoload(pool: &crate::db::Pool) -> AppResult<Vec<OptionRow>> {
+    check_schema!("options", "autoload");
     let sql = "SELECT * FROM options WHERE autoload = 1";
     let rows = sqlx::query_as::<_, OptionRow>(sql).fetch_all(pool).await?;
     Ok(rows)
@@ -121,6 +122,7 @@ pub async fn find_by_key(
     key: &str,
     tenant_id: Option<i64>,
 ) -> AppResult<Option<OptionRow>> {
+    check_schema!("options", "option_key");
     match tenant_id {
         Some(tid) => {
             let sql = format!(
@@ -148,6 +150,7 @@ pub async fn find_by_key(
 
 /// Query all options
 pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<i64>) -> AppResult<Vec<OptionRow>> {
+    check_schema!("options", "sort_order", "option_key");
     match tenant_id {
         Some(tid) => {
             let sql = format!(
@@ -175,6 +178,7 @@ pub async fn upsert_value(
     value: &str,
     tenant_id: Option<i64>,
 ) -> AppResult<()> {
+    check_schema!("options", "value", "updated_at", "option_key");
     match tenant_id {
         Some(tid) => {
             let now = crate::utils::tz::now_utc();
@@ -218,6 +222,7 @@ pub async fn delete_by_key(
     key: &str,
     tenant_id: Option<i64>,
 ) -> AppResult<()> {
+    check_schema!("options", "option_key");
     match tenant_id {
         Some(tid) => {
             let sql = format!(

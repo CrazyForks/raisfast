@@ -319,13 +319,7 @@ pub async fn find_by_slug(
     slug: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Page>> {
-    let filter = tenant_filter_ph(tenant_id, 2);
-    let sql = format!("SELECT * FROM pages WHERE slug = {}{filter}", ph(1));
-    let mut q = sqlx::query_as::<_, Page>(&sql).bind(slug);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    Ok(q.fetch_optional(pool).await?)
+    Ok(tenant_find!(pool, "pages" => Page, "slug" => slug, tenant_id)?)
 }
 
 pub async fn find_by_id(
@@ -333,13 +327,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Page>> {
-    let filter = tenant_filter_ph(tenant_id, 2);
-    let sql = format!("SELECT * FROM pages WHERE id = {}{filter}", ph(1));
-    let mut q = sqlx::query_as::<_, Page>(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    Ok(q.fetch_optional(pool).await?)
+    Ok(tenant_find!(pool, "pages" => Page, "id" => id, tenant_id)?)
 }
 
 pub async fn find_by_document_id(
@@ -347,13 +335,7 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Page>> {
-    let filter = tenant_filter_ph(tenant_id, 2);
-    let sql = format!("SELECT * FROM pages WHERE document_id = {}{filter}", ph(1));
-    let mut q = sqlx::query_as::<_, Page>(&sql).bind(document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    Ok(q.fetch_optional(pool).await?)
+    Ok(tenant_find!(pool, "pages" => Page, "document_id" => document_id, tenant_id)?)
 }
 
 pub async fn list_published(
@@ -362,6 +344,7 @@ pub async fn list_published(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Page>, i64)> {
+    check_schema!("pages", "status", "sort_order", "created_at");
     let offset = (page - 1) * page_size;
     let count_filter = tenant_filter_ph(tenant_id, 2);
     let count_sql = format!(
@@ -398,6 +381,7 @@ pub async fn list_all(
     status: Option<PageStatus>,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Page>, i64)> {
+    check_schema!("pages", "status", "sort_order", "created_at");
     let offset = (page - 1) * page_size;
     let has_status = status.is_some();
     let status_clause = if has_status {
@@ -451,44 +435,24 @@ pub async fn create(
         pool,
         "pages",
         [
-            "document_id",
-            "title",
-            "slug",
-            "content",
-            "blocks",
-            "meta_title",
-            "meta_description",
-            "og_image",
-            "template",
-            "parent_id",
-            "sort_order",
-            "status",
-            "created_by",
-            "updated_by",
-            "cover_image",
-            "published_at",
-            "created_at",
-            "updated_at"
-        ],
-        [
-            &document_id,
-            &cmd.title,
-            &cmd.slug,
-            &cmd.content,
-            &cmd.blocks,
-            &cmd.meta_title,
-            &cmd.meta_description,
-            &cmd.og_image,
-            &cmd.template,
-            cmd.parent_id,
-            cmd.sort_order,
-            cmd.status,
-            cmd.created_by,
-            cmd.created_by,
-            &cmd.cover_image,
-            published_at,
-            now,
-            now
+            "document_id" => &document_id,
+            "title" => &cmd.title,
+            "slug" => &cmd.slug,
+            "content" => &cmd.content,
+            "blocks" => &cmd.blocks,
+            "meta_title" => &cmd.meta_title,
+            "meta_description" => &cmd.meta_description,
+            "og_image" => &cmd.og_image,
+            "template" => &cmd.template,
+            "parent_id" => cmd.parent_id,
+            "sort_order" => cmd.sort_order,
+            "status" => cmd.status,
+            "created_by" => cmd.created_by,
+            "updated_by" => cmd.created_by,
+            "cover_image" => &cmd.cover_image,
+            "published_at" => published_at,
+            "created_at" => now,
+            "updated_at" => now
         ],
         tenant_id
     )?;
@@ -503,6 +467,25 @@ pub async fn update(
     cmd: &UpdatePageCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
+    check_schema!(
+        "pages",
+        "updated_by",
+        "title",
+        "slug",
+        "content",
+        "blocks",
+        "meta_title",
+        "meta_description",
+        "og_image",
+        "template",
+        "parent_id",
+        "sort_order",
+        "status",
+        "published_at",
+        "cover_image",
+        "updated_at",
+        "id"
+    );
     let now = crate::utils::tz::now_utc();
     let mut idx = 0;
     let mut sets = vec![];
@@ -635,13 +618,7 @@ pub async fn update(
 }
 
 pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
-    let filter = tenant_filter_ph(tenant_id, 2);
-    let sql = format!("DELETE FROM pages WHERE id = {}{filter}", ph(1));
-    let mut q = sqlx::query(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let result = q.execute(pool).await?;
+    let result = tenant_delete!(pool, "pages", "id" => id, tenant_id)?;
     AppError::expect_affected(&result, "page")
 }
 
@@ -652,6 +629,14 @@ pub async fn update_status(
     updated_by: Option<i64>,
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
+    check_schema!(
+        "pages",
+        "status",
+        "updated_by",
+        "published_at",
+        "updated_at",
+        "id"
+    );
     let now = crate::utils::tz::now_utc();
     let mut idx = 1;
     let status_ph = ph(idx);
@@ -706,20 +691,14 @@ pub async fn reorder(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    let tf = tenant_filter_ph(tenant_id, 3);
-    let sql = format!(
-        "UPDATE pages SET sort_order = {}, updated_at = {} WHERE id = {}{tf}",
-        ph(1),
-        ph(2),
-        ph(3)
-    );
 
     for (id, sort_order) in items {
-        let mut q = sqlx::query(&sql).bind(sort_order).bind(now).bind(id);
-        if let Some(tid) = tenant_id {
-            q = q.bind(tid);
-        }
-        q.execute(pool).await?;
+        crate::tenant_update!(
+            pool, "pages",
+            bind: ["sort_order" => sort_order, "updated_at" => now],
+            where: "id" => id,
+            tenant: tenant_id
+        )?;
     }
     Ok(())
 }
@@ -733,11 +712,14 @@ pub async fn list_sitemap(
         "SELECT slug, updated_at FROM pages WHERE status = {}{filter} ORDER BY sort_order ASC",
         ph(1)
     );
-    let mut q = sqlx::query_as::<_, (String, Option<String>)>(&sql).bind(PageStatus::Published);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    Ok(q.fetch_all(pool).await?)
+    Ok(tenant_query!(
+        pool,
+        (String, Option<String>),
+        &sql,
+        [PageStatus::Published],
+        tenant_id,
+        fetch_all
+    )?)
 }
 
 #[cfg(test)]

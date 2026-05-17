@@ -43,22 +43,13 @@ pub async fn create(
 
     let expires_at = crate::utils::tz::now_utc() + chrono::Duration::seconds(expires_in_secs);
 
-    let sql = format!(
-        "INSERT INTO password_reset_tokens (document_id, user_id, token, expires_at, created_at) VALUES ({}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-    );
-    sqlx::query(&sql)
-        .bind(&document_id)
-        .bind(user_id)
-        .bind(&token)
-        .bind(expires_at)
-        .bind(now)
-        .execute(pool)
-        .await?;
+    crud_insert!(pool, "password_reset_tokens", [
+        "document_id" => &document_id,
+        "user_id" => user_id,
+        "token" => &token,
+        "expires_at" => expires_at,
+        "created_at" => now
+    ])?;
 
     find_by_token(pool, &token).await?.ok_or_else(|| {
         crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
@@ -72,6 +63,7 @@ pub async fn find_by_token(
     pool: &crate::db::Pool,
     token: &str,
 ) -> AppResult<Option<PasswordResetToken>> {
+    check_schema!("password_reset_tokens", "token", "used_at");
     let sql = format!(
         "SELECT * FROM password_reset_tokens WHERE token = {} AND used_at IS NULL",
         ph(1),
@@ -86,17 +78,16 @@ pub async fn find_by_token(
 /// Mark a token as used
 pub async fn mark_used(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    let sql = format!(
-        "UPDATE password_reset_tokens SET used_at = {} WHERE id = {}",
-        ph(1),
-        ph(2),
-    );
-    sqlx::query(&sql).bind(now).bind(id).execute(pool).await?;
+    crud_update!(pool, "password_reset_tokens",
+        bind: ["used_at" => now],
+        where: "id" => id
+    )?;
     Ok(())
 }
 
 /// Delete all unused reset tokens for a user (called before creating a new token to prevent token accumulation)
 pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<()> {
+    check_schema!("password_reset_tokens", "user_id", "used_at");
     let sql = format!(
         "DELETE FROM password_reset_tokens WHERE user_id = {} AND used_at IS NULL",
         ph(1),
@@ -107,6 +98,7 @@ pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: i64) -> AppR
 
 /// Clean up expired and unused tokens
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
+    check_schema!("password_reset_tokens", "expires_at", "used_at");
     let now = crate::utils::tz::now_utc();
     let sql = format!(
         "DELETE FROM password_reset_tokens WHERE expires_at < {} AND used_at IS NULL",

@@ -49,25 +49,14 @@ pub async fn create_state(
     expires_at: &str,
 ) -> AppResult<String> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
-    let sql = format!(
-        "INSERT INTO oauth_states (document_id, provider, code_verifier, user_id, expires_at, created_at) VALUES ({}, {}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6)
-    );
-    let mut q = sqlx::query(&sql)
-        .bind(&document_id)
-        .bind(provider)
-        .bind(code_verifier);
-    q = if let Some(uid) = user_id {
-        q.bind(uid)
-    } else {
-        q.bind(Option::<i64>::None)
-    };
-    q.bind(expires_at).bind(now).execute(pool).await?;
+    crud_insert!(pool, "oauth_states", [
+        "document_id" => &document_id,
+        "provider" => provider,
+        "code_verifier" => code_verifier,
+        "user_id" => user_id,
+        "expires_at" => expires_at,
+        "created_at" => now,
+    ])?;
     Ok(document_id)
 }
 
@@ -76,6 +65,7 @@ pub async fn consume_state(
     pool: &crate::db::Pool,
     document_id: &str,
 ) -> AppResult<Option<OAuthState>> {
+    check_schema!("oauth_states", "document_id", "expires_at");
     let sql = format!(
         "SELECT * FROM oauth_states WHERE document_id = {} AND expires_at > {}",
         ph(1),
@@ -99,6 +89,7 @@ pub async fn consume_state(
 
 /// Clean up expired OAuth state records
 pub async fn cleanup_expired_states(pool: &crate::db::Pool) -> AppResult<u64> {
+    check_schema!("oauth_states", "expires_at");
     let sql = format!(
         "DELETE FROM oauth_states WHERE expires_at <= {}",
         crate::db::dialect::now_fn(),
@@ -113,6 +104,7 @@ pub async fn find_by_provider_user(
     provider: &str,
     provider_user_id: &str,
 ) -> AppResult<Option<OAuthAccount>> {
+    check_schema!("oauth_accounts", "provider", "provider_user_id");
     let sql = format!(
         "SELECT * FROM oauth_accounts WHERE provider = {} AND provider_user_id = {}",
         ph(1),
@@ -128,6 +120,7 @@ pub async fn find_by_provider_user(
 
 /// Find all OAuth bindings for a user
 pub async fn find_by_user_id(pool: &crate::db::Pool, user_id: i64) -> AppResult<Vec<OAuthAccount>> {
+    check_schema!("oauth_accounts", "user_id", "created_at");
     let sql = format!(
         "SELECT * FROM oauth_accounts WHERE user_id = {} ORDER BY created_at",
         ph(1)
@@ -160,46 +153,23 @@ pub async fn create_account(
 ) -> AppResult<OAuthAccount> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
-    let sql = format!(
-        "INSERT INTO oauth_accounts (document_id, user_id, provider, provider_user_id, email, display_name, avatar_url, access_token, refresh_token, token_expires_at, profile, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7),
-        ph(8),
-        ph(9),
-        ph(10),
-        ph(11),
-        ph(12),
-        ph(13)
-    );
-    sqlx::query(&sql)
-        .bind(&document_id)
-        .bind(params.user_id)
-        .bind(params.provider)
-        .bind(params.provider_user_id)
-        .bind(params.email)
-        .bind(params.display_name)
-        .bind(params.avatar_url)
-        .bind(params.access_token)
-        .bind(params.refresh_token)
-        .bind(params.token_expires_at)
-        .bind(params.profile)
-        .bind(now)
-        .bind(now)
-        .execute(pool)
-        .await?;
+    crud_insert!(pool, "oauth_accounts", [
+        "document_id" => &document_id,
+        "user_id" => params.user_id,
+        "provider" => params.provider,
+        "provider_user_id" => params.provider_user_id,
+        "email" => params.email,
+        "display_name" => params.display_name,
+        "avatar_url" => params.avatar_url,
+        "access_token" => params.access_token,
+        "refresh_token" => params.refresh_token,
+        "token_expires_at" => params.token_expires_at,
+        "profile" => params.profile,
+        "created_at" => now,
+        "updated_at" => now,
+    ])?;
 
-    let sql2 = format!("SELECT * FROM oauth_accounts WHERE document_id = {}", ph(1));
-    let account = sqlx::query_as::<_, OAuthAccount>(&sql2)
-        .bind(&document_id)
-        .fetch_one(pool)
-        .await?;
-
-    Ok(account)
+    Ok(crud_find_one!(pool, "oauth_accounts" => OAuthAccount, "document_id" => &document_id)?)
 }
 
 /// Parameters for updating an OAuth account binding
@@ -220,30 +190,19 @@ pub async fn update_account(
     params: UpdateOAuthAccountParams<'_>,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    let sql = format!(
-        "UPDATE oauth_accounts SET updated_at = {}, email = {}, display_name = {}, avatar_url = {}, access_token = {}, refresh_token = {}, token_expires_at = {}, profile = {} WHERE id = {}",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7),
-        ph(8),
-        ph(9)
-    );
-    sqlx::query(&sql)
-        .bind(now)
-        .bind(params.email)
-        .bind(params.display_name)
-        .bind(params.avatar_url)
-        .bind(params.access_token)
-        .bind(params.refresh_token)
-        .bind(params.token_expires_at)
-        .bind(params.profile)
-        .bind(params.id)
-        .execute(pool)
-        .await?;
+    crud_update!(pool, "oauth_accounts",
+        bind: [
+            "updated_at" => now,
+            "email" => params.email,
+            "display_name" => params.display_name,
+            "avatar_url" => params.avatar_url,
+            "access_token" => params.access_token,
+            "refresh_token" => params.refresh_token,
+            "token_expires_at" => params.token_expires_at,
+            "profile" => params.profile,
+        ],
+        where: "id" => params.id
+    )?;
     Ok(())
 }
 
@@ -253,6 +212,7 @@ pub async fn delete_account(
     user_id: i64,
     provider: &str,
 ) -> AppResult<bool> {
+    check_schema!("oauth_accounts", "user_id", "provider");
     let sql = format!(
         "DELETE FROM oauth_accounts WHERE user_id = {} AND provider = {}",
         ph(1),
@@ -268,6 +228,7 @@ pub async fn delete_account(
 
 /// Count the number of OAuth providers bound to a user
 pub async fn count_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<i64> {
+    check_schema!("oauth_accounts", "user_id");
     let sql = format!(
         "SELECT COUNT(*) FROM oauth_accounts WHERE user_id = {}",
         ph(1)

@@ -56,6 +56,7 @@ pub async fn find_by_auth_type_and_identifier(
     auth_type: AuthType,
     identifier: &str,
 ) -> AppResult<Option<UserCredential>> {
+    check_schema!("user_credentials", "auth_type", "identifier");
     let sql = format!(
         "SELECT * FROM user_credentials WHERE auth_type = {} AND identifier = {}",
         ph(1),
@@ -73,15 +74,12 @@ pub async fn find_by_user_id(
     pool: &crate::db::Pool,
     user_id: i64,
 ) -> AppResult<Vec<UserCredential>> {
-    let sql = format!("SELECT * FROM user_credentials WHERE user_id = {}", ph(1));
-    sqlx::query_as::<_, UserCredential>(&sql)
-        .bind(user_id)
-        .fetch_all(pool)
-        .await
+    crud_find_all!(pool, "user_credentials" => UserCredential, "user_id" => user_id)
         .map_err(Into::into)
 }
 
 pub async fn count_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<i64> {
+    check_schema!("user_credentials", "user_id");
     let sql = format!(
         "SELECT COUNT(*) as count FROM user_credentials WHERE user_id = {}",
         ph(1)
@@ -99,37 +97,18 @@ pub async fn create(
     verified: bool,
 ) -> AppResult<UserCredential> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
-    let sql = format!(
-        "INSERT INTO user_credentials (document_id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7),
-        ph(8)
-    );
-    sqlx::query(&sql)
-        .bind(&document_id)
-        .bind(user_id)
-        .bind(auth_type)
-        .bind(identifier)
-        .bind(credential_data)
-        .bind(if verified { 1 } else { 0 })
-        .bind(now)
-        .bind(now)
-        .execute(pool)
-        .await?;
-
-    let sql = format!(
-        "SELECT * FROM user_credentials WHERE document_id = {}",
-        ph(1)
-    );
-    let cred = sqlx::query_as::<_, UserCredential>(&sql)
-        .bind(&document_id)
-        .fetch_one(pool)
-        .await?;
+    crud_insert!(pool, "user_credentials", [
+        "document_id" => &document_id,
+        "user_id" => user_id,
+        "auth_type" => auth_type,
+        "identifier" => identifier,
+        "credential_data" => credential_data,
+        "verified" => if verified { 1 } else { 0 },
+        "created_at" => now,
+        "updated_at" => now
+    ])?;
+    let cred =
+        crud_find_one!(pool, "user_credentials" => UserCredential, "document_id" => &document_id)?;
     Ok(cred)
 }
 
@@ -139,49 +118,27 @@ pub async fn update_credential_data(
     credential_data: &str,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_str();
-    let sql = format!(
-        "UPDATE user_credentials SET credential_data = {}, updated_at = {} WHERE id = {}",
-        ph(1),
-        ph(2),
-        ph(3)
-    );
-    sqlx::query(&sql)
-        .bind(credential_data)
-        .bind(&now)
-        .bind(id)
-        .execute(pool)
-        .await?;
+    crud_update!(pool, "user_credentials",
+        bind: ["credential_data" => credential_data, "updated_at" => &now],
+        where: "id" => id
+    )?;
     Ok(())
 }
 
 pub async fn update_verified(pool: &crate::db::Pool, id: i64, verified: bool) -> AppResult<()> {
     let now = crate::utils::tz::now_str();
-    let sql = format!(
-        "UPDATE user_credentials SET verified = {}, updated_at = {} WHERE id = {}",
-        ph(1),
-        ph(2),
-        ph(3)
-    );
-    sqlx::query(&sql)
-        .bind(if verified { 1 } else { 0 })
-        .bind(&now)
-        .bind(id)
-        .execute(pool)
-        .await?;
+    crud_update!(pool, "user_credentials",
+        bind: ["verified" => if verified { 1 } else { 0 }, "updated_at" => &now],
+        where: "id" => id
+    )?;
     Ok(())
 }
 
 pub async fn delete_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<bool> {
-    let sql = format!("DELETE FROM user_credentials WHERE id = {}", ph(1));
-    let result = sqlx::query(&sql).bind(id).execute(pool).await?;
+    let result = crud_delete!(pool, "user_credentials", "id" => id)?;
     Ok(result.rows_affected() > 0)
 }
 
 pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<Option<UserCredential>> {
-    let sql = format!("SELECT * FROM user_credentials WHERE id = {}", ph(1));
-    sqlx::query_as::<_, UserCredential>(&sql)
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(Into::into)
+    crud_find!(pool, "user_credentials" => UserCredential, "id" => id).map_err(Into::into)
 }

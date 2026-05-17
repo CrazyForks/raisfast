@@ -49,40 +49,20 @@ pub async fn create(
         pool,
         "media",
         [
-            "document_id",
-            "user_id",
-            "filename",
-            "filepath",
-            "mimetype",
-            "size",
-            "width",
-            "height",
-            "created_at"
-        ],
-        [
-            &document_id,
-            cmd.user_id,
-            &cmd.filename,
-            &cmd.filepath,
-            &cmd.mimetype,
-            cmd.size,
-            cmd.width,
-            cmd.height,
-            now
+            "document_id" => &document_id,
+            "user_id" => cmd.user_id,
+            "filename" => &cmd.filename,
+            "filepath" => &cmd.filepath,
+            "mimetype" => &cmd.mimetype,
+            "size" => cmd.size,
+            "width" => cmd.width,
+            "height" => cmd.height,
+            "created_at" => now
         ],
         tenant_id
     )?;
 
-    let sql = format!(
-        "SELECT * FROM media WHERE document_id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, Media>(&sql).bind(&document_id);
-    if let Some(t) = tenant_id {
-        q = q.bind(t);
-    }
-    let media = q.fetch_one(pool).await?;
+    let media = tenant_find_one!(pool, "media" => Media, "document_id" => document_id, tenant_id)?;
 
     Ok(media)
 }
@@ -94,6 +74,7 @@ pub async fn find_all(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Media>, i64)> {
+    check_schema!("media", "user_id", "created_at");
     let offset = (page - 1) * page_size;
     let base = usize::from(tenant_id.is_some()) + 1;
     let sql = format!(
@@ -115,11 +96,7 @@ pub async fn find_all(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    let mut q2 = sqlx::query_as::<_, (i64,)>(&sql2).bind(user_id);
-    if let Some(tid) = tenant_id {
-        q2 = q2.bind(tid);
-    }
-    let total: (i64,) = q2.fetch_one(pool).await?;
+    let total: (i64,) = tenant_query!(pool, (i64,), &sql2, [user_id], tenant_id, fetch_one)?;
 
     Ok((items, total.0))
 }
@@ -130,6 +107,7 @@ pub async fn find_all_admin(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Media>, i64)> {
+    check_schema!("media", "created_at");
     let offset = (page - 1) * page_size;
     let base = usize::from(tenant_id.is_some()) + 1;
     let sql = format!(
@@ -149,11 +127,7 @@ pub async fn find_all_admin(
         "SELECT COUNT(*) FROM media WHERE 1=1{}",
         tenant_filter_ph(tenant_id, 1)
     );
-    let mut q2 = sqlx::query_as::<_, (i64,)>(&sql2);
-    if let Some(tid) = tenant_id {
-        q2 = q2.bind(tid);
-    }
-    let total: (i64,) = q2.fetch_one(pool).await?;
+    let total: (i64,) = tenant_query!(pool, (i64,), &sql2, [], tenant_id, fetch_one)?;
 
     Ok((items, total.0))
 }
@@ -163,17 +137,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Media>> {
-    let sql = format!(
-        "SELECT * FROM media WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, Media>(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let media = q.fetch_optional(pool).await?;
-    Ok(media)
+    Ok(tenant_find!(pool, "media" => Media, "id" => id, tenant_id)?)
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -201,21 +165,27 @@ pub async fn stats(
         "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE user_id = {}{filter}",
         ph(1)
     );
-    let mut q = sqlx::query_as::<_, (i64, i64)>(&total_sql).bind(user_id);
-    if let Some(t) = tenant_id {
-        q = q.bind(t);
-    }
-    let (total_files, total_size) = q.fetch_one(pool).await?;
+    let (total_files, total_size) = tenant_query!(
+        pool,
+        (i64, i64),
+        &total_sql,
+        [user_id],
+        tenant_id,
+        fetch_one
+    )?;
 
     let by_type_sql = format!(
         "SELECT mimetype, COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE user_id = {}{filter} GROUP BY mimetype ORDER BY COUNT(*) DESC",
         ph(1)
     );
-    let mut q2 = sqlx::query_as::<_, (String, i64, i64)>(&by_type_sql).bind(user_id);
-    if let Some(t) = tenant_id {
-        q2 = q2.bind(t);
-    }
-    let rows = q2.fetch_all(pool).await?;
+    let rows = tenant_query!(
+        pool,
+        (String, i64, i64),
+        &by_type_sql,
+        [user_id],
+        tenant_id,
+        fetch_all
+    )?;
 
     let by_type = rows
         .into_iter()
@@ -234,17 +204,7 @@ pub async fn stats(
 }
 
 pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
-    let sql = format!(
-        "DELETE FROM media WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let result = q.execute(pool).await?;
-
+    let result = tenant_delete!(pool, "media", "id" => id, tenant_id)?;
     AppError::expect_affected(&result, "media")
 }
 

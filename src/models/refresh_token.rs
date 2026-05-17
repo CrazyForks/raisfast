@@ -7,7 +7,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
@@ -35,21 +34,13 @@ pub async fn create_token(
     expires_at: &str,
 ) -> AppResult<()> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
-    sqlx::query(&format!(
-        "INSERT INTO refresh_tokens (document_id, user_id, token, expires_at, created_at) VALUES ({}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-    ))
-    .bind(document_id)
-    .bind(user_id)
-    .bind(token)
-    .bind(expires_at)
-    .bind(now)
-    .execute(pool)
-    .await?;
+    crud_insert!(pool, "refresh_tokens", [
+        "document_id" => document_id,
+        "user_id" => user_id,
+        "token" => token,
+        "expires_at" => expires_at,
+        "created_at" => now
+    ])?;
     Ok(())
 }
 
@@ -57,25 +48,14 @@ pub async fn create_token(
 ///
 /// Returns `Ok(Some(token))` or `Ok(None)` when not found.
 pub async fn find_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<Option<RefreshToken>> {
-    let sql = format!("SELECT * FROM refresh_tokens WHERE token = {}", ph(1));
-    let row = sqlx::query_as::<_, RefreshToken>(&sql)
-        .bind(token)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row)
+    crud_find!(pool, "refresh_tokens" => RefreshToken, "token" => token).map_err(Into::into)
 }
 
 /// Delete a refresh token by token string
 ///
 /// Used to revoke a specific refresh token on logout.
 pub async fn delete_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<()> {
-    sqlx::query(&format!(
-        "DELETE FROM refresh_tokens WHERE token = {}",
-        ph(1),
-    ))
-    .bind(token)
-    .execute(pool)
-    .await?;
+    crud_delete!(pool, "refresh_tokens", "token" => token)?;
     Ok(())
 }
 
@@ -83,13 +63,7 @@ pub async fn delete_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<(
 ///
 /// Used for logging out all devices or forcing re-login after a password change.
 pub async fn delete_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<()> {
-    sqlx::query(&format!(
-        "DELETE FROM refresh_tokens WHERE user_id = {}",
-        ph(1),
-    ))
-    .bind(user_id)
-    .execute(pool)
-    .await?;
+    crud_delete!(pool, "refresh_tokens", "user_id" => user_id)?;
     Ok(())
 }
 

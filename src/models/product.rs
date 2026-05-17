@@ -85,16 +85,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Product>> {
-    let sql = format!(
-        "SELECT * FROM products WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, Product>(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_optional(pool).await.map_err(Into::into)
+    tenant_find!(pool, "products" => Product, "id" => id, tenant_id).map_err(Into::into)
 }
 
 pub async fn find_by_document_id(
@@ -102,16 +93,8 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Product>> {
-    let sql = format!(
-        "SELECT * FROM products WHERE document_id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, Product>(&sql).bind(document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_optional(pool).await.map_err(Into::into)
+    tenant_find!(pool, "products" => Product, "document_id" => document_id, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn find_active_paginated(
@@ -125,11 +108,7 @@ pub async fn find_active_paginated(
         "SELECT COUNT(*) as count FROM products WHERE status = 'active'{}",
         tenant_filter_ph(tenant_id, 1)
     );
-    let mut cq = sqlx::query_as::<_, (i64,)>(&count_sql);
-    if let Some(tid) = tenant_id {
-        cq = cq.bind(tid);
-    }
-    let (total,): (i64,) = cq.fetch_one(pool).await?;
+    let (total,): (i64,) = tenant_query!(pool, (i64,), &count_sql, [], tenant_id, fetch_one)?;
     let base = usize::from(tenant_id.is_some()) + 1;
     let sql = format!(
         "SELECT * FROM products WHERE status = 'active'{} ORDER BY sort_order, created_at DESC LIMIT {} OFFSET {}",
@@ -218,60 +197,32 @@ pub async fn insert(
         pool,
         "products",
         [
-            "document_id",
-            "category_id",
-            "title",
-            "description",
-            "cover_url",
-            "product_type",
-            "fulfillment_type",
-            "delivery_hook",
-            "weight",
-            "price",
-            "currency",
-            "attributes",
-            "sort_order",
-            "slug",
-            "content",
-            "image_ids",
-            "original_price",
-            "specs",
-            "unit",
-            "min_purchase",
-            "max_purchase",
-            "virtual_sales",
-            "meta_title",
-            "meta_description",
-            "created_at",
-            "updated_at"
-        ],
-        [
-            &document_id,
-            cmd.category_id,
-            &cmd.title,
-            &cmd.description,
-            &cmd.cover_url,
-            &cmd.product_type,
-            &cmd.fulfillment_type,
-            &cmd.delivery_hook,
-            cmd.weight,
-            cmd.price,
-            &cmd.currency,
-            &cmd.attributes,
-            cmd.sort_order,
-            &cmd.slug,
-            &cmd.content,
-            &cmd.image_ids,
-            cmd.original_price,
-            &cmd.specs,
-            &cmd.unit,
-            cmd.min_purchase,
-            cmd.max_purchase,
-            cmd.virtual_sales,
-            &cmd.meta_title,
-            &cmd.meta_description,
-            &now,
-            &now
+            "document_id" => &document_id,
+            "category_id" => cmd.category_id,
+            "title" => &cmd.title,
+            "description" => &cmd.description,
+            "cover_url" => &cmd.cover_url,
+            "product_type" => &cmd.product_type,
+            "fulfillment_type" => &cmd.fulfillment_type,
+            "delivery_hook" => &cmd.delivery_hook,
+            "weight" => cmd.weight,
+            "price" => cmd.price,
+            "currency" => &cmd.currency,
+            "attributes" => &cmd.attributes,
+            "sort_order" => cmd.sort_order,
+            "slug" => &cmd.slug,
+            "content" => &cmd.content,
+            "image_ids" => &cmd.image_ids,
+            "original_price" => cmd.original_price,
+            "specs" => &cmd.specs,
+            "unit" => &cmd.unit,
+            "min_purchase" => cmd.min_purchase,
+            "max_purchase" => cmd.max_purchase,
+            "virtual_sales" => cmd.virtual_sales,
+            "meta_title" => &cmd.meta_title,
+            "meta_description" => &cmd.meta_description,
+            "created_at" => &now,
+            "updated_at" => &now
         ],
         tenant_id
     )?;
@@ -289,71 +240,42 @@ pub async fn update(
     cmd: &UpdateProductCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
-    let sql = format!(
-        "UPDATE products SET category_id={}, title={}, description={}, cover_url={}, product_type={}, fulfillment_type={}, delivery_hook={}, weight={}, price={}, currency={}, status={}, attributes={}, sort_order={}, slug={}, content={}, image_ids={}, original_price={}, specs={}, unit={}, min_purchase={}, max_purchase={}, total_sales={}, virtual_sales={}, meta_title={}, meta_description={}, published_at={}, updated_at=datetime('now'), version=version+1 WHERE id={} AND version={}{}",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7),
-        ph(8),
-        ph(9),
-        ph(10),
-        ph(11),
-        ph(12),
-        ph(13),
-        ph(14),
-        ph(15),
-        ph(16),
-        ph(17),
-        ph(18),
-        ph(19),
-        ph(20),
-        ph(21),
-        ph(22),
-        ph(23),
-        ph(24),
-        ph(25),
-        ph(26),
-        ph(27),
-        ph(28),
-        tenant_filter_ph(tenant_id, 29)
-    );
-    let mut q = sqlx::query(&sql)
-        .bind(cmd.category_id)
-        .bind(&cmd.title)
-        .bind(&cmd.description)
-        .bind(&cmd.cover_url)
-        .bind(&cmd.product_type)
-        .bind(&cmd.fulfillment_type)
-        .bind(&cmd.delivery_hook)
-        .bind(cmd.weight)
-        .bind(cmd.price)
-        .bind(&cmd.currency)
-        .bind(&cmd.status)
-        .bind(&cmd.attributes)
-        .bind(cmd.sort_order)
-        .bind(&cmd.slug)
-        .bind(&cmd.content)
-        .bind(&cmd.image_ids)
-        .bind(cmd.original_price)
-        .bind(&cmd.specs)
-        .bind(&cmd.unit)
-        .bind(cmd.min_purchase)
-        .bind(cmd.max_purchase)
-        .bind(cmd.total_sales)
-        .bind(cmd.virtual_sales)
-        .bind(&cmd.meta_title)
-        .bind(&cmd.meta_description)
-        .bind(&cmd.published_at)
-        .bind(cmd.id)
-        .bind(cmd.version);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let affected = q.execute(pool).await?.rows_affected();
+    let affected = crate::tenant_update!(
+        pool, "products",
+        bind: [
+            "category_id" => cmd.category_id,
+            "title" => &cmd.title,
+            "description" => &cmd.description,
+            "cover_url" => &cmd.cover_url,
+            "product_type" => &cmd.product_type,
+            "fulfillment_type" => &cmd.fulfillment_type,
+            "delivery_hook" => &cmd.delivery_hook,
+            "weight" => cmd.weight,
+            "price" => cmd.price,
+            "currency" => &cmd.currency,
+            "status" => &cmd.status,
+            "attributes" => &cmd.attributes,
+            "sort_order" => cmd.sort_order,
+            "slug" => &cmd.slug,
+            "content" => &cmd.content,
+            "image_ids" => &cmd.image_ids,
+            "original_price" => cmd.original_price,
+            "specs" => &cmd.specs,
+            "unit" => &cmd.unit,
+            "min_purchase" => cmd.min_purchase,
+            "max_purchase" => cmd.max_purchase,
+            "total_sales" => cmd.total_sales,
+            "virtual_sales" => cmd.virtual_sales,
+            "meta_title" => &cmd.meta_title,
+            "meta_description" => &cmd.meta_description,
+            "published_at" => &cmd.published_at,
+        ],
+        raw: ["updated_at" => "datetime('now')", "version" => "version + 1"],
+        where: "id" => cmd.id,
+        and: ["version" => cmd.version],
+        tenant: tenant_id
+    )?
+    .rows_affected();
     Ok(affected > 0)
 }
 

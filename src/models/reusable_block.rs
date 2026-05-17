@@ -36,13 +36,7 @@ pub async fn find_reusable_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<ReusableBlock>> {
-    let filter = tenant_filter_ph(tenant_id, 2);
-    let sql = format!("SELECT * FROM reusable_blocks WHERE id = {}{filter}", ph(1));
-    let mut q = sqlx::query_as::<_, ReusableBlock>(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    Ok(q.fetch_optional(pool).await?)
+    Ok(tenant_find!(pool, "reusable_blocks" => ReusableBlock, "id" => id, tenant_id)?)
 }
 
 pub async fn find_reusable_by_document_id(
@@ -50,16 +44,9 @@ pub async fn find_reusable_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<ReusableBlock>> {
-    let filter = tenant_filter_ph(tenant_id, 2);
-    let sql = format!(
-        "SELECT * FROM reusable_blocks WHERE document_id = {}{filter}",
-        ph(1)
-    );
-    let mut q = sqlx::query_as::<_, ReusableBlock>(&sql).bind(document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    Ok(q.fetch_optional(pool).await?)
+    Ok(
+        tenant_find!(pool, "reusable_blocks" => ReusableBlock, "document_id" => document_id, tenant_id)?,
+    )
 }
 
 pub async fn list_reusable(
@@ -68,11 +55,14 @@ pub async fn list_reusable(
 ) -> AppResult<Vec<ReusableBlock>> {
     let filter = tenant_filter_ph(tenant_id, 1);
     let sql = format!("SELECT * FROM reusable_blocks WHERE 1=1{filter} ORDER BY name ASC");
-    let mut q = sqlx::query_as::<_, ReusableBlock>(&sql);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    Ok(q.fetch_all(pool).await?)
+    Ok(tenant_query!(
+        pool,
+        ReusableBlock,
+        &sql,
+        [],
+        tenant_id,
+        fetch_all
+    )?)
 }
 
 pub async fn create_reusable(
@@ -85,26 +75,15 @@ pub async fn create_reusable(
         pool,
         "reusable_blocks",
         [
-            "document_id",
-            "name",
-            "block_type",
-            "content",
-            "description",
-            "created_by",
-            "updated_by",
-            "created_at",
-            "updated_at"
-        ],
-        [
-            &document_id,
-            &cmd.name,
-            &cmd.block_type,
-            &cmd.content,
-            &cmd.description,
-            cmd.created_by,
-            cmd.created_by,
-            now,
-            now
+            "document_id" => &document_id,
+            "name" => &cmd.name,
+            "block_type" => &cmd.block_type,
+            "content" => &cmd.content,
+            "description" => &cmd.description,
+            "created_by" => cmd.created_by,
+            "updated_by" => cmd.created_by,
+            "created_at" => now,
+            "updated_at" => now
         ],
         tenant_id
     )?;
@@ -119,6 +98,16 @@ pub async fn update_reusable(
     cmd: &UpdateReusableBlockCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<ReusableBlock> {
+    check_schema!(
+        "reusable_blocks",
+        "updated_at",
+        "updated_by",
+        "name",
+        "block_type",
+        "content",
+        "description",
+        "id"
+    );
     let now = crate::utils::tz::now_utc();
     let mut idx = 1;
     let mut sets = vec![format!("updated_at = {}", ph(1))];
@@ -187,13 +176,7 @@ pub async fn delete_reusable(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let filter = tenant_filter_ph(tenant_id, 2);
-    let sql = format!("DELETE FROM reusable_blocks WHERE id = {}{filter}", ph(1));
-    let mut q = sqlx::query(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let result = q.execute(pool).await?;
+    let result = tenant_delete!(pool, "reusable_blocks", "id" => id, tenant_id)?;
     AppError::expect_affected(&result, "reusable_block")
 }
 

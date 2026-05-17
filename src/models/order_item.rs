@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::db::dialect::ph;
-use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
@@ -35,16 +33,8 @@ pub async fn find_by_order_id(
     order_id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<OrderItem>> {
-    let sql = format!(
-        "SELECT * FROM order_items WHERE order_id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, OrderItem>(&sql).bind(order_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_all(pool).await.map_err(Into::into)
+    tenant_find_all!(pool, "order_items" => OrderItem, "order_id" => order_id, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn insert(
@@ -58,43 +48,22 @@ pub async fn insert(
         pool,
         "order_items",
         [
-            "document_id",
-            "order_id",
-            "product_id",
-            "title",
-            "description",
-            "unit_price",
-            "quantity",
-            "subtotal",
-            "cover_url",
-            "attributes",
-            "created_at"
-        ],
-        [
-            &document_id,
-            cmd.order_id,
-            cmd.product_id,
-            &cmd.title,
-            &cmd.description,
-            cmd.unit_price,
-            cmd.quantity,
-            cmd.subtotal,
-            &cmd.cover_url,
-            &cmd.attributes,
-            &now
+            "document_id" => &document_id,
+            "order_id" => cmd.order_id,
+            "product_id" => cmd.product_id,
+            "title" => &cmd.title,
+            "description" => &cmd.description,
+            "unit_price" => cmd.unit_price,
+            "quantity" => cmd.quantity,
+            "subtotal" => cmd.subtotal,
+            "cover_url" => &cmd.cover_url,
+            "attributes" => &cmd.attributes,
+            "created_at" => &now
         ],
         tenant_id
     )?;
-    let sql2 = format!(
-        "SELECT * FROM order_items WHERE document_id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, OrderItem>(&sql2).bind(&document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_one(pool).await.map_err(Into::into)
+    tenant_find_one!(pool, "order_items" => OrderItem, "document_id" => &document_id, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn insert_batch(
@@ -119,43 +88,22 @@ pub async fn tx_insert(
         &mut *tx,
         "order_items",
         [
-            "document_id",
-            "order_id",
-            "product_id",
-            "title",
-            "description",
-            "unit_price",
-            "quantity",
-            "subtotal",
-            "cover_url",
-            "attributes",
-            "created_at"
-        ],
-        [
-            &document_id,
-            cmd.order_id,
-            cmd.product_id,
-            &cmd.title,
-            &cmd.description,
-            cmd.unit_price,
-            cmd.quantity,
-            cmd.subtotal,
-            &cmd.cover_url,
-            &cmd.attributes,
-            &now
+            "document_id" => &document_id,
+            "order_id" => cmd.order_id,
+            "product_id" => cmd.product_id,
+            "title" => &cmd.title,
+            "description" => &cmd.description,
+            "unit_price" => cmd.unit_price,
+            "quantity" => cmd.quantity,
+            "subtotal" => cmd.subtotal,
+            "cover_url" => &cmd.cover_url,
+            "attributes" => &cmd.attributes,
+            "created_at" => &now
         ],
         tenant_id
     )?;
-    let sql2 = format!(
-        "SELECT * FROM order_items WHERE document_id = {}{}",
-        ph(1),
-        crate::db::tenant::tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, OrderItem>(&sql2).bind(&document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_one(&mut *tx).await.map_err(Into::into)
+    tenant_find_one!(&mut *tx, "order_items" => OrderItem, "document_id" => &document_id, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn tx_insert_batch(

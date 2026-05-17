@@ -33,16 +33,8 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentChannel>> {
-    let sql = format!(
-        "SELECT * FROM payment_channels WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, PaymentChannel>(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_optional(pool).await.map_err(Into::into)
+    tenant_find!(pool, "payment_channels" => PaymentChannel, "id" => id, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn find_by_document_id(
@@ -50,16 +42,7 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentChannel>> {
-    let sql = format!(
-        "SELECT * FROM payment_channels WHERE document_id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, PaymentChannel>(&sql).bind(document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_optional(pool).await.map_err(Into::into)
+    tenant_find!(pool, "payment_channels" => PaymentChannel, "document_id" => document_id, tenant_id).map_err(Into::into)
 }
 
 pub async fn find_all_active(
@@ -70,11 +53,7 @@ pub async fn find_all_active(
         "SELECT * FROM payment_channels WHERE is_active = 1{} ORDER BY sort_order, created_at DESC",
         tenant_filter_ph(tenant_id, 1)
     );
-    let mut q = sqlx::query_as::<_, PaymentChannel>(&sql);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_all(pool).await.map_err(Into::into)
+    tenant_query!(pool, PaymentChannel, &sql, [], tenant_id, fetch_all).map_err(Into::into)
 }
 
 pub async fn find_all_admin_paginated(
@@ -84,6 +63,7 @@ pub async fn find_all_admin_paginated(
     page_size: i64,
     is_active: Option<bool>,
 ) -> AppResult<(Vec<PaymentChannel>, i64)> {
+    check_schema!("payment_channels", "is_active", "sort_order", "created_at");
     let offset = (page - 1) * page_size;
     let tenant_ph = tenant_filter_ph(tenant_id, 1);
     let has_tenant = tenant_id.is_some();
@@ -154,30 +134,17 @@ pub async fn insert(
         pool,
         "payment_channels",
         [
-            "document_id",
-            "provider",
-            "name",
-            "is_live",
-            "credentials",
-            "webhook_secret",
-            "settings",
-            "is_active",
-            "sort_order",
-            "created_at",
-            "updated_at"
-        ],
-        [
-            &document_id,
-            &cmd.provider,
-            &cmd.name,
-            is_live_val,
-            &cmd.credentials,
-            &cmd.webhook_secret,
-            &cmd.settings,
-            is_active_val,
-            cmd.sort_order,
-            &now,
-            &now
+            "document_id" => &document_id,
+            "provider" => &cmd.provider,
+            "name" => &cmd.name,
+            "is_live" => is_live_val,
+            "credentials" => &cmd.credentials,
+            "webhook_secret" => &cmd.webhook_secret,
+            "settings" => &cmd.settings,
+            "is_active" => is_active_val,
+            "sort_order" => cmd.sort_order,
+            "created_at" => &now,
+            "updated_at" => &now
         ],
         tenant_id
     )?;
@@ -197,35 +164,24 @@ pub async fn update(
 ) -> AppResult<bool> {
     let is_live_val = if cmd.is_live { 1_i64 } else { 0_i64 };
     let is_active_val = if cmd.is_active { 1_i64 } else { 0_i64 };
-    let sql = format!(
-        "UPDATE payment_channels SET provider={}, name={}, is_live={}, credentials={}, webhook_secret={}, settings={}, is_active={}, sort_order={}, updated_at=datetime('now'), version=version+1 WHERE id={} AND version={}{}",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7),
-        ph(8),
-        ph(9),
-        ph(10),
-        tenant_filter_ph(tenant_id, 11)
-    );
-    let mut q = sqlx::query(&sql)
-        .bind(&cmd.provider)
-        .bind(&cmd.name)
-        .bind(is_live_val)
-        .bind(&cmd.credentials)
-        .bind(&cmd.webhook_secret)
-        .bind(&cmd.settings)
-        .bind(is_active_val)
-        .bind(cmd.sort_order)
-        .bind(cmd.id)
-        .bind(cmd.version);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let affected = q.execute(pool).await?.rows_affected();
+    let affected = crate::tenant_update!(
+        pool, "payment_channels",
+        bind: [
+            "provider" => &cmd.provider,
+            "name" => &cmd.name,
+            "is_live" => is_live_val,
+            "credentials" => &cmd.credentials,
+            "webhook_secret" => &cmd.webhook_secret,
+            "settings" => &cmd.settings,
+            "is_active" => is_active_val,
+            "sort_order" => cmd.sort_order,
+        ],
+        raw: ["updated_at" => "datetime('now')", "version" => "version + 1"],
+        where: "id" => cmd.id,
+        and: ["version" => cmd.version],
+        tenant: tenant_id
+    )?
+    .rows_affected();
     Ok(affected > 0)
 }
 
@@ -234,16 +190,7 @@ pub async fn delete_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
-    let sql = format!(
-        "DELETE FROM payment_channels WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let affected = q.execute(pool).await?.rows_affected();
+    let affected = tenant_delete!(pool, "payment_channels", "id" => id, tenant_id)?.rows_affected();
     Ok(affected > 0)
 }
 

@@ -234,6 +234,8 @@ impl StatsService {
         tenant_id: Option<&str>,
         limit: i64,
     ) -> Result<Vec<Value>, AppError> {
+        check_schema!("posts", "title", "slug", "created_at");
+        check_schema!("comments", "content", "created_at");
         let mut activities = Vec::new();
 
         let tf_aliased = crate::db::tenant::tenant_filter_aliased_ph("p", tenant_id, 1);
@@ -244,12 +246,15 @@ impl StatsService {
              ORDER BY p.created_at DESC {limit_clause}"
         );
 
-        let mut post_q = sqlx::query_as::<_, (Option<String>, String, String)>(&post_sql);
-        bind_tenant!(post_q, tenant_id);
-        let posts = post_q
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+        let posts: Vec<(Option<String>, String, String)> = tenant_query!(
+            &self.pool,
+            (Option<String>, String, String),
+            &post_sql,
+            [],
+            tenant_id,
+            fetch_all
+        )
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
         for (title, slug, at) in posts {
             activities.push(json!({
@@ -265,12 +270,15 @@ impl StatsService {
              ORDER BY c.created_at DESC {limit_clause}"
         );
 
-        let mut comment_q = sqlx::query_as::<_, (Option<String>, String)>(&comment_sql);
-        bind_tenant!(comment_q, tenant_id);
-        let comments = comment_q
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
+        let comments: Vec<(Option<String>, String)> = tenant_query!(
+            &self.pool,
+            (Option<String>, String),
+            &comment_sql,
+            [],
+            tenant_id,
+            fetch_all
+        )
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
         for (content, at) in comments {
             activities.push(json!({

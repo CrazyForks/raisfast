@@ -10,6 +10,10 @@ pub mod pool;
 pub mod schema;
 pub mod tenant;
 
+pub mod schema_meta {
+    include!(concat!(env!("OUT_DIR"), "/schema_meta.rs"));
+}
+
 pub use pool::{
     DbArguments, DbConnection, DbPoolConnection, DbQueryResult, DbRow, Pool, Transaction,
 };

@@ -53,44 +53,26 @@ pub async fn create(
     expires_at: Option<&str>,
 ) -> AppResult<ApiToken> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
-    let sql = format!(
-        "INSERT INTO api_tokens (document_id, user_id, name, token_hash, token_prefix, scopes, expires_at, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7),
-        ph(8)
-    );
-    sqlx::query(&sql)
-        .bind(&document_id)
-        .bind(user_id)
-        .bind(name)
-        .bind(token_hash)
-        .bind(token_prefix)
-        .bind(scopes)
-        .bind(expires_at)
-        .bind(now)
-        .execute(pool)
-        .await?;
-    let sql = format!("SELECT * FROM api_tokens WHERE document_id = {}", ph(1));
-    let row = sqlx::query_as::<_, ApiToken>(&sql)
-        .bind(&document_id)
-        .fetch_one(pool)
-        .await?;
-    Ok(row)
+    crud_insert!(pool, "api_tokens", [
+        "document_id" => &document_id,
+        "user_id" => user_id,
+        "name" => name,
+        "token_hash" => token_hash,
+        "token_prefix" => token_prefix,
+        "scopes" => scopes,
+        "expires_at" => expires_at,
+        "created_at" => now
+    ])?;
+    find_by_id(pool, &document_id).await?.ok_or_else(|| {
+        crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
+            "failed to fetch newly created api token"
+        ))
+    })
 }
 
 /// Find API Token by token_hash
 pub async fn find_by_hash(pool: &crate::db::Pool, token_hash: &str) -> AppResult<Option<ApiToken>> {
-    let sql = format!("SELECT * FROM api_tokens WHERE token_hash = {}", ph(1));
-    let row = sqlx::query_as::<_, ApiToken>(&sql)
-        .bind(token_hash)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row)
+    crud_find!(pool, "api_tokens" => ApiToken, "token_hash" => token_hash).map_err(Into::into)
 }
 
 /// List all API Tokens for a given user (sanitized)
@@ -98,6 +80,18 @@ pub async fn list_by_user(
     pool: &crate::db::Pool,
     user_id: i64,
 ) -> AppResult<Vec<ApiTokenListItem>> {
+    check_schema!(
+        "api_tokens",
+        "id",
+        "document_id",
+        "name",
+        "token_prefix",
+        "scopes",
+        "last_used_at",
+        "expires_at",
+        "created_at",
+        "user_id"
+    );
     let sql = format!(
         "SELECT id, document_id, name, token_prefix, scopes, last_used_at, expires_at, created_at FROM api_tokens WHERE user_id = {} ORDER BY created_at DESC",
         ph(1)
@@ -111,30 +105,22 @@ pub async fn list_by_user(
 
 /// Find API Token by document_id
 pub async fn find_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<Option<ApiToken>> {
-    let sql = format!("SELECT * FROM api_tokens WHERE document_id = {}", ph(1));
-    let row = sqlx::query_as::<_, ApiToken>(&sql)
-        .bind(document_id)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row)
+    crud_find!(pool, "api_tokens" => ApiToken, "document_id" => document_id).map_err(Into::into)
 }
 
 /// Delete API Token by document_id
 pub async fn delete_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<()> {
-    let sql = format!("DELETE FROM api_tokens WHERE document_id = {}", ph(1));
-    sqlx::query(&sql).bind(document_id).execute(pool).await?;
+    crud_delete!(pool, "api_tokens", "document_id" => document_id)?;
     Ok(())
 }
 
 /// Update last_used_at (by integer primary key)
 pub async fn touch_last_used(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    let sql = format!(
-        "UPDATE api_tokens SET last_used_at = {} WHERE id = {}",
-        ph(1),
-        ph(2)
-    );
-    sqlx::query(&sql).bind(now).bind(id).execute(pool).await?;
+    crud_update!(pool, "api_tokens",
+        bind: ["last_used_at" => now],
+        where: "id" => id
+    )?;
     Ok(())
 }
 

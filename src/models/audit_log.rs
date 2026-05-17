@@ -32,6 +32,19 @@ crate::impl_from_row_opt_tenant!(AuditEntry {
 
 /// Insert an audit log entry
 pub async fn insert(pool: &crate::db::Pool, entry: &AuditEntry) -> AppResult<()> {
+    check_schema!(
+        "audit_log",
+        "document_id",
+        "actor_id",
+        "actor_role",
+        "action",
+        "subject",
+        "subject_id",
+        "detail",
+        "ip_address",
+        "user_agent",
+        "created_at"
+    );
     match &entry.tenant_id {
         Some(tid) => {
             let sql = format!(
@@ -104,6 +117,7 @@ pub async fn find_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<AuditEntry>, i64)> {
+    check_schema!("audit_log", "action", "actor_id", "created_at");
     let offset = (page - 1).max(0) * page_size;
 
     let mut ph_idx = 1usize;
@@ -155,28 +169,13 @@ pub async fn find_paginated(
 
 /// Find an audit log entry by ID
 pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<AuditEntry> {
-    let sql = format!(
-        "SELECT * FROM audit_log WHERE id = {}",
-        crate::db::dialect::ph(1)
-    );
-    sqlx::query_as::<_, AuditEntry>(&sql)
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .map_err(Into::into)
+    crud_find_one!(pool, "audit_log" => AuditEntry, "id" => id).map_err(Into::into)
 }
 
 pub async fn find_by_document_id(
     pool: &crate::db::Pool,
     document_id: &str,
 ) -> AppResult<AuditEntry> {
-    let sql = format!(
-        "SELECT * FROM audit_log WHERE document_id = {}",
-        crate::db::dialect::ph(1)
-    );
-    sqlx::query_as::<_, AuditEntry>(&sql)
-        .bind(document_id)
-        .fetch_one(pool)
-        .await
+    crud_find_one!(pool, "audit_log" => AuditEntry, "document_id" => document_id)
         .map_err(Into::into)
 }

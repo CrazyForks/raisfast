@@ -48,34 +48,19 @@ pub async fn tx_insert(
         &mut *tx,
         "wallet_outbox",
         [
-            "document_id",
-            "user_id",
-            "currency",
-            "amount",
-            "entry_type",
-            "tx_type",
-            "transaction_no",
-            "reference_type",
-            "reference_id",
-            "metadata",
-            "status",
-            "created_at",
-            "updated_at"
-        ],
-        [
-            &document_id,
-            cmd.user_id,
-            &cmd.currency,
-            cmd.amount,
-            &cmd.entry_type,
-            cmd.tx_type,
-            &cmd.transaction_no,
-            cmd.reference_type,
-            &cmd.reference_id,
-            &cmd.metadata,
-            OutboxStatus::Pending,
-            &now,
-            &now
+            "document_id" => &document_id,
+            "user_id" => cmd.user_id,
+            "currency" => &cmd.currency,
+            "amount" => cmd.amount,
+            "entry_type" => &cmd.entry_type,
+            "tx_type" => cmd.tx_type,
+            "transaction_no" => &cmd.transaction_no,
+            "reference_type" => cmd.reference_type,
+            "reference_id" => &cmd.reference_id,
+            "metadata" => &cmd.metadata,
+            "status" => OutboxStatus::Pending,
+            "created_at" => &now,
+            "updated_at" => &now
         ],
         tenant_id
     )?;
@@ -83,6 +68,13 @@ pub async fn tx_insert(
 }
 
 pub async fn fetch_pending(pool: &crate::db::Pool, limit: i64) -> AppResult<Vec<WalletOutbox>> {
+    check_schema!(
+        "wallet_outbox",
+        "status",
+        "attempts",
+        "max_attempts",
+        "created_at"
+    );
     let sql = format!(
         "SELECT * FROM wallet_outbox WHERE status IN ('pending', 'failed') AND attempts < max_attempts ORDER BY created_at ASC LIMIT {}",
         ph(1)
@@ -95,6 +87,7 @@ pub async fn fetch_pending(pool: &crate::db::Pool, limit: i64) -> AppResult<Vec<
 }
 
 pub async fn mark_processing(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
+    check_schema!("wallet_outbox", "status", "updated_at", "id");
     let sql = format!(
         "UPDATE wallet_outbox SET status = 'processing', updated_at = datetime('now') WHERE id = {} AND status IN ('pending', 'failed')",
         ph(1)
@@ -104,6 +97,7 @@ pub async fn mark_processing(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
 }
 
 pub async fn mark_completed(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
+    check_schema!("wallet_outbox", "status", "updated_at", "id");
     let sql = format!(
         "UPDATE wallet_outbox SET status = 'completed', updated_at = datetime('now') WHERE id = {}",
         ph(1)
@@ -113,6 +107,15 @@ pub async fn mark_completed(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
 }
 
 pub async fn mark_failed(pool: &crate::db::Pool, id: i64, error: &str) -> AppResult<()> {
+    check_schema!(
+        "wallet_outbox",
+        "status",
+        "attempts",
+        "max_attempts",
+        "last_error",
+        "updated_at",
+        "id"
+    );
     let sql = format!(
         "UPDATE wallet_outbox SET status = CASE WHEN attempts + 1 >= max_attempts THEN 'dead' ELSE 'failed' END, attempts = attempts + 1, last_error = {}, updated_at = datetime('now') WHERE id = {}",
         ph(1),
