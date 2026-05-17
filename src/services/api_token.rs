@@ -494,8 +494,8 @@ mod tests {
             verify_api_token(&pool, &*cache, plain).await.unwrap();
         assert_eq!(uid, user.document_id);
         assert_eq!(role, "admin");
-        assert!(tenant_id.is_none());
-        assert!(tenant_id.is_none());
+        assert_eq!(tenant_id, Some("default".to_string()));
+        assert_eq!(tenant_id, Some("default".to_string()));
     }
 
     #[tokio::test]

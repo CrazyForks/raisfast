@@ -63,6 +63,10 @@ pub(crate) async fn test_pool() -> raisfast::db::Pool {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(raisfast::db::schema::TENANTABLE_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
         pool
     }
 }
@@ -70,12 +74,7 @@ pub(crate) async fn test_pool() -> raisfast::db::Pool {
 pub(crate) async fn test_pool_with_tenants() -> raisfast::db::Pool {
     #[cfg(feature = "db-sqlite")]
     {
-        let pool = test_pool().await;
-        sqlx::query(raisfast::db::schema::TENANTABLE_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        pool
+        test_pool().await
     }
 }
 

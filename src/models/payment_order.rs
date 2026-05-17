@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::db::dialect::ph;
-use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
@@ -78,7 +77,8 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentOrder>> {
-    tenant_find!(pool, "payment_orders" => PaymentOrder, "id" => id, tenant_id).map_err(Into::into)
+    raisfast_derive::tenant_find!(pool, "payment_orders", PaymentOrder, "id" => id, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn find_by_document_id(
@@ -86,7 +86,7 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentOrder>> {
-    tenant_find!(pool, "payment_orders" => PaymentOrder, "document_id" => document_id, tenant_id)
+    raisfast_derive::tenant_find!(pool, "payment_orders", PaymentOrder, "document_id" => document_id, tenant_id)
         .map_err(Into::into)
 }
 
@@ -95,7 +95,7 @@ pub async fn find_by_idempotency_key(
     key: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentOrder>> {
-    tenant_find!(pool, "payment_orders" => PaymentOrder, "idempotency_key" => key, tenant_id)
+    raisfast_derive::tenant_find!(pool, "payment_orders", PaymentOrder, "idempotency_key" => key, tenant_id)
         .map_err(Into::into)
 }
 
@@ -104,7 +104,7 @@ pub async fn find_by_provider_order_id(
     provider_order_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentOrder>> {
-    tenant_find!(pool, "payment_orders" => PaymentOrder, "provider_order_id" => provider_order_id, tenant_id).map_err(Into::into)
+    raisfast_derive::tenant_find!(pool, "payment_orders", PaymentOrder, "provider_order_id" => provider_order_id, tenant_id).map_err(Into::into)
 }
 
 pub async fn find_by_user_paginated(
@@ -114,30 +114,16 @@ pub async fn find_by_user_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<PaymentOrder>, i64)> {
-    check_schema!("payment_orders", "user_id", "created_at");
-    let offset = (page - 1) * page_size;
-    let tenant_ph = tenant_filter_ph(tenant_id, 2);
-    let count_sql = format!(
-        "SELECT COUNT(*) as count FROM payment_orders WHERE user_id = {}{}",
-        ph(1),
-        tenant_ph
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, PaymentOrder,
+        data_sql: "SELECT * FROM payment_orders WHERE user_id = ?{tenant} ORDER BY created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM payment_orders WHERE user_id = ?{tenant}",
+        binds: [user_id],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    let (total,): (i64,) =
-        tenant_query!(pool, (i64,), &count_sql, [user_id], tenant_id, fetch_one)?;
-    let base = usize::from(tenant_id.is_some()) + 2;
-    let sql = format!(
-        "SELECT * FROM payment_orders WHERE user_id = {}{} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2),
-        ph(base),
-        ph(base + 1)
-    );
-    let mut dq = sqlx::query_as::<_, PaymentOrder>(&sql).bind(user_id);
-    if let Some(tid) = tenant_id {
-        dq = dq.bind(tid);
-    }
-    let rows = dq.bind(page_size).bind(offset).fetch_all(pool).await?;
-    Ok((rows, total))
+    Ok(result)
 }
 
 pub async fn find_all_admin_paginated(
@@ -147,60 +133,17 @@ pub async fn find_all_admin_paginated(
     page_size: i64,
     status: Option<&str>,
 ) -> AppResult<(Vec<PaymentOrder>, i64)> {
-    check_schema!("payment_orders", "status", "created_at");
-    let offset = (page - 1) * page_size;
-    let tenant_ph = tenant_filter_ph(tenant_id, 1);
-    let has_tenant = tenant_id.is_some();
-    let status_ph_idx = if has_tenant { 2 } else { 1 };
-    let (count_sql, data_sql_base) = if let Some(_s) = status {
-        (
-            format!(
-                "SELECT COUNT(*) as count FROM payment_orders WHERE status = {}{}",
-                ph(status_ph_idx),
-                tenant_ph
-            ),
-            format!(
-                "SELECT * FROM payment_orders WHERE status = {}{} ORDER BY created_at DESC",
-                ph(status_ph_idx),
-                tenant_ph
-            ),
-        )
-    } else {
-        (
-            format!(
-                "SELECT COUNT(*) as count FROM payment_orders WHERE 1=1{}",
-                tenant_ph
-            ),
-            format!(
-                "SELECT * FROM payment_orders WHERE 1=1{} ORDER BY created_at DESC",
-                tenant_ph
-            ),
-        )
-    };
-    let mut q = sqlx::query_as::<_, (i64,)>(&count_sql);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    if let Some(ref s) = status {
-        q = q.bind(s);
-    }
-    let (total,): (i64,) = q.fetch_one(pool).await?;
-    let limit_base = status_ph_idx + usize::from(status.is_some());
-    let sql = format!(
-        "{} LIMIT {} OFFSET {}",
-        data_sql_base,
-        ph(limit_base + 1),
-        ph(limit_base + 2)
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, PaymentOrder,
+        data_sql: "SELECT * FROM payment_orders WHERE 1=1{tenant} ORDER BY created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM payment_orders WHERE 1=1{tenant}",
+        binds: [],
+        where: ["status" => status],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    let mut q2 = sqlx::query_as::<_, PaymentOrder>(&sql);
-    if let Some(tid) = tenant_id {
-        q2 = q2.bind(tid);
-    }
-    if let Some(s) = status {
-        q2 = q2.bind(s);
-    }
-    let rows = q2.bind(page_size).bind(offset).fetch_all(pool).await?;
-    Ok((rows, total))
+    Ok(result)
 }
 
 pub async fn insert(
@@ -210,7 +153,7 @@ pub async fn insert(
 ) -> AppResult<PaymentOrder> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         pool,
         "payment_orders",
         [
@@ -253,7 +196,7 @@ pub async fn update_provider_order_id(
     provider_data: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    crate::tenant_update!(
+    raisfast_derive::tenant_update!(
         pool, "payment_orders",
         bind: ["provider_order_id" => provider_order_id, "provider_data" => provider_data],
         raw: ["updated_at" => "datetime('now')"],
@@ -270,7 +213,7 @@ pub async fn tx_update_status_cas(
     timestamp_col: Option<&str>,
     expected_status: PaymentStatus,
 ) -> AppResult<u64> {
-    check_schema!("payment_orders", "status", "updated_at", "version", "id");
+    raisfast_derive::check_schema!("payment_orders", "status", "updated_at", "version", "id");
     let sql = if let Some(col) = timestamp_col {
         format!(
             "UPDATE payment_orders SET status = {}, {} = datetime('now'), updated_at = datetime('now'), version = version + 1 WHERE id = {} AND status = {}",
@@ -462,7 +405,7 @@ mod tests {
         assert_eq!(order.status, PaymentStatus::Pending);
         assert_eq!(order.version, 1);
         assert!(order.paid_at.is_none());
-        assert!(order.tenant_id.is_none());
+        assert_eq!(order.tenant_id, Some("default".to_string()));
         assert!(order.provider_order_id.is_none());
     }
 

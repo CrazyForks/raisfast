@@ -7,7 +7,6 @@ use sqlx::FromRow;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
@@ -34,7 +33,7 @@ pub struct Tenant {
 
 /// Query all tenants
 pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Tenant>> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "tenants",
         "id",
         "document_id",
@@ -53,13 +52,14 @@ pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Tenant>> {
 
 /// Find a tenant by document_id
 pub async fn find_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<Option<Tenant>> {
-    let tenant = crud_find!(pool, "tenants" => Tenant, "document_id" => document_id)?;
+    let tenant =
+        raisfast_derive::crud_find!(pool, "tenants", Tenant, "document_id" => document_id)?;
     Ok(tenant)
 }
 
 /// Find a tenant by domain
 pub async fn find_by_domain(pool: &crate::db::Pool, domain: &str) -> AppResult<Option<Tenant>> {
-    let tenant = crud_find!(pool, "tenants" => Tenant, "domain" => domain)?;
+    let tenant = raisfast_derive::crud_find!(pool, "tenants", Tenant, "domain" => domain)?;
     Ok(tenant)
 }
 
@@ -71,38 +71,21 @@ pub async fn create(
     domain: Option<&str>,
     config: &str,
 ) -> AppResult<Tenant> {
-    check_schema!(
-        "tenants",
-        "document_id",
-        "name",
-        "domain",
-        "config",
-        "status",
-        "created_at",
-        "updated_at"
-    );
     let now = crate::utils::tz::now_utc();
-    let sql = format!(
-        "INSERT INTO tenants (document_id, name, domain, config, status, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7),
-    );
-    sqlx::query(&sql)
-        .bind(document_id)
-        .bind(name)
-        .bind(domain)
-        .bind(config)
-        .bind(TenantStatus::Active)
-        .bind(now)
-        .bind(now)
-        .execute(pool)
-        .await
-        .map_err(|e| AppError::Conflict(format!("create tenant failed: {e}")))?;
+    raisfast_derive::crud_insert!(
+        pool,
+        "tenants",
+        [
+            "document_id" => document_id,
+            "name" => name,
+            "domain" => domain,
+            "config" => config,
+            "status" => TenantStatus::Active,
+            "created_at" => now,
+            "updated_at" => now
+        ]
+    )
+    .map_err(|e| AppError::Conflict(format!("create tenant failed: {e}")))?;
 
     find_by_id(pool, document_id)
         .await?
@@ -118,50 +101,13 @@ pub async fn update(
     config: Option<&str>,
     status: Option<TenantStatus>,
 ) -> AppResult<Tenant> {
-    check_schema!(
-        "tenants",
-        "document_id",
-        "name",
-        "domain",
-        "config",
-        "status",
-        "updated_at"
-    );
-    let mut sets = Vec::new();
-    let mut idx = 1usize;
     let now = crate::utils::tz::now_utc();
-    sets.push(format!("updated_at = {}", ph(idx)));
-    if name.is_some() {
-        idx += 1;
-        sets.push(format!("name = {}", ph(idx)));
-    }
-    if domain.is_some() {
-        idx += 1;
-        sets.push(format!("domain = {}", ph(idx)));
-    }
-    if config.is_some() {
-        idx += 1;
-        sets.push(format!("config = {}", ph(idx)));
-    }
-    if status.is_some() {
-        idx += 1;
-        sets.push(format!("status = {}", ph(idx)));
-    }
-
-    idx += 1;
-    let sql = format!(
-        "UPDATE tenants SET {} WHERE document_id = {}",
-        sets.join(", "),
-        ph(idx),
-    );
-    let mut q = sqlx::query(&sql);
-    q = q.bind(now);
-    bind_optional!(q, name);
-    bind_optional!(q, domain);
-    bind_optional!(q, config);
-    bind_optional!(q, status);
-    q = q.bind(document_id);
-    q.execute(pool).await?;
+    raisfast_derive::crud_update!(
+        pool, "tenants",
+        bind: ["updated_at" => now],
+        optional: ["name" => name, "domain" => domain, "config" => config, "status" => status],
+        where: "document_id" => document_id
+    )?;
 
     find_by_id(pool, document_id)
         .await?
@@ -170,7 +116,7 @@ pub async fn update(
 
 /// Delete a tenant
 pub async fn delete(pool: &crate::db::Pool, document_id: &str) -> AppResult<()> {
-    crud_delete!(pool, "tenants", "document_id" => document_id)?;
+    raisfast_derive::crud_delete!(pool, "tenants", "document_id" => document_id)?;
     Ok(())
 }
 

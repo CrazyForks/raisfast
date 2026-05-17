@@ -41,7 +41,7 @@ pub async fn create(
 
     let expires_at = crate::utils::tz::now_utc() + chrono::Duration::seconds(expires_in_secs);
 
-    crud_insert!(pool, "email_verification_tokens", [
+    raisfast_derive::crud_insert!(pool, "email_verification_tokens", [
         "document_id" => &document_id,
         "user_id" => user_id,
         "token" => &token,
@@ -62,7 +62,7 @@ pub async fn find_by_token(
     pool: &crate::db::Pool,
     token: &str,
 ) -> AppResult<Option<EmailVerificationToken>> {
-    check_schema!("email_verification_tokens", "token", "verified_at");
+    raisfast_derive::check_schema!("email_verification_tokens", "token", "verified_at");
     let sql = format!(
         "SELECT * FROM email_verification_tokens WHERE token = {} AND verified_at IS NULL",
         ph(1),
@@ -77,7 +77,7 @@ pub async fn find_by_token(
 /// Mark a token as verified
 pub async fn mark_verified(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    crud_update!(pool, "email_verification_tokens",
+    raisfast_derive::crud_update!(pool, "email_verification_tokens",
         bind: ["verified_at" => now],
         where: "id" => id
     )?;
@@ -86,7 +86,7 @@ pub async fn mark_verified(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
 
 /// Delete all unused verification tokens for a user
 pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<()> {
-    check_schema!("email_verification_tokens", "user_id", "verified_at");
+    raisfast_derive::check_schema!("email_verification_tokens", "user_id", "verified_at");
     let sql = format!(
         "DELETE FROM email_verification_tokens WHERE user_id = {} AND verified_at IS NULL",
         ph(1),
@@ -97,7 +97,7 @@ pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: i64) -> AppR
 
 /// Clean up expired verification tokens
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
-    check_schema!("email_verification_tokens", "expires_at", "verified_at");
+    raisfast_derive::check_schema!("email_verification_tokens", "expires_at", "verified_at");
     let now = crate::utils::tz::now_utc();
     let sql = format!(
         "DELETE FROM email_verification_tokens WHERE expires_at < {} AND verified_at IS NULL",

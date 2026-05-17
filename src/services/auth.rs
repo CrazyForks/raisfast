@@ -178,18 +178,6 @@ pub async fn register(
     require_email_verification: bool,
     pool: &crate::db::Pool,
 ) -> AppResult<UserResponse> {
-    check_schema!("users", "document_id");
-    check_schema!(
-        "user_credentials",
-        "document_id",
-        "user_id",
-        "auth_type",
-        "identifier",
-        "credential_data",
-        "verified",
-        "created_at",
-        "updated_at"
-    );
     if crate::models::user_credential::find_by_auth_type_and_identifier(
         pool,
         AuthType::Email,
@@ -208,7 +196,7 @@ pub async fn register(
     let registered_via = crate::models::user::RegisteredVia::Email;
 
     let user = in_transaction!(pool, tx, {
-        tenant_insert!(
+        raisfast_derive::tenant_insert!(
             &mut *tx,
             "users",
             [
@@ -379,7 +367,7 @@ pub async fn refresh(
     jwt_refresh_expires: u64,
     tenant_id: Option<&str>,
 ) -> AppResult<LoginResponse> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "refresh_tokens",
         "token",
         "document_id",
@@ -472,7 +460,7 @@ pub async fn change_password(
     auth: &AuthUser,
     req: UpdatePasswordRequest,
 ) -> AppResult<()> {
-    check_schema!("refresh_tokens", "user_id");
+    raisfast_derive::check_schema!("refresh_tokens", "user_id");
     let user_id = auth.ensure_authenticated()?;
     let tenant_id = auth.tenant_id();
     let _user = crate::models::user::find_by_id(pool, user_id, tenant_id)

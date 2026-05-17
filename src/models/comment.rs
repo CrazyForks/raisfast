@@ -72,7 +72,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Comment>> {
-    Ok(tenant_find!(pool, "comments" => Comment, "id" => id, tenant_id)?)
+    Ok(raisfast_derive::tenant_find!(pool, "comments", Comment, "id" => id, tenant_id)?)
 }
 
 pub async fn find_by_document_id(
@@ -80,7 +80,9 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Comment>> {
-    Ok(tenant_find!(pool, "comments" => Comment, "document_id" => document_id, tenant_id)?)
+    Ok(
+        raisfast_derive::tenant_find!(pool, "comments", Comment, "document_id" => document_id, tenant_id)?,
+    )
 }
 
 pub async fn create(
@@ -90,7 +92,7 @@ pub async fn create(
 ) -> AppResult<Comment> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         pool,
         "comments",
         [
@@ -125,7 +127,7 @@ pub async fn find_approved_by_post(
         ph(1),
         ph(2)
     );
-    let comments = tenant_query!(
+    let comments = raisfast_derive::tenant_query!(
         pool,
         Comment,
         &sql,
@@ -143,41 +145,16 @@ pub async fn find_approved_by_post_paginated(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Comment>, i64)> {
-    check_schema!("comments", "post_id", "status", "created_at");
-    let offset = (page - 1) * page_size;
-    let filter = tenant_filter_ph(tenant_id, 3);
-    let base = usize::from(tenant_id.is_some());
-    let sql = format!(
-        "SELECT * FROM comments WHERE post_id = {} AND status = {}{filter} ORDER BY created_at ASC LIMIT {} OFFSET {}",
-        ph(1),
-        ph(2),
-        ph(base + 3),
-        ph(base + 4)
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, Comment,
+        data_sql: "SELECT * FROM comments WHERE post_id = ? AND status = ?{tenant} ORDER BY created_at ASC",
+        count_sql: "SELECT COUNT(*) FROM comments WHERE post_id = ? AND status = ?{tenant}",
+        binds: [post_id, CommentStatus::Approved],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    let mut q = sqlx::query_as::<_, Comment>(&sql)
-        .bind(post_id)
-        .bind(CommentStatus::Approved);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q = q.bind(page_size).bind(offset);
-    let comments = q.fetch_all(pool).await?;
-
-    let filter2 = tenant_filter_ph(tenant_id, 3);
-    let sql2 = format!(
-        "SELECT COUNT(*) FROM comments WHERE post_id = {} AND status = {}{filter2}",
-        ph(1),
-        ph(2)
-    );
-    let mut q2 = sqlx::query_scalar::<_, i64>(&sql2)
-        .bind(post_id)
-        .bind(CommentStatus::Approved);
-    if let Some(tid) = tenant_id {
-        q2 = q2.bind(tid);
-    }
-    let total: i64 = q2.fetch_one(pool).await?;
-
-    Ok((comments, total))
+    Ok(result)
 }
 
 pub async fn find_all_by_post(
@@ -185,13 +162,7 @@ pub async fn find_all_by_post(
     post_id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<Comment>> {
-    let filter = tenant_filter_ph(tenant_id, 2);
-    let sql = format!(
-        "SELECT * FROM comments WHERE post_id = {}{filter} ORDER BY created_at ASC",
-        ph(1)
-    );
-    let comments = tenant_query!(pool, Comment, &sql, [post_id], tenant_id, fetch_all)?;
-    Ok(comments)
+    raisfast_derive::tenant_find_all!(pool, "comments", Comment, "post_id" => post_id, tenant_id, order_by: "created_at ASC").map_err(Into::into)
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -215,7 +186,7 @@ pub async fn find_all_paginated(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<AdminCommentRow>, i64)> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "comments",
         "id",
         "post_id",
@@ -227,7 +198,7 @@ pub async fn find_all_paginated(
         "status",
         "created_at"
     );
-    check_schema!("posts", "id", "title");
+    raisfast_derive::check_schema!("posts", "id", "title");
     let offset = (page - 1) * page_size;
     let filter = tenant_filter_aliased_ph("c", tenant_id, 1);
     let base = usize::from(tenant_id.is_some());
@@ -261,7 +232,7 @@ pub async fn update_status(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    let result = tenant_update!(pool, "comments",
+    let result = raisfast_derive::tenant_update!(pool, "comments",
         bind: ["status" => status, "updated_at" => &now],
         where: "id" => id,
         tenant: tenant_id
@@ -271,7 +242,7 @@ pub async fn update_status(
 }
 
 pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
-    let result = tenant_delete!(pool, "comments", "id" => id, tenant_id)?;
+    let result = raisfast_derive::tenant_delete!(pool, "comments", "id" => id, tenant_id)?;
     AppError::expect_affected(&result, "comment")
 }
 

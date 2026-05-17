@@ -41,7 +41,7 @@ pub struct Permission {
 
 /// List all roles
 pub async fn list_roles(pool: &crate::db::Pool) -> AppResult<Vec<Role>> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "roles",
         "id",
         "document_id",
@@ -61,13 +61,13 @@ pub async fn list_roles(pool: &crate::db::Pool) -> AppResult<Vec<Role>> {
 
 /// Find role by document_id
 pub async fn find_role_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<Option<Role>> {
-    let role = crud_find!(pool, "roles" => Role, "document_id" => document_id)?;
+    let role = raisfast_derive::crud_find!(pool, "roles", Role, "document_id" => document_id)?;
     Ok(role)
 }
 
 /// Find role ID by role name (returns integer PK)
 pub async fn find_role_id_by_name(pool: &crate::db::Pool, name: &str) -> AppResult<Option<i64>> {
-    check_schema!("roles", "id", "name");
+    raisfast_derive::check_schema!("roles", "id", "name");
     let sql = format!("SELECT id FROM roles WHERE name = {}", ph(1));
     let row = sqlx::query_as::<_, (i64,)>(&sql)
         .bind(name)
@@ -83,33 +83,20 @@ pub async fn create_role(
     name: &str,
     description: Option<&str>,
 ) -> AppResult<Role> {
-    check_schema!(
-        "roles",
-        "document_id",
-        "name",
-        "description",
-        "is_system",
-        "created_at",
-        "updated_at"
-    );
     let now = crate::utils::tz::now_utc();
-    let sql = format!(
-        "INSERT INTO roles (document_id, name, description, is_system, created_at, updated_at) VALUES ({}, {}, {}, 0, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-    );
-    sqlx::query(&sql)
-        .bind(document_id)
-        .bind(name)
-        .bind(description)
-        .bind(now)
-        .bind(now)
-        .execute(pool)
-        .await
-        .map_err(|e| AppError::Conflict(format!("create role failed: {e}")))?;
+    raisfast_derive::crud_insert!(
+        pool,
+        "roles",
+        [
+            "document_id" => document_id,
+            "name" => name,
+            "description" => description,
+            "is_system" => 0_i64,
+            "created_at" => now,
+            "updated_at" => now
+        ]
+    )
+    .map_err(|e| AppError::Conflict(format!("create role failed: {e}")))?;
 
     find_role_by_id(pool, document_id)
         .await?
@@ -123,32 +110,13 @@ pub async fn update_role(
     name: Option<&str>,
     description: Option<&str>,
 ) -> AppResult<Role> {
-    check_schema!("roles", "document_id", "name", "description", "updated_at");
-    let mut sets = Vec::new();
-    let mut idx = 1;
     let now = crate::utils::tz::now_utc();
-    sets.push(format!("updated_at = {}", ph(idx)));
-    if name.is_some() {
-        idx += 1;
-        sets.push(format!("name = {}", ph(idx)));
-    }
-    if description.is_some() {
-        idx += 1;
-        sets.push(format!("description = {}", ph(idx)));
-    }
-
-    idx += 1;
-    let sql = format!(
-        "UPDATE roles SET {} WHERE document_id = {}",
-        sets.join(", "),
-        ph(idx)
-    );
-    let mut q = sqlx::query(sql.as_ref());
-    q = q.bind(now);
-    bind_optional!(q, name);
-    bind_optional!(q, description);
-    q = q.bind(document_id);
-    q.execute(pool).await?;
+    raisfast_derive::crud_update!(
+        pool, "roles",
+        bind: ["updated_at" => now],
+        optional: ["name" => name, "description" => description],
+        where: "document_id" => document_id
+    )?;
 
     find_role_by_id(pool, document_id)
         .await?
@@ -157,7 +125,7 @@ pub async fn update_role(
 
 /// Delete role
 pub async fn delete_role(pool: &crate::db::Pool, document_id: &str) -> AppResult<()> {
-    crud_delete!(pool, "roles", "document_id" => document_id)?;
+    raisfast_derive::crud_delete!(pool, "roles", "document_id" => document_id)?;
     Ok(())
 }
 
@@ -166,7 +134,7 @@ pub async fn find_permissions_by_role_id(
     pool: &crate::db::Pool,
     role_id: i64,
 ) -> AppResult<Vec<Permission>> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "permissions",
         "id",
         "document_id",
@@ -190,14 +158,14 @@ pub async fn find_permissions_by_role_id(
 
 /// Delete all permissions for a role
 pub async fn delete_permissions_by_role_id(pool: &crate::db::Pool, role_id: i64) -> AppResult<()> {
-    crud_delete!(pool, "permissions", "role_id" => role_id)?;
+    raisfast_derive::crud_delete!(pool, "permissions", "role_id" => role_id)?;
     Ok(())
 }
 
 /// Insert a single permission
 pub async fn insert_permission(pool: &crate::db::Pool, cmd: &CreatePermissionCmd) -> AppResult<()> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
-    crud_insert!(pool, "permissions", [
+    raisfast_derive::crud_insert!(pool, "permissions", [
         "document_id" => &document_id,
         "role_id" => cmd.role_id,
         "action" => &cmd.action,

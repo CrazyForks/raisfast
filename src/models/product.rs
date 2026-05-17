@@ -3,8 +3,6 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::commands::{CreateProductCmd, UpdateProductCmd};
-use crate::db::dialect::ph;
-use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
@@ -85,7 +83,8 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Product>> {
-    tenant_find!(pool, "products" => Product, "id" => id, tenant_id).map_err(Into::into)
+    raisfast_derive::tenant_find!(pool, "products", Product, "id" => id, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn find_by_document_id(
@@ -93,7 +92,7 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Product>> {
-    tenant_find!(pool, "products" => Product, "document_id" => document_id, tenant_id)
+    raisfast_derive::tenant_find!(pool, "products", Product, "document_id" => document_id, tenant_id)
         .map_err(Into::into)
 }
 
@@ -103,25 +102,16 @@ pub async fn find_active_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<Product>, i64)> {
-    let offset = (page - 1) * page_size;
-    let count_sql = format!(
-        "SELECT COUNT(*) as count FROM products WHERE status = 'active'{}",
-        tenant_filter_ph(tenant_id, 1)
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, Product,
+        data_sql: "SELECT * FROM products WHERE status = 'active'{tenant} ORDER BY sort_order, created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM products WHERE status = 'active'{tenant}",
+        binds: [],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    let (total,): (i64,) = tenant_query!(pool, (i64,), &count_sql, [], tenant_id, fetch_one)?;
-    let base = usize::from(tenant_id.is_some()) + 1;
-    let sql = format!(
-        "SELECT * FROM products WHERE status = 'active'{} ORDER BY sort_order, created_at DESC LIMIT {} OFFSET {}",
-        tenant_filter_ph(tenant_id, 1),
-        ph(base),
-        ph(base + 1)
-    );
-    let mut dq = sqlx::query_as::<_, Product>(&sql);
-    if let Some(tid) = tenant_id {
-        dq = dq.bind(tid);
-    }
-    let rows = dq.bind(page_size).bind(offset).fetch_all(pool).await?;
-    Ok((rows, total))
+    Ok(result)
 }
 
 pub async fn find_all_admin(
@@ -131,59 +121,17 @@ pub async fn find_all_admin(
     page_size: i64,
     status: Option<&str>,
 ) -> AppResult<(Vec<Product>, i64)> {
-    let offset = (page - 1) * page_size;
-    let tenant_ph = tenant_filter_ph(tenant_id, 1);
-    let has_tenant = tenant_id.is_some();
-    let status_ph_idx = if has_tenant { 2 } else { 1 };
-    let (count_sql, data_sql_base) = if let Some(_s) = status {
-        (
-            format!(
-                "SELECT COUNT(*) as count FROM products WHERE status = {}{}",
-                ph(status_ph_idx),
-                tenant_ph
-            ),
-            format!(
-                "SELECT * FROM products WHERE status = {}{} ORDER BY sort_order, created_at DESC",
-                ph(status_ph_idx),
-                tenant_ph
-            ),
-        )
-    } else {
-        (
-            format!(
-                "SELECT COUNT(*) as count FROM products WHERE 1=1{}",
-                tenant_ph
-            ),
-            format!(
-                "SELECT * FROM products WHERE 1=1{} ORDER BY sort_order, created_at DESC",
-                tenant_ph
-            ),
-        )
-    };
-    let mut q = sqlx::query_as::<_, (i64,)>(&count_sql);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    if let Some(ref s) = status {
-        q = q.bind(s);
-    }
-    let (total,): (i64,) = q.fetch_one(pool).await?;
-    let limit_base = status_ph_idx + usize::from(status.is_some());
-    let sql = format!(
-        "{} LIMIT {} OFFSET {}",
-        data_sql_base,
-        ph(limit_base + 1),
-        ph(limit_base + 2)
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, Product,
+        data_sql: "SELECT * FROM products WHERE 1=1{tenant} ORDER BY sort_order, created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM products WHERE 1=1{tenant}",
+        binds: [],
+        where: ["status" => status],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    let mut q2 = sqlx::query_as::<_, Product>(&sql);
-    if let Some(tid) = tenant_id {
-        q2 = q2.bind(tid);
-    }
-    if let Some(s) = status {
-        q2 = q2.bind(s);
-    }
-    let rows = q2.bind(page_size).bind(offset).fetch_all(pool).await?;
-    Ok((rows, total))
+    Ok(result)
 }
 
 pub async fn insert(
@@ -193,7 +141,7 @@ pub async fn insert(
 ) -> AppResult<Product> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         pool,
         "products",
         [
@@ -240,7 +188,7 @@ pub async fn update(
     cmd: &UpdateProductCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
-    let affected = crate::tenant_update!(
+    let affected = raisfast_derive::tenant_update!(
         pool, "products",
         bind: [
             "category_id" => cmd.category_id,
@@ -284,17 +232,8 @@ pub async fn delete_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
-    let sql = format!(
-        "DELETE FROM products WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let affected = q.execute(pool).await?.rows_affected();
-    Ok(affected > 0)
+    let result = raisfast_derive::tenant_delete!(pool, "products", "id" => id, tenant_id)?;
+    Ok(result.rows_affected() > 0)
 }
 
 #[cfg(test)]
@@ -441,7 +380,7 @@ mod tests {
         assert_eq!(p.status, ProductStatus::Draft);
         assert_eq!(p.sort_order, 0);
         assert_eq!(p.version, 1);
-        assert!(p.tenant_id.is_none());
+        assert_eq!(p.tenant_id, Some("default".to_string()));
     }
 
     #[tokio::test]

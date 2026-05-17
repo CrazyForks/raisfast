@@ -946,7 +946,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("ALTER TABLE posts ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'")
+        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -971,7 +971,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("ALTER TABLE posts ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'")
+        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -993,6 +993,10 @@ mod tests {
     async fn resolve_doc_id_not_found() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();

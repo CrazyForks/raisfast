@@ -49,7 +49,7 @@ pub async fn create_state(
     expires_at: &str,
 ) -> AppResult<String> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
-    crud_insert!(pool, "oauth_states", [
+    raisfast_derive::crud_insert!(pool, "oauth_states", [
         "document_id" => &document_id,
         "provider" => provider,
         "code_verifier" => code_verifier,
@@ -65,7 +65,7 @@ pub async fn consume_state(
     pool: &crate::db::Pool,
     document_id: &str,
 ) -> AppResult<Option<OAuthState>> {
-    check_schema!("oauth_states", "document_id", "expires_at");
+    raisfast_derive::check_schema!("oauth_states", "document_id", "expires_at");
     let sql = format!(
         "SELECT * FROM oauth_states WHERE document_id = {} AND expires_at > {}",
         ph(1),
@@ -89,7 +89,7 @@ pub async fn consume_state(
 
 /// Clean up expired OAuth state records
 pub async fn cleanup_expired_states(pool: &crate::db::Pool) -> AppResult<u64> {
-    check_schema!("oauth_states", "expires_at");
+    raisfast_derive::check_schema!("oauth_states", "expires_at");
     let sql = format!(
         "DELETE FROM oauth_states WHERE expires_at <= {}",
         crate::db::dialect::now_fn(),
@@ -104,7 +104,7 @@ pub async fn find_by_provider_user(
     provider: &str,
     provider_user_id: &str,
 ) -> AppResult<Option<OAuthAccount>> {
-    check_schema!("oauth_accounts", "provider", "provider_user_id");
+    raisfast_derive::check_schema!("oauth_accounts", "provider", "provider_user_id");
     let sql = format!(
         "SELECT * FROM oauth_accounts WHERE provider = {} AND provider_user_id = {}",
         ph(1),
@@ -120,7 +120,7 @@ pub async fn find_by_provider_user(
 
 /// Find all OAuth bindings for a user
 pub async fn find_by_user_id(pool: &crate::db::Pool, user_id: i64) -> AppResult<Vec<OAuthAccount>> {
-    check_schema!("oauth_accounts", "user_id", "created_at");
+    raisfast_derive::check_schema!("oauth_accounts", "user_id", "created_at");
     let sql = format!(
         "SELECT * FROM oauth_accounts WHERE user_id = {} ORDER BY created_at",
         ph(1)
@@ -153,7 +153,7 @@ pub async fn create_account(
 ) -> AppResult<OAuthAccount> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
-    crud_insert!(pool, "oauth_accounts", [
+    raisfast_derive::crud_insert!(pool, "oauth_accounts", [
         "document_id" => &document_id,
         "user_id" => params.user_id,
         "provider" => params.provider,
@@ -169,7 +169,9 @@ pub async fn create_account(
         "updated_at" => now,
     ])?;
 
-    Ok(crud_find_one!(pool, "oauth_accounts" => OAuthAccount, "document_id" => &document_id)?)
+    Ok(
+        raisfast_derive::crud_find_one!(pool, "oauth_accounts", OAuthAccount, "document_id" => &document_id)?,
+    )
 }
 
 /// Parameters for updating an OAuth account binding
@@ -190,7 +192,7 @@ pub async fn update_account(
     params: UpdateOAuthAccountParams<'_>,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    crud_update!(pool, "oauth_accounts",
+    raisfast_derive::crud_update!(pool, "oauth_accounts",
         bind: [
             "updated_at" => now,
             "email" => params.email,
@@ -212,7 +214,7 @@ pub async fn delete_account(
     user_id: i64,
     provider: &str,
 ) -> AppResult<bool> {
-    check_schema!("oauth_accounts", "user_id", "provider");
+    raisfast_derive::check_schema!("oauth_accounts", "user_id", "provider");
     let sql = format!(
         "DELETE FROM oauth_accounts WHERE user_id = {} AND provider = {}",
         ph(1),
@@ -228,7 +230,7 @@ pub async fn delete_account(
 
 /// Count the number of OAuth providers bound to a user
 pub async fn count_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<i64> {
-    check_schema!("oauth_accounts", "user_id");
+    raisfast_derive::check_schema!("oauth_accounts", "user_id");
     let sql = format!(
         "SELECT COUNT(*) FROM oauth_accounts WHERE user_id = {}",
         ph(1)

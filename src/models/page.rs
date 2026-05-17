@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::commands::{CreatePageCmd, UpdatePageCmd};
+
 use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
@@ -319,7 +320,7 @@ pub async fn find_by_slug(
     slug: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Page>> {
-    Ok(tenant_find!(pool, "pages" => Page, "slug" => slug, tenant_id)?)
+    Ok(raisfast_derive::tenant_find!(pool, "pages", Page, "slug" => slug, tenant_id)?)
 }
 
 pub async fn find_by_id(
@@ -327,7 +328,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Page>> {
-    Ok(tenant_find!(pool, "pages" => Page, "id" => id, tenant_id)?)
+    Ok(raisfast_derive::tenant_find!(pool, "pages", Page, "id" => id, tenant_id)?)
 }
 
 pub async fn find_by_document_id(
@@ -335,7 +336,9 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Page>> {
-    Ok(tenant_find!(pool, "pages" => Page, "document_id" => document_id, tenant_id)?)
+    Ok(
+        raisfast_derive::tenant_find!(pool, "pages", Page, "document_id" => document_id, tenant_id)?,
+    )
 }
 
 pub async fn list_published(
@@ -344,7 +347,7 @@ pub async fn list_published(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Page>, i64)> {
-    check_schema!("pages", "status", "sort_order", "created_at");
+    raisfast_derive::check_schema!("pages", "status", "sort_order", "created_at");
     let offset = (page - 1) * page_size;
     let count_filter = tenant_filter_ph(tenant_id, 2);
     let count_sql = format!(
@@ -381,7 +384,7 @@ pub async fn list_all(
     status: Option<PageStatus>,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Page>, i64)> {
-    check_schema!("pages", "status", "sort_order", "created_at");
+    raisfast_derive::check_schema!("pages", "status", "sort_order", "created_at");
     let offset = (page - 1) * page_size;
     let has_status = status.is_some();
     let status_clause = if has_status {
@@ -431,7 +434,7 @@ pub async fn create(
         None
     };
 
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         pool,
         "pages",
         [
@@ -467,7 +470,7 @@ pub async fn update(
     cmd: &UpdatePageCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "pages",
         "updated_by",
         "title",
@@ -618,7 +621,7 @@ pub async fn update(
 }
 
 pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
-    let result = tenant_delete!(pool, "pages", "id" => id, tenant_id)?;
+    let result = raisfast_derive::tenant_delete!(pool, "pages", "id" => id, tenant_id)?;
     AppError::expect_affected(&result, "page")
 }
 
@@ -629,7 +632,7 @@ pub async fn update_status(
     updated_by: Option<i64>,
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "pages",
         "status",
         "updated_by",
@@ -693,7 +696,7 @@ pub async fn reorder(
     let now = crate::utils::tz::now_utc();
 
     for (id, sort_order) in items {
-        crate::tenant_update!(
+        raisfast_derive::tenant_update!(
             pool, "pages",
             bind: ["sort_order" => sort_order, "updated_at" => now],
             where: "id" => id,
@@ -712,7 +715,7 @@ pub async fn list_sitemap(
         "SELECT slug, updated_at FROM pages WHERE status = {}{filter} ORDER BY sort_order ASC",
         ph(1)
     );
-    Ok(tenant_query!(
+    Ok(raisfast_derive::tenant_query!(
         pool,
         (String, Option<String>),
         &sql,

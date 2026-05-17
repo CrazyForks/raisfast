@@ -62,7 +62,7 @@ pub async fn find_transactions_by_wallet(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
-    check_schema!("wallet_transactions", "wallet_id", "created_at");
+    raisfast_derive::check_schema!("wallet_transactions", "wallet_id", "created_at");
     let offset = (page - 1) * page_size;
     let count_sql = format!(
         "SELECT COUNT(*) as count FROM wallet_transactions WHERE wallet_id = {}",
@@ -94,7 +94,7 @@ pub async fn find_transactions_by_user(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
-    check_schema!("wallet_transactions", "user_id", "created_at");
+    raisfast_derive::check_schema!("wallet_transactions", "user_id", "created_at");
     let offset = (page - 1) * page_size;
     let count_sql = format!(
         "SELECT COUNT(*) as count FROM wallet_transactions WHERE user_id = {}",
@@ -126,7 +126,7 @@ pub async fn find_all_transactions(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
-    check_schema!("wallet_transactions", "tenant_id", "created_at");
+    raisfast_derive::check_schema!("wallet_transactions", "tenant_id", "created_at");
     let offset = (page - 1) * page_size;
     let (total,): (i64,) = if let Some(tid) = tenant_id {
         sqlx::query_as(&format!(
@@ -173,7 +173,7 @@ pub async fn find_tx_by_transaction_no(
     pool: &crate::db::Pool,
     transaction_no: &str,
 ) -> AppResult<Option<WalletTransaction>> {
-    crud_find!(pool, "wallet_transactions" => WalletTransaction, "transaction_no" => transaction_no)
+    raisfast_derive::crud_find!(pool, "wallet_transactions", WalletTransaction, "transaction_no" => transaction_no)
         .map_err(Into::into)
 }
 
@@ -181,19 +181,20 @@ pub async fn find_tx_by_id(
     pool: &crate::db::Pool,
     id: i64,
 ) -> AppResult<Option<WalletTransaction>> {
-    crud_find!(pool, "wallet_transactions" => WalletTransaction, "id" => id).map_err(Into::into)
+    raisfast_derive::crud_find!(pool, "wallet_transactions", WalletTransaction, "id" => id)
+        .map_err(Into::into)
 }
 
 pub async fn find_tx_by_document_id(
     pool: &crate::db::Pool,
     document_id: &str,
 ) -> AppResult<Option<WalletTransaction>> {
-    crud_find!(pool, "wallet_transactions" => WalletTransaction, "document_id" => document_id)
+    raisfast_derive::crud_find!(pool, "wallet_transactions", WalletTransaction, "document_id" => document_id)
         .map_err(Into::into)
 }
 
 pub async fn has_reversal_for(pool: &crate::db::Pool, related_tx_id: i64) -> AppResult<bool> {
-    check_schema!("wallet_transactions", "related_tx_id", "tx_type");
+    raisfast_derive::check_schema!("wallet_transactions", "related_tx_id", "tx_type");
     let sql = format!(
         "SELECT COUNT(*) as count FROM wallet_transactions WHERE related_tx_id = {} AND tx_type = {}",
         ph(1),
@@ -211,7 +212,7 @@ pub async fn find_document_ids_by_ids(
     pool: &crate::db::Pool,
     ids: &[i64],
 ) -> AppResult<std::collections::HashMap<i64, String>> {
-    check_schema!("wallet_transactions", "id", "document_id");
+    raisfast_derive::check_schema!("wallet_transactions", "id", "document_id");
     if ids.is_empty() {
         return Ok(std::collections::HashMap::new());
     }

@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::commands::{CreateReusableBlockCmd, UpdateReusableBlockCmd};
-use crate::db::dialect::ph;
-use crate::db::tenant::tenant_filter_ph;
+
 use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
@@ -36,7 +35,9 @@ pub async fn find_reusable_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<ReusableBlock>> {
-    Ok(tenant_find!(pool, "reusable_blocks" => ReusableBlock, "id" => id, tenant_id)?)
+    Ok(
+        raisfast_derive::tenant_find!(pool, "reusable_blocks", ReusableBlock, "id" => id, tenant_id)?,
+    )
 }
 
 pub async fn find_reusable_by_document_id(
@@ -45,7 +46,7 @@ pub async fn find_reusable_by_document_id(
     tenant_id: Option<&str>,
 ) -> AppResult<Option<ReusableBlock>> {
     Ok(
-        tenant_find!(pool, "reusable_blocks" => ReusableBlock, "document_id" => document_id, tenant_id)?,
+        raisfast_derive::tenant_find!(pool, "reusable_blocks", ReusableBlock, "document_id" => document_id, tenant_id)?,
     )
 }
 
@@ -53,16 +54,7 @@ pub async fn list_reusable(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<ReusableBlock>> {
-    let filter = tenant_filter_ph(tenant_id, 1);
-    let sql = format!("SELECT * FROM reusable_blocks WHERE 1=1{filter} ORDER BY name ASC");
-    Ok(tenant_query!(
-        pool,
-        ReusableBlock,
-        &sql,
-        [],
-        tenant_id,
-        fetch_all
-    )?)
+    raisfast_derive::crud_list!(pool, "reusable_blocks", ReusableBlock, order_by: "name ASC", tenant: tenant_id).map_err(Into::into)
 }
 
 pub async fn create_reusable(
@@ -71,7 +63,7 @@ pub async fn create_reusable(
     tenant_id: Option<&str>,
 ) -> AppResult<ReusableBlock> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         pool,
         "reusable_blocks",
         [
@@ -98,73 +90,14 @@ pub async fn update_reusable(
     cmd: &UpdateReusableBlockCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<ReusableBlock> {
-    check_schema!(
-        "reusable_blocks",
-        "updated_at",
-        "updated_by",
-        "name",
-        "block_type",
-        "content",
-        "description",
-        "id"
-    );
     let now = crate::utils::tz::now_utc();
-    let mut idx = 1;
-    let mut sets = vec![format!("updated_at = {}", ph(1))];
-
-    if cmd.updated_by.is_some() {
-        idx += 1;
-        sets.push(format!("updated_by = {}", ph(idx)));
-    }
-    if cmd.name.is_some() {
-        idx += 1;
-        sets.push(format!("name = {}", ph(idx)));
-    }
-    if cmd.block_type.is_some() {
-        idx += 1;
-        sets.push(format!("block_type = {}", ph(idx)));
-    }
-    if cmd.content.is_some() {
-        idx += 1;
-        sets.push(format!("content = {}", ph(idx)));
-    }
-    if cmd.description.is_some() {
-        idx += 1;
-        sets.push(format!("description = {}", ph(idx)));
-    }
-
-    idx += 1;
-    let id_ph = ph(idx);
-    let tf = tenant_filter_ph(tenant_id, idx + 1);
-    let sql = format!(
-        "UPDATE reusable_blocks SET {} WHERE id = {id_ph}{tf}",
-        sets.join(", ")
-    );
-
-    let mut q = sqlx::query(&sql);
-    q = q.bind(now);
-    if let Some(v) = cmd.updated_by {
-        q = q.bind(v);
-    }
-    if let Some(ref v) = cmd.name {
-        q = q.bind(v);
-    }
-    if let Some(ref v) = cmd.block_type {
-        q = q.bind(v);
-    }
-    if let Some(ref v) = cmd.content {
-        q = q.bind(v);
-    }
-    if let Some(ref v) = cmd.description {
-        q = q.bind(v);
-    }
-    q = q.bind(cmd.id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-
-    let result = q.execute(pool).await?;
-    AppError::expect_affected(&result, "reusable_block")?;
+    raisfast_derive::tenant_update!(
+        pool, "reusable_blocks",
+        bind: ["updated_at" => now],
+        optional: ["updated_by" => cmd.updated_by, "name" => cmd.name, "block_type" => cmd.block_type, "content" => cmd.content, "description" => cmd.description],
+        where: "id" => cmd.id,
+        tenant: tenant_id
+    )?;
 
     find_reusable_by_id(pool, cmd.id, tenant_id)
         .await?
@@ -176,7 +109,7 @@ pub async fn delete_reusable(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let result = tenant_delete!(pool, "reusable_blocks", "id" => id, tenant_id)?;
+    let result = raisfast_derive::tenant_delete!(pool, "reusable_blocks", "id" => id, tenant_id)?;
     AppError::expect_affected(&result, "reusable_block")
 }
 

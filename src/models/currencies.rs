@@ -19,14 +19,14 @@ pub struct Currency {
 }
 
 pub async fn find_by_code(pool: &crate::db::Pool, code: &str) -> AppResult<Option<Currency>> {
-    crud_find!(pool, "currencies" => Currency, "code" => code).map_err(Into::into)
+    raisfast_derive::crud_find!(pool, "currencies", Currency, "code" => code).map_err(Into::into)
 }
 
 pub async fn find_active_by_code(
     pool: &crate::db::Pool,
     code: &str,
 ) -> AppResult<Option<Currency>> {
-    check_schema!("currencies", "code", "is_active");
+    raisfast_derive::check_schema!("currencies", "code", "is_active");
     let sql = format!(
         "SELECT * FROM currencies WHERE code = {} AND is_active = 1",
         ph(1)
@@ -42,7 +42,7 @@ pub async fn find_by_code_tx(
     tx: &mut crate::db::pool::DbConnection,
     code: &str,
 ) -> AppResult<Option<Currency>> {
-    check_schema!("currencies", "code", "is_active");
+    raisfast_derive::check_schema!("currencies", "code", "is_active");
     let sql = format!(
         "SELECT * FROM currencies WHERE code = {} AND is_active = 1",
         ph(1)
@@ -55,7 +55,7 @@ pub async fn find_by_code_tx(
 }
 
 pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Currency>> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "currencies",
         "id",
         "document_id",
@@ -80,40 +80,21 @@ pub async fn create(
     name: &str,
     decimals: i64,
 ) -> AppResult<Currency> {
-    check_schema!(
-        "currencies",
-        "document_id",
-        "code",
-        "name",
-        "decimals",
-        "created_at",
-        "updated_at"
-    );
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
-    let sql = format!(
-        "INSERT INTO currencies (document_id, code, name, decimals, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {})",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6)
-    );
-    sqlx::query(&sql)
-        .bind(&document_id)
-        .bind(code)
-        .bind(name)
-        .bind(decimals)
-        .bind(now)
-        .bind(now)
-        .execute(pool)
-        .await?;
+    raisfast_derive::crud_insert!(
+        pool,
+        "currencies",
+        [
+            "document_id" => &document_id,
+            "code" => code,
+            "name" => name,
+            "decimals" => decimals,
+            "created_at" => now,
+            "updated_at" => now
+        ]
+    )?;
 
-    let sql = format!("SELECT * FROM currencies WHERE document_id = {}", ph(1));
-    sqlx::query_as::<_, Currency>(&sql)
-        .bind(&document_id)
-        .fetch_one(pool)
-        .await
+    raisfast_derive::crud_find_one!(pool, "currencies", Currency, "document_id" => &document_id)
         .map_err(Into::into)
 }
 
@@ -123,7 +104,7 @@ pub async fn update(
     name: Option<&str>,
     is_active: Option<bool>,
 ) -> AppResult<Option<Currency>> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "currencies",
         "id",
         "code",
@@ -170,8 +151,8 @@ pub async fn update(
 }
 
 pub async fn delete_by_code(pool: &crate::db::Pool, code: &str) -> AppResult<bool> {
-    check_schema!("currencies", "id", "code");
-    check_schema!("wallets", "currency");
+    raisfast_derive::check_schema!("currencies", "id", "code");
+    raisfast_derive::check_schema!("wallets", "currency");
     let existing = find_by_code(pool, code).await?;
     let existing = match existing {
         Some(e) => e,

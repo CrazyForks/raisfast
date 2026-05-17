@@ -44,7 +44,7 @@ pub async fn tx_insert(
 ) -> AppResult<()> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         &mut *tx,
         "wallet_outbox",
         [
@@ -68,7 +68,7 @@ pub async fn tx_insert(
 }
 
 pub async fn fetch_pending(pool: &crate::db::Pool, limit: i64) -> AppResult<Vec<WalletOutbox>> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "wallet_outbox",
         "status",
         "attempts",
@@ -87,7 +87,7 @@ pub async fn fetch_pending(pool: &crate::db::Pool, limit: i64) -> AppResult<Vec<
 }
 
 pub async fn mark_processing(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
-    check_schema!("wallet_outbox", "status", "updated_at", "id");
+    raisfast_derive::check_schema!("wallet_outbox", "status", "updated_at", "id");
     let sql = format!(
         "UPDATE wallet_outbox SET status = 'processing', updated_at = datetime('now') WHERE id = {} AND status IN ('pending', 'failed')",
         ph(1)
@@ -97,7 +97,7 @@ pub async fn mark_processing(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
 }
 
 pub async fn mark_completed(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
-    check_schema!("wallet_outbox", "status", "updated_at", "id");
+    raisfast_derive::check_schema!("wallet_outbox", "status", "updated_at", "id");
     let sql = format!(
         "UPDATE wallet_outbox SET status = 'completed', updated_at = datetime('now') WHERE id = {}",
         ph(1)
@@ -107,7 +107,7 @@ pub async fn mark_completed(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
 }
 
 pub async fn mark_failed(pool: &crate::db::Pool, id: i64, error: &str) -> AppResult<()> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "wallet_outbox",
         "status",
         "attempts",

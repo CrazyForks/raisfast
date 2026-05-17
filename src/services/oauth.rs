@@ -310,7 +310,7 @@ async fn auto_register_user(
     user_info: &OAuthUserInfo,
     aspect_engine: &AspectEngine,
 ) -> AppResult<crate::models::user::User> {
-    check_schema!("users", "avatar", "updated_at", "id");
+    raisfast_derive::check_schema!("users", "avatar", "updated_at", "id");
     let base_username = user_info.display_name.clone().unwrap_or_else(|| {
         format!(
             "{provider_name}_{}",

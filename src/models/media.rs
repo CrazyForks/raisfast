@@ -45,7 +45,7 @@ pub async fn create(
 ) -> AppResult<Media> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         pool,
         "media",
         [
@@ -62,7 +62,7 @@ pub async fn create(
         tenant_id
     )?;
 
-    let media = tenant_find_one!(pool, "media" => Media, "document_id" => document_id, tenant_id)?;
+    let media = raisfast_derive::tenant_find_one!(pool, "media", Media, "document_id" => document_id, tenant_id)?;
 
     Ok(media)
 }
@@ -74,31 +74,16 @@ pub async fn find_all(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Media>, i64)> {
-    check_schema!("media", "user_id", "created_at");
-    let offset = (page - 1) * page_size;
-    let base = usize::from(tenant_id.is_some()) + 1;
-    let sql = format!(
-        "SELECT * FROM media WHERE user_id = {}{} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2),
-        ph(base + 1),
-        ph(base + 2)
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, Media,
+        data_sql: "SELECT * FROM media WHERE user_id = ?{tenant} ORDER BY created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM media WHERE user_id = ?{tenant}",
+        binds: [user_id],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    let mut q = sqlx::query_as::<_, Media>(&sql).bind(user_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q = q.bind(page_size).bind(offset);
-    let items = q.fetch_all(pool).await?;
-
-    let sql2 = format!(
-        "SELECT COUNT(*) FROM media WHERE user_id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let total: (i64,) = tenant_query!(pool, (i64,), &sql2, [user_id], tenant_id, fetch_one)?;
-
-    Ok((items, total.0))
+    Ok(result)
 }
 
 pub async fn find_all_admin(
@@ -107,29 +92,16 @@ pub async fn find_all_admin(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Media>, i64)> {
-    check_schema!("media", "created_at");
-    let offset = (page - 1) * page_size;
-    let base = usize::from(tenant_id.is_some()) + 1;
-    let sql = format!(
-        "SELECT * FROM media WHERE 1=1{} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-        tenant_filter_ph(tenant_id, 1),
-        ph(base),
-        ph(base + 1)
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, Media,
+        data_sql: "SELECT * FROM media WHERE 1=1{tenant} ORDER BY created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM media WHERE 1=1{tenant}",
+        binds: [],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    let mut q = sqlx::query_as::<_, Media>(&sql);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q = q.bind(page_size).bind(offset);
-    let items = q.fetch_all(pool).await?;
-
-    let sql2 = format!(
-        "SELECT COUNT(*) FROM media WHERE 1=1{}",
-        tenant_filter_ph(tenant_id, 1)
-    );
-    let total: (i64,) = tenant_query!(pool, (i64,), &sql2, [], tenant_id, fetch_one)?;
-
-    Ok((items, total.0))
+    Ok(result)
 }
 
 pub async fn find_by_id(
@@ -137,7 +109,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Media>> {
-    Ok(tenant_find!(pool, "media" => Media, "id" => id, tenant_id)?)
+    Ok(raisfast_derive::tenant_find!(pool, "media", Media, "id" => id, tenant_id)?)
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -165,7 +137,7 @@ pub async fn stats(
         "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE user_id = {}{filter}",
         ph(1)
     );
-    let (total_files, total_size) = tenant_query!(
+    let (total_files, total_size) = raisfast_derive::tenant_query!(
         pool,
         (i64, i64),
         &total_sql,
@@ -178,7 +150,7 @@ pub async fn stats(
         "SELECT mimetype, COUNT(*), COALESCE(SUM(size), 0) FROM media WHERE user_id = {}{filter} GROUP BY mimetype ORDER BY COUNT(*) DESC",
         ph(1)
     );
-    let rows = tenant_query!(
+    let rows = raisfast_derive::tenant_query!(
         pool,
         (String, i64, i64),
         &by_type_sql,
@@ -204,7 +176,7 @@ pub async fn stats(
 }
 
 pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
-    let result = tenant_delete!(pool, "media", "id" => id, tenant_id)?;
+    let result = raisfast_derive::tenant_delete!(pool, "media", "id" => id, tenant_id)?;
     AppError::expect_affected(&result, "media")
 }
 

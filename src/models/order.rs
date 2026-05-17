@@ -63,7 +63,8 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Order>> {
-    tenant_find!(pool, "orders" => Order, "id" => id, tenant_id).map_err(Into::into)
+    raisfast_derive::tenant_find!(pool, "orders", Order, "id" => id, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn find_by_document_id(
@@ -71,7 +72,7 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Order>> {
-    tenant_find!(pool, "orders" => Order, "document_id" => document_id, tenant_id)
+    raisfast_derive::tenant_find!(pool, "orders", Order, "document_id" => document_id, tenant_id)
         .map_err(Into::into)
 }
 
@@ -80,7 +81,8 @@ pub async fn find_by_order_no(
     order_no: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Order>> {
-    tenant_find!(pool, "orders" => Order, "order_no" => order_no, tenant_id).map_err(Into::into)
+    raisfast_derive::tenant_find!(pool, "orders", Order, "order_no" => order_no, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn find_by_user_paginated(
@@ -90,30 +92,16 @@ pub async fn find_by_user_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<Order>, i64)> {
-    check_schema!("orders", "user_id", "tenant_id", "created_at");
-    let offset = (page - 1) * page_size;
-    let tenant_ph = tenant_filter_ph(tenant_id, 2);
-    let count_sql = format!(
-        "SELECT COUNT(*) as count FROM orders WHERE user_id = {}{}",
-        ph(1),
-        tenant_ph
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, Order,
+        data_sql: "SELECT * FROM orders WHERE user_id = ?{tenant} ORDER BY created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM orders WHERE user_id = ?{tenant}",
+        binds: [user_id],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    let (total,): (i64,) =
-        tenant_query!(pool, (i64,), &count_sql, [user_id], tenant_id, fetch_one)?;
-    let base = usize::from(tenant_id.is_some()) + 2;
-    let sql = format!(
-        "SELECT * FROM orders WHERE user_id = {}{} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2),
-        ph(base),
-        ph(base + 1)
-    );
-    let mut dq = sqlx::query_as::<_, Order>(&sql).bind(user_id);
-    if let Some(tid) = tenant_id {
-        dq = dq.bind(tid);
-    }
-    let rows = dq.bind(page_size).bind(offset).fetch_all(pool).await?;
-    Ok((rows, total))
+    Ok(result)
 }
 
 pub async fn find_all_admin_paginated(
@@ -123,60 +111,17 @@ pub async fn find_all_admin_paginated(
     page_size: i64,
     status: Option<&str>,
 ) -> AppResult<(Vec<Order>, i64)> {
-    check_schema!("orders", "status", "tenant_id", "created_at");
-    let offset = (page - 1) * page_size;
-    let tenant_ph = tenant_filter_ph(tenant_id, 1);
-    let has_tenant = tenant_id.is_some();
-    let status_ph_idx = if has_tenant { 2 } else { 1 };
-    let (count_sql, data_sql_base) = if let Some(_s) = status {
-        (
-            format!(
-                "SELECT COUNT(*) as count FROM orders WHERE status = {}{}",
-                ph(status_ph_idx),
-                tenant_ph
-            ),
-            format!(
-                "SELECT * FROM orders WHERE status = {}{} ORDER BY created_at DESC",
-                ph(status_ph_idx),
-                tenant_ph
-            ),
-        )
-    } else {
-        (
-            format!(
-                "SELECT COUNT(*) as count FROM orders WHERE 1=1{}",
-                tenant_ph
-            ),
-            format!(
-                "SELECT * FROM orders WHERE 1=1{} ORDER BY created_at DESC",
-                tenant_ph
-            ),
-        )
-    };
-    let mut q = sqlx::query_as::<_, (i64,)>(&count_sql);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    if let Some(ref s) = status {
-        q = q.bind(s);
-    }
-    let (total,): (i64,) = q.fetch_one(pool).await?;
-    let limit_base = status_ph_idx + usize::from(status.is_some());
-    let sql = format!(
-        "{} LIMIT {} OFFSET {}",
-        data_sql_base,
-        ph(limit_base + 1),
-        ph(limit_base + 2)
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, Order,
+        data_sql: "SELECT * FROM orders WHERE 1=1{tenant} ORDER BY created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM orders WHERE 1=1{tenant}",
+        binds: [],
+        where: ["status" => status],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    let mut q2 = sqlx::query_as::<_, Order>(&sql);
-    if let Some(tid) = tenant_id {
-        q2 = q2.bind(tid);
-    }
-    if let Some(s) = status {
-        q2 = q2.bind(s);
-    }
-    let rows = q2.bind(page_size).bind(offset).fetch_all(pool).await?;
-    Ok((rows, total))
+    Ok(result)
 }
 
 pub async fn insert(
@@ -186,7 +131,7 @@ pub async fn insert(
 ) -> AppResult<Order> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         pool,
         "orders",
         [
@@ -242,7 +187,7 @@ pub async fn update_status(
     timestamp_col: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    check_schema!("orders", "status", "updated_at", "id", "tenant_id");
+    raisfast_derive::check_schema!("orders", "status", "updated_at", "id", "tenant_id");
     let sql = if let Some(col) = timestamp_col {
         validate_timestamp_col(col)?;
         format!(
@@ -275,7 +220,7 @@ pub async fn update_shipped(
     carrier: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    crate::tenant_update!(
+    raisfast_derive::tenant_update!(
         pool, "orders",
         bind: [
             "status" => OrderStatus::Shipped.as_str(),
@@ -295,7 +240,7 @@ pub async fn update_admin_remark(
     admin_remark: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    crate::tenant_update!(
+    raisfast_derive::tenant_update!(
         pool, "orders",
         bind: ["admin_remark" => admin_remark],
         raw: ["updated_at" => "datetime('now')"],
@@ -311,7 +256,7 @@ pub async fn update_delivery_data(
     delivery_data: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    crate::tenant_update!(
+    raisfast_derive::tenant_update!(
         pool, "orders",
         bind: ["delivery_data" => delivery_data],
         raw: ["updated_at" => "datetime('now')"],
@@ -325,7 +270,7 @@ pub async fn tx_find_id_by_document_id(
     tx: &mut crate::db::pool::DbConnection,
     document_id: &str,
 ) -> AppResult<Option<i64>> {
-    check_schema!("orders", "id", "document_id");
+    raisfast_derive::check_schema!("orders", "id", "document_id");
     let sql = format!("SELECT id FROM orders WHERE document_id = {}", ph(1));
     let result: Option<(i64,)> = sqlx::query_as(&sql)
         .bind(document_id)
@@ -338,7 +283,8 @@ pub async fn tx_find_by_document_id(
     tx: &mut crate::db::pool::DbConnection,
     document_id: &str,
 ) -> AppResult<Option<Order>> {
-    crud_find!(&mut *tx, "orders" => Order, "document_id" => document_id).map_err(Into::into)
+    raisfast_derive::crud_find!(&mut *tx, "orders", Order, "document_id" => document_id)
+        .map_err(Into::into)
 }
 
 pub async fn tx_update_status(
@@ -347,7 +293,7 @@ pub async fn tx_update_status(
     status: OrderStatus,
     timestamp_col: Option<&str>,
 ) -> AppResult<()> {
-    check_schema!("orders", "status", "updated_at", "id");
+    raisfast_derive::check_schema!("orders", "status", "updated_at", "id");
     let sql = if let Some(col) = timestamp_col {
         validate_timestamp_col(col)?;
         format!(
@@ -376,10 +322,9 @@ pub async fn tx_insert(
     cmd: &crate::commands::CreateOrderCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Order> {
-    check_schema!("orders", "document_id", "tenant_id");
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         &mut *tx,
         "orders",
         [
@@ -410,7 +355,8 @@ pub async fn tx_insert(
     } else {
         format!("SELECT * FROM orders WHERE document_id = {}", ph(1))
     };
-    tenant_query!(&mut *tx, Order, &sql, [&document_id], tenant_id, fetch_one).map_err(Into::into)
+    raisfast_derive::tenant_query!(&mut *tx, Order, &sql, [&document_id], tenant_id, fetch_one)
+        .map_err(Into::into)
 }
 
 pub async fn tx_update_status_cas(
@@ -420,7 +366,7 @@ pub async fn tx_update_status_cas(
     timestamp_col: Option<&str>,
     expected_status: OrderStatus,
 ) -> AppResult<u64> {
-    check_schema!("orders", "status", "updated_at", "id");
+    raisfast_derive::check_schema!("orders", "status", "updated_at", "id");
     let sql = if let Some(col) = timestamp_col {
         validate_timestamp_col(col)?;
         format!(
@@ -453,7 +399,7 @@ pub async fn tx_update_shipped(
     tracking_no: Option<&str>,
     carrier: Option<&str>,
 ) -> AppResult<u64> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "orders",
         "status",
         "tracking_no",
@@ -484,12 +430,12 @@ pub async fn get_stats_query(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
 ) -> AppResult<crate::dto::OrderStatsResponse> {
-    check_schema!("orders", "status", "tenant_id", "total_amount");
+    raisfast_derive::check_schema!("orders", "status", "tenant_id", "total_amount");
     let sql = format!(
         "SELECT status, COUNT(*) as cnt FROM orders WHERE 1=1{} GROUP BY status",
         tenant_filter_ph(tenant_id, 1)
     );
-    let rows = tenant_query!(pool, (String, i64), &sql, [], tenant_id, fetch_all)?;
+    let rows = raisfast_derive::tenant_query!(pool, (String, i64), &sql, [], tenant_id, fetch_all)?;
 
     let mut total_orders: i64 = 0;
     let mut pending_orders: i64 = 0;
@@ -509,7 +455,8 @@ pub async fn get_stats_query(
         "SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE status = 'completed'{}",
         tenant_filter_ph(tenant_id, 1)
     );
-    let (total_revenue,) = tenant_query!(pool, (i64,), &rev_sql, [], tenant_id, fetch_one)?;
+    let (total_revenue,) =
+        raisfast_derive::tenant_query!(pool, (i64,), &rev_sql, [], tenant_id, fetch_one)?;
 
     Ok(crate::dto::OrderStatsResponse {
         total_orders,
@@ -653,7 +600,7 @@ mod tests {
         assert_eq!(o.shipping_amount, 0);
         assert_eq!(o.currency, "CNY");
         assert!(o.paid_at.is_none());
-        assert!(o.tenant_id.is_none());
+        assert_eq!(o.tenant_id, Some("default".to_string()));
     }
 
     #[tokio::test]

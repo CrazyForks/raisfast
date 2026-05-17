@@ -150,6 +150,10 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(crate::db::schema::TENANTABLE_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
         let config = Arc::new(AppConfig::test_defaults());
         let handler = ProcessWalletOutboxHandler::new(pool, config);
         let job = Job::GenerateSitemap;
@@ -160,6 +164,10 @@ mod tests {
     async fn handles_empty_outbox() {
         let pool = Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();

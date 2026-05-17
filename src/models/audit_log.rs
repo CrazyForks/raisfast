@@ -32,79 +32,23 @@ crate::impl_from_row_opt_tenant!(AuditEntry {
 
 /// Insert an audit log entry
 pub async fn insert(pool: &crate::db::Pool, entry: &AuditEntry) -> AppResult<()> {
-    check_schema!(
+    raisfast_derive::tenant_insert!(
+        pool,
         "audit_log",
-        "document_id",
-        "actor_id",
-        "actor_role",
-        "action",
-        "subject",
-        "subject_id",
-        "detail",
-        "ip_address",
-        "user_agent",
-        "created_at"
-    );
-    match &entry.tenant_id {
-        Some(tid) => {
-            let sql = format!(
-                "INSERT INTO audit_log (document_id, tenant_id, actor_id, actor_role, action, subject, subject_id, detail, ip_address, user_agent, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
-                crate::db::dialect::ph(1),
-                crate::db::dialect::ph(2),
-                crate::db::dialect::ph(3),
-                crate::db::dialect::ph(4),
-                crate::db::dialect::ph(5),
-                crate::db::dialect::ph(6),
-                crate::db::dialect::ph(7),
-                crate::db::dialect::ph(8),
-                crate::db::dialect::ph(9),
-                crate::db::dialect::ph(10),
-                crate::db::dialect::ph(11)
-            );
-            sqlx::query(&sql)
-                .bind(&entry.document_id)
-                .bind(tid)
-                .bind(entry.actor_id)
-                .bind(&entry.actor_role)
-                .bind(&entry.action)
-                .bind(&entry.subject)
-                .bind(&entry.subject_id)
-                .bind(&entry.detail)
-                .bind(&entry.ip_address)
-                .bind(&entry.user_agent)
-                .bind(entry.created_at)
-                .execute(pool)
-                .await?;
-        }
-        None => {
-            let sql = format!(
-                "INSERT INTO audit_log (document_id, actor_id, actor_role, action, subject, subject_id, detail, ip_address, user_agent, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
-                crate::db::dialect::ph(1),
-                crate::db::dialect::ph(2),
-                crate::db::dialect::ph(3),
-                crate::db::dialect::ph(4),
-                crate::db::dialect::ph(5),
-                crate::db::dialect::ph(6),
-                crate::db::dialect::ph(7),
-                crate::db::dialect::ph(8),
-                crate::db::dialect::ph(9),
-                crate::db::dialect::ph(10)
-            );
-            sqlx::query(&sql)
-                .bind(&entry.document_id)
-                .bind(entry.actor_id)
-                .bind(&entry.actor_role)
-                .bind(&entry.action)
-                .bind(&entry.subject)
-                .bind(&entry.subject_id)
-                .bind(&entry.detail)
-                .bind(&entry.ip_address)
-                .bind(&entry.user_agent)
-                .bind(entry.created_at)
-                .execute(pool)
-                .await?;
-        }
-    }
+        [
+            "document_id" => &entry.document_id,
+            "actor_id" => entry.actor_id,
+            "actor_role" => &entry.actor_role,
+            "action" => &entry.action,
+            "subject" => &entry.subject,
+            "subject_id" => &entry.subject_id,
+            "detail" => &entry.detail,
+            "ip_address" => &entry.ip_address,
+            "user_agent" => &entry.user_agent,
+            "created_at" => entry.created_at
+        ],
+        entry.tenant_id.as_deref()
+    )?;
     Ok(())
 }
 
@@ -117,7 +61,7 @@ pub async fn find_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<AuditEntry>, i64)> {
-    check_schema!("audit_log", "action", "actor_id", "created_at");
+    raisfast_derive::check_schema!("audit_log", "action", "actor_id", "created_at");
     let offset = (page - 1).max(0) * page_size;
 
     let mut ph_idx = 1usize;
@@ -169,13 +113,13 @@ pub async fn find_paginated(
 
 /// Find an audit log entry by ID
 pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<AuditEntry> {
-    crud_find_one!(pool, "audit_log" => AuditEntry, "id" => id).map_err(Into::into)
+    raisfast_derive::crud_find_one!(pool, "audit_log", AuditEntry, "id" => id).map_err(Into::into)
 }
 
 pub async fn find_by_document_id(
     pool: &crate::db::Pool,
     document_id: &str,
 ) -> AppResult<AuditEntry> {
-    crud_find_one!(pool, "audit_log" => AuditEntry, "document_id" => document_id)
+    raisfast_derive::crud_find_one!(pool, "audit_log", AuditEntry, "document_id" => document_id)
         .map_err(Into::into)
 }

@@ -34,7 +34,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentRefund>> {
-    tenant_find!(pool, "payment_refunds" => PaymentRefund, "id" => id, tenant_id)
+    raisfast_derive::tenant_find!(pool, "payment_refunds", PaymentRefund, "id" => id, tenant_id)
         .map_err(Into::into)
 }
 
@@ -48,7 +48,7 @@ pub async fn find_by_payment_order_id(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    tenant_query!(
+    raisfast_derive::tenant_query!(
         pool,
         PaymentRefund,
         &sql,
@@ -64,12 +64,8 @@ pub async fn find_by_order_id(
     order_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<PaymentRefund>> {
-    let sql = format!(
-        "SELECT * FROM payment_refunds WHERE order_id = {}{} ORDER BY created_at DESC",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    tenant_query!(pool, PaymentRefund, &sql, [order_id], tenant_id, fetch_all).map_err(Into::into)
+    raisfast_derive::tenant_find_all!(pool, "payment_refunds", PaymentRefund, "order_id" => order_id, tenant_id, order_by: "created_at DESC")
+        .map_err(Into::into)
 }
 
 pub async fn insert(
@@ -79,7 +75,7 @@ pub async fn insert(
 ) -> AppResult<PaymentRefund> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         pool,
         "payment_refunds",
         [
@@ -99,7 +95,7 @@ pub async fn insert(
         ],
         tenant_id
     )?;
-    tenant_find_one!(pool, "payment_refunds" => PaymentRefund, "document_id" => &document_id, tenant_id).map_err(Into::into)
+    raisfast_derive::tenant_find_one!(pool, "payment_refunds", PaymentRefund, "document_id" => &document_id, tenant_id).map_err(Into::into)
 }
 
 pub async fn update_status(
@@ -108,7 +104,7 @@ pub async fn update_status(
     status: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    crate::tenant_update!(
+    raisfast_derive::tenant_update!(
         pool, "payment_refunds",
         bind: ["status" => status],
         raw: ["updated_at" => "datetime('now')"],
@@ -128,7 +124,14 @@ pub async fn sum_refunded_by_order(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    let (total,) = tenant_query!(pool, (i64,), &sql, [payment_order_id], tenant_id, fetch_one)?;
+    let (total,) = raisfast_derive::tenant_query!(
+        pool,
+        (i64,),
+        &sql,
+        [payment_order_id],
+        tenant_id,
+        fetch_one
+    )?;
     Ok(total)
 }
 
@@ -138,27 +141,16 @@ pub async fn find_all_admin_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<PaymentRefund>, i64)> {
-    check_schema!("payment_refunds", "created_at");
-    let offset = (page - 1) * page_size;
-    let tenant_ph = tenant_filter_ph(tenant_id, 1);
-    let count_sql = format!(
-        "SELECT COUNT(*) as count FROM payment_refunds WHERE 1=1{}",
-        tenant_ph
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, PaymentRefund,
+        data_sql: "SELECT * FROM payment_refunds WHERE 1=1{tenant} ORDER BY created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM payment_refunds WHERE 1=1{tenant}",
+        binds: [],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    let (total,): (i64,) = tenant_query!(pool, (i64,), &count_sql, [], tenant_id, fetch_one)?;
-    let base = usize::from(tenant_id.is_some()) + 1;
-    let sql = format!(
-        "SELECT * FROM payment_refunds WHERE 1=1{} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-        tenant_ph,
-        ph(base),
-        ph(base + 1)
-    );
-    let mut dq = sqlx::query_as::<_, PaymentRefund>(&sql);
-    if let Some(tid) = tenant_id {
-        dq = dq.bind(tid);
-    }
-    let rows = dq.bind(page_size).bind(offset).fetch_all(pool).await?;
-    Ok((rows, total))
+    Ok(result)
 }
 
 pub async fn tx_insert(
@@ -168,7 +160,7 @@ pub async fn tx_insert(
 ) -> AppResult<()> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         &mut *tx,
         "payment_refunds",
         [
@@ -207,7 +199,7 @@ pub async fn tx_sum_refunded_by_order(
             ph(1)
         )
     };
-    let (total,) = tenant_query!(
+    let (total,) = raisfast_derive::tenant_query!(
         &mut *tx,
         (i64,),
         &sql,
@@ -222,16 +214,7 @@ pub async fn tx_find_by_document_id(
     tx: &mut crate::db::pool::DbConnection,
     document_id: &str,
 ) -> AppResult<Option<PaymentRefund>> {
-    check_schema!("payment_refunds", "document_id");
-    let sql = format!(
-        "SELECT * FROM payment_refunds WHERE document_id = {}",
-        ph(1)
-    );
-    sqlx::query_as::<_, PaymentRefund>(&sql)
-        .bind(document_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(Into::into)
+    raisfast_derive::crud_find!(&mut *tx, "payment_refunds", PaymentRefund, "document_id" => document_id).map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -455,7 +438,7 @@ mod tests {
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
         let refund = seed_refund(&pool, po_id, uid, 500, "pending").await;
-        assert!(refund.tenant_id.is_none());
+        assert_eq!(refund.tenant_id, Some("default".to_string()));
         assert!(refund.payment_tx_id.is_none());
         assert!(refund.metadata.is_none());
         assert!(refund.provider_refund_id.is_some());

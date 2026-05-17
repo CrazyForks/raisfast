@@ -1007,7 +1007,7 @@ pub async fn refund_payment_order(
     id: &str,
     req: CreateRefundRequest,
 ) -> AppResult<PaymentRefund> {
-    check_schema!("payment_refunds", "provider_refund_id");
+    raisfast_derive::check_schema!("payment_refunds", "provider_refund_id");
     auth.ensure_admin()?;
     let payment_order =
         crate::models::payment_order::find_by_document_id(pool, id, auth.tenant_id())
@@ -1241,6 +1241,10 @@ mod tests {
     async fn setup_pool() -> crate::db::Pool {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();

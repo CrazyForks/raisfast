@@ -30,8 +30,8 @@ pub async fn trigger_email_verification(
 ///
 /// Validates the token, marks it as used, and updates user_credentials.verified = 1.
 pub async fn verify_email(pool: &crate::db::Pool, token: &str) -> AppResult<()> {
-    check_schema!("email_verification_tokens", "verified_at", "id");
-    check_schema!(
+    raisfast_derive::check_schema!("email_verification_tokens", "verified_at", "id");
+    raisfast_derive::check_schema!(
         "user_credentials",
         "verified",
         "updated_at",

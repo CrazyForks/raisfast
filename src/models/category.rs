@@ -8,8 +8,6 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::db::dialect::ph;
-use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
@@ -42,12 +40,7 @@ crate::impl_from_row_opt_tenant!(Category {
 });
 
 pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppResult<Vec<Category>> {
-    let sql = format!(
-        "SELECT * FROM categories WHERE 1=1{} ORDER BY sort_order, name",
-        tenant_filter_ph(tenant_id, 1)
-    );
-    let categories = tenant_query!(pool, Category, &sql, [], tenant_id, fetch_all)?;
-    Ok(categories)
+    raisfast_derive::crud_list!(pool, "categories", Category, order_by: "sort_order, name", tenant: tenant_id).map_err(Into::into)
 }
 
 pub async fn find_paginated(
@@ -56,34 +49,16 @@ pub async fn find_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<Category>, i64)> {
-    check_schema!("categories", "sort_order", "name");
-    let offset = (page - 1).max(0) * page_size;
-
-    let count_sql = format!(
-        "SELECT COUNT(*) FROM categories WHERE 1=1{}",
-        tenant_filter_ph(tenant_id, 1)
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, Category,
+        data_sql: "SELECT * FROM categories WHERE 1=1{tenant} ORDER BY sort_order, name",
+        count_sql: "SELECT COUNT(*) FROM categories WHERE 1=1{tenant}",
+        binds: [],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    let mut cq = sqlx::query_scalar::<_, i64>(&count_sql);
-    if let Some(tid) = tenant_id {
-        cq = cq.bind(tid);
-    }
-    let total = cq.fetch_one(pool).await?;
-
-    let base = usize::from(tenant_id.is_some()) + 1;
-    let data_sql = format!(
-        "SELECT * FROM categories WHERE 1=1{} ORDER BY sort_order, name LIMIT {} OFFSET {}",
-        tenant_filter_ph(tenant_id, 1),
-        ph(base),
-        ph(base + 1)
-    );
-    let mut dq = sqlx::query_as::<_, Category>(&data_sql);
-    if let Some(tid) = tenant_id {
-        dq = dq.bind(tid);
-    }
-    dq = dq.bind(page_size).bind(offset);
-    let items = dq.fetch_all(pool).await?;
-
-    Ok((items, total))
+    Ok(result)
 }
 
 pub async fn find_by_id(
@@ -91,7 +66,8 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Category> {
-    tenant_find_one!(pool, "categories" => Category, "id" => id, tenant_id).map_err(Into::into)
+    raisfast_derive::tenant_find_one!(pool, "categories", Category, "id" => id, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn find_by_document_id(
@@ -99,7 +75,7 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Category>> {
-    tenant_find!(pool, "categories" => Category, "document_id" => document_id, tenant_id)
+    raisfast_derive::tenant_find!(pool, "categories", Category, "document_id" => document_id, tenant_id)
         .map_err(Into::into)
 }
 
@@ -111,7 +87,7 @@ pub async fn create(
 ) -> AppResult<Category> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         pool,
         "categories",
         [
@@ -154,7 +130,7 @@ pub async fn update(
     let sort = cmd.sort_order.unwrap_or(existing.sort_order);
 
     let now = crate::utils::tz::now_utc();
-    tenant_update!(pool, "categories",
+    raisfast_derive::tenant_update!(pool, "categories",
         bind: ["name" => name, "slug" => slug, "description" => desc, "parent_id" => parent, "sort_order" => sort, "updated_by" => updated_by, "updated_at" => &now],
         where: "id" => cat_id,
         tenant: tenant_id
@@ -164,7 +140,7 @@ pub async fn update(
 }
 
 pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
-    let result = tenant_delete!(pool, "categories", "id" => id, tenant_id)?;
+    let result = raisfast_derive::tenant_delete!(pool, "categories", "id" => id, tenant_id)?;
     AppError::expect_affected(&result, "category")
 }
 

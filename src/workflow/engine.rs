@@ -648,6 +648,10 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(crate::db::schema::TENANTABLE_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
         WorkflowService::new(pool)
     }
 

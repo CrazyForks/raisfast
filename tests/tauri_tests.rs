@@ -63,6 +63,10 @@ async fn setup_pool() -> sqlx::SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(raisfast::db::schema::TENANTABLE_SQL)
+        .execute(&pool)
+        .await
+        .unwrap();
     tenant::invalidate_cache().await;
     pool
 }

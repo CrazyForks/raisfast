@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use crate::db::dialect::ph;
-use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
@@ -33,7 +31,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentChannel>> {
-    tenant_find!(pool, "payment_channels" => PaymentChannel, "id" => id, tenant_id)
+    raisfast_derive::tenant_find!(pool, "payment_channels", PaymentChannel, "id" => id, tenant_id)
         .map_err(Into::into)
 }
 
@@ -42,18 +40,15 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentChannel>> {
-    tenant_find!(pool, "payment_channels" => PaymentChannel, "document_id" => document_id, tenant_id).map_err(Into::into)
+    raisfast_derive::tenant_find!(pool, "payment_channels", PaymentChannel, "document_id" => document_id, tenant_id).map_err(Into::into)
 }
 
 pub async fn find_all_active(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<PaymentChannel>> {
-    let sql = format!(
-        "SELECT * FROM payment_channels WHERE is_active = 1{} ORDER BY sort_order, created_at DESC",
-        tenant_filter_ph(tenant_id, 1)
-    );
-    tenant_query!(pool, PaymentChannel, &sql, [], tenant_id, fetch_all).map_err(Into::into)
+    raisfast_derive::tenant_find_all!(pool, "payment_channels", PaymentChannel, "is_active" => 1_i64, tenant_id, order_by: "sort_order, created_at DESC")
+        .map_err(Into::into)
 }
 
 pub async fn find_all_admin_paginated(
@@ -63,62 +58,18 @@ pub async fn find_all_admin_paginated(
     page_size: i64,
     is_active: Option<bool>,
 ) -> AppResult<(Vec<PaymentChannel>, i64)> {
-    check_schema!("payment_channels", "is_active", "sort_order", "created_at");
-    let offset = (page - 1) * page_size;
-    let tenant_ph = tenant_filter_ph(tenant_id, 1);
-    let has_tenant = tenant_id.is_some();
-    let status_ph_idx = if has_tenant { 2 } else { 1 };
-    let (count_sql, data_sql_base) = if let Some(active) = is_active {
-        let val = if active { 1 } else { 0 };
-        let _ = val;
-        (
-            format!(
-                "SELECT COUNT(*) as count FROM payment_channels WHERE is_active = {}{}",
-                ph(status_ph_idx),
-                tenant_ph
-            ),
-            format!(
-                "SELECT * FROM payment_channels WHERE is_active = {}{} ORDER BY sort_order, created_at DESC",
-                ph(status_ph_idx),
-                tenant_ph
-            ),
-        )
-    } else {
-        (
-            format!(
-                "SELECT COUNT(*) as count FROM payment_channels WHERE 1=1{}",
-                tenant_ph
-            ),
-            format!(
-                "SELECT * FROM payment_channels WHERE 1=1{} ORDER BY sort_order, created_at DESC",
-                tenant_ph
-            ),
-        )
-    };
-    let mut q = sqlx::query_as::<_, (i64,)>(&count_sql);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    if let Some(active) = is_active {
-        q = q.bind(if active { 1_i64 } else { 0_i64 });
-    }
-    let (total,): (i64,) = q.fetch_one(pool).await?;
-    let limit_base = status_ph_idx + usize::from(is_active.is_some());
-    let sql = format!(
-        "{} LIMIT {} OFFSET {}",
-        data_sql_base,
-        ph(limit_base + 1),
-        ph(limit_base + 2)
+    let active_val = is_active.map(|a| if a { 1_i64 } else { 0_i64 });
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, PaymentChannel,
+        data_sql: "SELECT * FROM payment_channels WHERE 1=1{tenant} ORDER BY sort_order, created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM payment_channels WHERE 1=1{tenant}",
+        binds: [],
+        where: ["is_active" => active_val],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    let mut q2 = sqlx::query_as::<_, PaymentChannel>(&sql);
-    if let Some(tid) = tenant_id {
-        q2 = q2.bind(tid);
-    }
-    if let Some(active) = is_active {
-        q2 = q2.bind(if active { 1_i64 } else { 0_i64 });
-    }
-    let rows = q2.bind(page_size).bind(offset).fetch_all(pool).await?;
-    Ok((rows, total))
+    Ok(result)
 }
 
 pub async fn insert(
@@ -130,7 +81,7 @@ pub async fn insert(
     let is_live_val = if cmd.is_live { 1_i64 } else { 0_i64 };
     let is_active_val = if cmd.is_active { 1_i64 } else { 0_i64 };
     let now = crate::utils::tz::now_utc();
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         pool,
         "payment_channels",
         [
@@ -164,7 +115,7 @@ pub async fn update(
 ) -> AppResult<bool> {
     let is_live_val = if cmd.is_live { 1_i64 } else { 0_i64 };
     let is_active_val = if cmd.is_active { 1_i64 } else { 0_i64 };
-    let affected = crate::tenant_update!(
+    let affected = raisfast_derive::tenant_update!(
         pool, "payment_channels",
         bind: [
             "provider" => &cmd.provider,
@@ -190,7 +141,9 @@ pub async fn delete_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
-    let affected = tenant_delete!(pool, "payment_channels", "id" => id, tenant_id)?.rows_affected();
+    let affected =
+        raisfast_derive::tenant_delete!(pool, "payment_channels", "id" => id, tenant_id)?
+            .rows_affected();
     Ok(affected > 0)
 }
 

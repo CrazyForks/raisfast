@@ -22,7 +22,7 @@ pub struct PluginStorageRow {
 
 /// Get a plugin's KV data
 pub async fn get(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<Option<String>> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "plugin_storage",
         "plugin_id",
         "storage_key",
@@ -70,7 +70,7 @@ pub async fn set(
     value: &str,
     ttl_seconds: Option<i64>,
 ) -> AppResult<()> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "plugin_storage",
         "plugin_id",
         "storage_key",
@@ -112,7 +112,7 @@ pub async fn set(
 
 /// Delete a specific key for a plugin
 pub async fn delete(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<()> {
-    check_schema!("plugin_storage", "plugin_id", "storage_key");
+    raisfast_derive::check_schema!("plugin_storage", "plugin_id", "storage_key");
     sqlx::query(&format!(
         "DELETE FROM plugin_storage WHERE plugin_id = {} AND storage_key = {}",
         ph(1),
@@ -127,7 +127,7 @@ pub async fn delete(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<()> {
 
 /// Delete all data for a plugin
 pub async fn delete_all(pool: &Pool, plugin_id: &str) -> AppResult<()> {
-    crud_delete!(pool, "plugin_storage", "plugin_id" => plugin_id)?;
+    raisfast_derive::crud_delete!(pool, "plugin_storage", "plugin_id" => plugin_id)?;
     Ok(())
 }
 

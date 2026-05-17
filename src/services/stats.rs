@@ -234,8 +234,8 @@ impl StatsService {
         tenant_id: Option<&str>,
         limit: i64,
     ) -> Result<Vec<Value>, AppError> {
-        check_schema!("posts", "title", "slug", "created_at");
-        check_schema!("comments", "content", "created_at");
+        raisfast_derive::check_schema!("posts", "title", "slug", "created_at");
+        raisfast_derive::check_schema!("comments", "content", "created_at");
         let mut activities = Vec::new();
 
         let tf_aliased = crate::db::tenant::tenant_filter_aliased_ph("p", tenant_id, 1);
@@ -246,7 +246,7 @@ impl StatsService {
              ORDER BY p.created_at DESC {limit_clause}"
         );
 
-        let posts: Vec<(Option<String>, String, String)> = tenant_query!(
+        let posts: Vec<(Option<String>, String, String)> = raisfast_derive::tenant_query!(
             &self.pool,
             (Option<String>, String, String),
             &post_sql,
@@ -270,7 +270,7 @@ impl StatsService {
              ORDER BY c.created_at DESC {limit_clause}"
         );
 
-        let comments: Vec<(Option<String>, String)> = tenant_query!(
+        let comments: Vec<(Option<String>, String)> = raisfast_derive::tenant_query!(
             &self.pool,
             (Option<String>, String),
             &comment_sql,

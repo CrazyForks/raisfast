@@ -59,7 +59,7 @@ pub async fn create_revision(
     let snapshot_str = serde_json::to_string(snapshot)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("snapshot serialize: {e}")))?;
 
-    crud_insert!(pool, "content_revisions", [
+    raisfast_derive::crud_insert!(pool, "content_revisions", [
         "document_id" => &document_id,
         "content_type" => content_type,
         "record_id" => record_id,
@@ -69,7 +69,9 @@ pub async fn create_revision(
         "created_at" => now,
     ])?;
 
-    Ok(crud_find_one!(pool, "content_revisions" => ContentRevision, "document_id" => &document_id)?)
+    Ok(
+        raisfast_derive::crud_find_one!(pool, "content_revisions", ContentRevision, "document_id" => &document_id)?,
+    )
 }
 
 async fn next_revision_number(
@@ -77,7 +79,7 @@ async fn next_revision_number(
     content_type: &str,
     record_id: &str,
 ) -> AppResult<i64> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "content_revisions",
         "revision_number",
         "content_type",
@@ -102,7 +104,7 @@ pub async fn list_revisions(
     content_type: &str,
     record_id: &str,
 ) -> AppResult<Vec<RevisionSummary>> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "content_revisions",
         "id",
         "revision_number",
@@ -139,7 +141,7 @@ pub async fn get_revision(
     record_id: &str,
     revision_id: i64,
 ) -> AppResult<Option<ContentRevision>> {
-    check_schema!("content_revisions", "id", "content_type", "record_id");
+    raisfast_derive::check_schema!("content_revisions", "id", "content_type", "record_id");
     let sql = format!(
         "SELECT * FROM content_revisions WHERE id = {} AND content_type = {} AND record_id = {}",
         ph(1),
@@ -201,7 +203,7 @@ pub async fn delete_revisions(
     content_type: &str,
     record_id: &str,
 ) -> AppResult<u64> {
-    check_schema!("content_revisions", "content_type", "record_id");
+    raisfast_derive::check_schema!("content_revisions", "content_type", "record_id");
     let sql = format!(
         "DELETE FROM content_revisions WHERE content_type = {} AND record_id = {}",
         ph(1),

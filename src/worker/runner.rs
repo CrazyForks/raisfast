@@ -145,6 +145,10 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(crate::db::schema::TENANTABLE_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
         let queue = Arc::new(SqliteJobQueue::new(pool));
         let mut registry = JobHandlerRegistry::new();
         registry.register("generate_sitemap", Box::new(LogJobHandler));

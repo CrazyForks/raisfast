@@ -7,8 +7,6 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::db::dialect::ph;
-use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
@@ -39,12 +37,8 @@ crate::impl_from_row_opt_tenant!(Tag {
 });
 
 pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppResult<Vec<Tag>> {
-    let sql = format!(
-        "SELECT * FROM tags WHERE 1=1{} ORDER BY name",
-        tenant_filter_ph(tenant_id, 1)
-    );
-    let tags = tenant_query!(pool, Tag, &sql, [], tenant_id, fetch_all)?;
-    Ok(tags)
+    raisfast_derive::crud_list!(pool, "tags", Tag, order_by: "name", tenant: tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn find_paginated(
@@ -53,28 +47,16 @@ pub async fn find_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<Tag>, i64)> {
-    check_schema!("tags", "name");
-    let offset = (page - 1).max(0) * page_size;
-
-    let count_sql = format!(
-        "SELECT COUNT(*) FROM tags WHERE 1=1{}",
-        tenant_filter_ph(tenant_id, 1)
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, Tag,
+        data_sql: "SELECT * FROM tags WHERE 1=1{tenant} ORDER BY name",
+        count_sql: "SELECT COUNT(*) FROM tags WHERE 1=1{tenant}",
+        binds: [],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    let total: i64 = tenant_scalar!(pool, i64, &count_sql, [], tenant_id, fetch_one)?;
-
-    let base = usize::from(tenant_id.is_some()) + 1;
-    let data_sql = format!(
-        "SELECT * FROM tags WHERE 1=1{} ORDER BY name LIMIT {} OFFSET {}",
-        tenant_filter_ph(tenant_id, 1),
-        ph(base),
-        ph(base + 1)
-    );
-    let mut dq = sqlx::query_as::<_, Tag>(&data_sql);
-    bind_tenant!(dq, tenant_id);
-    dq = dq.bind(page_size).bind(offset);
-    let items = dq.fetch_all(pool).await?;
-
-    Ok((items, total))
+    Ok(result)
 }
 
 pub async fn find_by_id(
@@ -82,7 +64,8 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Tag> {
-    tenant_find_one!(pool, "tags" => Tag, "id" => id, tenant_id).map_err(Into::into)
+    raisfast_derive::tenant_find_one!(pool, "tags", Tag, "id" => id, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn find_by_document_id(
@@ -90,7 +73,7 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Tag> {
-    tenant_find_one!(pool, "tags" => Tag, "document_id" => document_id, tenant_id)
+    raisfast_derive::tenant_find_one!(pool, "tags", Tag, "document_id" => document_id, tenant_id)
         .map_err(Into::into)
 }
 
@@ -103,7 +86,7 @@ pub async fn create(
 ) -> AppResult<Tag> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         pool,
         "tags",
         [
@@ -122,7 +105,7 @@ pub async fn create(
 }
 
 pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
-    let result = tenant_delete!(pool, "tags", "id" => id, tenant_id)?;
+    let result = raisfast_derive::tenant_delete!(pool, "tags", "id" => id, tenant_id)?;
     AppError::expect_affected(&result, "tag")
 }
 
@@ -134,7 +117,7 @@ pub async fn update(
     tenant_id: Option<&str>,
 ) -> AppResult<Tag> {
     let now = crate::utils::tz::now_utc();
-    let result = tenant_update!(pool, "tags",
+    let result = raisfast_derive::tenant_update!(pool, "tags",
         bind: ["name" => name, "slug" => slug, "updated_at" => &now],
         where: "id" => id,
         tenant: tenant_id

@@ -37,7 +37,7 @@ pub async fn find_by_id(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    tenant_query!(
+    raisfast_derive::tenant_query!(
         pool,
         PaymentTransaction,
         &sql,
@@ -58,7 +58,7 @@ pub async fn find_by_payment_order_id(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    tenant_query!(
+    raisfast_derive::tenant_query!(
         pool,
         PaymentTransaction,
         &sql,
@@ -79,7 +79,7 @@ pub async fn find_by_order_id(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    tenant_query!(
+    raisfast_derive::tenant_query!(
         pool,
         PaymentTransaction,
         &sql,
@@ -100,7 +100,7 @@ pub async fn find_by_provider_tx_id(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    tenant_query!(
+    raisfast_derive::tenant_query!(
         pool,
         PaymentTransaction,
         &sql,
@@ -121,7 +121,7 @@ async fn find_by_document_id(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    tenant_query!(
+    raisfast_derive::tenant_query!(
         pool,
         PaymentTransaction,
         &sql,
@@ -138,27 +138,16 @@ pub async fn find_all_admin_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<PaymentTransaction>, i64)> {
-    check_schema!("payment_transactions", "created_at");
-    let offset = (page - 1) * page_size;
-    let tenant_ph = tenant_filter_ph(tenant_id, 1);
-    let count_sql = format!(
-        "SELECT COUNT(*) as count FROM payment_transactions WHERE 1=1{}",
-        tenant_ph
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, PaymentTransaction,
+        data_sql: "SELECT * FROM payment_transactions WHERE 1=1{tenant} ORDER BY created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM payment_transactions WHERE 1=1{tenant}",
+        binds: [],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    let (total,): (i64,) = tenant_query!(pool, (i64,), &count_sql, [], tenant_id, fetch_one)?;
-    let base = usize::from(tenant_id.is_some()) + 1;
-    let sql = format!(
-        "SELECT * FROM payment_transactions WHERE 1=1{} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-        tenant_filter_ph(tenant_id, 1),
-        ph(base),
-        ph(base + 1)
-    );
-    let mut dq = sqlx::query_as::<_, PaymentTransaction>(&sql);
-    if let Some(tid) = tenant_id {
-        dq = dq.bind(tid);
-    }
-    let rows = dq.bind(page_size).bind(offset).fetch_all(pool).await?;
-    Ok((rows, total))
+    Ok(result)
 }
 
 pub async fn insert(
@@ -168,7 +157,7 @@ pub async fn insert(
 ) -> AppResult<PaymentTransaction> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         pool,
         "payment_transactions",
         [
@@ -202,7 +191,7 @@ pub async fn tx_insert(
 ) -> AppResult<()> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         &mut *tx,
         "payment_transactions",
         [

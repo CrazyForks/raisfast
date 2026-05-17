@@ -1082,7 +1082,7 @@ impl AppConfig {
             sms_rate_limit_secs: default_sms_rate_limit_secs(),
             require_email_verification: false,
             builtins: BuiltinsConfig::default(),
-            builtin_tenantable: false,
+            builtin_tenantable: true,
             email_provider: default_email_provider(),
             email_smtp_host: None,
             email_smtp_port: default_email_smtp_port(),

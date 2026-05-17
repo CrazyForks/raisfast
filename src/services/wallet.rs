@@ -161,7 +161,7 @@ use crate::models::wallet_transaction::WalletReferenceType as R;
 use crate::models::wallet_transaction::WalletTxType as T;
 
 async fn tx_find_wallet_by_id(tx: &mut DbConnection, id: i64) -> AppResult<Option<wallet::Wallet>> {
-    check_schema!("wallets", "id");
+    raisfast_derive::check_schema!("wallets", "id");
     let sql = format!("SELECT * FROM wallets WHERE id = {}", ph(1));
     sqlx::query_as::<_, wallet::Wallet>(&sql)
         .bind(id)
@@ -175,7 +175,7 @@ async fn tx_find_or_create(
     user_id: i64,
     currency: &str,
 ) -> AppResult<wallet::Wallet> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "wallets",
         "document_id",
         "user_id",
@@ -240,7 +240,7 @@ async fn tx_find_or_create(
 }
 
 async fn tx_find_tx_by_id(tx: &mut DbConnection, id: i64) -> AppResult<Option<WalletTransaction>> {
-    check_schema!("wallet_transactions", "id");
+    raisfast_derive::check_schema!("wallet_transactions", "id");
     let sql = format!("SELECT * FROM wallet_transactions WHERE id = {}", ph(1));
     sqlx::query_as::<_, WalletTransaction>(&sql)
         .bind(id)
@@ -253,7 +253,7 @@ async fn tx_find_tx_by_transaction_no(
     tx: &mut DbConnection,
     transaction_no: &str,
 ) -> AppResult<Option<WalletTransaction>> {
-    check_schema!("wallet_transactions", "transaction_no");
+    raisfast_derive::check_schema!("wallet_transactions", "transaction_no");
     let sql = format!(
         "SELECT * FROM wallet_transactions WHERE transaction_no = {}",
         ph(1)
@@ -266,7 +266,7 @@ async fn tx_find_tx_by_transaction_no(
 }
 
 async fn tx_has_reversal_for(tx: &mut DbConnection, related_tx_id: i64) -> AppResult<bool> {
-    check_schema!("wallet_transactions", "related_tx_id", "tx_type");
+    raisfast_derive::check_schema!("wallet_transactions", "related_tx_id", "tx_type");
     let sql = format!(
         "SELECT COUNT(*) as count FROM wallet_transactions WHERE related_tx_id = {} AND tx_type = {}",
         ph(1),
@@ -287,7 +287,7 @@ async fn apply_wallet_delta(
     delta: i64,
     current_balance: i64,
 ) -> AppResult<()> {
-    check_schema!("wallets", "balance", "version", "updated_at", "id");
+    raisfast_derive::check_schema!("wallets", "balance", "version", "updated_at", "id");
     if delta > 0 {
         let _ = current_balance
             .checked_add(delta)
@@ -715,7 +715,7 @@ async fn insert_tx(
     metadata: Option<&str>,
 ) -> AppResult<WalletTransaction> {
     debug_assert!(balance_after >= 0, "balance_after must be non-negative");
-    check_schema!(
+    raisfast_derive::check_schema!(
         "wallet_transactions",
         "document_id",
         "wallet_id",
@@ -1092,6 +1092,10 @@ mod tests {
             .await
             .unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();

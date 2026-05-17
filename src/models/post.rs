@@ -83,17 +83,7 @@ pub async fn find_by_slug(
     slug: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Post>> {
-    check_schema!("posts", "slug");
-    let sql = format!(
-        "SELECT * FROM posts WHERE slug = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, Post>(&sql).bind(slug);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let post = q.fetch_optional(pool).await?;
+    let post = raisfast_derive::tenant_find!(pool, "posts", Post, "slug" => slug, tenant_id)?;
     Ok(post)
 }
 
@@ -102,17 +92,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Post>> {
-    check_schema!("posts", "id");
-    let sql = format!(
-        "SELECT * FROM posts WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, Post>(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let post = q.fetch_optional(pool).await?;
+    let post = raisfast_derive::tenant_find!(pool, "posts", Post, "id" => id, tenant_id)?;
     Ok(post)
 }
 
@@ -121,17 +101,7 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Post>> {
-    check_schema!("posts", "document_id");
-    let sql = format!(
-        "SELECT * FROM posts WHERE document_id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, Post>(&sql).bind(document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let post = q.fetch_optional(pool).await?;
+    let post = raisfast_derive::tenant_find!(pool, "posts", Post, "document_id" => document_id, tenant_id)?;
     Ok(post)
 }
 
@@ -160,7 +130,7 @@ pub async fn create_tx(
     } else {
         None
     };
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         &mut **tx,
         "posts",
         [
@@ -193,14 +163,7 @@ async fn find_by_document_id_tx(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Post>> {
-    check_schema!("posts", "document_id");
-    let filter = tenant_filter_ph(tenant_id, 2);
-    let sql = format!("SELECT * FROM posts WHERE document_id = {}{filter}", ph(1));
-    let mut q = sqlx::query_as::<_, Post>(&sql).bind(document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_optional(&mut **tx).await.map_err(Into::into)
+    raisfast_derive::tenant_find!(&mut **tx, "posts", Post, "document_id" => document_id, tenant_id).map_err(Into::into)
 }
 
 pub async fn update(
@@ -219,7 +182,7 @@ pub async fn update_tx(
     cmd: &crate::commands::UpdatePostCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Post> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "posts",
         "id",
         "title",
@@ -234,19 +197,9 @@ pub async fn update_tx(
         "updated_at"
     );
     let post_id: i64 = cmd.id;
-    let sql = format!(
-        "SELECT * FROM posts WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, Post>(&sql).bind(post_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let existing = q
-        .fetch_optional(&mut **tx)
-        .await?
-        .ok_or_else(|| AppError::not_found("post"))?;
+    let existing =
+        raisfast_derive::tenant_find_one!(&mut **tx, "posts", Post, "id" => post_id, tenant_id)
+            .map_err(|_| AppError::not_found("post"))?;
 
     let now = crate::utils::tz::now_utc();
     let new_status = match cmd.status {
@@ -340,18 +293,7 @@ pub async fn update_tx(
 }
 
 pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
-    check_schema!("posts", "id");
-    let sql = format!(
-        "DELETE FROM posts WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let result = q.execute(pool).await?;
-
+    let result = raisfast_derive::tenant_delete!(pool, "posts", "id" => id, tenant_id)?;
     AppError::expect_affected(&result, "post")
 }
 
@@ -360,7 +302,7 @@ pub async fn increment_view_count_joined(
     slug: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<PostJoinedRow> {
-    check_schema!("posts", "slug", "status", "view_count");
+    raisfast_derive::check_schema!("posts", "slug", "status", "view_count");
     let sql = format!(
         "UPDATE posts SET view_count = view_count + 1 WHERE slug = {} AND status = {}{}",
         ph(1),
@@ -388,21 +330,10 @@ pub async fn sync_tags_tx(
     post_id: i64,
     tag_ids: &[i64],
 ) -> AppResult<()> {
-    check_schema!("posts_tags", "post_id", "tag_id");
-    let sql = format!("DELETE FROM posts_tags WHERE post_id = {}", ph(1));
-    sqlx::query(&sql).bind(post_id).execute(&mut **tx).await?;
+    raisfast_derive::crud_delete!(&mut **tx, "posts_tags", "post_id" => post_id)?;
 
     for tag_id in tag_ids {
-        let sql = format!(
-            "INSERT INTO posts_tags (post_id, tag_id) VALUES ({}, {})",
-            ph(1),
-            ph(2)
-        );
-        sqlx::query(&sql)
-            .bind(post_id)
-            .bind(tag_id)
-            .execute(&mut **tx)
-            .await?;
+        raisfast_derive::crud_insert!(&mut **tx, "posts_tags", ["post_id" => post_id, "tag_id" => *tag_id])?;
     }
 
     Ok(())
@@ -420,8 +351,8 @@ pub async fn get_post_tags(
     post_id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<TagBrief>> {
-    check_schema!("tags", "id", "name", "slug");
-    check_schema!("posts_tags", "post_id", "tag_id");
+    raisfast_derive::check_schema!("tags", "id", "name", "slug");
+    raisfast_derive::check_schema!("posts_tags", "post_id", "tag_id");
     let sql = format!(
         "SELECT t.id, t.name, t.slug FROM tags t INNER JOIN posts_tags pt ON t.id = pt.tag_id WHERE pt.post_id = {}{}",
         ph(1),
@@ -453,7 +384,7 @@ pub async fn get_author_name(
     created_by: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<String>> {
-    check_schema!("users", "id", "username");
+    raisfast_derive::check_schema!("users", "id", "username");
     let sql = format!(
         "SELECT username FROM users WHERE id = {}{}",
         ph(1),
@@ -477,7 +408,7 @@ pub async fn get_category_name(
     category_id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<String>> {
-    check_schema!("categories", "id", "name");
+    raisfast_derive::check_schema!("categories", "id", "name");
     let sql = format!(
         "SELECT name FROM categories WHERE id = {}{}",
         ph(1),
@@ -500,7 +431,7 @@ pub async fn find_published(
     q: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Post>, i64)> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "posts",
         "id",
         "status",
@@ -510,7 +441,7 @@ pub async fn find_published(
         "content",
         "category_id"
     );
-    check_schema!("posts_tags", "post_id", "tag_id");
+    raisfast_derive::check_schema!("posts_tags", "post_id", "tag_id");
     let offset = (page - 1) * page_size;
 
     let (posts, total) = if let Some(tag_id) = tag_id {
@@ -649,7 +580,7 @@ pub async fn find_all_joined(
     status: Option<PostStatus>,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<PostJoinedRow>, i64)> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "posts",
         "id",
         "document_id",
@@ -679,8 +610,8 @@ pub async fn find_all_joined(
         "updated_at",
         "published_at"
     );
-    check_schema!("users", "id", "username");
-    check_schema!("categories", "id", "name");
+    raisfast_derive::check_schema!("users", "id", "username");
+    raisfast_derive::check_schema!("categories", "id", "name");
     let offset = (page - 1) * page_size;
 
     let (posts, total) = if let Some(status) = status {
@@ -997,7 +928,7 @@ pub async fn find_joined_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<PostJoinedRow> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "posts",
         "id",
         "document_id",
@@ -1027,8 +958,8 @@ pub async fn find_joined_by_id(
         "updated_at",
         "published_at"
     );
-    check_schema!("users", "id", "username");
-    check_schema!("categories", "id", "name");
+    raisfast_derive::check_schema!("users", "id", "username");
+    raisfast_derive::check_schema!("categories", "id", "name");
     let sql = format!(
         "{JOIN_SQL} WHERE p.id = {}{}",
         ph(1),
@@ -1046,7 +977,7 @@ pub async fn find_published_joined_by_slug(
     slug: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<PostJoinedRow> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "posts",
         "id",
         "document_id",
@@ -1076,8 +1007,8 @@ pub async fn find_published_joined_by_slug(
         "updated_at",
         "published_at"
     );
-    check_schema!("users", "id", "username");
-    check_schema!("categories", "id", "name");
+    raisfast_derive::check_schema!("users", "id", "username");
+    raisfast_derive::check_schema!("categories", "id", "name");
     let sql = format!(
         "{JOIN_SQL} WHERE p.slug = {} AND p.status = {}{}",
         ph(1),
@@ -1102,8 +1033,8 @@ pub async fn get_tags_for_posts(
         return Ok(std::collections::HashMap::new());
     }
 
-    check_schema!("posts_tags", "post_id", "tag_id");
-    check_schema!("tags", "id", "name", "slug");
+    raisfast_derive::check_schema!("posts_tags", "post_id", "tag_id");
+    raisfast_derive::check_schema!("tags", "id", "name", "slug");
 
     let placeholders: Vec<String> = (1..=post_ids.len()).map(ph).collect();
     let next_idx = post_ids.len() + 1;
@@ -1153,7 +1084,7 @@ pub async fn find_joined_by_ids(
         return Ok(Vec::new());
     }
 
-    check_schema!(
+    raisfast_derive::check_schema!(
         "posts",
         "id",
         "document_id",
@@ -1183,8 +1114,8 @@ pub async fn find_joined_by_ids(
         "updated_at",
         "published_at"
     );
-    check_schema!("users", "id", "username");
-    check_schema!("categories", "id", "name");
+    raisfast_derive::check_schema!("users", "id", "username");
+    raisfast_derive::check_schema!("categories", "id", "name");
 
     let placeholders: Vec<String> = (1..=ids.len()).map(ph).collect();
     let next_idx = ids.len() + 1;
@@ -1219,7 +1150,7 @@ pub async fn count_published_by_ids(
         return Ok(0);
     }
 
-    check_schema!("posts", "id", "status");
+    raisfast_derive::check_schema!("posts", "id", "status");
 
     let placeholders: Vec<String> = (1..=ids.len()).map(ph).collect();
     let next_idx = ids.len() + 1;
@@ -1250,7 +1181,7 @@ pub async fn find_published_joined(
     q: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<PostJoinedRow>, i64)> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "posts",
         "id",
         "document_id",
@@ -1280,9 +1211,9 @@ pub async fn find_published_joined(
         "updated_at",
         "published_at"
     );
-    check_schema!("users", "id", "username");
-    check_schema!("categories", "id", "name");
-    check_schema!("posts_tags", "post_id", "tag_id");
+    raisfast_derive::check_schema!("users", "id", "username");
+    raisfast_derive::check_schema!("categories", "id", "name");
+    raisfast_derive::check_schema!("posts_tags", "post_id", "tag_id");
     let offset = (page - 1) * page_size;
 
     let (posts, total) = if let Some(tag_id) = tag_id {

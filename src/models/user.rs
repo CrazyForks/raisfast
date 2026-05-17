@@ -6,8 +6,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::db::dialect::ph;
-use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
@@ -88,7 +86,7 @@ pub fn encode_metadata(meta: &Option<UserMetadata>) -> Option<String> {
 
 /// Find user by username
 pub async fn find_by_username(pool: &crate::db::Pool, username: &str) -> AppResult<Option<User>> {
-    Ok(crud_find!(pool, "users" => User, "username" => username)?)
+    Ok(raisfast_derive::crud_find!(pool, "users", User, "username" => username)?)
 }
 
 /// Find user by document_id (external API)
@@ -97,7 +95,9 @@ pub async fn find_by_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<User>> {
-    Ok(tenant_find!(pool, "users" => User, "document_id" => document_id, tenant_id)?)
+    Ok(
+        raisfast_derive::tenant_find!(pool, "users", User, "document_id" => document_id, tenant_id)?,
+    )
 }
 
 /// Find user by integer primary key (internal FK lookup)
@@ -106,7 +106,7 @@ pub async fn find_by_pk(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<User>> {
-    Ok(tenant_find!(pool, "users" => User, "id" => id, tenant_id)?)
+    Ok(raisfast_derive::tenant_find!(pool, "users", User, "id" => id, tenant_id)?)
 }
 
 /// Create a new user
@@ -117,7 +117,7 @@ pub async fn create(
 ) -> AppResult<User> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
-    tenant_insert!(
+    raisfast_derive::tenant_insert!(
         pool,
         "users",
         [
@@ -132,7 +132,7 @@ pub async fn create(
         tenant_id
     )?;
 
-    let user = tenant_find!(pool, "users" => User, "document_id" => &document_id, tenant_id)?
+    let user = raisfast_derive::tenant_find!(pool, "users", User, "document_id" => &document_id, tenant_id)?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch newly created user")))?;
     Ok(user)
 }
@@ -173,7 +173,7 @@ pub async fn update_profile(
         .map(|v| serde_json::to_string(v).unwrap_or_default())
         .or_else(|| user.metadata.clone());
     let now = crate::utils::tz::now_utc();
-    tenant_update!(pool, "users",
+    raisfast_derive::tenant_update!(pool, "users",
         bind: ["username" => username, "bio" => bio, "website" => website, "avatar" => avatar, "social_links" => social_links, "metadata" => metadata, "updated_at" => &now],
         where: "id" => user.id,
         tenant: tenant_id
@@ -190,23 +190,16 @@ pub async fn find_all(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<User>, i64)> {
-    check_schema!("users", "created_at");
-    let offset = (page - 1) * page_size;
-    let filter = tenant_filter_ph(tenant_id, 1);
-    let base = usize::from(tenant_id.is_some());
-    let sql_q = format!(
-        "SELECT * FROM users WHERE 1=1{filter} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-        ph(base + 1),
-        ph(base + 2)
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, User,
+        data_sql: "SELECT * FROM users WHERE 1=1{tenant} ORDER BY created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM users WHERE 1=1{tenant}",
+        binds: [],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    let mut q = sqlx::query_as::<_, User>(&sql_q);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let users = q.bind(page_size).bind(offset).fetch_all(pool).await?;
-    let count_q = format!("SELECT COUNT(*) FROM users WHERE 1=1{filter}");
-    let total = tenant_query!(pool, (i64,), &count_q, [], tenant_id, fetch_one)?;
-    Ok((users, total.0))
+    Ok(result)
 }
 
 /// Admin updates user role
@@ -217,7 +210,7 @@ pub async fn update_role(
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
     let now = crate::utils::tz::now_utc();
-    let result = tenant_update!(pool, "users",
+    let result = raisfast_derive::tenant_update!(pool, "users",
         bind: ["role" => role, "updated_at" => &now],
         where: "document_id" => document_id,
         tenant: tenant_id
@@ -233,17 +226,7 @@ pub async fn delete_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    check_schema!("users", "document_id");
-    let sql = format!(
-        "DELETE FROM users WHERE document_id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query(&sql).bind(document_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.execute(pool).await?;
+    raisfast_derive::tenant_delete!(pool, "users", "document_id" => document_id, tenant_id)?;
     Ok(())
 }
 

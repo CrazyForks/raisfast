@@ -235,7 +235,7 @@ pub async fn admin_delete_media(
         crate::db::dialect::ph(1),
         crate::db::tenant::tenant_filter_ph(auth.tenant_id(), 2)
     );
-    let (media_pk,): (i64,) = tenant_query!(
+    let (media_pk,): (i64,) = raisfast_derive::tenant_query!(
         pool,
         (i64,),
         &sql,
@@ -279,7 +279,7 @@ pub async fn delete_media(
         crate::db::dialect::ph(1),
         crate::db::tenant::tenant_filter_ph(auth.tenant_id(), 2)
     );
-    let (media_pk,): (i64,) = tenant_query!(
+    let (media_pk,): (i64,) = raisfast_derive::tenant_query!(
         pool,
         (i64,),
         &sql2,

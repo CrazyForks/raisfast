@@ -53,7 +53,7 @@ pub async fn create(
     expires_at: Option<&str>,
 ) -> AppResult<ApiToken> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
-    crud_insert!(pool, "api_tokens", [
+    raisfast_derive::crud_insert!(pool, "api_tokens", [
         "document_id" => &document_id,
         "user_id" => user_id,
         "name" => name,
@@ -72,7 +72,8 @@ pub async fn create(
 
 /// Find API Token by token_hash
 pub async fn find_by_hash(pool: &crate::db::Pool, token_hash: &str) -> AppResult<Option<ApiToken>> {
-    crud_find!(pool, "api_tokens" => ApiToken, "token_hash" => token_hash).map_err(Into::into)
+    raisfast_derive::crud_find!(pool, "api_tokens", ApiToken, "token_hash" => token_hash)
+        .map_err(Into::into)
 }
 
 /// List all API Tokens for a given user (sanitized)
@@ -80,7 +81,7 @@ pub async fn list_by_user(
     pool: &crate::db::Pool,
     user_id: i64,
 ) -> AppResult<Vec<ApiTokenListItem>> {
-    check_schema!(
+    raisfast_derive::check_schema!(
         "api_tokens",
         "id",
         "document_id",
@@ -105,19 +106,20 @@ pub async fn list_by_user(
 
 /// Find API Token by document_id
 pub async fn find_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<Option<ApiToken>> {
-    crud_find!(pool, "api_tokens" => ApiToken, "document_id" => document_id).map_err(Into::into)
+    raisfast_derive::crud_find!(pool, "api_tokens", ApiToken, "document_id" => document_id)
+        .map_err(Into::into)
 }
 
 /// Delete API Token by document_id
 pub async fn delete_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<()> {
-    crud_delete!(pool, "api_tokens", "document_id" => document_id)?;
+    raisfast_derive::crud_delete!(pool, "api_tokens", "document_id" => document_id)?;
     Ok(())
 }
 
 /// Update last_used_at (by integer primary key)
 pub async fn touch_last_used(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    crud_update!(pool, "api_tokens",
+    raisfast_derive::crud_update!(pool, "api_tokens",
         bind: ["last_used_at" => now],
         where: "id" => id
     )?;

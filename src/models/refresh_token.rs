@@ -34,7 +34,7 @@ pub async fn create_token(
     expires_at: &str,
 ) -> AppResult<()> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
-    crud_insert!(pool, "refresh_tokens", [
+    raisfast_derive::crud_insert!(pool, "refresh_tokens", [
         "document_id" => document_id,
         "user_id" => user_id,
         "token" => token,
@@ -48,14 +48,15 @@ pub async fn create_token(
 ///
 /// Returns `Ok(Some(token))` or `Ok(None)` when not found.
 pub async fn find_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<Option<RefreshToken>> {
-    crud_find!(pool, "refresh_tokens" => RefreshToken, "token" => token).map_err(Into::into)
+    raisfast_derive::crud_find!(pool, "refresh_tokens", RefreshToken, "token" => token)
+        .map_err(Into::into)
 }
 
 /// Delete a refresh token by token string
 ///
 /// Used to revoke a specific refresh token on logout.
 pub async fn delete_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<()> {
-    crud_delete!(pool, "refresh_tokens", "token" => token)?;
+    raisfast_derive::crud_delete!(pool, "refresh_tokens", "token" => token)?;
     Ok(())
 }
 
@@ -63,7 +64,7 @@ pub async fn delete_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<(
 ///
 /// Used for logging out all devices or forcing re-login after a password change.
 pub async fn delete_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<()> {
-    crud_delete!(pool, "refresh_tokens", "user_id" => user_id)?;
+    raisfast_derive::crud_delete!(pool, "refresh_tokens", "user_id" => user_id)?;
     Ok(())
 }
 

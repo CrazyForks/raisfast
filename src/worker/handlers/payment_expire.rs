@@ -163,6 +163,10 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(crate::db::schema::TENANTABLE_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
         let config = Arc::new(AppConfig::test_defaults());
         let handler = ExpirePaymentOrdersHandler::new(pool, config);
         let job = Job::GenerateSitemap;

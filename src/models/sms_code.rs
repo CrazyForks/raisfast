@@ -53,7 +53,7 @@ pub async fn create(
     let expires_at =
         crate::utils::tz::now_utc() + chrono::Duration::seconds(expires_in_secs as i64);
 
-    crud_insert!(pool, "sms_codes", [
+    raisfast_derive::crud_insert!(pool, "sms_codes", [
         "document_id" => &document_id,
         "phone" => phone,
         "code" => code,
@@ -63,14 +63,17 @@ pub async fn create(
         "created_at" => now
     ])?;
 
-    crud_find!(pool, "sms_codes" => SmsCode, "document_id" => &document_id)?.ok_or_else(|| {
-        crate::errors::app_error::AppError::Internal(anyhow::anyhow!("failed to fetch sms code"))
-    })
+    raisfast_derive::crud_find!(pool, "sms_codes", SmsCode, "document_id" => &document_id)?
+        .ok_or_else(|| {
+            crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
+                "failed to fetch sms code"
+            ))
+        })
 }
 
 /// Find a verification code by ID
 pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<Option<SmsCode>> {
-    Ok(crud_find!(pool, "sms_codes" => SmsCode, "id" => id)?)
+    Ok(raisfast_derive::crud_find!(pool, "sms_codes", SmsCode, "id" => id)?)
 }
 
 /// Find the most recent unverified code for a phone number
@@ -79,7 +82,7 @@ pub async fn find_latest_unverified(
     phone: &str,
     purpose: &str,
 ) -> AppResult<Option<SmsCode>> {
-    check_schema!("sms_codes", "phone", "purpose", "verified_at", "created_at");
+    raisfast_derive::check_schema!("sms_codes", "phone", "purpose", "verified_at", "created_at");
     let sql = format!(
         "SELECT * FROM sms_codes WHERE phone = {} AND purpose = {} AND verified_at IS NULL ORDER BY created_at DESC LIMIT 1",
         ph(1),
@@ -100,7 +103,7 @@ pub async fn is_rate_limited(
     purpose: &str,
     within_secs: u64,
 ) -> AppResult<bool> {
-    check_schema!("sms_codes", "phone", "purpose", "created_at");
+    raisfast_derive::check_schema!("sms_codes", "phone", "purpose", "created_at");
     let cutoff = crate::utils::tz::now_utc() - chrono::Duration::seconds(within_secs as i64);
     let sql = format!(
         "SELECT COUNT(*) as cnt FROM sms_codes WHERE phone = {} AND purpose = {} AND created_at > {}",
@@ -140,7 +143,7 @@ pub async fn verify_code(
     }
 
     if sms.code != input_code {
-        crud_update!(pool, "sms_codes",
+        raisfast_derive::crud_update!(pool, "sms_codes",
             bind: [],
             raw: ["attempts" => "attempts + 1"],
             where: "id" => id
@@ -149,7 +152,7 @@ pub async fn verify_code(
     }
 
     let now = crate::utils::tz::now_utc();
-    crud_update!(pool, "sms_codes",
+    raisfast_derive::crud_update!(pool, "sms_codes",
         bind: ["verified_at" => now],
         where: "id" => id
     )?;
@@ -169,7 +172,7 @@ pub enum VerifyResult {
 
 /// Clean up expired verification code records
 pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
-    check_schema!("sms_codes", "expires_at");
+    raisfast_derive::check_schema!("sms_codes", "expires_at");
     let now = crate::utils::tz::now_utc();
     let sql = format!("DELETE FROM sms_codes WHERE expires_at < {}", ph(1));
     let result = sqlx::query(&sql).bind(now).execute(pool).await?;

@@ -3035,6 +3035,10 @@ end
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(crate::db::schema::TENANTABLE_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
 
         let mut config = crate::config::app::AppConfig::test_defaults();
         config.plugin_dir = Some(dir.path().to_string_lossy().to_string());

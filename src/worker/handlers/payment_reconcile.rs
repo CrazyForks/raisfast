@@ -182,6 +182,10 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(crate::db::schema::TENANTABLE_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
         let config = Arc::new(AppConfig::test_defaults());
         let handler = ReconcilePaymentsHandler::new(pool, config);
         let job = Job::GenerateSitemap;
@@ -192,6 +196,10 @@ mod tests {
     async fn handles_reconcile_job() {
         let pool = Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();
