@@ -430,9 +430,15 @@ async fn tauri_cms_delete() {
     let created = repo.create(&ct, data, None, &save_ctx).await.unwrap();
 
     let id = created["document_id"].as_str().unwrap().to_string();
-    repo.delete(&ct, &id, None, &test_protocol_registry())
-        .await
-        .unwrap();
+    repo.delete(
+        &ct,
+        &id,
+        None,
+        &test_protocol_registry(),
+        &raisfast::content_type::ContentTypeRegistry::new(),
+    )
+    .await
+    .unwrap();
 
     let found = repo.find_by_id(&ct, &id, None, true).await.unwrap();
     assert!(found.is_none(), "deleted item should not exist");

@@ -98,6 +98,14 @@ pub fn routes(
     r
 }
 
+fn looks_like_uuid(s: &str) -> bool {
+    s.len() == 36
+        && s.as_bytes().iter().enumerate().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => *c == b'-',
+            _ => c.is_ascii_hexdigit(),
+        })
+}
+
 fn make_base_ctx_from_auth(
     auth: &AuthUser,
     pool: &crate::db::pool::Pool,
@@ -858,17 +866,18 @@ pub async fn do_get(
 
     let repo = ContentRepository::new(state.pool.clone());
 
-    let item = if id_or_slug.contains('-') && !id_or_slug.contains('/') {
-        repo.find_by_slug(ct, id_or_slug, None, None, false)
-            .await?
-            .or(None)
+    let item = if looks_like_uuid(id_or_slug) {
+        repo.find_by_id(ct, id_or_slug, None, false).await?
     } else {
-        None
-    };
-
-    let item = match item {
-        Some(data) => Some(data),
-        None => repo.find_by_id(ct, id_or_slug, None, false).await?,
+        let by_slug = if ct.slug_field.is_some() {
+            repo.find_by_slug(ct, id_or_slug, None, None, false).await?
+        } else {
+            None
+        };
+        match by_slug {
+            Some(data) => Some(data),
+            None => repo.find_by_id(ct, id_or_slug, None, false).await?,
+        }
     };
 
     let result = item.ok_or_else(|| AppError::not_found(&format!("{}/{}", ct.name, id_or_slug)))?;
@@ -1140,8 +1149,14 @@ pub async fn do_delete(
         repo.soft_delete(ct, id, deleted_at, deleted_by, auth.tenant_id())
             .await?;
     } else {
-        repo.delete(ct, id, auth.tenant_id(), &state.protocol_registry)
-            .await?;
+        repo.delete(
+            ct,
+            id,
+            auth.tenant_id(),
+            &state.protocol_registry,
+            &state.content_type_registry,
+        )
+        .await?;
     }
 
     invalidate_cms_cache(state, ct);

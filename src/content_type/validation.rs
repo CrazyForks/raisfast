@@ -139,6 +139,33 @@ async fn do_validate_create(
             }
         }
 
+        if matches!(
+            field.field_type,
+            FieldType::Integer | FieldType::BigInt | FieldType::Decimal | FieldType::Float
+        ) {
+            let as_f64 = val
+                .as_f64()
+                .or_else(|| val.as_str().and_then(|s| s.parse::<f64>().ok()));
+            if let Some(n) = as_f64 {
+                if let Some(min) = field.min
+                    && n < min
+                {
+                    errors.push(format!(
+                        "field '{}': value {} is less than min {}",
+                        field.name, n, min
+                    ));
+                }
+                if let Some(max) = field.max
+                    && n > max
+                {
+                    errors.push(format!(
+                        "field '{}': value {} exceeds max {}",
+                        field.name, n, max
+                    ));
+                }
+            }
+        }
+
         if let Some(ref pattern) = field.pattern
             && let Some(s) = val.as_str()
             && let Ok(re) = regex::Regex::new(pattern)
@@ -281,6 +308,33 @@ async fn do_validate_update(
             }
         }
 
+        if matches!(
+            field.field_type,
+            FieldType::Integer | FieldType::BigInt | FieldType::Decimal | FieldType::Float
+        ) {
+            let as_f64 = val
+                .as_f64()
+                .or_else(|| val.as_str().and_then(|s| s.parse::<f64>().ok()));
+            if let Some(n) = as_f64 {
+                if let Some(min) = field.min
+                    && n < min
+                {
+                    errors.push(format!(
+                        "field '{}': value {} is less than min {}",
+                        field.name, n, min
+                    ));
+                }
+                if let Some(max) = field.max
+                    && n > max
+                {
+                    errors.push(format!(
+                        "field '{}': value {} exceeds max {}",
+                        field.name, n, max
+                    ));
+                }
+            }
+        }
+
         if let Some(ref pattern) = field.pattern
             && let Some(s) = val.as_str()
             && let Ok(re) = regex::Regex::new(pattern)
@@ -384,7 +438,12 @@ fn check_type(ft: &FieldType, val: &Value) -> Result<(), String> {
                 return Err("expected integer".into());
             }
         }
-        FieldType::Decimal | FieldType::Float => {
+        FieldType::Decimal => {
+            if !val.is_f64() && !val.is_i64() && !val.is_string() {
+                return Err("expected number or numeric string".into());
+            }
+        }
+        FieldType::Float => {
             if !val.is_f64() && !val.is_i64() {
                 return Err("expected number".into());
             }
@@ -700,6 +759,12 @@ immutable = true
     fn check_type_decimal_accepts_int_and_float() {
         assert!(check_type(&FieldType::Decimal, &json!(9.99)).is_ok());
         assert!(check_type(&FieldType::Decimal, &json!(42)).is_ok());
+    }
+
+    #[test]
+    fn check_type_decimal_accepts_numeric_string() {
+        assert!(check_type(&FieldType::Decimal, &json!("9.99")).is_ok());
+        assert!(check_type(&FieldType::Decimal, &json!("42")).is_ok());
     }
 
     #[test]

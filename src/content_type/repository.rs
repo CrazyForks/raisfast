@@ -396,6 +396,7 @@ impl ContentRepository {
         let mut fk_relation_map: std::collections::HashMap<String, (String, String)> =
             std::collections::HashMap::new();
         let mut junction_fields: Vec<(String, String, String, String, String)> = Vec::new();
+        let mut otm_fields: Vec<(String, String, String)> = Vec::new();
 
         for field in &ct.fields {
             if field.field_type != FieldType::Relation {
@@ -427,15 +428,25 @@ impl ContentRepository {
                         target_col,
                     ));
                 }
-                RelationType::OneToMany => {}
+                RelationType::OneToMany => {
+                    let fk_col = rel
+                        .foreign_key
+                        .clone()
+                        .unwrap_or_else(|| format!("{}_id", ct.singular));
+                    otm_fields.push((field.name.clone(), rel.target.clone(), fk_col));
+                }
             }
         }
 
         let junction_field_names: Vec<&str> =
             junction_fields.iter().map(|(n, ..)| n.as_str()).collect();
+        let otm_field_names: Vec<&str> = otm_fields.iter().map(|(n, ..)| n.as_str()).collect();
 
         for (key, val) in obj.iter() {
-            if key == COL_TENANT_ID || junction_field_names.contains(&key.as_str()) {
+            if key == COL_TENANT_ID
+                || junction_field_names.contains(&key.as_str())
+                || otm_field_names.contains(&key.as_str())
+            {
                 continue;
             }
             if !crate::db::dialect::is_safe_identifier(key) {
@@ -529,6 +540,37 @@ impl ContentRepository {
             }
         }
 
+        for (field_name, target_table, fk_col) in &otm_fields {
+            if !crate::db::dialect::is_safe_identifier(target_table)
+                || !crate::db::dialect::is_safe_identifier(fk_col)
+            {
+                tracing::warn!(
+                    "skipping one-to-many with unsafe identifier: target={target_table}, fk={fk_col}"
+                );
+                continue;
+            }
+            let Some(val) = obj.get(field_name) else {
+                continue;
+            };
+            let doc_ids = extract_document_ids(val);
+            if doc_ids.is_empty() {
+                continue;
+            }
+            let int_ids = resolve_document_ids_batch(&self.pool, target_table, &doc_ids).await?;
+            let usql = format!(
+                "UPDATE {target_table} SET {fk_col} = {} WHERE {COL_ID} = {}",
+                crate::db::dialect::ph(1),
+                crate::db::dialect::ph(2)
+            );
+            for target_int_id in int_ids {
+                sqlx::query(&usql)
+                    .bind(source_int_id)
+                    .bind(target_int_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+
         tx.commit()
             .await
             .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("commit failed")))?;
@@ -595,6 +637,7 @@ impl ContentRepository {
         let mut fk_relation_map: std::collections::HashMap<String, (String, String)> =
             std::collections::HashMap::new();
         let mut junction_fields: Vec<(String, String, String, String, String)> = Vec::new();
+        let mut otm_fields: Vec<(String, String, String)> = Vec::new();
 
         for field in &ct.fields {
             if field.field_type != FieldType::Relation {
@@ -626,12 +669,19 @@ impl ContentRepository {
                         target_col,
                     ));
                 }
-                RelationType::OneToMany => {}
+                RelationType::OneToMany => {
+                    let fk_col = rel
+                        .foreign_key
+                        .clone()
+                        .unwrap_or_else(|| format!("{}_id", ct.singular));
+                    otm_fields.push((field.name.clone(), rel.target.clone(), fk_col));
+                }
             }
         }
 
         let junction_field_names: Vec<&str> =
             junction_fields.iter().map(|(n, ..)| n.as_str()).collect();
+        let otm_field_names: Vec<&str> = otm_fields.iter().map(|(n, ..)| n.as_str()).collect();
 
         let decl = ct.declaration();
 
@@ -653,7 +703,9 @@ impl ContentRepository {
                 if !crate::db::dialect::is_safe_identifier(key) {
                     continue;
                 }
-                if junction_field_names.contains(&key.as_str()) {
+                if junction_field_names.contains(&key.as_str())
+                    || otm_field_names.contains(&key.as_str())
+                {
                     continue;
                 }
                 if let Some((fk_col, target_table)) = fk_relation_map.get(key) {
@@ -782,6 +834,49 @@ impl ContentRepository {
             }
         }
 
+        for (field_name, target_table, fk_col) in &otm_fields {
+            if !crate::db::dialect::is_safe_identifier(target_table)
+                || !crate::db::dialect::is_safe_identifier(fk_col)
+            {
+                tracing::warn!(
+                    "skipping one-to-many with unsafe identifier: target={target_table}, fk={fk_col}"
+                );
+                continue;
+            }
+            let Some(val) = obj.get(field_name) else {
+                continue;
+            };
+            let clear_sql = format!(
+                "UPDATE {target_table} SET {fk_col} = NULL WHERE {fk_col} = {}",
+                crate::db::dialect::ph(1)
+            );
+            sqlx::query(&clear_sql)
+                .bind(source_int_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| {
+                    AppError::Internal(anyhow::Error::from(e).context("one-to-many clear failed"))
+                })?;
+
+            let doc_ids = extract_document_ids(val);
+            if doc_ids.is_empty() {
+                continue;
+            }
+            let int_ids = resolve_document_ids_batch(&self.pool, target_table, &doc_ids).await?;
+            let usql = format!(
+                "UPDATE {target_table} SET {fk_col} = {} WHERE {COL_ID} = {}",
+                crate::db::dialect::ph(1),
+                crate::db::dialect::ph(2)
+            );
+            for target_int_id in int_ids {
+                sqlx::query(&usql)
+                    .bind(source_int_id)
+                    .bind(target_int_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+
         tx.commit()
             .await
             .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("commit failed")))?;
@@ -802,8 +897,59 @@ impl ContentRepository {
         id: &str,
         tenant_id: Option<&str>,
         protocol_registry: &crate::protocols::ProtocolRegistry,
+        ct_registry: &crate::content_type::ContentTypeRegistry,
     ) -> Result<(), AppError> {
         let tid = self.resolve_tenant(ct, tenant_id);
+
+        let mut source_junctions: Vec<(String, String)> = Vec::new();
+        for field in &ct.fields {
+            if field.field_type != FieldType::Relation {
+                continue;
+            }
+            let Some(ref rel) = field.relation else {
+                continue;
+            };
+            if matches!(
+                rel.relation_type,
+                RelationType::ManyToMany | RelationType::ManyWay
+            ) {
+                let through = rel
+                    .through
+                    .clone()
+                    .unwrap_or_else(|| format!("{}_{}", ct.table, rel.target));
+                let source_col = format!("{}_id", ct.singular);
+                source_junctions.push((through, source_col));
+            }
+        }
+
+        let mut reverse_junctions: Vec<(String, String)> = Vec::new();
+        for other_ct in ct_registry.all() {
+            if other_ct.table == ct.table {
+                continue;
+            }
+            for field in &other_ct.fields {
+                if field.field_type != FieldType::Relation {
+                    continue;
+                }
+                let Some(ref rel) = field.relation else {
+                    continue;
+                };
+                if matches!(
+                    rel.relation_type,
+                    RelationType::ManyToMany | RelationType::ManyWay
+                ) && rel.target == ct.table
+                {
+                    let through = rel
+                        .through
+                        .clone()
+                        .unwrap_or_else(|| format!("{}_{}", other_ct.table, ct.table));
+                    let target_col = format!("{}_id", ct.table);
+                    reverse_junctions.push((through, target_col));
+                }
+            }
+        }
+
+        let has_cleanup = !source_junctions.is_empty() || !reverse_junctions.is_empty();
 
         let mut idx = 1;
         let mut where_parts = vec![format!(
@@ -811,15 +957,114 @@ impl ContentRepository {
             crate::db::dialect::ph(idx)
         )];
         idx += 1;
-
         let mut values = vec![id.to_string()];
-
         if let Some(ref tid) = tid {
             where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::dialect::ph(idx)));
+            idx += 1;
             values.push(tid.clone());
         }
 
-        if ct.is_soft_delete() {
+        if has_cleanup {
+            let mut tx = self.pool.begin().await?;
+
+            let source_int_id: Option<i64> = {
+                let id_sql = format!(
+                    "SELECT {COL_ID} FROM {} WHERE {}",
+                    ct.table,
+                    where_parts.join(" AND ")
+                );
+                let mut query = sqlx::query_scalar::<_, i64>(&id_sql);
+                for v in &values {
+                    query = query.bind(v);
+                }
+                query.fetch_optional(&mut *tx).await?
+            };
+
+            if let Some(sid) = source_int_id {
+                for (through, source_col) in &source_junctions {
+                    if !crate::db::dialect::is_safe_identifier(through)
+                        || !crate::db::dialect::is_safe_identifier(source_col)
+                    {
+                        continue;
+                    }
+                    let sql = format!(
+                        "DELETE FROM {through} WHERE {source_col} = {}",
+                        crate::db::dialect::ph(1)
+                    );
+                    sqlx::query(&sql)
+                        .bind(sid)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|e| {
+                            AppError::Internal(
+                                anyhow::Error::from(e).context("source junction cleanup failed"),
+                            )
+                        })?;
+                }
+
+                for (through, target_col) in &reverse_junctions {
+                    if !crate::db::dialect::is_safe_identifier(through)
+                        || !crate::db::dialect::is_safe_identifier(target_col)
+                    {
+                        continue;
+                    }
+                    let sql = format!(
+                        "DELETE FROM {through} WHERE {target_col} = {}",
+                        crate::db::dialect::ph(1)
+                    );
+                    sqlx::query(&sql)
+                        .bind(sid)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|e| {
+                            AppError::Internal(
+                                anyhow::Error::from(e).context("reverse junction cleanup failed"),
+                            )
+                        })?;
+                }
+            }
+
+            if ct.is_soft_delete() {
+                let decl = ct.declaration();
+                let col = match &decl.delete_strategy {
+                    crate::protocols::DeleteStrategy::Soft { column } => column.clone(),
+                    _ => unreachable!(),
+                };
+                let now = crate::utils::tz::now_str();
+                let sql = format!(
+                    "UPDATE {} SET {} = {} WHERE {}",
+                    ct.table,
+                    col,
+                    crate::db::dialect::ph(idx),
+                    where_parts.join(" AND ")
+                );
+                let mut query = sqlx::query(&sql);
+                query = query.bind(now);
+                for v in &values {
+                    query = query.bind(v);
+                }
+                query.execute(&mut *tx).await.map_err(|e| {
+                    AppError::Internal(anyhow::Error::from(e).context("delete failed"))
+                })?;
+            } else {
+                let sql = format!(
+                    "DELETE FROM {} WHERE {}",
+                    ct.table,
+                    where_parts.join(" AND ")
+                );
+                let mut query = sqlx::query(&sql);
+                for v in &values {
+                    query = query.bind(v);
+                }
+                query.execute(&mut *tx).await.map_err(|e| {
+                    AppError::Internal(anyhow::Error::from(e).context("delete failed"))
+                })?;
+            }
+
+            tx.commit()
+                .await
+                .map_err(|e| AppError::Internal(anyhow::Error::from(e).context("commit failed")))?;
+        } else if ct.is_soft_delete() {
             let decl = ct.declaration();
             let col = match &decl.delete_strategy {
                 crate::protocols::DeleteStrategy::Soft { column } => column.clone(),
@@ -954,6 +1199,51 @@ impl ContentRepository {
 
             tracing::info!("created table: {}", ct.table);
         } else {
+            let db_columns = self.fetch_columns_with_types(&ct.table).await?;
+            let mismatches =
+                super::migration::detect_type_mismatches(ct, &db_columns, &protocol_columns);
+            if !mismatches.is_empty() {
+                for (col, expected, actual) in &mismatches {
+                    tracing::error!(
+                        "type mismatch on {}.{}: expected {expected}, actual {actual}",
+                        ct.table,
+                        col
+                    );
+                }
+
+                let migration_sql = super::migration::generate_rebuild_migration(
+                    ct,
+                    &mismatches,
+                    &protocol_columns,
+                );
+                let dir = std::path::Path::new("migrations/manual");
+                if let Err(e) = std::fs::create_dir_all(dir) {
+                    tracing::warn!("could not create migrations/manual dir: {e}");
+                }
+                let now = chrono::Utc::now().format("%Y%m%d%H%M%S");
+                let filename = dir.join(format!("{now}_rebuild_{}.sql", ct.table));
+                match std::fs::write(&filename, &migration_sql) {
+                    Ok(()) => {
+                        tracing::info!("migration script written to {}", filename.display());
+                    }
+                    Err(e) => {
+                        tracing::warn!("could not write migration script: {e}");
+                    }
+                }
+
+                return Err(AppError::Internal(anyhow::anyhow!(
+                    "schema type mismatch in table '{}': {}. Migration script generated at {} — review and run it, then restart",
+                    ct.table,
+                    mismatches
+                        .iter()
+                        .map(|(c, e, a)| format!("{c}: {a} -> {e}"))
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                    filename.display()
+                )));
+            }
+
+            let existing_columns: Vec<String> = db_columns.iter().map(|(n, _)| n.clone()).collect();
             let alter_stmts =
                 super::migration::generate_alter_table(ct, &existing_columns, &protocol_columns);
             if alter_stmts.is_empty() {
@@ -1012,6 +1302,61 @@ impl ContentRepository {
         }
 
         Ok(columns)
+    }
+
+    async fn fetch_columns_with_types(
+        &self,
+        table: &str,
+    ) -> Result<Vec<(String, String)>, AppError> {
+        if !crate::db::dialect::is_safe_identifier(table) {
+            return Err(AppError::BadRequest(format!("invalid table name: {table}")));
+        }
+        #[cfg(feature = "db-sqlite")]
+        {
+            let sql = format!("PRAGMA table_info({table})");
+            let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
+            let mut cols = Vec::new();
+            for row in &rows {
+                let name: String = row.try_get(1).unwrap_or_default();
+                let typ: String = row.try_get(2).unwrap_or_default();
+                if !name.is_empty() {
+                    cols.push((name, typ));
+                }
+            }
+            Ok(cols)
+        }
+        #[cfg(feature = "db-postgres")]
+        {
+            let sql = format!(
+                "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '{table}'"
+            );
+            let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
+            let mut cols = Vec::new();
+            for row in &rows {
+                let name: String = row.try_get(0).unwrap_or_default();
+                let typ: String = row.try_get(1).unwrap_or_default();
+                if !name.is_empty() {
+                    cols.push((name, typ));
+                }
+            }
+            Ok(cols)
+        }
+        #[cfg(feature = "db-mysql")]
+        {
+            let sql = format!(
+                "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = '{table}'"
+            );
+            let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
+            let mut cols = Vec::new();
+            for row in &rows {
+                let name: String = row.try_get(0).unwrap_or_default();
+                let typ: String = row.try_get(1).unwrap_or_default();
+                if !name.is_empty() {
+                    cols.push((name, typ));
+                }
+            }
+            Ok(cols)
+        }
     }
 }
 

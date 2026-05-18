@@ -164,9 +164,15 @@ impl MutationRoot {
             }
         }
 
-        repo.delete(&ct, id.as_str(), None, &state.protocol_registry)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        repo.delete(
+            &ct,
+            id.as_str(),
+            None,
+            &state.protocol_registry,
+            &state.content_type_registry,
+        )
+        .await
+        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
         let cache_key = cms_detail_cache_key(&ct, id.as_str());
         state.cms_cache.remove(&cache_key);

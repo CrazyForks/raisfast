@@ -132,8 +132,8 @@ pub fn generate_junction_tables(ct: &ContentTypeSchema) -> Vec<String> {
 
             let sql = format!(
                 "CREATE TABLE IF NOT EXISTS {through} (\n\
-                 {source_col} INTEGER NOT NULL REFERENCES {source_table}({COL_ID}) ON DELETE CASCADE,\n\
-                 {target_col} INTEGER NOT NULL REFERENCES {target_table}({COL_ID}) ON DELETE CASCADE,\n\
+                 {source_col} INTEGER NOT NULL REFERENCES {source_table}({COL_ID}),\n\
+                 {target_col} INTEGER NOT NULL REFERENCES {target_table}({COL_ID}),\n\
                  PRIMARY KEY ({source_col}, {target_col})\n\
                  )",
                 through = through,
@@ -270,6 +270,253 @@ pub fn generate_alter_table(
     stmts
 }
 
+/// Detect type mismatches between schema and existing DB columns.
+///
+/// Returns a list of `(column_name, expected_type, actual_type)` tuples for columns
+/// whose SQL type differs from what the schema expects.
+#[must_use]
+pub fn detect_type_mismatches(
+    ct: &ContentTypeSchema,
+    db_columns: &[(String, String)],
+    protocol_columns: &[ColumnDef],
+) -> Vec<(String, String, String)> {
+    let db_map: std::collections::HashMap<&str, &str> = db_columns
+        .iter()
+        .map(|(name, typ)| (name.as_str(), typ.as_str()))
+        .collect();
+
+    let mut mismatches = Vec::new();
+
+    for field in &ct.fields {
+        let col_name = if field.field_type == FieldType::Relation {
+            match field.relation.as_ref().map(|r| &r.relation_type) {
+                Some(RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay) => {
+                    field
+                        .relation
+                        .as_ref()
+                        .and_then(|r| r.foreign_key.clone())
+                        .unwrap_or_else(|| format!("{}_id", field.name))
+                }
+                _ => continue,
+            }
+        } else {
+            field.name.clone()
+        };
+
+        let expected = field_type_to_sql(&field.field_type);
+        if let Some(actual) = db_map.get(col_name.as_str())
+            && !type_compatible(expected, actual)
+        {
+            mismatches.push((col_name, expected.to_string(), (*actual).to_string()));
+        }
+    }
+
+    for col in protocol_columns {
+        if let Some(actual) = db_map.get(col.name.as_str())
+            && !type_compatible(col.sql_type.as_str(), actual)
+        {
+            mismatches.push((
+                col.name.clone(),
+                col.sql_type.as_str().to_string(),
+                (*actual).to_string(),
+            ));
+        }
+    }
+
+    mismatches
+}
+
+/// Generate a rebuild-table migration SQL for type mismatches.
+///
+/// Produces database-specific SQL based on the active `db-*` feature flag:
+/// - **SQLite**: PRAGMA foreign_keys=OFF, BEGIN, CREATE new, INSERT, DROP, RENAME, PRAGMA foreign_key_check, COMMIT
+/// - **PostgreSQL**: BEGIN, CREATE new, INSERT, DROP, RENAME, COMMIT
+/// - **MySQL**: SET FOREIGN_KEY_CHECKS=0, CREATE new, INSERT, DROP, RENAME, SET FOREIGN_KEY_CHECKS=1
+#[must_use]
+pub fn generate_rebuild_migration(
+    ct: &ContentTypeSchema,
+    mismatches: &[(String, String, String)],
+    protocol_columns: &[ColumnDef],
+) -> String {
+    let table = ct.table.as_str();
+    let temp = format!("{table}__new");
+
+    let create = generate_create_table_for_rebuild(ct, protocol_columns, &temp);
+    let indexes = generate_indexes(ct);
+
+    let mut sql = String::new();
+    sql.push_str("-- Auto-generated migration to fix column type mismatches\n");
+    sql.push_str(&format!(
+        "-- Table: {table}, Content type: {}\n",
+        ct.singular
+    ));
+    sql.push_str("-- Mismatches:\n");
+    for (col, expected, actual) in mismatches {
+        sql.push_str(&format!("--   {col}: {actual} -> {expected}\n"));
+    }
+    sql.push_str("--\n");
+    sql.push_str("-- REVIEW THIS FILE BEFORE EXECUTING!\n");
+    sql.push_str(
+        "-- Data in mismatched columns may be lost or truncated during type conversion.\n",
+    );
+    sql.push_str("-- Back up your database before running.\n");
+    sql.push_str("--\n\n");
+
+    #[cfg(feature = "db-sqlite")]
+    {
+        sql.push_str("PRAGMA foreign_keys = OFF;\n\n");
+        sql.push_str("BEGIN TRANSACTION;\n\n");
+        sql.push_str(&create);
+        sql.push_str(&format!("INSERT INTO {temp} SELECT * FROM {table};\n\n"));
+        sql.push_str(&format!("DROP TABLE {table};\n\n"));
+        sql.push_str(&format!("ALTER TABLE {temp} RENAME TO {table};\n\n"));
+        for idx in &indexes {
+            sql.push_str(idx);
+            sql.push_str(";\n");
+        }
+        sql.push_str("\nPRAGMA foreign_key_check;\n\n");
+        sql.push_str("COMMIT;\n\n");
+        sql.push_str("PRAGMA foreign_keys = ON;\n");
+    }
+
+    #[cfg(feature = "db-postgres")]
+    {
+        sql.push_str("BEGIN;\n\n");
+        sql.push_str(&create);
+        sql.push_str(&format!("INSERT INTO {temp} SELECT * FROM {table};\n\n"));
+        sql.push_str(&format!("DROP TABLE {table};\n\n"));
+        sql.push_str(&format!("ALTER TABLE {temp} RENAME TO {table};\n\n"));
+        for idx in &indexes {
+            sql.push_str(idx);
+            sql.push_str(";\n");
+        }
+        sql.push_str("\nCOMMIT;\n");
+    }
+
+    #[cfg(feature = "db-mysql")]
+    {
+        sql.push_str("SET FOREIGN_KEY_CHECKS = 0;\n\n");
+        sql.push_str(&create);
+        sql.push_str(&format!("INSERT INTO {temp} SELECT * FROM {table};\n\n"));
+        sql.push_str(&format!("DROP TABLE {table};\n\n"));
+        sql.push_str(&format!("ALTER TABLE {temp} RENAME TO {table};\n\n"));
+        for idx in &indexes {
+            sql.push_str(idx);
+            sql.push_str(";\n");
+        }
+        sql.push_str("\nSET FOREIGN_KEY_CHECKS = 1;\n");
+    }
+
+    sql
+}
+
+fn generate_create_table_for_rebuild(
+    ct: &ContentTypeSchema,
+    protocol_columns: &[ColumnDef],
+    table_name: &str,
+) -> String {
+    let mut cols = Vec::new();
+
+    #[cfg(feature = "db-sqlite")]
+    cols.push(format!("    {COL_ID} INTEGER PRIMARY KEY AUTOINCREMENT"));
+    #[cfg(feature = "db-postgres")]
+    cols.push(format!("    {COL_ID} BIGSERIAL PRIMARY KEY"));
+    #[cfg(feature = "db-mysql")]
+    cols.push(format!("    {COL_ID} BIGINT AUTO_INCREMENT PRIMARY KEY"));
+
+    #[cfg(feature = "db-sqlite")]
+    cols.push(format!("    {COL_DOCUMENT_ID} TEXT NOT NULL UNIQUE"));
+    #[cfg(feature = "db-postgres")]
+    cols.push(format!("    {COL_DOCUMENT_ID} VARCHAR(36) NOT NULL UNIQUE"));
+    #[cfg(feature = "db-mysql")]
+    cols.push(format!("    {COL_DOCUMENT_ID} VARCHAR(36) NOT NULL UNIQUE"));
+
+    for field in &ct.fields {
+        if field.field_type == FieldType::Relation {
+            match field.relation.as_ref().map(|r| &r.relation_type) {
+                Some(RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay) => {
+                    let fk = field
+                        .relation
+                        .as_ref()
+                        .and_then(|r| r.foreign_key.clone())
+                        .unwrap_or_else(|| format!("{}_id", field.name));
+                    let target_table = field
+                        .relation
+                        .as_ref()
+                        .map_or("users", |r| r.target.as_str());
+                    let not_null = if field.required { " NOT NULL" } else { "" };
+                    cols.push(format!(
+                        "    {fk} INTEGER{not_null} REFERENCES {target_table}(id)"
+                    ));
+                }
+                Some(RelationType::OneToMany) => {}
+                _ => {}
+            }
+            continue;
+        }
+
+        let col_type = field_type_to_sql(&field.field_type);
+        let mut col_def = format!("    {} {}", field.name, col_type);
+        if field.required {
+            col_def.push_str(" NOT NULL");
+        }
+        if let Some(ref default) = field.default {
+            col_def.push_str(&format!(" DEFAULT {}", json_to_sql_literal(default)));
+        }
+        cols.push(col_def);
+    }
+
+    let user_col_names: std::collections::HashSet<&str> = ct
+        .fields
+        .iter()
+        .map(|f| f.name.as_str())
+        .chain(
+            ct.fields
+                .iter()
+                .filter(|f| f.field_type == FieldType::Relation)
+                .filter_map(|f| {
+                    f.relation
+                        .as_ref()
+                        .and_then(|r| r.foreign_key.as_deref())
+                        .or_else(|| Some(f.name.as_str()).filter(|n| n.ends_with("_id")))
+                }),
+        )
+        .collect();
+
+    for col in protocol_columns {
+        if !user_col_names.contains(col.name.as_str()) {
+            let mut sql = format!("    {} {}", col.name, col.sql_type.as_str());
+            if let Some(ref default) = col.default {
+                sql.push_str(&format!(" NOT NULL DEFAULT {}", default));
+            }
+            cols.push(sql);
+        }
+    }
+
+    let mut sql = format!("CREATE TABLE {table_name} (\n");
+    sql.push_str(&cols.join(",\n"));
+    sql.push_str("\n);\n\n");
+
+    sql
+}
+
+fn type_compatible(expected: &str, actual: &str) -> bool {
+    let normalize = |s: &str| -> String {
+        let s = s.to_uppercase();
+        let s = s.split('(').next().unwrap_or(&s).trim();
+        match s {
+            "INT" | "INTEGER" | "BIGINT" => "INTEGER",
+            "TEXT" | "VARCHAR" | "CHAR" => "TEXT",
+            "REAL" | "FLOAT" | "DOUBLE" | "NUMERIC" => "REAL",
+            "BOOLEAN" | "BOOL" => "BOOLEAN",
+            "DECIMAL" => "DECIMAL",
+            other => other,
+        }
+        .to_string()
+    };
+    normalize(expected) == normalize(actual)
+}
+
 /// Get all column names expected by the content type schema (for comparison with DB)
 #[must_use]
 pub fn expected_columns(ct: &ContentTypeSchema, protocol_columns: &[ColumnDef]) -> Vec<String> {
@@ -299,11 +546,23 @@ pub fn expected_columns(ct: &ContentTypeSchema, protocol_columns: &[ColumnDef]) 
     cols
 }
 
+fn decimal_sql_type() -> &'static str {
+    #[cfg(feature = "db-sqlite")]
+    {
+        "TEXT"
+    }
+    #[cfg(not(feature = "db-sqlite"))]
+    {
+        "DECIMAL(65,30)"
+    }
+}
+
 fn field_type_to_sql(ft: &FieldType) -> &'static str {
     match ft {
         FieldType::Text | FieldType::RichText | FieldType::Json => "TEXT",
         FieldType::Integer | FieldType::BigInt => "INTEGER",
-        FieldType::Decimal | FieldType::Float => "REAL",
+        FieldType::Float => "REAL",
+        FieldType::Decimal => decimal_sql_type(),
         FieldType::Boolean => "BOOLEAN",
         FieldType::Date | FieldType::DateTime | FieldType::Time => "TEXT",
         FieldType::Email | FieldType::Password | FieldType::Enum => "TEXT",
@@ -586,7 +845,7 @@ foreign_key = "author_id"
         assert_eq!(field_type_to_sql(&FieldType::RichText), "TEXT");
         assert_eq!(field_type_to_sql(&FieldType::Integer), "INTEGER");
         assert_eq!(field_type_to_sql(&FieldType::BigInt), "INTEGER");
-        assert_eq!(field_type_to_sql(&FieldType::Decimal), "REAL");
+        assert_eq!(field_type_to_sql(&FieldType::Decimal), "TEXT");
         assert_eq!(field_type_to_sql(&FieldType::Float), "REAL");
         assert_eq!(field_type_to_sql(&FieldType::Boolean), "BOOLEAN");
         assert_eq!(field_type_to_sql(&FieldType::Date), "TEXT");

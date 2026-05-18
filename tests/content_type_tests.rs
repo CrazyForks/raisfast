@@ -88,6 +88,10 @@ fn parse_article() -> ContentTypeSchema {
     .unwrap()
 }
 
+fn test_ct_registry() -> raisfast::content_type::ContentTypeRegistry {
+    raisfast::content_type::ContentTypeRegistry::new()
+}
+
 fn test_protocol_registry() -> raisfast::protocols::ProtocolRegistry {
     let mut reg = raisfast::protocols::ProtocolRegistry::new();
     reg.register(raisfast::protocols::ownable::OwnableProtocol);
@@ -372,9 +376,15 @@ async fn delete_removes_record() {
         .unwrap();
     let id = created["document_id"].as_str().unwrap().to_string();
 
-    repo.delete(&ct, &id, None, &test_protocol_registry())
-        .await
-        .unwrap();
+    repo.delete(
+        &ct,
+        &id,
+        None,
+        &test_protocol_registry(),
+        &test_ct_registry(),
+    )
+    .await
+    .unwrap();
 
     let found = repo.find_by_id(&ct, &id, None, true).await.unwrap();
     assert!(found.is_none());
@@ -420,9 +430,15 @@ required = true
         .unwrap();
     let id = created["document_id"].as_str().unwrap().to_string();
 
-    repo.delete(&ct, &id, None, &test_protocol_registry())
-        .await
-        .unwrap();
+    repo.delete(
+        &ct,
+        &id,
+        None,
+        &test_protocol_registry(),
+        &test_ct_registry(),
+    )
+    .await
+    .unwrap();
 
     let row: Option<(String,)> =
         sqlx::query_as("SELECT deleted_at FROM ct_notes WHERE document_id = ?")
@@ -550,9 +566,15 @@ async fn delete_respects_tenant() {
         .unwrap();
     let id_a = a["document_id"].as_str().unwrap();
 
-    repo.delete(&ct, id_a, Some("tenant_b"), &test_protocol_registry())
-        .await
-        .unwrap();
+    repo.delete(
+        &ct,
+        id_a,
+        Some("tenant_b"),
+        &test_protocol_registry(),
+        &test_ct_registry(),
+    )
+    .await
+    .unwrap();
 
     assert!(
         repo.find_by_id(&ct, id_a, Some("tenant_a"), true)
@@ -562,9 +584,15 @@ async fn delete_respects_tenant() {
         "tenant_b should not be able to delete tenant_a's data"
     );
 
-    repo.delete(&ct, id_a, Some("tenant_a"), &test_protocol_registry())
-        .await
-        .unwrap();
+    repo.delete(
+        &ct,
+        id_a,
+        Some("tenant_a"),
+        &test_protocol_registry(),
+        &test_ct_registry(),
+    )
+    .await
+    .unwrap();
     assert!(
         repo.find_by_id(&ct, id_a, Some("tenant_a"), true)
             .await
@@ -1005,9 +1033,15 @@ async fn versioning_delete_cleans_up_revisions() {
         .unwrap();
     assert_eq!(before.len(), 1);
 
-    repo.delete(&ct, id, None, &test_protocol_registry())
-        .await
-        .unwrap();
+    repo.delete(
+        &ct,
+        id,
+        None,
+        &test_protocol_registry(),
+        &test_ct_registry(),
+    )
+    .await
+    .unwrap();
 
     let after = raisfast::models::content_revision::list_revisions(&pool, "article", id)
         .await

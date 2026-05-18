@@ -68,8 +68,8 @@ access = "member"
 
 [api.update]
 access = "member"
-filter = "@auth.id == author_id || @auth.role == 'admin'"
+filter = "@request.auth.id == author_id || @request.auth.role == 'admin'"
 
 [api.delete]
 access = "member"
-filter = "@auth.id == author_id || @auth.role == 'admin'"
+filter = "@request.auth.id == author_id || @request.auth.role == 'admin'"

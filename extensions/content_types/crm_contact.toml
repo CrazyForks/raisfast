@@ -100,7 +100,7 @@ access = "member"
 
 [api.update]
 access = "member"
-filter = "@auth.id == owner_id || @auth.role == 'admin'"
+filter = "@request.auth.id == owner_id || @request.auth.role == 'admin'"
 
 [api.delete]
 access = "admin"
