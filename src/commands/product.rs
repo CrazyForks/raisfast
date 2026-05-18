@@ -24,6 +24,10 @@ pub struct CreateProductCmd {
     pub virtual_sales: i64,
     pub meta_title: Option<String>,
     pub meta_description: Option<String>,
+    pub stock: i64,
+    pub cost_price: Option<i64>,
+    pub sale_price: Option<i64>,
+    pub has_variants: bool,
 }
 
 pub struct UpdateProductCmd {
@@ -54,5 +58,9 @@ pub struct UpdateProductCmd {
     pub meta_title: Option<String>,
     pub meta_description: Option<String>,
     pub published_at: Option<String>,
+    pub stock: i64,
+    pub cost_price: Option<i64>,
+    pub sale_price: Option<i64>,
+    pub has_variants: bool,
     pub version: i64,
 }

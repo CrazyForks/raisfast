@@ -734,6 +734,10 @@ CREATE TABLE IF NOT EXISTS products (
     meta_title VARCHAR(255),
     meta_description VARCHAR(500),
     published_at DATETIME(3),
+    stock INT NOT NULL DEFAULT 0,
+    cost_price BIGINT,
+    sale_price BIGINT,
+    has_variants BOOLEAN NOT NULL DEFAULT FALSE,
     updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (category_id) REFERENCES categories(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -742,6 +746,55 @@ CREATE INDEX idx_products_status ON products(status);
 CREATE INDEX idx_products_type ON products(product_type);
 CREATE INDEX idx_products_slug ON products(slug);
 CREATE INDEX idx_products_tenant ON products(tenant_id);
+
+-- Product Variants
+CREATE TABLE IF NOT EXISTS product_variants (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    product_id BIGINT NOT NULL,
+    sku VARCHAR(100) UNIQUE,
+    title VARCHAR(500) NOT NULL,
+    price BIGINT NOT NULL CHECK(price >= 0),
+    original_price BIGINT,
+    stock INT NOT NULL DEFAULT 0,
+    attributes JSON,
+    sort_order INT NOT NULL DEFAULT 0,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    FOREIGN KEY (product_id) REFERENCES products(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_product_variants_product ON product_variants(product_id);
+CREATE INDEX idx_product_variants_sku ON product_variants(sku);
+CREATE INDEX idx_product_variants_tenant ON product_variants(tenant_id);
+
+-- User Addresses
+CREATE TABLE IF NOT EXISTS user_addresses (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    user_id BIGINT NOT NULL,
+    label VARCHAR(100) NOT NULL DEFAULT '',
+    recipient_name VARCHAR(200) NOT NULL,
+    phone VARCHAR(50) NOT NULL,
+    country VARCHAR(10) NOT NULL DEFAULT 'CN',
+    province VARCHAR(100) NOT NULL DEFAULT '',
+    city VARCHAR(100) NOT NULL DEFAULT '',
+    district VARCHAR(100) NOT NULL DEFAULT '',
+    address_line1 TEXT NOT NULL,
+    address_line2 TEXT,
+    postal_code VARCHAR(20),
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    address_type VARCHAR(20) NOT NULL DEFAULT 'shipping',
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_user_addresses_user ON user_addresses(user_id);
+CREATE INDEX idx_user_addresses_tenant ON user_addresses(tenant_id);
 
 -- Orders
 CREATE TABLE IF NOT EXISTS orders (
@@ -765,6 +818,10 @@ CREATE TABLE IF NOT EXISTS orders (
     remark TEXT,
     admin_remark TEXT,
     delivery_data JSON,
+    tax_amount BIGINT NOT NULL DEFAULT 0,
+    coupon_id BIGINT,
+    shipping_address_id BIGINT,
+    billing_address_id BIGINT,
     paid_at DATETIME(3),
     completed_at DATETIME(3),
     cancelled_at DATETIME(3),
@@ -788,22 +845,44 @@ CREATE TABLE IF NOT EXISTS order_items (
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     order_id BIGINT NOT NULL,
     product_id BIGINT,
+    variant_id BIGINT,
     title VARCHAR(500) NOT NULL,
     description TEXT,
+    sku VARCHAR(100),
     unit_price BIGINT NOT NULL CHECK(unit_price >= 0),
     quantity INT NOT NULL CHECK(quantity > 0),
     subtotal BIGINT NOT NULL,
+    tax_amount BIGINT NOT NULL DEFAULT 0,
     cover_url VARCHAR(500),
     attributes JSON,
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (order_id) REFERENCES orders(id),
-    FOREIGN KEY (product_id) REFERENCES products(id)
+    FOREIGN KEY (product_id) REFERENCES products(id),
+    FOREIGN KEY (variant_id) REFERENCES product_variants(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_order_items_order ON order_items(order_id);
 CREATE INDEX idx_order_items_tenant ON order_items(tenant_id);
 
--- Payment Channels
+CREATE TABLE IF NOT EXISTS cart_items (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
+    user_id BIGINT NOT NULL,
+    product_id BIGINT NOT NULL,
+    variant_id BIGINT,
+    quantity INT NOT NULL DEFAULT 1,
+    attributes JSON,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    UNIQUE KEY uq_cart_user_product_variant (user_id, product_id, variant_id),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (product_id) REFERENCES products(id),
+    FOREIGN KEY (variant_id) REFERENCES product_variants(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_cart_items_tenant ON cart_items(tenant_id);
+
 CREATE TABLE IF NOT EXISTS payment_channels (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,

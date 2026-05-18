@@ -19,6 +19,7 @@
 
 pub mod api_token;
 pub mod audit_log;
+pub mod cart_item;
 pub mod category;
 pub mod comment;
 pub mod content_revision;
@@ -38,6 +39,7 @@ pub mod payment_transaction;
 pub mod plugin_storage;
 pub mod post;
 pub mod product;
+pub mod product_variant;
 pub mod rbac;
 pub mod refresh_token;
 pub mod reusable_block;
@@ -45,6 +47,7 @@ pub mod sms_code;
 pub mod tag;
 pub mod tenant;
 pub mod user;
+pub mod user_address;
 pub mod user_credential;
 pub mod wallet;
 pub mod wallet_outbox;

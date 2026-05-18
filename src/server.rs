@@ -131,6 +131,12 @@ async fn build_app(
     api_v1 = api_v1
         .merge(crate::handlers::product::routes(&mut registry, config))
         .merge(crate::handlers::order::routes(&mut registry, config))
+        .merge(crate::handlers::cart::routes(&mut registry, config))
+        .merge(crate::handlers::product_variant::routes(
+            &mut registry,
+            config,
+        ))
+        .merge(crate::handlers::user_address::routes(&mut registry, config))
         .merge(h_payment::routes(&mut registry, config));
 
     if config.builtins.pages {

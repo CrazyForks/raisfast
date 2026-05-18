@@ -11,16 +11,23 @@ pub struct CreateOrderCmd {
     pub buyer_email: Option<String>,
     pub shipping_address: Option<String>,
     pub remark: Option<String>,
+    pub tax_amount: i64,
+    pub coupon_id: Option<i64>,
+    pub shipping_address_id: Option<i64>,
+    pub billing_address_id: Option<i64>,
 }
 
 pub struct CreateOrderItemCmd {
     pub order_id: i64,
     pub product_id: Option<i64>,
+    pub variant_id: Option<i64>,
     pub title: String,
     pub description: Option<String>,
+    pub sku: Option<String>,
     pub unit_price: i64,
     pub quantity: i64,
     pub subtotal: i64,
+    pub tax_amount: i64,
     pub cover_url: Option<String>,
     pub attributes: Option<String>,
 }

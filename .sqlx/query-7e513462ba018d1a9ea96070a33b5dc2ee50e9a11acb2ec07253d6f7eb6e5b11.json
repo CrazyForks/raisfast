@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM cart_items WHERE user_id = ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "7e513462ba018d1a9ea96070a33b5dc2ee50e9a11acb2ec07253d6f7eb6e5b11"
+}

@@ -757,6 +757,10 @@ CREATE TABLE IF NOT EXISTS products (
     meta_title TEXT,
     meta_description TEXT,
     published_at TEXT,
+    stock INTEGER NOT NULL DEFAULT 0,
+    cost_price INTEGER,
+    sale_price INTEGER,
+    has_variants INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
@@ -764,6 +768,53 @@ CREATE INDEX IF NOT EXISTS idx_products_status ON products(status);
 CREATE INDEX IF NOT EXISTS idx_products_type ON products(product_type);
 CREATE INDEX IF NOT EXISTS idx_products_slug ON products(slug);
 CREATE INDEX IF NOT EXISTS idx_products_tenant ON products(tenant_id);
+
+-- Product Variants
+CREATE TABLE IF NOT EXISTS product_variants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    product_id INTEGER NOT NULL REFERENCES products(id),
+    sku TEXT UNIQUE,
+    title TEXT NOT NULL,
+    price INTEGER NOT NULL CHECK(price >= 0),
+    original_price INTEGER,
+    stock INTEGER NOT NULL DEFAULT 0,
+    attributes TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_variants_product ON product_variants(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_variants_sku ON product_variants(sku);
+CREATE INDEX IF NOT EXISTS idx_product_variants_tenant ON product_variants(tenant_id);
+
+-- User Addresses
+CREATE TABLE IF NOT EXISTS user_addresses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    label TEXT NOT NULL DEFAULT '',
+    recipient_name TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    country TEXT NOT NULL DEFAULT 'CN',
+    province TEXT NOT NULL DEFAULT '',
+    city TEXT NOT NULL DEFAULT '',
+    district TEXT NOT NULL DEFAULT '',
+    address_line1 TEXT NOT NULL,
+    address_line2 TEXT,
+    postal_code TEXT,
+    is_default INTEGER NOT NULL DEFAULT 0,
+    address_type TEXT NOT NULL DEFAULT 'shipping',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_addresses_user ON user_addresses(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_addresses_tenant ON user_addresses(tenant_id);
 
 -- Orders
 CREATE TABLE IF NOT EXISTS orders (
@@ -787,6 +838,10 @@ CREATE TABLE IF NOT EXISTS orders (
     remark TEXT,
     admin_remark TEXT,
     delivery_data TEXT,
+    tax_amount INTEGER NOT NULL DEFAULT 0,
+    coupon_id INTEGER,
+    shipping_address_id INTEGER,
+    billing_address_id INTEGER,
     paid_at TEXT,
     completed_at TEXT,
     cancelled_at TEXT,
@@ -809,11 +864,14 @@ CREATE TABLE IF NOT EXISTS order_items (
     tenant_id TEXT NOT NULL DEFAULT 'default',
     order_id INTEGER NOT NULL REFERENCES orders(id),
     product_id INTEGER REFERENCES products(id),
+    variant_id INTEGER REFERENCES product_variants(id),
     title TEXT NOT NULL,
     description TEXT,
+    sku TEXT,
     unit_price INTEGER NOT NULL CHECK(unit_price >= 0),
     quantity INTEGER NOT NULL CHECK(quantity > 0),
     subtotal INTEGER NOT NULL,
+    tax_amount INTEGER NOT NULL DEFAULT 0,
     cover_url TEXT,
     attributes TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
@@ -822,7 +880,21 @@ CREATE TABLE IF NOT EXISTS order_items (
 CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_order_items_tenant ON order_items(tenant_id);
 
--- Payment Channels
+CREATE TABLE IF NOT EXISTS cart_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL UNIQUE,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    product_id INTEGER NOT NULL REFERENCES products(id),
+    variant_id INTEGER REFERENCES product_variants(id),
+    quantity INTEGER NOT NULL DEFAULT 1,
+    attributes TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cart_items_user_product_variant ON cart_items(user_id, product_id, variant_id);
+CREATE INDEX IF NOT EXISTS idx_cart_items_tenant ON cart_items(tenant_id);
+
 CREATE TABLE IF NOT EXISTS payment_channels (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id TEXT NOT NULL UNIQUE,

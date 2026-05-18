@@ -17,11 +17,12 @@ use http_body_util::BodyExt;
 use raisfast::AppState;
 use raisfast::config::app::AppConfig;
 use raisfast::handlers::{
-    api_token as h_token, auth as h_auth, category as h_cat, comment as h_cmt, cron as h_cron,
-    health as h_health, media as h_media, options as h_options, order as h_order, page as h_page,
-    payment as h_payment, plugin as h_plugin, post as h_post, product as h_product, rbac as h_rbac,
-    reusable_block as h_block, rss as h_rss, sse as h_sse, stats as h_stats, tag as h_tag,
-    tenant as h_tenant, user as h_user, wallet as h_wallet,
+    api_token as h_token, auth as h_auth, cart as h_cart, category as h_cat, comment as h_cmt,
+    cron as h_cron, health as h_health, media as h_media, options as h_options, order as h_order,
+    page as h_page, payment as h_payment, plugin as h_plugin, post as h_post, product as h_product,
+    product_variant as h_product_variant, rbac as h_rbac, reusable_block as h_block, rss as h_rss,
+    sse as h_sse, stats as h_stats, tag as h_tag, tenant as h_tenant, user as h_user,
+    user_address as h_user_address, wallet as h_wallet,
 };
 use raisfast::middleware::locale::locale_middleware;
 use raisfast::middleware::rate_limit::{
@@ -125,6 +126,17 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             Arc::new(raisfast::aspects::engine::AspectEngine::new()),
             Arc::new(pool.clone()),
         )),
+        cart_service: Arc::new(raisfast::services::cart::CartServiceImpl::new(Arc::new(
+            pool.clone(),
+        ))),
+        product_variant_service: Arc::new(
+            raisfast::services::product_variant::ProductVariantServiceImpl::new(Arc::new(
+                pool.clone(),
+            )),
+        ),
+        user_address_service: Arc::new(
+            raisfast::services::user_address::UserAddressServiceImpl::new(Arc::new(pool.clone())),
+        ),
         payment_service: Arc::new(raisfast::services::payment::PaymentServiceImpl::new(
             config.clone(),
             Arc::new(raisfast::aspects::engine::AspectEngine::new()),
@@ -454,6 +466,38 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             get(h_payment::admin_list_transactions),
         )
         .route("/admin/payment/refunds", get(h_payment::admin_list_refunds))
+        // ── Cart ──
+        .route("/cart", http_post(h_cart::add_to_cart))
+        .route("/cart", get(h_cart::list_cart))
+        .route("/cart/{id}", put(h_cart::update_cart_item))
+        .route("/cart/{id}", delete(h_cart::remove_from_cart))
+        .route("/cart", delete(h_cart::clear_cart))
+        .route("/cart/checkout", http_post(h_cart::checkout))
+        // ── Product Variants ──
+        .route(
+            "/products/{product_id}/variants",
+            get(h_product_variant::list_by_product),
+        )
+        .route(
+            "/admin/product-variants",
+            http_post(h_product_variant::admin_create),
+        )
+        .route(
+            "/admin/product-variants/{id}",
+            put(h_product_variant::admin_update),
+        )
+        .route(
+            "/admin/product-variants/{id}",
+            delete(h_product_variant::admin_delete),
+        )
+        // ── User Addresses ──
+        .route("/user/addresses", get(h_user_address::list_addresses))
+        .route("/user/addresses", http_post(h_user_address::create_address))
+        .route("/user/addresses/{id}", put(h_user_address::update_address))
+        .route(
+            "/user/addresses/{id}",
+            delete(h_user_address::delete_address),
+        )
         .layer(from_fn(global_rate_limit))
         .layer(axum::Extension(RateLimiterSet::new_default()));
 
@@ -670,6 +714,8 @@ mod api_token;
 mod audit;
 #[path = "api/auth.rs"]
 mod auth;
+#[path = "api/cart.rs"]
+mod cart;
 #[path = "api/category.rs"]
 mod category;
 #[path = "api/comment.rs"]
@@ -692,6 +738,10 @@ mod payment;
 mod plugin;
 #[path = "api/post.rs"]
 mod post;
+#[path = "api/product.rs"]
+mod product;
+#[path = "api/product_variant.rs"]
+mod product_variant;
 #[path = "api/rbac.rs"]
 mod rbac;
 #[path = "api/reusable_block.rs"]
@@ -710,6 +760,8 @@ mod tenant_admin;
 mod tenant_e2e;
 #[path = "api/user.rs"]
 mod user;
+#[path = "api/user_address.rs"]
+mod user_address;
 #[path = "api/wallet.rs"]
 mod wallet;
 #[path = "api/webhook.rs"]

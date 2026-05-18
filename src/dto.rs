@@ -1,7 +1,9 @@
 pub mod batch;
+pub mod cart;
 pub mod category;
 pub mod comment;
 pub mod currencies;
+pub mod ecommerce;
 pub mod media;
 pub mod order;
 pub mod payment;
@@ -11,9 +13,11 @@ pub mod user;
 pub mod wallet;
 
 pub use batch::*;
+pub use cart::*;
 pub use category::*;
 pub use comment::*;
 pub use currencies::*;
+pub use ecommerce::*;
 pub use media::*;
 pub use order::*;
 pub use payment::*;

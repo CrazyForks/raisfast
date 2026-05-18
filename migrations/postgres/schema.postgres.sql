@@ -706,6 +706,10 @@ CREATE TABLE IF NOT EXISTS products (
     meta_title VARCHAR(255),
     meta_description VARCHAR(500),
     published_at TIMESTAMPTZ,
+    stock INTEGER NOT NULL DEFAULT 0,
+    cost_price BIGINT,
+    sale_price BIGINT,
+    has_variants BOOLEAN NOT NULL DEFAULT FALSE,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -713,6 +717,53 @@ CREATE INDEX IF NOT EXISTS idx_products_status ON products(status);
 CREATE INDEX IF NOT EXISTS idx_products_type ON products(product_type);
 CREATE INDEX IF NOT EXISTS idx_products_slug ON products(slug);
 CREATE INDEX IF NOT EXISTS idx_products_tenant ON products(tenant_id);
+
+-- Product Variants
+CREATE TABLE IF NOT EXISTS product_variants (
+    id BIGSERIAL PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    product_id BIGINT NOT NULL REFERENCES products(id),
+    sku VARCHAR(100) UNIQUE,
+    title TEXT NOT NULL,
+    price BIGINT NOT NULL CHECK(price >= 0),
+    original_price BIGINT,
+    stock INTEGER NOT NULL DEFAULT 0,
+    attributes JSONB,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_variants_product ON product_variants(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_variants_sku ON product_variants(sku);
+CREATE INDEX IF NOT EXISTS idx_product_variants_tenant ON product_variants(tenant_id);
+
+-- User Addresses
+CREATE TABLE IF NOT EXISTS user_addresses (
+    id BIGSERIAL PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    label VARCHAR(100) NOT NULL DEFAULT '',
+    recipient_name VARCHAR(200) NOT NULL,
+    phone VARCHAR(50) NOT NULL,
+    country VARCHAR(10) NOT NULL DEFAULT 'CN',
+    province VARCHAR(100) NOT NULL DEFAULT '',
+    city VARCHAR(100) NOT NULL DEFAULT '',
+    district VARCHAR(100) NOT NULL DEFAULT '',
+    address_line1 TEXT NOT NULL,
+    address_line2 TEXT,
+    postal_code VARCHAR(20),
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    address_type VARCHAR(20) NOT NULL DEFAULT 'shipping',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_addresses_user ON user_addresses(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_addresses_tenant ON user_addresses(tenant_id);
 
 -- Orders
 CREATE TABLE IF NOT EXISTS orders (
@@ -736,6 +787,10 @@ CREATE TABLE IF NOT EXISTS orders (
     remark TEXT,
     admin_remark TEXT,
     delivery_data JSONB,
+    tax_amount BIGINT NOT NULL DEFAULT 0,
+    coupon_id BIGINT,
+    shipping_address_id BIGINT,
+    billing_address_id BIGINT,
     paid_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
     cancelled_at TIMESTAMPTZ,
@@ -758,11 +813,14 @@ CREATE TABLE IF NOT EXISTS order_items (
     tenant_id TEXT NOT NULL DEFAULT 'default',
     order_id BIGINT NOT NULL REFERENCES orders(id),
     product_id BIGINT REFERENCES products(id),
+    variant_id BIGINT REFERENCES product_variants(id),
     title TEXT NOT NULL,
     description TEXT,
+    sku VARCHAR(100),
     unit_price BIGINT NOT NULL CHECK(unit_price >= 0),
     quantity INTEGER NOT NULL CHECK(quantity > 0),
     subtotal BIGINT NOT NULL,
+    tax_amount BIGINT NOT NULL DEFAULT 0,
     cover_url VARCHAR(500),
     attributes JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -771,7 +829,21 @@ CREATE TABLE IF NOT EXISTS order_items (
 CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_order_items_tenant ON order_items(tenant_id);
 
--- Payment Channels
+CREATE TABLE IF NOT EXISTS cart_items (
+    id BIGSERIAL PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL UNIQUE,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    product_id BIGINT NOT NULL REFERENCES products(id),
+    variant_id BIGINT REFERENCES product_variants(id),
+    quantity INTEGER NOT NULL DEFAULT 1,
+    attributes JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, product_id, variant_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cart_items_tenant ON cart_items(tenant_id);
+
 CREATE TABLE IF NOT EXISTS payment_channels (
     id BIGSERIAL PRIMARY KEY,
     document_id VARCHAR(36) NOT NULL UNIQUE,

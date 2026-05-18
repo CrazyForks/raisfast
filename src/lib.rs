@@ -110,6 +110,9 @@ pub struct AppState {
     pub wallet_service: Arc<dyn crate::services::wallet::WalletService>,
     pub product_service: Arc<dyn crate::services::product::ProductService>,
     pub order_service: Arc<dyn crate::services::order::OrderService>,
+    pub cart_service: Arc<dyn crate::services::cart::CartService>,
+    pub product_variant_service: Arc<dyn crate::services::product_variant::ProductVariantService>,
+    pub user_address_service: Arc<dyn crate::services::user_address::UserAddressService>,
     pub payment_service: Arc<dyn crate::services::payment::PaymentService>,
     pub search: Arc<dyn SearchEngine>,
     pub content_type_registry: Arc<ContentTypeRegistry>,
@@ -159,6 +162,21 @@ pub async fn build_app_state(
             aspect_engine.clone(),
             Arc::new(pool.clone()),
         ));
+
+    let cart_service: Arc<dyn crate::services::cart::CartService> = Arc::new(
+        crate::services::cart::CartServiceImpl::new(Arc::new(pool.clone())),
+    );
+
+    let product_variant_service: Arc<dyn crate::services::product_variant::ProductVariantService> =
+        Arc::new(
+            crate::services::product_variant::ProductVariantServiceImpl::new(Arc::new(
+                pool.clone(),
+            )),
+        );
+
+    let user_address_service: Arc<dyn crate::services::user_address::UserAddressService> = Arc::new(
+        crate::services::user_address::UserAddressServiceImpl::new(Arc::new(pool.clone())),
+    );
 
     let wallet_service: Arc<dyn crate::services::wallet::WalletService> =
         Arc::new(crate::services::wallet::WalletServiceImpl::new(
@@ -279,6 +297,9 @@ pub async fn build_app_state(
         wallet_service,
         product_service,
         order_service,
+        cart_service,
+        product_variant_service,
+        user_address_service,
         payment_service,
         search,
         content_type_registry: ct_registry,

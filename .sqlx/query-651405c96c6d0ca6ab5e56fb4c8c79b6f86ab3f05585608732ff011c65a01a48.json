@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO user_addresses (document_id, user_id, label, recipient_name, phone, country, province, city, district, address_line1, address_line2, postal_code, is_default, address_type, created_at, updated_at, tenant_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 17
+    },
+    "nullable": []
+  },
+  "hash": "651405c96c6d0ca6ab5e56fb4c8c79b6f86ab3f05585608732ff011c65a01a48"
+}

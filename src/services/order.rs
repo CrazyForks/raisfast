@@ -165,6 +165,10 @@ impl OrderService for OrderServiceImpl {
                     buyer_email: req.buyer_email.clone(),
                     shipping_address: req.shipping_address.clone(),
                     remark: req.remark.clone(),
+                    tax_amount: 0,
+                    coupon_id: None,
+                    shipping_address_id: None,
+                    billing_address_id: None,
                 },
                 auth.tenant_id(),
             )
@@ -175,11 +179,14 @@ impl OrderService for OrderServiceImpl {
                 items.push(crate::commands::CreateOrderItemCmd {
                     order_id: order.id,
                     product_id: Some(product.id),
+                    variant_id: None,
                     title: product.title.clone(),
                     description: product.description.clone(),
+                    sku: None,
                     unit_price: product.price,
                     quantity: *quantity,
                     subtotal: *line_total,
+                    tax_amount: 0,
                     cover_url: product.cover_url.clone(),
                     attributes: product.attributes.clone(),
                 });
@@ -616,6 +623,10 @@ mod tests {
                 virtual_sales: 0,
                 meta_title: None,
                 meta_description: None,
+                stock: 0,
+                cost_price: None,
+                sale_price: None,
+                has_variants: false,
             },
             None,
         )
@@ -817,6 +828,10 @@ mod tests {
                 virtual_sales: 0,
                 meta_title: None,
                 meta_description: None,
+                stock: 0,
+                cost_price: None,
+                sale_price: None,
+                has_variants: false,
             },
             None,
         )

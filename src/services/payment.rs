@@ -1355,6 +1355,10 @@ mod tests {
                 buyer_email: None,
                 shipping_address: None,
                 remark: None,
+                tax_amount: 0,
+                coupon_id: None,
+                shipping_address_id: None,
+                billing_address_id: None,
             },
             None,
         )

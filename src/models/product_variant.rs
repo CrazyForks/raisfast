@@ -1,0 +1,511 @@
+use serde::{Deserialize, Serialize};
+#[cfg(feature = "export-types")]
+use ts_rs::TS;
+
+use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::tz::Timestamp;
+
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
+pub struct ProductVariant {
+    pub id: i64,
+    pub document_id: String,
+    pub tenant_id: Option<String>,
+    pub product_id: i64,
+    pub sku: Option<String>,
+    pub title: String,
+    pub price: i64,
+    pub original_price: Option<i64>,
+    pub stock: i64,
+    pub attributes: Option<String>,
+    pub sort_order: i64,
+    pub is_active: bool,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+pub async fn find_by_id(
+    pool: &crate::db::Pool,
+    id: i64,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<ProductVariant>> {
+    raisfast_derive::crud_find!(
+        pool,
+        "product_variants",
+        ProductVariant,
+        "id" => id,
+        tenant: tenant_id
+    )
+    .map_err(Into::into)
+}
+
+pub async fn find_by_document_id(
+    pool: &crate::db::Pool,
+    document_id: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<ProductVariant>> {
+    raisfast_derive::crud_find!(
+        pool,
+        "product_variants",
+        ProductVariant,
+        "document_id" => document_id,
+        tenant: tenant_id
+    )
+    .map_err(Into::into)
+}
+
+pub async fn find_by_sku(
+    pool: &crate::db::Pool,
+    sku: &str,
+    tenant_id: Option<&str>,
+) -> AppResult<Option<ProductVariant>> {
+    raisfast_derive::crud_find!(
+        pool,
+        "product_variants",
+        ProductVariant,
+        "sku" => sku,
+        tenant: tenant_id
+    )
+    .map_err(Into::into)
+}
+
+pub async fn find_by_product_id(
+    pool: &crate::db::Pool,
+    product_id: i64,
+    tenant_id: Option<&str>,
+) -> AppResult<Vec<ProductVariant>> {
+    Ok(raisfast_derive::crud_find_all!(
+        pool,
+        "product_variants",
+        ProductVariant,
+        "product_id" => product_id,
+        order_by: "sort_order, created_at",
+        tenant: tenant_id
+    )?)
+}
+
+pub async fn find_active_by_product_id(
+    pool: &crate::db::Pool,
+    product_id: i64,
+    tenant_id: Option<&str>,
+) -> AppResult<Vec<ProductVariant>> {
+    Ok(raisfast_derive::crud_find_all!(
+        pool,
+        "product_variants",
+        ProductVariant,
+        "product_id" => product_id,
+        and: ["is_active" => true],
+        order_by: "sort_order, created_at",
+        tenant: tenant_id
+    )?)
+}
+
+pub async fn insert(
+    pool: &crate::db::Pool,
+    cmd: &crate::commands::CreateProductVariantCmd,
+    tenant_id: Option<&str>,
+) -> AppResult<ProductVariant> {
+    let document_id = uuid::Uuid::now_v7().to_string();
+    let now = crate::utils::tz::now_utc();
+    raisfast_derive::crud_insert!(
+        pool,
+        "product_variants",
+        [
+            "document_id" => &document_id,
+            "product_id" => cmd.product_id,
+            "sku" => &cmd.sku,
+            "title" => &cmd.title,
+            "price" => cmd.price,
+            "original_price" => cmd.original_price,
+            "stock" => cmd.stock,
+            "attributes" => &cmd.attributes,
+            "sort_order" => cmd.sort_order,
+            "is_active" => cmd.is_active,
+            "created_at" => &now,
+            "updated_at" => &now
+        ],
+        tenant: tenant_id
+    )?;
+    find_by_document_id(pool, &document_id, tenant_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "product_variant not found after insert: {document_id}"
+            ))
+        })
+}
+
+pub async fn update(
+    pool: &crate::db::Pool,
+    cmd: &crate::commands::UpdateProductVariantCmd,
+    tenant_id: Option<&str>,
+) -> AppResult<bool> {
+    let result = raisfast_derive::crud_update!(
+        pool,
+        "product_variants",
+        bind: [
+            "sku" => &cmd.sku,
+            "title" => &cmd.title,
+            "price" => cmd.price,
+            "original_price" => cmd.original_price,
+            "stock" => cmd.stock,
+            "attributes" => &cmd.attributes,
+            "sort_order" => cmd.sort_order,
+            "is_active" => cmd.is_active,
+        ],
+        raw: ["updated_at" => "datetime('now')"],
+        where: "id" => cmd.id,
+        tenant: tenant_id
+    )?;
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn delete_by_id(
+    pool: &crate::db::Pool,
+    id: i64,
+    tenant_id: Option<&str>,
+) -> AppResult<bool> {
+    let result: sqlx::sqlite::SqliteQueryResult =
+        raisfast_derive::crud_delete!(pool, "product_variants", "id" => id, tenant: tenant_id)?;
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn delete_by_product_id(
+    pool: &crate::db::Pool,
+    product_id: i64,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
+    let result = raisfast_derive::crud_delete!(
+        pool,
+        "product_variants",
+        "product_id" => product_id,
+        tenant: tenant_id
+    )?;
+    AppError::expect_affected(&result, "product_variant")
+}
+
+pub async fn count_by_product(
+    pool: &crate::db::Pool,
+    product_id: i64,
+    tenant_id: Option<&str>,
+) -> AppResult<i64> {
+    let count = raisfast_derive::crud_count!(
+        pool,
+        "product_variants",
+        "product_id" => product_id,
+        tenant: tenant_id
+    )?;
+    Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn setup_pool() -> crate::db::Pool {
+        crate::test_pool!()
+    }
+
+    async fn seed_product(pool: &crate::db::Pool) -> i64 {
+        crate::models::product::insert(
+            pool,
+            &crate::commands::CreateProductCmd {
+                category_id: None,
+                title: "Test Product".to_string(),
+                description: None,
+                cover_url: None,
+                product_type: "custom".to_string(),
+                fulfillment_type: "digital".to_string(),
+                delivery_hook: None,
+                weight: None,
+                price: 1000,
+                currency: "CNY".to_string(),
+                attributes: None,
+                sort_order: 0,
+                slug: None,
+                content: None,
+                image_ids: None,
+                original_price: None,
+                specs: None,
+                unit: "piece".to_string(),
+                min_purchase: 1,
+                max_purchase: None,
+                virtual_sales: 0,
+                meta_title: None,
+                meta_description: None,
+                stock: 0,
+                cost_price: None,
+                sale_price: None,
+                has_variants: false,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        let (id,): (i64,) = sqlx::query_as("SELECT id FROM products ORDER BY id DESC LIMIT 1")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        id
+    }
+
+    async fn seed_variant(
+        pool: &crate::db::Pool,
+        product_id: i64,
+        title: &str,
+        sku: &str,
+    ) -> ProductVariant {
+        insert(
+            pool,
+            &crate::commands::CreateProductVariantCmd {
+                product_id,
+                sku: Some(sku.to_string()),
+                title: title.to_string(),
+                price: 1000,
+                original_price: None,
+                stock: 50,
+                attributes: Some(r#"{"color":"red"}"#.to_string()),
+                sort_order: 0,
+                is_active: true,
+            },
+            None,
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn insert_and_find_by_id() {
+        let pool = setup_pool().await;
+        let pid = seed_product(&pool).await;
+        let v = seed_variant(&pool, pid, "Red Shirt", "SKU-RED-001").await;
+
+        let found = super::find_by_id(&pool, v.id, None).await.unwrap().unwrap();
+        assert_eq!(found.id, v.id);
+        assert_eq!(found.title, "Red Shirt");
+        assert_eq!(found.sku.unwrap(), "SKU-RED-001");
+        assert_eq!(found.price, 1000);
+        assert_eq!(found.stock, 50);
+        assert!(found.is_active);
+    }
+
+    #[tokio::test]
+    async fn find_by_document_id() {
+        let pool = setup_pool().await;
+        let pid = seed_product(&pool).await;
+        let v = seed_variant(&pool, pid, "Blue", "SKU-BLU").await;
+        let found = super::find_by_document_id(&pool, &v.document_id, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.id, v.id);
+    }
+
+    #[tokio::test]
+    async fn find_by_sku() {
+        let pool = setup_pool().await;
+        let pid = seed_product(&pool).await;
+        seed_variant(&pool, pid, "Green", "SKU-GRN").await;
+        let found = super::find_by_sku(&pool, "SKU-GRN", None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.title, "Green");
+    }
+
+    #[tokio::test]
+    async fn find_by_product_id() {
+        let pool = setup_pool().await;
+        let pid = seed_product(&pool).await;
+        seed_variant(&pool, pid, "V1", "SKU1").await;
+        seed_variant(&pool, pid, "V2", "SKU2").await;
+
+        let variants = super::find_by_product_id(&pool, pid, None).await.unwrap();
+        assert_eq!(variants.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn find_active_by_product_id_filters_inactive() {
+        let pool = setup_pool().await;
+        let pid = seed_product(&pool).await;
+
+        insert(
+            &pool,
+            &crate::commands::CreateProductVariantCmd {
+                product_id: pid,
+                sku: Some("SKU-ACTIVE".to_string()),
+                title: "Active".to_string(),
+                price: 100,
+                original_price: None,
+                stock: 10,
+                attributes: None,
+                sort_order: 0,
+                is_active: true,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        insert(
+            &pool,
+            &crate::commands::CreateProductVariantCmd {
+                product_id: pid,
+                sku: Some("SKU-INACTIVE".to_string()),
+                title: "Inactive".to_string(),
+                price: 100,
+                original_price: None,
+                stock: 10,
+                attributes: None,
+                sort_order: 1,
+                is_active: false,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+        let active = super::find_active_by_product_id(&pool, pid, None)
+            .await
+            .unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].title, "Active");
+    }
+
+    #[tokio::test]
+    async fn update_changes_title_and_price() {
+        let pool = setup_pool().await;
+        let pid = seed_product(&pool).await;
+        let v = seed_variant(&pool, pid, "Old", "SKU-OLD").await;
+
+        let ok = super::update(
+            &pool,
+            &crate::commands::UpdateProductVariantCmd {
+                id: v.id,
+                sku: Some("SKU-NEW".to_string()),
+                title: "New".to_string(),
+                price: 2000,
+                original_price: Some(2500),
+                stock: 99,
+                attributes: None,
+                sort_order: 1,
+                is_active: true,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(ok);
+
+        let found = super::find_by_id(&pool, v.id, None).await.unwrap().unwrap();
+        assert_eq!(found.title, "New");
+        assert_eq!(found.sku.unwrap(), "SKU-NEW");
+        assert_eq!(found.price, 2000);
+        assert_eq!(found.original_price.unwrap(), 2500);
+        assert_eq!(found.stock, 99);
+    }
+
+    #[tokio::test]
+    async fn update_not_found() {
+        let pool = setup_pool().await;
+        let ok = super::update(
+            &pool,
+            &crate::commands::UpdateProductVariantCmd {
+                id: 99999,
+                sku: None,
+                title: "X".to_string(),
+                price: 100,
+                original_price: None,
+                stock: 0,
+                attributes: None,
+                sort_order: 0,
+                is_active: true,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(!ok);
+    }
+
+    #[tokio::test]
+    async fn delete_by_id() {
+        let pool = setup_pool().await;
+        let pid = seed_product(&pool).await;
+        let v = seed_variant(&pool, pid, "Bye", "SKU-BYE").await;
+        let ok = super::delete_by_id(&pool, v.id, None).await.unwrap();
+        assert!(ok);
+        assert!(
+            super::find_by_id(&pool, v.id, None)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_not_found() {
+        let pool = setup_pool().await;
+        let ok = super::delete_by_id(&pool, 99999, None).await.unwrap();
+        assert!(!ok);
+    }
+
+    #[tokio::test]
+    async fn delete_by_product_id() {
+        let pool = setup_pool().await;
+        let pid = seed_product(&pool).await;
+        seed_variant(&pool, pid, "V1", "SKU-D1").await;
+        seed_variant(&pool, pid, "V2", "SKU-D2").await;
+
+        super::delete_by_product_id(&pool, pid, None).await.unwrap();
+        let variants = super::find_by_product_id(&pool, pid, None).await.unwrap();
+        assert!(variants.is_empty());
+    }
+
+    #[tokio::test]
+    async fn count_by_product() {
+        let pool = setup_pool().await;
+        let pid = seed_product(&pool).await;
+        assert_eq!(super::count_by_product(&pool, pid, None).await.unwrap(), 0);
+
+        seed_variant(&pool, pid, "V1", "SKU-C1").await;
+        seed_variant(&pool, pid, "V2", "SKU-C2").await;
+        assert_eq!(super::count_by_product(&pool, pid, None).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn tenant_isolation() {
+        let pool = setup_pool().await;
+        let pid = seed_product(&pool).await;
+
+        insert(
+            &pool,
+            &crate::commands::CreateProductVariantCmd {
+                product_id: pid,
+                sku: Some("SKU-TENANT".to_string()),
+                title: "TenantVariant".to_string(),
+                price: 500,
+                original_price: None,
+                stock: 10,
+                attributes: None,
+                sort_order: 0,
+                is_active: true,
+            },
+            Some("tenant_a"),
+        )
+        .await
+        .unwrap();
+
+        let a_variants = super::find_by_product_id(&pool, pid, Some("tenant_a"))
+            .await
+            .unwrap();
+        assert_eq!(a_variants.len(), 1);
+
+        let b_variants = super::find_by_product_id(&pool, pid, Some("tenant_b"))
+            .await
+            .unwrap();
+        assert!(b_variants.is_empty());
+
+        let all_variants = super::find_by_product_id(&pool, pid, None).await.unwrap();
+        assert_eq!(all_variants.len(), 1);
+    }
+}

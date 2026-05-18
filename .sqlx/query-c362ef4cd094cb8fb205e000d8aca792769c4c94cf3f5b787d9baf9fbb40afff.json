@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM product_variants WHERE product_id = ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "c362ef4cd094cb8fb205e000d8aca792769c4c94cf3f5b787d9baf9fbb40afff"
+}
