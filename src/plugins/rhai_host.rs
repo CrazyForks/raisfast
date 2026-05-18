@@ -93,6 +93,75 @@ pub fn register_host_functions(
     engine.register_fn("dbRollback", move || -> String { hc.db_rollback() });
 
     let hc = host_ctx.clone();
+    engine.register_fn(
+        "dbInsert",
+        move |table: &str, data: &str, options: &str| -> String {
+            hc.db_insert(table, data, options)
+        },
+    );
+
+    let hc = host_ctx.clone();
+    engine.register_fn(
+        "dbFetchOne",
+        move |table: &str, r#where: &str, options: &str| -> String {
+            hc.db_fetch_one(table, r#where, options)
+        },
+    );
+
+    let hc = host_ctx.clone();
+    engine.register_fn(
+        "dbFetchAll",
+        move |table: &str, r#where: &str, options: &str| -> String {
+            hc.db_fetch_all(table, r#where, options)
+        },
+    );
+
+    let hc = host_ctx.clone();
+    engine.register_fn(
+        "dbUpdate",
+        move |table: &str, data: &str, r#where: &str, options: &str| -> String {
+            hc.db_update(table, data, r#where, options)
+        },
+    );
+
+    let hc = host_ctx.clone();
+    engine.register_fn(
+        "dbDelete",
+        move |table: &str, r#where: &str, options: &str| -> String {
+            hc.db_delete(table, r#where, options)
+        },
+    );
+
+    let hc = host_ctx.clone();
+    engine.register_fn(
+        "dbCount",
+        move |table: &str, r#where: &str, options: &str| -> String {
+            hc.db_count(table, r#where, options)
+        },
+    );
+
+    let hc = host_ctx.clone();
+    engine.register_fn(
+        "dbIncrement",
+        move |table: &str, columns: &str, r#where: &str, options: &str| -> String {
+            hc.db_increment(table, columns, r#where, options)
+        },
+    );
+
+    let hc = host_ctx.clone();
+    engine.register_fn(
+        "dbSum",
+        move |table: &str, column: &str, r#where: &str, options: &str| -> String {
+            hc.db_sum(table, column, r#where, options)
+        },
+    );
+
+    let hc = host_ctx.clone();
+    engine.register_fn("dbGroupBy", move |table: &str, options: &str| -> String {
+        hc.db_group_by(table, options)
+    });
+
+    let hc = host_ctx.clone();
     engine.register_fn("vfsRead", move |path: &str| -> rhai::Dynamic {
         match hc.vfs_read(path) {
             Ok(v) => v.into(),
@@ -294,6 +363,12 @@ mod tests {
         let _: String = engine.eval(r#"dbCommit()"#).unwrap();
         let _: String = engine.eval(r#"dbRollback()"#).unwrap();
         let _: String = engine.eval(r#"dbPh(1)"#).unwrap();
+        let _: String = engine.eval(r#"dbInsert("t", "{}", "{}")"#).unwrap();
+        let _: String = engine.eval(r#"dbFetchOne("t", "{}", "{}")"#).unwrap();
+        let _: String = engine.eval(r#"dbFetchAll("t", "{}", "{}")"#).unwrap();
+        let _: String = engine.eval(r#"dbUpdate("t", "{}", "{}", "{}")"#).unwrap();
+        let _: String = engine.eval(r#"dbDelete("t", "{}", "{}")"#).unwrap();
+        let _: String = engine.eval(r#"dbCount("t", "{}", "{}")"#).unwrap();
         let _ = engine.eval::<rhai::Dynamic>(r#"vfsRead("f")"#).unwrap();
         let _: bool = engine.eval(r#"vfsWrite("f", "c")"#).unwrap();
         let _: bool = engine.eval(r#"vfsDelete("f")"#).unwrap();

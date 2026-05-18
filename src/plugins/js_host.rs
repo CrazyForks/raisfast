@@ -99,6 +99,85 @@ pub fn register_host_functions(
     host.set("dbRollback", db_rollback_fn)?;
 
     let hc = host_ctx.clone();
+    let db_insert_fn = Function::new(
+        ctx.clone(),
+        move |table: String, data: String, options: String| -> String {
+            hc.db_insert(&table, &data, &options)
+        },
+    )?;
+    host.set("dbInsert", db_insert_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_fetch_one_fn = Function::new(
+        ctx.clone(),
+        move |table: String, r#where: String, options: String| -> String {
+            hc.db_fetch_one(&table, &r#where, &options)
+        },
+    )?;
+    host.set("dbFetchOne", db_fetch_one_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_fetch_all_fn = Function::new(
+        ctx.clone(),
+        move |table: String, r#where: String, options: String| -> String {
+            hc.db_fetch_all(&table, &r#where, &options)
+        },
+    )?;
+    host.set("dbFetchAll", db_fetch_all_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_update_fn = Function::new(
+        ctx.clone(),
+        move |table: String, data: String, r#where: String, options: String| -> String {
+            hc.db_update(&table, &data, &r#where, &options)
+        },
+    )?;
+    host.set("dbUpdate", db_update_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_delete_fn = Function::new(
+        ctx.clone(),
+        move |table: String, r#where: String, options: String| -> String {
+            hc.db_delete(&table, &r#where, &options)
+        },
+    )?;
+    host.set("dbDelete", db_delete_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_count_fn = Function::new(
+        ctx.clone(),
+        move |table: String, r#where: String, options: String| -> String {
+            hc.db_count(&table, &r#where, &options)
+        },
+    )?;
+    host.set("dbCount", db_count_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_increment_fn = Function::new(
+        ctx.clone(),
+        move |table: String, columns: String, r#where: String, options: String| -> String {
+            hc.db_increment(&table, &columns, &r#where, &options)
+        },
+    )?;
+    host.set("dbIncrement", db_increment_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_sum_fn = Function::new(
+        ctx.clone(),
+        move |table: String, column: String, r#where: String, options: String| -> String {
+            hc.db_sum(&table, &column, &r#where, &options)
+        },
+    )?;
+    host.set("dbSum", db_sum_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_group_by_fn = Function::new(
+        ctx.clone(),
+        move |table: String, options: String| -> String { hc.db_group_by(&table, &options) },
+    )?;
+    host.set("dbGroupBy", db_group_by_fn)?;
+
+    let hc = host_ctx.clone();
     let vfs_read_fn = Function::new(ctx.clone(), move |path: String| -> Option<String> {
         hc.vfs_read(&path).ok()
     })?;

@@ -17,6 +17,70 @@ export function dbExec(sql, params) {
     const result = RaisFastHost.dbExecute(sql, JSON.stringify(params ?? []));
     return JSON.parse(result);
 }
+export function dbInsert(table, data, options) {
+    const dataStr = typeof data === "string" ? data : JSON.stringify(data);
+    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
+    const result = JSON.parse(RaisFastHost.dbInsert(table, dataStr, optStr));
+    if (result.error) throw new Error(result.error);
+    return result;
+}
+export function dbFetchOne(table, where, options) {
+    const whereStr = where == null ? "{}" : (typeof where === "string" ? where : JSON.stringify(where));
+    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
+    const result = JSON.parse(RaisFastHost.dbFetchOne(table, whereStr, optStr));
+    if (result.error) throw new Error(result.error);
+    return result.data;
+}
+export function dbFetchAll(table, where, options) {
+    const whereStr = where == null ? "{}" : (typeof where === "string" ? where : JSON.stringify(where));
+    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
+    const result = JSON.parse(RaisFastHost.dbFetchAll(table, whereStr, optStr));
+    if (result.error) throw new Error(result.error);
+    return result;
+}
+export function dbUpdate(table, data, where, options) {
+    const dataStr = typeof data === "string" ? data : JSON.stringify(data);
+    const whereStr = where == null ? "{}" : (typeof where === "string" ? where : JSON.stringify(where));
+    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
+    const result = JSON.parse(RaisFastHost.dbUpdate(table, dataStr, whereStr, optStr));
+    if (result.error) throw new Error(result.error);
+    return result;
+}
+export function dbDelete(table, where, options) {
+    const whereStr = where == null ? "{}" : (typeof where === "string" ? where : JSON.stringify(where));
+    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
+    const result = JSON.parse(RaisFastHost.dbDelete(table, whereStr, optStr));
+    if (result.error) throw new Error(result.error);
+    return result;
+}
+export function dbCount(table, where, options) {
+    const whereStr = where == null ? "{}" : (typeof where === "string" ? where : JSON.stringify(where));
+    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
+    const result = JSON.parse(RaisFastHost.dbCount(table, whereStr, optStr));
+    if (result.error) throw new Error(result.error);
+    return result.count;
+}
+export function dbIncrement(table, columns, where, options) {
+    const colStr = typeof columns === "string" ? columns : JSON.stringify(columns);
+    const whereStr = where == null ? "{}" : (typeof where === "string" ? where : JSON.stringify(where));
+    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
+    const result = JSON.parse(RaisFastHost.dbIncrement(table, colStr, whereStr, optStr));
+    if (result.error) throw new Error(result.error);
+    return result;
+}
+export function dbSum(table, column, where, options) {
+    const whereStr = where == null ? "{}" : (typeof where === "string" ? where : JSON.stringify(where));
+    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
+    const result = JSON.parse(RaisFastHost.dbSum(table, column, whereStr, optStr));
+    if (result.error) throw new Error(result.error);
+    return result.sum;
+}
+export function dbGroupBy(table, options) {
+    const optStr = options == null ? "{}" : (typeof options === "string" ? options : JSON.stringify(options));
+    const result = JSON.parse(RaisFastHost.dbGroupBy(table, optStr));
+    if (result.error) throw new Error(result.error);
+    return result;
+}
 export function dbBegin() {
     const result = JSON.parse(RaisFastHost.dbBegin());
     if (!result.ok)

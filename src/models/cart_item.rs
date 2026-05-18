@@ -53,18 +53,16 @@ pub async fn find_by_user_and_product(
         )
         .map_err(Into::into)
     } else {
-        let sql = if tenant_id.is_some() {
-            "SELECT * FROM cart_items WHERE user_id = ? AND product_id = ? AND variant_id IS NULL AND tenant_id = ?"
-        } else {
-            "SELECT * FROM cart_items WHERE user_id = ? AND product_id = ? AND variant_id IS NULL"
-        };
-        let mut q = sqlx::query_as::<_, CartItem>(sql)
-            .bind(user_id)
-            .bind(product_id);
-        if let Some(tid) = tenant_id {
-            q = q.bind(tid);
-        }
-        Ok(q.fetch_optional(pool).await?)
+        raisfast_derive::crud_find!(
+            pool,
+            "cart_items",
+            CartItem,
+            "user_id" => user_id,
+            and: ["product_id" => product_id],
+            and_null: ["variant_id"],
+            tenant: tenant_id
+        )
+        .map_err(Into::into)
     }
 }
 

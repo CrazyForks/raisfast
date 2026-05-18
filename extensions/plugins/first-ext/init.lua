@@ -8,17 +8,10 @@ local sdk = require("sdk")
 Plugin = {}
 
 Plugin.stats_overview = function(input)
-    local posts = sdk.dbQuery("SELECT CAST(COUNT(*) AS TEXT) as total FROM posts")
-    if not posts then return sdk.fail(500, "query failed") end
-
-    local comments = sdk.dbQuery("SELECT CAST(COUNT(*) AS TEXT) as total FROM comments")
-    local users = sdk.dbQuery("SELECT CAST(COUNT(*) AS TEXT) as total FROM users")
-    local published = sdk.dbQuery("SELECT CAST(COUNT(*) AS TEXT) as total FROM posts WHERE status = 'published'")
-
-    local total_posts = posts[1] and tonumber(posts[1].total) or 0
-    local total_comments = comments and comments[1] and tonumber(comments[1].total) or 0
-    local total_users = users and users[1] and tonumber(users[1].total) or 0
-    local total_published = published and published[1] and tonumber(published[1].total) or 0
+    local total_posts = sdk.dbCount("posts")
+    local total_comments = sdk.dbCount("comments")
+    local total_users = sdk.dbCount("users")
+    local total_published = sdk.dbCount("posts", { status = "published" })
 
     sdk.logInfo("[blog-stats] GET overview")
 
@@ -31,27 +24,19 @@ Plugin.stats_overview = function(input)
 end
 
 Plugin.stats_posts = function(input)
-    local result = sdk.dbQuery("SELECT status, CAST(COUNT(*) AS TEXT) as count FROM posts GROUP BY status")
-    if not result then return sdk.fail(500, "query failed") end
-    return sdk.ok(result)
+    local result = sdk.dbGroupBy("posts", {
+        group_by = "status",
+        count = true
+    })
+    return sdk.ok(result.data or {})
 end
 
 Plugin.stats_recent = function(input)
-    local result = sdk.dbQuery(
-        "SELECT title, slug, view_count, published_at "
-        .. "FROM posts WHERE status = 'published' "
-        .. "ORDER BY published_at DESC LIMIT 10"
-    )
-    if not result then return sdk.fail(500, "query failed") end
-    return sdk.ok(result)
+    local result = sdk.dbFetchAll("posts", { status = "published" }, { order_by = "published_at DESC", limit = 10 })
+    return sdk.ok(result.data or {})
 end
 
 Plugin.stats_top = function(input)
-    local result = sdk.dbQuery(
-        "SELECT title, slug, view_count "
-        .. "FROM posts WHERE status = 'published' "
-        .. "ORDER BY view_count DESC LIMIT 10"
-    )
-    if not result then return sdk.fail(500, "query failed") end
-    return sdk.ok(result)
+    local result = sdk.dbFetchAll("posts", { status = "published" }, { order_by = "view_count DESC", limit = 10 })
+    return sdk.ok(result.data or {})
 end

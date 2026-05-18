@@ -23,6 +23,65 @@ struct TxState {
     conn: DbPoolConnection,
 }
 
+struct WhereResult {
+    clause: String,
+    params: Vec<serde_json::Value>,
+}
+
+enum CrudTenant {
+    Auto,
+    Disabled,
+    Explicit(String),
+}
+
+struct CrudOptions {
+    tenant: CrudTenant,
+    order_by: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+impl CrudOptions {
+    fn parse(json: &str) -> Self {
+        let mut opts = Self {
+            tenant: CrudTenant::Auto,
+            order_by: None,
+            limit: None,
+            offset: None,
+        };
+        let Ok(obj) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(json)
+        else {
+            return opts;
+        };
+        match obj.get("tenant") {
+            Some(serde_json::Value::Bool(false)) => opts.tenant = CrudTenant::Disabled,
+            Some(serde_json::Value::String(s)) => opts.tenant = CrudTenant::Explicit(s.clone()),
+            _ => {}
+        }
+        if let Some(serde_json::Value::String(s)) = obj.get("order_by") {
+            opts.order_by = Some(s.clone());
+        }
+        if let Some(serde_json::Value::Number(n)) = obj.get("limit") {
+            opts.limit = n.as_u64().map(|v| v as usize);
+        }
+        if let Some(serde_json::Value::Number(n)) = obj.get("offset") {
+            opts.offset = n.as_u64().map(|v| v as usize);
+        }
+        opts
+    }
+
+    fn tenant_is_disabled(&self) -> bool {
+        matches!(self.tenant, CrudTenant::Disabled)
+    }
+
+    fn tenant_value_owned(&self) -> Option<String> {
+        match &self.tenant {
+            CrudTenant::Explicit(s) => Some(s.clone()),
+            _ => None,
+        }
+    }
+}
+
 /// Plugin host context
 ///
 /// Holds all shared state needed by a single plugin. Business logic methods are synchronous
@@ -36,6 +95,7 @@ pub struct HostContext {
     tx: Mutex<Option<TxState>>,
     vfs: Option<Arc<VirtualFs>>,
     event_bus: Option<EventBus>,
+    content_type_registry: Option<Arc<crate::content_type::ContentTypeRegistry>>,
 }
 
 impl Clone for HostContext {
@@ -49,6 +109,7 @@ impl Clone for HostContext {
             tx: Mutex::new(None),
             vfs: self.vfs.clone(),
             event_bus: self.event_bus.clone(),
+            content_type_registry: self.content_type_registry.clone(),
         }
     }
 }
@@ -72,12 +133,21 @@ impl HostContext {
             tx: Mutex::new(None),
             vfs: None,
             event_bus: None,
+            content_type_registry: None,
         }
     }
 
     /// Set the event bus (called after PluginManager initialization)
     pub fn set_event_bus(&mut self, bus: EventBus) {
         self.event_bus = Some(bus);
+    }
+
+    /// Set the content type registry (called after PluginManager initialization)
+    pub fn set_content_type_registry(
+        &mut self,
+        reg: Arc<crate::content_type::ContentTypeRegistry>,
+    ) {
+        self.content_type_registry = Some(reg);
     }
 
     /// Return the plugin ID
@@ -457,6 +527,773 @@ impl HostContext {
                 );
             });
         }
+    }
+
+    // ── High-level CRUD API ─────────────────────────────────────
+
+    /// Check if a table is a content type table with tenantable protocol
+    fn is_tenantable_table(&self, table: &str) -> bool {
+        self.content_type_registry
+            .as_ref()
+            .and_then(|reg| reg.get_by_table(table))
+            .is_some_and(|ct| ct.implements_protocol("tenantable"))
+    }
+
+    fn check_table_readable(&self, table: &str) -> Result<(), String> {
+        if PermissionChecker::is_protected_table(table, &self.config.builtins.protected_tables()) {
+            return Err(format!("table '{table}' is protected"));
+        }
+        if !PermissionChecker::is_table_readable(&self.permissions, table) {
+            return Err(format!("no read permission for table: {table}"));
+        }
+        Ok(())
+    }
+
+    fn check_table_writable(&self, table: &str) -> Result<(), String> {
+        if PermissionChecker::is_protected_table(table, &self.config.builtins.protected_tables()) {
+            return Err(format!("table '{table}' is protected"));
+        }
+        if !PermissionChecker::is_table_writable(&self.permissions, table) {
+            return Err(format!("no write permission for table: {table}"));
+        }
+        Ok(())
+    }
+
+    fn require_pool(&self) -> Result<&Pool, String> {
+        self.pool
+            .as_ref()
+            .ok_or_else(|| "no database access".to_string())
+    }
+
+    /// Insert a row into a table.
+    ///
+    /// `data_json` is a JSON object of column-value pairs.
+    /// `options_json` is optional: `{ "tenant": "tenant_id" }` or `{ "tenant": false }`.
+    ///
+    /// Returns `{"data":{...},"rows_affected":1}` or `{"error":"..."}`.
+    #[must_use]
+    pub fn db_insert(&self, table: &str, data_json: &str, options_json: &str) -> String {
+        if let Err(e) = self.check_table_writable(table) {
+            return format!(r#"{{"error":"{e}"}}"#);
+        }
+        let Ok(pool) = self.require_pool() else {
+            return r#"{"error":"no database access"}"#.to_string();
+        };
+        let mut data: serde_json::Map<String, serde_json::Value> =
+            match serde_json::from_str(data_json) {
+                Ok(d) => d,
+                Err(e) => return format!(r#"{{"error":"invalid data JSON: {e}"}}"#),
+            };
+
+        let opts = CrudOptions::parse(options_json);
+        if self.is_tenantable_table(table) {
+            match &opts.tenant {
+                CrudTenant::Auto => {}
+                CrudTenant::Explicit(tid) => {
+                    data.insert("tenant_id".into(), serde_json::Value::String(tid.clone()));
+                }
+                CrudTenant::Disabled => {}
+            }
+        }
+
+        let mut cols = Vec::new();
+        let mut vals = Vec::new();
+        let mut args = DbArguments::default();
+        for (k, v) in &data {
+            cols.push(k.clone());
+            Self::add_param(&mut args, v);
+            vals.push(crate::db::dialect::ph(vals.len() + 1));
+        }
+
+        let sql = format!(
+            "INSERT INTO {table} ({}) VALUES ({})",
+            cols.join(", "),
+            vals.join(", ")
+        );
+
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle.block_on(async { sqlx::query_with(&sql, args).execute(pool).await }) {
+                Ok(r) => format!(r#"{{"rows_affected":{}}}"#, r.rows_affected()),
+                Err(e) => format!(r#"{{"error":"insert failed: {e}"}}"#),
+            }
+        })
+    }
+
+    /// Fetch a single row from a table.
+    ///
+    /// `where_json` can be:
+    /// - A JSON object: `{"id": 1}` → WHERE id = ?
+    /// - A string: `"id = 1 AND status = 'active'"` → raw WHERE clause
+    /// - An array: `["status = ? AND total > ?", "active", 100]` → parameterized
+    ///
+    /// Returns `{"data":{...}}` or `{"data":null}` or `{"error":"..."}`.
+    #[must_use]
+    pub fn db_fetch_one(&self, table: &str, where_json: &str, options_json: &str) -> String {
+        if let Err(e) = self.check_table_readable(table) {
+            return format!(r#"{{"error":"{e}"}}"#);
+        }
+        let Ok(pool) = self.require_pool() else {
+            return r#"{"error":"no database access"}"#.to_string();
+        };
+        let where_result = match Self::build_where_clause(where_json) {
+            Ok(w) => w,
+            Err(e) => return format!(r#"{{"error":"{e}"}}"#),
+        };
+        let opts = CrudOptions::parse(options_json);
+        let tenantable = self.is_tenantable_table(table);
+        let (sql, args) = Self::build_query_args(tenantable, table, &where_result, &opts);
+
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle.block_on(async { sqlx::query_with(&sql, args).fetch_optional(pool).await })
+            {
+                Ok(Some(row)) => {
+                    let json = crate::plugins::rows_to_json(std::slice::from_ref(&row));
+                    format!(r#"{{"data":{json}}}"#)
+                }
+                Ok(None) => r#"{"data":null}"#.to_string(),
+                Err(e) => format!(r#"{{"error":"query failed: {e}"}}"#),
+            }
+        })
+    }
+
+    /// Fetch multiple rows from a table.
+    ///
+    /// `where_json` same as `db_fetch_one`.
+    /// `options_json` can include `order_by`, `limit`, `offset`, `tenant`.
+    ///
+    /// Returns `{"data":[...],"total":N}` or `{"error":"..."}`.
+    #[must_use]
+    pub fn db_fetch_all(&self, table: &str, where_json: &str, options_json: &str) -> String {
+        if let Err(e) = self.check_table_readable(table) {
+            return format!(r#"{{"error":"{e}"}}"#);
+        }
+        let Ok(pool) = self.require_pool() else {
+            return r#"{"error":"no database access"}"#.to_string();
+        };
+        let where_result = match Self::build_where_clause(where_json) {
+            Ok(w) => w,
+            Err(e) => return format!(r#"{{"error":"{e}"}}"#),
+        };
+        let opts = CrudOptions::parse(options_json);
+        let tenantable = self.is_tenantable_table(table);
+        let (sql, args) = Self::build_query_args(tenantable, table, &where_result, &opts);
+
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle.block_on(async { sqlx::query_with(&sql, args).fetch_all(pool).await }) {
+                Ok(rows) => {
+                    let count = rows.len();
+                    let json = crate::plugins::rows_to_json(&rows);
+                    format!(r#"{{"data":{json},"total":{count}}}"#)
+                }
+                Err(e) => format!(r#"{{"error":"query failed: {e}"}}"#),
+            }
+        })
+    }
+
+    /// Update rows in a table.
+    ///
+    /// `data_json` is a JSON object of columns to set.
+    /// `where_json` same as `db_fetch_one`.
+    ///
+    /// Returns `{"rows_affected":N}` or `{"error":"..."}`.
+    #[must_use]
+    pub fn db_update(
+        &self,
+        table: &str,
+        data_json: &str,
+        where_json: &str,
+        options_json: &str,
+    ) -> String {
+        if let Err(e) = self.check_table_writable(table) {
+            return format!(r#"{{"error":"{e}"}}"#);
+        }
+        let Ok(pool) = self.require_pool() else {
+            return r#"{"error":"no database access"}"#.to_string();
+        };
+        let data: serde_json::Map<String, serde_json::Value> = match serde_json::from_str(data_json)
+        {
+            Ok(d) => d,
+            Err(e) => return format!(r#"{{"error":"invalid data JSON: {e}"}}"#),
+        };
+        if data.is_empty() {
+            return r#"{"error":"no columns to update"}"#.to_string();
+        }
+        let where_result = match Self::build_where_clause(where_json) {
+            Ok(w) => w,
+            Err(e) => return format!(r#"{{"error":"{e}"}}"#),
+        };
+        let opts = CrudOptions::parse(options_json);
+
+        let mut set_parts = Vec::new();
+        let mut args = DbArguments::default();
+        let mut idx = 1;
+        for (k, v) in &data {
+            set_parts.push(format!("{k} = {}", crate::db::dialect::ph(idx)));
+            idx += 1;
+            Self::add_param(&mut args, v);
+        }
+
+        let mut where_sql = String::new();
+        if !where_result.clause.is_empty() {
+            where_sql = format!(" WHERE {}", where_result.clause);
+        }
+        for p in &where_result.params {
+            Self::add_param(&mut args, p);
+        }
+
+        if self.is_tenantable_table(table) && !opts.tenant_is_disabled() {
+            let ph = crate::db::dialect::ph(idx);
+            let connector = if where_sql.is_empty() {
+                " WHERE"
+            } else {
+                " AND"
+            };
+            where_sql.push_str(&format!("{connector} tenant_id = {ph}"));
+            let tid = opts
+                .tenant_value_owned()
+                .unwrap_or_else(|| crate::constants::DEFAULT_TENANT.to_string());
+            args.add(tid).ok();
+        }
+
+        let sql = format!("UPDATE {table} SET {}{where_sql}", set_parts.join(", "));
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle.block_on(async { sqlx::query_with(&sql, args).execute(pool).await }) {
+                Ok(r) => format!(r#"{{"rows_affected":{}}}"#, r.rows_affected()),
+                Err(e) => format!(r#"{{"error":"update failed: {e}"}}"#),
+            }
+        })
+    }
+
+    /// Delete rows from a table.
+    ///
+    /// `where_json` same as `db_fetch_one`.
+    ///
+    /// Returns `{"rows_affected":N}` or `{"error":"..."}`.
+    #[must_use]
+    pub fn db_delete(&self, table: &str, where_json: &str, options_json: &str) -> String {
+        if let Err(e) = self.check_table_writable(table) {
+            return format!(r#"{{"error":"{e}"}}"#);
+        }
+        let Ok(pool) = self.require_pool() else {
+            return r#"{"error":"no database access"}"#.to_string();
+        };
+        let where_result = match Self::build_where_clause(where_json) {
+            Ok(w) => w,
+            Err(e) => return format!(r#"{{"error":"{e}"}}"#),
+        };
+        let opts = CrudOptions::parse(options_json);
+
+        let mut args = DbArguments::default();
+        let mut where_sql = String::new();
+        if !where_result.clause.is_empty() {
+            where_sql = format!(" WHERE {}", where_result.clause);
+        }
+        for p in &where_result.params {
+            Self::add_param(&mut args, p);
+        }
+
+        if self.is_tenantable_table(table) && !opts.tenant_is_disabled() {
+            let idx = where_result.params.len() + 1;
+            let ph = crate::db::dialect::ph(idx);
+            let connector = if where_sql.is_empty() {
+                " WHERE"
+            } else {
+                " AND"
+            };
+            where_sql.push_str(&format!("{connector} tenant_id = {ph}"));
+            let tid = opts
+                .tenant_value_owned()
+                .unwrap_or_else(|| crate::constants::DEFAULT_TENANT.to_string());
+            args.add(tid).ok();
+        }
+
+        let sql = format!("DELETE FROM {table}{where_sql}");
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle.block_on(async { sqlx::query_with(&sql, args).execute(pool).await }) {
+                Ok(r) => format!(r#"{{"rows_affected":{}}}"#, r.rows_affected()),
+                Err(e) => format!(r#"{{"error":"delete failed: {e}"}}"#),
+            }
+        })
+    }
+
+    /// Count rows in a table.
+    ///
+    /// `where_json` same as `db_fetch_one`.
+    ///
+    /// Returns `{"count":N}` or `{"error":"..."}`.
+    #[must_use]
+    pub fn db_count(&self, table: &str, where_json: &str, options_json: &str) -> String {
+        if let Err(e) = self.check_table_readable(table) {
+            return format!(r#"{{"error":"{e}"}}"#);
+        }
+        let Ok(pool) = self.require_pool() else {
+            return r#"{"error":"no database access"}"#.to_string();
+        };
+        let where_result = match Self::build_where_clause(where_json) {
+            Ok(w) => w,
+            Err(e) => return format!(r#"{{"error":"{e}"}}"#),
+        };
+        let opts = CrudOptions::parse(options_json);
+
+        let mut args = DbArguments::default();
+        let mut where_sql = String::new();
+        if !where_result.clause.is_empty() {
+            where_sql = format!(" WHERE {}", where_result.clause);
+        }
+        for p in &where_result.params {
+            Self::add_param(&mut args, p);
+        }
+
+        if self.is_tenantable_table(table) && !opts.tenant_is_disabled() {
+            let idx = where_result.params.len() + 1;
+            let ph = crate::db::dialect::ph(idx);
+            let connector = if where_sql.is_empty() {
+                " WHERE"
+            } else {
+                " AND"
+            };
+            where_sql.push_str(&format!("{connector} tenant_id = {ph}"));
+            let tid = opts
+                .tenant_value_owned()
+                .unwrap_or_else(|| crate::constants::DEFAULT_TENANT.to_string());
+            args.add(tid).ok();
+        }
+
+        let sql = format!("SELECT COUNT(*) as cnt FROM {table}{where_sql}");
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle.block_on(async {
+                let row: (i64,) = sqlx::query_as_with(&sql, args).fetch_one(pool).await?;
+                Ok::<_, sqlx::Error>(row.0)
+            }) {
+                Ok(count) => format!(r#"{{"count":{count}}}"#),
+                Err(e) => format!(r#"{{"error":"count failed: {e}"}}"#),
+            }
+        })
+    }
+
+    /// Atomically increment (or decrement) numeric columns.
+    ///
+    /// `columns_json` is a JSON object mapping column names to delta values, e.g. `{"view_count": 1}`.
+    /// `where_json` same as other CRUD functions.
+    /// `options_json` can include:
+    /// - `set`: JSON object of regular column-value pairs to SET alongside the increments.
+    /// - `min`: integer (default no clamp). When set, generates `CASE WHEN col > min - delta THEN col + delta ELSE min END`.
+    /// - `tenant`: tenant control.
+    ///
+    /// Returns `{"rows_affected":N}` or `{"error":"..."}`.
+    #[must_use]
+    pub fn db_increment(
+        &self,
+        table: &str,
+        columns_json: &str,
+        where_json: &str,
+        options_json: &str,
+    ) -> String {
+        if let Err(e) = self.check_table_writable(table) {
+            return format!(r#"{{"error":"{e}"}}"#);
+        }
+        let Ok(pool) = self.require_pool() else {
+            return r#"{"error":"no database access"}"#.to_string();
+        };
+        let columns: serde_json::Map<String, serde_json::Value> =
+            match serde_json::from_str(columns_json) {
+                Ok(c) => c,
+                Err(e) => return format!(r#"{{"error":"invalid columns JSON: {e}"}}"#),
+            };
+        if columns.is_empty() {
+            return r#"{"error":"no columns to increment"}"#.to_string();
+        }
+
+        let opts = CrudOptions::parse(options_json);
+        let set_data: Option<serde_json::Map<String, serde_json::Value>> =
+            serde_json::from_str(options_json)
+                .ok()
+                .and_then(|obj: serde_json::Map<String, serde_json::Value>| obj.get("set").cloned())
+                .and_then(|v| {
+                    if v.is_object() {
+                        v.as_object().cloned()
+                    } else {
+                        None
+                    }
+                });
+
+        let min_value: Option<i64> = serde_json::from_str(options_json)
+            .ok()
+            .and_then(|obj: serde_json::Map<String, serde_json::Value>| obj.get("min").cloned())
+            .and_then(|v| v.as_i64());
+
+        let mut set_parts = Vec::new();
+        let mut args = DbArguments::default();
+        let mut idx = 1;
+
+        for (col, delta) in &columns {
+            let delta_i64 = match delta.as_i64() {
+                Some(d) => d,
+                None => return format!(r#"{{"error":"delta for '{col}' must be an integer"}}"#),
+            };
+            if let Some(min) = min_value {
+                let min_ph = crate::db::dialect::ph(idx);
+                idx += 1;
+                let delta_ph = crate::db::dialect::ph(idx);
+                idx += 1;
+                set_parts.push(format!("{col} = MAX({min_ph}, {col} + {delta_ph})"));
+                args.add(min).ok();
+                args.add(delta_i64).ok();
+            } else {
+                let ph = crate::db::dialect::ph(idx);
+                idx += 1;
+                set_parts.push(format!("{col} = {col} + {ph}"));
+                args.add(delta_i64).ok();
+            }
+        }
+
+        if let Some(ref set) = set_data {
+            for (k, v) in set {
+                let ph = crate::db::dialect::ph(idx);
+                idx += 1;
+                set_parts.push(format!("{k} = {ph}"));
+                Self::add_param(&mut args, v);
+            }
+        }
+
+        let where_result = match Self::build_where_clause(where_json) {
+            Ok(w) => w,
+            Err(e) => return format!(r#"{{"error":"{e}"}}"#),
+        };
+
+        let mut where_sql = String::new();
+        if !where_result.clause.is_empty() {
+            where_sql = format!(" WHERE {}", where_result.clause);
+        }
+        for p in &where_result.params {
+            Self::add_param(&mut args, p);
+        }
+
+        if self.is_tenantable_table(table) && !opts.tenant_is_disabled() {
+            let ph = crate::db::dialect::ph(idx);
+            let connector = if where_sql.is_empty() {
+                " WHERE"
+            } else {
+                " AND"
+            };
+            where_sql.push_str(&format!("{connector} tenant_id = {ph}"));
+            let tid = opts
+                .tenant_value_owned()
+                .unwrap_or_else(|| crate::constants::DEFAULT_TENANT.to_string());
+            args.add(tid).ok();
+        }
+
+        let sql = format!("UPDATE {table} SET {}{where_sql}", set_parts.join(", "));
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle.block_on(async { sqlx::query_with(&sql, args).execute(pool).await }) {
+                Ok(r) => format!(r#"{{"rows_affected":{}}}"#, r.rows_affected()),
+                Err(e) => format!(r#"{{"error":"increment failed: {e}"}}"#),
+            }
+        })
+    }
+
+    /// Compute SUM of a column.
+    ///
+    /// Returns `{"sum":<number>}` or `{"error":"..."}`.
+    #[must_use]
+    pub fn db_sum(
+        &self,
+        table: &str,
+        column: &str,
+        where_json: &str,
+        options_json: &str,
+    ) -> String {
+        if let Err(e) = self.check_table_readable(table) {
+            return format!(r#"{{"error":"{e}"}}"#);
+        }
+        let Ok(pool) = self.require_pool() else {
+            return r#"{"error":"no database access"}"#.to_string();
+        };
+        let where_result = match Self::build_where_clause(where_json) {
+            Ok(w) => w,
+            Err(e) => return format!(r#"{{"error":"{e}"}}"#),
+        };
+        let opts = CrudOptions::parse(options_json);
+
+        let mut args = DbArguments::default();
+        let mut where_sql = String::new();
+        if !where_result.clause.is_empty() {
+            where_sql = format!(" WHERE {}", where_result.clause);
+        }
+        for p in &where_result.params {
+            Self::add_param(&mut args, p);
+        }
+
+        if self.is_tenantable_table(table) && !opts.tenant_is_disabled() {
+            let idx = where_result.params.len() + 1;
+            let ph = crate::db::dialect::ph(idx);
+            let connector = if where_sql.is_empty() {
+                " WHERE"
+            } else {
+                " AND"
+            };
+            where_sql.push_str(&format!("{connector} tenant_id = {ph}"));
+            let tid = opts
+                .tenant_value_owned()
+                .unwrap_or_else(|| crate::constants::DEFAULT_TENANT.to_string());
+            args.add(tid).ok();
+        }
+
+        let sql = format!(
+            "SELECT CAST(COALESCE(SUM({column}), 0) AS TEXT) as total FROM {table}{where_sql}"
+        );
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle.block_on(async {
+                let row: (String,) = sqlx::query_as_with(&sql, args).fetch_one(pool).await?;
+                Ok::<_, sqlx::Error>(row.0)
+            }) {
+                Ok(total_str) => {
+                    let total: f64 = total_str.parse().unwrap_or(0.0);
+                    if total.fract() == 0.0 {
+                        format!(r#"{{"sum":{}}}"#, total as i64)
+                    } else {
+                        format!(r#"{{"sum":{total}}}"#)
+                    }
+                }
+                Err(e) => format!(r#"{{"error":"sum failed: {e}"}}"#),
+            }
+        })
+    }
+
+    /// GROUP BY with count and optional sum aggregates.
+    ///
+    /// `options_json` must include:
+    /// - `group_by`: string or array of strings — columns to GROUP BY.
+    /// - `count`: boolean (default false) — include COUNT(*).
+    /// - `sum`: string or array of strings — columns to SUM.
+    /// - `where`, `order_by`, `limit`, `tenant` — same as other CRUD functions.
+    ///
+    /// Returns `{"data":[...],"total":N}` or `{"error":"..."}`.
+    #[must_use]
+    pub fn db_group_by(&self, table: &str, options_json: &str) -> String {
+        if let Err(e) = self.check_table_readable(table) {
+            return format!(r#"{{"error":"{e}"}}"#);
+        }
+        let Ok(pool) = self.require_pool() else {
+            return r#"{"error":"no database access"}"#.to_string();
+        };
+        let obj: serde_json::Map<String, serde_json::Value> =
+            match serde_json::from_str(options_json) {
+                Ok(o) => o,
+                Err(e) => return format!(r#"{{"error":"invalid options JSON: {e}"}}"#),
+            };
+
+        let group_by: Vec<String> = match obj.get("group_by") {
+            Some(serde_json::Value::String(s)) => vec![s.clone()],
+            Some(serde_json::Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect(),
+            _ => return r#"{"error":"group_by is required"}"#.to_string(),
+        };
+        if group_by.is_empty() {
+            return r#"{"error":"group_by cannot be empty"}"#.to_string();
+        }
+
+        let do_count = obj.get("count").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        let sum_cols: Vec<String> = match obj.get("sum") {
+            Some(serde_json::Value::String(s)) => vec![s.clone()],
+            Some(serde_json::Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect(),
+            _ => Vec::new(),
+        };
+
+        let where_json = obj
+            .get("where")
+            .and_then(|v| serde_json::to_string(v).ok())
+            .unwrap_or_default();
+        let where_result = match Self::build_where_clause(&where_json) {
+            Ok(w) => w,
+            Err(e) => return format!(r#"{{"error":"{e}"}}"#),
+        };
+
+        let opts = CrudOptions::parse(options_json);
+
+        let mut select_parts: Vec<String> = group_by.clone();
+        if do_count {
+            select_parts.push("CAST(COUNT(*) AS TEXT) as cnt".to_string());
+        }
+        for col in &sum_cols {
+            select_parts.push(format!(
+                "CAST(COALESCE(SUM({col}), 0) AS TEXT) as sum_{col}"
+            ));
+        }
+
+        let mut args = DbArguments::default();
+        let mut where_sql = String::new();
+        if !where_result.clause.is_empty() {
+            where_sql = format!(" WHERE {}", where_result.clause);
+        }
+        for p in &where_result.params {
+            Self::add_param(&mut args, p);
+        }
+
+        let mut idx = where_result.params.len() + 1;
+        if self.is_tenantable_table(table) && !opts.tenant_is_disabled() {
+            let ph = crate::db::dialect::ph(idx);
+            idx += 1;
+            let connector = if where_sql.is_empty() {
+                " WHERE"
+            } else {
+                " AND"
+            };
+            where_sql.push_str(&format!("{connector} tenant_id = {ph}"));
+            let tid = opts
+                .tenant_value_owned()
+                .unwrap_or_else(|| crate::constants::DEFAULT_TENANT.to_string());
+            args.add(tid).ok();
+        }
+
+        let group_clause = group_by.join(", ");
+        let mut sql = format!(
+            "SELECT {} FROM {table}{where_sql} GROUP BY {group_clause}",
+            select_parts.join(", ")
+        );
+
+        if let Some(ref order_by) = opts.order_by {
+            sql.push_str(&format!(" ORDER BY {order_by}"));
+        }
+        if let Some(lim) = opts.limit {
+            let ph = crate::db::dialect::ph(idx);
+            sql.push_str(&format!(" LIMIT {ph}"));
+            args.add(lim as i64).ok();
+        }
+
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| {
+            match handle.block_on(async { sqlx::query_with(&sql, args).fetch_all(pool).await }) {
+                Ok(rows) => {
+                    let count = rows.len();
+                    let json = crate::plugins::rows_to_json(&rows);
+                    format!(r#"{{"data":{json},"total":{count}}}"#)
+                }
+                Err(e) => format!(r#"{{"error":"group_by failed: {e}"}}"#),
+            }
+        })
+    }
+
+    // ── Where clause parsing ─────────────────────────────────────
+
+    fn build_where_clause(where_json: &str) -> Result<WhereResult, String> {
+        let trimmed = where_json.trim();
+        if trimmed.is_empty() || trimmed == "null" || trimmed == "{}" {
+            return Ok(WhereResult {
+                clause: String::new(),
+                params: Vec::new(),
+            });
+        }
+
+        // Try array form: ["col = ? AND col2 = ?", val1, val2]
+        if trimmed.starts_with('[') {
+            let arr: Vec<serde_json::Value> =
+                serde_json::from_str(trimmed).map_err(|e| format!("invalid where array: {e}"))?;
+            if arr.is_empty() {
+                return Ok(WhereResult {
+                    clause: String::new(),
+                    params: Vec::new(),
+                });
+            }
+            let clause = arr[0]
+                .as_str()
+                .ok_or_else(|| "where array first element must be a SQL string".to_string())?;
+            let params = arr[1..].to_vec();
+            return Ok(WhereResult {
+                clause: clause.to_string(),
+                params,
+            });
+        }
+
+        // Try object form: {"col1": val1, "col2": val2}
+        if trimmed.starts_with('{') {
+            let obj: serde_json::Map<String, serde_json::Value> =
+                serde_json::from_str(trimmed).map_err(|e| format!("invalid where object: {e}"))?;
+            if obj.is_empty() {
+                return Ok(WhereResult {
+                    clause: String::new(),
+                    params: Vec::new(),
+                });
+            }
+            let mut parts = Vec::new();
+            let mut params = Vec::new();
+            for (i, (k, _v)) in obj.iter().enumerate() {
+                parts.push(format!("{k} = {}", crate::db::dialect::ph(i + 1)));
+            }
+            for (_, v) in obj.iter() {
+                params.push(v.clone());
+            }
+            return Ok(WhereResult {
+                clause: parts.join(" AND "),
+                params,
+            });
+        }
+
+        // String form: raw SQL
+        Ok(WhereResult {
+            clause: trimmed.to_string(),
+            params: Vec::new(),
+        })
+    }
+
+    fn build_query_args(
+        tenantable: bool,
+        table: &str,
+        where_result: &WhereResult,
+        opts: &CrudOptions,
+    ) -> (String, DbArguments<'static>) {
+        let mut args = DbArguments::default();
+        let mut where_sql = String::new();
+        if !where_result.clause.is_empty() {
+            where_sql = format!(" WHERE {}", where_result.clause);
+        }
+        for p in &where_result.params {
+            Self::add_param(&mut args, p);
+        }
+        let mut idx = where_result.params.len() + 1;
+        if tenantable && !opts.tenant_is_disabled() {
+            let ph = crate::db::dialect::ph(idx);
+            idx += 1;
+            let connector = if where_sql.is_empty() {
+                " WHERE"
+            } else {
+                " AND"
+            };
+            where_sql.push_str(&format!("{connector} tenant_id = {ph}"));
+            let tid = opts
+                .tenant_value_owned()
+                .unwrap_or_else(|| crate::constants::DEFAULT_TENANT.to_string());
+            args.add(tid).ok();
+        }
+        if let Some(ref order_by) = opts.order_by {
+            where_sql.push_str(&format!(" ORDER BY {order_by}"));
+        }
+        if let Some(lim) = opts.limit {
+            let ph = crate::db::dialect::ph(idx);
+            idx += 1;
+            where_sql.push_str(&format!(" LIMIT {ph}"));
+            args.add(lim as i64).ok();
+        }
+        if let Some(off) = opts.offset {
+            let ph = crate::db::dialect::ph(idx);
+            where_sql.push_str(&format!(" OFFSET {ph}"));
+            args.add(off as i64).ok();
+        }
+        (format!("SELECT * FROM {table}{where_sql}"), args)
     }
 
     /// Read a file from the virtual file system
@@ -1236,5 +2073,710 @@ mod tests {
             Some(pool),
         );
         ctx.cleanup_tx();
+    }
+
+    // ── High-level CRUD tests ──────────────────────────────────────
+
+    fn make_crud_ctx(pool: &Pool) -> HostContext {
+        let config = make_test_config();
+        let perms = Permissions {
+            database: vec!["tags".into(), "categories".into(), "posts".into()],
+            ..Permissions::default()
+        };
+        HostContext::new(
+            "test",
+            config,
+            "crud-test".into(),
+            perms,
+            Some(pool.clone()),
+        )
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_insert_and_fetch_one() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let result = ctx.db_insert(
+            "tags",
+            r#"{"document_id":"t1","name":"Rust","slug":"rust"}"#,
+            "{}",
+        );
+        assert!(result.contains(r#""rows_affected":1"#), "insert: {result}");
+
+        let found = ctx.db_fetch_one("tags", r#"{"document_id":"t1"}"#, "{}");
+        assert!(found.contains(r#""name":"Rust""#), "fetch_one: {found}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_fetch_one_not_found() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let found = ctx.db_fetch_one("tags", r#"{"document_id":"nonexistent"}"#, "{}");
+        assert!(found.contains(r#""data":null"#), "not found: {found}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_fetch_one_string_where() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let _ = ctx.db_insert(
+            "tags",
+            r#"{"document_id":"t2","name":"Go","slug":"go"}"#,
+            "{}",
+        );
+
+        let found = ctx.db_fetch_one("tags", r#"name = 'Go'"#, "{}");
+        assert!(found.contains(r#""slug":"go""#), "string where: {found}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_fetch_one_array_where() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let _ = ctx.db_insert(
+            "tags",
+            r#"{"document_id":"t3","name":"Python","slug":"python"}"#,
+            "{}",
+        );
+
+        let found = ctx.db_fetch_one("tags", r#"["name = ?", "Python"]"#, "{}");
+        assert!(
+            found.contains(r#""document_id":"t3""#),
+            "array where: {found}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_fetch_all_with_order_and_limit() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let _ = ctx.db_insert(
+            "tags",
+            r#"{"document_id":"a1","name":"A","slug":"a"}"#,
+            "{}",
+        );
+        let _ = ctx.db_insert(
+            "tags",
+            r#"{"document_id":"b2","name":"B","slug":"b"}"#,
+            "{}",
+        );
+        let _ = ctx.db_insert(
+            "tags",
+            r#"{"document_id":"c3","name":"C","slug":"c"}"#,
+            "{}",
+        );
+
+        let result = ctx.db_fetch_all("tags", "{}", r#"{"order_by":"name DESC","limit":2}"#);
+        assert!(result.contains(r#""total":2"#), "fetch_all limit: {result}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_update() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let _ = ctx.db_insert(
+            "tags",
+            r#"{"document_id":"u1","name":"Old","slug":"old"}"#,
+            "{}",
+        );
+
+        let result = ctx.db_update("tags", r#"{"name":"New"}"#, r#"{"document_id":"u1"}"#, "{}");
+        assert!(result.contains(r#""rows_affected":1"#), "update: {result}");
+
+        let found = ctx.db_fetch_one("tags", r#"{"document_id":"u1"}"#, "{}");
+        assert!(found.contains(r#""name":"New""#), "after update: {found}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_update_empty_data() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let result = ctx.db_update("tags", "{}", "{}", "{}");
+        assert!(result.contains("no columns"), "empty data: {result}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_delete() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let _ = ctx.db_insert(
+            "tags",
+            r#"{"document_id":"d1","name":"Delete","slug":"del"}"#,
+            "{}",
+        );
+
+        let result = ctx.db_delete("tags", r#"{"document_id":"d1"}"#, "{}");
+        assert!(result.contains(r#""rows_affected":1"#), "delete: {result}");
+
+        let found = ctx.db_fetch_one("tags", r#"{"document_id":"d1"}"#, "{}");
+        assert!(found.contains(r#""data":null"#), "after delete: {found}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_count() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let _ = ctx.db_insert(
+            "tags",
+            r#"{"document_id":"c1","name":"Count1","slug":"c1"}"#,
+            "{}",
+        );
+        let _ = ctx.db_insert(
+            "tags",
+            r#"{"document_id":"c2","name":"Count2","slug":"c2"}"#,
+            "{}",
+        );
+
+        let result = ctx.db_count("tags", "{}", "{}");
+        assert!(result.contains(r#""count":2"#), "count: {result}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_count_with_where() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let _ = ctx.db_insert(
+            "tags",
+            r#"{"document_id":"cw1","name":"Go","slug":"go"}"#,
+            "{}",
+        );
+        let _ = ctx.db_insert(
+            "tags",
+            r#"{"document_id":"cw2","name":"Rust","slug":"rust"}"#,
+            "{}",
+        );
+
+        let result = ctx.db_count("tags", r#"["name = ?", "Rust"]"#, "{}");
+        assert!(
+            result.contains(r#""count":1"#),
+            "count with where: {result}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_crud_no_pool() {
+        let config = make_test_config();
+        let perms = Permissions {
+            database: vec!["tags".into()],
+            ..Permissions::default()
+        };
+        let ctx = HostContext::new("test", config, "p1".into(), perms, None);
+
+        assert!(ctx.db_insert("tags", "{}", "{}").contains("no database"));
+        assert!(ctx.db_fetch_one("tags", "{}", "{}").contains("no database"));
+        assert!(ctx.db_fetch_all("tags", "{}", "{}").contains("no database"));
+        assert!(
+            ctx.db_update("tags", "{}", "{}", "{}")
+                .contains("no database")
+        );
+        assert!(ctx.db_delete("tags", "{}", "{}").contains("no database"));
+        assert!(ctx.db_count("tags", "{}", "{}").contains("no database"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_crud_no_permission() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let config = make_test_config();
+        let ctx = HostContext::new(
+            "test",
+            config,
+            "p1".into(),
+            Permissions::default(),
+            Some(pool),
+        );
+
+        assert!(
+            ctx.db_insert("tags", "{}", "{}")
+                .contains("no write permission")
+        );
+        assert!(
+            ctx.db_fetch_one("tags", "{}", "{}")
+                .contains("no read permission")
+        );
+        assert!(
+            ctx.db_fetch_all("tags", "{}", "{}")
+                .contains("no read permission")
+        );
+        assert!(
+            ctx.db_update("tags", "{}", "{}", "{}")
+                .contains("no write permission")
+        );
+        assert!(
+            ctx.db_delete("tags", "{}", "{}")
+                .contains("no write permission")
+        );
+        assert!(
+            ctx.db_count("tags", "{}", "{}")
+                .contains("no read permission")
+        );
+    }
+
+    // ── db_increment / db_sum / db_group_by tests ────────────────
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_increment_simple() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"p1","name":"Test","slug":"test","sort_order":"0"}"#,
+            "{}",
+        );
+
+        let r = ctx.db_increment(
+            "categories",
+            r#"{"sort_order":1}"#,
+            r#"{"document_id":"p1"}"#,
+            "{}",
+        );
+        assert!(r.contains(r#""rows_affected":1"#), "increment: {r}");
+
+        let s = ctx.db_sum("categories", "sort_order", r#"{"document_id":"p1"}"#, "{}");
+        assert!(s.contains(r#""sum":1"#), "after increment sum: {s}");
+
+        let r2 = ctx.db_increment(
+            "categories",
+            r#"{"sort_order":1}"#,
+            r#"{"document_id":"p1"}"#,
+            "{}",
+        );
+        assert!(r2.contains(r#""rows_affected":1"#));
+
+        let s2 = ctx.db_sum("categories", "sort_order", r#"{"document_id":"p1"}"#, "{}");
+        assert!(s2.contains(r#""sum":2"#), "after 2nd sum: {s2}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_increment_negative_delta() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"p2","name":"Dec","slug":"dec","sort_order":"5"}"#,
+            "{}",
+        );
+
+        let r = ctx.db_increment(
+            "categories",
+            r#"{"sort_order":-1}"#,
+            r#"{"document_id":"p2"}"#,
+            "{}",
+        );
+        assert!(r.contains(r#""rows_affected":1"#), "decrement: {r}");
+
+        let s = ctx.db_sum("categories", "sort_order", r#"{"document_id":"p2"}"#, "{}");
+        assert!(s.contains(r#""sum":4"#), "after decrement sum: {s}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_increment_with_min_clamp() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"p3","name":"Clamp","slug":"clamp","sort_order":"1"}"#,
+            "{}",
+        );
+
+        let r = ctx.db_increment(
+            "categories",
+            r#"{"sort_order":-5}"#,
+            r#"{"document_id":"p3"}"#,
+            r#"{"min":0}"#,
+        );
+        assert!(r.contains(r#""rows_affected":1"#), "clamp: {r}");
+
+        let s = ctx.db_sum("categories", "sort_order", r#"{"document_id":"p3"}"#, "{}");
+        assert!(s.contains(r#""sum":0"#), "clamped to 0 sum: {s}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_increment_with_set() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"p4","name":"Set","slug":"set","sort_order":"0"}"#,
+            "{}",
+        );
+
+        let r = ctx.db_increment(
+            "categories",
+            r#"{"sort_order":1}"#,
+            r#"{"document_id":"p4"}"#,
+            r#"{"set":{"name":"Updated"}}"#,
+        );
+        assert!(r.contains(r#""rows_affected":1"#), "increment+set: {r}");
+
+        let s = ctx.db_sum("categories", "sort_order", r#"{"document_id":"p4"}"#, "{}");
+        assert!(s.contains(r#""sum":1"#), "incremented sum: {s}");
+
+        let found = ctx.db_fetch_one("categories", r#"{"document_id":"p4"}"#, "{}");
+        assert!(found.contains(r#""name":"Updated""#), "set col: {found}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_increment_no_pool() {
+        let config = make_test_config();
+        let perms = Permissions {
+            database: vec!["categories".into()],
+            ..Permissions::default()
+        };
+        let ctx = HostContext::new("test", config, "p1".into(), perms, None);
+        let r = ctx.db_increment("categories", r#"{"sort_order":1}"#, "{}", "{}");
+        assert!(r.contains("no database access"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_increment_no_permission() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let config = make_test_config();
+        let ctx = HostContext::new(
+            "test",
+            config,
+            "p1".into(),
+            Permissions::default(),
+            Some(pool),
+        );
+        let r = ctx.db_increment("categories", r#"{"sort_order":1}"#, "{}", "{}");
+        assert!(r.contains("no write permission"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_sum_basic() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"s1","name":"A","slug":"sa","sort_order":"3"}"#,
+            "{}",
+        );
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"s2","name":"B","slug":"sb","sort_order":"7"}"#,
+            "{}",
+        );
+
+        let r = ctx.db_sum(
+            "categories",
+            "sort_order",
+            r#"{"tenant_id":"default"}"#,
+            "{}",
+        );
+        assert!(r.contains(r#""sum":10"#), "sum: {r}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_sum_empty() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let r = ctx.db_sum("categories", "sort_order", "{}", "{}");
+        assert!(r.contains(r#""sum":0"#), "sum empty: {r}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_sum_no_pool() {
+        let config = make_test_config();
+        let perms = Permissions {
+            database: vec!["categories".into()],
+            ..Permissions::default()
+        };
+        let ctx = HostContext::new("test", config, "p1".into(), perms, None);
+        let r = ctx.db_sum("categories", "sort_order", "{}", "{}");
+        assert!(r.contains("no database access"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_group_by_count() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"g1","name":"Rust1","slug":"rust1","tenant_id":"t1"}"#,
+            r#"{"tenant":"disabled"}"#,
+        );
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"g2","name":"Go","slug":"go","tenant_id":"t2"}"#,
+            r#"{"tenant":"disabled"}"#,
+        );
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"g3","name":"Rust2","slug":"rust2","tenant_id":"t1"}"#,
+            r#"{"tenant":"disabled"}"#,
+        );
+
+        let r = ctx.db_group_by(
+            "categories",
+            r#"{"group_by":"tenant_id","count":true,"order_by":"cnt DESC","tenant":false}"#,
+        );
+        assert!(r.contains(r#""total":2"#), "group_by count: {r}");
+        assert!(r.contains(r#""tenant_id":"t1""#), "group_by t1: {r}");
+        assert!(r.contains(r#""cnt":2"#), "group_by cnt: {r}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_group_by_with_sum() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"gs1","name":"A1","slug":"gsa","sort_order":"3","tenant_id":"grpA"}"#,
+            r#"{"tenant":"disabled"}"#,
+        );
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"gs2","name":"A2","slug":"gsb","sort_order":"7","tenant_id":"grpA"}"#,
+            r#"{"tenant":"disabled"}"#,
+        );
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"gs3","name":"B1","slug":"gsc","sort_order":"2","tenant_id":"grpB"}"#,
+            r#"{"tenant":"disabled"}"#,
+        );
+
+        let r = ctx.db_group_by(
+            "categories",
+            r#"{"group_by":"tenant_id","count":true,"sum":"sort_order","order_by":"sum_sort_order DESC","tenant":false}"#,
+        );
+        assert!(r.contains(r#""total":2"#), "group_by sum total: {r}");
+        assert!(
+            r.contains(r#""sum_sort_order":10"#),
+            "group_by sum grpA: {r}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_group_by_with_where() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"w1","name":"W1","slug":"wa","tenant_id":"tA"}"#,
+            r#"{"tenant":"disabled"}"#,
+        );
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"w2","name":"W2","slug":"wb","tenant_id":"tA"}"#,
+            r#"{"tenant":"disabled"}"#,
+        );
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"w3","name":"W3","slug":"wc","tenant_id":"tB"}"#,
+            r#"{"tenant":"disabled"}"#,
+        );
+
+        let r = ctx.db_group_by(
+            "categories",
+            r#"{"group_by":"tenant_id","count":true,"where":{"tenant_id":"tA"},"tenant":false}"#,
+        );
+        assert!(r.contains(r#""total":1"#), "group_by where: {r}");
+        assert!(r.contains(r#""cnt":2"#), "group_by where cnt: {r}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_group_by_with_limit() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"l1","name":"X","slug":"lx"}"#,
+            "{}",
+        );
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"l2","name":"Y","slug":"ly"}"#,
+            "{}",
+        );
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"l3","name":"Z","slug":"lz"}"#,
+            "{}",
+        );
+
+        let r = ctx.db_group_by(
+            "categories",
+            r#"{"group_by":"name","count":true,"limit":2,"order_by":"name ASC"}"#,
+        );
+        assert!(r.contains(r#""total":2"#), "group_by limit: {r}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_group_by_missing_field() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let r = ctx.db_group_by("categories", r#"{"count":true}"#);
+        assert!(r.contains("group_by is required"), "missing: {r}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_group_by_no_pool() {
+        let config = make_test_config();
+        let perms = Permissions {
+            database: vec!["categories".into()],
+            ..Permissions::default()
+        };
+        let ctx = HostContext::new("test", config, "p1".into(), perms, None);
+        let r = ctx.db_group_by("categories", r#"{"group_by":"name","count":true}"#);
+        assert!(r.contains("no database access"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_group_by_no_permission() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let config = make_test_config();
+        let ctx = HostContext::new(
+            "test",
+            config,
+            "p1".into(),
+            Permissions::default(),
+            Some(pool),
+        );
+        let r = ctx.db_group_by("categories", r#"{"group_by":"name","count":true}"#);
+        assert!(r.contains("no read permission"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn db_increment_multi_column_with_min() {
+        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(crate::db::schema::SCHEMA_SQL)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ctx = make_crud_ctx(&pool);
+
+        let _ = ctx.db_insert(
+            "categories",
+            r#"{"document_id":"m1","name":"Multi","slug":"multi","sort_order":"2"}"#,
+            "{}",
+        );
+
+        let r = ctx.db_increment(
+            "categories",
+            r#"{"sort_order":-10}"#,
+            r#"{"document_id":"m1"}"#,
+            r#"{"min":0}"#,
+        );
+        assert!(r.contains(r#""rows_affected":1"#), "multi clamp: {r}");
+
+        let s = ctx.db_sum("categories", "sort_order", r#"{"document_id":"m1"}"#, "{}");
+        assert!(s.contains(r#""sum":0"#), "clamped sum: {s}");
     }
 }

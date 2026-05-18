@@ -114,6 +114,94 @@ pub fn register_host_functions(
     host.set("dbRollback", db_rollback_fn)?;
 
     let hc = host_ctx.clone();
+    let db_insert_fn = lua.create_function(
+        move |lua, (table, data, options): (String, String, String)| {
+            Ok(mlua::Value::String(
+                lua.create_string(hc.db_insert(&table, &data, &options))?,
+            ))
+        },
+    )?;
+    host.set("dbInsert", db_insert_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_fetch_one_fn = lua.create_function(
+        move |lua, (table, r#where, options): (String, String, String)| {
+            Ok(mlua::Value::String(lua.create_string(
+                hc.db_fetch_one(&table, &r#where, &options),
+            )?))
+        },
+    )?;
+    host.set("dbFetchOne", db_fetch_one_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_fetch_all_fn = lua.create_function(
+        move |lua, (table, r#where, options): (String, String, String)| {
+            Ok(mlua::Value::String(lua.create_string(
+                hc.db_fetch_all(&table, &r#where, &options),
+            )?))
+        },
+    )?;
+    host.set("dbFetchAll", db_fetch_all_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_update_fn = lua.create_function(
+        move |lua, (table, data, r#where, options): (String, String, String, String)| {
+            Ok(mlua::Value::String(lua.create_string(
+                hc.db_update(&table, &data, &r#where, &options),
+            )?))
+        },
+    )?;
+    host.set("dbUpdate", db_update_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_delete_fn = lua.create_function(
+        move |lua, (table, r#where, options): (String, String, String)| {
+            Ok(mlua::Value::String(
+                lua.create_string(hc.db_delete(&table, &r#where, &options))?,
+            ))
+        },
+    )?;
+    host.set("dbDelete", db_delete_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_count_fn = lua.create_function(
+        move |lua, (table, r#where, options): (String, String, String)| {
+            Ok(mlua::Value::String(
+                lua.create_string(hc.db_count(&table, &r#where, &options))?,
+            ))
+        },
+    )?;
+    host.set("dbCount", db_count_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_increment_fn = lua.create_function(
+        move |lua, (table, columns, r#where, options): (String, String, String, String)| {
+            Ok(mlua::Value::String(lua.create_string(
+                hc.db_increment(&table, &columns, &r#where, &options),
+            )?))
+        },
+    )?;
+    host.set("dbIncrement", db_increment_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_sum_fn = lua.create_function(
+        move |lua, (table, column, r#where, options): (String, String, String, String)| {
+            Ok(mlua::Value::String(lua.create_string(
+                hc.db_sum(&table, &column, &r#where, &options),
+            )?))
+        },
+    )?;
+    host.set("dbSum", db_sum_fn)?;
+
+    let hc = host_ctx.clone();
+    let db_group_by_fn = lua.create_function(move |lua, (table, options): (String, String)| {
+        Ok(mlua::Value::String(
+            lua.create_string(hc.db_group_by(&table, &options))?,
+        ))
+    })?;
+    host.set("dbGroupBy", db_group_by_fn)?;
+
+    let hc = host_ctx.clone();
     let vfs_read_fn = lua.create_function(move |lua, path: String| match hc.vfs_read(&path) {
         Ok(content) => Ok(mlua::Value::String(lua.create_string(&content)?)),
         Err(_) => Ok(mlua::Value::Nil),
