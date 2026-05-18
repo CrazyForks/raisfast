@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM payment_channels WHERE id = ?1 AND tenant_id = ?2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "ed209bbbe8fa3f5a2f031db01e57996b631fccd5547d942bab4fa0aa2dcf0ab0"
+}

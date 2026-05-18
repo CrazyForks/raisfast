@@ -42,7 +42,7 @@ pub async fn find_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<Tag>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, Tag,
         data_sql: "SELECT * FROM tags WHERE 1=1{tenant} ORDER BY name",
         count_sql: "SELECT COUNT(*) FROM tags WHERE 1=1{tenant}",
@@ -59,7 +59,8 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Tag> {
-    raisfast_derive::tenant_find_one!(pool, "tags", Tag, "id" => id, tenant_id).map_err(Into::into)
+    raisfast_derive::crud_find_one!(pool, "tags", Tag, "id" => id, tenant: tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn find_by_document_id(
@@ -67,7 +68,7 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Tag> {
-    raisfast_derive::tenant_find_one!(pool, "tags", Tag, "document_id" => document_id, tenant_id)
+    raisfast_derive::crud_find_one!(pool, "tags", Tag, "document_id" => document_id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -80,7 +81,7 @@ pub async fn create(
 ) -> AppResult<Tag> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         pool,
         "tags",
         [
@@ -92,14 +93,14 @@ pub async fn create(
             "created_at" => &now,
             "updated_at" => &now
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
 
     find_by_document_id(pool, &document_id, tenant_id).await
 }
 
 pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
-    let result = raisfast_derive::tenant_delete!(pool, "tags", "id" => id, tenant_id)?;
+    let result = raisfast_derive::crud_delete!(pool, "tags", "id" => id, tenant: tenant_id)?;
     AppError::expect_affected(&result, "tag")
 }
 
@@ -111,7 +112,7 @@ pub async fn update(
     tenant_id: Option<&str>,
 ) -> AppResult<Tag> {
     let now = crate::utils::tz::now_utc();
-    let result = raisfast_derive::tenant_update!(pool, "tags",
+    let result = raisfast_derive::crud_update!(pool, "tags",
         bind: ["name" => name, "slug" => slug, "updated_at" => &now],
         where: "id" => id,
         tenant: tenant_id

@@ -44,7 +44,7 @@ pub async fn tx_insert(
 ) -> AppResult<()> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         &mut *tx,
         "wallet_outbox",
         [
@@ -62,7 +62,7 @@ pub async fn tx_insert(
             "created_at" => &now,
             "updated_at" => &now
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
     Ok(())
 }

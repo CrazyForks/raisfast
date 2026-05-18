@@ -81,7 +81,7 @@ impl OptionsService {
         service
     }
 
-    fn tenant_arg(&self) -> Option<i64> {
+    fn tenant_arg(&self) -> Option<&str> {
         None
     }
 

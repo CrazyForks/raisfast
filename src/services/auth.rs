@@ -196,7 +196,7 @@ pub async fn register(
     let registered_via = crate::models::user::RegisteredVia::Email;
 
     let user = in_transaction!(pool, tx, {
-        raisfast_derive::tenant_insert!(
+        raisfast_derive::crud_insert!(
             &mut *tx,
             "users",
             [
@@ -208,7 +208,7 @@ pub async fn register(
                 "status" => UserStatus::Active,
                 "registered_via" => registered_via
             ],
-            tenant_id
+            tenant: tenant_id
         )?;
 
         let filter = crate::db::tenant::tenant_filter_ph(tenant_id, 2);

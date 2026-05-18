@@ -5,8 +5,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::constants::COL_TENANT_ID;
-use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
@@ -26,7 +24,7 @@ define_enum!(
 pub struct OptionRow {
     pub id: i64,
     pub document_id: String,
-    pub tenant_id: Option<i64>,
+    pub tenant_id: Option<String>,
     pub option_key: String,
     pub value: String,
     #[serde(rename = "type")]
@@ -117,55 +115,21 @@ pub async fn find_autoload(pool: &crate::db::Pool) -> AppResult<Vec<OptionRow>> 
 pub async fn find_by_key(
     pool: &crate::db::Pool,
     key: &str,
-    tenant_id: Option<i64>,
+    tenant_id: Option<&str>,
 ) -> AppResult<Option<OptionRow>> {
-    raisfast_derive::check_schema!("options", "option_key");
-    match tenant_id {
-        Some(tid) => {
-            let sql = format!(
-                "SELECT * FROM options WHERE {COL_TENANT_ID} = {} AND option_key = {}",
-                ph(1),
-                ph(2)
-            );
-            let row = sqlx::query_as::<_, OptionRow>(&sql)
-                .bind(tid)
-                .bind(key)
-                .fetch_optional(pool)
-                .await?;
-            Ok(row)
-        }
-        None => {
-            let sql = format!("SELECT * FROM options WHERE option_key = {}", ph(1));
-            let row = sqlx::query_as::<_, OptionRow>(&sql)
-                .bind(key)
-                .fetch_optional(pool)
-                .await?;
-            Ok(row)
-        }
-    }
+    Ok(
+        raisfast_derive::crud_find!(pool, "options", OptionRow, "option_key" => key, tenant: tenant_id)?,
+    )
 }
 
 /// Query all options
-pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<i64>) -> AppResult<Vec<OptionRow>> {
-    raisfast_derive::check_schema!("options", "sort_order", "option_key");
-    match tenant_id {
-        Some(tid) => {
-            let sql = format!(
-                "SELECT * FROM options WHERE {COL_TENANT_ID} = {} ORDER BY sort_order, option_key",
-                ph(1)
-            );
-            let rows = sqlx::query_as::<_, OptionRow>(&sql)
-                .bind(tid)
-                .fetch_all(pool)
-                .await?;
-            Ok(rows)
-        }
-        None => {
-            let sql = "SELECT * FROM options ORDER BY sort_order, option_key";
-            let rows = sqlx::query_as::<_, OptionRow>(sql).fetch_all(pool).await?;
-            Ok(rows)
-        }
-    }
+pub async fn find_all(
+    pool: &crate::db::Pool,
+    tenant_id: Option<&str>,
+) -> AppResult<Vec<OptionRow>> {
+    Ok(
+        raisfast_derive::crud_list!(pool, "options", OptionRow, order_by: "sort_order, option_key", tenant: tenant_id)?,
+    )
 }
 
 /// Insert or update an option value (UPSERT by key)
@@ -173,43 +137,14 @@ pub async fn upsert_value(
     pool: &crate::db::Pool,
     key: &str,
     value: &str,
-    tenant_id: Option<i64>,
+    tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    raisfast_derive::check_schema!("options", "value", "updated_at", "option_key");
-    match tenant_id {
-        Some(tid) => {
-            let now = crate::utils::tz::now_utc();
-            let sql = format!(
-                "UPDATE options SET value = {}, updated_at = {} WHERE {COL_TENANT_ID} = {} AND option_key = {}",
-                ph(1),
-                ph(2),
-                ph(3),
-                ph(4)
-            );
-            sqlx::query(&sql)
-                .bind(value)
-                .bind(now)
-                .bind(tid)
-                .bind(key)
-                .execute(pool)
-                .await?;
-        }
-        None => {
-            let now = crate::utils::tz::now_utc();
-            let sql = format!(
-                "UPDATE options SET value = {}, updated_at = {} WHERE option_key = {}",
-                ph(1),
-                ph(2),
-                ph(3)
-            );
-            sqlx::query(&sql)
-                .bind(value)
-                .bind(now)
-                .bind(key)
-                .execute(pool)
-                .await?;
-        }
-    }
+    let now = crate::utils::tz::now_utc();
+    raisfast_derive::crud_update!(pool, "options",
+        bind: ["value" => value, "updated_at" => now],
+        where: "option_key" => key,
+        tenant: tenant_id
+    )?;
     Ok(())
 }
 
@@ -217,23 +152,9 @@ pub async fn upsert_value(
 pub async fn delete_by_key(
     pool: &crate::db::Pool,
     key: &str,
-    tenant_id: Option<i64>,
+    tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    raisfast_derive::check_schema!("options", "option_key");
-    match tenant_id {
-        Some(tid) => {
-            let sql = format!(
-                "DELETE FROM options WHERE {COL_TENANT_ID} = {} AND option_key = {}",
-                ph(1),
-                ph(2)
-            );
-            sqlx::query(&sql).bind(tid).bind(key).execute(pool).await?;
-        }
-        None => {
-            let sql = format!("DELETE FROM options WHERE option_key = {}", ph(1));
-            sqlx::query(&sql).bind(key).execute(pool).await?;
-        }
-    }
+    raisfast_derive::crud_delete!(pool, "options", "option_key" => key, tenant: tenant_id)?;
     Ok(())
 }
 

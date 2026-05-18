@@ -90,7 +90,9 @@ pub async fn find_by_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<User>> {
-    Ok(raisfast_derive::tenant_find!(pool, "users", User, "document_id" => document_id, tenant_id)?)
+    Ok(
+        raisfast_derive::crud_find!(pool, "users", User, "document_id" => document_id, tenant: tenant_id)?,
+    )
 }
 
 /// Find user by integer primary key (internal FK lookup)
@@ -99,7 +101,7 @@ pub async fn find_by_pk(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<User>> {
-    Ok(raisfast_derive::tenant_find!(pool, "users", User, "id" => id, tenant_id)?)
+    Ok(raisfast_derive::crud_find!(pool, "users", User, "id" => id, tenant: tenant_id)?)
 }
 
 /// Create a new user
@@ -110,7 +112,7 @@ pub async fn create(
 ) -> AppResult<User> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         pool,
         "users",
         [
@@ -122,10 +124,10 @@ pub async fn create(
             "status" => UserStatus::Active,
             "registered_via" => cmd.registered_via
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
 
-    let user = raisfast_derive::tenant_find!(pool, "users", User, "document_id" => &document_id, tenant_id)?
+    let user = raisfast_derive::crud_find!(pool, "users", User, "document_id" => &document_id, tenant: tenant_id)?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch newly created user")))?;
     Ok(user)
 }
@@ -166,7 +168,7 @@ pub async fn update_profile(
         .map(|v| serde_json::to_string(v).unwrap_or_default())
         .or_else(|| user.metadata.clone());
     let now = crate::utils::tz::now_utc();
-    raisfast_derive::tenant_update!(pool, "users",
+    raisfast_derive::crud_update!(pool, "users",
         bind: ["username" => username, "bio" => bio, "website" => website, "avatar" => avatar, "social_links" => social_links, "metadata" => metadata, "updated_at" => &now],
         where: "id" => user.id,
         tenant: tenant_id
@@ -183,7 +185,7 @@ pub async fn find_all(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<User>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, User,
         data_sql: "SELECT * FROM users WHERE 1=1{tenant} ORDER BY created_at DESC",
         count_sql: "SELECT COUNT(*) FROM users WHERE 1=1{tenant}",
@@ -203,7 +205,7 @@ pub async fn update_role(
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
     let now = crate::utils::tz::now_utc();
-    let result = raisfast_derive::tenant_update!(pool, "users",
+    let result = raisfast_derive::crud_update!(pool, "users",
         bind: ["role" => role, "updated_at" => &now],
         where: "document_id" => document_id,
         tenant: tenant_id
@@ -219,7 +221,7 @@ pub async fn delete_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    raisfast_derive::tenant_delete!(pool, "users", "document_id" => document_id, tenant_id)?;
+    raisfast_derive::crud_delete!(pool, "users", "document_id" => document_id, tenant: tenant_id)?;
     Ok(())
 }
 

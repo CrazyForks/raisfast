@@ -44,7 +44,7 @@ pub async fn find_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<Category>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, Category,
         data_sql: "SELECT * FROM categories WHERE 1=1{tenant} ORDER BY sort_order, name",
         count_sql: "SELECT COUNT(*) FROM categories WHERE 1=1{tenant}",
@@ -61,7 +61,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Category> {
-    raisfast_derive::tenant_find_one!(pool, "categories", Category, "id" => id, tenant_id)
+    raisfast_derive::crud_find_one!(pool, "categories", Category, "id" => id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -70,7 +70,7 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Category>> {
-    raisfast_derive::tenant_find!(pool, "categories", Category, "document_id" => document_id, tenant_id)
+    raisfast_derive::crud_find!(pool, "categories", Category, "document_id" => document_id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -82,7 +82,7 @@ pub async fn create(
 ) -> AppResult<Category> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         pool,
         "categories",
         [
@@ -97,7 +97,7 @@ pub async fn create(
             "created_at" => now,
             "updated_at" => now
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
 
     find_by_document_id(pool, &document_id, tenant_id)
@@ -125,7 +125,7 @@ pub async fn update(
     let sort = cmd.sort_order.unwrap_or(existing.sort_order);
 
     let now = crate::utils::tz::now_utc();
-    raisfast_derive::tenant_update!(pool, "categories",
+    raisfast_derive::crud_update!(pool, "categories",
         bind: ["name" => name, "slug" => slug, "description" => desc, "parent_id" => parent, "sort_order" => sort, "updated_by" => updated_by, "updated_at" => &now],
         where: "id" => cat_id,
         tenant: tenant_id
@@ -135,7 +135,7 @@ pub async fn update(
 }
 
 pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
-    let result = raisfast_derive::tenant_delete!(pool, "categories", "id" => id, tenant_id)?;
+    let result = raisfast_derive::crud_delete!(pool, "categories", "id" => id, tenant: tenant_id)?;
     AppError::expect_affected(&result, "category")
 }
 

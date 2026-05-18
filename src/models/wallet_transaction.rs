@@ -62,7 +62,7 @@ pub async fn find_transactions_by_wallet(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, WalletTransaction,
         data_sql: "SELECT * FROM wallet_transactions WHERE wallet_id = ? ORDER BY created_at DESC",
         count_sql: "SELECT COUNT(*) FROM wallet_transactions WHERE wallet_id = ?",
@@ -80,7 +80,7 @@ pub async fn find_transactions_by_user(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, WalletTransaction,
         data_sql: "SELECT * FROM wallet_transactions WHERE user_id = ? ORDER BY created_at DESC",
         count_sql: "SELECT COUNT(*) FROM wallet_transactions WHERE user_id = ?",
@@ -99,7 +99,7 @@ pub async fn find_all_transactions(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
     raisfast_derive::check_schema!("wallet_transactions", "tenant_id", "created_at");
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, WalletTransaction,
         data_sql: "SELECT * FROM wallet_transactions WHERE 1=1{tenant} ORDER BY created_at DESC",
         count_sql: "SELECT COUNT(*) FROM wallet_transactions WHERE 1=1{tenant}",

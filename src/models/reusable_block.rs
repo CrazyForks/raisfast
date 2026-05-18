@@ -31,7 +31,7 @@ pub async fn find_reusable_by_id(
     tenant_id: Option<&str>,
 ) -> AppResult<Option<ReusableBlock>> {
     Ok(
-        raisfast_derive::tenant_find!(pool, "reusable_blocks", ReusableBlock, "id" => id, tenant_id)?,
+        raisfast_derive::crud_find!(pool, "reusable_blocks", ReusableBlock, "id" => id, tenant: tenant_id)?,
     )
 }
 
@@ -41,7 +41,7 @@ pub async fn find_reusable_by_document_id(
     tenant_id: Option<&str>,
 ) -> AppResult<Option<ReusableBlock>> {
     Ok(
-        raisfast_derive::tenant_find!(pool, "reusable_blocks", ReusableBlock, "document_id" => document_id, tenant_id)?,
+        raisfast_derive::crud_find!(pool, "reusable_blocks", ReusableBlock, "document_id" => document_id, tenant: tenant_id)?,
     )
 }
 
@@ -58,7 +58,7 @@ pub async fn create_reusable(
     tenant_id: Option<&str>,
 ) -> AppResult<ReusableBlock> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         pool,
         "reusable_blocks",
         [
@@ -72,7 +72,7 @@ pub async fn create_reusable(
             "created_at" => now,
             "updated_at" => now
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
 
     find_reusable_by_document_id(pool, &document_id, tenant_id)
@@ -86,7 +86,7 @@ pub async fn update_reusable(
     tenant_id: Option<&str>,
 ) -> AppResult<ReusableBlock> {
     let now = crate::utils::tz::now_utc();
-    raisfast_derive::tenant_update!(
+    raisfast_derive::crud_update!(
         pool, "reusable_blocks",
         bind: ["updated_at" => now],
         optional: ["updated_by" => cmd.updated_by, "name" => cmd.name, "block_type" => cmd.block_type, "content" => cmd.content, "description" => cmd.description],
@@ -104,7 +104,8 @@ pub async fn delete_reusable(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let result = raisfast_derive::tenant_delete!(pool, "reusable_blocks", "id" => id, tenant_id)?;
+    let result =
+        raisfast_derive::crud_delete!(pool, "reusable_blocks", "id" => id, tenant: tenant_id)?;
     AppError::expect_affected(&result, "reusable_block")
 }
 

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO wallet_outbox (document_id, user_id, currency, amount, entry_type, tx_type, transaction_no, reference_type, reference_id, metadata, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 13
+    },
+    "nullable": []
+  },
+  "hash": "3f5e106e8664eac53a52b59f3724cd4a4b6d9846effe43beec8f7d075fac6976"
+}

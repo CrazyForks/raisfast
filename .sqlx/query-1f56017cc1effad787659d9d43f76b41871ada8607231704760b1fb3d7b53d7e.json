@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM media WHERE id = ?1 AND tenant_id = ?2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "1f56017cc1effad787659d9d43f76b41871ada8607231704760b1fb3d7b53d7e"
+}

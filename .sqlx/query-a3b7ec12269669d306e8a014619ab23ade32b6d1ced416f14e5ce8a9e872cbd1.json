@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM categories WHERE id = ?1 AND tenant_id = ?2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "a3b7ec12269669d306e8a014619ab23ade32b6d1ced416f14e5ce8a9e872cbd1"
+}

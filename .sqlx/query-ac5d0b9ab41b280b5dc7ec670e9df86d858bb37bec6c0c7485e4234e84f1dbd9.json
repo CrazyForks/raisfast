@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM options WHERE option_key = ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "ac5d0b9ab41b280b5dc7ec670e9df86d858bb37bec6c0c7485e4234e84f1dbd9"
+}

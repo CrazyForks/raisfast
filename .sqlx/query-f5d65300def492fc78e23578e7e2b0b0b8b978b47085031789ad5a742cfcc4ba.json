@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO webhook_subscriptions (document_id, url, secret, events, enabled, description, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "f5d65300def492fc78e23578e7e2b0b0b8b978b47085031789ad5a742cfcc4ba"
+}

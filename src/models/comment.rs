@@ -65,7 +65,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Comment>> {
-    Ok(raisfast_derive::tenant_find!(pool, "comments", Comment, "id" => id, tenant_id)?)
+    Ok(raisfast_derive::crud_find!(pool, "comments", Comment, "id" => id, tenant: tenant_id)?)
 }
 
 pub async fn find_by_document_id(
@@ -74,7 +74,7 @@ pub async fn find_by_document_id(
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Comment>> {
     Ok(
-        raisfast_derive::tenant_find!(pool, "comments", Comment, "document_id" => document_id, tenant_id)?,
+        raisfast_derive::crud_find!(pool, "comments", Comment, "document_id" => document_id, tenant: tenant_id)?,
     )
 }
 
@@ -85,7 +85,7 @@ pub async fn create(
 ) -> AppResult<Comment> {
     let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
 
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         pool,
         "comments",
         [
@@ -101,7 +101,7 @@ pub async fn create(
             "updated_at" => now,
             "status" => CommentStatus::Pending
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
 
     find_by_document_id(pool, &document_id, tenant_id)
@@ -115,7 +115,7 @@ pub async fn find_approved_by_post(
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<Comment>> {
     Ok(
-        raisfast_derive::tenant_find_all!(pool, "comments", Comment, "post_id" => post_id, tenant_id, and: ["status" => CommentStatus::Approved], order_by: "created_at ASC")?,
+        raisfast_derive::crud_find_all!(pool, "comments", Comment, "post_id" => post_id, tenant: tenant_id, and: ["status" => CommentStatus::Approved], order_by: "created_at ASC")?,
     )
 }
 
@@ -126,7 +126,7 @@ pub async fn find_approved_by_post_paginated(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Comment>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, Comment,
         data_sql: "SELECT * FROM comments WHERE post_id = ? AND status = ?{tenant} ORDER BY created_at ASC",
         count_sql: "SELECT COUNT(*) FROM comments WHERE post_id = ? AND status = ?{tenant}",
@@ -143,7 +143,7 @@ pub async fn find_all_by_post(
     post_id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<Comment>> {
-    raisfast_derive::tenant_find_all!(pool, "comments", Comment, "post_id" => post_id, tenant_id, order_by: "created_at ASC").map_err(Into::into)
+    raisfast_derive::crud_find_all!(pool, "comments", Comment, "post_id" => post_id, tenant: tenant_id, order_by: "created_at ASC").map_err(Into::into)
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -167,7 +167,7 @@ pub async fn find_all_paginated(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<AdminCommentRow>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, AdminCommentRow,
         data_sql: "SELECT c.id, c.post_id, p.title AS post_title, c.created_by, c.nickname, c.email, c.content, c.parent_id, c.status, c.created_at FROM comments c JOIN posts p ON c.post_id = p.id WHERE 1=1{tenant} ORDER BY c.created_at DESC",
         count_sql: "SELECT COUNT(*) FROM comments WHERE 1=1{tenant}",
@@ -186,7 +186,7 @@ pub async fn update_status(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    let result = raisfast_derive::tenant_update!(pool, "comments",
+    let result = raisfast_derive::crud_update!(pool, "comments",
         bind: ["status" => status, "updated_at" => &now],
         where: "id" => id,
         tenant: tenant_id
@@ -196,7 +196,7 @@ pub async fn update_status(
 }
 
 pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
-    let result = raisfast_derive::tenant_delete!(pool, "comments", "id" => id, tenant_id)?;
+    let result = raisfast_derive::crud_delete!(pool, "comments", "id" => id, tenant: tenant_id)?;
     AppError::expect_affected(&result, "comment")
 }
 

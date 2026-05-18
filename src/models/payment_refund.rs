@@ -29,7 +29,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentRefund>> {
-    raisfast_derive::tenant_find!(pool, "payment_refunds", PaymentRefund, "id" => id, tenant_id)
+    raisfast_derive::crud_find!(pool, "payment_refunds", PaymentRefund, "id" => id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -38,7 +38,7 @@ pub async fn find_by_payment_order_id(
     payment_order_id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<PaymentRefund>> {
-    raisfast_derive::tenant_find_all!(pool, "payment_refunds", PaymentRefund, "payment_order_id" => payment_order_id, tenant_id, order_by: "created_at DESC")
+    raisfast_derive::crud_find_all!(pool, "payment_refunds", PaymentRefund, "payment_order_id" => payment_order_id, tenant: tenant_id, order_by: "created_at DESC")
         .map_err(Into::into)
 }
 
@@ -47,7 +47,7 @@ pub async fn find_by_order_id(
     order_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<PaymentRefund>> {
-    raisfast_derive::tenant_find_all!(pool, "payment_refunds", PaymentRefund, "order_id" => order_id, tenant_id, order_by: "created_at DESC")
+    raisfast_derive::crud_find_all!(pool, "payment_refunds", PaymentRefund, "order_id" => order_id, tenant: tenant_id, order_by: "created_at DESC")
         .map_err(Into::into)
 }
 
@@ -58,7 +58,7 @@ pub async fn insert(
 ) -> AppResult<PaymentRefund> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         pool,
         "payment_refunds",
         [
@@ -76,9 +76,9 @@ pub async fn insert(
             "created_at" => &now,
             "updated_at" => &now
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
-    raisfast_derive::tenant_find_one!(pool, "payment_refunds", PaymentRefund, "document_id" => &document_id, tenant_id).map_err(Into::into)
+    raisfast_derive::crud_find_one!(pool, "payment_refunds", PaymentRefund, "document_id" => &document_id, tenant: tenant_id).map_err(Into::into)
 }
 
 pub async fn update_status(
@@ -87,7 +87,7 @@ pub async fn update_status(
     status: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    raisfast_derive::tenant_update!(
+    raisfast_derive::crud_update!(
         pool, "payment_refunds",
         bind: ["status" => status],
         raw: ["updated_at" => "datetime('now')"],
@@ -107,13 +107,13 @@ pub async fn sum_refunded_by_order(
         ph(1),
         tenant_filter_ph(tenant_id, 2)
     );
-    let (total,) = raisfast_derive::tenant_query!(
+    let (total,) = raisfast_derive::crud_query!(
         pool,
         (i64,),
         &sql,
         [payment_order_id],
-        tenant_id,
-        fetch_one
+        fetch_one,
+        tenant: tenant_id
     )?;
     Ok(total)
 }
@@ -124,7 +124,7 @@ pub async fn find_all_admin_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<PaymentRefund>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, PaymentRefund,
         data_sql: "SELECT * FROM payment_refunds WHERE 1=1{tenant} ORDER BY created_at DESC",
         count_sql: "SELECT COUNT(*) FROM payment_refunds WHERE 1=1{tenant}",
@@ -143,7 +143,7 @@ pub async fn tx_insert(
 ) -> AppResult<()> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         &mut *tx,
         "payment_refunds",
         [
@@ -160,7 +160,7 @@ pub async fn tx_insert(
             "created_at" => &now,
             "updated_at" => &now
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
     Ok(())
 }
@@ -182,13 +182,13 @@ pub async fn tx_sum_refunded_by_order(
             ph(1)
         )
     };
-    let (total,) = raisfast_derive::tenant_query!(
+    let (total,) = raisfast_derive::crud_query!(
         &mut *tx,
         (i64,),
         &sql,
         [payment_order_id],
-        tenant_id,
-        fetch_one
+        fetch_one,
+        tenant: tenant_id
     )?;
     Ok(total)
 }

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO roles (document_id, name, description, is_system, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "f758e4d5a6991e6e974b2e7a6bce796a81107e90c4c38aea79b5f71102713cde"
+}

@@ -28,7 +28,7 @@ pub async fn find_by_order_id(
     order_id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<OrderItem>> {
-    raisfast_derive::tenant_find_all!(pool, "order_items", OrderItem, "order_id" => order_id, tenant_id)
+    raisfast_derive::crud_find_all!(pool, "order_items", OrderItem, "order_id" => order_id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -39,7 +39,7 @@ pub async fn insert(
 ) -> AppResult<OrderItem> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         pool,
         "order_items",
         [
@@ -55,9 +55,9 @@ pub async fn insert(
             "attributes" => &cmd.attributes,
             "created_at" => &now
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
-    raisfast_derive::tenant_find_one!(pool, "order_items", OrderItem, "document_id" => &document_id, tenant_id)
+    raisfast_derive::crud_find_one!(pool, "order_items", OrderItem, "document_id" => &document_id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -79,7 +79,7 @@ pub async fn tx_insert(
 ) -> AppResult<OrderItem> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         &mut *tx,
         "order_items",
         [
@@ -95,9 +95,9 @@ pub async fn tx_insert(
             "attributes" => &cmd.attributes,
             "created_at" => &now
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
-    raisfast_derive::tenant_find_one!(&mut *tx, "order_items", OrderItem, "document_id" => &document_id, tenant_id)
+    raisfast_derive::crud_find_one!(&mut *tx, "order_items", OrderItem, "document_id" => &document_id, tenant: tenant_id)
         .map_err(Into::into)
 }
 

@@ -26,7 +26,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentChannel>> {
-    raisfast_derive::tenant_find!(pool, "payment_channels", PaymentChannel, "id" => id, tenant_id)
+    raisfast_derive::crud_find!(pool, "payment_channels", PaymentChannel, "id" => id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -35,14 +35,14 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentChannel>> {
-    raisfast_derive::tenant_find!(pool, "payment_channels", PaymentChannel, "document_id" => document_id, tenant_id).map_err(Into::into)
+    raisfast_derive::crud_find!(pool, "payment_channels", PaymentChannel, "document_id" => document_id, tenant: tenant_id).map_err(Into::into)
 }
 
 pub async fn find_all_active(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<PaymentChannel>> {
-    raisfast_derive::tenant_find_all!(pool, "payment_channels", PaymentChannel, "is_active" => 1_i64, tenant_id, order_by: "sort_order, created_at DESC")
+    raisfast_derive::crud_find_all!(pool, "payment_channels", PaymentChannel, "is_active" => 1_i64, tenant: tenant_id, order_by: "sort_order, created_at DESC")
         .map_err(Into::into)
 }
 
@@ -54,7 +54,7 @@ pub async fn find_all_admin_paginated(
     is_active: Option<bool>,
 ) -> AppResult<(Vec<PaymentChannel>, i64)> {
     let active_val = is_active.map(|a| if a { 1_i64 } else { 0_i64 });
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, PaymentChannel,
         data_sql: "SELECT * FROM payment_channels WHERE 1=1{tenant} ORDER BY sort_order, created_at DESC",
         count_sql: "SELECT COUNT(*) FROM payment_channels WHERE 1=1{tenant}",
@@ -76,7 +76,7 @@ pub async fn insert(
     let is_live_val = if cmd.is_live { 1_i64 } else { 0_i64 };
     let is_active_val = if cmd.is_active { 1_i64 } else { 0_i64 };
     let now = crate::utils::tz::now_utc();
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         pool,
         "payment_channels",
         [
@@ -92,7 +92,7 @@ pub async fn insert(
             "created_at" => &now,
             "updated_at" => &now
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
     find_by_document_id(pool, &document_id, tenant_id)
         .await?
@@ -110,7 +110,7 @@ pub async fn update(
 ) -> AppResult<bool> {
     let is_live_val = if cmd.is_live { 1_i64 } else { 0_i64 };
     let is_active_val = if cmd.is_active { 1_i64 } else { 0_i64 };
-    let affected = raisfast_derive::tenant_update!(
+    let affected = raisfast_derive::crud_update!(
         pool, "payment_channels",
         bind: [
             "provider" => &cmd.provider,
@@ -137,7 +137,7 @@ pub async fn delete_by_id(
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
     let affected =
-        raisfast_derive::tenant_delete!(pool, "payment_channels", "id" => id, tenant_id)?
+        raisfast_derive::crud_delete!(pool, "payment_channels", "id" => id, tenant: tenant_id)?
             .rows_affected();
     Ok(affected > 0)
 }

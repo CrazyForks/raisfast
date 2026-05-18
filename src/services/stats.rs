@@ -246,13 +246,13 @@ impl StatsService {
              ORDER BY p.created_at DESC {limit_clause}"
         );
 
-        let posts: Vec<(Option<String>, String, String)> = raisfast_derive::tenant_query!(
+        let posts: Vec<(Option<String>, String, String)> = raisfast_derive::crud_query!(
             &self.pool,
             (Option<String>, String, String),
             &post_sql,
             [],
-            tenant_id,
-            fetch_all
+            fetch_all,
+            tenant: tenant_id
         )
         .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
@@ -270,13 +270,13 @@ impl StatsService {
              ORDER BY c.created_at DESC {limit_clause}"
         );
 
-        let comments: Vec<(Option<String>, String)> = raisfast_derive::tenant_query!(
+        let comments: Vec<(Option<String>, String)> = raisfast_derive::crud_query!(
             &self.pool,
             (Option<String>, String),
             &comment_sql,
             [],
-            tenant_id,
-            fetch_all
+            fetch_all,
+            tenant: tenant_id
         )
         .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 

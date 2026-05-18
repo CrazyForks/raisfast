@@ -78,7 +78,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Product>> {
-    raisfast_derive::tenant_find!(pool, "products", Product, "id" => id, tenant_id)
+    raisfast_derive::crud_find!(pool, "products", Product, "id" => id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -87,7 +87,7 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Product>> {
-    raisfast_derive::tenant_find!(pool, "products", Product, "document_id" => document_id, tenant_id)
+    raisfast_derive::crud_find!(pool, "products", Product, "document_id" => document_id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -97,7 +97,7 @@ pub async fn find_active_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<Product>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, Product,
         data_sql: "SELECT * FROM products WHERE status = 'active'{tenant} ORDER BY sort_order, created_at DESC",
         count_sql: "SELECT COUNT(*) FROM products WHERE status = 'active'{tenant}",
@@ -116,7 +116,7 @@ pub async fn find_all_admin(
     page_size: i64,
     status: Option<&str>,
 ) -> AppResult<(Vec<Product>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, Product,
         data_sql: "SELECT * FROM products WHERE 1=1{tenant} ORDER BY sort_order, created_at DESC",
         count_sql: "SELECT COUNT(*) FROM products WHERE 1=1{tenant}",
@@ -136,7 +136,7 @@ pub async fn insert(
 ) -> AppResult<Product> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         pool,
         "products",
         [
@@ -167,7 +167,7 @@ pub async fn insert(
             "created_at" => &now,
             "updated_at" => &now
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
     find_by_document_id(pool, &document_id, tenant_id)
         .await?
@@ -183,7 +183,7 @@ pub async fn update(
     cmd: &UpdateProductCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
-    let affected = raisfast_derive::tenant_update!(
+    let affected = raisfast_derive::crud_update!(
         pool, "products",
         bind: [
             "category_id" => cmd.category_id,
@@ -227,7 +227,7 @@ pub async fn delete_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
-    let result = raisfast_derive::tenant_delete!(pool, "products", "id" => id, tenant_id)?;
+    let result = raisfast_derive::crud_delete!(pool, "products", "id" => id, tenant: tenant_id)?;
     Ok(result.rows_affected() > 0)
 }
 

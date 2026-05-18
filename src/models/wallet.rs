@@ -73,7 +73,7 @@ pub async fn find_all_wallets(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Wallet>, i64)> {
     raisfast_derive::check_schema!("wallets", "tenant_id", "created_at");
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, Wallet,
         data_sql: "SELECT * FROM wallets WHERE 1=1{tenant} ORDER BY created_at DESC",
         count_sql: "SELECT COUNT(*) FROM wallets WHERE 1=1{tenant}",

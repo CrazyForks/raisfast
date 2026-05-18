@@ -25,7 +25,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentTransaction>> {
-    raisfast_derive::tenant_find!(pool, "payment_transactions", PaymentTransaction, "id" => id, tenant_id)
+    raisfast_derive::crud_find!(pool, "payment_transactions", PaymentTransaction, "id" => id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -34,7 +34,7 @@ pub async fn find_by_payment_order_id(
     payment_order_id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<PaymentTransaction>> {
-    raisfast_derive::tenant_find_all!(pool, "payment_transactions", PaymentTransaction, "payment_order_id" => payment_order_id, tenant_id, order_by: "created_at DESC")
+    raisfast_derive::crud_find_all!(pool, "payment_transactions", PaymentTransaction, "payment_order_id" => payment_order_id, tenant: tenant_id, order_by: "created_at DESC")
         .map_err(Into::into)
 }
 
@@ -43,7 +43,7 @@ pub async fn find_by_order_id(
     order_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<PaymentTransaction>> {
-    raisfast_derive::tenant_find_all!(pool, "payment_transactions", PaymentTransaction, "order_id" => order_id, tenant_id, order_by: "created_at DESC")
+    raisfast_derive::crud_find_all!(pool, "payment_transactions", PaymentTransaction, "order_id" => order_id, tenant: tenant_id, order_by: "created_at DESC")
         .map_err(Into::into)
 }
 
@@ -52,7 +52,7 @@ pub async fn find_by_provider_tx_id(
     provider_tx_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentTransaction>> {
-    raisfast_derive::tenant_find!(pool, "payment_transactions", PaymentTransaction, "provider_tx_id" => provider_tx_id, tenant_id)
+    raisfast_derive::crud_find!(pool, "payment_transactions", PaymentTransaction, "provider_tx_id" => provider_tx_id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -61,7 +61,7 @@ async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentTransaction>> {
-    raisfast_derive::tenant_find!(pool, "payment_transactions", PaymentTransaction, "document_id" => document_id, tenant_id)
+    raisfast_derive::crud_find!(pool, "payment_transactions", PaymentTransaction, "document_id" => document_id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -71,7 +71,7 @@ pub async fn find_all_admin_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<PaymentTransaction>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, PaymentTransaction,
         data_sql: "SELECT * FROM payment_transactions WHERE 1=1{tenant} ORDER BY created_at DESC",
         count_sql: "SELECT COUNT(*) FROM payment_transactions WHERE 1=1{tenant}",
@@ -90,7 +90,7 @@ pub async fn insert(
 ) -> AppResult<PaymentTransaction> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         pool,
         "payment_transactions",
         [
@@ -106,7 +106,7 @@ pub async fn insert(
             "raw_payload" => &cmd.raw_payload,
             "created_at" => &now
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
     find_by_document_id(pool, &document_id, tenant_id)
         .await?
@@ -124,7 +124,7 @@ pub async fn tx_insert(
 ) -> AppResult<()> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         &mut *tx,
         "payment_transactions",
         [
@@ -140,7 +140,7 @@ pub async fn tx_insert(
             "raw_payload" => &cmd.raw_payload,
             "created_at" => &now
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
     Ok(())
 }

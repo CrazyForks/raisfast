@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM permissions WHERE role_id = ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "bef6bb407b0a44599d55e8e425488eb650e27dd3660d54fba23c0c70ed19e5db"
+}

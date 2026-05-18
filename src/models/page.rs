@@ -315,7 +315,7 @@ pub async fn find_by_slug(
     slug: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Page>> {
-    Ok(raisfast_derive::tenant_find!(pool, "pages", Page, "slug" => slug, tenant_id)?)
+    Ok(raisfast_derive::crud_find!(pool, "pages", Page, "slug" => slug, tenant: tenant_id)?)
 }
 
 pub async fn find_by_id(
@@ -323,7 +323,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Page>> {
-    Ok(raisfast_derive::tenant_find!(pool, "pages", Page, "id" => id, tenant_id)?)
+    Ok(raisfast_derive::crud_find!(pool, "pages", Page, "id" => id, tenant: tenant_id)?)
 }
 
 pub async fn find_by_document_id(
@@ -331,7 +331,9 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Page>> {
-    Ok(raisfast_derive::tenant_find!(pool, "pages", Page, "document_id" => document_id, tenant_id)?)
+    Ok(
+        raisfast_derive::crud_find!(pool, "pages", Page, "document_id" => document_id, tenant: tenant_id)?,
+    )
 }
 
 pub async fn list_published(
@@ -340,7 +342,7 @@ pub async fn list_published(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Page>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, Page,
         data_sql: "SELECT * FROM pages WHERE status = ?{tenant} ORDER BY sort_order ASC, created_at DESC",
         count_sql: "SELECT COUNT(*) FROM pages WHERE status = ?{tenant}",
@@ -359,7 +361,7 @@ pub async fn list_all(
     status: Option<PageStatus>,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Page>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, Page,
         data_sql: "SELECT * FROM pages WHERE 1=1{tenant} ORDER BY sort_order ASC, created_at DESC",
         count_sql: "SELECT COUNT(*) FROM pages WHERE 1=1{tenant}",
@@ -384,7 +386,7 @@ pub async fn create(
         None
     };
 
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         pool,
         "pages",
         [
@@ -407,7 +409,7 @@ pub async fn create(
             "created_at" => now,
             "updated_at" => now
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
 
     find_by_document_id(pool, &document_id, tenant_id)
@@ -571,7 +573,7 @@ pub async fn update(
 }
 
 pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
-    let result = raisfast_derive::tenant_delete!(pool, "pages", "id" => id, tenant_id)?;
+    let result = raisfast_derive::crud_delete!(pool, "pages", "id" => id, tenant: tenant_id)?;
     AppError::expect_affected(&result, "page")
 }
 
@@ -646,7 +648,7 @@ pub async fn reorder(
     let now = crate::utils::tz::now_utc();
 
     for (id, sort_order) in items {
-        raisfast_derive::tenant_update!(
+        raisfast_derive::crud_update!(
             pool, "pages",
             bind: ["sort_order" => sort_order, "updated_at" => now],
             where: "id" => id,
@@ -665,13 +667,13 @@ pub async fn list_sitemap(
         "SELECT slug, updated_at FROM pages WHERE status = {}{filter} ORDER BY sort_order ASC",
         ph(1)
     );
-    Ok(raisfast_derive::tenant_query!(
+    Ok(raisfast_derive::crud_query!(
         pool,
         (String, Option<String>),
         &sql,
         [PageStatus::Published],
-        tenant_id,
-        fetch_all
+        fetch_all,
+        tenant: tenant_id
     )?)
 }
 

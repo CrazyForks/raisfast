@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM reusable_blocks WHERE id = ?1 AND tenant_id = ?2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "73df20bf733eeb03ba66a55e19f6ba198fad6c05c367338e37a5d7a8b6ac80d1"
+}

@@ -55,7 +55,7 @@ pub struct WebhookPayload {
 /// Inserts a webhook subscription
 pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         pool,
         "webhook_subscriptions",
         [
@@ -68,7 +68,7 @@ pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
             "created_at" => now,
             "updated_at" => now
         ],
-        sub.tenant_id.as_deref()
+        tenant: sub.tenant_id.as_deref()
     )?;
     Ok(())
 }
@@ -80,7 +80,7 @@ pub async fn find_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<WebhookSubscription>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, WebhookSubscription,
         data_sql: "SELECT * FROM webhook_subscriptions WHERE 1=1{tenant} ORDER BY created_at DESC",
         count_sql: "SELECT COUNT(*) FROM webhook_subscriptions WHERE 1=1{tenant}",
@@ -122,6 +122,6 @@ pub async fn find_enabled_by_tenant(
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<WebhookSubscription>> {
     Ok(
-        raisfast_derive::tenant_find_all!(pool, "webhook_subscriptions", WebhookSubscription, "enabled" => true, tenant_id)?,
+        raisfast_derive::crud_find_all!(pool, "webhook_subscriptions", WebhookSubscription, "enabled" => true, tenant: tenant_id)?,
     )
 }

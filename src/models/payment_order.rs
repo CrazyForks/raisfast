@@ -72,7 +72,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentOrder>> {
-    raisfast_derive::tenant_find!(pool, "payment_orders", PaymentOrder, "id" => id, tenant_id)
+    raisfast_derive::crud_find!(pool, "payment_orders", PaymentOrder, "id" => id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -81,7 +81,7 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentOrder>> {
-    raisfast_derive::tenant_find!(pool, "payment_orders", PaymentOrder, "document_id" => document_id, tenant_id)
+    raisfast_derive::crud_find!(pool, "payment_orders", PaymentOrder, "document_id" => document_id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -90,7 +90,7 @@ pub async fn find_by_idempotency_key(
     key: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentOrder>> {
-    raisfast_derive::tenant_find!(pool, "payment_orders", PaymentOrder, "idempotency_key" => key, tenant_id)
+    raisfast_derive::crud_find!(pool, "payment_orders", PaymentOrder, "idempotency_key" => key, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -99,7 +99,7 @@ pub async fn find_by_provider_order_id(
     provider_order_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentOrder>> {
-    raisfast_derive::tenant_find!(pool, "payment_orders", PaymentOrder, "provider_order_id" => provider_order_id, tenant_id).map_err(Into::into)
+    raisfast_derive::crud_find!(pool, "payment_orders", PaymentOrder, "provider_order_id" => provider_order_id, tenant: tenant_id).map_err(Into::into)
 }
 
 pub async fn find_by_user_paginated(
@@ -109,7 +109,7 @@ pub async fn find_by_user_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<PaymentOrder>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, PaymentOrder,
         data_sql: "SELECT * FROM payment_orders WHERE user_id = ?{tenant} ORDER BY created_at DESC",
         count_sql: "SELECT COUNT(*) FROM payment_orders WHERE user_id = ?{tenant}",
@@ -128,7 +128,7 @@ pub async fn find_all_admin_paginated(
     page_size: i64,
     status: Option<&str>,
 ) -> AppResult<(Vec<PaymentOrder>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, PaymentOrder,
         data_sql: "SELECT * FROM payment_orders WHERE 1=1{tenant} ORDER BY created_at DESC",
         count_sql: "SELECT COUNT(*) FROM payment_orders WHERE 1=1{tenant}",
@@ -148,7 +148,7 @@ pub async fn insert(
 ) -> AppResult<PaymentOrder> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         pool,
         "payment_orders",
         [
@@ -173,7 +173,7 @@ pub async fn insert(
             "created_at" => &now,
             "updated_at" => &now
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
     find_by_document_id(pool, &document_id, tenant_id)
         .await?
@@ -191,7 +191,7 @@ pub async fn update_provider_order_id(
     provider_data: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    raisfast_derive::tenant_update!(
+    raisfast_derive::crud_update!(
         pool, "payment_orders",
         bind: ["provider_order_id" => provider_order_id, "provider_data" => provider_data],
         raw: ["updated_at" => "datetime('now')"],

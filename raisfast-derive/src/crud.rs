@@ -3,7 +3,7 @@
 //! This module implements all the `tenant_*!` and `crud_*!` bang macros, plus
 //! `check_schema!`. Each macro follows the same pattern:
 //!
-//! 1. **Parse** the input tokens into a structured input struct (e.g., `TenantDeleteInput`).
+//! 1. **Parse** the input tokens into a structured input struct (e.g., `DeleteInput`).
 //! 2. **Validate** table and column names against the compile-time schema.
 //! 3. **Expand** into Rust code that calls `sqlx::query!()` (compile-time verified) or
 //!    `sqlx::query()` / `sqlx::query_as()` (runtime, for tenant-dependent SQL).
@@ -263,68 +263,59 @@ fn extra_conds_columns(ecs: &ExtraConds) -> Vec<syn::LitStr> {
     cols
 }
 
-// ── tenant_delete! / crud_delete! ────────────────────────────────────────
-
-pub fn tenant_delete(input: TokenStream) -> TokenStream {
-    expand_delete(input, true)
-}
+// ── crud_delete! ────────────────────────────────────────────────────────
 
 pub fn crud_delete(input: TokenStream) -> TokenStream {
-    expand_delete(input, false)
+    expand_delete(input)
 }
 
-/// Expand a DELETE macro.
-///
-/// - **tenant** variant: emits a `match` on `tid` with two `sqlx::query!()` branches
-///   (with/without `AND tenant_id = ?`). Both SQL strings are literals → compile-time verified.
-/// - **crud** variant: single `sqlx::query!()` call.
-fn expand_delete(input: TokenStream, with_tenant: bool) -> TokenStream {
-    if with_tenant {
-        let parsed = parse_macro_input!(input as TenantDeleteInput);
-        let table = &parsed.table;
-        let col = &parsed.col;
+fn expand_delete(input: TokenStream) -> TokenStream {
+    let parsed = parse_macro_input!(input as DeleteInput);
+    let table = &parsed.table;
+    let col = &parsed.col;
 
-        if let Some(err) = validate_table(table) {
-            return err;
-        }
-        if let Some(err) = validate_column(table, col) {
-            return err;
-        }
-        if let Some(err) = validate_columns(table, &parsed.and_cols) {
-            return err;
-        }
-        if let Some(err) = validate_columns(table, &extra_conds_columns(&parsed.ecs)) {
-            return err;
-        }
+    if let Some(err) = validate_table(table) {
+        return err;
+    }
+    if let Some(err) = validate_column(table, col) {
+        return err;
+    }
+    if let Some(err) = validate_columns(table, &parsed.and_cols) {
+        return err;
+    }
+    if let Some(err) = validate_columns(table, &extra_conds_columns(&parsed.ecs)) {
+        return err;
+    }
 
-        let pool = &parsed.pool;
-        let val = &parsed.val;
-        let tid = &parsed.tid;
-        let table_str = table.value();
-        let col_str = col.value();
-        let and_cols = &parsed.and_cols;
-        let and_vals = &parsed.and_vals;
+    let pool = &parsed.pool;
+    let val = &parsed.val;
+    let tid = &parsed.tid;
+    let table_str = table.value();
+    let col_str = col.value();
+    let and_cols = &parsed.and_cols;
+    let and_vals = &parsed.and_vals;
 
-        let d = dialect();
-        let mut ph_idx = 1usize;
-        let col_ph = d.ph(ph_idx);
-        ph_idx += 1;
-        let mut and_parts: Vec<String> = and_cols
-            .iter()
-            .map(|ac| {
-                let ph = d.ph(ph_idx);
-                ph_idx += 1;
-                format!("AND {} = {}", ac.value(), ph)
-            })
-            .collect();
-        let (ecs_parts, ecs_vals) = build_extra_conds_sql(&parsed.ecs, d, &mut ph_idx);
-        and_parts.extend(ecs_parts);
-        let all_extra_vals: Vec<syn::Expr> =
-            and_vals.iter().chain(ecs_vals.iter()).cloned().collect();
-        let and_str = and_parts.join(" ");
+    let d = dialect();
+    let mut ph_idx = 1usize;
+    let col_ph = d.ph(ph_idx);
+    ph_idx += 1;
+    let mut and_parts: Vec<String> = and_cols
+        .iter()
+        .map(|ac| {
+            let ph = d.ph(ph_idx);
+            ph_idx += 1;
+            format!("AND {} = {}", ac.value(), ph)
+        })
+        .collect();
+    let (ecs_parts, ecs_vals) = build_extra_conds_sql(&parsed.ecs, d, &mut ph_idx);
+    and_parts.extend(ecs_parts);
+    let all_extra_vals: Vec<syn::Expr> = and_vals.iter().chain(ecs_vals.iter()).cloned().collect();
+    let and_str = and_parts.join(" ");
+
+    let has_extra = !and_cols.is_empty() || !parsed.ecs.is_empty();
+
+    if parsed.tid.is_some() {
         let tid_ph = d.ph(ph_idx);
-
-        let has_extra = !and_cols.is_empty() || !parsed.ecs.is_empty();
 
         let expanded = if !has_extra {
             let sql_with_tenant = syn::LitStr::new(
@@ -374,50 +365,6 @@ fn expand_delete(input: TokenStream, with_tenant: bool) -> TokenStream {
         };
         TokenStream::from(expanded)
     } else {
-        let parsed = parse_macro_input!(input as CrudDeleteInput);
-        let table = &parsed.table;
-        let col = &parsed.col;
-
-        if let Some(err) = validate_table(table) {
-            return err;
-        }
-        if let Some(err) = validate_column(table, col) {
-            return err;
-        }
-        if let Some(err) = validate_columns(table, &parsed.and_cols) {
-            return err;
-        }
-        if let Some(err) = validate_columns(table, &extra_conds_columns(&parsed.ecs)) {
-            return err;
-        }
-
-        let pool = &parsed.pool;
-        let val = &parsed.val;
-        let table_str = table.value();
-        let col_str = col.value();
-        let and_cols = &parsed.and_cols;
-        let and_vals = &parsed.and_vals;
-
-        let d = dialect();
-        let mut ph_idx = 1usize;
-        let col_ph = d.ph(ph_idx);
-        ph_idx += 1;
-        let mut and_parts: Vec<String> = and_cols
-            .iter()
-            .map(|ac| {
-                let ph = d.ph(ph_idx);
-                ph_idx += 1;
-                format!("AND {} = {}", ac.value(), ph)
-            })
-            .collect();
-        let (ecs_parts, ecs_vals) = build_extra_conds_sql(&parsed.ecs, d, &mut ph_idx);
-        and_parts.extend(ecs_parts);
-        let all_extra_vals: Vec<syn::Expr> =
-            and_vals.iter().chain(ecs_vals.iter()).cloned().collect();
-        let and_str = and_parts.join(" ");
-
-        let has_extra = !and_cols.is_empty() || !parsed.ecs.is_empty();
-
         let expanded = if !has_extra {
             let sql_lit = syn::LitStr::new(
                 &format!("DELETE FROM {} WHERE {} = {}", table_str, col_str, col_ph),
@@ -448,45 +395,38 @@ fn expand_delete(input: TokenStream, with_tenant: bool) -> TokenStream {
     }
 }
 
-// ── tenant_insert! / crud_insert! ────────────────────────────────────────
-
-pub fn tenant_insert(input: TokenStream) -> TokenStream {
-    expand_insert(input, true)
-}
+// ── crud_insert! ────────────────────────────────────────────────────────
 
 pub fn crud_insert(input: TokenStream) -> TokenStream {
-    expand_insert(input, false)
+    expand_insert(input)
 }
 
-/// Expand an INSERT macro.
-///
-/// - **tenant** variant: two SQL literals (with/without `tenant_id` column), match on `tid`.
-///   Uses `sqlx::query!()` for both branches — compile-time verified.
-/// - **crud** variant: single `sqlx::query!()` call.
-///
-/// Both variants use `let` pre-binding to avoid E0716 temporary lifetime errors
-/// when values are used inside `match` arms.
-fn expand_insert(input: TokenStream, with_tenant: bool) -> TokenStream {
-    if with_tenant {
-        let parsed = parse_macro_input!(input as TenantInsertInput);
-        let table = &parsed.table;
+fn expand_insert(input: TokenStream) -> TokenStream {
+    let parsed = parse_macro_input!(input as InsertInput);
+    let table = &parsed.table;
 
-        if let Some(err) = validate_table(table) {
-            return err;
-        }
-        if let Some(err) = validate_columns(table, &parsed.cols) {
-            return err;
-        }
+    if let Some(err) = validate_table(table) {
+        return err;
+    }
+    if let Some(err) = validate_columns(table, &parsed.cols) {
+        return err;
+    }
 
-        let pool = &parsed.pool;
-        let vals = &parsed.vals;
-        let tid = &parsed.tid;
-        let table_str = table.value();
-        let col_strs: Vec<String> = parsed.cols.iter().map(|l| l.value()).collect();
+    let pool = &parsed.pool;
+    let vals = &parsed.vals;
+    let tid = &parsed.tid;
+    let table_str = table.value();
+    let col_strs: Vec<String> = parsed.cols.iter().map(|l| l.value()).collect();
 
-        let col_list = col_strs.join(", ");
-        let n = col_strs.len();
-        let d = dialect();
+    let col_list = col_strs.join(", ");
+    let n = col_strs.len();
+    let d = dialect();
+
+    let val_idents: Vec<syn::Ident> = (0..vals.len())
+        .map(|i| syn::Ident::new(&format!("__vi_{}", i), proc_macro2::Span::call_site()))
+        .collect();
+
+    if parsed.tid.is_some() {
         let col_list_with = format!("{}, tenant_id", col_list);
         let ph_with: Vec<String> = (1..=n + 1).map(|i| d.ph(i)).collect();
         let ph: Vec<String> = (1..=n).map(|i| d.ph(i)).collect();
@@ -508,10 +448,6 @@ fn expand_insert(input: TokenStream, with_tenant: bool) -> TokenStream {
             ),
             table.span(),
         );
-        // E0716 fix: pre-bind values to named locals before the match
-        let val_idents: Vec<syn::Ident> = (0..vals.len())
-            .map(|i| syn::Ident::new(&format!("__vi_{}", i), proc_macro2::Span::call_site()))
-            .collect();
         let expanded = quote! {
             {
                 #(let #val_idents = #vals;)*
@@ -523,24 +459,6 @@ fn expand_insert(input: TokenStream, with_tenant: bool) -> TokenStream {
         };
         TokenStream::from(expanded)
     } else {
-        let parsed = parse_macro_input!(input as CrudInsertInput);
-        let table = &parsed.table;
-
-        if let Some(err) = validate_table(table) {
-            return err;
-        }
-        if let Some(err) = validate_columns(table, &parsed.cols) {
-            return err;
-        }
-
-        let pool = &parsed.pool;
-        let vals = &parsed.vals;
-        let table_str = table.value();
-        let col_strs: Vec<String> = parsed.cols.iter().map(|l| l.value()).collect();
-
-        let col_list = col_strs.join(", ");
-        let n = col_strs.len();
-        let d = dialect();
         let ph: Vec<String> = (1..=n).map(|i| d.ph(i)).collect();
         let sql = syn::LitStr::new(
             &format!(
@@ -551,10 +469,6 @@ fn expand_insert(input: TokenStream, with_tenant: bool) -> TokenStream {
             ),
             table.span(),
         );
-        // E0716 fix: pre-bind values even for single-branch (consistency + future-proofing)
-        let val_idents: Vec<syn::Ident> = (0..vals.len())
-            .map(|i| syn::Ident::new(&format!("__vi_{}", i), proc_macro2::Span::call_site()))
-            .collect();
         let expanded = quote! {
             {
                 #(let #val_idents = #vals;)*
@@ -565,30 +479,13 @@ fn expand_insert(input: TokenStream, with_tenant: bool) -> TokenStream {
     }
 }
 
-// ── tenant_scalar! / crud_scalar! ────────────────────────────────────────
-
-pub fn tenant_scalar(input: TokenStream) -> TokenStream {
-    expand_scalar(input, true)
-}
+// ── crud_scalar! ────────────────────────────────────────
 
 pub fn crud_scalar(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as CrudScalarInput);
-    let pool = &input.pool;
-    let ty = &input.ty;
-    let sql = &input.sql;
-    let vals = &input.vals;
-    let method = &input.method;
-    let expanded = quote! {
-        sqlx::query_scalar::<_, #ty>(#sql)#(.bind(#vals))*.#method(#pool).await
-    };
-    TokenStream::from(expanded)
+    expand_scalar(input)
 }
 
-/// Expand a scalar query macro (`query_scalar`).
-///
-/// Uses runtime `sqlx::query_scalar::<_, Type>()` because the SQL string is
-/// caller-provided (not a literal we control). Tenant variant conditionally binds `tid`.
-fn expand_scalar(input: TokenStream, with_tenant: bool) -> TokenStream {
+fn expand_scalar(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as ScalarInput);
     let pool = &input.pool;
     let ty = &input.ty;
@@ -596,7 +493,7 @@ fn expand_scalar(input: TokenStream, with_tenant: bool) -> TokenStream {
     let vals = &input.vals;
     let method = &input.method;
 
-    if with_tenant {
+    if input.tid.is_some() {
         let tid = &input.tid;
         let expanded = quote! {
             {
@@ -616,17 +513,13 @@ fn expand_scalar(input: TokenStream, with_tenant: bool) -> TokenStream {
     }
 }
 
-// ── tenant_select! / crud_select! ─────────────────────────────────────
-
-pub fn tenant_select(input: TokenStream) -> TokenStream {
-    expand_select(input, true)
-}
+// ── crud_select! ─────────────────────────────────────
 
 pub fn crud_select(input: TokenStream) -> TokenStream {
-    expand_select(input, false)
+    expand_select(input)
 }
 
-fn expand_select(input: TokenStream, with_tenant: bool) -> TokenStream {
+fn expand_select(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as SelectInput);
     let table = &parsed.table;
 
@@ -669,7 +562,7 @@ fn expand_select(input: TokenStream, with_tenant: bool) -> TokenStream {
         .map(|i| syn::Ident::new(&format!("__sav_{}", i), proc_macro2::Span::call_site()))
         .collect();
 
-    if with_tenant {
+    if parsed.tid.is_some() {
         let tid = &parsed.tid;
         let expanded = quote! {
             {
@@ -719,21 +612,13 @@ fn expand_select(input: TokenStream, with_tenant: bool) -> TokenStream {
     }
 }
 
-// ── tenant_query! / crud_query! ──────────────────────────────────────────
-
-pub fn tenant_query(input: TokenStream) -> TokenStream {
-    expand_query(input, true)
-}
+// ── crud_query! ──────────────────────────────────────────
 
 pub fn crud_query(input: TokenStream) -> TokenStream {
-    expand_query(input, false)
+    expand_query(input)
 }
 
-/// Expand a query_as macro.
-///
-/// Uses runtime `sqlx::query_as::<_, Type>()` because the SQL string is caller-provided.
-/// Tenant variant conditionally binds `tid`.
-fn expand_query(input: TokenStream, with_tenant: bool) -> TokenStream {
+fn expand_query(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as QueryInput);
     let pool = &input.pool;
     let ty = &input.ty;
@@ -741,7 +626,7 @@ fn expand_query(input: TokenStream, with_tenant: bool) -> TokenStream {
     let vals = &input.vals;
     let method = &input.method;
 
-    if with_tenant {
+    if input.tid.is_some() {
         let tid = &input.tid;
         let expanded = quote! {
             {
@@ -768,33 +653,20 @@ fn get_select_columns(table: &syn::LitStr) -> String {
     get_schema().column_names(&table.value()).join(", ")
 }
 
-// ── tenant_find! / crud_find! ─────────────────────────────────────────
-
-pub fn tenant_find(input: TokenStream) -> TokenStream {
-    expand_find(input, true, FindMethod::FetchOptional)
-}
-
-pub fn tenant_find_one(input: TokenStream) -> TokenStream {
-    expand_find(input, true, FindMethod::FetchOne)
-}
-
-pub fn tenant_find_all(input: TokenStream) -> TokenStream {
-    expand_find(input, true, FindMethod::FetchAll)
-}
+// ── crud_find! ─────────────────────────────────────────────────────────
 
 pub fn crud_find(input: TokenStream) -> TokenStream {
-    expand_find(input, false, FindMethod::FetchOptional)
+    expand_find(input, FindMethod::FetchOptional)
 }
 
 pub fn crud_find_one(input: TokenStream) -> TokenStream {
-    expand_find(input, false, FindMethod::FetchOne)
+    expand_find(input, FindMethod::FetchOne)
 }
 
 pub fn crud_find_all(input: TokenStream) -> TokenStream {
-    expand_find(input, false, FindMethod::FetchAll)
+    expand_find(input, FindMethod::FetchAll)
 }
 
-/// Which sqlx fetch method to use.
 #[allow(clippy::enum_variant_names)]
 enum FindMethod {
     FetchOptional,
@@ -802,48 +674,40 @@ enum FindMethod {
     FetchAll,
 }
 
-/// Expand a find-by-column macro.
-///
-/// Generates `SELECT {all_columns} FROM table WHERE col = ?` with explicit column list
-/// from the schema (no `SELECT *`).
-///
-/// - **tenant** variant: runtime SQL via `format!()` + `sqlx::query_as()` because the
-///   WHERE clause depends on whether `tenant_id` is Some/None at runtime.
-/// - **crud** variant: runtime `sqlx::query_as()` with a static SQL literal.
-fn expand_find(input: TokenStream, with_tenant: bool, method: FindMethod) -> TokenStream {
-    if with_tenant {
-        let parsed = parse_macro_input!(input as TenantFindInput);
-        let table = &parsed.table;
+fn expand_find(input: TokenStream, method: FindMethod) -> TokenStream {
+    let parsed = parse_macro_input!(input as FindInput);
+    let table = &parsed.table;
 
-        if let Some(err) = validate_table(table) {
-            return err;
-        }
-        if let Some(err) = validate_column(table, &parsed.col) {
-            return err;
-        }
-        if let Some(err) = validate_columns(table, &parsed.and_cols) {
-            return err;
-        }
-        if let Some(err) = validate_columns(table, &extra_conds_columns(&parsed.ecs)) {
-            return err;
-        }
+    if let Some(err) = validate_table(table) {
+        return err;
+    }
+    if let Some(err) = validate_column(table, &parsed.col) {
+        return err;
+    }
+    if let Some(err) = validate_columns(table, &parsed.and_cols) {
+        return err;
+    }
+    if let Some(err) = validate_columns(table, &extra_conds_columns(&parsed.ecs)) {
+        return err;
+    }
 
-        let pool = &parsed.pool;
-        let ty = &parsed.ty;
-        let val = &parsed.val;
-        let tid = &parsed.tid;
-        let table_str = table.value();
-        let col_str = parsed.col.value();
-        let cols = get_select_columns(table);
-        let and_cols = &parsed.and_cols;
-        let and_vals = &parsed.and_vals;
+    let pool = &parsed.pool;
+    let ty = &parsed.ty;
+    let val = &parsed.val;
+    let tid = &parsed.tid;
+    let table_str = table.value();
+    let col_str = parsed.col.value();
+    let cols = get_select_columns(table);
+    let and_cols = &parsed.and_cols;
+    let and_vals = &parsed.and_vals;
 
-        let method_call = match &method {
-            FindMethod::FetchOptional => quote! { fetch_optional(#pool).await },
-            FindMethod::FetchOne => quote! { fetch_one(#pool).await },
-            FindMethod::FetchAll => quote! { fetch_all(#pool).await },
-        };
+    let method_call = match &method {
+        FindMethod::FetchOptional => quote! { fetch_optional(#pool).await },
+        FindMethod::FetchOne => quote! { fetch_one(#pool).await },
+        FindMethod::FetchAll => quote! { fetch_all(#pool).await },
+    };
 
+    if parsed.tid.is_some() {
         let col_lit = syn::LitStr::new(&col_str, table.span());
         let table_lit = syn::LitStr::new(&table_str, table.span());
         let cols_lit = syn::LitStr::new(&cols, table.span());
@@ -971,37 +835,6 @@ fn expand_find(input: TokenStream, with_tenant: bool, method: FindMethod) -> Tok
         };
         TokenStream::from(expanded)
     } else {
-        let parsed = parse_macro_input!(input as CrudFindInput);
-        let table = &parsed.table;
-
-        if let Some(err) = validate_table(table) {
-            return err;
-        }
-        if let Some(err) = validate_column(table, &parsed.col) {
-            return err;
-        }
-        if let Some(err) = validate_columns(table, &parsed.and_cols) {
-            return err;
-        }
-        if let Some(err) = validate_columns(table, &extra_conds_columns(&parsed.ecs)) {
-            return err;
-        }
-
-        let pool = &parsed.pool;
-        let ty = &parsed.ty;
-        let val = &parsed.val;
-        let table_str = table.value();
-        let col_str = parsed.col.value();
-        let cols = get_select_columns(table);
-        let and_cols = &parsed.and_cols;
-        let and_vals = &parsed.and_vals;
-
-        let method_call = match &method {
-            FindMethod::FetchOptional => quote! { fetch_optional(#pool).await },
-            FindMethod::FetchOne => quote! { fetch_one(#pool).await },
-            FindMethod::FetchAll => quote! { fetch_all(#pool).await },
-        };
-
         let d = dialect();
         let mut sql_str = format!("SELECT {} FROM {} WHERE {} = ?", cols, table_str, col_str);
         let mut all_extra_vals: Vec<syn::Expr> = and_vals.to_vec();
@@ -1099,73 +932,68 @@ fn expand_find(input: TokenStream, with_tenant: bool, method: FindMethod) -> Tok
     }
 }
 
-// ── tenant_count! / crud_count! ─────────────────────────────────────────
-
-pub fn tenant_count(input: TokenStream) -> TokenStream {
-    expand_count(input, true)
-}
+// ── crud_count! ─────────────────────────────────────────
 
 pub fn crud_count(input: TokenStream) -> TokenStream {
-    expand_count(input, false)
+    expand_count(input)
 }
 
-fn expand_count(input: TokenStream, with_tenant: bool) -> TokenStream {
-    if with_tenant {
-        let parsed = parse_macro_input!(input as TenantDeleteInput);
-        let table = &parsed.table;
-        let col = &parsed.col;
+fn expand_count(input: TokenStream) -> TokenStream {
+    let parsed = parse_macro_input!(input as DeleteInput);
+    let table = &parsed.table;
+    let col = &parsed.col;
 
-        if let Some(err) = validate_table(table) {
-            return err;
-        }
-        if let Some(err) = validate_column(table, col) {
-            return err;
-        }
-        if let Some(err) = validate_columns(table, &parsed.and_cols) {
-            return err;
-        }
-        if let Some(err) = validate_columns(table, &extra_conds_columns(&parsed.ecs)) {
-            return err;
-        }
+    if let Some(err) = validate_table(table) {
+        return err;
+    }
+    if let Some(err) = validate_column(table, col) {
+        return err;
+    }
+    if let Some(err) = validate_columns(table, &parsed.and_cols) {
+        return err;
+    }
+    if let Some(err) = validate_columns(table, &extra_conds_columns(&parsed.ecs)) {
+        return err;
+    }
 
-        let pool = &parsed.pool;
-        let val = &parsed.val;
-        let tid = &parsed.tid;
-        let table_str = table.value();
-        let col_str = col.value();
-        let and_cols = &parsed.and_cols;
-        let and_vals = &parsed.and_vals;
+    let pool = &parsed.pool;
+    let val = &parsed.val;
+    let tid = &parsed.tid;
+    let table_str = table.value();
+    let col_str = col.value();
+    let and_cols = &parsed.and_cols;
+    let and_vals = &parsed.and_vals;
 
-        let has_in = !parsed.ecs.in_cols.is_empty();
+    let has_in = !parsed.ecs.in_cols.is_empty();
 
-        let d = dialect();
-        let mut ph_idx = 1usize;
-        let col_ph = d.ph(ph_idx);
-        ph_idx += 1;
-        let mut and_parts: Vec<String> = and_cols
-            .iter()
-            .map(|ac| {
-                let ph = d.ph(ph_idx);
-                ph_idx += 1;
-                format!("AND {} = {}", ac.value(), ph)
-            })
-            .collect();
-        let (ecs_parts, ecs_vals) = build_extra_conds_sql(&parsed.ecs, d, &mut ph_idx);
-        and_parts.extend(ecs_parts);
-        let all_extra_vals: Vec<syn::Expr> =
-            and_vals.iter().chain(ecs_vals.iter()).cloned().collect();
-        let and_str = and_parts.join(" ");
+    let d = dialect();
+    let mut ph_idx = 1usize;
+    let col_ph = d.ph(ph_idx);
+    ph_idx += 1;
+    let mut and_parts: Vec<String> = and_cols
+        .iter()
+        .map(|ac| {
+            let ph = d.ph(ph_idx);
+            ph_idx += 1;
+            format!("AND {} = {}", ac.value(), ph)
+        })
+        .collect();
+    let (ecs_parts, ecs_vals) = build_extra_conds_sql(&parsed.ecs, d, &mut ph_idx);
+    and_parts.extend(ecs_parts);
+    let all_extra_vals: Vec<syn::Expr> = and_vals.iter().chain(ecs_vals.iter()).cloned().collect();
+    let and_str = and_parts.join(" ");
 
-        let has_extra = !and_cols.is_empty() || !parsed.ecs.is_empty();
+    let has_extra = !and_cols.is_empty() || !parsed.ecs.is_empty();
 
-        let in_col_lits: Vec<syn::LitStr> = parsed
-            .ecs
-            .in_cols
-            .iter()
-            .map(|c| syn::LitStr::new(&c.value(), table.span()))
-            .collect();
-        let in_vals = &parsed.ecs.in_vals;
+    let in_col_lits: Vec<syn::LitStr> = parsed
+        .ecs
+        .in_cols
+        .iter()
+        .map(|c| syn::LitStr::new(&c.value(), table.span()))
+        .collect();
+    let in_vals = &parsed.ecs.in_vals;
 
+    if parsed.tid.is_some() {
         if has_in {
             let and_parts_in: Vec<String> = and_cols
                 .iter()
@@ -1285,52 +1113,6 @@ fn expand_count(input: TokenStream, with_tenant: bool) -> TokenStream {
             TokenStream::from(expanded)
         }
     } else {
-        let parsed = parse_macro_input!(input as CrudDeleteInput);
-        let table = &parsed.table;
-        let col = &parsed.col;
-
-        if let Some(err) = validate_table(table) {
-            return err;
-        }
-        if let Some(err) = validate_column(table, col) {
-            return err;
-        }
-        if let Some(err) = validate_columns(table, &parsed.and_cols) {
-            return err;
-        }
-        if let Some(err) = validate_columns(table, &extra_conds_columns(&parsed.ecs)) {
-            return err;
-        }
-
-        let pool = &parsed.pool;
-        let val = &parsed.val;
-        let table_str = table.value();
-        let col_str = col.value();
-        let and_cols = &parsed.and_cols;
-        let and_vals = &parsed.and_vals;
-
-        let has_in = !parsed.ecs.in_cols.is_empty();
-
-        let d = dialect();
-        let mut ph_idx = 1usize;
-        let col_ph = d.ph(ph_idx);
-        ph_idx += 1;
-        let mut and_parts: Vec<String> = and_cols
-            .iter()
-            .map(|ac| {
-                let ph = d.ph(ph_idx);
-                ph_idx += 1;
-                format!("AND {} = {}", ac.value(), ph)
-            })
-            .collect();
-        let (ecs_parts, ecs_vals) = build_extra_conds_sql(&parsed.ecs, d, &mut ph_idx);
-        and_parts.extend(ecs_parts);
-        let all_extra_vals: Vec<syn::Expr> =
-            and_vals.iter().chain(ecs_vals.iter()).cloned().collect();
-        let and_str = and_parts.join(" ");
-
-        let has_extra = !and_cols.is_empty() || !parsed.ecs.is_empty();
-
         if has_in {
             let and_parts_in: Vec<String> = and_cols
                 .iter()
@@ -1348,14 +1130,6 @@ fn expand_count(input: TokenStream, with_tenant: bool) -> TokenStream {
                 }
             );
             let sql_prefix_lit = syn::LitStr::new(&sql_prefix, table.span());
-
-            let in_col_lits: Vec<syn::LitStr> = parsed
-                .ecs
-                .in_cols
-                .iter()
-                .map(|c| syn::LitStr::new(&c.value(), table.span()))
-                .collect();
-            let in_vals = &parsed.ecs.in_vals;
 
             let extra_idents: Vec<syn::Ident> = (0..all_extra_vals.len())
                 .map(|i| syn::Ident::new(&format!("__cnt_{}", i), proc_macro2::Span::call_site()))
@@ -1474,33 +1248,13 @@ pub fn crud_list(input: TokenStream) -> TokenStream {
     }
 }
 
-// ── tenant_update! / crud_update! ────────────────────────────────────
-
-pub fn tenant_update(input: TokenStream) -> TokenStream {
-    expand_update(input, true)
-}
+// ── crud_update! ────────────────────────────────────
 
 pub fn crud_update(input: TokenStream) -> TokenStream {
-    expand_update(input, false)
+    expand_update(input)
 }
 
-/// Expand an UPDATE macro.
-///
-/// Supports flexible sections: `bind:`, `raw:`, `where:`, `and:`, `tenant:`.
-///
-/// - **bind** — columns set to `?` placeholders with runtime-bound values.
-/// - **raw** — columns set to literal SQL expressions (e.g., `datetime('now')`, `version + 1`).
-/// - **where** — primary key column and value (required).
-/// - **and** — extra `AND col = ?` conditions (e.g., optimistic locking on version).
-/// - **tenant** — optional `Option<&str>` for `AND tenant_id = ?` filter.
-///
-/// Both variants use runtime `sqlx::query()` because:
-/// - The tenant variant's SQL depends on `tid` at runtime.
-/// - The `raw` expressions contain non-trivial SQL that's easier to construct dynamically.
-///
-/// Values are pre-bound to `let` variables (`__uv_*`, `__ua_*`, `__pkv`) to avoid E0716
-/// temporary lifetime issues.
-fn expand_update(input: TokenStream, with_tenant: bool) -> TokenStream {
+fn expand_update(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as UpdateInput);
     let table = &parsed.table;
 
@@ -1597,7 +1351,7 @@ fn expand_update(input: TokenStream, with_tenant: bool) -> TokenStream {
             .map(|i| syn::Ident::new(&format!("__obv_{}", i), proc_macro2::Span::call_site()))
             .collect();
 
-        let expanded = if with_tenant {
+        let expanded = if parsed.tid.is_some() {
             quote! {
                 {
                     #(let #val_idents = #bind_vals;)*
@@ -1710,7 +1464,7 @@ fn expand_update(input: TokenStream, with_tenant: bool) -> TokenStream {
     let set_str = set_static.join(", ");
     let and_str = and_parts.join("");
 
-    if with_tenant {
+    if parsed.tid.is_some() {
         let tid = &parsed.tid;
         let tenant_ph = d.ph(ph_idx);
 
@@ -1787,9 +1541,9 @@ fn expand_update(input: TokenStream, with_tenant: bool) -> TokenStream {
     }
 }
 
-// ── tenant_query_paged! ──────────────────────────────────────────────
+// ── crud_query_paged! ──────────────────────────────────────────────
 
-pub fn tenant_query_paged(input: TokenStream) -> TokenStream {
+pub fn crud_query_paged(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as QueryPagedInput);
     let pool = &parsed.pool;
     let ty = &parsed.ty;
@@ -1912,18 +1666,19 @@ pub fn check_schema(input: TokenStream) -> TokenStream {
 // ── Delete inputs ──
 
 /// `tenant_delete!(pool, "table", "col" => val, tenant_id [, and: ["c" => v, ...]])`
-struct TenantDeleteInput {
+/// `crud_delete!(pool, "table", "col" => val [, tenant: expr, and: ["c" => v, ...], and_null: [...], ...])`
+struct DeleteInput {
     pool: syn::Expr,
     table: syn::LitStr,
     col: syn::LitStr,
     val: syn::Expr,
-    tid: syn::Expr,
+    tid: Option<syn::Expr>,
     and_cols: Vec<syn::LitStr>,
     and_vals: Vec<syn::Expr>,
     ecs: ExtraConds,
 }
 
-impl syn::parse::Parse for TenantDeleteInput {
+impl syn::parse::Parse for DeleteInput {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let pool: syn::Expr = input.parse()?;
         let _: syn::Token![,] = input.parse()?;
@@ -1932,16 +1687,17 @@ impl syn::parse::Parse for TenantDeleteInput {
         let col: syn::LitStr = input.parse()?;
         let _: syn::Token![=>] = input.parse()?;
         let val: syn::Expr = input.parse()?;
-        let _: syn::Token![,] = input.parse()?;
-        let tid: syn::Expr = input.parse()?;
 
+        let mut tid = None;
         let mut and_cols = Vec::new();
         let mut and_vals = Vec::new();
         let mut ecs = ExtraConds::default();
         while input.parse::<syn::Token![,]>().is_ok() {
-            let section: syn::Ident = input.parse()?;
+            let section: syn::Ident = input.call(syn::Ident::parse_any)?;
             let _: syn::Token![:] = input.parse()?;
-            if section == "and" {
+            if section == "tenant" {
+                tid = Some(input.parse()?);
+            } else if section == "and" {
                 let content;
                 syn::bracketed!(content in input);
                 let (c, v) = parse_kv_bracket(&content)?;
@@ -1961,59 +1717,6 @@ impl syn::parse::Parse for TenantDeleteInput {
             col,
             val,
             tid,
-            and_cols,
-            and_vals,
-            ecs,
-        })
-    }
-}
-
-/// `crud_delete!(pool, "table", "col" => val [, and: ["c" => v, ...]])`
-struct CrudDeleteInput {
-    pool: syn::Expr,
-    table: syn::LitStr,
-    col: syn::LitStr,
-    val: syn::Expr,
-    and_cols: Vec<syn::LitStr>,
-    and_vals: Vec<syn::Expr>,
-    ecs: ExtraConds,
-}
-
-impl syn::parse::Parse for CrudDeleteInput {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let pool: syn::Expr = input.parse()?;
-        let _: syn::Token![,] = input.parse()?;
-        let table: syn::LitStr = input.parse()?;
-        let _: syn::Token![,] = input.parse()?;
-        let col: syn::LitStr = input.parse()?;
-        let _: syn::Token![=>] = input.parse()?;
-        let val: syn::Expr = input.parse()?;
-
-        let mut and_cols = Vec::new();
-        let mut and_vals = Vec::new();
-        let mut ecs = ExtraConds::default();
-        while input.parse::<syn::Token![,]>().is_ok() {
-            let section: syn::Ident = input.parse()?;
-            let _: syn::Token![:] = input.parse()?;
-            if section == "and" {
-                let content;
-                syn::bracketed!(content in input);
-                let (c, v) = parse_kv_bracket(&content)?;
-                and_cols = c;
-                and_vals = v;
-            } else if !parse_extra_conds_section(&mut ecs, &section, input)? {
-                return Err(syn::Error::new(
-                    section.span(),
-                    format!("unknown section: {}", section),
-                ));
-            }
-        }
-
-        Ok(Self {
-            pool,
-            table,
-            col,
-            val,
             and_cols,
             and_vals,
             ecs,
@@ -2254,17 +1957,13 @@ impl syn::parse::Parse for JoinInput {
     }
 }
 
-pub fn tenant_join(input: TokenStream) -> TokenStream {
-    expand_join(input, true)
-}
-
 pub fn crud_join(input: TokenStream) -> TokenStream {
-    expand_join(input, false)
+    expand_join(input)
 }
 
-// ── tenant_join_paged! ────────────────────────────────────────────────
+// ── crud_join_paged! ────────────────────────────────────────────────
 
-pub fn tenant_join_paged(input: TokenStream) -> TokenStream {
+pub fn crud_join_paged(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as JoinPagedInput);
     let pool = &parsed.pool;
     let ty = &parsed.ty;
@@ -2481,7 +2180,7 @@ impl syn::parse::Parse for JoinPagedInput {
     }
 }
 
-fn expand_join(input: TokenStream, with_tenant: bool) -> TokenStream {
+fn expand_join(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as JoinInput);
     let pool = &parsed.pool;
     let ty = &parsed.ty;
@@ -2606,7 +2305,7 @@ fn expand_join(input: TokenStream, with_tenant: bool) -> TokenStream {
         quote! {}
     };
 
-    if with_tenant {
+    if parsed.tid.is_some() {
         let tid = &parsed.tid;
         let tenant_alias = &parsed.tenant_alias;
         let tenant_sql_with = match tenant_alias {
@@ -2788,20 +2487,31 @@ fn expand_join(input: TokenStream, with_tenant: bool) -> TokenStream {
     }
 }
 
-/// `tenant_insert!(pool, "table", ["col" => val, ...], tenant_id)`
-struct TenantInsertInput {
+/// `crud_insert!(pool, "table", ["col" => val, ...] [, tenant: expr])`
+struct InsertInput {
     pool: syn::Expr,
     table: syn::LitStr,
     cols: Vec<syn::LitStr>,
     vals: Vec<syn::Expr>,
-    tid: syn::Expr,
+    tid: Option<syn::Expr>,
 }
 
-impl syn::parse::Parse for TenantInsertInput {
+impl syn::parse::Parse for InsertInput {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let (pool, table, cols, vals) = parse_insert_body(input)?;
-        let _: syn::Token![,] = input.parse()?;
-        let tid: syn::Expr = input.parse()?;
+        let mut tid = None;
+        while input.parse::<syn::Token![,]>().is_ok() {
+            let section: syn::Ident = input.call(syn::Ident::parse_any)?;
+            let _: syn::Token![:] = input.parse()?;
+            if section == "tenant" {
+                tid = Some(input.parse()?);
+            } else {
+                return Err(syn::Error::new(
+                    section.span(),
+                    format!("unknown section: {}", section),
+                ));
+            }
+        }
         Ok(Self {
             pool,
             table,
@@ -2812,39 +2522,16 @@ impl syn::parse::Parse for TenantInsertInput {
     }
 }
 
-/// `crud_insert!(pool, "table", ["col" => val, ...])`
-struct CrudInsertInput {
-    pool: syn::Expr,
-    table: syn::LitStr,
-    cols: Vec<syn::LitStr>,
-    vals: Vec<syn::Expr>,
-}
-
-impl syn::parse::Parse for CrudInsertInput {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let (pool, table, cols, vals) = parse_insert_body(input)?;
-        Ok(Self {
-            pool,
-            table,
-            cols,
-            vals,
-        })
-    }
-}
-
 // ── Scalar / Query inputs ──
 
-/// `tenant_scalar!(pool, Type, sql, [val1, val2], tenant_id, method)`
-///
-/// - `sql`: a string expression (not necessarily a literal — can be a `format!()` result).
-/// - `method`: one of `fetch_one`, `fetch_optional`, etc.
+/// `crud_scalar!(pool, Type, sql, [val1, val2], method [, tenant: expr])`
 struct ScalarInput {
     pool: syn::Expr,
     ty: syn::Type,
     sql: syn::Expr,
     vals: Vec<syn::Expr>,
-    tid: syn::Expr,
     method: syn::Ident,
+    tid: Option<syn::Expr>,
 }
 
 impl syn::parse::Parse for ScalarInput {
@@ -2863,63 +2550,39 @@ impl syn::parse::Parse for ScalarInput {
             let _ = content.parse::<syn::Token![,]>();
         }
         let _: syn::Token![,] = input.parse()?;
-        let tid: syn::Expr = input.parse()?;
-        let _: syn::Token![,] = input.parse()?;
         let method: syn::Ident = input.parse()?;
-        Ok(Self {
-            pool,
-            ty,
-            sql,
-            vals,
-            tid,
-            method,
-        })
-    }
-}
-
-struct CrudScalarInput {
-    pool: syn::Expr,
-    ty: syn::Type,
-    sql: syn::Expr,
-    vals: Vec<syn::Expr>,
-    method: syn::Ident,
-}
-
-impl syn::parse::Parse for CrudScalarInput {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let pool: syn::Expr = input.parse()?;
-        let _: syn::Token![,] = input.parse()?;
-        let ty: syn::Type = input.parse()?;
-        let _: syn::Token![,] = input.parse()?;
-        let sql: syn::Expr = input.parse()?;
-        let _: syn::Token![,] = input.parse()?;
-        let content;
-        syn::bracketed!(content in input);
-        let mut vals: Vec<syn::Expr> = Vec::new();
-        while !content.is_empty() {
-            vals.push(content.parse()?);
-            let _ = content.parse::<syn::Token![,]>();
+        let mut tid = None;
+        while input.parse::<syn::Token![,]>().is_ok() {
+            let section: syn::Ident = input.call(syn::Ident::parse_any)?;
+            let _: syn::Token![:] = input.parse()?;
+            if section == "tenant" {
+                tid = Some(input.parse()?);
+            } else {
+                return Err(syn::Error::new(
+                    section.span(),
+                    format!("unknown section: {}", section),
+                ));
+            }
         }
-        let _: syn::Token![,] = input.parse()?;
-        let method: syn::Ident = input.parse()?;
         Ok(Self {
             pool,
             ty,
             sql,
             vals,
             method,
+            tid,
         })
     }
 }
 
-/// `tenant_query!(pool, Type, sql, [val1, val2], tenant_id, method)`
+/// `crud_query!(pool, Type, sql, [val1, val2], method [, tenant: expr])`
 struct QueryInput {
     pool: syn::Expr,
     ty: syn::Type,
     sql: syn::Expr,
     vals: Vec<syn::Expr>,
-    tid: syn::Expr,
     method: syn::Ident,
+    tid: Option<syn::Expr>,
 }
 
 impl syn::parse::Parse for QueryInput {
@@ -2938,37 +2601,48 @@ impl syn::parse::Parse for QueryInput {
             let _ = content.parse::<syn::Token![,]>();
         }
         let _: syn::Token![,] = input.parse()?;
-        let tid: syn::Expr = input.parse()?;
-        let _: syn::Token![,] = input.parse()?;
         let method: syn::Ident = input.parse()?;
+        let mut tid = None;
+        while input.parse::<syn::Token![,]>().is_ok() {
+            let section: syn::Ident = input.call(syn::Ident::parse_any)?;
+            let _: syn::Token![:] = input.parse()?;
+            if section == "tenant" {
+                tid = Some(input.parse()?);
+            } else {
+                return Err(syn::Error::new(
+                    section.span(),
+                    format!("unknown section: {}", section),
+                ));
+            }
+        }
         Ok(Self {
             pool,
             ty,
             sql,
             vals,
-            tid,
             method,
+            tid,
         })
     }
 }
 
 // ── Find inputs ──
 
-/// `tenant_find!(pool, "table", Type, "col" => val, tenant_id [, and: ["c" => v, ...], order_by: "expr"])`
-struct TenantFindInput {
+/// `crud_find!(pool, "table", Type, "col" => val [, tenant: expr, and: ["c" => v, ...], order_by: "expr"])`
+struct FindInput {
     pool: syn::Expr,
     table: syn::LitStr,
     ty: syn::Type,
     col: syn::LitStr,
     val: syn::Expr,
-    tid: syn::Expr,
+    tid: Option<syn::Expr>,
     order_by: Option<syn::LitStr>,
     and_cols: Vec<syn::LitStr>,
     and_vals: Vec<syn::Expr>,
     ecs: ExtraConds,
 }
 
-impl syn::parse::Parse for TenantFindInput {
+impl syn::parse::Parse for FindInput {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let pool: syn::Expr = input.parse()?;
         let _: syn::Token![,] = input.parse()?;
@@ -2979,17 +2653,18 @@ impl syn::parse::Parse for TenantFindInput {
         let col: syn::LitStr = input.parse()?;
         let _: syn::Token![=>] = input.parse()?;
         let val: syn::Expr = input.parse()?;
-        let _: syn::Token![,] = input.parse()?;
-        let tid: syn::Expr = input.parse()?;
 
+        let mut tid = None;
         let mut order_by = None;
         let mut and_cols = Vec::new();
         let mut and_vals = Vec::new();
         let mut ecs = ExtraConds::default();
         while input.parse::<syn::Token![,]>().is_ok() {
-            let section: syn::Ident = input.parse()?;
+            let section: syn::Ident = input.call(syn::Ident::parse_any)?;
             let _: syn::Token![:] = input.parse()?;
-            if section == "order_by" {
+            if section == "tenant" {
+                tid = Some(input.parse()?);
+            } else if section == "order_by" {
                 order_by = Some(input.parse()?);
             } else if section == "and" {
                 let content;
@@ -3012,68 +2687,6 @@ impl syn::parse::Parse for TenantFindInput {
             col,
             val,
             tid,
-            order_by,
-            and_cols,
-            and_vals,
-            ecs,
-        })
-    }
-}
-
-/// `crud_find!(pool, "table", Type, "col" => val [, and: ["c" => v, ...], order_by: "expr"])`
-struct CrudFindInput {
-    pool: syn::Expr,
-    table: syn::LitStr,
-    ty: syn::Type,
-    col: syn::LitStr,
-    val: syn::Expr,
-    order_by: Option<syn::LitStr>,
-    and_cols: Vec<syn::LitStr>,
-    and_vals: Vec<syn::Expr>,
-    ecs: ExtraConds,
-}
-
-impl syn::parse::Parse for CrudFindInput {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let pool: syn::Expr = input.parse()?;
-        let _: syn::Token![,] = input.parse()?;
-        let table: syn::LitStr = input.parse()?;
-        let _: syn::Token![,] = input.parse()?;
-        let ty: syn::Type = input.parse()?;
-        let _: syn::Token![,] = input.parse()?;
-        let col: syn::LitStr = input.parse()?;
-        let _: syn::Token![=>] = input.parse()?;
-        let val: syn::Expr = input.parse()?;
-
-        let mut order_by = None;
-        let mut and_cols = Vec::new();
-        let mut and_vals = Vec::new();
-        let mut ecs = ExtraConds::default();
-        while input.parse::<syn::Token![,]>().is_ok() {
-            let section: syn::Ident = input.parse()?;
-            let _: syn::Token![:] = input.parse()?;
-            if section == "order_by" {
-                order_by = Some(input.parse()?);
-            } else if section == "and" {
-                let content;
-                syn::bracketed!(content in input);
-                let (c, v) = parse_kv_bracket(&content)?;
-                and_cols = c;
-                and_vals = v;
-            } else if !parse_extra_conds_section(&mut ecs, &section, input)? {
-                return Err(syn::Error::new(
-                    section.span(),
-                    format!("unknown section: {}", section),
-                ));
-            }
-        }
-
-        Ok(Self {
-            pool,
-            table,
-            ty,
-            col,
-            val,
             order_by,
             and_cols,
             and_vals,
@@ -3315,14 +2928,14 @@ impl syn::parse::Parse for UpdateInput {
 
 // ── QueryPaged input ──
 
-/// `tenant_query_paged!(pool, Type, data_sql: "...", count_sql: "...", binds: [...], tenant: tid, page: page, page_size: page_size)`
+/// `crud_query_paged!(pool, Type, data_sql: "...", count_sql: "...", binds: [...], tenant: tid, page: page, page_size: page_size)`
 struct QueryPagedInput {
     pool: syn::Expr,
     ty: syn::Type,
     data_sql: syn::LitStr,
     count_sql: syn::LitStr,
     binds: Vec<syn::Expr>,
-    tid: syn::Expr,
+    tid: Option<syn::Expr>,
     page: syn::Expr,
     page_size: syn::Expr,
     where_cols: Vec<syn::LitStr>,
@@ -3399,7 +3012,6 @@ impl syn::parse::Parse for QueryPagedInput {
             data_sql.ok_or_else(|| syn::Error::new(ty.span(), "missing `data_sql:` section"))?;
         let count_sql =
             count_sql.ok_or_else(|| syn::Error::new(ty.span(), "missing `count_sql:` section"))?;
-        let tid = tid.ok_or_else(|| syn::Error::new(ty.span(), "missing `tenant:` section"))?;
         let page = page.ok_or_else(|| syn::Error::new(ty.span(), "missing `page:` section"))?;
         let page_size =
             page_size.ok_or_else(|| syn::Error::new(ty.span(), "missing `page_size:` section"))?;

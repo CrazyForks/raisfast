@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM tags WHERE id = ?1 AND tenant_id = ?2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "80487d83e9411405668d0e5c316550887ce8efb3b698131f8f7e4334d86b863b"
+}

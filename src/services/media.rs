@@ -235,13 +235,13 @@ pub async fn admin_delete_media(
         crate::db::dialect::ph(1),
         crate::db::tenant::tenant_filter_ph(auth.tenant_id(), 2)
     );
-    let (media_pk,): (i64,) = raisfast_derive::tenant_query!(
+    let (media_pk,): (i64,) = raisfast_derive::crud_query!(
         pool,
         (i64,),
         &sql,
         [media_id],
-        auth.tenant_id(),
-        fetch_optional
+        fetch_optional,
+        tenant: auth.tenant_id()
     )
     .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
     .ok_or_else(|| AppError::not_found("media"))?;
@@ -279,13 +279,13 @@ pub async fn delete_media(
         crate::db::dialect::ph(1),
         crate::db::tenant::tenant_filter_ph(auth.tenant_id(), 2)
     );
-    let (media_pk,): (i64,) = raisfast_derive::tenant_query!(
+    let (media_pk,): (i64,) = raisfast_derive::crud_query!(
         pool,
         (i64,),
         &sql2,
         [media_id],
-        auth.tenant_id(),
-        fetch_optional
+        fetch_optional,
+        tenant: auth.tenant_id()
     )
     .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
     .ok_or_else(|| AppError::not_found("media"))?;

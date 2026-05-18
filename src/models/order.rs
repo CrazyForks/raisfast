@@ -58,7 +58,8 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Order>> {
-    raisfast_derive::tenant_find!(pool, "orders", Order, "id" => id, tenant_id).map_err(Into::into)
+    raisfast_derive::crud_find!(pool, "orders", Order, "id" => id, tenant: tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn find_by_document_id(
@@ -66,7 +67,7 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Order>> {
-    raisfast_derive::tenant_find!(pool, "orders", Order, "document_id" => document_id, tenant_id)
+    raisfast_derive::crud_find!(pool, "orders", Order, "document_id" => document_id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -75,7 +76,7 @@ pub async fn find_by_order_no(
     order_no: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Order>> {
-    raisfast_derive::tenant_find!(pool, "orders", Order, "order_no" => order_no, tenant_id)
+    raisfast_derive::crud_find!(pool, "orders", Order, "order_no" => order_no, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -86,7 +87,7 @@ pub async fn find_by_user_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<Order>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, Order,
         data_sql: "SELECT * FROM orders WHERE user_id = ?{tenant} ORDER BY created_at DESC",
         count_sql: "SELECT COUNT(*) FROM orders WHERE user_id = ?{tenant}",
@@ -105,7 +106,7 @@ pub async fn find_all_admin_paginated(
     page_size: i64,
     status: Option<&str>,
 ) -> AppResult<(Vec<Order>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, Order,
         data_sql: "SELECT * FROM orders WHERE 1=1{tenant} ORDER BY created_at DESC",
         count_sql: "SELECT COUNT(*) FROM orders WHERE 1=1{tenant}",
@@ -125,7 +126,7 @@ pub async fn insert(
 ) -> AppResult<Order> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         pool,
         "orders",
         [
@@ -145,7 +146,7 @@ pub async fn insert(
             "created_at" => &now,
             "updated_at" => &now
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
     find_by_document_id(pool, &document_id, tenant_id)
         .await?
@@ -214,7 +215,7 @@ pub async fn update_shipped(
     carrier: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    raisfast_derive::tenant_update!(
+    raisfast_derive::crud_update!(
         pool, "orders",
         bind: [
             "status" => OrderStatus::Shipped.as_str(),
@@ -234,7 +235,7 @@ pub async fn update_admin_remark(
     admin_remark: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    raisfast_derive::tenant_update!(
+    raisfast_derive::crud_update!(
         pool, "orders",
         bind: ["admin_remark" => admin_remark],
         raw: ["updated_at" => "datetime('now')"],
@@ -250,7 +251,7 @@ pub async fn update_delivery_data(
     delivery_data: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    raisfast_derive::tenant_update!(
+    raisfast_derive::crud_update!(
         pool, "orders",
         bind: ["delivery_data" => delivery_data],
         raw: ["updated_at" => "datetime('now')"],
@@ -319,7 +320,7 @@ pub async fn tx_insert(
 ) -> AppResult<Order> {
     let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         &mut *tx,
         "orders",
         [
@@ -339,7 +340,7 @@ pub async fn tx_insert(
             "created_at" => &now,
             "updated_at" => &now
         ],
-        tenant_id
+        tenant: tenant_id
     )?;
     let sql = if tenant_id.is_some() {
         format!(
@@ -350,7 +351,7 @@ pub async fn tx_insert(
     } else {
         format!("SELECT * FROM orders WHERE document_id = {}", ph(1))
     };
-    raisfast_derive::tenant_query!(&mut *tx, Order, &sql, [&document_id], tenant_id, fetch_one)
+    raisfast_derive::crud_query!(&mut *tx, Order, &sql, [&document_id], fetch_one, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -416,7 +417,8 @@ pub async fn get_stats_query(
         "SELECT status, COUNT(*) as cnt FROM orders WHERE 1=1{} GROUP BY status",
         tenant_filter_ph(tenant_id, 1)
     );
-    let rows = raisfast_derive::tenant_query!(pool, (String, i64), &sql, [], tenant_id, fetch_all)?;
+    let rows =
+        raisfast_derive::crud_query!(pool, (String, i64), &sql, [], fetch_all, tenant: tenant_id)?;
 
     let mut total_orders: i64 = 0;
     let mut pending_orders: i64 = 0;
@@ -437,7 +439,7 @@ pub async fn get_stats_query(
         tenant_filter_ph(tenant_id, 1)
     );
     let (total_revenue,) =
-        raisfast_derive::tenant_query!(pool, (i64,), &rev_sql, [], tenant_id, fetch_one)?;
+        raisfast_derive::crud_query!(pool, (i64,), &rev_sql, [], fetch_one, tenant: tenant_id)?;
 
     Ok(crate::dto::OrderStatsResponse {
         total_orders,

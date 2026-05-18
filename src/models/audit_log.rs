@@ -27,7 +27,7 @@ pub struct AuditEntry {
 
 /// Insert an audit log entry
 pub async fn insert(pool: &crate::db::Pool, entry: &AuditEntry) -> AppResult<()> {
-    raisfast_derive::tenant_insert!(
+    raisfast_derive::crud_insert!(
         pool,
         "audit_log",
         [
@@ -42,7 +42,7 @@ pub async fn insert(pool: &crate::db::Pool, entry: &AuditEntry) -> AppResult<()>
             "user_agent" => &entry.user_agent,
             "created_at" => entry.created_at
         ],
-        entry.tenant_id.as_deref()
+        tenant: entry.tenant_id.as_deref()
     )?;
     Ok(())
 }
@@ -56,7 +56,7 @@ pub async fn find_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<AuditEntry>, i64)> {
-    let result = raisfast_derive::tenant_query_paged!(
+    let result = raisfast_derive::crud_query_paged!(
         pool, AuditEntry,
         data_sql: "SELECT * FROM audit_log WHERE 1=1 ORDER BY created_at DESC",
         count_sql: "SELECT COUNT(*) FROM audit_log WHERE 1=1",
