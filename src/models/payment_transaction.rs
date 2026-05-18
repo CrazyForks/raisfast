@@ -1,11 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::db::dialect::ph;
-use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct PaymentTransaction {
     pub id: i64,
     pub document_id: String,
@@ -22,30 +20,13 @@ pub struct PaymentTransaction {
     pub created_at: Timestamp,
 }
 
-crate::impl_from_row_opt_tenant!(PaymentTransaction {
-    required { id, document_id, payment_order_id, user_id, tx_type, amount, currency, provider_tx_id, status, created_at }
-    optional { order_id, raw_payload }
-});
-
 pub async fn find_by_id(
     pool: &crate::db::Pool,
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentTransaction>> {
-    let sql = format!(
-        "SELECT * FROM payment_transactions WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    raisfast_derive::tenant_query!(
-        pool,
-        PaymentTransaction,
-        &sql,
-        [id],
-        tenant_id,
-        fetch_optional
-    )
-    .map_err(Into::into)
+    raisfast_derive::tenant_find!(pool, "payment_transactions", PaymentTransaction, "id" => id, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn find_by_payment_order_id(
@@ -53,20 +34,8 @@ pub async fn find_by_payment_order_id(
     payment_order_id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<PaymentTransaction>> {
-    let sql = format!(
-        "SELECT * FROM payment_transactions WHERE payment_order_id = {}{} ORDER BY created_at DESC",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    raisfast_derive::tenant_query!(
-        pool,
-        PaymentTransaction,
-        &sql,
-        [payment_order_id],
-        tenant_id,
-        fetch_all
-    )
-    .map_err(Into::into)
+    raisfast_derive::tenant_find_all!(pool, "payment_transactions", PaymentTransaction, "payment_order_id" => payment_order_id, tenant_id, order_by: "created_at DESC")
+        .map_err(Into::into)
 }
 
 pub async fn find_by_order_id(
@@ -74,20 +43,8 @@ pub async fn find_by_order_id(
     order_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<PaymentTransaction>> {
-    let sql = format!(
-        "SELECT * FROM payment_transactions WHERE order_id = {}{} ORDER BY created_at DESC",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    raisfast_derive::tenant_query!(
-        pool,
-        PaymentTransaction,
-        &sql,
-        [order_id],
-        tenant_id,
-        fetch_all
-    )
-    .map_err(Into::into)
+    raisfast_derive::tenant_find_all!(pool, "payment_transactions", PaymentTransaction, "order_id" => order_id, tenant_id, order_by: "created_at DESC")
+        .map_err(Into::into)
 }
 
 pub async fn find_by_provider_tx_id(
@@ -95,20 +52,8 @@ pub async fn find_by_provider_tx_id(
     provider_tx_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentTransaction>> {
-    let sql = format!(
-        "SELECT * FROM payment_transactions WHERE provider_tx_id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    raisfast_derive::tenant_query!(
-        pool,
-        PaymentTransaction,
-        &sql,
-        [provider_tx_id],
-        tenant_id,
-        fetch_optional
-    )
-    .map_err(Into::into)
+    raisfast_derive::tenant_find!(pool, "payment_transactions", PaymentTransaction, "provider_tx_id" => provider_tx_id, tenant_id)
+        .map_err(Into::into)
 }
 
 async fn find_by_document_id(
@@ -116,20 +61,8 @@ async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentTransaction>> {
-    let sql = format!(
-        "SELECT * FROM payment_transactions WHERE document_id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    raisfast_derive::tenant_query!(
-        pool,
-        PaymentTransaction,
-        &sql,
-        [document_id],
-        tenant_id,
-        fetch_optional
-    )
-    .map_err(Into::into)
+    raisfast_derive::tenant_find!(pool, "payment_transactions", PaymentTransaction, "document_id" => document_id, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn find_all_admin_paginated(

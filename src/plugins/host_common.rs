@@ -821,10 +821,6 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
 
         let config = make_test_config();
         let ctx = HostContext::new(
@@ -847,10 +843,6 @@ mod tests {
     async fn host_context_get_data_isolation_between_plugins() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -886,10 +878,6 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
 
         let perms = Permissions {
             database: vec!["posts".into()],
@@ -910,10 +898,6 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
 
         let perms = Permissions {
             database: vec!["read:comments".into()],
@@ -930,10 +914,6 @@ mod tests {
     async fn host_context_db_query_wildcard_permission() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1008,10 +988,6 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
 
         let perms = Permissions {
             database: vec!["tags".into()],
@@ -1041,10 +1017,6 @@ mod tests {
     async fn host_context_db_execute_parameterized() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1134,10 +1106,6 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
 
         let perms = Permissions {
             database: vec!["tags".into()],
@@ -1171,10 +1139,6 @@ mod tests {
     async fn host_context_transaction_rollback_discards() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1231,10 +1195,6 @@ mod tests {
     async fn host_context_cleanup_tx_rolls_back() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();

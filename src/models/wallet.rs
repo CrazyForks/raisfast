@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
@@ -30,17 +29,7 @@ pub async fn find_by_user_and_currency(
     user_id: i64,
     currency: &str,
 ) -> AppResult<Option<Wallet>> {
-    raisfast_derive::check_schema!("wallets", "user_id", "currency");
-    let sql = format!(
-        "SELECT * FROM wallets WHERE user_id = {} AND currency = {}",
-        ph(1),
-        ph(2)
-    );
-    sqlx::query_as::<_, Wallet>(&sql)
-        .bind(user_id)
-        .bind(currency)
-        .fetch_optional(pool)
-        .await
+    raisfast_derive::crud_find!(pool, "wallets", Wallet, "user_id" => user_id, and: ["currency" => currency])
         .map_err(Into::into)
 }
 
@@ -84,46 +73,16 @@ pub async fn find_all_wallets(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Wallet>, i64)> {
     raisfast_derive::check_schema!("wallets", "tenant_id", "created_at");
-    let offset = (page - 1) * page_size;
-    let (total,): (i64,) = if let Some(tid) = tenant_id {
-        sqlx::query_as(&format!(
-            "SELECT COUNT(*) as count FROM wallets WHERE tenant_id = {}",
-            crate::db::dialect::ph(1)
-        ))
-        .bind(tid)
-        .fetch_one(pool)
-        .await?
-    } else {
-        sqlx::query_as("SELECT COUNT(*) as count FROM wallets")
-            .fetch_one(pool)
-            .await?
-    };
-    let rows = if let Some(tid) = tenant_id {
-        let sql = format!(
-            "SELECT * FROM wallets WHERE tenant_id = {} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-            crate::db::dialect::ph(1),
-            crate::db::dialect::ph(2),
-            crate::db::dialect::ph(3)
-        );
-        sqlx::query_as::<_, Wallet>(&sql)
-            .bind(tid)
-            .bind(page_size)
-            .bind(offset)
-            .fetch_all(pool)
-            .await?
-    } else {
-        let sql = format!(
-            "SELECT * FROM wallets ORDER BY created_at DESC LIMIT {} OFFSET {}",
-            crate::db::dialect::ph(1),
-            crate::db::dialect::ph(2)
-        );
-        sqlx::query_as::<_, Wallet>(&sql)
-            .bind(page_size)
-            .bind(offset)
-            .fetch_all(pool)
-            .await?
-    };
-    Ok((rows, total))
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, Wallet,
+        data_sql: "SELECT * FROM wallets WHERE 1=1{tenant} ORDER BY created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM wallets WHERE 1=1{tenant}",
+        binds: [],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
+    );
+    Ok(result)
 }
 
 #[cfg(test)]

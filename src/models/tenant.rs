@@ -44,9 +44,7 @@ pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Tenant>> {
         "created_at",
         "updated_at"
     );
-    let tenants = sqlx::query_as::<_, Tenant>("SELECT * FROM tenants ORDER BY name")
-        .fetch_all(pool)
-        .await?;
+    let tenants = raisfast_derive::crud_list!(pool, "tenants", Tenant, order_by: "name")?;
     Ok(tenants)
 }
 
@@ -127,10 +125,6 @@ mod tests {
     async fn setup_pool() -> crate::db::Pool {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();

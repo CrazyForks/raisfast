@@ -62,16 +62,13 @@ pub async fn find_by_token(
     pool: &crate::db::Pool,
     token: &str,
 ) -> AppResult<Option<EmailVerificationToken>> {
-    raisfast_derive::check_schema!("email_verification_tokens", "token", "verified_at");
-    let sql = format!(
-        "SELECT * FROM email_verification_tokens WHERE token = {} AND verified_at IS NULL",
-        ph(1),
-    );
-    let row = sqlx::query_as::<_, EmailVerificationToken>(&sql)
-        .bind(token)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row)
+    Ok(raisfast_derive::crud_find!(
+        pool,
+        "email_verification_tokens",
+        EmailVerificationToken,
+        "token" => token,
+        and_null: ["verified_at"]
+    )?)
 }
 
 /// Mark a token as verified
@@ -86,12 +83,12 @@ pub async fn mark_verified(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
 
 /// Delete all unused verification tokens for a user
 pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<()> {
-    raisfast_derive::check_schema!("email_verification_tokens", "user_id", "verified_at");
-    let sql = format!(
-        "DELETE FROM email_verification_tokens WHERE user_id = {} AND verified_at IS NULL",
-        ph(1),
-    );
-    sqlx::query(&sql).bind(user_id).execute(pool).await?;
+    raisfast_derive::crud_delete!(
+        pool,
+        "email_verification_tokens",
+        "user_id" => user_id,
+        and_null: ["verified_at"]
+    )?;
     Ok(())
 }
 

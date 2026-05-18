@@ -62,30 +62,16 @@ pub async fn find_transactions_by_wallet(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
-    raisfast_derive::check_schema!("wallet_transactions", "wallet_id", "created_at");
-    let offset = (page - 1) * page_size;
-    let count_sql = format!(
-        "SELECT COUNT(*) as count FROM wallet_transactions WHERE wallet_id = {}",
-        ph(1)
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, WalletTransaction,
+        data_sql: "SELECT * FROM wallet_transactions WHERE wallet_id = ? ORDER BY created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM wallet_transactions WHERE wallet_id = ?",
+        binds: [wallet_id],
+        tenant: None::<&str>,
+        page: page,
+        page_size: page_size
     );
-    let (total,): (i64,) = sqlx::query_as(&count_sql)
-        .bind(wallet_id)
-        .fetch_one(pool)
-        .await?;
-
-    let sql = format!(
-        "SELECT * FROM wallet_transactions WHERE wallet_id = {} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-        ph(1),
-        ph(2),
-        ph(3)
-    );
-    let rows = sqlx::query_as::<_, WalletTransaction>(&sql)
-        .bind(wallet_id)
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
-    Ok((rows, total))
+    Ok(result)
 }
 
 pub async fn find_transactions_by_user(
@@ -94,30 +80,16 @@ pub async fn find_transactions_by_user(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
-    raisfast_derive::check_schema!("wallet_transactions", "user_id", "created_at");
-    let offset = (page - 1) * page_size;
-    let count_sql = format!(
-        "SELECT COUNT(*) as count FROM wallet_transactions WHERE user_id = {}",
-        ph(1)
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, WalletTransaction,
+        data_sql: "SELECT * FROM wallet_transactions WHERE user_id = ? ORDER BY created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM wallet_transactions WHERE user_id = ?",
+        binds: [user_id],
+        tenant: None::<&str>,
+        page: page,
+        page_size: page_size
     );
-    let (total,): (i64,) = sqlx::query_as(&count_sql)
-        .bind(user_id)
-        .fetch_one(pool)
-        .await?;
-
-    let sql = format!(
-        "SELECT * FROM wallet_transactions WHERE user_id = {} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-        ph(1),
-        ph(2),
-        ph(3)
-    );
-    let rows = sqlx::query_as::<_, WalletTransaction>(&sql)
-        .bind(user_id)
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
-    Ok((rows, total))
+    Ok(result)
 }
 
 pub async fn find_all_transactions(
@@ -127,46 +99,16 @@ pub async fn find_all_transactions(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
     raisfast_derive::check_schema!("wallet_transactions", "tenant_id", "created_at");
-    let offset = (page - 1) * page_size;
-    let (total,): (i64,) = if let Some(tid) = tenant_id {
-        sqlx::query_as(&format!(
-            "SELECT COUNT(*) as count FROM wallet_transactions WHERE tenant_id = {}",
-            crate::db::dialect::ph(1)
-        ))
-        .bind(tid)
-        .fetch_one(pool)
-        .await?
-    } else {
-        sqlx::query_as("SELECT COUNT(*) as count FROM wallet_transactions")
-            .fetch_one(pool)
-            .await?
-    };
-    let rows = if let Some(tid) = tenant_id {
-        let sql = format!(
-            "SELECT * FROM wallet_transactions WHERE tenant_id = {} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-            crate::db::dialect::ph(1),
-            crate::db::dialect::ph(2),
-            crate::db::dialect::ph(3)
-        );
-        sqlx::query_as::<_, WalletTransaction>(&sql)
-            .bind(tid)
-            .bind(page_size)
-            .bind(offset)
-            .fetch_all(pool)
-            .await?
-    } else {
-        let sql = format!(
-            "SELECT * FROM wallet_transactions ORDER BY created_at DESC LIMIT {} OFFSET {}",
-            crate::db::dialect::ph(1),
-            crate::db::dialect::ph(2)
-        );
-        sqlx::query_as::<_, WalletTransaction>(&sql)
-            .bind(page_size)
-            .bind(offset)
-            .fetch_all(pool)
-            .await?
-    };
-    Ok((rows, total))
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, WalletTransaction,
+        data_sql: "SELECT * FROM wallet_transactions WHERE 1=1{tenant} ORDER BY created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM wallet_transactions WHERE 1=1{tenant}",
+        binds: [],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
+    );
+    Ok(result)
 }
 
 pub async fn find_tx_by_transaction_no(
@@ -194,17 +136,10 @@ pub async fn find_tx_by_document_id(
 }
 
 pub async fn has_reversal_for(pool: &crate::db::Pool, related_tx_id: i64) -> AppResult<bool> {
-    raisfast_derive::check_schema!("wallet_transactions", "related_tx_id", "tx_type");
-    let sql = format!(
-        "SELECT COUNT(*) as count FROM wallet_transactions WHERE related_tx_id = {} AND tx_type = {}",
-        ph(1),
-        ph(2)
-    );
-    let (count,): (i64,) = sqlx::query_as(&sql)
-        .bind(related_tx_id)
-        .bind(WalletTxType::Refund)
-        .fetch_one(pool)
-        .await?;
+    let count: i64 = raisfast_derive::crud_count!(
+        pool, "wallet_transactions", "related_tx_id" => related_tx_id,
+        and: ["tx_type" => WalletTxType::Refund]
+    )?;
     Ok(count > 0)
 }
 

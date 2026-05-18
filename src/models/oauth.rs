@@ -104,31 +104,14 @@ pub async fn find_by_provider_user(
     provider: &str,
     provider_user_id: &str,
 ) -> AppResult<Option<OAuthAccount>> {
-    raisfast_derive::check_schema!("oauth_accounts", "provider", "provider_user_id");
-    let sql = format!(
-        "SELECT * FROM oauth_accounts WHERE provider = {} AND provider_user_id = {}",
-        ph(1),
-        ph(2)
-    );
-    let account = sqlx::query_as::<_, OAuthAccount>(&sql)
-        .bind(provider)
-        .bind(provider_user_id)
-        .fetch_optional(pool)
-        .await?;
-    Ok(account)
+    raisfast_derive::crud_find!(pool, "oauth_accounts", OAuthAccount, "provider" => provider, and: ["provider_user_id" => provider_user_id])
+        .map_err(Into::into)
 }
 
 /// Find all OAuth bindings for a user
 pub async fn find_by_user_id(pool: &crate::db::Pool, user_id: i64) -> AppResult<Vec<OAuthAccount>> {
     raisfast_derive::check_schema!("oauth_accounts", "user_id", "created_at");
-    let sql = format!(
-        "SELECT * FROM oauth_accounts WHERE user_id = {} ORDER BY created_at",
-        ph(1)
-    );
-    let accounts = sqlx::query_as::<_, OAuthAccount>(&sql)
-        .bind(user_id)
-        .fetch_all(pool)
-        .await?;
+    let accounts = raisfast_derive::crud_find_all!(pool, "oauth_accounts", OAuthAccount, "user_id" => user_id, order_by: "created_at")?;
     Ok(accounts)
 }
 
@@ -214,32 +197,13 @@ pub async fn delete_account(
     user_id: i64,
     provider: &str,
 ) -> AppResult<bool> {
-    raisfast_derive::check_schema!("oauth_accounts", "user_id", "provider");
-    let sql = format!(
-        "DELETE FROM oauth_accounts WHERE user_id = {} AND provider = {}",
-        ph(1),
-        ph(2)
-    );
-    let result = sqlx::query(&sql)
-        .bind(user_id)
-        .bind(provider)
-        .execute(pool)
-        .await?;
+    let result = raisfast_derive::crud_delete!(pool, "oauth_accounts", "user_id" => user_id, and: ["provider" => provider])?;
     Ok(result.rows_affected() > 0)
 }
 
 /// Count the number of OAuth providers bound to a user
 pub async fn count_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<i64> {
-    raisfast_derive::check_schema!("oauth_accounts", "user_id");
-    let sql = format!(
-        "SELECT COUNT(*) FROM oauth_accounts WHERE user_id = {}",
-        ph(1)
-    );
-    let (count,) = sqlx::query_as::<_, (i64,)>(&sql)
-        .bind(user_id)
-        .fetch_one(pool)
-        .await?;
-    Ok(count)
+    Ok(raisfast_derive::crud_count!(pool, "oauth_accounts", "user_id" => user_id)?)
 }
 
 #[cfg(test)]

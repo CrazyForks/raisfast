@@ -112,16 +112,12 @@ pub async fn set(
 
 /// Delete a specific key for a plugin
 pub async fn delete(pool: &Pool, plugin_id: &str, key: &str) -> AppResult<()> {
-    raisfast_derive::check_schema!("plugin_storage", "plugin_id", "storage_key");
-    sqlx::query(&format!(
-        "DELETE FROM plugin_storage WHERE plugin_id = {} AND storage_key = {}",
-        ph(1),
-        ph(2),
-    ))
-    .bind(plugin_id)
-    .bind(key)
-    .execute(pool)
-    .await?;
+    raisfast_derive::crud_delete!(
+        pool,
+        "plugin_storage",
+        "plugin_id" => plugin_id,
+        and: ["storage_key" => key]
+    )?;
     Ok(())
 }
 

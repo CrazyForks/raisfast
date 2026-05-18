@@ -141,6 +141,64 @@ pub fn crud_scalar(input: TokenStream) -> TokenStream {
     crud::crud_scalar(input)
 }
 
+/// `tenant_select!(pool, "table", ["col1", "col2"], "where_col" => val, tenant_id)`
+///
+/// Generates `SELECT col1, col2 FROM table WHERE where_col = ? AND tenant_id = ?` via `sqlx::query_as`.
+/// Returns `Option<(col1_type, col2_type, ...)>`. Supports optional `and:` parameter.
+#[proc_macro]
+pub fn tenant_select(input: TokenStream) -> TokenStream {
+    crud::tenant_select(input)
+}
+
+/// `crud_select!(pool, "table", ["col1", "col2"], "where_col" => val)`
+///
+/// Same as `tenant_select!` but without tenant filtering.
+#[proc_macro]
+pub fn crud_select(input: TokenStream) -> TokenStream {
+    crud::crud_select(input)
+}
+
+/// `tenant_join!(pool, Type, select: [...], from: "...", joins: [LEFT "table" ON "..."], where: "col" => val, tenant_alias: "...", tenant: tid, method: fetch_one)`
+///
+/// Generates a JOIN query with tenant filtering.
+/// `joins:` entries use keywords `INNER`/`LEFT`/`RIGHT` before the table name.
+#[proc_macro]
+pub fn tenant_join(input: TokenStream) -> TokenStream {
+    crud::tenant_join(input)
+}
+
+/// `crud_join!(pool, Type, select: [...], from: "...", joins: [...], where: "col" => val, method: fetch_all)`
+///
+/// Same as `tenant_join!` but without tenant filtering.
+#[proc_macro]
+pub fn crud_join(input: TokenStream) -> TokenStream {
+    crud::crud_join(input)
+}
+
+/// `tenant_join_paged!(pool, Type, select: [...], from: "...", joins: [...], and: [...], tenant_alias: "...", tenant: tid, order_by: "...", page: page, page_size: page_size)`
+///
+/// Generates a paginated JOIN query with COUNT. Returns `(Vec<T>, i64)`.
+#[proc_macro]
+pub fn tenant_join_paged(input: TokenStream) -> TokenStream {
+    crud::tenant_join_paged(input)
+}
+
+/// `tenant_count!(pool, "table", "col" => val, tenant_id [, and: ["c" => v, ...]])`
+///
+/// `SELECT COUNT(*) FROM table WHERE col = ? [AND c = ? ...] [AND tenant_id = ?]` → `i64`.
+#[proc_macro]
+pub fn tenant_count(input: TokenStream) -> TokenStream {
+    crud::tenant_count(input)
+}
+
+/// `crud_count!(pool, "table", "col" => val [, and: ["c" => v, ...]])`
+///
+/// `SELECT COUNT(*) FROM table WHERE col = ? [AND c = ? ...]` → `i64`.
+#[proc_macro]
+pub fn crud_count(input: TokenStream) -> TokenStream {
+    crud::crud_count(input)
+}
+
 /// `tenant_query!(pool, Type, sql, [vals], tenant_id, method)`
 ///
 /// Generates `sqlx::query_as::<_, Type>(sql)` with optional tenant bind. Runtime query.

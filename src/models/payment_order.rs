@@ -33,7 +33,7 @@ define_enum!(
     }
 );
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct PaymentOrder {
     pub id: i64,
     pub document_id: String,
@@ -66,11 +66,6 @@ pub struct PaymentOrder {
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
-
-crate::impl_from_row_opt_tenant!(PaymentOrder {
-    required { id, document_id, user_id, title, amount, currency, channel_id, provider, status, idempotency_key, version, created_at, updated_at }
-    optional { order_id, provider_order_id, provider_method, reference_type, reference_id, return_url, provider_data, client_ip, client_language, client_country, client_user_agent, channel_selected_by, metadata, paid_at, cancelled_at, expired_at }
-});
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,

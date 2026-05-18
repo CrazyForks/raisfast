@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
@@ -26,15 +25,7 @@ pub async fn find_active_by_code(
     pool: &crate::db::Pool,
     code: &str,
 ) -> AppResult<Option<Currency>> {
-    raisfast_derive::check_schema!("currencies", "code", "is_active");
-    let sql = format!(
-        "SELECT * FROM currencies WHERE code = {} AND is_active = 1",
-        ph(1)
-    );
-    sqlx::query_as::<_, Currency>(&sql)
-        .bind(code)
-        .fetch_optional(pool)
-        .await
+    raisfast_derive::crud_find!(pool, "currencies", Currency, "code" => code, and: ["is_active" => 1i64])
         .map_err(Into::into)
 }
 
@@ -42,15 +33,7 @@ pub async fn find_by_code_tx(
     tx: &mut crate::db::pool::DbConnection,
     code: &str,
 ) -> AppResult<Option<Currency>> {
-    raisfast_derive::check_schema!("currencies", "code", "is_active");
-    let sql = format!(
-        "SELECT * FROM currencies WHERE code = {} AND is_active = 1",
-        ph(1)
-    );
-    sqlx::query_as::<_, Currency>(&sql)
-        .bind(code)
-        .fetch_optional(tx)
-        .await
+    raisfast_derive::crud_find!(tx, "currencies", Currency, "code" => code, and: ["is_active" => 1i64])
         .map_err(Into::into)
 }
 
@@ -67,11 +50,7 @@ pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Currency>> {
         "created_at",
         "updated_at"
     );
-    let sql = "SELECT * FROM currencies ORDER BY code";
-    sqlx::query_as::<_, Currency>(sql)
-        .fetch_all(pool)
-        .await
-        .map_err(Into::into)
+    raisfast_derive::crud_list!(pool, "currencies", Currency, order_by: "code").map_err(Into::into)
 }
 
 pub async fn create(
@@ -123,23 +102,13 @@ pub async fn update(
     let is_active = is_active.unwrap_or(existing.is_active);
     let now = crate::utils::tz::now_str();
 
-    let sql = format!(
-        "UPDATE currencies SET name = {}, is_active = {}, version = version + 1, updated_at = {} WHERE id = {} AND version = {}",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5)
-    );
-    let affected = sqlx::query(&sql)
-        .bind(name)
-        .bind(is_active)
-        .bind(now)
-        .bind(existing.id)
-        .bind(existing.version)
-        .execute(pool)
-        .await?
-        .rows_affected();
+    let result = raisfast_derive::crud_update!(pool, "currencies",
+        bind: ["name" => name, "is_active" => is_active, "updated_at" => now],
+        raw: ["version" => "version + 1"],
+        where: "id" => existing.id,
+        and: ["version" => existing.version]
+    )?;
+    let affected = result.rows_affected();
 
     if affected == 0 {
         return Err(crate::errors::app_error::AppError::Conflict(
@@ -151,21 +120,13 @@ pub async fn update(
 }
 
 pub async fn delete_by_code(pool: &crate::db::Pool, code: &str) -> AppResult<bool> {
-    raisfast_derive::check_schema!("currencies", "id", "code");
-    raisfast_derive::check_schema!("wallets", "currency");
     let existing = find_by_code(pool, code).await?;
     let existing = match existing {
         Some(e) => e,
         None => return Ok(false),
     };
 
-    let (count,): (i64,) = sqlx::query_as(&format!(
-        "SELECT COUNT(*) as count FROM wallets WHERE currency = {}",
-        ph(1)
-    ))
-    .bind(code)
-    .fetch_one(pool)
-    .await?;
+    let count: i64 = raisfast_derive::crud_count!(pool, "wallets", "currency" => code)?;
 
     if count > 0 {
         return Err(crate::errors::app_error::AppError::BadRequest(format!(
@@ -173,13 +134,8 @@ pub async fn delete_by_code(pool: &crate::db::Pool, code: &str) -> AppResult<boo
         )));
     }
 
-    let sql = format!("DELETE FROM currencies WHERE id = {}", ph(1));
-    let affected = sqlx::query(&sql)
-        .bind(existing.id)
-        .execute(pool)
-        .await?
-        .rows_affected();
-    Ok(affected > 0)
+    let result = raisfast_derive::crud_delete!(pool, "currencies", "id" => existing.id)?;
+    Ok(result.rows_affected() > 0)
 }
 
 #[cfg(test)]

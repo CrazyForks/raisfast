@@ -63,16 +63,13 @@ pub async fn find_by_token(
     pool: &crate::db::Pool,
     token: &str,
 ) -> AppResult<Option<PasswordResetToken>> {
-    raisfast_derive::check_schema!("password_reset_tokens", "token", "used_at");
-    let sql = format!(
-        "SELECT * FROM password_reset_tokens WHERE token = {} AND used_at IS NULL",
-        ph(1),
-    );
-    let row = sqlx::query_as::<_, PasswordResetToken>(&sql)
-        .bind(token)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row)
+    Ok(raisfast_derive::crud_find!(
+        pool,
+        "password_reset_tokens",
+        PasswordResetToken,
+        "token" => token,
+        and_null: ["used_at"]
+    )?)
 }
 
 /// Mark a token as used
@@ -87,12 +84,12 @@ pub async fn mark_used(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
 
 /// Delete all unused reset tokens for a user (called before creating a new token to prevent token accumulation)
 pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<()> {
-    raisfast_derive::check_schema!("password_reset_tokens", "user_id", "used_at");
-    let sql = format!(
-        "DELETE FROM password_reset_tokens WHERE user_id = {} AND used_at IS NULL",
-        ph(1),
-    );
-    sqlx::query(&sql).bind(user_id).execute(pool).await?;
+    raisfast_derive::crud_delete!(
+        pool,
+        "password_reset_tokens",
+        "user_id" => user_id,
+        and_null: ["used_at"]
+    )?;
     Ok(())
 }
 

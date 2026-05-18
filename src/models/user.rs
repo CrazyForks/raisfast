@@ -38,7 +38,7 @@ define_enum!(
 );
 
 /// Full database row model for users
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 #[non_exhaustive]
 pub struct User {
     pub id: i64,
@@ -59,11 +59,6 @@ pub struct User {
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
-
-crate::impl_from_row_opt_tenant!(User {
-    required { id, document_id, username, role, status, registered_via, created_at, updated_at }
-    optional { avatar, bio, website, display_name, slug, locale, social_links, metadata }
-});
 
 pub fn parse_social_links(raw: &Option<String>) -> Option<SocialLinks> {
     raw.as_ref().and_then(|s| serde_json::from_str(s).ok())
@@ -95,9 +90,7 @@ pub async fn find_by_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<User>> {
-    Ok(
-        raisfast_derive::tenant_find!(pool, "users", User, "document_id" => document_id, tenant_id)?,
-    )
+    Ok(raisfast_derive::tenant_find!(pool, "users", User, "document_id" => document_id, tenant_id)?)
 }
 
 /// Find user by integer primary key (internal FK lookup)

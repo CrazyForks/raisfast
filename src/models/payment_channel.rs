@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct PaymentChannel {
     pub id: i64,
     pub document_id: String,
@@ -20,11 +20,6 @@ pub struct PaymentChannel {
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
-
-crate::impl_from_row_opt_tenant!(PaymentChannel {
-    required { id, document_id, provider, name, is_live, credentials, is_active, sort_order, version, created_at, updated_at }
-    optional { webhook_secret, settings }
-});
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,

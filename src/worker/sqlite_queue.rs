@@ -397,10 +397,6 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
         SqliteJobQueue::new(pool)
     }
 
@@ -416,10 +412,6 @@ mod tests {
     async fn enqueue_and_dequeue() {
         let pool = Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();

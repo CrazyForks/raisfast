@@ -110,10 +110,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> for OptionRow {
 
 /// Query all autoload options (preloaded at startup)
 pub async fn find_autoload(pool: &crate::db::Pool) -> AppResult<Vec<OptionRow>> {
-    raisfast_derive::check_schema!("options", "autoload");
-    let sql = "SELECT * FROM options WHERE autoload = 1";
-    let rows = sqlx::query_as::<_, OptionRow>(sql).fetch_all(pool).await?;
-    Ok(rows)
+    Ok(raisfast_derive::crud_find_all!(pool, "options", OptionRow, "autoload" => 1_i64)?)
 }
 
 /// Query a single option by key

@@ -21,7 +21,16 @@ pub async fn list_revisions(
 ) -> AppResult<(Vec<RevisionSummary>, i64)> {
     let items = content_revision::list_revisions(pool, content_type, content_id).await?;
     let total = items.len() as i64;
-    Ok((items, total))
+    let summaries = items
+        .into_iter()
+        .map(|r| RevisionSummary {
+            id: r.id,
+            revision_number: r.revision_number,
+            created_by: r.created_by,
+            created_at: r.created_at,
+        })
+        .collect();
+    Ok((summaries, total))
 }
 
 pub async fn get_revision(

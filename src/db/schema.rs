@@ -11,12 +11,3 @@ pub const SCHEMA_SQL: &str = include_str!("../../migrations/postgres/schema.post
 
 #[cfg(feature = "db-mysql")]
 pub const SCHEMA_SQL: &str = include_str!("../../migrations/mysql/schema.mysql.sql");
-
-#[cfg(feature = "db-sqlite")]
-pub const TENANTABLE_SQL: &str = include_str!("../../migrations/sqlite/tenantable.sqlite.sql");
-
-#[cfg(feature = "db-postgres")]
-pub const TENANTABLE_SQL: &str = include_str!("../../migrations/postgres/tenantable.postgres.sql");
-
-#[cfg(feature = "db-mysql")]
-pub const TENANTABLE_SQL: &str = include_str!("../../migrations/mysql/tenantable.mysql.sql");

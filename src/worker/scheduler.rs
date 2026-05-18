@@ -835,10 +835,6 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
 
         let s = create_schedule(
             &pool,
@@ -863,10 +859,6 @@ mod tests {
     async fn toggle_and_delete_schedule() {
         let pool = Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -897,10 +889,6 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
 
         let result = toggle_schedule(&pool, "nonexistent", true).await;
         assert!(result.is_err());
@@ -910,10 +898,6 @@ mod tests {
     async fn list_schedules_returns_all() {
         let pool = Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -936,10 +920,6 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
 
         seed_defaults(&pool, &[]).await.unwrap();
 
@@ -956,10 +936,6 @@ mod tests {
     async fn scheduler_dispatches_due_schedule() {
         let pool = Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1011,10 +987,6 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
 
         let queue = std::sync::Arc::new(super::super::SqliteJobQueue::new(pool.clone()));
 
@@ -1054,10 +1026,6 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
 
         let entries = vec![CronEntry {
             label: "Cleanup".into(),
@@ -1082,10 +1050,6 @@ mod tests {
     async fn sync_plugin_crons_updates_existing() {
         let pool = Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1122,10 +1086,6 @@ mod tests {
     async fn sync_plugin_crons_removes_stale_entries() {
         let pool = Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1170,10 +1130,6 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
 
         let entries = vec![CronEntry {
             label: "X".into(),
@@ -1195,10 +1151,6 @@ mod tests {
     async fn remove_plugin_crons_does_not_affect_others() {
         let pool = Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1234,10 +1186,6 @@ mod tests {
     async fn setup_log_tables() -> Pool {
         let pool = Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();
@@ -1370,10 +1318,6 @@ mod tests {
     async fn scheduler_dispatch_creates_execution_log() {
         let pool = Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();

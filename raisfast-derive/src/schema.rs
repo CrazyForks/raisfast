@@ -137,15 +137,9 @@ impl Schema {
         let ext = dialect.schema_ext();
 
         let schema_file = format!("{}{}{}", dir, "/schema", ext);
-        let tenant_file = format!("{}{}{}", dir, "/tenantable", ext);
-
         let schema_sql = std::fs::read_to_string(base.join(&schema_file)).unwrap_or_default();
-        let tenantable_sql = std::fs::read_to_string(base.join(&tenant_file)).unwrap_or_default();
 
-        let mut tables = parse_schema(&schema_sql);
-        let tenant_tables = parse_schema(&tenantable_sql);
-        tables.extend(tenant_tables);
-        apply_tenant_columns(&tenantable_sql, &mut tables);
+        let tables = parse_schema(&schema_sql);
 
         Schema { tables, dialect }
     }
@@ -314,43 +308,4 @@ fn parse_column_line(line: &str) -> Option<ColumnSchema> {
         nullable,
         has_default,
     })
-}
-
-/// Parse `ALTER TABLE ... ADD COLUMN ...` statements and inject those columns
-/// into the existing table schemas.
-///
-/// This handles the tenantable migration which adds `tenant_id` columns to
-/// existing tables via ALTER TABLE rather than modifying the original CREATE TABLE.
-fn apply_tenant_columns(sql: &str, tables: &mut HashMap<String, TableSchema>) {
-    for line in sql.lines() {
-        let trimmed = line.trim();
-        let rest = match trimmed.strip_prefix("ALTER TABLE") {
-            Some(r) => r.trim(),
-            None => continue,
-        };
-
-        let rest = rest.strip_prefix("IF EXISTS").unwrap_or(rest).trim();
-        let table_name = match rest
-            .split(|c: char| !c.is_alphanumeric() && c != '_')
-            .next()
-        {
-            Some(n) if !n.is_empty() => n.to_lowercase(),
-            _ => continue,
-        };
-
-        let rest = if let Some(r) = rest.find("ADD COLUMN") {
-            &rest[r + "ADD COLUMN".len()..]
-        } else {
-            continue;
-        };
-
-        let col = match parse_column_line(rest) {
-            Some(c) => c,
-            None => continue,
-        };
-
-        if let Some(t) = tables.get_mut(&table_name) {
-            t.columns.push(col);
-        }
-    }
 }

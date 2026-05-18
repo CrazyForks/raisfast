@@ -36,14 +36,6 @@ pub struct RevisionSummary {
     pub created_at: Timestamp,
 }
 
-#[derive(Debug, FromRow)]
-struct RevisionSummaryRow {
-    id: i64,
-    revision_number: i64,
-    created_by: Option<i64>,
-    created_at: Timestamp,
-}
-
 pub async fn create_revision(
     pool: &crate::db::Pool,
     content_type: &str,
@@ -103,36 +95,10 @@ pub async fn list_revisions(
     pool: &crate::db::Pool,
     content_type: &str,
     record_id: &str,
-) -> AppResult<Vec<RevisionSummary>> {
-    raisfast_derive::check_schema!(
-        "content_revisions",
-        "id",
-        "revision_number",
-        "created_by",
-        "created_at",
-        "content_type",
-        "record_id"
-    );
-    let sql = format!(
-        "SELECT id, revision_number, created_by, created_at FROM content_revisions WHERE content_type = {} AND record_id = {} ORDER BY revision_number DESC",
-        ph(1),
-        ph(2),
-    );
-    let rows = sqlx::query_as::<_, RevisionSummaryRow>(&sql)
-        .bind(content_type)
-        .bind(record_id)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| RevisionSummary {
-            id: r.id,
-            revision_number: r.revision_number,
-            created_by: r.created_by,
-            created_at: r.created_at,
-        })
-        .collect())
+) -> AppResult<Vec<ContentRevision>> {
+    Ok(
+        raisfast_derive::crud_find_all!(pool, "content_revisions", ContentRevision, "content_type" => content_type, and: ["record_id" => record_id], order_by: "revision_number DESC")?,
+    )
 }
 
 pub async fn get_revision(
@@ -141,20 +107,9 @@ pub async fn get_revision(
     record_id: &str,
     revision_id: i64,
 ) -> AppResult<Option<ContentRevision>> {
-    raisfast_derive::check_schema!("content_revisions", "id", "content_type", "record_id");
-    let sql = format!(
-        "SELECT * FROM content_revisions WHERE id = {} AND content_type = {} AND record_id = {}",
-        ph(1),
-        ph(2),
-        ph(3),
-    );
-    let row = sqlx::query_as::<_, ContentRevision>(&sql)
-        .bind(revision_id)
-        .bind(content_type)
-        .bind(record_id)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row)
+    Ok(
+        raisfast_derive::crud_find!(pool, "content_revisions", ContentRevision, "id" => revision_id, and: ["content_type" => content_type, "record_id" => record_id])?,
+    )
 }
 
 pub fn compute_diff(old: &Value, new: &Value) -> Value {
@@ -203,17 +158,7 @@ pub async fn delete_revisions(
     content_type: &str,
     record_id: &str,
 ) -> AppResult<u64> {
-    raisfast_derive::check_schema!("content_revisions", "content_type", "record_id");
-    let sql = format!(
-        "DELETE FROM content_revisions WHERE content_type = {} AND record_id = {}",
-        ph(1),
-        ph(2),
-    );
-    let result = sqlx::query(&sql)
-        .bind(content_type)
-        .bind(record_id)
-        .execute(pool)
-        .await?;
+    let result = raisfast_derive::crud_delete!(pool, "content_revisions", "content_type" => content_type, and: ["record_id" => record_id])?;
     Ok(result.rows_affected())
 }
 

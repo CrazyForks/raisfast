@@ -1095,10 +1095,6 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
         crate::models::currencies::create(&pool, "CNY", "Chinese Yuan", 2)
             .await
             .unwrap();

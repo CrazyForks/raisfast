@@ -34,7 +34,7 @@ define_enum!(
 );
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct Product {
     pub id: i64,
     pub document_id: String,
@@ -72,11 +72,6 @@ pub struct Product {
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
-
-crate::impl_from_row_opt_tenant!(Product {
-    required { id, document_id, title, product_type, fulfillment_type, price, currency, status, sort_order, unit, min_purchase, total_sales, virtual_sales, version, created_at, updated_at }
-    optional { category_id, description, cover_url, delivery_hook, weight, shipping_template_id, attributes, slug, content, image_ids, original_price, specs, max_purchase, meta_title, meta_description, published_at }
-});
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,

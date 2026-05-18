@@ -20,7 +20,7 @@ define_enum!(
 );
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct Page {
     pub id: i64,
     pub document_id: String,
@@ -48,11 +48,6 @@ pub struct Page {
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
-
-crate::impl_from_row_opt_tenant!(Page {
-    required { id, document_id, title, slug, template, sort_order, status, created_by, comment_status, created_at, updated_at }
-    optional { content, blocks, meta_title, meta_description, og_image, parent_id, updated_by, cover_image, password, og_title, og_description, canonical_url, published_at }
-});
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -336,9 +331,7 @@ pub async fn find_by_document_id(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Page>> {
-    Ok(
-        raisfast_derive::tenant_find!(pool, "pages", Page, "document_id" => document_id, tenant_id)?,
-    )
+    Ok(raisfast_derive::tenant_find!(pool, "pages", Page, "document_id" => document_id, tenant_id)?)
 }
 
 pub async fn list_published(
@@ -347,34 +340,16 @@ pub async fn list_published(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Page>, i64)> {
-    raisfast_derive::check_schema!("pages", "status", "sort_order", "created_at");
-    let offset = (page - 1) * page_size;
-    let count_filter = tenant_filter_ph(tenant_id, 2);
-    let count_sql = format!(
-        "SELECT COUNT(*) FROM pages WHERE status = {}{count_filter}",
-        ph(1)
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, Page,
+        data_sql: "SELECT * FROM pages WHERE status = ?{tenant} ORDER BY sort_order ASC, created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM pages WHERE status = ?{tenant}",
+        binds: [PageStatus::Published],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    let mut cq = sqlx::query_scalar::<_, i64>(&count_sql).bind(PageStatus::Published);
-    if let Some(tid) = tenant_id {
-        cq = cq.bind(tid);
-    }
-    let total = cq.fetch_one(pool).await?;
-
-    let base = usize::from(tenant_id.is_some());
-    let data_filter = tenant_filter_ph(tenant_id, 2);
-    let data_sql = format!(
-        "SELECT * FROM pages WHERE status = {}{data_filter} ORDER BY sort_order ASC, created_at DESC LIMIT {} OFFSET {}",
-        ph(1),
-        ph(base + 2),
-        ph(base + 3)
-    );
-    let mut dq = sqlx::query_as::<_, Page>(&data_sql).bind(PageStatus::Published);
-    if let Some(tid) = tenant_id {
-        dq = dq.bind(tid);
-    }
-    dq = dq.bind(page_size).bind(offset);
-    let items = dq.fetch_all(pool).await?;
-    Ok((items, total))
+    Ok(result)
 }
 
 pub async fn list_all(
@@ -384,42 +359,17 @@ pub async fn list_all(
     status: Option<PageStatus>,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Page>, i64)> {
-    raisfast_derive::check_schema!("pages", "status", "sort_order", "created_at");
-    let offset = (page - 1) * page_size;
-    let has_status = status.is_some();
-    let status_clause = if has_status {
-        format!(" AND status = {}", ph(1))
-    } else {
-        String::new()
-    };
-
-    let tf = tenant_filter_ph(tenant_id, has_status as usize + 1);
-    let count_sql = format!("SELECT COUNT(*) FROM pages WHERE 1=1{status_clause}{tf}");
-    let mut cq = sqlx::query_scalar::<_, i64>(&count_sql);
-    if let Some(s) = status {
-        cq = cq.bind(s);
-    }
-    if let Some(tid) = tenant_id {
-        cq = cq.bind(tid);
-    }
-    let total = cq.fetch_one(pool).await?;
-
-    let base = has_status as usize + usize::from(tenant_id.is_some());
-    let data_sql = format!(
-        "SELECT * FROM pages WHERE 1=1{status_clause}{tf} ORDER BY sort_order ASC, created_at DESC LIMIT {} OFFSET {}",
-        ph(base + 1),
-        ph(base + 2)
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, Page,
+        data_sql: "SELECT * FROM pages WHERE 1=1{tenant} ORDER BY sort_order ASC, created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM pages WHERE 1=1{tenant}",
+        binds: [],
+        where: ["status" => status],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    let mut dq = sqlx::query_as::<_, Page>(&data_sql);
-    if let Some(s) = status {
-        dq = dq.bind(s);
-    }
-    if let Some(tid) = tenant_id {
-        dq = dq.bind(tid);
-    }
-    dq = dq.bind(page_size).bind(offset);
-    let items = dq.fetch_all(pool).await?;
-    Ok((items, total))
+    Ok(result)
 }
 
 pub async fn create(

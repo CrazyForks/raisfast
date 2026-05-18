@@ -9,7 +9,7 @@ use crate::utils::tz::Timestamp;
 
 /// Complete database row for a webhook subscription
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct WebhookSubscription {
     pub id: i64,
     pub document_id: String,
@@ -22,11 +22,6 @@ pub struct WebhookSubscription {
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
-
-crate::impl_from_row_opt_tenant!(WebhookSubscription {
-    required { id, document_id, url, secret, events, enabled, created_at, updated_at }
-    optional { description }
-});
 
 /// Create subscription request body
 #[derive(Debug, Deserialize)]
@@ -60,58 +55,21 @@ pub struct WebhookPayload {
 /// Inserts a webhook subscription
 pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    match &sub.tenant_id {
-        Some(tid) => {
-            let sql = format!(
-                "INSERT INTO webhook_subscriptions (document_id, tenant_id, url, secret, events, enabled, description, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})",
-                crate::db::dialect::ph(1),
-                crate::db::dialect::ph(2),
-                crate::db::dialect::ph(3),
-                crate::db::dialect::ph(4),
-                crate::db::dialect::ph(5),
-                crate::db::dialect::ph(6),
-                crate::db::dialect::ph(7),
-                crate::db::dialect::ph(8),
-                crate::db::dialect::ph(9)
-            );
-            sqlx::query(&sql)
-                .bind(&sub.document_id)
-                .bind(tid)
-                .bind(&sub.url)
-                .bind(&sub.secret)
-                .bind(&sub.events)
-                .bind(sub.enabled)
-                .bind(&sub.description)
-                .bind(now)
-                .bind(now)
-                .execute(pool)
-                .await?;
-        }
-        None => {
-            let sql = format!(
-                "INSERT INTO webhook_subscriptions (document_id, url, secret, events, enabled, description, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
-                crate::db::dialect::ph(1),
-                crate::db::dialect::ph(2),
-                crate::db::dialect::ph(3),
-                crate::db::dialect::ph(4),
-                crate::db::dialect::ph(5),
-                crate::db::dialect::ph(6),
-                crate::db::dialect::ph(7),
-                crate::db::dialect::ph(8)
-            );
-            sqlx::query(&sql)
-                .bind(&sub.document_id)
-                .bind(&sub.url)
-                .bind(&sub.secret)
-                .bind(&sub.events)
-                .bind(sub.enabled)
-                .bind(&sub.description)
-                .bind(now)
-                .bind(now)
-                .execute(pool)
-                .await?;
-        }
-    }
+    raisfast_derive::tenant_insert!(
+        pool,
+        "webhook_subscriptions",
+        [
+            "document_id" => &sub.document_id,
+            "url" => &sub.url,
+            "secret" => &sub.secret,
+            "events" => &sub.events,
+            "enabled" => sub.enabled,
+            "description" => &sub.description,
+            "created_at" => now,
+            "updated_at" => now
+        ],
+        sub.tenant_id.as_deref()
+    )?;
     Ok(())
 }
 
@@ -122,84 +80,38 @@ pub async fn find_paginated(
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<WebhookSubscription>, i64)> {
-    let offset = (page - 1).max(0) * page_size;
-
-    let mut ph_idx = 1usize;
-    let mut where_parts = vec!["1=1".to_string()];
-    if tenant_id.is_some() {
-        where_parts.push(format!("tenant_id = {}", crate::db::dialect::ph(ph_idx)));
-        ph_idx += 1;
-    }
-
-    let where_str = where_parts.join(" AND ");
-    let count_sql = format!("SELECT COUNT(*) FROM webhook_subscriptions WHERE {where_str}");
-    let data_sql = format!(
-        "SELECT * FROM webhook_subscriptions WHERE {where_str} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-        crate::db::dialect::ph(ph_idx),
-        crate::db::dialect::ph(ph_idx + 1)
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, WebhookSubscription,
+        data_sql: "SELECT * FROM webhook_subscriptions WHERE 1=1{tenant} ORDER BY created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM webhook_subscriptions WHERE 1=1{tenant}",
+        binds: [],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-
-    let mut cq = sqlx::query_scalar::<_, i64>(&count_sql);
-    let mut dq = sqlx::query_as::<_, WebhookSubscription>(&data_sql);
-
-    if let Some(tid) = tenant_id {
-        cq = cq.bind(tid);
-        dq = dq.bind(tid);
-    }
-
-    let total = cq.fetch_one(pool).await?;
-    dq = dq.bind(page_size).bind(offset);
-    let items = dq.fetch_all(pool).await?;
-
-    Ok((items, total))
+    Ok(result)
 }
 
 /// Finds a subscription by ID
 pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<WebhookSubscription> {
-    let sql = format!(
-        "SELECT * FROM webhook_subscriptions WHERE document_id = {}",
-        crate::db::dialect::ph(1)
-    );
-    sqlx::query_as::<_, WebhookSubscription>(&sql)
-        .bind(id)
-        .fetch_one(pool)
-        .await
+    raisfast_derive::crud_find_one!(pool, "webhook_subscriptions", WebhookSubscription, "document_id" => id)
         .map_err(Into::into)
 }
 
 /// Updates a subscription by ID
 pub async fn update(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
-    let sql = format!(
-        "UPDATE webhook_subscriptions SET url = {}, secret = {}, events = {}, enabled = {}, description = {}, updated_at = {} WHERE document_id = {}",
-        crate::db::dialect::ph(1),
-        crate::db::dialect::ph(2),
-        crate::db::dialect::ph(3),
-        crate::db::dialect::ph(4),
-        crate::db::dialect::ph(5),
-        crate::db::dialect::ph(6),
-        crate::db::dialect::ph(7)
-    );
-    let result = sqlx::query(&sql)
-        .bind(&sub.url)
-        .bind(&sub.secret)
-        .bind(&sub.events)
-        .bind(sub.enabled)
-        .bind(&sub.description)
-        .bind(now)
-        .bind(&sub.document_id)
-        .execute(pool)
-        .await?;
+    let result = raisfast_derive::crud_update!(
+        pool, "webhook_subscriptions",
+        bind: ["url" => &sub.url, "secret" => &sub.secret, "events" => &sub.events, "enabled" => sub.enabled, "description" => &sub.description, "updated_at" => now],
+        where: "document_id" => &sub.document_id
+    )?;
     AppError::expect_affected(&result, "webhook_subscription")?;
     Ok(())
 }
 
 pub async fn delete_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
-    let sql = format!(
-        "DELETE FROM webhook_subscriptions WHERE document_id = {}",
-        crate::db::dialect::ph(1)
-    );
-    let result = sqlx::query(&sql).bind(id).execute(pool).await?;
+    let result = raisfast_derive::crud_delete!(pool, "webhook_subscriptions", "document_id" => id)?;
     AppError::expect_affected(&result, "webhook_subscription")?;
     Ok(())
 }
@@ -209,24 +121,7 @@ pub async fn find_enabled_by_tenant(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<WebhookSubscription>> {
-    match tenant_id {
-        Some(tid) => {
-            let sql = format!(
-                "SELECT * FROM webhook_subscriptions WHERE tenant_id = {} AND enabled = 1",
-                crate::db::dialect::ph(1)
-            );
-            let items = sqlx::query_as::<_, WebhookSubscription>(&sql)
-                .bind(tid)
-                .fetch_all(pool)
-                .await?;
-            Ok(items)
-        }
-        None => {
-            let sql = "SELECT * FROM webhook_subscriptions WHERE enabled = 1".to_string();
-            let items = sqlx::query_as::<_, WebhookSubscription>(&sql)
-                .fetch_all(pool)
-                .await?;
-            Ok(items)
-        }
-    }
+    Ok(
+        raisfast_derive::tenant_find_all!(pool, "webhook_subscriptions", WebhookSubscription, "enabled" => true, tenant_id)?,
+    )
 }

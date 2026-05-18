@@ -6,7 +6,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
@@ -56,18 +55,8 @@ pub async fn find_by_auth_type_and_identifier(
     auth_type: AuthType,
     identifier: &str,
 ) -> AppResult<Option<UserCredential>> {
-    raisfast_derive::check_schema!("user_credentials", "auth_type", "identifier");
-    let sql = format!(
-        "SELECT * FROM user_credentials WHERE auth_type = {} AND identifier = {}",
-        ph(1),
-        ph(2)
-    );
-    let cred = sqlx::query_as::<_, UserCredential>(&sql)
-        .bind(auth_type)
-        .bind(identifier)
-        .fetch_optional(pool)
-        .await?;
-    Ok(cred)
+    raisfast_derive::crud_find!(pool, "user_credentials", UserCredential, "auth_type" => auth_type, and: ["identifier" => identifier])
+        .map_err(Into::into)
 }
 
 pub async fn find_by_user_id(
@@ -79,13 +68,7 @@ pub async fn find_by_user_id(
 }
 
 pub async fn count_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<i64> {
-    raisfast_derive::check_schema!("user_credentials", "user_id");
-    let sql = format!(
-        "SELECT COUNT(*) as count FROM user_credentials WHERE user_id = {}",
-        ph(1)
-    );
-    let row: (i64,) = sqlx::query_as(&sql).bind(user_id).fetch_one(pool).await?;
-    Ok(row.0)
+    Ok(raisfast_derive::crud_count!(pool, "user_credentials", "user_id" => user_id)?)
 }
 
 pub async fn create(

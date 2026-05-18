@@ -21,7 +21,7 @@ define_enum!(
 );
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct Order {
     pub id: i64,
     pub document_id: String,
@@ -53,18 +53,12 @@ pub struct Order {
     pub updated_at: Timestamp,
 }
 
-crate::impl_from_row_opt_tenant!(Order {
-    required { id, document_id, user_id, order_no, subtotal, discount_amount, shipping_amount, total_amount, currency, status, created_at, updated_at }
-    optional { buyer_name, buyer_phone, buyer_email, shipping_address, tracking_no, carrier, remark, admin_remark, delivery_data, paid_at, completed_at, cancelled_at, refunding_at, refunded_at, expired_at }
-});
-
 pub async fn find_by_id(
     pool: &crate::db::Pool,
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Order>> {
-    raisfast_derive::tenant_find!(pool, "orders", Order, "id" => id, tenant_id)
-        .map_err(Into::into)
+    raisfast_derive::tenant_find!(pool, "orders", Order, "id" => id, tenant_id).map_err(Into::into)
 }
 
 pub async fn find_by_document_id(
@@ -270,13 +264,14 @@ pub async fn tx_find_id_by_document_id(
     tx: &mut crate::db::pool::DbConnection,
     document_id: &str,
 ) -> AppResult<Option<i64>> {
-    raisfast_derive::check_schema!("orders", "id", "document_id");
     let sql = format!("SELECT id FROM orders WHERE document_id = {}", ph(1));
-    let result: Option<(i64,)> = sqlx::query_as(&sql)
-        .bind(document_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-    Ok(result.map(|(id,)| id))
+    Ok(raisfast_derive::crud_scalar!(
+        &mut *tx,
+        i64,
+        &sql,
+        [document_id],
+        fetch_optional
+    )?)
 }
 
 pub async fn tx_find_by_document_id(
@@ -399,30 +394,16 @@ pub async fn tx_update_shipped(
     tracking_no: Option<&str>,
     carrier: Option<&str>,
 ) -> AppResult<u64> {
-    raisfast_derive::check_schema!(
-        "orders",
-        "status",
-        "tracking_no",
-        "carrier",
-        "updated_at",
-        "id"
-    );
-    let sql = format!(
-        "UPDATE orders SET status = {}, tracking_no = {}, carrier = {}, updated_at = datetime('now') WHERE id = {} AND status = {}",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5)
-    );
-    let result = sqlx::query(&sql)
-        .bind(OrderStatus::Shipped.as_str())
-        .bind(tracking_no)
-        .bind(carrier)
-        .bind(id)
-        .bind(OrderStatus::Paid.as_str())
-        .execute(&mut *tx)
-        .await?;
+    let result = raisfast_derive::crud_update!(&mut *tx, "orders",
+        bind: [
+            "status" => OrderStatus::Shipped.as_str(),
+            "tracking_no" => tracking_no,
+            "carrier" => carrier
+        ],
+        raw: ["updated_at" => "datetime('now')"],
+        where: "id" => id,
+        and: ["status" => OrderStatus::Paid.as_str()]
+    )?;
     Ok(result.rows_affected())
 }
 

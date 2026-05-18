@@ -13,8 +13,6 @@ use sqlx::FromRow;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
-use crate::db::dialect::ph;
-use crate::db::tenant::{tenant_filter_aliased_ph, tenant_filter_ph};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
@@ -26,7 +24,7 @@ define_enum!(
     }
 );
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 #[non_exhaustive]
 pub struct Comment {
     pub id: i64,
@@ -45,11 +43,6 @@ pub struct Comment {
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
-
-crate::impl_from_row_opt_tenant!(Comment {
-    required { id, document_id, post_id, content, status, created_at, updated_at }
-    optional { created_by, updated_by, nickname, email, parent_id, author_ip, author_url }
-});
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Clone)]
@@ -121,21 +114,9 @@ pub async fn find_approved_by_post(
     post_id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<Comment>> {
-    let filter = tenant_filter_ph(tenant_id, 3);
-    let sql = format!(
-        "SELECT * FROM comments WHERE post_id = {} AND status = {}{filter} ORDER BY created_at ASC",
-        ph(1),
-        ph(2)
-    );
-    let comments = raisfast_derive::tenant_query!(
-        pool,
-        Comment,
-        &sql,
-        [post_id, CommentStatus::Approved],
-        tenant_id,
-        fetch_all
-    )?;
-    Ok(comments)
+    Ok(
+        raisfast_derive::tenant_find_all!(pool, "comments", Comment, "post_id" => post_id, tenant_id, and: ["status" => CommentStatus::Approved], order_by: "created_at ASC")?,
+    )
 }
 
 pub async fn find_approved_by_post_paginated(
@@ -186,43 +167,16 @@ pub async fn find_all_paginated(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<AdminCommentRow>, i64)> {
-    raisfast_derive::check_schema!(
-        "comments",
-        "id",
-        "post_id",
-        "created_by",
-        "nickname",
-        "email",
-        "content",
-        "parent_id",
-        "status",
-        "created_at"
+    let result = raisfast_derive::tenant_query_paged!(
+        pool, AdminCommentRow,
+        data_sql: "SELECT c.id, c.post_id, p.title AS post_title, c.created_by, c.nickname, c.email, c.content, c.parent_id, c.status, c.created_at FROM comments c JOIN posts p ON c.post_id = p.id WHERE 1=1{tenant} ORDER BY c.created_at DESC",
+        count_sql: "SELECT COUNT(*) FROM comments WHERE 1=1{tenant}",
+        binds: [],
+        tenant: tenant_id,
+        page: page,
+        page_size: page_size
     );
-    raisfast_derive::check_schema!("posts", "id", "title");
-    let offset = (page - 1) * page_size;
-    let filter = tenant_filter_aliased_ph("c", tenant_id, 1);
-    let base = usize::from(tenant_id.is_some());
-    let sql = format!(
-        "SELECT c.id, c.post_id, p.title AS post_title, c.created_by, c.nickname, c.email, c.content, c.parent_id, c.status, c.created_at FROM comments c JOIN posts p ON c.post_id = p.id WHERE 1=1{filter} ORDER BY c.created_at DESC LIMIT {} OFFSET {}",
-        ph(base + 1),
-        ph(base + 2)
-    );
-    let mut q = sqlx::query_as::<_, AdminCommentRow>(&sql);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q = q.bind(page_size).bind(offset);
-    let rows = q.fetch_all(pool).await?;
-
-    let filter2 = tenant_filter_ph(tenant_id, 1);
-    let sql2 = format!("SELECT COUNT(*) FROM comments WHERE 1=1{filter2}");
-    let mut q2 = sqlx::query_scalar::<_, i64>(&sql2);
-    if let Some(tid) = tenant_id {
-        q2 = q2.bind(tid);
-    }
-    let total: i64 = q2.fetch_one(pool).await?;
-
-    Ok((rows, total))
+    Ok(result)
 }
 
 pub async fn update_status(

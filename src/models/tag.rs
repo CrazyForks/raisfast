@@ -11,7 +11,7 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct Tag {
     pub id: i64,
     pub document_id: String,
@@ -30,11 +30,6 @@ pub struct Tag {
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
-
-crate::impl_from_row_opt_tenant!(Tag {
-    required { id, document_id, name, slug, created_at, updated_at }
-    optional { description, cover_image, meta_title, meta_description, og_title, og_description, og_image, created_by, updated_by }
-});
 
 pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppResult<Vec<Tag>> {
     raisfast_derive::crud_list!(pool, "tags", Tag, order_by: "name", tenant: tenant_id)
@@ -64,8 +59,7 @@ pub async fn find_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Tag> {
-    raisfast_derive::tenant_find_one!(pool, "tags", Tag, "id" => id, tenant_id)
-        .map_err(Into::into)
+    raisfast_derive::tenant_find_one!(pool, "tags", Tag, "id" => id, tenant_id).map_err(Into::into)
 }
 
 pub async fn find_by_document_id(

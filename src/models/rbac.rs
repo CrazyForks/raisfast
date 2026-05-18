@@ -51,11 +51,7 @@ pub async fn list_roles(pool: &crate::db::Pool) -> AppResult<Vec<Role>> {
         "created_at",
         "updated_at"
     );
-    let roles = sqlx::query_as::<_, Role>(
-        "SELECT id, document_id, name, description, is_system, created_at, updated_at FROM roles ORDER BY name",
-    )
-    .fetch_all(pool)
-    .await?;
+    let roles = raisfast_derive::crud_list!(pool, "roles", Role, order_by: "name")?;
     Ok(roles)
 }
 
@@ -67,13 +63,14 @@ pub async fn find_role_by_id(pool: &crate::db::Pool, document_id: &str) -> AppRe
 
 /// Find role ID by role name (returns integer PK)
 pub async fn find_role_id_by_name(pool: &crate::db::Pool, name: &str) -> AppResult<Option<i64>> {
-    raisfast_derive::check_schema!("roles", "id", "name");
     let sql = format!("SELECT id FROM roles WHERE name = {}", ph(1));
-    let row = sqlx::query_as::<_, (i64,)>(&sql)
-        .bind(name)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row.map(|(id,)| id))
+    Ok(raisfast_derive::crud_scalar!(
+        pool,
+        i64,
+        &sql,
+        [name],
+        fetch_optional
+    )?)
 }
 
 /// Create role
@@ -145,14 +142,7 @@ pub async fn find_permissions_by_role_id(
         "conditions",
         "created_at"
     );
-    let sql = format!(
-        "SELECT id, document_id, role_id, action, subject, fields, conditions, created_at FROM permissions WHERE role_id = {} ORDER BY action",
-        ph(1)
-    );
-    let perms = sqlx::query_as::<_, Permission>(&sql)
-        .bind(role_id)
-        .fetch_all(pool)
-        .await?;
+    let perms = raisfast_derive::crud_find_all!(pool, "permissions", Permission, "role_id" => role_id, order_by: "action")?;
     Ok(perms)
 }
 

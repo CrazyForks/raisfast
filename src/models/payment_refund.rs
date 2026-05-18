@@ -5,7 +5,7 @@ use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct PaymentRefund {
     pub id: i64,
     pub document_id: String,
@@ -24,11 +24,6 @@ pub struct PaymentRefund {
     pub updated_at: Timestamp,
 }
 
-crate::impl_from_row_opt_tenant!(PaymentRefund {
-    required { id, document_id, payment_order_id, user_id, amount, currency, status, created_at, updated_at }
-    optional { order_id, reason, provider_refund_id, payment_tx_id, metadata }
-});
-
 pub async fn find_by_id(
     pool: &crate::db::Pool,
     id: i64,
@@ -43,20 +38,8 @@ pub async fn find_by_payment_order_id(
     payment_order_id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<PaymentRefund>> {
-    let sql = format!(
-        "SELECT * FROM payment_refunds WHERE payment_order_id = {}{} ORDER BY created_at DESC",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    raisfast_derive::tenant_query!(
-        pool,
-        PaymentRefund,
-        &sql,
-        [payment_order_id],
-        tenant_id,
-        fetch_all
-    )
-    .map_err(Into::into)
+    raisfast_derive::tenant_find_all!(pool, "payment_refunds", PaymentRefund, "payment_order_id" => payment_order_id, tenant_id, order_by: "created_at DESC")
+        .map_err(Into::into)
 }
 
 pub async fn find_by_order_id(

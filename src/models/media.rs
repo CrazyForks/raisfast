@@ -13,7 +13,7 @@ use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct Media {
     pub id: i64,
     pub document_id: String,
@@ -32,11 +32,6 @@ pub struct Media {
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
-
-crate::impl_from_row_opt_tenant!(Media {
-    required { id, document_id, user_id, filename, filepath, mimetype, size, created_at, updated_at }
-    optional { width, height, title, alt_text, caption, description }
-});
 
 pub async fn create(
     pool: &crate::db::Pool,

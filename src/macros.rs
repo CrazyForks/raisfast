@@ -96,45 +96,6 @@ macro_rules! reg_route {
 }
 
 #[macro_export]
-macro_rules! impl_from_row_opt_tenant {
-    ($t:ident { required { $($req:ident),* $(,)? } optional { $($opt:ident),* $(,)? } }) => {
-        #[cfg(feature = "db-sqlite")]
-        impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for $t {
-            fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
-                use sqlx::Row;
-                Ok(Self {
-                    tenant_id: row.try_get($crate::constants::COL_TENANT_ID).ok(),
-                    $($req: row.try_get(stringify!($req))?,)*
-                    $($opt: row.try_get(stringify!($opt))?,)*
-                })
-            }
-        }
-        #[cfg(feature = "db-postgres")]
-        impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for $t {
-            fn from_row(row: &'r sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
-                use sqlx::Row;
-                Ok(Self {
-                    tenant_id: row.try_get($crate::constants::COL_TENANT_ID).ok(),
-                    $($req: row.try_get(stringify!($req))?,)*
-                    $($opt: row.try_get(stringify!($opt))?,)*
-                })
-            }
-        }
-        #[cfg(feature = "db-mysql")]
-        impl<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> for $t {
-            fn from_row(row: &'r sqlx::mysql::MySqlRow) -> Result<Self, sqlx::Error> {
-                use sqlx::Row;
-                Ok(Self {
-                    tenant_id: row.try_get($crate::constants::COL_TENANT_ID).ok(),
-                    $($req: row.try_get(stringify!($req))?,)*
-                    $($opt: row.try_get(stringify!($opt))?,)*
-                })
-            }
-        }
-    };
-}
-
-#[macro_export]
 macro_rules! in_transaction {
     ($pool:expr, $tx:ident, $body:block) => {{
         #[allow(unused_mut)]
@@ -345,10 +306,6 @@ macro_rules! test_pool {
     () => {{
         let pool = $crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query($crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query($crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();

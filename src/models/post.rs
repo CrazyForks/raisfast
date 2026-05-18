@@ -32,7 +32,7 @@ define_enum!(
     }
 );
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 #[non_exhaustive]
 pub struct Post {
     pub id: i64,
@@ -64,11 +64,6 @@ pub struct Post {
     pub updated_at: Timestamp,
     pub published_at: Option<Timestamp>,
 }
-
-crate::impl_from_row_opt_tenant!(Post {
-    required { id, document_id, title, slug, content, status, created_by, view_count, is_pinned, comment_status, format, template, reading_time, created_at, updated_at }
-    optional { excerpt, cover_image, updated_by, category_id, published_at, password, meta_title, meta_description, og_title, og_description, og_image, canonical_url }
-});
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone, utoipa::ToSchema)]
@@ -163,7 +158,8 @@ async fn find_by_document_id_tx(
     document_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Post>> {
-    raisfast_derive::tenant_find!(&mut **tx, "posts", Post, "document_id" => document_id, tenant_id).map_err(Into::into)
+    raisfast_derive::tenant_find!(&mut **tx, "posts", Post, "document_id" => document_id, tenant_id)
+        .map_err(Into::into)
 }
 
 pub async fn update(
@@ -182,20 +178,6 @@ pub async fn update_tx(
     cmd: &crate::commands::UpdatePostCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Post> {
-    raisfast_derive::check_schema!(
-        "posts",
-        "id",
-        "title",
-        "slug",
-        "content",
-        "excerpt",
-        "cover_image",
-        "status",
-        "category_id",
-        "published_at",
-        "updated_by",
-        "updated_at"
-    );
     let post_id: i64 = cmd.id;
     let existing =
         raisfast_derive::tenant_find_one!(&mut **tx, "posts", Post, "id" => post_id, tenant_id)
@@ -228,37 +210,18 @@ pub async fn update_tx(
     let slug = cmd.slug.as_deref().unwrap_or(&existing.slug);
     let updated_by: Option<i64> = cmd.updated_by.or(existing.updated_by);
 
-    let sql = format!(
-        "UPDATE posts SET title = {}, slug = {}, content = {}, excerpt = {}, cover_image = {}, status = {}, category_id = {}, published_at = {}, updated_by = {}, updated_at = {} WHERE id = {}{}",
-        ph(1),
-        ph(2),
-        ph(3),
-        ph(4),
-        ph(5),
-        ph(6),
-        ph(7),
-        ph(8),
-        ph(9),
-        ph(10),
-        ph(11),
-        tenant_filter_ph(tenant_id, 12)
-    );
-    let mut q = sqlx::query(&sql)
-        .bind(title)
-        .bind(slug)
-        .bind(content)
-        .bind(&excerpt)
-        .bind(&cover_image)
-        .bind(new_status)
-        .bind(category_id)
-        .bind(published_at)
-        .bind(updated_by)
-        .bind(now)
-        .bind(post_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.execute(&mut **tx).await?;
+    raisfast_derive::tenant_update!(
+        &mut **tx, "posts",
+        bind: [
+            "title" => title, "slug" => slug, "content" => content,
+            "excerpt" => &excerpt, "cover_image" => &cover_image,
+            "status" => new_status, "category_id" => category_id,
+            "published_at" => published_at, "updated_by" => updated_by,
+            "updated_at" => now
+        ],
+        where: "id" => post_id,
+        tenant: tenant_id
+    )?;
 
     Ok(Post {
         id: existing.id,
@@ -302,18 +265,13 @@ pub async fn increment_view_count_joined(
     slug: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<PostJoinedRow> {
-    raisfast_derive::check_schema!("posts", "slug", "status", "view_count");
-    let sql = format!(
-        "UPDATE posts SET view_count = view_count + 1 WHERE slug = {} AND status = {}{}",
-        ph(1),
-        ph(2),
-        tenant_filter_ph(tenant_id, 3)
-    );
-    let mut q = sqlx::query(&sql).bind(slug).bind(PostStatus::Published);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.execute(pool).await?;
+    raisfast_derive::tenant_update!(
+        pool, "posts",
+        raw: ["view_count" => "view_count + 1"],
+        where: "slug" => slug,
+        and: ["status" => PostStatus::Published],
+        tenant: tenant_id
+    )?;
 
     find_published_joined_by_slug(pool, slug, tenant_id).await
 }
@@ -351,18 +309,16 @@ pub async fn get_post_tags(
     post_id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<TagBrief>> {
-    raisfast_derive::check_schema!("tags", "id", "name", "slug");
-    raisfast_derive::check_schema!("posts_tags", "post_id", "tag_id");
-    let sql = format!(
-        "SELECT t.id, t.name, t.slug FROM tags t INNER JOIN posts_tags pt ON t.id = pt.tag_id WHERE pt.post_id = {}{}",
-        ph(1),
-        tenant_filter_aliased_ph("t", tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, TagRow>(&sql).bind(post_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let rows = q.fetch_all(pool).await?;
+    let rows: Vec<TagRow> = raisfast_derive::tenant_join!(
+        pool, TagRow,
+        select: ["t.id", "t.name", "t.slug"],
+        from: "tags t",
+        joins: [INNER "posts_tags pt" ON "t.id = pt.tag_id"],
+        where: "pt.post_id" => post_id,
+        tenant_alias: "t",
+        tenant: tenant_id,
+        method: fetch_all
+    )?;
 
     Ok(rows
         .into_iter()
@@ -374,33 +330,15 @@ pub async fn get_post_tags(
         .collect())
 }
 
-#[derive(Debug, FromRow)]
-pub struct AuthorRow {
-    pub username: String,
-}
-
 pub async fn get_author_name(
     pool: &crate::db::Pool,
     created_by: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<String>> {
-    raisfast_derive::check_schema!("users", "id", "username");
-    let sql = format!(
-        "SELECT username FROM users WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, AuthorRow>(&sql).bind(created_by);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let row = q.fetch_optional(pool).await?;
-    Ok(row.map(|r| r.username))
-}
-
-#[derive(Debug, FromRow)]
-pub struct CategoryNameRow {
-    pub name: String,
+    let row: Option<(String,)> = raisfast_derive::tenant_select!(
+        pool, "users", ["username"], "id" => created_by, tenant_id
+    )?;
+    Ok(row.map(|(s,)| s))
 }
 
 pub async fn get_category_name(
@@ -408,18 +346,10 @@ pub async fn get_category_name(
     category_id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<String>> {
-    raisfast_derive::check_schema!("categories", "id", "name");
-    let sql = format!(
-        "SELECT name FROM categories WHERE id = {}{}",
-        ph(1),
-        tenant_filter_ph(tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, CategoryNameRow>(&sql).bind(category_id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    let row = q.fetch_optional(pool).await?;
-    Ok(row.map(|r| r.name))
+    let row: Option<(String,)> = raisfast_derive::tenant_select!(
+        pool, "categories", ["name"], "id" => category_id, tenant_id
+    )?;
+    Ok(row.map(|(s,)| s))
 }
 
 pub async fn find_published(
@@ -580,94 +510,72 @@ pub async fn find_all_joined(
     status: Option<PostStatus>,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<PostJoinedRow>, i64)> {
-    raisfast_derive::check_schema!(
-        "posts",
-        "id",
-        "document_id",
-        "title",
-        "slug",
-        "content",
-        "excerpt",
-        "cover_image",
-        "status",
-        "created_by",
-        "updated_by",
-        "category_id",
-        "view_count",
-        "is_pinned",
-        "password",
-        "comment_status",
-        "format",
-        "template",
-        "meta_title",
-        "meta_description",
-        "og_title",
-        "og_description",
-        "og_image",
-        "canonical_url",
-        "reading_time",
-        "created_at",
-        "updated_at",
-        "published_at"
-    );
-    raisfast_derive::check_schema!("users", "id", "username");
-    raisfast_derive::check_schema!("categories", "id", "name");
-    let offset = (page - 1) * page_size;
-
-    let (posts, total) = if let Some(status) = status {
-        let filter = tenant_filter_aliased_ph("p", tenant_id, 2);
-        let sql = format!(
-            "{JOIN_SQL} \
-             WHERE p.status = {}{filter} \
-             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT {} OFFSET {}",
-            ph(1),
-            ph(3),
-            ph(4)
+    if let Some(s) = status {
+        let result = raisfast_derive::tenant_join_paged!(
+            pool, PostJoinedRow,
+            select: [
+                "p.id", "p.document_id", "p.tenant_id", "p.title", "p.slug",
+                "p.content", "p.excerpt", "p.cover_image", "p.status",
+                "p.created_by", "p.updated_by", "p.category_id", "p.view_count", "p.is_pinned",
+                "p.password", "p.comment_status", "p.format", "p.template",
+                "p.meta_title", "p.meta_description", "p.og_title", "p.og_description",
+                "p.og_image", "p.canonical_url", "p.reading_time",
+                "p.created_at", "p.updated_at", "p.published_at",
+                "u.username AS author_name", "c.name AS category_name"
+            ],
+            from: "posts p",
+            joins: [
+                LEFT "users u" ON "p.created_by = u.id",
+                LEFT "categories c" ON "p.category_id = c.id"
+            ],
+            and: ["p.status" => s],
+            tenant_alias: "p",
+            tenant: tenant_id,
+            order_by: "p.is_pinned DESC, p.created_at DESC",
+            page: page,
+            page_size: page_size
         );
-        let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql).bind(status);
-        if let Some(tid) = tenant_id {
-            query = query.bind(tid);
-        }
-        let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
-        let filter = tenant_filter_ph(tenant_id, 2);
-        let sql = format!(
-            "SELECT COUNT(*) FROM posts WHERE status = {}{filter}",
-            ph(1)
-        );
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(status);
-        if let Some(tid) = tenant_id {
-            query = query.bind(tid);
-        }
-        let total = query.fetch_one(pool).await?;
-        (posts, total.0)
+        Ok(result)
     } else {
-        let filter = tenant_filter_aliased_ph("p", tenant_id, 1);
-        let sql = format!(
-            "{JOIN_SQL} \
-             WHERE 1=1{filter} \
-             ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT {} OFFSET {}",
-            ph(2),
-            ph(3)
+        let result = raisfast_derive::tenant_join_paged!(
+            pool, PostJoinedRow,
+            select: [
+                "p.id", "p.document_id", "p.tenant_id", "p.title", "p.slug",
+                "p.content", "p.excerpt", "p.cover_image", "p.status",
+                "p.created_by", "p.updated_by", "p.category_id", "p.view_count", "p.is_pinned",
+                "p.password", "p.comment_status", "p.format", "p.template",
+                "p.meta_title", "p.meta_description", "p.og_title", "p.og_description",
+                "p.og_image", "p.canonical_url", "p.reading_time",
+                "p.created_at", "p.updated_at", "p.published_at",
+                "u.username AS author_name", "c.name AS category_name"
+            ],
+            from: "posts p",
+            joins: [
+                LEFT "users u" ON "p.created_by = u.id",
+                LEFT "categories c" ON "p.category_id = c.id"
+            ],
+            tenant_alias: "p",
+            tenant: tenant_id,
+            order_by: "p.is_pinned DESC, p.created_at DESC",
+            page: page,
+            page_size: page_size
         );
-        let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql);
-        if let Some(tid) = tenant_id {
-            query = query.bind(tid);
-        }
-        let posts = query.bind(page_size).bind(offset).fetch_all(pool).await?;
-        let filter = tenant_filter_ph(tenant_id, 2);
-        let sql = format!(
-            "SELECT COUNT(*) FROM posts WHERE status = {}{filter}",
-            ph(1)
+        let (data, _) = result;
+        let count_filter = match tenant_id {
+            Some(_) => " AND tenant_id = ?",
+            None => "",
+        };
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM posts WHERE status = ?{}",
+            count_filter
         );
-        let mut query = sqlx::query_as::<_, (i64,)>(&sql).bind(PostStatus::Published);
+        let mut cq = sqlx::query_scalar::<_, i64>(&count_sql).bind(PostStatus::Published);
         if let Some(tid) = tenant_id {
-            query = query.bind(tid);
+            cq = cq.bind(tid);
         }
-        let total = query.fetch_one(pool).await?;
-        (posts, total.0)
-    };
-
-    Ok((posts, total))
+        let total = cq.fetch_one(pool).await?;
+        Ok((data, total))
+    }
 }
 
 #[cfg(test)]
@@ -873,7 +781,7 @@ mod tests {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct PostJoinedRow {
     pub id: i64,
     pub document_id: String,
@@ -907,13 +815,8 @@ pub struct PostJoinedRow {
     pub category_name: Option<String>,
 }
 
-crate::impl_from_row_opt_tenant!(PostJoinedRow {
-    required { id, document_id, title, slug, content, status, created_by, view_count, is_pinned, comment_status, format, template, reading_time, created_at, updated_at }
-    optional { excerpt, cover_image, updated_by, category_id, published_at, author_name, category_name, password, meta_title, meta_description, og_title, og_description, og_image, canonical_url }
-});
-
 const JOIN_SQL: &str = "\
-    SELECT p.id, p.document_id, p.title, p.slug, p.content, p.excerpt, p.cover_image, p.status, \
+    SELECT p.id, p.document_id, p.tenant_id, p.title, p.slug, p.content, p.excerpt, p.cover_image, p.status, \
     p.created_by, p.updated_by, p.category_id, p.view_count, p.is_pinned, \
     p.password, p.comment_status, p.format, p.template, \
     p.meta_title, p.meta_description, p.og_title, p.og_description, p.og_image, p.canonical_url, p.reading_time, \
@@ -928,48 +831,19 @@ pub async fn find_joined_by_id(
     id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<PostJoinedRow> {
-    raisfast_derive::check_schema!(
-        "posts",
-        "id",
-        "document_id",
-        "title",
-        "slug",
-        "content",
-        "excerpt",
-        "cover_image",
-        "status",
-        "created_by",
-        "updated_by",
-        "category_id",
-        "view_count",
-        "is_pinned",
-        "password",
-        "comment_status",
-        "format",
-        "template",
-        "meta_title",
-        "meta_description",
-        "og_title",
-        "og_description",
-        "og_image",
-        "canonical_url",
-        "reading_time",
-        "created_at",
-        "updated_at",
-        "published_at"
-    );
-    raisfast_derive::check_schema!("users", "id", "username");
-    raisfast_derive::check_schema!("categories", "id", "name");
-    let sql = format!(
-        "{JOIN_SQL} WHERE p.id = {}{}",
-        ph(1),
-        tenant_filter_aliased_ph("p", tenant_id, 2)
-    );
-    let mut q = sqlx::query_as::<_, PostJoinedRow>(&sql).bind(id);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_one(pool).await.map_err(Into::into)
+    raisfast_derive::tenant_join!(
+        pool, PostJoinedRow,
+        select: ["p.id", "p.document_id", "p.tenant_id", "p.title", "p.slug", "p.content", "p.excerpt", "p.cover_image", "p.status", "p.created_by", "p.updated_by", "p.category_id", "p.view_count", "p.is_pinned", "p.password", "p.comment_status", "p.format", "p.template", "p.meta_title", "p.meta_description", "p.og_title", "p.og_description", "p.og_image", "p.canonical_url", "p.reading_time", "p.created_at", "p.updated_at", "p.published_at", "u.username AS author_name", "c.name AS category_name"],
+        from: "posts p",
+        joins: [
+            LEFT "users u" ON "p.created_by = u.id",
+            LEFT "categories c" ON "p.category_id = c.id"
+        ],
+        where: "p.id" => id,
+        tenant_alias: "p",
+        tenant: tenant_id,
+        method: fetch_one
+    ).map_err(Into::into)
 }
 
 pub async fn find_published_joined_by_slug(
@@ -977,51 +851,20 @@ pub async fn find_published_joined_by_slug(
     slug: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<PostJoinedRow> {
-    raisfast_derive::check_schema!(
-        "posts",
-        "id",
-        "document_id",
-        "title",
-        "slug",
-        "content",
-        "excerpt",
-        "cover_image",
-        "status",
-        "created_by",
-        "updated_by",
-        "category_id",
-        "view_count",
-        "is_pinned",
-        "password",
-        "comment_status",
-        "format",
-        "template",
-        "meta_title",
-        "meta_description",
-        "og_title",
-        "og_description",
-        "og_image",
-        "canonical_url",
-        "reading_time",
-        "created_at",
-        "updated_at",
-        "published_at"
-    );
-    raisfast_derive::check_schema!("users", "id", "username");
-    raisfast_derive::check_schema!("categories", "id", "name");
-    let sql = format!(
-        "{JOIN_SQL} WHERE p.slug = {} AND p.status = {}{}",
-        ph(1),
-        ph(2),
-        tenant_filter_aliased_ph("p", tenant_id, 3)
-    );
-    let mut q = sqlx::query_as::<_, PostJoinedRow>(&sql)
-        .bind(slug)
-        .bind(PostStatus::Published);
-    if let Some(tid) = tenant_id {
-        q = q.bind(tid);
-    }
-    q.fetch_one(pool).await.map_err(Into::into)
+    raisfast_derive::tenant_join!(
+        pool, PostJoinedRow,
+        select: ["p.id", "p.document_id", "p.tenant_id", "p.title", "p.slug", "p.content", "p.excerpt", "p.cover_image", "p.status", "p.created_by", "p.updated_by", "p.category_id", "p.view_count", "p.is_pinned", "p.password", "p.comment_status", "p.format", "p.template", "p.meta_title", "p.meta_description", "p.og_title", "p.og_description", "p.og_image", "p.canonical_url", "p.reading_time", "p.created_at", "p.updated_at", "p.published_at", "u.username AS author_name", "c.name AS category_name"],
+        from: "posts p",
+        joins: [
+            LEFT "users u" ON "p.created_by = u.id",
+            LEFT "categories c" ON "p.category_id = c.id"
+        ],
+        where: "p.slug" => slug,
+        and: ["p.status" => PostStatus::Published],
+        tenant_alias: "p",
+        tenant: tenant_id,
+        method: fetch_one
+    ).map_err(Into::into)
 }
 
 pub async fn get_tags_for_posts(
@@ -1033,20 +876,6 @@ pub async fn get_tags_for_posts(
         return Ok(std::collections::HashMap::new());
     }
 
-    raisfast_derive::check_schema!("posts_tags", "post_id", "tag_id");
-    raisfast_derive::check_schema!("tags", "id", "name", "slug");
-
-    let placeholders: Vec<String> = (1..=post_ids.len()).map(ph).collect();
-    let next_idx = post_ids.len() + 1;
-    let sql = format!(
-        "SELECT pt.post_id, t.id, t.name, t.slug \
-         FROM posts_tags pt \
-         JOIN tags t ON pt.tag_id = t.id \
-         WHERE pt.post_id IN ({}){}",
-        placeholders.join(","),
-        tenant_filter_aliased_ph("t", tenant_id, next_idx)
-    );
-
     #[derive(Debug, FromRow)]
     struct TagWithPostId {
         post_id: i64,
@@ -1055,14 +884,17 @@ pub async fn get_tags_for_posts(
         slug: String,
     }
 
-    let mut query = sqlx::query_as::<_, TagWithPostId>(&sql);
-    for id in post_ids {
-        query = query.bind(id);
-    }
-    if let Some(tid) = tenant_id {
-        query = query.bind(tid);
-    }
-    let rows = query.fetch_all(pool).await?;
+    let rows = raisfast_derive::tenant_join!(
+        pool,
+        TagWithPostId,
+        select: ["pt.post_id", "t.id", "t.name", "t.slug"],
+        from: "posts_tags pt",
+        joins: [JOIN "tags" ON "pt.tag_id = t.id"],
+        and_in: ["pt.post_id" => post_ids],
+        tenant_alias: "t",
+        tenant: tenant_id,
+        method: fetch_all
+    )?;
 
     let mut map: std::collections::HashMap<i64, Vec<TagBrief>> = std::collections::HashMap::new();
     for row in rows {
@@ -1084,61 +916,32 @@ pub async fn find_joined_by_ids(
         return Ok(Vec::new());
     }
 
-    raisfast_derive::check_schema!(
-        "posts",
-        "id",
-        "document_id",
-        "title",
-        "slug",
-        "content",
-        "excerpt",
-        "cover_image",
-        "status",
-        "created_by",
-        "updated_by",
-        "category_id",
-        "view_count",
-        "is_pinned",
-        "password",
-        "comment_status",
-        "format",
-        "template",
-        "meta_title",
-        "meta_description",
-        "og_title",
-        "og_description",
-        "og_image",
-        "canonical_url",
-        "reading_time",
-        "created_at",
-        "updated_at",
-        "published_at"
-    );
-    raisfast_derive::check_schema!("users", "id", "username");
-    raisfast_derive::check_schema!("categories", "id", "name");
-
-    let placeholders: Vec<String> = (1..=ids.len()).map(ph).collect();
-    let next_idx = ids.len() + 1;
-    let sql = format!(
-        "{} \
-         WHERE p.id IN ({}) AND p.status = {}{} \
-         ORDER BY p.is_pinned DESC, p.created_at DESC",
-        JOIN_SQL,
-        placeholders.join(","),
-        ph(next_idx),
-        tenant_filter_aliased_ph("p", tenant_id, next_idx + 1)
-    );
-
-    let mut query = sqlx::query_as::<_, PostJoinedRow>(&sql);
-    for id in ids {
-        query = query.bind(id);
-    }
-    query = query.bind(PostStatus::Published);
-    if let Some(tid) = tenant_id {
-        query = query.bind(tid);
-    }
-    let rows = query.fetch_all(pool).await?;
-    Ok(rows)
+    raisfast_derive::tenant_join!(
+        pool,
+        PostJoinedRow,
+        select: [
+            "p.id", "p.document_id", "p.tenant_id", "p.title", "p.slug",
+            "p.content", "p.excerpt", "p.cover_image", "p.status",
+            "p.created_by", "p.updated_by", "p.category_id", "p.view_count", "p.is_pinned",
+            "p.password", "p.comment_status", "p.format", "p.template",
+            "p.meta_title", "p.meta_description", "p.og_title", "p.og_description",
+            "p.og_image", "p.canonical_url", "p.reading_time",
+            "p.created_at", "p.updated_at", "p.published_at",
+            "u.username AS author_name", "c.name AS category_name"
+        ],
+        from: "posts p",
+        joins: [
+            LEFT "users u" ON "p.created_by = u.id",
+            LEFT "categories c" ON "p.category_id = c.id"
+        ],
+        and: ["p.status" => PostStatus::Published],
+        and_in: ["p.id" => ids],
+        tenant_alias: "p",
+        tenant: tenant_id,
+        order_by: "p.is_pinned DESC, p.created_at DESC",
+        method: fetch_all
+    )
+    .map_err(Into::into)
 }
 
 pub async fn count_published_by_ids(
@@ -1150,26 +953,14 @@ pub async fn count_published_by_ids(
         return Ok(0);
     }
 
-    raisfast_derive::check_schema!("posts", "id", "status");
-
-    let placeholders: Vec<String> = (1..=ids.len()).map(ph).collect();
-    let next_idx = ids.len() + 1;
-    let sql = format!(
-        "SELECT COUNT(*) FROM posts WHERE id IN ({}) AND status = {}{}",
-        placeholders.join(","),
-        ph(next_idx),
-        tenant_filter_ph(tenant_id, next_idx + 1)
-    );
-    let mut query = sqlx::query_as::<_, (i64,)>(&sql);
-    for id in ids {
-        query = query.bind(id);
-    }
-    query = query.bind(PostStatus::Published);
-    if let Some(tid) = tenant_id {
-        query = query.bind(tid);
-    }
-    let (count,) = query.fetch_one(pool).await?;
-    Ok(count)
+    raisfast_derive::tenant_count!(
+        pool,
+        "posts",
+        "status" => PostStatus::Published,
+        tenant_id,
+        and_in: ["id" => ids]
+    )
+    .map_err(Into::into)
 }
 
 pub async fn find_published_joined(

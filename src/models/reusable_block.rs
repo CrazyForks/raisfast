@@ -10,7 +10,7 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct ReusableBlock {
     pub id: i64,
     pub document_id: String,
@@ -24,11 +24,6 @@ pub struct ReusableBlock {
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
-
-crate::impl_from_row_opt_tenant!(ReusableBlock {
-    required { id, document_id, name, block_type, content, created_at, updated_at }
-    optional { description, created_by, updated_by }
-});
 
 pub async fn find_reusable_by_id(
     pool: &crate::db::Pool,

@@ -946,10 +946,6 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
         sqlx::query("INSERT INTO users (id, document_id, username, role, status, registered_via) VALUES (1, 'u1', 'user1', 'user', 'active', 'email')")
             .execute(&pool)
             .await
@@ -971,10 +967,6 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
         sqlx::query("INSERT INTO users (id, document_id, username, role, status, registered_via) VALUES (1, 'u1', 'user1', 'user', 'active', 'email')")
             .execute(&pool)
             .await
@@ -993,10 +985,6 @@ mod tests {
     async fn resolve_doc_id_not_found() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
             .execute(&pool)
             .await
             .unwrap();

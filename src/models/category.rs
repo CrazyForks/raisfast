@@ -12,7 +12,7 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct Category {
     pub id: i64,
     pub document_id: String,
@@ -33,11 +33,6 @@ pub struct Category {
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
-
-crate::impl_from_row_opt_tenant!(Category {
-    required { id, document_id, name, slug, sort_order, created_at, updated_at }
-    optional { description, cover_image, meta_title, meta_description, og_title, og_description, og_image, parent_id, created_by, updated_by }
-});
 
 pub async fn find_all(pool: &crate::db::Pool, tenant_id: Option<&str>) -> AppResult<Vec<Category>> {
     raisfast_derive::crud_list!(pool, "categories", Category, order_by: "sort_order, name", tenant: tenant_id).map_err(Into::into)

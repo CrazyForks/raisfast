@@ -97,12 +97,10 @@ pub async fn mark_processing(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
 }
 
 pub async fn mark_completed(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
-    raisfast_derive::check_schema!("wallet_outbox", "status", "updated_at", "id");
-    let sql = format!(
-        "UPDATE wallet_outbox SET status = 'completed', updated_at = datetime('now') WHERE id = {}",
-        ph(1)
-    );
-    sqlx::query(&sql).bind(id).execute(pool).await?;
+    raisfast_derive::crud_update!(pool, "wallet_outbox",
+        raw: ["status" => "'completed'", "updated_at" => "datetime('now')"],
+        where: "id" => id
+    )?;
     Ok(())
 }
 

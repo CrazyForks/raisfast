@@ -82,18 +82,15 @@ pub async fn find_latest_unverified(
     phone: &str,
     purpose: &str,
 ) -> AppResult<Option<SmsCode>> {
-    raisfast_derive::check_schema!("sms_codes", "phone", "purpose", "verified_at", "created_at");
-    let sql = format!(
-        "SELECT * FROM sms_codes WHERE phone = {} AND purpose = {} AND verified_at IS NULL ORDER BY created_at DESC LIMIT 1",
-        ph(1),
-        ph(2),
-    );
-    let row = sqlx::query_as::<_, SmsCode>(&sql)
-        .bind(phone)
-        .bind(purpose)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row)
+    Ok(raisfast_derive::crud_find!(
+        pool,
+        "sms_codes",
+        SmsCode,
+        "phone" => phone,
+        and: ["purpose" => purpose],
+        and_null: ["verified_at"],
+        order_by: "created_at DESC LIMIT 1"
+    )?)
 }
 
 /// Check if rate-limited (whether there is a sending record for the same phone number and purpose within the last N seconds)
@@ -103,21 +100,15 @@ pub async fn is_rate_limited(
     purpose: &str,
     within_secs: u64,
 ) -> AppResult<bool> {
-    raisfast_derive::check_schema!("sms_codes", "phone", "purpose", "created_at");
     let cutoff = crate::utils::tz::now_utc() - chrono::Duration::seconds(within_secs as i64);
-    let sql = format!(
-        "SELECT COUNT(*) as cnt FROM sms_codes WHERE phone = {} AND purpose = {} AND created_at > {}",
-        ph(1),
-        ph(2),
-        ph(3),
-    );
-    let row: (i64,) = sqlx::query_as(&sql)
-        .bind(phone)
-        .bind(purpose)
-        .bind(cutoff)
-        .fetch_one(pool)
-        .await?;
-    Ok(row.0 > 0)
+    let cnt = raisfast_derive::crud_count!(
+        pool,
+        "sms_codes",
+        "phone" => phone,
+        and: ["purpose" => purpose],
+        and_gt: ["created_at" => cutoff]
+    )?;
+    Ok(cnt > 0)
 }
 
 /// Verify code: on match, mark as verified; on mismatch, increment attempts

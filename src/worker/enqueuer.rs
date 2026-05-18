@@ -220,10 +220,6 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(crate::db::schema::TENANTABLE_SQL)
-            .execute(&pool)
-            .await
-            .unwrap();
         let queue = Arc::new(SqliteJobQueue::new(pool));
         (bus, queue)
     }

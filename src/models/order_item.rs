@@ -6,7 +6,7 @@ use crate::errors::app_error::AppResult;
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct OrderItem {
     pub id: i64,
     pub document_id: String,
@@ -22,11 +22,6 @@ pub struct OrderItem {
     pub attributes: Option<String>,
     pub created_at: Timestamp,
 }
-
-crate::impl_from_row_opt_tenant!(OrderItem {
-    required { id, document_id, order_id, title, unit_price, quantity, subtotal, created_at }
-    optional { product_id, description, cover_url, attributes }
-});
 
 pub async fn find_by_order_id(
     pool: &crate::db::Pool,
