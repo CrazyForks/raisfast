@@ -12,13 +12,13 @@
 
 -- 租户表
 CREATE TABLE IF NOT EXISTS tenants (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
+    id BIGINT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL UNIQUE,
     domain VARCHAR(255) UNIQUE,
     config JSON NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'active',
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 默认租户
@@ -27,7 +27,7 @@ INSERT IGNORE INTO tenants (name, domain, config, status, created_at, updated_at
 
 -- 用户
 CREATE TABLE IF NOT EXISTS users (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     username VARCHAR(255) UNIQUE NOT NULL,
     role VARCHAR(50) NOT NULL DEFAULT 'reader',
@@ -41,8 +41,8 @@ CREATE TABLE IF NOT EXISTS users (
     locale VARCHAR(10),
     social_links JSON,
     metadata JSON,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_users_username ON users(username);
@@ -51,14 +51,14 @@ CREATE INDEX idx_users_tenant ON users(tenant_id);
 
 -- 用户凭据
 CREATE TABLE IF NOT EXISTS user_credentials (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     user_id BIGINT NOT NULL,
     auth_type VARCHAR(100) NOT NULL,
     identifier VARCHAR(500) NOT NULL,
     credential_data TEXT NOT NULL,
     verified BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     UNIQUE KEY uq_credential_type_id (auth_type, identifier),
     FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -69,7 +69,7 @@ CREATE INDEX idx_user_credentials_type ON user_credentials(auth_type);
 
 -- OAuth 账号绑定
 CREATE TABLE IF NOT EXISTS oauth_accounts (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     user_id BIGINT NOT NULL,
     provider VARCHAR(50) NOT NULL,
     provider_user_id VARCHAR(255) NOT NULL,
@@ -78,10 +78,10 @@ CREATE TABLE IF NOT EXISTS oauth_accounts (
     avatar_url VARCHAR(500),
     access_token VARCHAR(1024),
     refresh_token VARCHAR(1024),
-    token_expires_at DATETIME(3),
+    token_expires_at DATETIME,
     profile TEXT,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     UNIQUE KEY uq_oauth_provider (provider, provider_user_id),
     FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -91,19 +91,19 @@ CREATE INDEX idx_oauth_accounts_provider ON oauth_accounts(provider, provider_us
 
 -- OAuth 短期 state 存储（PKCE）
 CREATE TABLE IF NOT EXISTS oauth_states (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     provider VARCHAR(50) NOT NULL,
     code_verifier VARCHAR(255) NOT NULL,
     user_id BIGINT,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    expires_at DATETIME(3) NOT NULL
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    expires_at DATETIME NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_oauth_states_expires ON oauth_states(expires_at);
 
 -- 币种配置
 CREATE TABLE IF NOT EXISTS currencies (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     code VARCHAR(10) NOT NULL UNIQUE,
     name VARCHAR(255) NOT NULL,
     decimals INT NOT NULL DEFAULT 0,
@@ -118,15 +118,15 @@ CREATE TABLE IF NOT EXISTS currencies (
 CREATE UNIQUE INDEX idx_currencies_code ON currencies(code);
 
 CREATE TABLE IF NOT EXISTS wallets (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     user_id BIGINT NOT NULL,
     currency VARCHAR(50) NOT NULL,
     balance BIGINT NOT NULL DEFAULT 0 CHECK(balance >= 0),
     version BIGINT NOT NULL DEFAULT 1,
     status VARCHAR(50) NOT NULL DEFAULT 'active',
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     UNIQUE KEY uq_wallets_user_currency (user_id, currency),
     FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -136,7 +136,7 @@ CREATE INDEX idx_wallets_currency ON wallets(currency);
 CREATE INDEX idx_wallets_tenant ON wallets(tenant_id);
 
 CREATE TABLE IF NOT EXISTS wallet_transactions (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     wallet_id BIGINT NOT NULL,
     user_id BIGINT NOT NULL,
@@ -151,7 +151,7 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
     reference_id VARCHAR(255),
     counterparty_wallet_id BIGINT,
     metadata JSON,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (wallet_id) REFERENCES wallets(id),
     FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -166,11 +166,11 @@ CREATE INDEX idx_wallet_transactions_tenant ON wallet_transactions(tenant_id);
 
 -- Refresh Tokens
 CREATE TABLE IF NOT EXISTS refresh_tokens (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     user_id BIGINT NOT NULL,
     token VARCHAR(500) UNIQUE NOT NULL,
-    expires_at DATETIME(3) NOT NULL,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    expires_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -180,7 +180,7 @@ CREATE INDEX idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);
 
 -- 站点配置
 CREATE TABLE IF NOT EXISTS options (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     `option_key` VARCHAR(255) NOT NULL,
     value TEXT NOT NULL,
@@ -192,7 +192,7 @@ CREATE TABLE IF NOT EXISTS options (
     is_public BOOLEAN NOT NULL DEFAULT FALSE,
     autoload BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order INT NOT NULL DEFAULT 0,
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     UNIQUE KEY uq_options_option_key (`option_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -200,27 +200,27 @@ CREATE INDEX idx_options_tenant_option_key ON options(tenant_id, `option_key`);
 
 -- RBAC 角色
 CREATE TABLE IF NOT EXISTS roles (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     name VARCHAR(100) NOT NULL UNIQUE,
     description TEXT,
     is_system BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_roles_tenant ON roles(tenant_id);
 
 -- RBAC 权限
 CREATE TABLE IF NOT EXISTS permissions (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     role_id BIGINT NOT NULL,
     action VARCHAR(255) NOT NULL,
     subject VARCHAR(255) NOT NULL,
     fields JSON,
     conditions JSON,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (role_id) REFERENCES roles(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -230,7 +230,7 @@ CREATE INDEX idx_permissions_tenant ON permissions(tenant_id);
 
 -- 审计日志
 CREATE TABLE IF NOT EXISTS audit_log (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     actor_id BIGINT,
     actor_role VARCHAR(50),
@@ -240,7 +240,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     detail TEXT,
     ip_address VARCHAR(45),
     user_agent TEXT,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_audit_log_action ON audit_log(action);
@@ -250,15 +250,15 @@ CREATE INDEX idx_audit_log_tenant ON audit_log(tenant_id);
 
 -- API Token
 CREATE TABLE IF NOT EXISTS api_tokens (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     user_id BIGINT NOT NULL,
     name VARCHAR(255) NOT NULL,
     token_hash VARCHAR(255) UNIQUE NOT NULL,
     token_prefix VARCHAR(50) NOT NULL,
     scopes JSON NOT NULL,
-    last_used_at DATETIME(3),
-    expires_at DATETIME(3),
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    last_used_at DATETIME,
+    expires_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -267,15 +267,15 @@ CREATE INDEX idx_api_tokens_token_hash ON api_tokens(token_hash);
 
 -- Webhook 订阅
 CREATE TABLE IF NOT EXISTS webhook_subscriptions (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     url VARCHAR(1024) NOT NULL,
     secret VARCHAR(255) NOT NULL,
     events JSON NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     description TEXT,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_webhook_subscriptions_enabled ON webhook_subscriptions(enabled);
@@ -286,8 +286,8 @@ CREATE TABLE IF NOT EXISTS plugin_storage (
     plugin_id VARCHAR(100) NOT NULL,
     `storage_key` VARCHAR(255) NOT NULL,
     value TEXT NOT NULL,
-    expires_at DATETIME(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    expires_at DATETIME,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     PRIMARY KEY (plugin_id, `storage_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -295,13 +295,13 @@ CREATE INDEX idx_plugin_storage_plugin ON plugin_storage(plugin_id);
 
 -- 内容版本历史
 CREATE TABLE IF NOT EXISTS content_revisions (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     content_type VARCHAR(100) NOT NULL,
     record_id BIGINT NOT NULL,
     revision_number INT NOT NULL,
     snapshot TEXT NOT NULL,
     created_by BIGINT,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     UNIQUE KEY uq_revision (content_type, record_id, revision_number)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -312,12 +312,12 @@ CREATE INDEX idx_revisions_ct_record_rev
 
 -- 密码重置令牌
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     user_id BIGINT NOT NULL,
     token VARCHAR(255) NOT NULL UNIQUE,
-    expires_at DATETIME(3) NOT NULL,
-    used_at DATETIME(3),
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    expires_at DATETIME NOT NULL,
+    used_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -327,15 +327,15 @@ CREATE INDEX idx_password_reset_tokens_expires_at ON password_reset_tokens(expir
 
 -- 短信验证码
 CREATE TABLE IF NOT EXISTS sms_codes (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     phone VARCHAR(50) NOT NULL,
     code VARCHAR(20) NOT NULL,
     purpose VARCHAR(50) NOT NULL,
-    expires_at DATETIME(3) NOT NULL,
-    verified_at DATETIME(3),
+    expires_at DATETIME NOT NULL,
+    verified_at DATETIME,
     attempts INT NOT NULL DEFAULT 0,
     ip_address VARCHAR(45),
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_sms_codes_phone ON sms_codes(phone);
@@ -343,13 +343,13 @@ CREATE INDEX idx_sms_codes_expires ON sms_codes(expires_at);
 
 -- 邮箱验证令牌
 CREATE TABLE IF NOT EXISTS email_verification_tokens (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     user_id BIGINT NOT NULL,
     token VARCHAR(255) NOT NULL UNIQUE,
     email VARCHAR(255) NOT NULL,
-    expires_at DATETIME(3) NOT NULL,
-    verified_at DATETIME(3),
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    expires_at DATETIME NOT NULL,
+    verified_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -359,16 +359,16 @@ CREATE INDEX idx_email_verification_tokens_expires ON email_verification_tokens(
 
 -- 后台任务队列
 CREATE TABLE IF NOT EXISTS jobs (
-    id           BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id           BIGINT PRIMARY KEY,
     job_type     VARCHAR(100) NOT NULL,
     payload      TEXT NOT NULL,
     status       VARCHAR(50) NOT NULL DEFAULT 'pending',
     attempts     INT NOT NULL DEFAULT 0,
     max_attempts INT NOT NULL DEFAULT 3,
-    run_after    DATETIME(3),
+    run_after    DATETIME,
     error        TEXT,
-    created_at   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_jobs_status ON jobs(status);
@@ -377,17 +377,17 @@ CREATE INDEX idx_jobs_type ON jobs(job_type);
 
 -- 定时任务调度
 CREATE TABLE IF NOT EXISTS cron_schedules (
-    id           BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id           BIGINT PRIMARY KEY,
     label        VARCHAR(255) NOT NULL,
     job_type     VARCHAR(100) NOT NULL,
     payload      TEXT,
     cron_expr    VARCHAR(100) NOT NULL,
     enabled      BOOLEAN NOT NULL DEFAULT TRUE,
-    last_run_at  DATETIME(3),
-    next_run_at  DATETIME(3) NOT NULL,
+    last_run_at  DATETIME,
+    next_run_at  DATETIME NOT NULL,
     plugin_id    VARCHAR(100),
-    created_at   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_cron_enabled ON cron_schedules(enabled);
@@ -396,15 +396,15 @@ CREATE INDEX idx_cron_plugin ON cron_schedules(plugin_id);
 
 -- Cron 执行历史
 CREATE TABLE IF NOT EXISTS cron_execution_log (
-    id           BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id           BIGINT PRIMARY KEY,
     schedule_id  BIGINT NOT NULL,
     job_type     VARCHAR(100) NOT NULL,
     label        VARCHAR(255) NOT NULL,
     status       VARCHAR(50) NOT NULL DEFAULT 'running',
     duration_ms  INT,
     error        TEXT,
-    started_at   DATETIME(3) NOT NULL,
-    finished_at  DATETIME(3)
+    started_at   DATETIME NOT NULL,
+    finished_at  DATETIME
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_cron_log_schedule ON cron_execution_log(schedule_id);
@@ -415,7 +415,7 @@ CREATE INDEX idx_cron_log_started ON cron_execution_log(started_at);
 
 -- 分类
 CREATE TABLE IF NOT EXISTS categories (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     name VARCHAR(255) UNIQUE NOT NULL,
     slug VARCHAR(255) UNIQUE NOT NULL,
@@ -430,8 +430,8 @@ CREATE TABLE IF NOT EXISTS categories (
     og_title VARCHAR(255),
     og_description VARCHAR(500),
     og_image VARCHAR(500),
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (parent_id) REFERENCES categories(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -439,7 +439,7 @@ CREATE INDEX idx_categories_tenant ON categories(tenant_id);
 
 -- 标签
 CREATE TABLE IF NOT EXISTS tags (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     name VARCHAR(255) UNIQUE NOT NULL,
     slug VARCHAR(255) UNIQUE NOT NULL,
@@ -452,15 +452,15 @@ CREATE TABLE IF NOT EXISTS tags (
     og_title VARCHAR(255),
     og_description VARCHAR(500),
     og_image VARCHAR(500),
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_tags_tenant ON tags(tenant_id);
 
 -- 文章
 CREATE TABLE IF NOT EXISTS posts (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     title VARCHAR(500) NOT NULL,
     slug VARCHAR(255) UNIQUE NOT NULL,
@@ -484,9 +484,9 @@ CREATE TABLE IF NOT EXISTS posts (
     og_image VARCHAR(500),
     canonical_url VARCHAR(1024),
     reading_time INTEGER NOT NULL DEFAULT 0,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    published_at DATETIME(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    published_at DATETIME,
     FOREIGN KEY (created_by) REFERENCES users(id),
     FOREIGN KEY (category_id) REFERENCES categories(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -517,7 +517,7 @@ CREATE INDEX idx_posts_tags_tag_id ON posts_tags(tag_id);
 
 -- 评论
 CREATE TABLE IF NOT EXISTS comments (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     post_id BIGINT NOT NULL,
     created_by BIGINT,
@@ -529,8 +529,8 @@ CREATE TABLE IF NOT EXISTS comments (
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
     author_ip VARCHAR(45),
     author_url VARCHAR(500),
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (post_id) REFERENCES posts(id),
     FOREIGN KEY (created_by) REFERENCES users(id),
     FOREIGN KEY (parent_id) REFERENCES comments(id)
@@ -547,7 +547,7 @@ CREATE INDEX idx_comments_tenant ON comments(tenant_id);
 -- ── 内置模块：Pages（BUILTIN_PAGES=true） ────────────────
 
 CREATE TABLE IF NOT EXISTS pages (
-    id               BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id               BIGINT PRIMARY KEY,
     tenant_id        VARCHAR(36) NOT NULL DEFAULT 'default',
     title            VARCHAR(500) NOT NULL,
     slug             VARCHAR(255) NOT NULL UNIQUE,
@@ -563,14 +563,14 @@ CREATE TABLE IF NOT EXISTS pages (
     created_by       BIGINT NOT NULL,
     updated_by       BIGINT,
     cover_image      VARCHAR(500),
-    published_at     DATETIME(3),
+    published_at     DATETIME,
     password         VARCHAR(255),
     comment_status   VARCHAR(20) NOT NULL DEFAULT 'closed',
     og_title         VARCHAR(255),
     og_description   VARCHAR(500),
     canonical_url    VARCHAR(1024),
-    created_at       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (created_by) REFERENCES users(id),
     FOREIGN KEY (parent_id) REFERENCES pages(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -583,7 +583,7 @@ CREATE INDEX idx_pages_tenant_slug ON pages(tenant_id, slug);
 CREATE INDEX idx_pages_tenant_status ON pages(tenant_id, status);
 
 CREATE TABLE IF NOT EXISTS reusable_blocks (
-    id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id          BIGINT PRIMARY KEY,
     tenant_id   VARCHAR(36) NOT NULL DEFAULT 'default',
     name        VARCHAR(255) NOT NULL,
     block_type  VARCHAR(100) NOT NULL,
@@ -591,8 +591,8 @@ CREATE TABLE IF NOT EXISTS reusable_blocks (
     description TEXT,
     created_by  BIGINT,
     updated_by  BIGINT,
-    created_at  DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at  DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_reusable_blocks_tenant ON reusable_blocks(tenant_id);
@@ -600,7 +600,7 @@ CREATE INDEX idx_reusable_blocks_tenant ON reusable_blocks(tenant_id);
 -- ── 内置模块：Media（BUILTIN_MEDIA=true） ────────────────
 
 CREATE TABLE IF NOT EXISTS media (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     user_id BIGINT NOT NULL,
     filename VARCHAR(255) NOT NULL,
@@ -613,8 +613,8 @@ CREATE TABLE IF NOT EXISTS media (
     alt_text VARCHAR(255),
     caption TEXT,
     description TEXT,
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -625,27 +625,27 @@ CREATE INDEX idx_media_tenant ON media(tenant_id);
 -- ── 内置模块：Workflow（BUILTIN_WORKFLOW=true） ──────────
 
 CREATE TABLE IF NOT EXISTS workflow_definitions (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
     steps JSON NOT NULL,
     initial_step VARCHAR(100) NOT NULL,
     version INT NOT NULL DEFAULT 1,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS workflow_instances (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     definition_id BIGINT NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'running',
     current_step VARCHAR(100),
     context JSON NOT NULL,
     triggered_by BIGINT,
-    started_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    completed_at DATETIME(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    completed_at DATETIME,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (definition_id) REFERENCES workflow_definitions(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -653,7 +653,7 @@ CREATE INDEX idx_wf_instances_definition ON workflow_instances(definition_id);
 CREATE INDEX idx_wf_instances_status ON workflow_instances(status);
 
 CREATE TABLE IF NOT EXISTS workflow_step_logs (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     instance_id BIGINT NOT NULL,
     step_id VARCHAR(100) NOT NULL,
     step_name VARCHAR(255) NOT NULL,
@@ -661,8 +661,8 @@ CREATE TABLE IF NOT EXISTS workflow_step_logs (
     input LONGTEXT,
     output LONGTEXT,
     error TEXT,
-    started_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    completed_at DATETIME(3),
+    started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    completed_at DATETIME,
     FOREIGN KEY (instance_id) REFERENCES workflow_instances(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -670,7 +670,7 @@ CREATE INDEX idx_wf_step_logs_instance ON workflow_step_logs(instance_id);
 
 -- Products
 CREATE TABLE IF NOT EXISTS products (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     category_id BIGINT,
     title VARCHAR(500) NOT NULL,
@@ -687,7 +687,7 @@ CREATE TABLE IF NOT EXISTS products (
     attributes JSON,
     sort_order INT NOT NULL DEFAULT 0,
     version INT NOT NULL DEFAULT 1,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     slug VARCHAR(255) UNIQUE,
     content LONGTEXT,
     image_ids JSON,
@@ -700,12 +700,12 @@ CREATE TABLE IF NOT EXISTS products (
     virtual_sales INT NOT NULL DEFAULT 0,
     meta_title VARCHAR(255),
     meta_description VARCHAR(500),
-    published_at DATETIME(3),
+    published_at DATETIME,
     stock INT NOT NULL DEFAULT 0,
     cost_price BIGINT,
     sale_price BIGINT,
     has_variants BOOLEAN NOT NULL DEFAULT FALSE,
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (category_id) REFERENCES categories(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -716,7 +716,7 @@ CREATE INDEX idx_products_tenant ON products(tenant_id);
 
 -- Product Variants
 CREATE TABLE IF NOT EXISTS product_variants (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     product_id BIGINT NOT NULL,
     sku VARCHAR(100) UNIQUE,
@@ -727,8 +727,8 @@ CREATE TABLE IF NOT EXISTS product_variants (
     attributes JSON,
     sort_order INT NOT NULL DEFAULT 0,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (product_id) REFERENCES products(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -738,7 +738,7 @@ CREATE INDEX idx_product_variants_tenant ON product_variants(tenant_id);
 
 -- User Addresses
 CREATE TABLE IF NOT EXISTS user_addresses (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     user_id BIGINT NOT NULL,
     label VARCHAR(100) NOT NULL DEFAULT '',
@@ -753,8 +753,8 @@ CREATE TABLE IF NOT EXISTS user_addresses (
     postal_code VARCHAR(20),
     is_default BOOLEAN NOT NULL DEFAULT FALSE,
     address_type VARCHAR(20) NOT NULL DEFAULT 'shipping',
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -763,7 +763,7 @@ CREATE INDEX idx_user_addresses_tenant ON user_addresses(tenant_id);
 
 -- Orders
 CREATE TABLE IF NOT EXISTS orders (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     user_id BIGINT NOT NULL,
     order_no VARCHAR(255) NOT NULL UNIQUE,
@@ -786,14 +786,14 @@ CREATE TABLE IF NOT EXISTS orders (
     coupon_id BIGINT,
     shipping_address_id BIGINT,
     billing_address_id BIGINT,
-    paid_at DATETIME(3),
-    completed_at DATETIME(3),
-    cancelled_at DATETIME(3),
-    refunding_at DATETIME(3),
-    refunded_at DATETIME(3),
-    expired_at DATETIME(3),
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    paid_at DATETIME,
+    completed_at DATETIME,
+    cancelled_at DATETIME,
+    refunding_at DATETIME,
+    refunded_at DATETIME,
+    expired_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -804,7 +804,7 @@ CREATE INDEX idx_orders_tenant ON orders(tenant_id);
 
 -- Order Items
 CREATE TABLE IF NOT EXISTS order_items (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     order_id BIGINT NOT NULL,
     product_id BIGINT,
@@ -818,7 +818,7 @@ CREATE TABLE IF NOT EXISTS order_items (
     tax_amount BIGINT NOT NULL DEFAULT 0,
     cover_url VARCHAR(500),
     attributes JSON,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (order_id) REFERENCES orders(id),
     FOREIGN KEY (product_id) REFERENCES products(id),
     FOREIGN KEY (variant_id) REFERENCES product_variants(id)
@@ -828,15 +828,15 @@ CREATE INDEX idx_order_items_order ON order_items(order_id);
 CREATE INDEX idx_order_items_tenant ON order_items(tenant_id);
 
 CREATE TABLE IF NOT EXISTS cart_items (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     user_id BIGINT NOT NULL,
     product_id BIGINT NOT NULL,
     variant_id BIGINT,
     quantity INT NOT NULL DEFAULT 1,
     attributes JSON,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     UNIQUE KEY uq_cart_user_product_variant (user_id, product_id, variant_id),
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (product_id) REFERENCES products(id),
@@ -846,7 +846,7 @@ CREATE TABLE IF NOT EXISTS cart_items (
 CREATE INDEX idx_cart_items_tenant ON cart_items(tenant_id);
 
 CREATE TABLE IF NOT EXISTS payment_channels (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     provider VARCHAR(50) NOT NULL,
     name VARCHAR(200) NOT NULL,
@@ -857,8 +857,8 @@ CREATE TABLE IF NOT EXISTS payment_channels (
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order INT NOT NULL DEFAULT 0,
     version INT NOT NULL DEFAULT 1,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     UNIQUE KEY uq_channel_provider_name (provider, name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -868,7 +868,7 @@ CREATE INDEX idx_payment_channels_tenant ON payment_channels(tenant_id);
 
 -- Payment Orders
 CREATE TABLE IF NOT EXISTS payment_orders (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     user_id BIGINT NOT NULL,
     order_id VARCHAR(36),
@@ -892,11 +892,11 @@ CREATE TABLE IF NOT EXISTS payment_orders (
     client_user_agent VARCHAR(512),
     channel_selected_by VARCHAR(20),
     metadata JSON,
-    paid_at DATETIME(3),
-    cancelled_at DATETIME(3),
-    expired_at DATETIME(3),
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    paid_at DATETIME,
+    cancelled_at DATETIME,
+    expired_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (channel_id) REFERENCES payment_channels(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -909,7 +909,7 @@ CREATE INDEX idx_payment_orders_tenant ON payment_orders(tenant_id);
 
 -- Payment Transactions
 CREATE TABLE IF NOT EXISTS payment_transactions (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     payment_order_id BIGINT NOT NULL,
     order_id VARCHAR(36),
@@ -920,7 +920,7 @@ CREATE TABLE IF NOT EXISTS payment_transactions (
     provider_tx_id VARCHAR(200) NOT NULL UNIQUE,
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
     raw_payload JSON,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (payment_order_id) REFERENCES payment_orders(id),
     FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -931,7 +931,7 @@ CREATE INDEX idx_payment_transactions_tenant ON payment_transactions(tenant_id);
 
 -- Payment Refunds
 CREATE TABLE IF NOT EXISTS payment_refunds (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     payment_order_id BIGINT NOT NULL,
     order_id VARCHAR(36),
@@ -943,8 +943,8 @@ CREATE TABLE IF NOT EXISTS payment_refunds (
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
     payment_tx_id BIGINT,
     metadata JSON,
-    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     FOREIGN KEY (payment_order_id) REFERENCES payment_orders(id),
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (payment_tx_id) REFERENCES payment_transactions(id)
@@ -956,7 +956,7 @@ CREATE INDEX idx_payment_refunds_tenant ON payment_refunds(tenant_id);
 
 -- Wallet Outbox (ensures wallet operations are never lost)
 CREATE TABLE IF NOT EXISTS wallet_outbox (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id VARCHAR(36) NOT NULL DEFAULT 'default',
     user_id BIGINT NOT NULL,
     currency VARCHAR(10) NOT NULL,

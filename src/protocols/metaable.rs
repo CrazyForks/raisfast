@@ -43,7 +43,7 @@ impl Aspect for MetaableAspect {
     fn columns(&self) -> Vec<ColumnDef> {
         vec![ColumnDef {
             name: COL_META.into(),
-            sql_type: SqlType::Text,
+            sql_type: SqlType::Json,
             default: Some("'{}'".into()),
         }]
     }

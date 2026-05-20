@@ -38,7 +38,7 @@ impl Aspect for ExpirableAspect {
     fn columns(&self) -> Vec<ColumnDef> {
         vec![ColumnDef {
             name: COL_EXPIRES_AT.into(),
-            sql_type: SqlType::Text,
+            sql_type: SqlType::Timestamp,
             default: None,
         }]
     }
@@ -121,7 +121,7 @@ mod tests {
         let cols = ExpirableAspect.columns();
         assert_eq!(cols.len(), 1);
         assert_eq!(cols[0].name, COL_EXPIRES_AT);
-        assert_eq!(cols[0].sql_type, SqlType::Text);
+        assert_eq!(cols[0].sql_type, SqlType::Timestamp);
     }
 
     #[test]

@@ -419,9 +419,9 @@ fn generate_create_table_for_rebuild(
     #[cfg(feature = "db-sqlite")]
     cols.push(format!("    {COL_ID} INTEGER PRIMARY KEY"));
     #[cfg(feature = "db-postgres")]
-    cols.push(format!("    {COL_ID} BIGSERIAL PRIMARY KEY"));
+    cols.push(format!("    {COL_ID} BIGINT PRIMARY KEY"));
     #[cfg(feature = "db-mysql")]
-    cols.push(format!("    {COL_ID} BIGINT AUTO_INCREMENT PRIMARY KEY"));
+    cols.push(format!("    {COL_ID} BIGINT PRIMARY KEY"));
 
     for field in &ct.fields {
         if field.field_type == FieldType::Relation {
@@ -538,29 +538,26 @@ pub fn expected_columns(ct: &ContentTypeSchema, protocol_columns: &[ColumnDef]) 
     cols
 }
 
-fn decimal_sql_type() -> &'static str {
-    #[cfg(feature = "db-sqlite")]
-    {
-        "TEXT"
-    }
-    #[cfg(not(feature = "db-sqlite"))]
-    {
-        "DECIMAL(65,30)"
-    }
-}
-
 fn field_type_to_sql(ft: &FieldType) -> &'static str {
+    use crate::db::sql_type::SqlType;
     match ft {
-        FieldType::Text | FieldType::RichText | FieldType::Json => "TEXT",
-        FieldType::Integer | FieldType::BigInt => "INTEGER",
-        FieldType::Float => "REAL",
-        FieldType::Decimal => decimal_sql_type(),
-        FieldType::Boolean => "BOOLEAN",
-        FieldType::Date | FieldType::DateTime | FieldType::Time => "TEXT",
-        FieldType::Email | FieldType::Password | FieldType::Enum => "TEXT",
-        FieldType::Uid => "TEXT",
-        FieldType::Media => "TEXT",
-        FieldType::Relation => "TEXT",
+        FieldType::Text => SqlType::Varchar.as_str(),
+        FieldType::RichText => SqlType::Text.as_str(),
+        FieldType::Json => SqlType::Json.as_str(),
+        FieldType::Integer => SqlType::Integer.as_str(),
+        FieldType::BigInt => SqlType::BigInt.as_str(),
+        FieldType::Float => SqlType::Real.as_str(),
+        FieldType::Decimal => SqlType::Decimal.as_str(),
+        FieldType::Boolean => SqlType::Boolean.as_str(),
+        FieldType::Date => SqlType::Date.as_str(),
+        FieldType::DateTime => SqlType::Timestamp.as_str(),
+        FieldType::Time => SqlType::Time.as_str(),
+        FieldType::Email
+        | FieldType::Password
+        | FieldType::Enum
+        | FieldType::Uid
+        | FieldType::Media => SqlType::Varchar.as_str(),
+        FieldType::Relation => SqlType::BigInt.as_str(),
     }
 }
 
@@ -583,29 +580,29 @@ fn json_to_sql_literal(v: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aspects::SqlType;
     use crate::constants::*;
+    use crate::db::sql_type::SqlType;
 
     fn default_protocol_columns() -> Vec<ColumnDef> {
         vec![
             ColumnDef {
                 name: COL_CREATED_AT.into(),
-                sql_type: SqlType::Text,
+                sql_type: SqlType::Timestamp,
                 default: None,
             },
             ColumnDef {
                 name: COL_UPDATED_AT.into(),
-                sql_type: SqlType::Text,
+                sql_type: SqlType::Timestamp,
                 default: None,
             },
             ColumnDef {
                 name: COL_CREATED_BY.into(),
-                sql_type: SqlType::Text,
+                sql_type: SqlType::BigInt,
                 default: None,
             },
             ColumnDef {
                 name: COL_UPDATED_BY.into(),
-                sql_type: SqlType::Text,
+                sql_type: SqlType::BigInt,
                 default: None,
             },
         ]
@@ -615,12 +612,12 @@ mod tests {
         let mut cols = default_protocol_columns();
         cols.push(ColumnDef {
             name: COL_DELETED_AT.into(),
-            sql_type: SqlType::Text,
+            sql_type: SqlType::Timestamp,
             default: None,
         });
         cols.push(ColumnDef {
             name: COL_DELETED_BY.into(),
-            sql_type: SqlType::Text,
+            sql_type: SqlType::BigInt,
             default: None,
         });
         cols
@@ -846,7 +843,7 @@ foreign_key = "author_id"
         assert_eq!(field_type_to_sql(&FieldType::Uid), "TEXT");
         assert_eq!(field_type_to_sql(&FieldType::Json), "TEXT");
         assert_eq!(field_type_to_sql(&FieldType::Media), "TEXT");
-        assert_eq!(field_type_to_sql(&FieldType::Relation), "TEXT");
+        assert_eq!(field_type_to_sql(&FieldType::Relation), "INTEGER");
     }
 
     #[test]
@@ -1155,7 +1152,7 @@ type = "text"
         .unwrap();
         let proto = vec![ColumnDef {
             name: "created_at".into(),
-            sql_type: SqlType::Text,
+            sql_type: SqlType::Timestamp,
             default: None,
         }];
         let sql = generate_create_table(&ct, &proto);

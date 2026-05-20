@@ -137,9 +137,10 @@ async fn resolve_many_to_one_batch(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("batch relation query failed: {e}")))?;
 
+    let id_cols: std::collections::HashSet<&str> = std::collections::HashSet::from([COL_ID]);
     let mut lookup: std::collections::HashMap<i64, Value> = std::collections::HashMap::new();
     for row in &rows {
-        let val = super::repository::row_to_value(row, &columns);
+        let val = super::repository::row_to_value(row, &columns, &id_cols);
         if let Some(id) = val.get(COL_ID).and_then(extract_id_i64) {
             lookup.insert(id, val);
         }
@@ -222,10 +223,11 @@ async fn resolve_one_to_many_batch(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("batch one_to_many query failed: {e}")))?;
 
+    let id_cols: std::collections::HashSet<&str> = std::collections::HashSet::from([COL_ID]);
     let mut lookup: std::collections::HashMap<i64, Vec<Value>> = std::collections::HashMap::new();
     for row in &rows {
         let fk_val: i64 = row.try_get("__fk").unwrap_or(0);
-        let val = super::repository::row_to_value(row, &columns);
+        let val = super::repository::row_to_value(row, &columns, &id_cols);
         lookup.entry(fk_val).or_default().push(val);
     }
 
@@ -307,10 +309,11 @@ async fn resolve_many_to_many_batch(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("batch many_to_many query failed: {e}")))?;
 
+    let id_cols: std::collections::HashSet<&str> = std::collections::HashSet::from([COL_ID]);
     let mut lookup: std::collections::HashMap<i64, Vec<Value>> = std::collections::HashMap::new();
     for row in &rows {
         let source_id: i64 = row.try_get("__source_id").unwrap_or(0);
-        let val = super::repository::row_to_value(row, &columns);
+        let val = super::repository::row_to_value(row, &columns, &id_cols);
         lookup.entry(source_id).or_default().push(val);
     }
 

@@ -8,6 +8,7 @@ pub mod connection;
 pub mod dialect;
 pub mod pool;
 pub mod schema;
+pub mod sql_type;
 pub mod tenant;
 
 pub mod schema_meta {

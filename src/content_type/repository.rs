@@ -190,7 +190,11 @@ impl ContentRepository {
             data_q.fetch_all(&self.pool).await?
         };
 
-        let mut items: Vec<Value> = rows.iter().map(|row| row_to_value(row, &columns)).collect();
+        let id_cols = ct.id_column_set();
+        let mut items: Vec<Value> = rows
+            .iter()
+            .map(|row| row_to_value(row, &columns, &id_cols))
+            .collect();
 
         if !ct.relation_fields().is_empty() {
             super::resolver::resolve_relations(
@@ -238,7 +242,8 @@ impl ContentRepository {
 
         let row = q.fetch_optional(&self.pool).await?;
 
-        let mut result = row.map(|r| row_to_value(&r, &columns));
+        let id_cols = ct.id_column_set();
+        let mut result = row.map(|r| row_to_value(&r, &columns, &id_cols));
 
         if let Some(ref mut item) = result
             && !ct.relation_fields().is_empty()
@@ -284,7 +289,8 @@ impl ContentRepository {
         let row = q.fetch_optional(&self.pool).await?;
 
         if let Some(r) = row {
-            let mut result = row_to_value(&r, &columns);
+            let id_cols = ct.id_column_set();
+            let mut result = row_to_value(&r, &columns, &id_cols);
             if !ct.relation_fields().is_empty() {
                 super::resolver::resolve_relations(
                     &self.pool,
@@ -349,7 +355,8 @@ impl ContentRepository {
 
         let row = q.fetch_optional(&self.pool).await?;
 
-        let mut result = row.map(|r| row_to_value(&r, &columns));
+        let id_cols = ct.id_column_set();
+        let mut result = row.map(|r| row_to_value(&r, &columns, &id_cols));
 
         if let Some(ref mut item) = result
             && !ct.relation_fields().is_empty()
@@ -586,7 +593,8 @@ impl ContentRepository {
             .fetch_optional(&self.pool)
             .await?;
 
-        row.map(|r| row_to_value(&r, &columns))
+        let id_cols = ct.id_column_set();
+        row.map(|r| row_to_value(&r, &columns, &id_cols))
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("created record not found")))
     }
 
@@ -1401,26 +1409,24 @@ pub fn build_column_names(
 ///
 /// SQLite stores all values as TEXT, so it tries to parse as bool/int/f64 first,
 /// falling back to the raw string.
-pub(crate) fn row_to_value(row: &DbRow, columns: &[String]) -> Value {
+pub(crate) fn row_to_value(
+    row: &DbRow,
+    columns: &[String],
+    id_columns: &std::collections::HashSet<&str>,
+) -> Value {
     let mut map = serde_json::Map::with_capacity(columns.len());
     for col in columns {
-        let val = cell_to_json(row, col.as_str());
+        let val = cell_to_json(row, col.as_str(), id_columns);
         map.insert(col.clone(), val);
     }
     Value::Object(map)
 }
 
-/// Convert a single SQLite cell to a JSON Value
-///
-/// Try order: i64 → f64 → bool → String → Null
-///
-/// Note: bool is placed after i64 because SQLite does not distinguish bool from int;
-/// non-0/1 integers would be misidentified as true by bool.
-fn cell_to_json(row: &DbRow, col: &str) -> Value {
-    if col == COL_ID
+fn cell_to_json(row: &DbRow, col: &str, id_columns: &std::collections::HashSet<&str>) -> Value {
+    if id_columns.contains(col)
         && let Ok(Some(v)) = row.try_get::<Option<i64>, _>(col)
     {
-        return json!(v.to_string());
+        return json!(crate::types::snowflake_id::encode_id(v));
     }
     if let Ok(Some(v)) = row.try_get::<Option<i64>, _>(col) {
         return json!(v);

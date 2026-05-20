@@ -8,13 +8,13 @@
 
 -- 租户表
 CREATE TABLE IF NOT EXISTS tenants (
-    id BIGSERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
+    id BIGINT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL UNIQUE,
     domain VARCHAR(255) UNIQUE,
     config JSONB NOT NULL DEFAULT '{}',
     status VARCHAR(50) NOT NULL DEFAULT 'active',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 -- 默认租户
@@ -24,7 +24,7 @@ ON CONFLICT (name) DO NOTHING;
 
 -- 用户
 CREATE TABLE IF NOT EXISTS users (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     username VARCHAR(255) UNIQUE NOT NULL,
     role VARCHAR(50) NOT NULL DEFAULT 'reader',
@@ -38,8 +38,8 @@ CREATE TABLE IF NOT EXISTS users (
     locale VARCHAR(10),
     social_links JSONB,
     metadata JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
@@ -48,14 +48,14 @@ CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
 
 -- 用户凭据
 CREATE TABLE IF NOT EXISTS user_credentials (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id),
     auth_type VARCHAR(100) NOT NULL,
     identifier VARCHAR(500) NOT NULL,
     credential_data TEXT NOT NULL,
     verified BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE(auth_type, identifier)
 );
 
@@ -65,7 +65,7 @@ CREATE INDEX IF NOT EXISTS idx_user_credentials_type ON user_credentials(auth_ty
 
 -- OAuth 账号绑定
 CREATE TABLE IF NOT EXISTS oauth_accounts (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id),
     provider VARCHAR(50) NOT NULL,
     provider_user_id VARCHAR(255) NOT NULL,
@@ -76,8 +76,8 @@ CREATE TABLE IF NOT EXISTS oauth_accounts (
     refresh_token VARCHAR(1024),
     token_expires_at TIMESTAMPTZ,
     profile JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE(provider, provider_user_id)
 );
 
@@ -86,11 +86,11 @@ CREATE INDEX IF NOT EXISTS idx_oauth_accounts_provider ON oauth_accounts(provide
 
 -- OAuth 短期 state 存储（PKCE）
 CREATE TABLE IF NOT EXISTS oauth_states (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     provider VARCHAR(50) NOT NULL,
     code_verifier VARCHAR(255) NOT NULL,
     user_id BIGINT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ NOT NULL
 );
 
@@ -98,28 +98,28 @@ CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
 
 -- 币种配置
 CREATE TABLE IF NOT EXISTS currencies (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     code VARCHAR(10) NOT NULL UNIQUE CHECK(code = UPPER(code) AND LENGTH(code) BETWEEN 1 AND 10),
     name TEXT NOT NULL,
     decimals INTEGER NOT NULL DEFAULT 0 CHECK(decimals BETWEEN 0 AND 18),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     version INTEGER NOT NULL DEFAULT 1,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_currencies_code ON currencies(code);
 
 CREATE TABLE IF NOT EXISTS wallets (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id BIGINT NOT NULL REFERENCES users(id),
     currency VARCHAR(50) NOT NULL,
     balance BIGINT NOT NULL DEFAULT 0 CHECK(balance >= 0),
     version BIGINT NOT NULL DEFAULT 1,
     status VARCHAR(50) NOT NULL DEFAULT 'active',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, currency)
 );
 
@@ -128,7 +128,7 @@ CREATE INDEX IF NOT EXISTS idx_wallets_currency ON wallets(currency);
 CREATE INDEX IF NOT EXISTS idx_wallets_tenant ON wallets(tenant_id);
 
 CREATE TABLE IF NOT EXISTS wallet_transactions (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     wallet_id BIGINT NOT NULL REFERENCES wallets(id),
     user_id BIGINT NOT NULL REFERENCES users(id),
@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
     reference_id VARCHAR(255),
     counterparty_wallet_id BIGINT,
     metadata JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_wallet_tx_wallet ON wallet_transactions(wallet_id);
@@ -156,11 +156,11 @@ CREATE INDEX IF NOT EXISTS idx_wallet_transactions_tenant ON wallet_transactions
 
 -- Refresh Tokens
 CREATE TABLE IF NOT EXISTS refresh_tokens (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id),
     token VARCHAR(500) UNIQUE NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
@@ -169,7 +169,7 @@ CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expir
 
 -- 站点配置
 CREATE TABLE IF NOT EXISTS options (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     option_key VARCHAR(255) NOT NULL,
     value TEXT NOT NULL,
@@ -181,7 +181,7 @@ CREATE TABLE IF NOT EXISTS options (
     is_public BOOLEAN NOT NULL DEFAULT FALSE,
     autoload BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order INTEGER NOT NULL DEFAULT 0,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE(option_key)
 );
 
@@ -189,27 +189,27 @@ CREATE INDEX IF NOT EXISTS idx_options_tenant_option_key ON options(tenant_id, o
 
 -- RBAC 角色
 CREATE TABLE IF NOT EXISTS roles (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     name VARCHAR(255) NOT NULL UNIQUE,
     description TEXT,
     is_system BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_roles_tenant ON roles(tenant_id);
 
 -- RBAC 权限
 CREATE TABLE IF NOT EXISTS permissions (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     role_id BIGINT NOT NULL REFERENCES roles(id),
     action VARCHAR(255) NOT NULL,
     subject VARCHAR(255) NOT NULL,
     fields JSONB,
     conditions JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_role_action_subject
@@ -218,7 +218,7 @@ CREATE INDEX IF NOT EXISTS idx_permissions_tenant ON permissions(tenant_id);
 
 -- 审计日志
 CREATE TABLE IF NOT EXISTS audit_log (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     actor_id BIGINT,
     actor_role VARCHAR(50),
@@ -228,7 +228,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     detail TEXT,
     ip_address VARCHAR(45),
     user_agent TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
@@ -238,7 +238,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_tenant ON audit_log(tenant_id);
 
 -- API Token
 CREATE TABLE IF NOT EXISTS api_tokens (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id),
     name VARCHAR(255) NOT NULL,
     token_hash VARCHAR(255) UNIQUE NOT NULL,
@@ -246,7 +246,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     scopes JSONB NOT NULL DEFAULT '["read","write"]',
     last_used_at TIMESTAMPTZ,
     expires_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_api_tokens_user_id ON api_tokens(user_id);
@@ -254,15 +254,15 @@ CREATE INDEX IF NOT EXISTS idx_api_tokens_token_hash ON api_tokens(token_hash);
 
 -- Webhook 订阅
 CREATE TABLE IF NOT EXISTS webhook_subscriptions (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     url VARCHAR(1024) NOT NULL,
     secret VARCHAR(255) NOT NULL,
     events JSONB NOT NULL DEFAULT '[]',
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     description TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_enabled ON webhook_subscriptions(enabled);
@@ -274,7 +274,7 @@ CREATE TABLE IF NOT EXISTS plugin_storage (
     storage_key VARCHAR(255) NOT NULL,
     value TEXT NOT NULL,
     expires_at TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     PRIMARY KEY (plugin_id, storage_key)
 );
 
@@ -282,13 +282,13 @@ CREATE INDEX IF NOT EXISTS idx_plugin_storage_plugin ON plugin_storage(plugin_id
 
 -- 内容版本历史
 CREATE TABLE IF NOT EXISTS content_revisions (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     content_type VARCHAR(100) NOT NULL,
     record_id BIGINT NOT NULL,
     revision_number INTEGER NOT NULL,
     snapshot JSONB NOT NULL,
     created_by BIGINT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE(content_type, record_id, revision_number)
 );
 
@@ -299,12 +299,12 @@ CREATE INDEX IF NOT EXISTS idx_revisions_ct_record_rev
 
 -- 密码重置令牌
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id),
     token VARCHAR(255) NOT NULL UNIQUE,
     expires_at TIMESTAMPTZ NOT NULL,
     used_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token);
@@ -313,7 +313,7 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires_at ON password_rese
 
 -- 短信验证码
 CREATE TABLE IF NOT EXISTS sms_codes (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     phone VARCHAR(50) NOT NULL,
     code VARCHAR(20) NOT NULL,
     purpose VARCHAR(50) NOT NULL,
@@ -321,7 +321,7 @@ CREATE TABLE IF NOT EXISTS sms_codes (
     verified_at TIMESTAMPTZ,
     attempts INTEGER NOT NULL DEFAULT 0,
     ip_address VARCHAR(45),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_sms_codes_phone ON sms_codes(phone);
@@ -329,13 +329,13 @@ CREATE INDEX IF NOT EXISTS idx_sms_codes_expires ON sms_codes(expires_at);
 
 -- 邮箱验证令牌
 CREATE TABLE IF NOT EXISTS email_verification_tokens (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id),
     token VARCHAR(255) NOT NULL UNIQUE,
     email VARCHAR(255) NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     verified_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_token ON email_verification_tokens(token);
@@ -344,7 +344,7 @@ CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expires ON email_verifi
 
 -- 后台任务队列
 CREATE TABLE IF NOT EXISTS jobs (
-    id           BIGSERIAL PRIMARY KEY,
+    id           BIGINT PRIMARY KEY,
     job_type     VARCHAR(100) NOT NULL,
     payload      TEXT NOT NULL,
     status       VARCHAR(50) NOT NULL DEFAULT 'pending',
@@ -352,8 +352,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     max_attempts INTEGER NOT NULL DEFAULT 3,
     run_after    TIMESTAMPTZ,
     error        TEXT,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at   TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
@@ -362,7 +362,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs(job_type);
 
 -- 定时任务调度
 CREATE TABLE IF NOT EXISTS cron_schedules (
-    id           BIGSERIAL PRIMARY KEY,
+    id           BIGINT PRIMARY KEY,
     label        VARCHAR(255) NOT NULL,
     job_type     VARCHAR(100) NOT NULL,
     payload      TEXT,
@@ -371,8 +371,8 @@ CREATE TABLE IF NOT EXISTS cron_schedules (
     last_run_at  TIMESTAMPTZ,
     next_run_at  TIMESTAMPTZ NOT NULL,
     plugin_id    VARCHAR(100),
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at   TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_cron_enabled ON cron_schedules(enabled);
@@ -381,7 +381,7 @@ CREATE INDEX IF NOT EXISTS idx_cron_plugin ON cron_schedules(plugin_id);
 
 -- Cron 执行历史
 CREATE TABLE IF NOT EXISTS cron_execution_log (
-    id           BIGSERIAL PRIMARY KEY,
+    id           BIGINT PRIMARY KEY,
     schedule_id  BIGINT NOT NULL,
     job_type     VARCHAR(100) NOT NULL,
     label        VARCHAR(255) NOT NULL,
@@ -400,7 +400,7 @@ CREATE INDEX IF NOT EXISTS idx_cron_log_started ON cron_execution_log(started_at
 
 -- 分类
 CREATE TABLE IF NOT EXISTS categories (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     name VARCHAR(255) UNIQUE NOT NULL,
     slug VARCHAR(255) UNIQUE NOT NULL,
@@ -415,15 +415,15 @@ CREATE TABLE IF NOT EXISTS categories (
     og_title VARCHAR(255),
     og_description VARCHAR(500),
     og_image VARCHAR(500),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_categories_tenant ON categories(tenant_id);
 
 -- 标签
 CREATE TABLE IF NOT EXISTS tags (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     name VARCHAR(255) UNIQUE NOT NULL,
     slug VARCHAR(255) UNIQUE NOT NULL,
@@ -436,15 +436,15 @@ CREATE TABLE IF NOT EXISTS tags (
     og_image VARCHAR(500),
     created_by BIGINT,
     updated_by BIGINT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_tags_tenant ON tags(tenant_id);
 
 -- 文章
 CREATE TABLE IF NOT EXISTS posts (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     title TEXT NOT NULL,
     slug VARCHAR(255) UNIQUE NOT NULL,
@@ -468,8 +468,8 @@ CREATE TABLE IF NOT EXISTS posts (
     og_image VARCHAR(500),
     canonical_url VARCHAR(1024),
     reading_time INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     published_at TIMESTAMPTZ
 );
 
@@ -497,7 +497,7 @@ CREATE INDEX IF NOT EXISTS idx_posts_tags_tag_id ON posts_tags(tag_id);
 
 -- 评论
 CREATE TABLE IF NOT EXISTS comments (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     post_id BIGINT NOT NULL REFERENCES posts(id),
     created_by BIGINT REFERENCES users(id),
@@ -509,8 +509,8 @@ CREATE TABLE IF NOT EXISTS comments (
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
     author_ip VARCHAR(45),
     author_url VARCHAR(500),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id);
@@ -524,7 +524,7 @@ CREATE INDEX IF NOT EXISTS idx_comments_tenant ON comments(tenant_id);
 -- ── 内置模块：Pages（BUILTIN_PAGES=true） ────────────────
 
 CREATE TABLE IF NOT EXISTS pages (
-    id               BIGSERIAL PRIMARY KEY,
+    id               BIGINT PRIMARY KEY,
     tenant_id        TEXT NOT NULL DEFAULT 'default',
     title            TEXT NOT NULL,
     slug             VARCHAR(255) NOT NULL UNIQUE,
@@ -546,8 +546,8 @@ CREATE TABLE IF NOT EXISTS pages (
     og_title VARCHAR(255),
     og_description VARCHAR(500),
     canonical_url VARCHAR(1024),
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at       TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_pages_slug      ON pages(slug);
@@ -558,7 +558,7 @@ CREATE INDEX IF NOT EXISTS idx_pages_tenant_slug ON pages(tenant_id, slug);
 CREATE INDEX IF NOT EXISTS idx_pages_tenant_status ON pages(tenant_id, status);
 
 CREATE TABLE IF NOT EXISTS reusable_blocks (
-    id          BIGSERIAL PRIMARY KEY,
+    id          BIGINT PRIMARY KEY,
     tenant_id   TEXT NOT NULL DEFAULT 'default',
     name        VARCHAR(255) NOT NULL,
     block_type  TEXT NOT NULL,
@@ -566,8 +566,8 @@ CREATE TABLE IF NOT EXISTS reusable_blocks (
     description TEXT,
     created_by  BIGINT,
     updated_by  BIGINT,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at  TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_reusable_blocks_tenant ON reusable_blocks(tenant_id);
@@ -575,7 +575,7 @@ CREATE INDEX IF NOT EXISTS idx_reusable_blocks_tenant ON reusable_blocks(tenant_
 -- ── 内置模块：Media（BUILTIN_MEDIA=true） ────────────────
 
 CREATE TABLE IF NOT EXISTS media (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id BIGINT NOT NULL REFERENCES users(id),
     filename VARCHAR(255) NOT NULL,
@@ -588,8 +588,8 @@ CREATE TABLE IF NOT EXISTS media (
     alt_text VARCHAR(255),
     caption TEXT,
     description TEXT,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_media_user_created
@@ -599,34 +599,34 @@ CREATE INDEX IF NOT EXISTS idx_media_tenant ON media(tenant_id);
 -- ── 内置模块：Workflow（BUILTIN_WORKFLOW=true） ──────────
 
 CREATE TABLE IF NOT EXISTS workflow_definitions (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
     steps JSONB NOT NULL,
     initial_step VARCHAR(100) NOT NULL,
     version INTEGER NOT NULL DEFAULT 1,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS workflow_instances (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     definition_id BIGINT NOT NULL REFERENCES workflow_definitions(id),
     status VARCHAR(50) NOT NULL DEFAULT 'running',
     current_step VARCHAR(100),
     context JSONB NOT NULL DEFAULT '{}',
     triggered_by BIGINT,
-    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    started_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_wf_instances_definition ON workflow_instances(definition_id);
 CREATE INDEX IF NOT EXISTS idx_wf_instances_status ON workflow_instances(status);
 
 CREATE TABLE IF NOT EXISTS workflow_step_logs (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     instance_id BIGINT NOT NULL REFERENCES workflow_instances(id),
     step_id VARCHAR(100) NOT NULL,
     step_name VARCHAR(255) NOT NULL,
@@ -634,7 +634,7 @@ CREATE TABLE IF NOT EXISTS workflow_step_logs (
     input TEXT,
     output TEXT,
     error TEXT,
-    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    started_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ
 );
 
@@ -642,7 +642,7 @@ CREATE INDEX IF NOT EXISTS idx_wf_step_logs_instance ON workflow_step_logs(insta
 
 -- Products
 CREATE TABLE IF NOT EXISTS products (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     category_id BIGINT REFERENCES categories(id),
     title TEXT NOT NULL,
@@ -659,7 +659,7 @@ CREATE TABLE IF NOT EXISTS products (
     attributes JSONB,
     sort_order INTEGER NOT NULL DEFAULT 0,
     version INTEGER NOT NULL DEFAULT 1,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     slug VARCHAR(255) UNIQUE,
     content TEXT,
     image_ids JSONB,
@@ -677,7 +677,7 @@ CREATE TABLE IF NOT EXISTS products (
     cost_price BIGINT,
     sale_price BIGINT,
     has_variants BOOLEAN NOT NULL DEFAULT FALSE,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_products_status ON products(status);
@@ -687,7 +687,7 @@ CREATE INDEX IF NOT EXISTS idx_products_tenant ON products(tenant_id);
 
 -- Product Variants
 CREATE TABLE IF NOT EXISTS product_variants (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     product_id BIGINT NOT NULL REFERENCES products(id),
     sku VARCHAR(100) UNIQUE,
@@ -698,8 +698,8 @@ CREATE TABLE IF NOT EXISTS product_variants (
     attributes JSONB,
     sort_order INTEGER NOT NULL DEFAULT 0,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_product_variants_product ON product_variants(product_id);
@@ -708,7 +708,7 @@ CREATE INDEX IF NOT EXISTS idx_product_variants_tenant ON product_variants(tenan
 
 -- User Addresses
 CREATE TABLE IF NOT EXISTS user_addresses (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id BIGINT NOT NULL REFERENCES users(id),
     label VARCHAR(100) NOT NULL DEFAULT '',
@@ -723,8 +723,8 @@ CREATE TABLE IF NOT EXISTS user_addresses (
     postal_code VARCHAR(20),
     is_default BOOLEAN NOT NULL DEFAULT FALSE,
     address_type VARCHAR(20) NOT NULL DEFAULT 'shipping',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_addresses_user ON user_addresses(user_id);
@@ -732,7 +732,7 @@ CREATE INDEX IF NOT EXISTS idx_user_addresses_tenant ON user_addresses(tenant_id
 
 -- Orders
 CREATE TABLE IF NOT EXISTS orders (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id BIGINT NOT NULL REFERENCES users(id),
     order_no VARCHAR(255) NOT NULL UNIQUE,
@@ -761,8 +761,8 @@ CREATE TABLE IF NOT EXISTS orders (
     refunding_at TIMESTAMPTZ,
     refunded_at TIMESTAMPTZ,
     expired_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);
@@ -772,7 +772,7 @@ CREATE INDEX IF NOT EXISTS idx_orders_tenant ON orders(tenant_id);
 
 -- Order Items
 CREATE TABLE IF NOT EXISTS order_items (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     order_id BIGINT NOT NULL REFERENCES orders(id),
     product_id BIGINT REFERENCES products(id),
@@ -786,28 +786,28 @@ CREATE TABLE IF NOT EXISTS order_items (
     tax_amount BIGINT NOT NULL DEFAULT 0,
     cover_url VARCHAR(500),
     attributes JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_order_items_tenant ON order_items(tenant_id);
 
 CREATE TABLE IF NOT EXISTS cart_items (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id BIGINT NOT NULL REFERENCES users(id),
     product_id BIGINT NOT NULL REFERENCES products(id),
     variant_id BIGINT REFERENCES product_variants(id),
     quantity INTEGER NOT NULL DEFAULT 1,
     attributes JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, product_id, variant_id)
 );
 CREATE INDEX IF NOT EXISTS idx_cart_items_tenant ON cart_items(tenant_id);
 
 CREATE TABLE IF NOT EXISTS payment_channels (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     provider VARCHAR(50) NOT NULL,
     name VARCHAR(200) NOT NULL,
@@ -818,8 +818,8 @@ CREATE TABLE IF NOT EXISTS payment_channels (
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order INTEGER NOT NULL DEFAULT 0,
     version INTEGER NOT NULL DEFAULT 1,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     UNIQUE(provider, name)
 );
 
@@ -829,7 +829,7 @@ CREATE INDEX IF NOT EXISTS idx_payment_channels_tenant ON payment_channels(tenan
 
 -- Payment Orders
 CREATE TABLE IF NOT EXISTS payment_orders (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id BIGINT NOT NULL REFERENCES users(id),
     order_id VARCHAR(36),
@@ -856,8 +856,8 @@ CREATE TABLE IF NOT EXISTS payment_orders (
     paid_at TIMESTAMPTZ,
     cancelled_at TIMESTAMPTZ,
     expired_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_payment_orders_user ON payment_orders(user_id);
@@ -868,7 +868,7 @@ CREATE INDEX IF NOT EXISTS idx_payment_orders_tenant ON payment_orders(tenant_id
 
 -- Payment Transactions
 CREATE TABLE IF NOT EXISTS payment_transactions (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     payment_order_id BIGINT NOT NULL REFERENCES payment_orders(id),
     order_id VARCHAR(36),
@@ -879,7 +879,7 @@ CREATE TABLE IF NOT EXISTS payment_transactions (
     provider_tx_id VARCHAR(200) NOT NULL UNIQUE,
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
     raw_payload JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_payment_tx_order ON payment_transactions(payment_order_id);
@@ -888,7 +888,7 @@ CREATE INDEX IF NOT EXISTS idx_payment_transactions_tenant ON payment_transactio
 
 -- Payment Refunds
 CREATE TABLE IF NOT EXISTS payment_refunds (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     payment_order_id BIGINT NOT NULL REFERENCES payment_orders(id),
     order_id VARCHAR(36),
@@ -900,8 +900,8 @@ CREATE TABLE IF NOT EXISTS payment_refunds (
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
     payment_tx_id BIGINT REFERENCES payment_transactions(id),
     metadata JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_payment_refunds_order ON payment_refunds(payment_order_id);
@@ -910,7 +910,7 @@ CREATE INDEX IF NOT EXISTS idx_payment_refunds_tenant ON payment_refunds(tenant_
 
 -- Wallet Outbox (ensures wallet operations are never lost)
 CREATE TABLE IF NOT EXISTS wallet_outbox (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id BIGINT NOT NULL,
     currency TEXT NOT NULL,
@@ -925,8 +925,8 @@ CREATE TABLE IF NOT EXISTS wallet_outbox (
     attempts INTEGER NOT NULL DEFAULT 0,
     max_attempts INTEGER NOT NULL DEFAULT 5,
     last_error TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_wallet_outbox_status ON wallet_outbox(status);

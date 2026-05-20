@@ -40,7 +40,7 @@ impl Aspect for NestableAspect {
         vec![
             ColumnDef {
                 name: COL_PARENT_ID.into(),
-                sql_type: SqlType::Text,
+                sql_type: SqlType::BigInt,
                 default: None,
             },
             ColumnDef {

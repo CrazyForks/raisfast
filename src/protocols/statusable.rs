@@ -50,7 +50,7 @@ impl Aspect for StatusableAspect {
     fn columns(&self) -> Vec<ColumnDef> {
         vec![ColumnDef {
             name: COL_STATUS.into(),
-            sql_type: SqlType::Text,
+            sql_type: SqlType::Varchar,
             default: None,
         }]
     }

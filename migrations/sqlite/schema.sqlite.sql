@@ -8,8 +8,8 @@
 
 -- 租户表
 CREATE TABLE IF NOT EXISTS tenants (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
     domain TEXT UNIQUE,
     config TEXT NOT NULL DEFAULT '{}',
     status TEXT NOT NULL DEFAULT 'active',
@@ -23,7 +23,7 @@ INSERT OR IGNORE INTO tenants (name, domain, config, status, created_at, updated
 
 -- 用户
 CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     username TEXT UNIQUE NOT NULL,
     role TEXT NOT NULL DEFAULT 'reader',
@@ -47,7 +47,7 @@ CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
 
 -- 用户凭据
 CREATE TABLE IF NOT EXISTS user_credentials (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id),
     auth_type TEXT NOT NULL,
     identifier TEXT NOT NULL,
@@ -64,7 +64,7 @@ CREATE INDEX IF NOT EXISTS idx_user_credentials_type ON user_credentials(auth_ty
 
 -- OAuth 账号绑定
 CREATE TABLE IF NOT EXISTS oauth_accounts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id),
     provider TEXT NOT NULL,
     provider_user_id TEXT NOT NULL,
@@ -85,7 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_oauth_accounts_provider ON oauth_accounts(provide
 
 -- OAuth 短期 state 存储（PKCE）
 CREATE TABLE IF NOT EXISTS oauth_states (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     provider TEXT NOT NULL,
     code_verifier TEXT NOT NULL,
     user_id INTEGER,
@@ -97,7 +97,7 @@ CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
 
 -- 币种配置
 CREATE TABLE IF NOT EXISTS currencies (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     code TEXT NOT NULL UNIQUE CHECK(code = UPPER(code) AND LENGTH(code) BETWEEN 1 AND 10),
     name TEXT NOT NULL,
     decimals INTEGER NOT NULL DEFAULT 0 CHECK(decimals BETWEEN 0 AND 18),
@@ -111,7 +111,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_currencies_code ON currencies(code);
 
 -- 用户钱包（每用户每币种一个）
 CREATE TABLE IF NOT EXISTS wallets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id INTEGER NOT NULL REFERENCES users(id),
     currency TEXT NOT NULL,
@@ -129,7 +129,7 @@ CREATE INDEX IF NOT EXISTS idx_wallets_tenant ON wallets(tenant_id);
 
 -- 不可变交易流水
 CREATE TABLE IF NOT EXISTS wallet_transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     wallet_id INTEGER NOT NULL REFERENCES wallets(id),
     user_id INTEGER NOT NULL REFERENCES users(id),
@@ -157,7 +157,7 @@ CREATE INDEX IF NOT EXISTS idx_wallet_transactions_tenant ON wallet_transactions
 
 -- Refresh Tokens
 CREATE TABLE IF NOT EXISTS refresh_tokens (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id),
     token TEXT UNIQUE NOT NULL,
     expires_at TEXT NOT NULL,
@@ -170,7 +170,7 @@ CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expir
 
 -- 站点配置
 CREATE TABLE IF NOT EXISTS options (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     option_key TEXT NOT NULL,
     value TEXT NOT NULL,
@@ -190,7 +190,7 @@ CREATE INDEX IF NOT EXISTS idx_options_tenant_option_key ON options(tenant_id, o
 
 -- RBAC 角色
 CREATE TABLE IF NOT EXISTS roles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     name TEXT NOT NULL UNIQUE,
     description TEXT,
@@ -203,7 +203,7 @@ CREATE INDEX IF NOT EXISTS idx_roles_tenant ON roles(tenant_id);
 
 -- RBAC 权限
 CREATE TABLE IF NOT EXISTS permissions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     role_id INTEGER NOT NULL REFERENCES roles(id),
     action TEXT NOT NULL,
@@ -220,7 +220,7 @@ CREATE INDEX IF NOT EXISTS idx_permissions_tenant ON permissions(tenant_id);
 
 -- 审计日志
 CREATE TABLE IF NOT EXISTS audit_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     actor_id INTEGER,
     actor_role TEXT,
@@ -241,7 +241,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_tenant ON audit_log(tenant_id);
 
 -- API Token
 CREATE TABLE IF NOT EXISTS api_tokens (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id),
     name TEXT NOT NULL,
     token_hash TEXT UNIQUE NOT NULL,
@@ -257,7 +257,7 @@ CREATE INDEX IF NOT EXISTS idx_api_tokens_token_hash ON api_tokens(token_hash);
 
 -- Webhook 订阅
 CREATE TABLE IF NOT EXISTS webhook_subscriptions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     url TEXT NOT NULL,
     secret TEXT NOT NULL,
@@ -285,7 +285,7 @@ CREATE INDEX IF NOT EXISTS idx_plugin_storage_plugin ON plugin_storage(plugin_id
 
 -- 内容版本历史
 CREATE TABLE IF NOT EXISTS content_revisions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     content_type TEXT NOT NULL,
     record_id INTEGER NOT NULL,
     revision_number INTEGER NOT NULL,
@@ -302,7 +302,7 @@ CREATE INDEX IF NOT EXISTS idx_revisions_ct_record_rev
 
 -- 密码重置令牌
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id),
     token TEXT NOT NULL UNIQUE,
     expires_at TEXT NOT NULL,
@@ -316,7 +316,7 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires_at ON password_rese
 
 -- 短信验证码
 CREATE TABLE IF NOT EXISTS sms_codes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     phone TEXT NOT NULL,
     code TEXT NOT NULL,
     purpose TEXT NOT NULL,
@@ -332,7 +332,7 @@ CREATE INDEX IF NOT EXISTS idx_sms_codes_expires ON sms_codes(expires_at);
 
 -- 邮箱验证令牌
 CREATE TABLE IF NOT EXISTS email_verification_tokens (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id),
     token TEXT NOT NULL UNIQUE,
     email TEXT NOT NULL,
@@ -347,7 +347,7 @@ CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expires ON email_verifi
 
 -- 后台任务队列
 CREATE TABLE IF NOT EXISTS jobs (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    id           INTEGER PRIMARY KEY,
     job_type     TEXT NOT NULL,
     payload      TEXT NOT NULL,
     status       TEXT NOT NULL DEFAULT 'pending',
@@ -365,7 +365,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs(job_type);
 
 -- 定时任务调度
 CREATE TABLE IF NOT EXISTS cron_schedules (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    id           INTEGER PRIMARY KEY,
     label        TEXT NOT NULL,
     job_type     TEXT NOT NULL,
     payload      TEXT,
@@ -384,7 +384,7 @@ CREATE INDEX IF NOT EXISTS idx_cron_plugin ON cron_schedules(plugin_id);
 
 -- Cron 执行历史
 CREATE TABLE IF NOT EXISTS cron_execution_log (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    id           INTEGER PRIMARY KEY,
     schedule_id  INTEGER NOT NULL,
     job_type     TEXT NOT NULL,
     label        TEXT NOT NULL,
@@ -403,7 +403,7 @@ CREATE INDEX IF NOT EXISTS idx_cron_log_started ON cron_execution_log(started_at
 
 -- 分类
 CREATE TABLE IF NOT EXISTS categories (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     name TEXT UNIQUE NOT NULL,
     slug TEXT UNIQUE NOT NULL,
@@ -426,7 +426,7 @@ CREATE INDEX IF NOT EXISTS idx_categories_tenant ON categories(tenant_id);
 
 -- 标签
 CREATE TABLE IF NOT EXISTS tags (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     name TEXT UNIQUE NOT NULL,
     slug TEXT UNIQUE NOT NULL,
@@ -447,7 +447,7 @@ CREATE INDEX IF NOT EXISTS idx_tags_tenant ON tags(tenant_id);
 
 -- 文章
 CREATE TABLE IF NOT EXISTS posts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     title TEXT NOT NULL,
     slug TEXT UNIQUE NOT NULL,
@@ -500,7 +500,7 @@ CREATE INDEX IF NOT EXISTS idx_posts_tags_tag_id ON posts_tags(tag_id);
 
 -- 评论
 CREATE TABLE IF NOT EXISTS comments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     post_id INTEGER NOT NULL REFERENCES posts(id),
     created_by INTEGER REFERENCES users(id),
@@ -527,7 +527,7 @@ CREATE INDEX IF NOT EXISTS idx_comments_tenant ON comments(tenant_id);
 -- ── 内置模块：Pages（BUILTIN_PAGES=true） ────────────────
 
 CREATE TABLE IF NOT EXISTS pages (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    id               INTEGER PRIMARY KEY,
     tenant_id        TEXT NOT NULL DEFAULT 'default',
     title            TEXT NOT NULL,
     slug             TEXT NOT NULL UNIQUE,
@@ -561,7 +561,7 @@ CREATE INDEX IF NOT EXISTS idx_pages_tenant_slug ON pages(tenant_id, slug);
 CREATE INDEX IF NOT EXISTS idx_pages_tenant_status ON pages(tenant_id, status);
 
 CREATE TABLE IF NOT EXISTS reusable_blocks (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id          INTEGER PRIMARY KEY,
     tenant_id   TEXT NOT NULL DEFAULT 'default',
     name        TEXT NOT NULL,
     block_type  TEXT NOT NULL,
@@ -578,7 +578,7 @@ CREATE INDEX IF NOT EXISTS idx_reusable_blocks_tenant ON reusable_blocks(tenant_
 -- ── 内置模块：Media（BUILTIN_MEDIA=true） ────────────────
 
 CREATE TABLE IF NOT EXISTS media (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id INTEGER NOT NULL REFERENCES users(id),
     filename TEXT NOT NULL,
@@ -602,7 +602,7 @@ CREATE INDEX IF NOT EXISTS idx_media_tenant ON media(tenant_id);
 -- ── 内置模块：Workflow（BUILTIN_WORKFLOW=true） ──────────
 
 CREATE TABLE IF NOT EXISTS workflow_definitions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
     description TEXT,
     steps TEXT NOT NULL,
@@ -614,7 +614,7 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
 );
 
 CREATE TABLE IF NOT EXISTS workflow_instances (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     definition_id INTEGER NOT NULL REFERENCES workflow_definitions(id),
     status TEXT NOT NULL DEFAULT 'running',
     current_step TEXT,
@@ -629,7 +629,7 @@ CREATE INDEX IF NOT EXISTS idx_wf_instances_definition ON workflow_instances(def
 CREATE INDEX IF NOT EXISTS idx_wf_instances_status ON workflow_instances(status);
 
 CREATE TABLE IF NOT EXISTS workflow_step_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     instance_id INTEGER NOT NULL REFERENCES workflow_instances(id),
     step_id TEXT NOT NULL,
     step_name TEXT NOT NULL,
@@ -693,7 +693,7 @@ INSERT OR IGNORE INTO options (tenant_id, option_key, value, type, group_name, l
 
 -- Products
 CREATE TABLE IF NOT EXISTS products (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     category_id INTEGER REFERENCES categories(id),
     title TEXT NOT NULL,
@@ -738,7 +738,7 @@ CREATE INDEX IF NOT EXISTS idx_products_tenant ON products(tenant_id);
 
 -- Product Variants
 CREATE TABLE IF NOT EXISTS product_variants (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     product_id INTEGER NOT NULL REFERENCES products(id),
     sku TEXT UNIQUE,
@@ -759,7 +759,7 @@ CREATE INDEX IF NOT EXISTS idx_product_variants_tenant ON product_variants(tenan
 
 -- User Addresses
 CREATE TABLE IF NOT EXISTS user_addresses (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id INTEGER NOT NULL REFERENCES users(id),
     label TEXT NOT NULL DEFAULT '',
@@ -783,7 +783,7 @@ CREATE INDEX IF NOT EXISTS idx_user_addresses_tenant ON user_addresses(tenant_id
 
 -- Orders
 CREATE TABLE IF NOT EXISTS orders (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id INTEGER NOT NULL REFERENCES users(id),
     order_no TEXT NOT NULL UNIQUE,
@@ -823,7 +823,7 @@ CREATE INDEX IF NOT EXISTS idx_orders_tenant ON orders(tenant_id);
 
 -- Order Items
 CREATE TABLE IF NOT EXISTS order_items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     order_id INTEGER NOT NULL REFERENCES orders(id),
     product_id INTEGER REFERENCES products(id),
@@ -844,7 +844,7 @@ CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_order_items_tenant ON order_items(tenant_id);
 
 CREATE TABLE IF NOT EXISTS cart_items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id INTEGER NOT NULL REFERENCES users(id),
     product_id INTEGER NOT NULL REFERENCES products(id),
@@ -858,7 +858,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_cart_items_user_product_variant ON cart_it
 CREATE INDEX IF NOT EXISTS idx_cart_items_tenant ON cart_items(tenant_id);
 
 CREATE TABLE IF NOT EXISTS payment_channels (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     provider TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -880,7 +880,7 @@ CREATE INDEX IF NOT EXISTS idx_payment_channels_tenant ON payment_channels(tenan
 
 -- Payment Orders
 CREATE TABLE IF NOT EXISTS payment_orders (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id INTEGER NOT NULL REFERENCES users(id),
     order_id TEXT,
@@ -919,7 +919,7 @@ CREATE INDEX IF NOT EXISTS idx_payment_orders_tenant ON payment_orders(tenant_id
 
 -- Payment Transactions
 CREATE TABLE IF NOT EXISTS payment_transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     payment_order_id INTEGER NOT NULL REFERENCES payment_orders(id),
     order_id TEXT,
@@ -939,7 +939,7 @@ CREATE INDEX IF NOT EXISTS idx_payment_transactions_tenant ON payment_transactio
 
 -- Payment Refunds
 CREATE TABLE IF NOT EXISTS payment_refunds (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     payment_order_id INTEGER NOT NULL REFERENCES payment_orders(id),
     order_id TEXT,
@@ -961,7 +961,7 @@ CREATE INDEX IF NOT EXISTS idx_payment_refunds_tenant ON payment_refunds(tenant_
 
 -- Wallet Outbox (ensures wallet operations are never lost)
 CREATE TABLE IF NOT EXISTS wallet_outbox (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id INTEGER NOT NULL,
     currency TEXT NOT NULL,

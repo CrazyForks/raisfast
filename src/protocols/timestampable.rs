@@ -48,12 +48,12 @@ impl Aspect for TimestampableAspect {
         vec![
             ColumnDef {
                 name: COL_CREATED_AT.into(),
-                sql_type: SqlType::Text,
+                sql_type: SqlType::Timestamp,
                 default: None,
             },
             ColumnDef {
                 name: COL_UPDATED_AT.into(),
-                sql_type: SqlType::Text,
+                sql_type: SqlType::Timestamp,
                 default: None,
             },
         ]

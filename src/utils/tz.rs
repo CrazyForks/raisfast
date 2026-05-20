@@ -55,17 +55,13 @@ pub fn now_utc() -> Timestamp {
     chrono::Utc::now()
 }
 
-/// Returns the current time as an RFC 3339 string in the site timezone
+/// Returns the current UTC time as a database-compatible timestamp string.
 ///
-/// Only used by the Aspect system (injected into TEXT fields of dynamic Content Type tables).
-/// For built-in tables, use [`now_utc`] instead.
-///
-/// Example output:
-/// - UTC: `2026-04-16T10:30:00+00:00`
-/// - Asia/Shanghai: `2026-04-16T18:30:00+08:00`
+/// Used by the Aspect system (injected into timestamp columns of dynamic Content Type tables).
+/// Format: `2026-04-16 10:30:00.123` — compatible with SQLite TEXT, MySQL DATETIME(3),
+/// and PostgreSQL TIMESTAMPTZ.
 pub fn now_str() -> String {
-    let tz = site_tz();
-    chrono::Utc::now().with_timezone(&tz).to_rfc3339()
+    chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 /// Returns the current time as `chrono::DateTime<chrono_tz::Tz>` in the site timezone
@@ -99,6 +95,6 @@ mod tests {
     fn now_str_format() {
         set_site_tz(chrono_tz::UTC);
         let s = now_str();
-        assert!(s.contains("+00:00") || s.contains("Z"), "got: {s}");
+        assert!(s.contains('-'), "got: {s}");
     }
 }

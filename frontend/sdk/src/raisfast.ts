@@ -14,6 +14,7 @@ import { Events } from "./public/events";
 import { Orders } from "./public/orders";
 import { Payment } from "./public/payment";
 import { Products } from "./public/products";
+import { Cart } from "./public/cart";
 import { Admin } from "./admin";
 import { Collection } from "./collection";
 import { SDKError } from "./errors";
@@ -47,6 +48,7 @@ export class RaisFast {
   readonly orders: Orders;
   readonly payment: Payment;
   readonly products: Products;
+  readonly cart: Cart;
   readonly authStore: IAuthStore;
   private readonly http: HttpClient;
 
@@ -71,6 +73,7 @@ export class RaisFast {
     this.orders = new Orders(this.http);
     this.payment = new Payment(this.http);
     this.products = new Products(this.http);
+    this.cart = new Cart(this.http);
   }
 
   async init(): Promise<void> {

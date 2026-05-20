@@ -48,12 +48,12 @@ impl Aspect for OwnableAspect {
         vec![
             ColumnDef {
                 name: COL_CREATED_BY.into(),
-                sql_type: SqlType::Integer,
+                sql_type: SqlType::BigInt,
                 default: None,
             },
             ColumnDef {
                 name: COL_UPDATED_BY.into(),
-                sql_type: SqlType::Integer,
+                sql_type: SqlType::BigInt,
                 default: None,
             },
         ]

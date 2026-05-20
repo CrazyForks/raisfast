@@ -15,6 +15,7 @@ export { Events } from "./public/events";
 export { Orders } from "./public/orders";
 export { Payment } from "./public/payment";
 export { Products } from "./public/products";
+export { Cart } from "./public/cart";
 export { BaseAuthStore, LocalAuthStore } from "./auth";
 export { HttpClient, type ApiStyle } from "./client";
 export { SDKError } from "./errors";
@@ -55,6 +56,10 @@ export type {
 export type {
   CreatePaymentOrderBody,
 } from "./public/payment";
+export type {
+  AddToCartBody,
+  UpdateCartItemBody,
+} from "./public/cart";
 export type {
   CreateReusableBlockBody,
   UpdateReusableBlockBody,

@@ -750,6 +750,40 @@ impl ContentTypeSchema {
             .collect()
     }
 
+    /// Get all column names that store Snowflake IDs.
+    ///
+    /// Includes: primary key (`id`), relation FK columns, and protocol ID columns
+    /// (`created_by`, `updated_by`, `deleted_by`, `parent_id`).
+    #[must_use]
+    pub fn id_column_set(&self) -> std::collections::HashSet<&str> {
+        let mut set = std::collections::HashSet::new();
+        set.insert(crate::constants::COL_ID);
+        for f in self.relation_fields() {
+            if let Some(RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay) =
+                f.relation.as_ref().map(|r| &r.relation_type)
+            {
+                let fk = f
+                    .relation
+                    .as_ref()
+                    .and_then(|r| r.foreign_key.as_deref())
+                    .unwrap_or(&f.name);
+                set.insert(fk);
+            }
+        }
+        for name in self.protocol_column_names() {
+            match name {
+                crate::constants::COL_CREATED_BY
+                | crate::constants::COL_UPDATED_BY
+                | crate::constants::COL_DELETED_BY
+                | crate::constants::COL_PARENT_ID => {
+                    set.insert(name);
+                }
+                _ => {}
+            }
+        }
+        set
+    }
+
     /// Find field definition by field name
     #[must_use]
     pub fn get_field(&self, name: &str) -> Option<&FieldSchema> {

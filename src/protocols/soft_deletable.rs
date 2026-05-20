@@ -40,12 +40,12 @@ impl Aspect for SoftDeletableAspect {
         vec![
             ColumnDef {
                 name: COL_DELETED_AT.into(),
-                sql_type: SqlType::Text,
+                sql_type: SqlType::Timestamp,
                 default: None,
             },
             ColumnDef {
                 name: COL_DELETED_BY.into(),
-                sql_type: SqlType::Integer,
+                sql_type: SqlType::BigInt,
                 default: None,
             },
         ]

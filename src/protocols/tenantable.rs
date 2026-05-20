@@ -29,7 +29,7 @@ impl Aspect for TenantableAspect {
     fn columns(&self) -> Vec<ColumnDef> {
         vec![ColumnDef {
             name: COL_TENANT_ID.into(),
-            sql_type: SqlType::Text,
+            sql_type: SqlType::Varchar,
             default: Some(format!("'{}'", crate::constants::DEFAULT_TENANT)),
         }]
     }
@@ -68,7 +68,7 @@ mod tests {
         let cols = TenantableAspect.columns();
         assert_eq!(cols.len(), 1);
         assert_eq!(cols[0].name, COL_TENANT_ID);
-        assert_eq!(cols[0].sql_type, SqlType::Text);
+        assert_eq!(cols[0].sql_type, SqlType::Varchar);
         assert!(cols[0].default.is_some());
     }
 
