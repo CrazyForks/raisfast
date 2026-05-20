@@ -51,8 +51,8 @@ impl MutationRoot {
         };
 
         let save_ctx = SaveContext {
-            user_id: auth.user_id().map(|s| s.to_string()),
-            user_int_id: auth.user_int_id(),
+            user_id: auth.user_id().map(|id| id.to_string()),
+            user_int_id: auth.user_id(),
             user_role: Some(auth.role().to_string()),
             tenant_id: auth.tenant_id().map(|s| s.to_string()),
         };
@@ -86,8 +86,13 @@ impl MutationRoot {
         )?;
 
         let repo = ContentRepository::new(state.pool.clone());
+        let int_id: i64 = id
+            .as_str()
+            .parse()
+            .map_err(|e| async_graphql::Error::new(format!("invalid id: {e}")))?;
+
         let existing = repo
-            .find_by_id(&ct, id.as_str(), None, true)
+            .find_by_id(&ct, int_id, None, true)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
@@ -107,24 +112,18 @@ impl MutationRoot {
         };
 
         let save_ctx = SaveContext {
-            user_id: auth.user_id().map(|s| s.to_string()),
-            user_int_id: auth.user_int_id(),
+            user_id: auth.user_id().map(|id| id.to_string()),
+            user_int_id: auth.user_id(),
             user_role: Some(auth.role().to_string()),
             tenant_id: auth.tenant_id().map(|s| s.to_string()),
         };
 
         let result = repo
-            .update(
-                &ct,
-                id.as_str(),
-                serde_json::Value::Object(obj),
-                None,
-                &save_ctx,
-            )
+            .update(&ct, int_id, serde_json::Value::Object(obj), None, &save_ctx)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        let cache_key = cms_detail_cache_key(&ct, id.as_str());
+        let cache_key = cms_detail_cache_key(&ct, int_id);
         state.cms_cache.remove(&cache_key);
 
         Ok(json_to_content_item(result))
@@ -149,8 +148,13 @@ impl MutationRoot {
         )?;
 
         let repo = ContentRepository::new(state.pool.clone());
+        let int_id: i64 = id
+            .as_str()
+            .parse()
+            .map_err(|e| async_graphql::Error::new(format!("invalid id: {e}")))?;
+
         let existing = repo
-            .find_by_id(&ct, id.as_str(), None, true)
+            .find_by_id(&ct, int_id, None, true)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
@@ -166,7 +170,7 @@ impl MutationRoot {
 
         repo.delete(
             &ct,
-            id.as_str(),
+            int_id,
             None,
             &state.protocol_registry,
             &state.content_type_registry,
@@ -174,7 +178,7 @@ impl MutationRoot {
         .await
         .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        let cache_key = cms_detail_cache_key(&ct, id.as_str());
+        let cache_key = cms_detail_cache_key(&ct, int_id);
         state.cms_cache.remove(&cache_key);
 
         Ok(DeleteResult {

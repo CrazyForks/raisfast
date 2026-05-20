@@ -71,13 +71,11 @@ pub struct UpdatePaymentChannelRequest {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PaymentOrderResponse {
     pub id: String,
-    pub user_id: i64,
     pub order_id: Option<String>,
     pub title: String,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub amount: i64,
     pub currency: String,
-    pub channel_id: String,
     pub provider: String,
     pub provider_order_id: Option<String>,
     pub provider_method: Option<String>,
@@ -124,7 +122,7 @@ pub struct PaymentChannelResponse {
 impl From<crate::models::payment_channel::PaymentChannel> for PaymentChannelResponse {
     fn from(ch: crate::models::payment_channel::PaymentChannel) -> Self {
         Self {
-            id: ch.document_id,
+            id: ch.id.to_string(),
             provider: ch.provider,
             name: ch.name,
             is_live: ch.is_live != 0,
@@ -148,11 +146,7 @@ fn mask_credentials(_creds: &str) -> String {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PaymentTransactionResponse {
     pub id: String,
-    #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub payment_order_id: i64,
     pub order_id: Option<String>,
-    #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub user_id: i64,
     pub tx_type: String,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub amount: i64,
@@ -165,10 +159,8 @@ pub struct PaymentTransactionResponse {
 impl From<crate::models::payment_transaction::PaymentTransaction> for PaymentTransactionResponse {
     fn from(tx: crate::models::payment_transaction::PaymentTransaction) -> Self {
         Self {
-            id: tx.document_id,
-            payment_order_id: tx.payment_order_id,
+            id: tx.id.to_string(),
             order_id: tx.order_id,
-            user_id: tx.user_id,
             tx_type: tx.tx_type,
             amount: tx.amount,
             currency: tx.currency,
@@ -183,11 +175,7 @@ impl From<crate::models::payment_transaction::PaymentTransaction> for PaymentTra
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PaymentRefundResponse {
     pub id: String,
-    #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub payment_order_id: i64,
     pub order_id: Option<String>,
-    #[cfg_attr(feature = "export-types", ts(type = "number"))]
-    pub user_id: i64,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub amount: i64,
     pub currency: String,
@@ -201,10 +189,8 @@ pub struct PaymentRefundResponse {
 impl From<crate::models::payment_refund::PaymentRefund> for PaymentRefundResponse {
     fn from(r: crate::models::payment_refund::PaymentRefund) -> Self {
         Self {
-            id: r.document_id,
-            payment_order_id: r.payment_order_id,
+            id: r.id.to_string(),
             order_id: r.order_id,
-            user_id: r.user_id,
             amount: r.amount,
             currency: r.currency,
             reason: r.reason,

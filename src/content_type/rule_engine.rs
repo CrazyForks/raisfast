@@ -50,7 +50,7 @@ impl RuleContext {
     /// Build context from request authentication info
     pub fn from_auth(auth: &crate::middleware::auth::AuthUser) -> Self {
         Self {
-            auth_user_id: auth.user_id().map(|s| s.to_string()),
+            auth_user_id: auth.user_id().map(|id| id.to_string()),
             auth_role: if auth.is_authenticated() {
                 Some(auth.role().to_string())
             } else {
@@ -620,7 +620,7 @@ pub fn compile_rule_sql(
     if auth.is_authenticated() {
         if expr_has_auth_id(&rule.expr) {
             let idx = offset + params.len() + 1;
-            params.push(auth.user_id().unwrap_or("").to_string());
+            params.push(auth.user_id().map_or_else(String::new, |id| id.to_string()));
             sql = sql.replace("__AUTH_ID__", &crate::db::dialect::ph(idx));
         }
         if expr_has_auth_role(&rule.expr) {
@@ -1122,7 +1122,7 @@ mod tests {
         let rule = Rule::parse(r#"status = "published""#, &cfg).unwrap();
         let record = json!({"status": "published"});
         let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test(
-            "",
+            0,
             crate::models::user::UserRole::Reader,
             "",
         ));
@@ -1135,7 +1135,7 @@ mod tests {
         let rule = Rule::parse(r#"status = "published""#, &cfg).unwrap();
         let record = json!({"status": "draft"});
         let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test(
-            "",
+            0,
             crate::models::user::UserRole::Reader,
             "",
         ));
@@ -1175,7 +1175,7 @@ mod tests {
         let cfg = default_config();
         let rule = Rule::parse(r#"status = "published" || status = "draft""#, &cfg).unwrap();
         let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test(
-            "",
+            0,
             crate::models::user::UserRole::Reader,
             "",
         ));
@@ -1194,7 +1194,7 @@ mod tests {
     fn eval_comparison_operators() {
         let cfg = default_config();
         let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test(
-            "",
+            0,
             crate::models::user::UserRole::Reader,
             "",
         ));
@@ -1218,7 +1218,7 @@ mod tests {
         let cfg = default_config();
         let rule = Rule::parse(r#"title ~ "%rust%""#, &cfg).unwrap();
         let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test(
-            "",
+            0,
             crate::models::user::UserRole::Reader,
             "",
         ));
@@ -1232,7 +1232,7 @@ mod tests {
         let cfg = default_config();
         let rule = Rule::parse(r#"title !~ "%spam%""#, &cfg).unwrap();
         let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test(
-            "",
+            0,
             crate::models::user::UserRole::Reader,
             "",
         ));
@@ -1246,7 +1246,7 @@ mod tests {
         let cfg = default_config();
         let rule = Rule::parse("title:isset", &cfg).unwrap();
         let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test(
-            "",
+            0,
             crate::models::user::UserRole::Reader,
             "",
         ));
@@ -1261,7 +1261,7 @@ mod tests {
         let cfg = default_config();
         let rule = Rule::parse("tags:length > 0", &cfg).unwrap();
         let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test(
-            "",
+            0,
             crate::models::user::UserRole::Reader,
             "",
         ));
@@ -1345,7 +1345,7 @@ mod tests {
         let cfg = default_config();
         let rule = Rule::parse("status = null", &cfg).unwrap();
         let ctx = RuleContext::from_auth(&crate::middleware::auth::AuthUser::new_test(
-            "",
+            0,
             crate::models::user::UserRole::Reader,
             "",
         ));
@@ -1361,7 +1361,7 @@ mod tests {
         let cfg = default_config();
         let rule = Rule::parse(r#"status = "published""#, &cfg).unwrap();
         let auth = crate::middleware::auth::AuthUser::new_test(
-            "",
+            0,
             crate::models::user::UserRole::Reader,
             "",
         );
@@ -1375,13 +1375,13 @@ mod tests {
         let cfg = default_config();
         let rule = Rule::parse("author_id = @request.auth.id", &cfg).unwrap();
         let auth = crate::middleware::auth::AuthUser::new_test(
-            "user123",
+            123,
             crate::models::user::UserRole::Reader,
             "",
         );
         let (sql, params) = compile_rule_sql(&rule, 0, &auth, &cfg).unwrap();
         assert!(!sql.contains("__AUTH_ID__"));
-        assert!(params.contains(&"user123".to_string()));
+        assert!(params.contains(&"123".to_string()));
     }
 
     #[test]
@@ -1389,7 +1389,7 @@ mod tests {
         let cfg = default_config();
         let rule = Rule::parse("author_id = @request.auth.id", &cfg).unwrap();
         let auth = crate::middleware::auth::AuthUser::new_test(
-            "",
+            0,
             crate::models::user::UserRole::Reader,
             "",
         );
@@ -1405,7 +1405,7 @@ mod tests {
         )
         .unwrap();
         let auth = crate::middleware::auth::AuthUser::new_test(
-            "abc",
+            999,
             crate::models::user::UserRole::Reader,
             "",
         );
@@ -1413,7 +1413,7 @@ mod tests {
         assert!(sql.contains("OR"));
         assert!(!sql.contains("__AUTH_ID__"));
         assert!(params.contains(&"published".to_string()));
-        assert!(params.contains(&"abc".to_string()));
+        assert!(params.contains(&"999".to_string()));
     }
 
     // ── Configuration tests ──────────────────────────────────────

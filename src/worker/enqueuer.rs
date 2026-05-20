@@ -54,33 +54,33 @@ impl JobEnqueuer {
                 })]
             }
             Event::PostUpdated(data) => {
-                let post_id: i64 = data.id;
+                let post_id: i64 = *data.id;
                 vec![NewJob::from(Job::RebuildSearchIndex {
                     post_ids: vec![post_id],
                 })]
             }
             Event::PostDeleted(data) => {
-                let post_id: i64 = data.id;
+                let post_id: i64 = *data.id;
                 vec![NewJob::from(Job::RebuildSearchIndex {
                     post_ids: vec![post_id],
                 })]
             }
             Event::UserRegistered(data) => {
                 vec![NewJob::from(Job::SendWelcomeEmail {
-                    user_id: data.id,
+                    user_id: *data.id,
                     email: String::new(),
                     username: data.username.clone(),
                 })]
             }
             Event::MediaUploaded(data) => {
                 vec![NewJob::from(Job::GenerateThumbnail {
-                    media_id: data.id,
+                    media_id: *data.id,
                     size: 300,
                 })]
             }
             Event::PasswordResetRequested { user, token } => {
                 vec![NewJob::from(Job::SendPasswordResetEmail {
-                    user_id: user.id,
+                    user_id: *user.id,
                     email: String::new(),
                     reset_token: token.token.clone(),
                 })]
@@ -124,7 +124,7 @@ mod tests {
             excerpt: None,
             cover_image: None,
             status: PostStatus::Published,
-            created_by: 0,
+            created_by: None,
             author_name: None,
             category_id: None,
             category_name: None,
@@ -152,8 +152,7 @@ mod tests {
 
     fn make_user(id: i64, username: &str) -> User {
         User {
-            id,
-            document_id: format!("doc-{id}"),
+            id: crate::utils::id::SnowflakeId(id),
             tenant_id: None,
             username: username.into(),
             role: UserRole::Reader,
@@ -174,10 +173,9 @@ mod tests {
 
     fn make_media(id: i64, filename: &str) -> Media {
         Media {
-            id,
-            document_id: format!("doc-{id}"),
+            id: crate::utils::id::SnowflakeId(id),
             tenant_id: None,
-            user_id: 1,
+            user_id: crate::utils::id::SnowflakeId(1),
             filename: filename.into(),
             filepath: String::new(),
             mimetype: String::new(),
@@ -195,10 +193,9 @@ mod tests {
 
     fn make_comment(id: i64) -> Comment {
         Comment {
-            id,
-            document_id: format!("doc-{id}"),
+            id: crate::utils::id::SnowflakeId(id),
             tenant_id: None,
-            post_id: 0,
+            post_id: crate::utils::id::SnowflakeId(0),
             created_by: None,
             updated_by: None,
             nickname: None,

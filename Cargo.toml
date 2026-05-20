@@ -164,6 +164,7 @@ aws-sdk-s3 = { version = "1", optional = true }
 aws-config = { version = "1", optional = true }
 regex = "1.12.3"
 tera = "1"
+sqlparser = "0.62"
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls-tls", "hostname"] }
 tauri = { version = "2", features = ["devtools"], optional = true }
 
@@ -187,6 +188,7 @@ utoipa-swagger-ui = { version = "9", features = ["axum"], optional = true }
 ts-rs = { version = "12", optional = true, features = ["chrono-impl"] }
 inventory = "0.3.24"
 raisfast-derive = { path = "raisfast-derive" }
+ferroid = { version = "2.0.0", features = ["snowflake", "atomic", "basic", "std", "alloc"] }
 
 [dev-dependencies]
 http-body-util = "0.1.3"

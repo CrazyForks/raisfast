@@ -253,7 +253,8 @@ pub async fn delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    state.comment_service.delete(&id, &auth).await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    state.comment_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -272,9 +273,10 @@ pub async fn update_status(
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
+    let id = crate::utils::id::parse_id(&id)?;
     state
         .comment_service
-        .update_status(&id, req.status, &auth)
+        .update_status(id, req.status, &auth)
         .await?;
     Ok(ApiResponse::success(()))
 }
@@ -313,9 +315,10 @@ pub async fn admin_update_status(
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
+    let id = crate::utils::id::parse_id(&id)?;
     state
         .comment_service
-        .update_status(&id, req.status, &auth)
+        .update_status(id, req.status, &auth)
         .await?;
     Ok(ApiResponse::success(()))
 }
@@ -331,7 +334,8 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    state.comment_service.delete(&id, &auth).await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    state.comment_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -348,7 +352,10 @@ pub async fn admin_batch(
     auth.ensure_admin()?;
     validation::validate(&req)?;
     let mut affected = 0usize;
-    for id in &req.ids {
+    for raw_id in &req.ids {
+        let Ok(id) = crate::utils::id::parse_id(raw_id) else {
+            continue;
+        };
         match req.action.as_str() {
             "delete" => {
                 if state.comment_service.delete(id, &auth).await.is_ok() {

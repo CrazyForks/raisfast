@@ -29,12 +29,11 @@ impl AuditService {
         ip_address: Option<&str>,
         user_agent: Option<&str>,
     ) -> AppResult<()> {
-        let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+        let (id, now) = crate::utils::id::new_id_and_timestamp();
         let entry = AuditEntry {
-            id: 0,
-            document_id,
+            id: crate::utils::id::SnowflakeId(id),
             tenant_id: Some(tenant_id.to_string()),
-            actor_id,
+            actor_id: actor_id.map(crate::utils::id::SnowflakeId),
             actor_role: actor_role.map(|s| s.to_string()),
             action: action.to_string(),
             subject: subject.to_string(),

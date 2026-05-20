@@ -35,8 +35,10 @@ pub async fn list_revisions(
         ));
     }
 
+    let int_id: i64 = crate::utils::id::parse_id(&id)?;
+
     let (summaries, total) =
-        crate::services::content_revision::list_revisions(&state.pool, &ct.singular, &id, 0, 0)
+        crate::services::content_revision::list_revisions(&state.pool, &ct.singular, int_id, 0, 0)
             .await?;
 
     Ok(ApiResponse::success(json!({
@@ -66,12 +68,11 @@ pub async fn get_revision(
         ));
     }
 
-    let rev_id: i64 = revision_id
-        .parse()
-        .map_err(|e| AppError::BadRequest(format!("invalid revision_id: {e}")))?;
+    let rev_id: i64 = crate::utils::id::parse_id(&revision_id)?;
+    let int_id: i64 = crate::utils::id::parse_id(&id)?;
 
     let revision =
-        crate::services::content_revision::get_revision(&state.pool, &ct.singular, &id, rev_id)
+        crate::services::content_revision::get_revision(&state.pool, &ct.singular, int_id, rev_id)
             .await?;
 
     let snapshot: serde_json::Value = serde_json::from_str(&revision.snapshot)
@@ -107,17 +108,20 @@ pub async fn restore_revision(
         ));
     }
 
-    let rev_id: i64 = revision_id
-        .parse()
-        .map_err(|e| AppError::BadRequest(format!("invalid revision_id: {e}")))?;
+    let rev_id: i64 = crate::utils::id::parse_id(&revision_id)?;
+    let int_id: i64 = crate::utils::id::parse_id(&id)?;
 
-    let snapshot =
-        crate::services::content_revision::restore_revision(&state.pool, &ct.singular, &id, rev_id)
-            .await?;
+    let snapshot = crate::services::content_revision::restore_revision(
+        &state.pool,
+        &ct.singular,
+        int_id,
+        rev_id,
+    )
+    .await?;
 
     let repo = ContentRepository::new(state.pool.clone());
     let result = repo
-        .update(&ct, &id, snapshot, None, &Default::default())
+        .update(&ct, int_id, snapshot, None, &Default::default())
         .await?;
 
     let value = serde_json::to_value(result)
@@ -146,17 +150,14 @@ pub async fn diff_revisions(
         ));
     }
 
-    let rev_a_id: i64 = rev_a
-        .parse()
-        .map_err(|e| AppError::BadRequest(format!("invalid revision_id: {e}")))?;
-    let rev_b_id: i64 = rev_b
-        .parse()
-        .map_err(|e| AppError::BadRequest(format!("invalid revision_id: {e}")))?;
+    let rev_a_id: i64 = crate::utils::id::parse_id(&rev_a)?;
+    let rev_b_id: i64 = crate::utils::id::parse_id(&rev_b)?;
+    let int_id: i64 = crate::utils::id::parse_id(&id)?;
 
     let result = crate::services::content_revision::diff_revisions(
         &state.pool,
         &ct.singular,
-        &id,
+        int_id,
         rev_a_id,
         rev_b_id,
     )

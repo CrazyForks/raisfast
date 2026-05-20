@@ -293,7 +293,7 @@ impl PaymentProvider for AlipayProvider {
         let private_key = parse_private_key(&creds.private_key)?;
 
         let biz = PrecreateBizContent {
-            out_trade_no: order.document_id.clone(),
+            out_trade_no: order.id.to_string(),
             total_amount: cents_to_amount(order.amount),
             subject: order.title.clone(),
             timeout_express: Some("30m".to_string()),
@@ -323,7 +323,7 @@ impl PaymentProvider for AlipayProvider {
             provider_order_id: result
                 .trade_no
                 .or(result.out_trade_no)
-                .unwrap_or(order.document_id.clone()),
+                .unwrap_or(order.id.to_string()),
             redirect_url: None,
             qr_code: result.qr_code,
             client_secret: None,
@@ -650,7 +650,6 @@ mod tests {
 
         let channel = PaymentChannel {
             id: 1,
-            document_id: "doc1".into(),
             tenant_id: None,
             provider: "alipay".into(),
             name: "Alipay".into(),

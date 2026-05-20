@@ -20,10 +20,10 @@ pub async fn list_reusable(
 
 pub async fn get_reusable(
     pool: &crate::db::Pool,
-    id: &str,
+    id: i64,
     auth: &AuthUser,
 ) -> AppResult<Option<reusable_block::ReusableBlock>> {
-    reusable_block::find_reusable_by_document_id(pool, id, auth.tenant_id()).await
+    reusable_block::find_reusable_by_id(pool, id, auth.tenant_id()).await
 }
 
 pub async fn create_reusable(
@@ -43,7 +43,7 @@ pub async fn create_reusable(
             block_type: block_type.to_string(),
             content: content.to_string(),
             description: description.map(|s| s.to_string()),
-            created_by: auth.user_int_id(),
+            created_by: auth.user_id(),
         },
         auth.tenant_id(),
     )
@@ -52,7 +52,7 @@ pub async fn create_reusable(
 
 pub async fn update_reusable(
     pool: &crate::db::Pool,
-    id: &str,
+    id: i64,
     auth: &AuthUser,
     name: Option<&str>,
     block_type: Option<&str>,
@@ -62,29 +62,29 @@ pub async fn update_reusable(
     if let Some(c) = content {
         validate_blocks_json(c)?;
     }
-    let block = reusable_block::find_reusable_by_document_id(pool, id, auth.tenant_id())
+    let block = reusable_block::find_reusable_by_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("reusable_block"))?;
     reusable_block::update_reusable(
         pool,
         &UpdateReusableBlockCmd {
-            id: block.id,
+            id: *block.id,
             name: name.map(|s| s.to_string()),
             block_type: block_type.map(|s| s.to_string()),
             content: content.map(|s| s.to_string()),
             description: description.map(|s| s.to_string()),
-            updated_by: auth.user_int_id(),
+            updated_by: auth.user_id(),
         },
         auth.tenant_id(),
     )
     .await
 }
 
-pub async fn delete_reusable(pool: &crate::db::Pool, id: &str, auth: &AuthUser) -> AppResult<()> {
-    let block = reusable_block::find_reusable_by_document_id(pool, id, auth.tenant_id())
+pub async fn delete_reusable(pool: &crate::db::Pool, id: i64, auth: &AuthUser) -> AppResult<()> {
+    let block = reusable_block::find_reusable_by_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("reusable_block"))?;
-    reusable_block::delete_reusable(pool, block.id, auth.tenant_id()).await
+    reusable_block::delete_reusable(pool, *block.id, auth.tenant_id()).await
 }
 
 #[cfg(test)]

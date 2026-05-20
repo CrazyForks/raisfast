@@ -2,8 +2,8 @@ use super::*;
 
 async fn admin_setup() -> (axum::Router, AppState, String) {
     let (app, state) = test_app().await;
-    let (int_id, doc_id) = create_author(&state.pool).await;
-    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Author);
+    let (int_id, id) = create_author(&state.pool).await;
+    let tok = make_token(&id, int_id, raisfast::models::user::UserRole::Author);
     (app, state, tok)
 }
 
@@ -29,7 +29,7 @@ async fn create_reusable_block_success() {
     .await;
     assert!(status.is_success(), "create block: {status} {body:?}");
     assert_eq!(body["data"]["name"], "Hero Banner");
-    assert!(body["data"]["document_id"].is_string());
+    assert!(body["data"]["id"].is_string());
 }
 
 #[tokio::test]
@@ -77,7 +77,7 @@ async fn get_reusable_block_by_id() {
         ),
     )
     .await;
-    let id = create_body["data"]["document_id"].as_str().unwrap();
+    let id = create_body["data"]["id"].as_str().unwrap();
     let (status, body) = send(
         &mut app,
         get_auth(&format!("/api/v1/admin/reusable-blocks/{id}"), &tok),
@@ -90,7 +90,7 @@ async fn get_reusable_block_by_id() {
 #[tokio::test]
 async fn get_reusable_block_not_found() {
     let (mut app, _, tok) = admin_setup().await;
-    let fake = uuid::Uuid::now_v7().to_string();
+    let fake = "9999999999999";
     let (status, _) = send(
         &mut app,
         get_auth(&format!("/api/v1/admin/reusable-blocks/{fake}"), &tok),
@@ -111,7 +111,7 @@ async fn update_reusable_block() {
         ),
     )
     .await;
-    let id = create_body["data"]["document_id"].as_str().unwrap();
+    let id = create_body["data"]["id"].as_str().unwrap();
     let (status, body) = send(
         &mut app,
         put_json_auth(
@@ -137,7 +137,7 @@ async fn delete_reusable_block() {
         ),
     )
     .await;
-    let id = create_body["data"]["document_id"].as_str().unwrap();
+    let id = create_body["data"]["id"].as_str().unwrap();
     let (status, _) = send(
         &mut app,
         delete_auth(&format!("/api/v1/admin/reusable-blocks/{id}"), &tok),
@@ -155,7 +155,7 @@ async fn delete_reusable_block() {
 #[tokio::test]
 async fn delete_reusable_block_not_found() {
     let (mut app, _, tok) = admin_setup().await;
-    let fake = uuid::Uuid::now_v7().to_string();
+    let fake = "9999999999999";
     let (status, _) = send(
         &mut app,
         delete_auth(&format!("/api/v1/admin/reusable-blocks/{fake}"), &tok),

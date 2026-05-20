@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -38,20 +38,19 @@ define_enum!(
 
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct WalletTransaction {
-    pub id: i64,
-    pub document_id: String,
-    pub wallet_id: i64,
-    pub user_id: i64,
+    pub id: SnowflakeId,
+    pub wallet_id: SnowflakeId,
+    pub user_id: SnowflakeId,
     pub entry_type: WalletEntryType,
     pub amount: i64,
     pub balance_after: i64,
     pub tx_type: WalletTxType,
     pub currency: String,
     pub transaction_no: String,
-    pub related_tx_id: Option<i64>,
+    pub related_tx_id: Option<SnowflakeId>,
     pub reference_type: Option<WalletReferenceType>,
     pub reference_id: Option<String>,
-    pub counterparty_wallet_id: Option<i64>,
+    pub counterparty_wallet_id: Option<SnowflakeId>,
     pub metadata: Option<String>,
     pub created_at: Timestamp,
 }
@@ -127,41 +126,12 @@ pub async fn find_tx_by_id(
         .map_err(Into::into)
 }
 
-pub async fn find_tx_by_document_id(
-    pool: &crate::db::Pool,
-    document_id: &str,
-) -> AppResult<Option<WalletTransaction>> {
-    raisfast_derive::crud_find!(pool, "wallet_transactions", WalletTransaction, "document_id" => document_id)
-        .map_err(Into::into)
-}
-
 pub async fn has_reversal_for(pool: &crate::db::Pool, related_tx_id: i64) -> AppResult<bool> {
     let count: i64 = raisfast_derive::crud_count!(
         pool, "wallet_transactions", "related_tx_id" => related_tx_id,
         and: ["tx_type" => WalletTxType::Refund]
     )?;
     Ok(count > 0)
-}
-
-pub async fn find_document_ids_by_ids(
-    pool: &crate::db::Pool,
-    ids: &[i64],
-) -> AppResult<std::collections::HashMap<i64, String>> {
-    raisfast_derive::check_schema!("wallet_transactions", "id", "document_id");
-    if ids.is_empty() {
-        return Ok(std::collections::HashMap::new());
-    }
-    let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| ph(i + 1)).collect();
-    let sql = format!(
-        "SELECT id, document_id FROM wallet_transactions WHERE id IN ({})",
-        placeholders.join(", ")
-    );
-    let mut query = sqlx::query_as::<_, (i64, String)>(&sql);
-    for &id in ids {
-        query = query.bind(id);
-    }
-    let rows = query.fetch_all(pool).await?;
-    Ok(rows.into_iter().collect())
 }
 
 #[cfg(test)]
@@ -176,7 +146,7 @@ mod tests {
         crate::models::user::create(
             pool,
             &crate::commands::user::CreateUserCmd {
-                username: crate::utils::id::new_document_id(),
+                username: crate::utils::id::new_id().to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
@@ -193,20 +163,20 @@ mod tests {
         WalletTransaction,
     ) {
         let user = insert_user(pool).await;
-        let w = crate::models::wallet::create(pool, user.id, "CNY")
+        let w = crate::models::wallet::create(pool, *user.id, "CNY")
             .await
             .unwrap();
 
-        let (doc_id, now) = crate::utils::id::new_document_id_and_timestamp();
-        let tx_no = format!("TX_{doc_id}");
+        let (tx_id, now) = crate::utils::id::new_id_and_timestamp();
+        let tx_no = format!("TX_{tx_id}");
         sqlx::query(&format!(
-            "INSERT INTO wallet_transactions (document_id, wallet_id, user_id, entry_type, amount, balance_after, tx_type, currency, transaction_no, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+            "INSERT INTO wallet_transactions (id, wallet_id, user_id, entry_type, amount, balance_after, tx_type, currency, transaction_no, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
             crate::db::dialect::ph(1), crate::db::dialect::ph(2), crate::db::dialect::ph(3),
             crate::db::dialect::ph(4), crate::db::dialect::ph(5), crate::db::dialect::ph(6),
             crate::db::dialect::ph(7), crate::db::dialect::ph(8), crate::db::dialect::ph(9),
             crate::db::dialect::ph(10),
         ))
-        .bind(&doc_id)
+        .bind(tx_id)
         .bind(w.id)
         .bind(user.id)
         .bind(WalletEntryType::Credit)
@@ -254,7 +224,7 @@ mod tests {
     async fn find_tx_by_id_found() {
         let pool = setup_pool().await;
         let (_, _, tx) = seed_wallet_and_tx(&pool).await;
-        let found = find_tx_by_id(&pool, tx.id).await.unwrap().unwrap();
+        let found = find_tx_by_id(&pool, *tx.id).await.unwrap().unwrap();
         assert_eq!(found.transaction_no, tx.transaction_no);
     }
 
@@ -268,7 +238,7 @@ mod tests {
     async fn find_transactions_by_wallet_found() {
         let pool = setup_pool().await;
         let (_, w, _) = seed_wallet_and_tx(&pool).await;
-        let (rows, total) = find_transactions_by_wallet(&pool, w.id, 1, 10)
+        let (rows, total) = find_transactions_by_wallet(&pool, *w.id, 1, 10)
             .await
             .unwrap();
         assert_eq!(total, 1);
@@ -290,7 +260,7 @@ mod tests {
     async fn find_transactions_by_user_found() {
         let pool = setup_pool().await;
         let (user, _, _) = seed_wallet_and_tx(&pool).await;
-        let (rows, total) = find_transactions_by_user(&pool, user.id, 1, 10)
+        let (rows, total) = find_transactions_by_user(&pool, *user.id, 1, 10)
             .await
             .unwrap();
         assert_eq!(total, 1);
@@ -301,7 +271,7 @@ mod tests {
     async fn has_reversal_for_false() {
         let pool = setup_pool().await;
         let (_, _, tx) = seed_wallet_and_tx(&pool).await;
-        assert!(!has_reversal_for(&pool, tx.id).await.unwrap());
+        assert!(!has_reversal_for(&pool, *tx.id).await.unwrap());
     }
 
     #[tokio::test]
@@ -309,16 +279,16 @@ mod tests {
         let pool = setup_pool().await;
         let (_, _, tx) = seed_wallet_and_tx(&pool).await;
 
-        let (rev_doc_id, rev_now) = crate::utils::id::new_document_id_and_timestamp();
-        let rev_no = format!("REV_{rev_doc_id}");
+        let (rev_id, rev_now) = crate::utils::id::new_id_and_timestamp();
+        let rev_no = format!("REV_{rev_id}");
         sqlx::query(&format!(
-            "INSERT INTO wallet_transactions (document_id, wallet_id, user_id, entry_type, amount, balance_after, tx_type, currency, transaction_no, related_tx_id, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+            "INSERT INTO wallet_transactions (id, wallet_id, user_id, entry_type, amount, balance_after, tx_type, currency, transaction_no, related_tx_id, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
             crate::db::dialect::ph(1), crate::db::dialect::ph(2), crate::db::dialect::ph(3),
             crate::db::dialect::ph(4), crate::db::dialect::ph(5), crate::db::dialect::ph(6),
             crate::db::dialect::ph(7), crate::db::dialect::ph(8), crate::db::dialect::ph(9),
             crate::db::dialect::ph(10), crate::db::dialect::ph(11),
         ))
-        .bind(&rev_doc_id)
+        .bind(rev_id)
         .bind(tx.wallet_id)
         .bind(tx.user_id)
         .bind(WalletEntryType::Debit)
@@ -333,6 +303,6 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(has_reversal_for(&pool, tx.id).await.unwrap());
+        assert!(has_reversal_for(&pool, *tx.id).await.unwrap());
     }
 }

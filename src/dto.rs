@@ -6,9 +6,12 @@ pub mod currencies;
 pub mod ecommerce;
 pub mod media;
 pub mod order;
+pub mod page;
 pub mod payment;
 pub mod post;
+pub mod reusable_block;
 pub mod tag;
+pub mod tenant;
 pub mod user;
 pub mod wallet;
 
@@ -20,9 +23,12 @@ pub use currencies::*;
 pub use ecommerce::*;
 pub use media::*;
 pub use order::*;
+pub use page::*;
 pub use payment::*;
 pub use post::*;
+pub use reusable_block::*;
 pub use tag::*;
+pub use tenant::*;
 pub use user::*;
 pub use wallet::*;
 

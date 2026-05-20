@@ -11,14 +11,14 @@ use serde::{Deserialize, Serialize};
 use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct Media {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
-    pub user_id: i64,
+    pub user_id: SnowflakeId,
     pub filename: String,
     pub filepath: String,
     pub mimetype: String,
@@ -38,13 +38,13 @@ pub async fn create(
     cmd: &crate::commands::CreateMediaCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Media> {
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
 
     raisfast_derive::crud_insert!(
         pool,
         "media",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "user_id" => cmd.user_id,
             "filename" => &cmd.filename,
             "filepath" => &cmd.filepath,
@@ -57,7 +57,8 @@ pub async fn create(
         tenant: tenant_id
     )?;
 
-    let media = raisfast_derive::crud_find_one!(pool, "media", Media, "document_id" => document_id, tenant: tenant_id)?;
+    let media =
+        raisfast_derive::crud_find_one!(pool, "media", Media, "id" => id, tenant: tenant_id)?;
 
     Ok(media)
 }
@@ -195,7 +196,7 @@ mod tests {
         )
         .await
         .unwrap();
-        user.id
+        *user.id
     }
 
     fn make_cmd(user_id: i64, filename: &str) -> CreateMediaCmd {
@@ -217,7 +218,7 @@ mod tests {
         let media = create(&pool, &make_cmd(uid, "photo.png"), None)
             .await
             .unwrap();
-        let found = find_by_id(&pool, media.id, None).await.unwrap().unwrap();
+        let found = find_by_id(&pool, *media.id, None).await.unwrap().unwrap();
         assert_eq!(found.id, media.id);
         assert_eq!(found.filename, "photo.png");
         assert_eq!(found.user_id, uid);
@@ -261,8 +262,8 @@ mod tests {
         let media = create(&pool, &make_cmd(uid, "gone.png"), None)
             .await
             .unwrap();
-        delete(&pool, media.id, None).await.unwrap();
-        let found = find_by_id(&pool, media.id, None).await.unwrap();
+        delete(&pool, *media.id, None).await.unwrap();
+        let found = find_by_id(&pool, *media.id, None).await.unwrap();
         assert!(found.is_none());
     }
 

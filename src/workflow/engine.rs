@@ -37,7 +37,7 @@ impl WorkflowService {
     /// Create workflow definition
     pub async fn create_workflow(
         &self,
-        id: &str,
+        id: i64,
         name: &str,
         description: Option<&str>,
         steps: &[StepDef],
@@ -66,7 +66,7 @@ impl WorkflowService {
     }
 
     /// Get workflow definition
-    pub async fn get_workflow(&self, id: &str) -> AppResult<WorkflowDefinition> {
+    pub async fn get_workflow(&self, id: i64) -> AppResult<WorkflowDefinition> {
         get_definition(&self.pool, id)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
@@ -82,7 +82,7 @@ impl WorkflowService {
 
     async fn get_definition_by_pk(&self, id: i64) -> AppResult<WorkflowDefinition> {
         let sql = format!(
-            "SELECT id, document_id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions WHERE id = {}",
+            "SELECT id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions WHERE id = {}",
             crate::db::dialect::ph(1)
         );
         sqlx::query_as::<_, WorkflowDefinition>(&sql)
@@ -94,7 +94,7 @@ impl WorkflowService {
     }
 
     /// Delete workflow definition
-    pub async fn delete_workflow(&self, id: &str) -> AppResult<()> {
+    pub async fn delete_workflow(&self, id: i64) -> AppResult<()> {
         super::model::delete_definition(&self.pool, id)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))
@@ -103,7 +103,7 @@ impl WorkflowService {
     /// Start workflow instance
     pub async fn start_workflow(
         &self,
-        definition_id: &str,
+        definition_id: i64,
         context: &serde_json::Value,
         triggered_by: Option<i64>,
     ) -> AppResult<WorkflowInstance> {
@@ -113,14 +113,14 @@ impl WorkflowService {
             return Err(AppError::BadRequest("workflow is disabled".into()));
         }
 
-        let id = uuid::Uuid::now_v7().to_string();
-        let instance = create_instance(&self.pool, &id, def.id, context, triggered_by)
+        let id = crate::utils::id::new_id();
+        let instance = create_instance(&self.pool, id, *def.id, context, triggered_by)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
         update_instance_step(
             &self.pool,
-            &id,
+            id,
             WorkflowInstanceStatus::Running,
             Some(&def.initial_step),
             context,
@@ -136,11 +136,11 @@ impl WorkflowService {
             .find(|s| s.id == def.initial_step)
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("initial step not found")))?;
 
-        let log_id = uuid::Uuid::now_v7().to_string();
+        let log_id = crate::utils::id::new_id();
         create_step_log(
             &self.pool,
-            &log_id,
-            instance.id,
+            log_id,
+            *instance.id,
             &initial.id,
             &initial.name,
             Some(context),
@@ -163,7 +163,7 @@ impl WorkflowService {
     /// Once all branches complete, the engine automatically advances to the `join_next` step.
     pub async fn execute_step(
         &self,
-        instance_id: &str,
+        instance_id: i64,
         step_output: &serde_json::Value,
     ) -> AppResult<WorkflowInstance> {
         let instance = self
@@ -182,7 +182,7 @@ impl WorkflowService {
             .as_deref()
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("no current step")))?;
 
-        let def = self.get_definition_by_pk(instance.definition_id).await?;
+        let def = self.get_definition_by_pk(*instance.definition_id).await?;
         let steps = def
             .parse_steps()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
@@ -233,7 +233,7 @@ impl WorkflowService {
     ) -> AppResult<WorkflowInstance> {
         let current_step_id = &current_step.id;
 
-        let active_logs: Vec<_> = list_step_logs(&self.pool, instance.id)
+        let active_logs: Vec<_> = list_step_logs(&self.pool, *instance.id)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
             .into_iter()
@@ -241,7 +241,7 @@ impl WorkflowService {
             .collect();
 
         if let Some(log) = active_logs.first() {
-            complete_step_log(&self.pool, &log.document_id, Some(step_output))
+            complete_step_log(&self.pool, *log.id, Some(step_output))
                 .await
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
         }
@@ -255,7 +255,7 @@ impl WorkflowService {
                     Some(ns) => {
                         update_instance_step(
                             &self.pool,
-                            &instance.document_id,
+                            *instance.id,
                             WorkflowInstanceStatus::Running,
                             Some(&ns.id),
                             context,
@@ -263,11 +263,11 @@ impl WorkflowService {
                         .await
                         .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
-                        let log_id = uuid::Uuid::now_v7().to_string();
+                        let log_id = crate::utils::id::new_id();
                         create_step_log(
                             &self.pool,
-                            &log_id,
-                            instance.id,
+                            log_id,
+                            *instance.id,
                             &ns.id,
                             &ns.name,
                             Some(context),
@@ -275,7 +275,7 @@ impl WorkflowService {
                         .await
                         .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
-                        self.get_instance(&instance.document_id)
+                        self.get_instance(*instance.id)
                             .await?
                             .ok_or_else(|| AppError::not_found("workflow instance"))
                     }
@@ -287,7 +287,7 @@ impl WorkflowService {
             None => {
                 update_instance_step(
                     &self.pool,
-                    &instance.document_id,
+                    *instance.id,
                     WorkflowInstanceStatus::Completed,
                     None,
                     context,
@@ -295,7 +295,7 @@ impl WorkflowService {
                 .await
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
-                self.get_instance(&instance.document_id)
+                self.get_instance(*instance.id)
                     .await?
                     .ok_or_else(|| AppError::not_found("workflow instance"))
             }
@@ -344,14 +344,14 @@ impl WorkflowService {
             )));
         }
 
-        let active_logs: Vec<_> = list_step_logs(&self.pool, instance.id)
+        let active_logs: Vec<_> = list_step_logs(&self.pool, *instance.id)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
             .into_iter()
             .filter(|l| l.step_id == parallel_step.id && (l.status == WorkflowStepStatus::Running))
             .collect();
         if let Some(log) = active_logs.first() {
-            complete_step_log(&self.pool, &log.document_id, None)
+            complete_step_log(&self.pool, *log.id, None)
                 .await
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
         }
@@ -378,11 +378,11 @@ impl WorkflowService {
             let branch_step = steps.iter().find(|s| s.id == *branch_id).ok_or_else(|| {
                 AppError::Internal(anyhow::anyhow!("parallel branch '{}' not found", branch_id))
             })?;
-            let log_id = uuid::Uuid::now_v7().to_string();
+            let log_id = crate::utils::id::new_id();
             create_step_log(
                 &self.pool,
-                &log_id,
-                instance.id,
+                log_id,
+                *instance.id,
                 &branch_step.id,
                 &branch_step.name,
                 Some(context),
@@ -393,7 +393,7 @@ impl WorkflowService {
 
         update_instance_step(
             &self.pool,
-            &instance.document_id,
+            *instance.id,
             WorkflowInstanceStatus::Running,
             Some(&first_branch.id),
             context,
@@ -401,7 +401,7 @@ impl WorkflowService {
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
-        self.get_instance(&instance.document_id)
+        self.get_instance(*instance.id)
             .await?
             .ok_or_else(|| AppError::not_found("workflow instance"))
     }
@@ -415,14 +415,14 @@ impl WorkflowService {
         context: &mut serde_json::Value,
         meta: &ParallelMeta,
     ) -> AppResult<WorkflowInstance> {
-        let active_logs: Vec<_> = list_step_logs(&self.pool, instance.id)
+        let active_logs: Vec<_> = list_step_logs(&self.pool, *instance.id)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
             .into_iter()
             .filter(|l| l.step_id == branch_step.id && (l.status == WorkflowStepStatus::Running))
             .collect();
         if let Some(log) = active_logs.first() {
-            complete_step_log(&self.pool, &log.document_id, None)
+            complete_step_log(&self.pool, *log.id, None)
                 .await
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
         }
@@ -451,7 +451,7 @@ impl WorkflowService {
 
             update_instance_step(
                 &self.pool,
-                &instance.document_id,
+                *instance.id,
                 WorkflowInstanceStatus::Running,
                 Some(&next_branch.id),
                 context,
@@ -460,7 +460,7 @@ impl WorkflowService {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
             return self
-                .get_instance(&instance.document_id)
+                .get_instance(*instance.id)
                 .await?
                 .ok_or_else(|| AppError::not_found("workflow instance"));
         }
@@ -480,7 +480,7 @@ impl WorkflowService {
 
                 update_instance_step(
                     &self.pool,
-                    &instance.document_id,
+                    *instance.id,
                     WorkflowInstanceStatus::Running,
                     Some(&join_step.id),
                     context,
@@ -488,11 +488,11 @@ impl WorkflowService {
                 .await
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
-                let log_id = uuid::Uuid::now_v7().to_string();
+                let log_id = crate::utils::id::new_id();
                 create_step_log(
                     &self.pool,
-                    &log_id,
-                    instance.id,
+                    log_id,
+                    *instance.id,
                     &join_step.id,
                     &join_step.name,
                     Some(context),
@@ -500,14 +500,14 @@ impl WorkflowService {
                 .await
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
-                self.get_instance(&instance.document_id)
+                self.get_instance(*instance.id)
                     .await?
                     .ok_or_else(|| AppError::not_found("workflow instance"))
             }
             None => {
                 update_instance_step(
                     &self.pool,
-                    &instance.document_id,
+                    *instance.id,
                     WorkflowInstanceStatus::Completed,
                     None,
                     context,
@@ -515,7 +515,7 @@ impl WorkflowService {
                 .await
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
 
-                self.get_instance(&instance.document_id)
+                self.get_instance(*instance.id)
                     .await?
                     .ok_or_else(|| AppError::not_found("workflow instance"))
             }
@@ -523,14 +523,14 @@ impl WorkflowService {
     }
 
     /// Mark step as failed
-    pub async fn fail_step(&self, instance_id: &str, error: &str) -> AppResult<()> {
+    pub async fn fail_step(&self, instance_id: i64, error: &str) -> AppResult<()> {
         let instance = self
             .get_instance(instance_id)
             .await?
             .ok_or_else(|| AppError::not_found("workflow instance"))?;
 
         if let Some(ref step_id) = instance.current_step {
-            let active_logs: Vec<_> = list_step_logs(&self.pool, instance.id)
+            let active_logs: Vec<_> = list_step_logs(&self.pool, *instance.id)
                 .await
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
                 .into_iter()
@@ -538,7 +538,7 @@ impl WorkflowService {
                 .collect();
 
             if let Some(log) = active_logs.first() {
-                fail_step_log(&self.pool, &log.document_id, error)
+                fail_step_log(&self.pool, *log.id, error)
                     .await
                     .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?;
             }
@@ -558,7 +558,7 @@ impl WorkflowService {
     }
 
     /// Cancel workflow instance
-    pub async fn cancel_instance(&self, instance_id: &str) -> AppResult<()> {
+    pub async fn cancel_instance(&self, instance_id: i64) -> AppResult<()> {
         let instance = self
             .get_instance(instance_id)
             .await?
@@ -584,7 +584,7 @@ impl WorkflowService {
     }
 
     /// Get workflow instance
-    pub async fn get_instance(&self, id: &str) -> AppResult<Option<WorkflowInstance>> {
+    pub async fn get_instance(&self, id: i64) -> AppResult<Option<WorkflowInstance>> {
         get_instance(&self.pool, id)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))
@@ -593,27 +593,23 @@ impl WorkflowService {
     /// List workflow instances
     pub async fn list_instances(
         &self,
-        definition_id: Option<&str>,
+        definition_id: Option<i64>,
         status: Option<WorkflowInstanceStatus>,
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<WorkflowInstance>, i64)> {
-        let def_id: Option<i64> = match definition_id {
-            Some(did) => Some(self.get_workflow(did).await?.id),
-            None => None,
-        };
-        super::model::list_instances(&self.pool, def_id, status, page, page_size)
+        super::model::list_instances(&self.pool, definition_id, status, page, page_size)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))
     }
 
     /// Get step logs
-    pub async fn get_step_logs(&self, instance_id: &str) -> AppResult<Vec<super::model::StepLog>> {
+    pub async fn get_step_logs(&self, instance_id: i64) -> AppResult<Vec<super::model::StepLog>> {
         let instance = self
             .get_instance(instance_id)
             .await?
             .ok_or_else(|| AppError::not_found("workflow instance"))?;
-        list_step_logs(&self.pool, instance.id)
+        list_step_logs(&self.pool, *instance.id)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))
     }
@@ -702,20 +698,23 @@ mod tests {
     async fn create_workflow_success() {
         let svc = setup().await;
         let steps = vec![task_step("s1", "Step 1", "")];
+        let wf_id = crate::utils::id::new_id();
         let def = svc
-            .create_workflow("wf-1", "Test WF", Some("desc"), &steps)
+            .create_workflow(wf_id, "Test WF", Some("desc"), &steps)
             .await
             .unwrap();
         assert_eq!(def.name, "Test WF");
         assert_eq!(def.initial_step, "s1");
-        assert_eq!(def.document_id, "wf-1");
+        assert_eq!(def.id, wf_id);
         assert!(def.enabled);
     }
 
     #[tokio::test]
     async fn create_workflow_empty_steps_rejected() {
         let svc = setup().await;
-        let result = svc.create_workflow("wf-empty", "Empty", None, &[]).await;
+        let result = svc
+            .create_workflow(crate::utils::id::new_id(), "Empty", None, &[])
+            .await;
         assert!(result.is_err());
     }
 
@@ -723,17 +722,18 @@ mod tests {
     async fn get_workflow_found() {
         let svc = setup().await;
         let steps = vec![task_step("s1", "S1", "")];
-        svc.create_workflow("wf-get", "Get", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "Get", None, &steps)
             .await
             .unwrap();
-        let def = svc.get_workflow("wf-get").await.unwrap();
+        let def = svc.get_workflow(wf_id).await.unwrap();
         assert_eq!(def.name, "Get");
     }
 
     #[tokio::test]
     async fn get_workflow_not_found() {
         let svc = setup().await;
-        let result = svc.get_workflow("nonexistent").await;
+        let result = svc.get_workflow(9999999).await;
         assert!(result.is_err());
     }
 
@@ -741,10 +741,10 @@ mod tests {
     async fn list_workflows() {
         let svc = setup().await;
         let steps = vec![task_step("s1", "S1", "")];
-        svc.create_workflow("wf-a", "A", None, &steps)
+        svc.create_workflow(crate::utils::id::new_id(), "A", None, &steps)
             .await
             .unwrap();
-        svc.create_workflow("wf-b", "B", None, &steps)
+        svc.create_workflow(crate::utils::id::new_id(), "B", None, &steps)
             .await
             .unwrap();
         let list = svc.list_workflows().await.unwrap();
@@ -755,23 +755,25 @@ mod tests {
     async fn delete_workflow() {
         let svc = setup().await;
         let steps = vec![task_step("s1", "S1", "")];
-        svc.create_workflow("wf-del", "Del", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "Del", None, &steps)
             .await
             .unwrap();
-        svc.delete_workflow("wf-del").await.unwrap();
-        assert!(svc.get_workflow("wf-del").await.is_err());
+        svc.delete_workflow(wf_id).await.unwrap();
+        assert!(svc.get_workflow(wf_id).await.is_err());
     }
 
     #[tokio::test]
     async fn start_workflow_success() {
         let svc = setup().await;
         let steps = vec![task_step("s1", "Step 1", "")];
-        svc.create_workflow("wf-start", "Start", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "Start", None, &steps)
             .await
             .unwrap();
 
         let inst = svc
-            .start_workflow("wf-start", &json!({"key": "val"}), None)
+            .start_workflow(wf_id, &json!({"key": "val"}), None)
             .await
             .unwrap();
         assert_eq!(inst.status, WorkflowInstanceStatus::Running);
@@ -781,7 +783,7 @@ mod tests {
     #[tokio::test]
     async fn start_workflow_not_found() {
         let svc = setup().await;
-        let result = svc.start_workflow("nope", &json!({}), None).await;
+        let result = svc.start_workflow(9999999, &json!({}), None).await;
         assert!(result.is_err());
     }
 
@@ -789,8 +791,9 @@ mod tests {
     async fn start_workflow_disabled() {
         let svc = setup().await;
         let steps = vec![task_step("s1", "S1", "")];
+        let wf_id = crate::utils::id::new_id();
         let def = svc
-            .create_workflow("wf-dis", "Dis", None, &steps)
+            .create_workflow(wf_id, "Dis", None, &steps)
             .await
             .unwrap();
         sqlx::query("UPDATE workflow_definitions SET enabled = 0 WHERE id = ?")
@@ -799,7 +802,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = svc.start_workflow("wf-dis", &json!({}), None).await;
+        let result = svc.start_workflow(wf_id, &json!({}), None).await;
         assert!(result.is_err());
     }
 
@@ -807,18 +810,16 @@ mod tests {
     async fn execute_step_completes_single_task() {
         let svc = setup().await;
         let steps = vec![task_step("s1", "Only", "")];
-        svc.create_workflow("wf-exec1", "Exec", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "Exec", None, &steps)
             .await
             .unwrap();
 
-        let inst = svc
-            .start_workflow("wf-exec1", &json!({}), None)
-            .await
-            .unwrap();
-        let inst_id = &inst.document_id;
+        let inst = svc.start_workflow(wf_id, &json!({}), None).await.unwrap();
+        let inst_id = inst.id;
 
         let result = svc
-            .execute_step(inst_id, &json!({"done": true}))
+            .execute_step(*inst_id, &json!({"done": true}))
             .await
             .unwrap();
         assert_eq!(result.status, WorkflowInstanceStatus::Completed);
@@ -832,17 +833,15 @@ mod tests {
             task_step("s1", "First", "s2"),
             task_step("s2", "Second", ""),
         ];
-        svc.create_workflow("wf-exec2", "Chain", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "Chain", None, &steps)
             .await
             .unwrap();
 
-        let inst = svc
-            .start_workflow("wf-exec2", &json!({}), None)
-            .await
-            .unwrap();
-        let inst_id = inst.document_id.clone();
+        let inst = svc.start_workflow(wf_id, &json!({}), None).await.unwrap();
+        let inst_id = inst.id;
 
-        let result = svc.execute_step(&inst_id, &json!({})).await.unwrap();
+        let result = svc.execute_step(*inst_id, &json!({})).await.unwrap();
         assert_eq!(result.current_step, Some("s2".to_string()));
         assert_eq!(result.status, WorkflowInstanceStatus::Running);
     }
@@ -851,23 +850,22 @@ mod tests {
     async fn execute_step_not_running_rejected() {
         let svc = setup().await;
         let steps = vec![task_step("s1", "S1", "")];
-        svc.create_workflow("wf-nr", "NR", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "NR", None, &steps)
             .await
             .unwrap();
 
-        let inst = svc.start_workflow("wf-nr", &json!({}), None).await.unwrap();
-        svc.execute_step(&inst.document_id, &json!({}))
-            .await
-            .unwrap();
+        let inst = svc.start_workflow(wf_id, &json!({}), None).await.unwrap();
+        svc.execute_step(*inst.id, &json!({})).await.unwrap();
 
-        let result = svc.execute_step(&inst.document_id, &json!({})).await;
+        let result = svc.execute_step(*inst.id, &json!({})).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn execute_step_instance_not_found() {
         let svc = setup().await;
-        let result = svc.execute_step("nope", &json!({})).await;
+        let result = svc.execute_step(9999999, &json!({})).await;
         assert!(result.is_err());
     }
 
@@ -886,13 +884,14 @@ mod tests {
             task_step("s2", "Yes", ""),
             task_step("s3", "No", ""),
         ];
-        svc.create_workflow("wf-br", "Branch", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "Branch", None, &steps)
             .await
             .unwrap();
 
-        let inst = svc.start_workflow("wf-br", &json!({}), None).await.unwrap();
+        let inst = svc.start_workflow(wf_id, &json!({}), None).await.unwrap();
         let result = svc
-            .execute_step(&inst.document_id, &json!({"ok": true}))
+            .execute_step(*inst.id, &json!({"ok": true}))
             .await
             .unwrap();
         assert_eq!(result.current_step, Some("s2".to_string()));
@@ -913,16 +912,14 @@ mod tests {
             task_step("s2", "Yes", ""),
             task_step("s3", "No", ""),
         ];
-        svc.create_workflow("wf-br2", "Branch2", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "Branch2", None, &steps)
             .await
             .unwrap();
 
-        let inst = svc
-            .start_workflow("wf-br2", &json!({}), None)
-            .await
-            .unwrap();
+        let inst = svc.start_workflow(wf_id, &json!({}), None).await.unwrap();
         let result = svc
-            .execute_step(&inst.document_id, &json!({"ok": false}))
+            .execute_step(*inst.id, &json!({"ok": false}))
             .await
             .unwrap();
         assert_eq!(result.current_step, Some("s3".to_string()));
@@ -937,26 +934,24 @@ mod tests {
             task_step("s3", "B", ""),
             task_step("s4", "After", ""),
         ];
-        svc.create_workflow("wf-par", "Par", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "Par", None, &steps)
             .await
             .unwrap();
 
-        let inst = svc
-            .start_workflow("wf-par", &json!({}), None)
-            .await
-            .unwrap();
-        let iid = inst.document_id.clone();
+        let inst = svc.start_workflow(wf_id, &json!({}), None).await.unwrap();
+        let iid = inst.id;
 
-        let r = svc.execute_step(&iid, &json!({})).await.unwrap();
+        let r = svc.execute_step(*iid, &json!({})).await.unwrap();
         assert_eq!(r.current_step, Some("s2".to_string()));
 
-        let r = svc.execute_step(&iid, &json!({"a": 1})).await.unwrap();
+        let r = svc.execute_step(*iid, &json!({"a": 1})).await.unwrap();
         assert_eq!(r.current_step, Some("s3".to_string()));
 
-        let r = svc.execute_step(&iid, &json!({"b": 2})).await.unwrap();
+        let r = svc.execute_step(*iid, &json!({"b": 2})).await.unwrap();
         assert_eq!(r.current_step, Some("s4".to_string()));
 
-        let r = svc.execute_step(&iid, &json!({})).await.unwrap();
+        let r = svc.execute_step(*iid, &json!({})).await.unwrap();
         assert_eq!(r.status, WorkflowInstanceStatus::Completed);
     }
 
@@ -968,19 +963,17 @@ mod tests {
             task_step("s2", "A", ""),
             task_step("s3", "B", ""),
         ];
-        svc.create_workflow("wf-par2", "Par2", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "Par2", None, &steps)
             .await
             .unwrap();
 
-        let inst = svc
-            .start_workflow("wf-par2", &json!({}), None)
-            .await
-            .unwrap();
-        let iid = inst.document_id.clone();
+        let inst = svc.start_workflow(wf_id, &json!({}), None).await.unwrap();
+        let iid = inst.id;
 
-        svc.execute_step(&iid, &json!({})).await.unwrap();
-        svc.execute_step(&iid, &json!({})).await.unwrap();
-        let r = svc.execute_step(&iid, &json!({})).await.unwrap();
+        svc.execute_step(*iid, &json!({})).await.unwrap();
+        svc.execute_step(*iid, &json!({})).await.unwrap();
+        let r = svc.execute_step(*iid, &json!({})).await.unwrap();
         assert_eq!(r.status, WorkflowInstanceStatus::Completed);
     }
 
@@ -988,24 +981,22 @@ mod tests {
     async fn fail_step_marks_failed() {
         let svc = setup().await;
         let steps = vec![await_step("s1", "Wait", "")];
-        svc.create_workflow("wf-fail", "Fail", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "Fail", None, &steps)
             .await
             .unwrap();
 
-        let inst = svc
-            .start_workflow("wf-fail", &json!({}), None)
-            .await
-            .unwrap();
-        svc.fail_step(&inst.document_id, "timeout").await.unwrap();
+        let inst = svc.start_workflow(wf_id, &json!({}), None).await.unwrap();
+        svc.fail_step(*inst.id, "timeout").await.unwrap();
 
-        let inst = svc.get_instance(&inst.document_id).await.unwrap().unwrap();
+        let inst = svc.get_instance(*inst.id).await.unwrap().unwrap();
         assert_eq!(inst.status, WorkflowInstanceStatus::Failed);
     }
 
     #[tokio::test]
     async fn fail_step_not_found() {
         let svc = setup().await;
-        let result = svc.fail_step("nope", "err").await;
+        let result = svc.fail_step(9999999, "err").await;
         assert!(result.is_err());
     }
 
@@ -1013,17 +1004,15 @@ mod tests {
     async fn cancel_instance() {
         let svc = setup().await;
         let steps = vec![await_step("s1", "Wait", "")];
-        svc.create_workflow("wf-can", "Cancel", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "Cancel", None, &steps)
             .await
             .unwrap();
 
-        let inst = svc
-            .start_workflow("wf-can", &json!({}), None)
-            .await
-            .unwrap();
-        svc.cancel_instance(&inst.document_id).await.unwrap();
+        let inst = svc.start_workflow(wf_id, &json!({}), None).await.unwrap();
+        svc.cancel_instance(*inst.id).await.unwrap();
 
-        let inst = svc.get_instance(&inst.document_id).await.unwrap().unwrap();
+        let inst = svc.get_instance(*inst.id).await.unwrap().unwrap();
         assert_eq!(inst.status, WorkflowInstanceStatus::Cancelled);
     }
 
@@ -1031,19 +1020,15 @@ mod tests {
     async fn cancel_not_running_rejected() {
         let svc = setup().await;
         let steps = vec![task_step("s1", "S1", "")];
-        svc.create_workflow("wf-can2", "Cancel2", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "Cancel2", None, &steps)
             .await
             .unwrap();
 
-        let inst = svc
-            .start_workflow("wf-can2", &json!({}), None)
-            .await
-            .unwrap();
-        svc.execute_step(&inst.document_id, &json!({}))
-            .await
-            .unwrap();
+        let inst = svc.start_workflow(wf_id, &json!({}), None).await.unwrap();
+        svc.execute_step(*inst.id, &json!({})).await.unwrap();
 
-        let result = svc.cancel_instance(&inst.document_id).await;
+        let result = svc.cancel_instance(*inst.id).await;
         assert!(result.is_err());
     }
 
@@ -1051,19 +1036,15 @@ mod tests {
     async fn get_step_logs_returns_entries() {
         let svc = setup().await;
         let steps = vec![task_step("s1", "S1", "")];
-        svc.create_workflow("wf-logs", "Logs", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "Logs", None, &steps)
             .await
             .unwrap();
 
-        let inst = svc
-            .start_workflow("wf-logs", &json!({}), None)
-            .await
-            .unwrap();
-        svc.execute_step(&inst.document_id, &json!({"x": 1}))
-            .await
-            .unwrap();
+        let inst = svc.start_workflow(wf_id, &json!({}), None).await.unwrap();
+        svc.execute_step(*inst.id, &json!({"x": 1})).await.unwrap();
 
-        let logs = svc.get_step_logs(&inst.document_id).await.unwrap();
+        let logs = svc.get_step_logs(*inst.id).await.unwrap();
         assert!(!logs.is_empty());
         assert_eq!(logs[0].step_id, "s1");
         assert_eq!(logs[0].status, WorkflowStepStatus::Completed);
@@ -1072,7 +1053,7 @@ mod tests {
     #[tokio::test]
     async fn get_step_logs_instance_not_found() {
         let svc = setup().await;
-        let result = svc.get_step_logs("nope").await;
+        let result = svc.get_step_logs(9999999).await;
         assert!(result.is_err());
     }
 
@@ -1080,17 +1061,15 @@ mod tests {
     async fn list_instances_by_definition() {
         let svc = setup().await;
         let steps = vec![task_step("s1", "S1", "")];
-        svc.create_workflow("wf-li", "List", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "List", None, &steps)
             .await
             .unwrap();
 
-        svc.start_workflow("wf-li", &json!({}), None).await.unwrap();
-        svc.start_workflow("wf-li", &json!({}), None).await.unwrap();
+        svc.start_workflow(wf_id, &json!({}), None).await.unwrap();
+        svc.start_workflow(wf_id, &json!({}), None).await.unwrap();
 
-        let (items, total) = svc
-            .list_instances(Some("wf-li"), None, 1, 10)
-            .await
-            .unwrap();
+        let (items, total) = svc.list_instances(Some(wf_id), None, 1, 10).await.unwrap();
         assert_eq!(total, 2);
         assert_eq!(items.len(), 2);
     }
@@ -1099,14 +1078,13 @@ mod tests {
     async fn list_instances_by_status() {
         let svc = setup().await;
         let steps = vec![task_step("s1", "S1", "")];
-        svc.create_workflow("wf-ls", "Status", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "Status", None, &steps)
             .await
             .unwrap();
 
-        let inst = svc.start_workflow("wf-ls", &json!({}), None).await.unwrap();
-        svc.execute_step(&inst.document_id, &json!({}))
-            .await
-            .unwrap();
+        let inst = svc.start_workflow(wf_id, &json!({}), None).await.unwrap();
+        svc.execute_step(*inst.id, &json!({})).await.unwrap();
 
         let (running, _) = svc
             .list_instances(None, Some(WorkflowInstanceStatus::Running), 1, 10)
@@ -1126,27 +1104,20 @@ mod tests {
     async fn list_instances_pagination() {
         let svc = setup().await;
         let steps = vec![task_step("s1", "S1", "")];
-        svc.create_workflow("wf-page", "Page", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "Page", None, &steps)
             .await
             .unwrap();
 
         for _ in 0..5 {
-            svc.start_workflow("wf-page", &json!({}), None)
-                .await
-                .unwrap();
+            svc.start_workflow(wf_id, &json!({}), None).await.unwrap();
         }
 
-        let (page1, total) = svc
-            .list_instances(Some("wf-page"), None, 1, 2)
-            .await
-            .unwrap();
+        let (page1, total) = svc.list_instances(Some(wf_id), None, 1, 2).await.unwrap();
         assert_eq!(total, 5);
         assert_eq!(page1.len(), 2);
 
-        let (page2, _) = svc
-            .list_instances(Some("wf-page"), None, 2, 2)
-            .await
-            .unwrap();
+        let (page2, _) = svc.list_instances(Some(wf_id), None, 2, 2).await.unwrap();
         assert_eq!(page2.len(), 2);
     }
 
@@ -1157,24 +1128,25 @@ mod tests {
             task_step("s1", "First", "s2"),
             task_step("s2", "Second", ""),
         ];
-        svc.create_workflow("wf-ctx", "Ctx", None, &steps)
+        let wf_id = crate::utils::id::new_id();
+        svc.create_workflow(wf_id, "Ctx", None, &steps)
             .await
             .unwrap();
 
         let inst = svc
-            .start_workflow("wf-ctx", &json!({"init": 1}), None)
+            .start_workflow(wf_id, &json!({"init": 1}), None)
             .await
             .unwrap();
-        let iid = inst.document_id.clone();
+        let iid = inst.id;
 
-        svc.execute_step(&iid, &json!({"step1": "done"}))
+        svc.execute_step(*iid, &json!({"step1": "done"}))
             .await
             .unwrap();
-        svc.execute_step(&iid, &json!({"step2": "done"}))
+        svc.execute_step(*iid, &json!({"step2": "done"}))
             .await
             .unwrap();
 
-        let inst = svc.get_instance(&iid).await.unwrap().unwrap();
+        let inst = svc.get_instance(*iid).await.unwrap().unwrap();
         let ctx = inst.parse_context();
         assert_eq!(ctx["init"], 1);
         assert_eq!(ctx["step1"], "done");

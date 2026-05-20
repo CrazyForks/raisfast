@@ -1,18 +1,15 @@
-//! Webhook subscription data models and database queries
-
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
-/// Complete database row for a webhook subscription
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct WebhookSubscription {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
     pub url: String,
     pub secret: String,
@@ -23,7 +20,6 @@ pub struct WebhookSubscription {
     pub updated_at: Timestamp,
 }
 
-/// Create subscription request body
 #[derive(Debug, Deserialize)]
 pub struct CreateWebhookRequest {
     pub url: String,
@@ -33,7 +29,6 @@ pub struct CreateWebhookRequest {
     pub secret: Option<String>,
 }
 
-/// Update subscription request body
 #[derive(Debug, Deserialize)]
 pub struct UpdateWebhookRequest {
     pub url: Option<String>,
@@ -42,7 +37,6 @@ pub struct UpdateWebhookRequest {
     pub enabled: Option<bool>,
 }
 
-/// Payload delivered to a webhook
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize)]
 pub struct WebhookPayload {
@@ -52,14 +46,13 @@ pub struct WebhookPayload {
     pub timestamp: Timestamp,
 }
 
-/// Inserts a webhook subscription
 pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_insert!(
         pool,
         "webhook_subscriptions",
         [
-            "document_id" => &sub.document_id,
+            "id" => sub.id,
             "url" => &sub.url,
             "secret" => &sub.secret,
             "events" => &sub.events,
@@ -73,7 +66,6 @@ pub async fn insert(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
     Ok(())
 }
 
-/// Paginated query for webhook subscriptions
 pub async fn find_paginated(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
@@ -92,31 +84,28 @@ pub async fn find_paginated(
     Ok(result)
 }
 
-/// Finds a subscription by ID
-pub async fn find_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<WebhookSubscription> {
-    raisfast_derive::crud_find_one!(pool, "webhook_subscriptions", WebhookSubscription, "document_id" => id)
+pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<WebhookSubscription> {
+    raisfast_derive::crud_find_one!(pool, "webhook_subscriptions", WebhookSubscription, "id" => id)
         .map_err(Into::into)
 }
 
-/// Updates a subscription by ID
 pub async fn update(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     let result = raisfast_derive::crud_update!(
         pool, "webhook_subscriptions",
         bind: ["url" => &sub.url, "secret" => &sub.secret, "events" => &sub.events, "enabled" => sub.enabled, "description" => &sub.description, "updated_at" => now],
-        where: "document_id" => &sub.document_id
+        where: "id" => sub.id
     )?;
     AppError::expect_affected(&result, "webhook_subscription")?;
     Ok(())
 }
 
-pub async fn delete_by_id(pool: &crate::db::Pool, id: &str) -> AppResult<()> {
-    let result = raisfast_derive::crud_delete!(pool, "webhook_subscriptions", "document_id" => id)?;
+pub async fn delete_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
+    let result = raisfast_derive::crud_delete!(pool, "webhook_subscriptions", "id" => id)?;
     AppError::expect_affected(&result, "webhook_subscription")?;
     Ok(())
 }
 
-/// Finds all enabled subscriptions (for event delivery)
 pub async fn find_enabled_by_tenant(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,

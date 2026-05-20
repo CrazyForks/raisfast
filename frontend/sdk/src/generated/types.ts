@@ -8,14 +8,11 @@ export type AdminCommentListQuery = {
 };
 
 export type AdminCommentRow = {
-  id: bigint;
-  post_id: bigint;
+  id: string;
   post_title: string;
-  created_by: bigint | null;
   nickname: string | null;
   email: string | null;
   content: string;
-  parent_id: bigint | null;
   status: CommentStatus;
   created_at: string;
 };
@@ -24,12 +21,6 @@ export type AdminPageListQuery = {
   page: bigint | null;
   page_size: bigint | null;
   status: PageStatus | null;
-};
-
-export type AdminPostListQuery = {
-  page: bigint | null;
-  page_size: bigint | null;
-  status: PostStatus | null;
 };
 
 export type AdminWalletOperationRequest = {
@@ -52,54 +43,53 @@ export type ApiAccess = typeof ApiAccess[keyof typeof ApiAccess];
 
 export type ApiConfig = {
   /**
-   * 列表查询（GET /cms/{plural}）
+   * List query (GET /cms/{plural})
    */
   list: ApiEndpointConfig;
   /**
-   * 单条查询（GET /cms/{plural}/{id}）
+   * Single query (GET /cms/{plural}/{id})
    */
   get: ApiEndpointConfig;
   /**
-   * 创建（POST /cms/{plural}）
+   * Create (POST /cms/{plural})
    */
   create: ApiEndpointConfig;
   /**
-   * 更新（PUT /cms/{plural}/{id}）
+   * Update (PUT /cms/{plural}/{id})
    */
   update: ApiEndpointConfig;
   /**
-   * 删除（DELETE /cms/{plural}/{id}）
+   * Delete (DELETE /cms/{plural}/{id})
    */
   delete: ApiEndpointConfig;
 };
 
 export type ApiEndpointConfig = {
   /**
-   * 访问级别：none / public / member / admin
+   * Access level: none / public / member / admin
    */
   access: ApiAccess;
   /**
-   * 数据过滤表达式（对所有通过 access 检查的请求生效）
+   * Data filter expression (applies to all requests passing access check)
    */
   filter: string | null;
   /**
-   * 已登录用户的额外过滤（与 filter 取 OR）
+   * Additional filter for authenticated users (ORed with filter)
    */
   filter_auth: string | null;
   /**
-   * 是否启用服务端缓存（默认 false）
+   * Whether to enable server-side caching (default false)
    */
   cache: boolean;
   /**
-   * API 返回字段白名单（默认空=返回全部非 private 字段）
-   * 仅对 list/get 端点有效，create/update/delete 忽略此配置
+   * API return field whitelist (default empty = return all non-private fields)
+   * Only effective for list/get endpoints; create/update/delete ignore this setting
    */
   fields: Array<string> | null;
 };
 
 export type ApiTokenListItem = {
-  id: bigint;
-  document_id: string;
+  id: string;
   name: string;
   token_prefix: string;
   scopes: string;
@@ -109,10 +99,9 @@ export type ApiTokenListItem = {
 };
 
 export type AuditEntry = {
-  id: bigint;
-  document_id: string;
+  id: string;
   tenant_id: string | null;
-  actor_id: bigint | null;
+  actor_id: string | null;
   actor_role: string | null;
   action: string;
   subject: string;
@@ -164,8 +153,7 @@ export type BindPhoneRequest = {
 };
 
 export type Category = {
-  id: bigint;
-  document_id: string;
+  id: string;
   tenant_id: string | null;
   name: string;
   slug: string;
@@ -176,10 +164,10 @@ export type Category = {
   og_title: string | null;
   og_description: string | null;
   og_image: string | null;
-  parent_id: bigint | null;
+  parent_id: string | null;
   sort_order: bigint;
-  created_by: bigint | null;
-  updated_by: bigint | null;
+  created_by: string | null;
+  updated_by: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -196,16 +184,15 @@ export const CommentOpenStatus = {
 export type CommentOpenStatus = typeof CommentOpenStatus[keyof typeof CommentOpenStatus];
 
 export type CommentResponse = {
-  id: bigint;
-  document_id: string;
-  post_id: bigint;
-  created_by: bigint | null;
+  id: string;
   nickname: string | null;
   content: string;
-  parent_id: bigint | null;
   depth: number;
   replies: Array<CommentResponse>;
   created_at: string;
+  post_id: string | null;
+  created_by: string | null;
+  parent_id: string | null;
 };
 
 export const CommentStatus = {
@@ -222,63 +209,62 @@ export const ContentKind = {
 export type ContentKind = typeof ContentKind[keyof typeof ContentKind];
 
 export type ContentRevision = {
-  id: bigint;
-  document_id: string;
+  id: string;
   content_type: string;
   record_id: string;
   revision_number: bigint;
   snapshot: string;
-  created_by: bigint | null;
+  created_by: string | null;
   created_at: string;
 };
 
 export type ContentTypeSchema = {
   /**
-   * 显示名称（如 "Post"）
+   * Display name (e.g., "Post")
    */
   name: string;
   /**
-   * 单数标识（如 "post"），用于 API 路径和注册表 key
+   * Singular identifier (e.g., "post"), used for API paths and registry key
    */
   singular: string;
   /**
-   * 复数标识（如 "posts"），用于 API 路径
+   * Plural identifier (e.g., "posts"), used for API paths
    */
   plural: string;
   /**
-   * 数据库表名
+   * Database table name
    */
   table: string;
   /**
-   * 类型：collection（多条记录）或 single（仅一条记录）
+   * Kind: collection (multiple records) or single (only one record)
    */
   kind: ContentKind;
   /**
-   * 描述
+   * Description
    */
   description: string;
   /**
-   * 字段列表
+   * Field list
    */
   fields: Array<FieldSchema>;
   /**
-   * 自动从哪个字段生成 slug
+   * Which field to auto-generate slug from
    */
   slug_field: string | null;
   /**
-   * 是否为内置 content type（内置 CT 不注入默认字段，字段全部显式定义）
+   * Whether this is a built-in content type (built-in CTs don't inject default fields; all fields are explicitly defined)
    */
   builtin: boolean;
   /**
-   * 声明实现的 Protocol 列表（如 ["versionable", "soft_deletable"]）
+   * Declared Protocol list (e.g., ["versionable", "soft_deletable"])
    */
   implements: Array<string | Record<string, string>>;
   /**
-   * 索引定义
+   * Index definitions
    */
   indexes: Array<IndexDef>;
   /**
-   * API 访问控制配置
+   * API access control configuration
    */
   api: ApiConfig;
 };
@@ -334,7 +320,6 @@ export type CreateTagRequest = {
 
 export type CreateTokenResult = {
   id: string;
-  document_id: string;
   name: string;
   token: string;
   token_prefix: string;
@@ -351,7 +336,7 @@ export type CreateWorkflowRequest = {
 };
 
 export type CredentialResponse = {
-  id: bigint;
+  id: string;
   auth_type: AuthType;
   identifier: string;
   verified: boolean;
@@ -367,9 +352,8 @@ export const CronExecStatus = {
 export type CronExecStatus = typeof CronExecStatus[keyof typeof CronExecStatus];
 
 export type CronExecutionLog = {
-  id: bigint;
-  document_id: string;
-  schedule_id: bigint;
+  id: string;
+  schedule_id: string;
   job_type: string;
   label: string;
   status: CronExecStatus;
@@ -380,8 +364,7 @@ export type CronExecutionLog = {
 };
 
 export type CronSchedule = {
-  id: bigint;
-  document_id: string;
+  id: string;
   label: string;
   job_type: string;
   payload: string | null;
@@ -414,67 +397,67 @@ export type FaqItem = {
 
 export type FieldSchema = {
   /**
-   * 字段名
+   * Field name
    */
   name: string;
   /**
-   * 字段类型
+   * Field type
    */
   field_type: FieldType;
   /**
-   * 是否必填
+   * Whether required
    */
   required: boolean;
   /**
-   * 是否唯一
+   * Whether unique
    */
   unique: boolean;
   /**
-   * 默认值
+   * Default value
    */
   default: unknown;
   /**
-   * 私有字段，公开 API 响应中隐藏（仅 admin API 返回）
+   * Private field, hidden in public API responses (only returned by admin API)
    */
   private: boolean;
   /**
-   * 创建后不可修改
+   * Immutable after creation
    */
   immutable: boolean;
   /**
-   * Admin UI 显示标签
+   * Admin UI display label
    */
   label: string | null;
   /**
-   * 字段说明
+   * Field description
    */
   description: string | null;
   /**
-   * 最大长度（text/email/password）
+   * Maximum length (text/email/password)
    */
   max_length: number | null;
   /**
-   * 最小值（数值类型）
+   * Minimum value (numeric types)
    */
   min: number | null;
   /**
-   * 最大值（数值类型）
+   * Maximum value (numeric types)
    */
   max: number | null;
   /**
-   * 正则校验（text/email）
+   * Regex validation (text/email)
    */
   pattern: string | null;
   /**
-   * 关系配置（仅 relation 类型）
+   * Relation configuration (relation type only)
    */
   relation: RelationConfig | null;
   /**
-   * 媒体配置（仅 media 类型）
+   * Media configuration (media type only)
    */
   media_config: MediaConfig | null;
   /**
-   * 枚举值列表（仅 enum 类型）
+   * Enum values list (enum type only)
    */
   enum_values: Array<string> | null;
 };
@@ -521,11 +504,11 @@ export type GalleryImage = {
 
 export type IndexDef = {
   /**
-   * 索引包含的字段
+   * Fields included in the index
    */
   fields: Array<string>;
   /**
-   * 是否唯一索引
+   * Whether this is a unique index
    */
   unique: boolean;
 };
@@ -560,18 +543,17 @@ export type LoginResponse = {
 
 export type MediaConfig = {
   /**
-   * 接受的 MIME 类型
+   * Accepted MIME types
    */
   accept: Array<string>;
   /**
-   * 最大文件数量
+   * Maximum file count
    */
   max_count: number;
 };
 
 export type MediaResponse = {
   id: string;
-  user_id: string;
   filename: string;
   url: string;
   mimetype: string;
@@ -633,8 +615,7 @@ export const OptionType = {
 export type OptionType = typeof OptionType[keyof typeof OptionType];
 
 export type Page = {
-  id: bigint;
-  document_id: string;
+  id: string;
   tenant_id: string | null;
   title: string;
   slug: string;
@@ -644,11 +625,11 @@ export type Page = {
   meta_description: string | null;
   og_image: string | null;
   template: string;
-  parent_id: bigint | null;
+  parent_id: string | null;
   sort_order: bigint;
   status: PageStatus;
-  created_by: bigint;
-  updated_by: bigint | null;
+  created_by: string;
+  updated_by: string | null;
   cover_image: string | null;
   password: string | null;
   comment_status: CommentOpenStatus;
@@ -794,9 +775,8 @@ export const PageStatus = {
 export type PageStatus = typeof PageStatus[keyof typeof PageStatus];
 
 export type Permission = {
-  id: bigint;
-  document_id: string;
-  role_id: bigint;
+  id: string;
+  role_id: string;
   action: string;
   subject: string;
   fields: string | null;
@@ -856,14 +836,6 @@ export type PluginMetrics = {
   total_duration_us: bigint;
 };
 
-export type PostListQuery = {
-  page: bigint | null;
-  page_size: bigint | null;
-  category_id: string | null;
-  tag_id: string | null;
-  q: string | null;
-};
-
 export type PostResponse = {
   id: string;
   title: string;
@@ -872,9 +844,7 @@ export type PostResponse = {
   excerpt: string | null;
   cover_image: string | null;
   status: PostStatus;
-  created_by: bigint;
   author_name: string | null;
-  category_id: bigint | null;
   category_name: string | null;
   tags: Array<TagBrief>;
   view_count: bigint;
@@ -895,6 +865,8 @@ export type PostResponse = {
   published_at: string | null;
   title_highlight: string | null;
   excerpt_highlight: string | null;
+  created_by: string | null;
+  category_id: string | null;
 };
 
 export const PostStatus = {
@@ -938,15 +910,15 @@ export type RegisteredVia = typeof RegisteredVia[keyof typeof RegisteredVia];
 export type RelationConfig = {
   relation_type: RelationType;
   /**
-   * 目标 content type 名称
+   * Target content type name
    */
   target: string;
   /**
-   * 多对多中间表名
+   * Many-to-many junction table name
    */
   through: string | null;
   /**
-   * 外键列名（默认为 "{target}_id"）
+   * Foreign key column name (defaults to "{target}_id")
    */
   foreign_key: string | null;
 };
@@ -980,15 +952,14 @@ export type ResetPasswordRequest = {
 };
 
 export type ReusableBlock = {
-  id: bigint;
-  document_id: string;
+  id: string;
   tenant_id: string | null;
   name: string;
   block_type: string;
   content: string;
   description: string | null;
-  created_by: bigint | null;
-  updated_by: bigint | null;
+  created_by: string | null;
+  updated_by: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -998,15 +969,14 @@ export type ReversalRequest = {
 };
 
 export type RevisionSummary = {
-  id: bigint;
+  id: string;
   revision_number: bigint;
-  created_by: bigint | null;
+  created_by: string | null;
   created_at: string;
 };
 
 export type Role = {
-  id: bigint;
-  document_id: string;
+  id: string;
   name: string;
   description: string | null;
   is_system: boolean;
@@ -1057,9 +1027,8 @@ export type StepDef = {
 };
 
 export type StepLog = {
-  id: bigint;
-  document_id: string;
-  instance_id: bigint;
+  id: string;
+  instance_id: string;
   step_id: string;
   step_name: string;
   status: WorkflowStepStatus;
@@ -1080,8 +1049,7 @@ export const StepType = {
 export type StepType = typeof StepType[keyof typeof StepType];
 
 export type Tag = {
-  id: bigint;
-  document_id: string;
+  id: string;
   tenant_id: string | null;
   name: string;
   slug: string;
@@ -1092,14 +1060,14 @@ export type Tag = {
   og_title: string | null;
   og_description: string | null;
   og_image: string | null;
-  created_by: bigint | null;
-  updated_by: bigint | null;
+  created_by: string | null;
+  updated_by: string | null;
   created_at: string;
   updated_at: string;
 };
 
 export type TagBrief = {
-  id: bigint;
+  id: string;
   name: string;
   slug: string;
 };
@@ -1113,8 +1081,7 @@ export type TeamMember = {
 };
 
 export type Tenant = {
-  id: bigint;
-  document_id: string;
+  id: string;
   name: string;
   domain: string | null;
   config: string;
@@ -1268,7 +1235,9 @@ export const WalletReferenceType = {
   api_usage: "api_usage",
   points_mall: "points_mall",
   order: "order",
-  expiry: "expiry"
+  expiry: "expiry",
+  payment: "payment",
+  payment_refund: "payment_refund"
 } as const;
 export type WalletReferenceType = typeof WalletReferenceType[keyof typeof WalletReferenceType];
 
@@ -1295,10 +1264,10 @@ export type WalletTransactionResponse = {
   tx_type: WalletTxType;
   currency: string;
   transaction_no: string;
-  related_tx_id: string | null;
   reference_type: WalletReferenceType | null;
   reference_id: string | null;
   metadata: string | null;
+  related_tx_id: string | null;
   created_at: string;
 };
 
@@ -1311,195 +1280,8 @@ export const WalletTxType = {
 } as const;
 export type WalletTxType = typeof WalletTxType[keyof typeof WalletTxType];
 
-// ─── Product types ───
-
-export type ProductResponse = {
-  id: string;
-  category_id: string | null;
-  title: string;
-  description: string | null;
-  cover_url: string | null;
-  product_type: string;
-  fulfillment_type: string;
-  delivery_hook: string | null;
-  weight: number | null;
-  price: number;
-  currency: string;
-  status: string;
-  attributes: string | null;
-  sort_order: number;
-  slug: string | null;
-  content: string | null;
-  image_ids: unknown;
-  original_price: number | null;
-  specs: unknown;
-  unit: string;
-  min_purchase: number;
-  max_purchase: number | null;
-  total_sales: number;
-  virtual_sales: number;
-  meta_title: string | null;
-  meta_description: string | null;
-  published_at: string | null;
-  version: number;
-  created_at: string;
-  updated_at: string;
-};
-
-// ─── Order types ───
-
-export type OrderItemResponse = {
-  id: string;
-  order_id: string;
-  product_id: string | null;
-  title: string;
-  description: string | null;
-  unit_price: number;
-  quantity: number;
-  subtotal: number;
-  cover_url: string | null;
-  attributes: string | null;
-  created_at: string;
-};
-
-export type OrderResponse = {
-  id: string;
-  user_id: string;
-  order_no: string;
-  subtotal: number;
-  discount_amount: number;
-  shipping_amount: number;
-  total_amount: number;
-  currency: string;
-  status: string;
-  buyer_name: string | null;
-  buyer_phone: string | null;
-  buyer_email: string | null;
-  shipping_address: string | null;
-  tracking_no: string | null;
-  carrier: string | null;
-  remark: string | null;
-  admin_remark: string | null;
-  delivery_data: string | null;
-  paid_at: string | null;
-  completed_at: string | null;
-  cancelled_at: string | null;
-  created_at: string;
-  updated_at: string;
-  items: OrderItemResponse[];
-};
-
-export type OrderStatsResponse = {
-  total_orders: number;
-  pending_orders: number;
-  paid_orders: number;
-  completed_orders: number;
-  total_revenue: number;
-};
-
-// ─── Payment types ───
-
-export const PaymentStatus = {
-  pending: "pending",
-  processing: "processing",
-  paid: "paid",
-  failed: "failed",
-  cancelled: "cancelled",
-  expired: "expired",
-  refunded: "refunded",
-  partially_refunded: "partially_refunded",
-} as const;
-export type PaymentStatus = typeof PaymentStatus[keyof typeof PaymentStatus];
-
-export type PaymentOrderResponse = {
-  id: string;
-  user_id: number;
-  order_id: string | null;
-  title: string;
-  amount: number;
-  currency: string;
-  channel_id: string;
-  provider: string;
-  provider_order_id: string | null;
-  provider_method: string | null;
-  status: PaymentStatus;
-  return_url: string | null;
-  version: number;
-  provider_data: string | null;
-  client_ip: string | null;
-  client_language: string | null;
-  client_country: string | null;
-  client_user_agent: string | null;
-  channel_selected_by: string | null;
-  metadata: string | null;
-  redirect_url: string | null;
-  qr_code: string | null;
-  client_secret: string | null;
-  paid_at: string | null;
-  cancelled_at: string | null;
-  expired_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export type PaymentChannelResponse = {
-  id: string;
-  provider: string;
-  name: string;
-  is_live: boolean;
-  credentials_masked: string;
-  webhook_secret_set: boolean;
-  settings: string | null;
-  is_active: boolean;
-  sort_order: number;
-  version: number;
-  created_at: string;
-  updated_at: string;
-};
-
-export type PaymentTransactionResponse = {
-  id: string;
-  payment_order_id: number;
-  order_id: string | null;
-  user_id: number;
-  tx_type: string;
-  amount: number;
-  currency: string;
-  provider_tx_id: string;
-  status: string;
-  created_at: string;
-};
-
-export type PaymentRefundResponse = {
-  id: string;
-  payment_order_id: number;
-  order_id: string | null;
-  user_id: number;
-  amount: number;
-  currency: string;
-  reason: string | null;
-  provider_refund_id: string | null;
-  status: string;
-  created_at: string;
-  updated_at: string;
-};
-
-export type AvailableChannelItem = {
-  channel_id: string;
-  provider: string;
-  name: string;
-  is_recommended: boolean;
-  sort_order: number;
-};
-
-export type AvailableChannelsResponse = {
-  recommended_channel_id: string | null;
-  channels: AvailableChannelItem[];
-};
-
 export type WebhookSubscription = {
-  id: bigint;
-  document_id: string;
+  id: string;
   tenant_id: string | null;
   url: string;
   secret: string;
@@ -1511,8 +1293,7 @@ export type WebhookSubscription = {
 };
 
 export type WorkflowDefinition = {
-  id: bigint;
-  document_id: string;
+  id: string;
   name: string;
   description: string | null;
   steps: string;
@@ -1524,13 +1305,12 @@ export type WorkflowDefinition = {
 };
 
 export type WorkflowInstance = {
-  id: bigint;
-  document_id: string;
-  definition_id: bigint;
+  id: string;
+  definition_id: string;
   status: WorkflowInstanceStatus;
   current_step: string | null;
   context: string;
-  triggered_by: bigint | null;
+  triggered_by: string | null;
   started_at: string;
   completed_at: string | null;
   updated_at: string;

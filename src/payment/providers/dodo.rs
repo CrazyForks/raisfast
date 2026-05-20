@@ -337,7 +337,7 @@ impl PaymentProvider for DodoProvider {
         let mut metadata = serde_json::Map::new();
         metadata.insert(
             "payment_order_id".to_string(),
-            serde_json::Value::String(order.document_id.clone()),
+            serde_json::Value::String(order.id.to_string()),
         );
         if let Some(ref order_id) = order.order_id {
             metadata.insert(
@@ -533,7 +533,6 @@ mod tests {
 
         let channel = PaymentChannel {
             id: 1,
-            document_id: "doc1".into(),
             tenant_id: None,
             provider: "dodo".into(),
             name: "Dodo".into(),
@@ -556,7 +555,6 @@ mod tests {
     fn extract_product_id_missing_settings() {
         let channel = PaymentChannel {
             id: 1,
-            document_id: "doc1".into(),
             tenant_id: None,
             provider: "dodo".into(),
             name: "Dodo".into(),
@@ -585,7 +583,6 @@ mod tests {
 
         let channel = PaymentChannel {
             id: 1,
-            document_id: "doc1".into(),
             tenant_id: None,
             provider: "dodo".into(),
             name: "Dodo".into(),
@@ -697,7 +694,6 @@ mod tests {
 
         let channel = PaymentChannel {
             id: 1,
-            document_id: "doc1".into(),
             tenant_id: None,
             provider: "dodo".into(),
             name: "Dodo".into(),
@@ -763,7 +759,6 @@ mod tests {
 
         let channel = PaymentChannel {
             id: 1,
-            document_id: "doc1".into(),
             tenant_id: None,
             provider: "dodo".into(),
             name: "Dodo".into(),
@@ -793,7 +788,6 @@ mod tests {
         let key = test_key();
         let channel = PaymentChannel {
             id: 1,
-            document_id: "doc1".into(),
             tenant_id: None,
             provider: "dodo".into(),
             name: "Dodo".into(),

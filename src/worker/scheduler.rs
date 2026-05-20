@@ -40,6 +40,7 @@ use crate::db::Pool;
 use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::plugins::CronEntry;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 use super::{CronExecStatus, Job, JobQueue, NewJob};
@@ -48,8 +49,7 @@ macro_rules! cron_row_to_schedule {
     ($r:expr) => {{
         let r = $r;
         CronSchedule {
-            id: r.id,
-            document_id: r.document_id,
+            id: SnowflakeId(r.id),
             label: r.label,
             job_type: r.job_type,
             payload: r.payload,
@@ -68,9 +68,8 @@ macro_rules! exec_log_row_to_struct {
     ($r:expr) => {{
         let r = $r;
         CronExecutionLog {
-            id: r.id,
-            document_id: r.document_id,
-            schedule_id: r.schedule_id,
+            id: SnowflakeId(r.id),
+            schedule_id: SnowflakeId(r.schedule_id),
             job_type: r.job_type,
             label: r.label,
             status: r.status,
@@ -85,7 +84,6 @@ macro_rules! exec_log_row_to_struct {
 #[derive(sqlx::FromRow)]
 struct CronScheduleRow {
     id: i64,
-    document_id: String,
     label: String,
     job_type: String,
     payload: Option<String>,
@@ -101,7 +99,6 @@ struct CronScheduleRow {
 #[derive(sqlx::FromRow)]
 struct CronExecLogRow {
     id: i64,
-    document_id: String,
     schedule_id: i64,
     job_type: String,
     label: String,
@@ -122,8 +119,7 @@ struct PluginCronRow {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CronSchedule {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub label: String,
     pub job_type: String,
     pub payload: Option<String>,
@@ -176,17 +172,15 @@ pub async fn create_schedule_with_plugin(
     enabled: bool,
     plugin_id: Option<&str>,
 ) -> AppResult<CronSchedule> {
-    let document_id = uuid::Uuid::now_v7().to_string();
     let now = crate::utils::tz::now_utc();
     let next = next_run(cron_expr, now)?;
 
     let (int_id,): (i64,) = sqlx::query_as(&format!(
-        "INSERT INTO cron_schedules (document_id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
-         VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+        "INSERT INTO cron_schedules (label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
+         VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})
          RETURNING id",
-        ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
+        ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9)
     ))
-    .bind(&document_id)
     .bind(label)
     .bind(job_type)
     .bind(payload)
@@ -200,8 +194,7 @@ pub async fn create_schedule_with_plugin(
     .await?;
 
     Ok(CronSchedule {
-        id: int_id,
-        document_id,
+        id: SnowflakeId(int_id),
         label: label.to_string(),
         job_type: job_type.to_string(),
         payload: payload.map(|s| s.to_string()),
@@ -216,10 +209,10 @@ pub async fn create_schedule_with_plugin(
 }
 
 /// Find by ID
-pub async fn find_by_id(pool: &Pool, id: &str) -> AppResult<Option<CronSchedule>> {
+pub async fn find_by_id(pool: &Pool, id: i64) -> AppResult<Option<CronSchedule>> {
     let row = sqlx::query_as::<_, CronScheduleRow>(&format!(
-        "SELECT id, document_id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
-         FROM cron_schedules WHERE document_id = {}",
+        "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
+         FROM cron_schedules WHERE id = {}",
         ph(1)
     ))
     .bind(id)
@@ -232,7 +225,7 @@ pub async fn find_by_id(pool: &Pool, id: &str) -> AppResult<Option<CronSchedule>
 /// List all schedules
 pub async fn list_schedules(pool: &Pool) -> AppResult<Vec<CronSchedule>> {
     let rows = sqlx::query_as::<_, CronScheduleRow>(
-        "SELECT id, document_id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
+        "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
          FROM cron_schedules ORDER BY created_at ASC",
     )
     .fetch_all(pool)
@@ -242,10 +235,10 @@ pub async fn list_schedules(pool: &Pool) -> AppResult<Vec<CronSchedule>> {
 }
 
 /// Enable/disable a schedule
-pub async fn toggle_schedule(pool: &Pool, id: &str, enabled: bool) -> AppResult<()> {
+pub async fn toggle_schedule(pool: &Pool, id: i64, enabled: bool) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     let result = sqlx::query(&format!(
-        "UPDATE cron_schedules SET enabled = {}, updated_at = {} WHERE document_id = {}",
+        "UPDATE cron_schedules SET enabled = {}, updated_at = {} WHERE id = {}",
         ph(1),
         ph(2),
         ph(3)
@@ -267,7 +260,7 @@ pub async fn toggle_schedule(pool: &Pool, id: &str, enabled: bool) -> AppResult<
 /// Merges provided fields, recalculates `next_run_at`, persists and returns the updated schedule.
 pub async fn update_schedule(
     pool: &Pool,
-    id: &str,
+    id: i64,
     label: Option<String>,
     job_type: Option<String>,
     payload: Option<Option<String>>,
@@ -298,7 +291,7 @@ pub async fn update_schedule(
     let now = crate::utils::tz::now_utc();
 
     sqlx::query(&format!(
-        "UPDATE cron_schedules SET label = {}, job_type = {}, payload = {}, cron_expr = {}, enabled = {}, next_run_at = {}, updated_at = {} WHERE document_id = {}",
+        "UPDATE cron_schedules SET label = {}, job_type = {}, payload = {}, cron_expr = {}, enabled = {}, next_run_at = {}, updated_at = {} WHERE id = {}",
         ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8)
     ))
     .bind(&schedule.label)
@@ -316,14 +309,11 @@ pub async fn update_schedule(
 }
 
 /// Delete a schedule
-pub async fn delete_schedule(pool: &Pool, id: &str) -> AppResult<()> {
-    let result = sqlx::query(&format!(
-        "DELETE FROM cron_schedules WHERE document_id = {}",
-        ph(1)
-    ))
-    .bind(id)
-    .execute(pool)
-    .await?;
+pub async fn delete_schedule(pool: &Pool, id: i64) -> AppResult<()> {
+    let result = sqlx::query(&format!("DELETE FROM cron_schedules WHERE id = {}", ph(1)))
+        .bind(id)
+        .execute(pool)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::not_found("cron_schedule"));
@@ -374,7 +364,7 @@ impl CronScheduler {
         let now = crate::utils::tz::now_utc();
 
         let rows = sqlx::query_as::<_, CronScheduleRow>(&format!(
-            "SELECT id, document_id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
+            "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
              FROM cron_schedules WHERE enabled = 1 AND next_run_at <= {}",
             ph(1)
         ))
@@ -404,10 +394,14 @@ impl CronScheduler {
             schedule.job_type
         );
 
-        let log_id =
-            create_execution_log(&self.pool, schedule.id, &schedule.job_type, &schedule.label)
-                .await
-                .ok();
+        let log_id = create_execution_log(
+            &self.pool,
+            *schedule.id,
+            &schedule.job_type,
+            &schedule.label,
+        )
+        .await
+        .ok();
 
         let start = std::time::Instant::now();
 
@@ -428,7 +422,7 @@ impl CronScheduler {
                 Ok(()) => {
                     if let Some(ref lid) = log_id {
                         sqlx::query(&format!(
-                            "UPDATE cron_execution_log SET status = {}, duration_ms = {}, finished_at = {} WHERE document_id = {}",
+                            "UPDATE cron_execution_log SET status = {}, duration_ms = {}, finished_at = {} WHERE id = {}",
                             ph(1), ph(2), ph(3), ph(4)
                         ))
                         .bind(CronExecStatus::Completed)
@@ -443,7 +437,7 @@ impl CronScheduler {
                     if let Some(ref lid) = log_id {
                         let err_str = e.to_string();
                         sqlx::query(&format!(
-                            "UPDATE cron_execution_log SET status = {}, duration_ms = {}, error = {}, finished_at = {} WHERE document_id = {}",
+                            "UPDATE cron_execution_log SET status = {}, duration_ms = {}, error = {}, finished_at = {} WHERE id = {}",
                             ph(1), ph(2), ph(3), ph(4), ph(5)
                         ))
                         .bind(CronExecStatus::Failed)
@@ -547,9 +541,8 @@ pub async fn seed_defaults(
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CronExecutionLog {
-    pub id: i64,
-    pub document_id: String,
-    pub schedule_id: i64,
+    pub id: SnowflakeId,
+    pub schedule_id: SnowflakeId,
     pub job_type: String,
     pub label: String,
     pub status: CronExecStatus,
@@ -565,12 +558,12 @@ pub async fn create_execution_log(
     schedule_id: i64,
     job_type: &str,
     label: &str,
-) -> AppResult<String> {
-    let document_id = uuid::Uuid::now_v7().to_string();
+) -> AppResult<i64> {
+    let id = crate::utils::id::new_id();
     let now = crate::utils::tz::now_utc();
 
     sqlx::query(&format!(
-        "INSERT INTO cron_execution_log (document_id, schedule_id, job_type, label, status, started_at)
+        "INSERT INTO cron_execution_log (id, schedule_id, job_type, label, status, started_at)
          VALUES ({}, {}, {}, {}, {}, {})",
         ph(1),
         ph(2),
@@ -579,7 +572,7 @@ pub async fn create_execution_log(
         ph(5),
         ph(6)
     ))
-    .bind(&document_id)
+    .bind(id)
     .bind(schedule_id)
     .bind(job_type)
     .bind(label)
@@ -588,14 +581,14 @@ pub async fn create_execution_log(
     .execute(pool)
     .await?;
 
-    Ok(document_id)
+    Ok(id)
 }
 
 /// Mark execution log as succeeded
-pub async fn complete_execution_log(pool: &Pool, log_id: &str, duration_ms: i64) -> AppResult<()> {
+pub async fn complete_execution_log(pool: &Pool, log_id: i64, duration_ms: i64) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     sqlx::query(&format!(
-        "UPDATE cron_execution_log SET status = {}, duration_ms = {}, finished_at = {} WHERE document_id = {}",
+        "UPDATE cron_execution_log SET status = {}, duration_ms = {}, finished_at = {} WHERE id = {}",
         ph(1), ph(2), ph(3), ph(4)
     ))
     .bind(CronExecStatus::Completed)
@@ -610,13 +603,13 @@ pub async fn complete_execution_log(pool: &Pool, log_id: &str, duration_ms: i64)
 /// Mark execution log as failed
 pub async fn fail_execution_log(
     pool: &Pool,
-    log_id: &str,
+    log_id: i64,
     duration_ms: i64,
     error: &str,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     sqlx::query(&format!(
-        "UPDATE cron_execution_log SET status = {}, duration_ms = {}, error = {}, finished_at = {} WHERE document_id = {}",
+        "UPDATE cron_execution_log SET status = {}, duration_ms = {}, error = {}, finished_at = {} WHERE id = {}",
         ph(1), ph(2), ph(3), ph(4), ph(5)
     ))
     .bind(CronExecStatus::Failed)
@@ -632,18 +625,17 @@ pub async fn fail_execution_log(
 /// Query execution history for a schedule
 pub async fn list_execution_logs(
     pool: &Pool,
-    schedule_document_id: &str,
+    schedule_id: i64,
     limit: i64,
 ) -> AppResult<Vec<CronExecutionLog>> {
     let rows = sqlx::query_as::<_, CronExecLogRow>(&format!(
-        "SELECT el.id, el.document_id, el.schedule_id, el.job_type, el.label, el.status, el.duration_ms, el.error, el.started_at, el.finished_at
+        "SELECT el.id, el.schedule_id, el.job_type, el.label, el.status, el.duration_ms, el.error, el.started_at, el.finished_at
          FROM cron_execution_log el
-         JOIN cron_schedules cs ON el.schedule_id = cs.id
-         WHERE cs.document_id = {}
+         WHERE el.schedule_id = {}
          ORDER BY el.started_at DESC LIMIT {}",
         ph(1), ph(2)
     ))
-    .bind(schedule_document_id)
+    .bind(schedule_id)
     .bind(limit)
     .fetch_all(pool)
     .await?;
@@ -657,7 +649,7 @@ pub async fn list_execution_logs(
 /// Query recent execution records across all schedules
 pub async fn recent_execution_logs(pool: &Pool, limit: i64) -> AppResult<Vec<CronExecutionLog>> {
     let rows = sqlx::query_as::<_, CronExecLogRow>(&format!(
-        "SELECT id, document_id, schedule_id, job_type, label, status, duration_ms, error, started_at, finished_at
+        "SELECT id, schedule_id, job_type, label, status, duration_ms, error, started_at, finished_at
          FROM cron_execution_log
          ORDER BY started_at DESC LIMIT {}",
         ph(1)
@@ -756,15 +748,15 @@ pub async fn sync_plugin_crons(
 
                 tracing::debug!("updated cron '{}' for plugin {plugin_id}", entry.job_type);
             } else {
-                let document_id = uuid::Uuid::now_v7().to_string();
+                let id = crate::utils::id::new_id();
                 let now = crate::utils::tz::now_utc();
                 let next = next_run(&entry.cron_expr, crate::utils::tz::now_utc())?;
                 sqlx::query(&format!(
-                    "INSERT INTO cron_schedules (document_id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
+                    "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
                      VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
                     ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10)
                 ))
-                .bind(&document_id)
+                .bind(id)
                 .bind(&entry.label)
                 .bind(&entry.job_type)
                 .bind(&entry.payload)
@@ -851,7 +843,7 @@ mod tests {
         assert!(s.enabled);
         assert!(s.next_run_at.to_rfc3339().len() > 10);
 
-        let found = find_by_id(&pool, &s.document_id).await.unwrap().unwrap();
+        let found = find_by_id(&pool, *s.id).await.unwrap().unwrap();
         assert_eq!(found.job_type, "generate_sitemap");
     }
 
@@ -874,12 +866,12 @@ mod tests {
         .await
         .unwrap();
 
-        toggle_schedule(&pool, &s.document_id, false).await.unwrap();
-        let found = find_by_id(&pool, &s.document_id).await.unwrap().unwrap();
+        toggle_schedule(&pool, *s.id, false).await.unwrap();
+        let found = find_by_id(&pool, *s.id).await.unwrap().unwrap();
         assert!(!found.enabled);
 
-        delete_schedule(&pool, &s.document_id).await.unwrap();
-        assert!(find_by_id(&pool, &s.document_id).await.unwrap().is_none());
+        delete_schedule(&pool, *s.id).await.unwrap();
+        assert!(find_by_id(&pool, *s.id).await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -890,7 +882,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = toggle_schedule(&pool, "nonexistent", true).await;
+        let result = toggle_schedule(&pool, 9999999, true).await;
         assert!(result.is_err());
     }
 
@@ -947,10 +939,10 @@ mod tests {
         let past = (now - chrono::Duration::hours(1)).to_rfc3339();
 
         sqlx::query(
-            "INSERT INTO cron_schedules (document_id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
+            "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, 1, ?, NULL, ?, ?)",
         )
-        .bind("sched-1")
+        .bind(1i64)
         .bind("Test Sitemap")
         .bind("generate_sitemap")
         .bind(Option::<String>::None)
@@ -965,18 +957,17 @@ mod tests {
         let scheduler = CronScheduler::new(pool.clone(), queue, std::time::Duration::from_secs(60));
         scheduler.tick().await.unwrap();
 
-        let jobs = sqlx::query_as::<_, (String, String)>("SELECT document_id, job_type FROM jobs")
+        let jobs = sqlx::query_as::<_, (String, String)>("SELECT job_type, status FROM jobs")
             .fetch_all(&pool)
             .await
             .unwrap();
         assert_eq!(jobs.len(), 1);
-        assert_eq!(jobs[0].1, "generate_sitemap");
+        assert_eq!(jobs[0].0, "generate_sitemap");
 
-        let row: (String,) =
-            sqlx::query_as("SELECT next_run_at FROM cron_schedules WHERE document_id = 'sched-1'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let row: (String,) = sqlx::query_as("SELECT next_run_at FROM cron_schedules WHERE id = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_ne!(row.0, past);
     }
 
@@ -994,10 +985,10 @@ mod tests {
         let future = (now + chrono::Duration::hours(1)).to_rfc3339();
 
         sqlx::query(
-            "INSERT INTO cron_schedules (document_id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
+            "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, 1, ?, NULL, ?, ?)",
         )
-        .bind("sched-future")
+        .bind(2i64)
         .bind("Future Job")
         .bind("generate_sitemap")
         .bind(Option::<String>::None)
@@ -1192,47 +1183,42 @@ mod tests {
         pool
     }
 
-    async fn insert_test_schedule(pool: &Pool, document_id: &str) -> i64 {
+    async fn insert_test_schedule(pool: &Pool) -> i64 {
+        let id = crate::utils::id::new_id();
         let now = Utc::now();
         sqlx::query(
-            "INSERT INTO cron_schedules (document_id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
+            "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
              VALUES (?, 'Test', 'test_task', NULL, '0 */5 * * * *', 1, ?, NULL, ?, ?)",
         )
-        .bind(document_id)
+        .bind(id)
         .bind(now.to_rfc3339())
         .bind(now.to_rfc3339())
         .bind(now.to_rfc3339())
         .execute(pool)
         .await
         .unwrap();
-
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM cron_schedules WHERE document_id = ?")
-            .bind(document_id)
-            .fetch_one(pool)
-            .await
-            .unwrap();
         id
     }
 
     #[tokio::test]
     async fn execution_log_create_and_complete() {
         let pool = setup_log_tables().await;
-        let sched_id = insert_test_schedule(&pool, "sched-1").await;
+        let sched_id = insert_test_schedule(&pool).await;
 
         let log_id = create_execution_log(&pool, sched_id, "generate_sitemap", "Sitemap")
             .await
             .unwrap();
 
-        let logs = list_execution_logs(&pool, "sched-1", 10).await.unwrap();
+        let logs = list_execution_logs(&pool, sched_id, 10).await.unwrap();
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].status, CronExecStatus::Running);
         assert_eq!(logs[0].job_type, "generate_sitemap");
         assert!(logs[0].duration_ms.is_none());
         assert!(logs[0].finished_at.is_none());
 
-        complete_execution_log(&pool, &log_id, 42).await.unwrap();
+        complete_execution_log(&pool, log_id, 42).await.unwrap();
 
-        let logs = list_execution_logs(&pool, "sched-1", 10).await.unwrap();
+        let logs = list_execution_logs(&pool, sched_id, 10).await.unwrap();
         assert_eq!(logs[0].status, CronExecStatus::Completed);
         assert_eq!(logs[0].duration_ms, Some(42));
         assert!(logs[0].finished_at.is_some());
@@ -1241,17 +1227,17 @@ mod tests {
     #[tokio::test]
     async fn execution_log_fail_records_error() {
         let pool = setup_log_tables().await;
-        let sched_id = insert_test_schedule(&pool, "sched-1").await;
+        let sched_id = insert_test_schedule(&pool).await;
 
         let log_id = create_execution_log(&pool, sched_id, "my_task", "Task")
             .await
             .unwrap();
 
-        fail_execution_log(&pool, &log_id, 100, "something broke")
+        fail_execution_log(&pool, log_id, 100, "something broke")
             .await
             .unwrap();
 
-        let logs = list_execution_logs(&pool, "sched-1", 10).await.unwrap();
+        let logs = list_execution_logs(&pool, sched_id, 10).await.unwrap();
         assert_eq!(logs[0].status, CronExecStatus::Failed);
         assert_eq!(logs[0].duration_ms, Some(100));
         assert_eq!(logs[0].error, Some("something broke".into()));
@@ -1260,8 +1246,8 @@ mod tests {
     #[tokio::test]
     async fn execution_log_list_by_schedule() {
         let pool = setup_log_tables().await;
-        let sched_a = insert_test_schedule(&pool, "sched-a").await;
-        let sched_b = insert_test_schedule(&pool, "sched-b").await;
+        let sched_a = insert_test_schedule(&pool).await;
+        let sched_b = insert_test_schedule(&pool).await;
 
         create_execution_log(&pool, sched_a, "task_a", "A")
             .await
@@ -1273,18 +1259,18 @@ mod tests {
             .await
             .unwrap();
 
-        let a = list_execution_logs(&pool, "sched-a", 10).await.unwrap();
+        let a = list_execution_logs(&pool, sched_a, 10).await.unwrap();
         assert_eq!(a.len(), 2);
 
-        let b = list_execution_logs(&pool, "sched-b", 10).await.unwrap();
+        let b = list_execution_logs(&pool, sched_b, 10).await.unwrap();
         assert_eq!(b.len(), 1);
     }
 
     #[tokio::test]
     async fn execution_log_recent_ordering() {
         let pool = setup_log_tables().await;
-        let s1 = insert_test_schedule(&pool, "s1").await;
-        let s2 = insert_test_schedule(&pool, "s2").await;
+        let s1 = insert_test_schedule(&pool).await;
+        let s2 = insert_test_schedule(&pool).await;
 
         create_execution_log(&pool, s1, "task_1", "First")
             .await
@@ -1301,7 +1287,7 @@ mod tests {
     #[tokio::test]
     async fn execution_log_cleanup_removes_old() {
         let pool = setup_log_tables().await;
-        let s1 = insert_test_schedule(&pool, "s1").await;
+        let s1 = insert_test_schedule(&pool).await;
 
         create_execution_log(&pool, s1, "task_1", "Old")
             .await
@@ -1310,7 +1296,7 @@ mod tests {
         let count = cleanup_execution_logs(&pool, 0).await.unwrap();
         assert_eq!(count, 1);
 
-        let logs = list_execution_logs(&pool, "s1", 10).await.unwrap();
+        let logs = list_execution_logs(&pool, s1, 10).await.unwrap();
         assert!(logs.is_empty());
     }
 
@@ -1329,10 +1315,10 @@ mod tests {
         let past = (now - chrono::Duration::hours(1)).to_rfc3339();
 
         sqlx::query(
-            "INSERT INTO cron_schedules (document_id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
+            "INSERT INTO cron_schedules (id, label, job_type, payload, cron_expr, enabled, next_run_at, plugin_id, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, 1, ?, NULL, ?, ?)",
         )
-        .bind("sched-log-test")
+        .bind(3i64)
         .bind("Log Test")
         .bind("generate_sitemap")
         .bind(Option::<String>::None)
@@ -1346,9 +1332,7 @@ mod tests {
 
         scheduler.tick().await.unwrap();
 
-        let logs = list_execution_logs(&pool, "sched-log-test", 10)
-            .await
-            .unwrap();
+        let logs = list_execution_logs(&pool, 3, 10).await.unwrap();
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].status, CronExecStatus::Completed);
         assert!(logs[0].duration_ms.is_some());

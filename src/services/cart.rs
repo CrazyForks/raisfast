@@ -20,12 +20,12 @@ pub trait CartService: Send + Sync {
         attributes: Option<String>,
     ) -> AppResult<()>;
 
-    async fn remove_item(&self, auth: &AuthUser, document_id: &str, user_id: i64) -> AppResult<()>;
+    async fn remove_item(&self, auth: &AuthUser, id: i64, user_id: i64) -> AppResult<()>;
 
     async fn update_quantity(
         &self,
         auth: &AuthUser,
-        document_id: &str,
+        id: i64,
         user_id: i64,
         quantity: i64,
     ) -> AppResult<()>;
@@ -64,10 +64,10 @@ impl CartService for CartServiceImpl {
         quantity: i64,
         attributes: Option<String>,
     ) -> AppResult<()> {
-        let product =
-            crate::models::product::find_by_document_id(&self.pool, &product_id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("product"))?;
+        let product_id: i64 = crate::utils::id::parse_id(&product_id)?;
+        let product = crate::models::product::find_by_id(&self.pool, product_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("product"))?;
 
         if product.status != ProductStatus::Active {
             return Err(AppError::BadRequest("product_not_active".into()));
@@ -80,7 +80,7 @@ impl CartService for CartServiceImpl {
         let existing = crate::models::cart_item::find_by_user_and_product(
             &self.pool,
             user_id,
-            product.id,
+            *product.id,
             None,
             auth.tenant_id(),
         )
@@ -93,7 +93,7 @@ impl CartService for CartServiceImpl {
                 .ok_or_else(|| AppError::BadRequest("quantity_overflow".into()))?;
             crate::models::cart_item::update_quantity(
                 &self.pool,
-                item.id,
+                *item.id,
                 new_quantity,
                 auth.tenant_id(),
             )
@@ -108,7 +108,7 @@ impl CartService for CartServiceImpl {
             crate::models::cart_item::insert(
                 &self.pool,
                 user_id,
-                product.id,
+                *product.id,
                 None,
                 quantity,
                 attributes.as_deref(),
@@ -120,21 +120,16 @@ impl CartService for CartServiceImpl {
         Ok(())
     }
 
-    async fn remove_item(&self, auth: &AuthUser, document_id: &str, user_id: i64) -> AppResult<()> {
-        let item = crate::models::cart_item::find_by_document_id_opt(
-            &self.pool,
-            document_id,
-            auth.tenant_id(),
-        )
-        .await?
-        .ok_or_else(|| AppError::not_found("cart_item"))?;
+    async fn remove_item(&self, auth: &AuthUser, id: i64, user_id: i64) -> AppResult<()> {
+        let item = crate::models::cart_item::find_by_id(&self.pool, id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("cart_item"))?;
 
         if item.user_id != user_id {
             return Err(AppError::Forbidden);
         }
 
-        crate::models::cart_item::delete_by_document_id(&self.pool, document_id, auth.tenant_id())
-            .await?;
+        crate::models::cart_item::delete_by_id(&self.pool, id, auth.tenant_id()).await?;
 
         Ok(())
     }
@@ -142,7 +137,7 @@ impl CartService for CartServiceImpl {
     async fn update_quantity(
         &self,
         auth: &AuthUser,
-        document_id: &str,
+        id: i64,
         user_id: i64,
         quantity: i64,
     ) -> AppResult<()> {
@@ -150,19 +145,15 @@ impl CartService for CartServiceImpl {
             return Err(AppError::BadRequest("invalid_quantity".into()));
         }
 
-        let item = crate::models::cart_item::find_by_document_id_opt(
-            &self.pool,
-            document_id,
-            auth.tenant_id(),
-        )
-        .await?
-        .ok_or_else(|| AppError::not_found("cart_item"))?;
+        let item = crate::models::cart_item::find_by_id(&self.pool, id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("cart_item"))?;
 
         if item.user_id != user_id {
             return Err(AppError::Forbidden);
         }
 
-        crate::models::cart_item::update_quantity(&self.pool, item.id, quantity, auth.tenant_id())
+        crate::models::cart_item::update_quantity(&self.pool, *item.id, quantity, auth.tenant_id())
             .await?;
 
         Ok(())
@@ -178,7 +169,7 @@ impl CartService for CartServiceImpl {
 
         for item in &items {
             let product =
-                crate::models::product::find_by_id(&self.pool, item.product_id, auth.tenant_id())
+                crate::models::product::find_by_id(&self.pool, *item.product_id, auth.tenant_id())
                     .await?;
 
             let (title, price, cover_url) = match product {
@@ -190,8 +181,7 @@ impl CartService for CartServiceImpl {
             total = total.checked_add(line_total).unwrap_or(i64::MAX);
 
             response_items.push(CartItemResponse {
-                id: item.document_id.clone(),
-                product_id: item.product_id.to_string(),
+                id: item.id.to_string(),
                 quantity: item.quantity,
                 attributes: item.attributes.clone(),
                 title,
@@ -234,7 +224,7 @@ impl CartService for CartServiceImpl {
 
         for item in &cart_items {
             let product =
-                crate::models::product::find_by_id(&self.pool, item.product_id, auth.tenant_id())
+                crate::models::product::find_by_id(&self.pool, *item.product_id, auth.tenant_id())
                     .await?
                     .ok_or_else(|| AppError::not_found("product"))?;
 
@@ -283,8 +273,8 @@ impl CartService for CartServiceImpl {
             let mut items = Vec::new();
             for (quantity, line_total, product) in &order_items_data {
                 items.push(crate::commands::CreateOrderItemCmd {
-                    order_id: order.id,
-                    product_id: Some(product.id),
+                    order_id: *order.id,
+                    product_id: Some(*product.id),
                     variant_id: None,
                     title: product.title.clone(),
                     description: product.description.clone(),
@@ -306,7 +296,7 @@ impl CartService for CartServiceImpl {
         })?;
 
         let items =
-            crate::models::order_item::find_by_order_id(&self.pool, order.id, auth.tenant_id())
+            crate::models::order_item::find_by_order_id(&self.pool, *order.id, auth.tenant_id())
                 .await?;
         Ok((order, items))
     }

@@ -411,7 +411,7 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             get(h_wallet::list_user_transactions),
         )
         .route(
-            "/admin/wallets/{tx_doc_id}/reversal",
+            "/admin/wallets/{tx_id}/reversal",
             http_post(h_wallet::admin_reversal),
         )
         .route(
@@ -439,7 +439,7 @@ async fn build_test_app(pool: raisfast::db::Pool) -> (axum::Router, AppState) {
             get(h_payment::list_order_refunds),
         )
         .route(
-            "/payment/callback/{channel_doc_id}",
+            "/payment/callback/{channel_id}",
             http_post(h_payment::handle_callback).layer(from_fn(payment_callback_rate_limit)),
         )
         .route(
@@ -584,11 +584,11 @@ pub(crate) fn delete_auth(path: &str, token: &str) -> Request<Body> {
 }
 
 pub(crate) fn make_token(
-    user_id: &str,
+    _user_id: &str,
     iid: i64,
     role: raisfast::models::user::UserRole,
 ) -> String {
-    raisfast::services::auth::generate_access_token_for_test(user_id, iid, role)
+    raisfast::services::auth::generate_access_token_for_test(iid, role)
 }
 
 pub(crate) async fn register_and_login(
@@ -625,20 +625,12 @@ pub(crate) async fn register_and_login(
 
 pub(crate) async fn create_admin(pool: &raisfast::db::Pool) -> (i64, String) {
     let hash = raisfast::services::auth::hash_password("AdminPass123!").unwrap();
-    let doc_id = uuid::Uuid::now_v7().to_string();
-    let sql = format!(
-        "INSERT INTO users (document_id, username, role, status, registered_via) VALUES ({}, 'testadmin', 'admin', 'active', 'email') RETURNING id",
-        raisfast::db::dialect::ph(1)
-    );
-    let int_id: i64 = sqlx::query_scalar(&sql)
-        .bind(&doc_id)
-        .fetch_one(pool)
-        .await
-        .unwrap();
+    let sql = "INSERT INTO users (username, role, status, registered_via) VALUES ('testadmin', 'admin', 'active', 'email') RETURNING id";
+    let int_id: i64 = sqlx::query_scalar(sql).fetch_one(pool).await.unwrap();
     let cred_data = serde_json::json!({"password_hash": hash}).to_string();
-    let (cred_doc_id, cred_now) = raisfast::utils::id::new_document_id_and_timestamp();
+    let (cred_id, cred_now) = raisfast::utils::id::new_id_and_timestamp();
     let cred_sql = format!(
-        "INSERT INTO user_credentials (document_id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
+        "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
         raisfast::db::dialect::ph(1),
         raisfast::db::dialect::ph(2),
         raisfast::db::dialect::ph(3),
@@ -647,7 +639,7 @@ pub(crate) async fn create_admin(pool: &raisfast::db::Pool) -> (i64, String) {
         raisfast::db::dialect::ph(6)
     );
     sqlx::query(&cred_sql)
-        .bind(&cred_doc_id)
+        .bind(cred_id)
         .bind(int_id)
         .bind("admin@test.com")
         .bind(&cred_data)
@@ -656,25 +648,17 @@ pub(crate) async fn create_admin(pool: &raisfast::db::Pool) -> (i64, String) {
         .execute(pool)
         .await
         .unwrap();
-    (int_id, doc_id)
+    (int_id, int_id.to_string())
 }
 
 pub(crate) async fn create_author(pool: &raisfast::db::Pool) -> (i64, String) {
     let hash = raisfast::services::auth::hash_password("AuthorPass123!").unwrap();
-    let doc_id = uuid::Uuid::now_v7().to_string();
-    let sql = format!(
-        "INSERT INTO users (document_id, username, role, status, registered_via) VALUES ({}, 'testauthor', 'author', 'active', 'email') RETURNING id",
-        raisfast::db::dialect::ph(1)
-    );
-    let int_id: i64 = sqlx::query_scalar(&sql)
-        .bind(&doc_id)
-        .fetch_one(pool)
-        .await
-        .unwrap();
+    let sql = "INSERT INTO users (username, role, status, registered_via) VALUES ('testauthor', 'author', 'active', 'email') RETURNING id";
+    let int_id: i64 = sqlx::query_scalar(sql).fetch_one(pool).await.unwrap();
     let cred_data = serde_json::json!({"password_hash": hash}).to_string();
-    let (cred_doc_id, cred_now) = raisfast::utils::id::new_document_id_and_timestamp();
+    let (cred_id, cred_now) = raisfast::utils::id::new_id_and_timestamp();
     let cred_sql = format!(
-        "INSERT INTO user_credentials (document_id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
+        "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
         raisfast::db::dialect::ph(1),
         raisfast::db::dialect::ph(2),
         raisfast::db::dialect::ph(3),
@@ -683,7 +667,7 @@ pub(crate) async fn create_author(pool: &raisfast::db::Pool) -> (i64, String) {
         raisfast::db::dialect::ph(6)
     );
     sqlx::query(&cred_sql)
-        .bind(&cred_doc_id)
+        .bind(cred_id)
         .bind(int_id)
         .bind("author@test.com")
         .bind(&cred_data)
@@ -692,7 +676,7 @@ pub(crate) async fn create_author(pool: &raisfast::db::Pool) -> (i64, String) {
         .execute(pool)
         .await
         .unwrap();
-    (int_id, doc_id)
+    (int_id, int_id.to_string())
 }
 
 pub(crate) async fn create_published_post(app: &mut axum::Router, token: &str) -> String {

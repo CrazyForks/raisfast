@@ -38,7 +38,7 @@ async fn create_success() {
     assert_eq!(body["data"]["url"], "https://example.com/hook");
     assert!(!body["data"]["secret"].as_str().unwrap().is_empty());
     assert_eq!(body["data"]["enabled"], true);
-    assert!(!body["data"]["document_id"].as_str().unwrap().is_empty());
+    assert!(!body["data"]["id"].as_str().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -139,7 +139,7 @@ async fn get_by_id() {
         ),
     )
     .await;
-    let id = create_body["data"]["document_id"].as_str().unwrap();
+    let id = create_body["data"]["id"].as_str().unwrap();
 
     let (status, body) = send(
         &mut app,
@@ -147,14 +147,14 @@ async fn get_by_id() {
     )
     .await;
     assert!(status.is_success(), "get: {status} {body:?}");
-    assert_eq!(body["data"]["document_id"], id);
+    assert_eq!(body["data"]["id"], id);
     assert_eq!(body["data"]["url"], "https://example.com/get");
 }
 
 #[tokio::test]
 async fn get_not_found() {
     let (mut app, tok) = setup_admin().await;
-    let fake_id = uuid::Uuid::now_v7().to_string();
+    let fake_id = "9999999999999".to_string();
     let (status, _body) = send(
         &mut app,
         get_auth(&format!("/api/v1/admin/webhooks/{fake_id}"), &tok),
@@ -175,7 +175,7 @@ async fn update_changes_fields() {
         ),
     )
     .await;
-    let id = create_body["data"]["document_id"].as_str().unwrap();
+    let id = create_body["data"]["id"].as_str().unwrap();
 
     let (status, body) = send(
         &mut app,
@@ -204,7 +204,7 @@ async fn update_events() {
         ),
     )
     .await;
-    let id = create_body["data"]["document_id"].as_str().unwrap();
+    let id = create_body["data"]["id"].as_str().unwrap();
 
     let (status, body) = send(
         &mut app,
@@ -236,7 +236,7 @@ async fn update_partial_only_description() {
         ),
     )
     .await;
-    let id = create_body["data"]["document_id"].as_str().unwrap();
+    let id = create_body["data"]["id"].as_str().unwrap();
     let original_url = create_body["data"]["url"].as_str().unwrap();
 
     let (status, body) = send(
@@ -265,7 +265,7 @@ async fn delete_success() {
         ),
     )
     .await;
-    let id = create_body["data"]["document_id"].as_str().unwrap();
+    let id = create_body["data"]["id"].as_str().unwrap();
 
     let (status, body) = send(
         &mut app,
@@ -285,7 +285,7 @@ async fn delete_success() {
 #[tokio::test]
 async fn delete_not_found() {
     let (mut app, tok) = setup_admin().await;
-    let fake_id = uuid::Uuid::now_v7().to_string();
+    let fake_id = "9999999999999".to_string();
     let (status, _body) = send(
         &mut app,
         delete_auth(&format!("/api/v1/admin/webhooks/{fake_id}"), &tok),
@@ -297,7 +297,7 @@ async fn delete_not_found() {
 #[tokio::test]
 async fn update_not_found() {
     let (mut app, tok) = setup_admin().await;
-    let fake_id = uuid::Uuid::now_v7().to_string();
+    let fake_id = "9999999999999".to_string();
     let (status, _body) = send(
         &mut app,
         put_json_auth(
@@ -379,10 +379,7 @@ async fn full_lifecycle_create_read_update_delete() {
     )
     .await;
     assert!(status.is_success());
-    let id = create_body["data"]["document_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let id = create_body["data"]["id"].as_str().unwrap().to_string();
     let secret = create_body["data"]["secret"].as_str().unwrap().to_string();
 
     let (status, get_body) = send(

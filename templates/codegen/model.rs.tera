@@ -1,0 +1,80 @@
+//! {{ singular }} model and database queries
+
+use serde::{Deserialize, Serialize};
+#[cfg(feature = "export-types")]
+use ts_rs::TS;
+
+use crate::errors::app_error::{AppError, AppResult};
+{% if has_timestamp %}
+use crate::utils::tz::Timestamp;
+{% endif %}
+
+#[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
+pub struct {{ struct_name }} {
+{% for col in columns %}
+    pub {{ col.name }}: {{ col.rust_type }},
+{% endfor %}
+}
+
+pub async fn find_all(
+    pool: &crate::db::Pool{% if has_tenant_id %},
+    tenant_id: Option<&str>{% endif %}
+) -> AppResult<Vec<{{ struct_name }}>> {
+    raisfast_derive::crud_list!(pool, "{{ name }}", {{ struct_name }}{% if has_tenant_id %}, tenant: tenant_id{% endif %})
+        .map_err(Into::into)
+}
+
+pub async fn find_paginated(
+    pool: &crate::db::Pool{% if has_tenant_id %},
+    tenant_id: Option<&str>{% endif %},
+    page: i64,
+    page_size: i64,
+) -> AppResult<(Vec<{{ struct_name }}>, i64)> {
+    let result = raisfast_derive::crud_query_paged!(
+        pool, {{ struct_name }},
+        data_sql: "SELECT * FROM {{ name }} WHERE 1=1{tenant}",
+        count_sql: "SELECT COUNT(*) FROM {{ name }} WHERE 1=1{tenant}",
+        binds: [],
+{% if has_tenant_id %}
+        tenant: tenant_id,
+{% endif %}
+        page: page,
+        page_size: page_size
+    );
+    Ok(result)
+}
+
+pub async fn find_by_id(
+    pool: &crate::db::Pool,
+    id: i64{% if has_tenant_id %},
+    tenant_id: Option<&str>{% endif %}
+) -> AppResult<{{ struct_name }}> {
+    raisfast_derive::crud_find_one!(pool, "{{ name }}", {{ struct_name }}, "id" => id{% if has_tenant_id %}, tenant: tenant_id{% endif %})
+        .map_err(Into::into)
+}
+
+pub async fn delete(
+    pool: &crate::db::Pool,
+    id: i64{% if has_tenant_id %},
+    tenant_id: Option<&str>{% endif %}
+) -> AppResult<()> {
+    let result = raisfast_derive::crud_delete!(pool, "{{ name }}", "id" => id{% if has_tenant_id %}, tenant: tenant_id{% endif %})?;
+    AppError::expect_affected(&result, "{{ singular }}")
+}
+
+pub async fn create(
+    pool: &crate::db::Pool{% if has_tenant_id %},
+    tenant_id: Option<&str>{% endif %}
+    // TODO: add parameters
+) -> AppResult<{{ struct_name }}> {
+    todo!("implement create for {{ struct_name }}")
+}
+
+pub async fn update(
+    pool: &crate::db::Pool{% if has_tenant_id %},
+    tenant_id: Option<&str>{% endif %}
+    // TODO: add parameters
+) -> AppResult<{{ struct_name }}> {
+    todo!("implement update for {{ struct_name }}")
+}

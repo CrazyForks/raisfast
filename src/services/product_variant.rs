@@ -18,13 +18,13 @@ pub trait ProductVariantService: Send + Sync {
     async fn update(
         &self,
         auth: &AuthUser,
-        id: &str,
+        id: i64,
         req: UpdateProductVariantRequest,
     ) -> AppResult<ProductVariant>;
 
-    async fn delete(&self, auth: &AuthUser, id: &str) -> AppResult<()>;
+    async fn delete(&self, auth: &AuthUser, id: i64) -> AppResult<()>;
 
-    async fn get(&self, auth: &AuthUser, id: &str) -> AppResult<ProductVariant>;
+    async fn get(&self, auth: &AuthUser, id: i64) -> AppResult<ProductVariant>;
 
     async fn list_by_product(
         &self,
@@ -58,18 +58,16 @@ impl ProductVariantService for ProductVariantServiceImpl {
     ) -> AppResult<ProductVariant> {
         auth.ensure_admin()?;
 
-        let product = crate::models::product::find_by_document_id(
-            &self.pool,
-            &req.product_id,
-            auth.tenant_id(),
-        )
-        .await?
-        .ok_or_else(|| AppError::not_found("product"))?;
+        let product_id_parsed: i64 = crate::utils::id::parse_id(&req.product_id)?;
+        let product =
+            crate::models::product::find_by_id(&self.pool, product_id_parsed, auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("product"))?;
 
         crate::models::product_variant::insert(
             &self.pool,
             &crate::commands::CreateProductVariantCmd {
-                product_id: product.id,
+                product_id: *product.id,
                 sku: req.sku,
                 title: req.title,
                 price: req.price,
@@ -87,20 +85,19 @@ impl ProductVariantService for ProductVariantServiceImpl {
     async fn update(
         &self,
         auth: &AuthUser,
-        id: &str,
+        id: i64,
         req: UpdateProductVariantRequest,
     ) -> AppResult<ProductVariant> {
         auth.ensure_admin()?;
 
-        let existing =
-            crate::models::product_variant::find_by_document_id(&self.pool, id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("product_variant"))?;
+        let existing = crate::models::product_variant::find_by_id(&self.pool, id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("product_variant"))?;
 
         let updated = crate::models::product_variant::update(
             &self.pool,
             &crate::commands::UpdateProductVariantCmd {
-                id: existing.id,
+                id: *existing.id,
                 sku: req.sku.or(existing.sku),
                 title: req.title.unwrap_or(existing.title),
                 price: req.price.unwrap_or(existing.price),
@@ -118,27 +115,26 @@ impl ProductVariantService for ProductVariantServiceImpl {
             return Err(AppError::not_found("product_variant"));
         }
 
-        crate::models::product_variant::find_by_id(&self.pool, existing.id, auth.tenant_id())
+        crate::models::product_variant::find_by_id(&self.pool, *existing.id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("product_variant"))
     }
 
-    async fn delete(&self, auth: &AuthUser, id: &str) -> AppResult<()> {
+    async fn delete(&self, auth: &AuthUser, id: i64) -> AppResult<()> {
         auth.ensure_admin()?;
 
-        let existing =
-            crate::models::product_variant::find_by_document_id(&self.pool, id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("product_variant"))?;
+        let existing = crate::models::product_variant::find_by_id(&self.pool, id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("product_variant"))?;
 
-        crate::models::product_variant::delete_by_id(&self.pool, existing.id, auth.tenant_id())
+        crate::models::product_variant::delete_by_id(&self.pool, *existing.id, auth.tenant_id())
             .await?;
 
         Ok(())
     }
 
-    async fn get(&self, auth: &AuthUser, id: &str) -> AppResult<ProductVariant> {
-        crate::models::product_variant::find_by_document_id(&self.pool, id, auth.tenant_id())
+    async fn get(&self, auth: &AuthUser, id: i64) -> AppResult<ProductVariant> {
+        crate::models::product_variant::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("product_variant"))
     }
@@ -148,13 +144,17 @@ impl ProductVariantService for ProductVariantServiceImpl {
         auth: &AuthUser,
         product_id: &str,
     ) -> AppResult<Vec<ProductVariant>> {
-        let product =
-            crate::models::product::find_by_document_id(&self.pool, product_id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("product"))?;
+        let pid: i64 = crate::utils::id::parse_id(product_id)?;
+        let product = crate::models::product::find_by_id(&self.pool, pid, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("product"))?;
 
-        crate::models::product_variant::find_by_product_id(&self.pool, product.id, auth.tenant_id())
-            .await
+        crate::models::product_variant::find_by_product_id(
+            &self.pool,
+            *product.id,
+            auth.tenant_id(),
+        )
+        .await
     }
 
     async fn list_active_by_product(
@@ -162,14 +162,14 @@ impl ProductVariantService for ProductVariantServiceImpl {
         auth: &AuthUser,
         product_id: &str,
     ) -> AppResult<Vec<ProductVariant>> {
-        let product =
-            crate::models::product::find_by_document_id(&self.pool, product_id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("product"))?;
+        let pid: i64 = crate::utils::id::parse_id(product_id)?;
+        let product = crate::models::product::find_by_id(&self.pool, pid, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("product"))?;
 
         crate::models::product_variant::find_active_by_product_id(
             &self.pool,
-            product.id,
+            *product.id,
             auth.tenant_id(),
         )
         .await

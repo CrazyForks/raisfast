@@ -47,7 +47,7 @@ impl JobHandler for RebuildSearchIndexHandler {
         for id in post_ids {
             match crate::models::post::find_by_id(&self.pool, *id, None).await {
                 Ok(Some(post)) => posts.push(SearchablePost {
-                    id: post.document_id,
+                    id: post.id.to_string(),
                     title: post.title,
                     content: post.content,
                 }),
@@ -97,11 +97,11 @@ mod tests {
 
     #[cfg(feature = "search-tantivy")]
     async fn create_user(pool: &crate::db::Pool) -> i64 {
-        let document_id = uuid::Uuid::now_v7().to_string();
+        let id = crate::utils::id::new_id();
         let (user_id,): (i64,) = sqlx::query_as(
-            "INSERT INTO users (document_id, username, role, status, registered_via) VALUES (?, 'testuser', 'author', 'active', 'email') RETURNING id",
+            "INSERT INTO users (id, username, role, status, registered_via) VALUES (?, 'testuser', 'author', 'active', 'email') RETURNING id",
         )
-        .bind(&document_id)
+        .bind(id)
         .fetch_one(pool)
         .await
         .unwrap();
@@ -110,14 +110,14 @@ mod tests {
 
     #[cfg(feature = "search-tantivy")]
     async fn create_post(pool: &crate::db::Pool, author_id: i64, title: &str) -> (i64, String) {
-        let document_id = uuid::Uuid::now_v7().to_string();
+        let id = crate::utils::id::new_id();
         let now = crate::utils::tz::now_str();
         let published = crate::models::post::PostStatus::Published.as_str();
         let (int_id,): (i64,) = sqlx::query_as(&format!(
-            "INSERT INTO posts (document_id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, created_at, updated_at) \
+            "INSERT INTO posts (id, title, slug, content, status, created_by, updated_by, view_count, is_pinned, created_at, updated_at) \
              VALUES (?, ?, ?, ?, '{published}', ?, NULL, 0, 0, ?, ?) RETURNING id",
         ))
-        .bind(&document_id)
+        .bind(id)
         .bind(title)
         .bind(title.to_lowercase().replace(' ', "-"))
         .bind(format!("{title} content"))
@@ -127,7 +127,7 @@ mod tests {
         .fetch_one(pool)
         .await
         .unwrap();
-        (int_id, document_id)
+        (int_id, id.to_string())
     }
 
     #[cfg(feature = "search-tantivy")]
@@ -135,7 +135,7 @@ mod tests {
     async fn indexes_existing_post_with_tantivy() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let (post_int_id, post_doc_id) = create_post(&pool, uid, "Rust Programming Intro").await;
+        let (post_int_id, post_id_str) = create_post(&pool, uid, "Rust Programming Intro").await;
 
         let engine = Arc::new(crate::search::TantivyEngine::open_in_memory().unwrap());
         let handler = RebuildSearchIndexHandler::new(pool, engine.clone());
@@ -146,7 +146,7 @@ mod tests {
 
         let (results, total) = engine.search("Rust", 1, 10).await.unwrap();
         assert_eq!(total, 1);
-        assert_eq!(results[0].post_id, post_doc_id);
+        assert_eq!(results[0].post_id, post_id_str);
     }
 
     #[cfg(feature = "search-tantivy")]
@@ -210,7 +210,7 @@ mod tests {
     async fn handles_mixed_existing_and_missing_posts() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let (real_id, real_doc_id) = create_post(&pool, uid, "Real post").await;
+        let (real_id, real_id_str) = create_post(&pool, uid, "Real post").await;
 
         let engine = Arc::new(crate::search::TantivyEngine::open_in_memory().unwrap());
         let handler = RebuildSearchIndexHandler::new(pool, engine.clone());
@@ -221,6 +221,6 @@ mod tests {
 
         let (results, total) = engine.search("Real", 1, 10).await.unwrap();
         assert_eq!(total, 1);
-        assert_eq!(results[0].post_id, real_doc_id);
+        assert_eq!(results[0].post_id, real_id_str);
     }
 }

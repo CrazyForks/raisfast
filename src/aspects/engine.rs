@@ -552,10 +552,11 @@ fn matches_table_any(pointcuts: &[Pointcut], table: &str) -> bool {
 
 fn make_base_ctx(auth: &crate::middleware::auth::AuthUser) -> super::BaseContext {
     super::BaseContext::new(
-        auth.user_id().map(|s| s.to_string()),
+        auth.user_id().map(|id| id.to_string()),
         auth.tenant_id().unwrap_or(DEFAULT_TENANT).to_string(),
         crate::utils::tz::now_str(),
     )
+    .with_user_int_id(auth.user_id())
 }
 
 fn merge_non_null(mut record: super::Record, data: &impl serde::Serialize) -> super::Record {

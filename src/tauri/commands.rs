@@ -63,9 +63,9 @@ pub async fn auth_get_me(
     state: TauriState<'_, AppManagedState>,
     user_id: String,
 ) -> Result<serde_json::Value, String> {
+    let uid: i64 = user_id.parse().map_err(|e| e.to_string())?;
     let auth = crate::middleware::auth::AuthUser::from_parts(
-        Some(user_id),
-        None,
+        Some(uid),
         crate::models::user::UserRole::Reader,
         None,
     );
@@ -84,7 +84,6 @@ pub async fn post_list(
     page_size: Option<i64>,
 ) -> Result<serde_json::Value, String> {
     let auth = crate::middleware::auth::AuthUser::from_parts(
-        None,
         None,
         crate::models::user::UserRole::Reader,
         None,
@@ -118,7 +117,6 @@ pub async fn post_get(
 ) -> Result<serde_json::Value, String> {
     let auth = crate::middleware::auth::AuthUser::from_parts(
         None,
-        None,
         crate::models::user::UserRole::Reader,
         None,
     );
@@ -147,9 +145,9 @@ pub async fn post_create(
         category_id: None,
         tag_ids: None,
     };
+    let uid: i64 = user_id.parse().map_err(|e| e.to_string())?;
     let auth = crate::middleware::auth::AuthUser::from_parts(
-        Some(user_id),
-        None,
+        Some(uid),
         crate::models::user::UserRole::Author,
         None,
     );
@@ -345,9 +343,9 @@ pub async fn media_list(
     page: Option<i64>,
     page_size: Option<i64>,
 ) -> Result<serde_json::Value, String> {
+    let uid: i64 = user_id.parse().map_err(|e| e.to_string())?;
     let auth = crate::middleware::auth::AuthUser::from_parts(
-        Some(user_id),
-        None,
+        Some(uid),
         crate::models::user::UserRole::Reader,
         None,
     );

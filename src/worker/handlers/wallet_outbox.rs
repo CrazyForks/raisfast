@@ -39,10 +39,10 @@ impl JobHandler for ProcessWalletOutboxHandler {
         let mut failed = 0u64;
 
         for entry in &entries {
-            if let Err(e) = wallet_outbox::mark_processing(&self.pool, entry.id).await {
+            if let Err(e) = wallet_outbox::mark_processing(&self.pool, *entry.id).await {
                 tracing::warn!(
                     "[wallet_outbox] CAS failed for entry {}, skipping: {e}",
-                    entry.document_id
+                    entry.id.to_string()
                 );
                 continue;
             }
@@ -51,7 +51,7 @@ impl JobHandler for ProcessWalletOutboxHandler {
                 "credit" => {
                     crate::services::wallet::credit_wallet(
                         &self.pool,
-                        entry.user_id,
+                        *entry.user_id,
                         &entry.currency,
                         entry.amount,
                         parse_tx_type(&entry.tx_type),
@@ -68,7 +68,7 @@ impl JobHandler for ProcessWalletOutboxHandler {
                 "debit" => {
                     crate::services::wallet::debit_wallet(
                         &self.pool,
-                        entry.user_id,
+                        *entry.user_id,
                         &entry.currency,
                         entry.amount,
                         parse_tx_type(&entry.tx_type),
@@ -89,16 +89,16 @@ impl JobHandler for ProcessWalletOutboxHandler {
 
             match result {
                 Ok(_) => {
-                    wallet_outbox::mark_completed(&self.pool, entry.id).await?;
+                    wallet_outbox::mark_completed(&self.pool, *entry.id).await?;
                     processed += 1;
                 }
                 Err(e) => {
                     let err_str = format!("{e}");
                     tracing::warn!(
                         "[wallet_outbox] failed to process entry {}: {err_str}",
-                        entry.document_id
+                        entry.id.to_string()
                     );
-                    wallet_outbox::mark_failed(&self.pool, entry.id, &err_str).await?;
+                    wallet_outbox::mark_failed(&self.pool, *entry.id, &err_str).await?;
                     failed += 1;
                 }
             }

@@ -28,7 +28,6 @@ pub async fn initiate_oauth(
     provider_name: &str,
     auth: &AuthUser,
 ) -> AppResult<String> {
-    let current_user_id = auth.user_id();
     let provider = registry.get(provider_name).ok_or_else(|| {
         AppError::BadRequest(format!("unsupported OAuth provider: {provider_name}"))
     })?;
@@ -38,15 +37,8 @@ pub async fn initiate_oauth(
     let code_challenge = crate::oauth::generate_code_challenge(&code_verifier);
 
     let expires_at = (Utc::now() + chrono::Duration::minutes(10)).to_rfc3339();
-    let resolved_user_id = if let Some(uid_str) = current_user_id {
-        let user = crate::models::user::find_by_id(pool, uid_str, None)
-            .await?
-            .ok_or(AppError::Unauthorized)?;
-        Some(user.id)
-    } else {
-        None
-    };
-    let state_doc_id = oauth::create_state(
+    let resolved_user_id = auth.user_id();
+    let state_id = oauth::create_state(
         pool,
         provider_name,
         &code_verifier,
@@ -54,8 +46,8 @@ pub async fn initiate_oauth(
         &expires_at,
     )
     .await?;
-
-    Ok(provider.authorize_url(&state_doc_id, &code_challenge))
+    let state_str = state_id.to_string();
+    Ok(provider.authorize_url(&state_str, &code_challenge))
 }
 
 /// OAuth callback result
@@ -94,7 +86,8 @@ pub async fn handle_callback(
         AppError::BadRequest(format!("unsupported OAuth provider: {provider_name}"))
     })?;
 
-    let oauth_state = oauth::consume_state(pool, state)
+    let state_id: i64 = crate::utils::id::parse_id(state)?;
+    let oauth_state = oauth::consume_state(pool, state_id)
         .await?
         .ok_or_else(|| AppError::BadRequest("invalid or expired OAuth state".into()))?;
 
@@ -113,7 +106,7 @@ pub async fn handle_callback(
         oauth::find_by_provider_user(pool, provider_name, &user_info.provider_user_id).await?;
 
     if let Some(account) = existing {
-        let user = crate::models::user::find_by_pk(pool, account.user_id, None)
+        let user = crate::models::user::find_by_id(pool, *account.user_id, None)
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("OAuth bound user not found")))?;
 
@@ -126,15 +119,15 @@ pub async fn handle_callback(
         )
         .await?;
 
-        update_oauth_account(pool, account.id, &token_resp, &user_info).await?;
+        update_oauth_account(pool, *account.id, &token_resp, &user_info).await?;
 
         return Ok(OAuthCallbackResult::LoginSuccess(Box::new(login_resp)));
     }
 
     if let Some(bind_user_id) = oauth_state.user_id {
-        do_bind_oauth(pool, bind_user_id, provider_name, &token_resp, &user_info).await?;
+        do_bind_oauth(pool, *bind_user_id, provider_name, &token_resp, &user_info).await?;
 
-        let user = crate::models::user::find_by_pk(pool, bind_user_id, None)
+        let user = crate::models::user::find_by_id(pool, *bind_user_id, None)
             .await?
             .ok_or_else(|| AppError::not_found("user"))?;
 
@@ -158,10 +151,10 @@ pub async fn handle_callback(
         )
         .await?;
         if let Some(cred) = cred {
-            let user = crate::models::user::find_by_pk(pool, cred.user_id, None)
+            let user = crate::models::user::find_by_id(pool, *cred.user_id, None)
                 .await?
                 .ok_or_else(|| AppError::Internal(anyhow::anyhow!("user not found")))?;
-            do_bind_oauth(pool, user.id, provider_name, &token_resp, &user_info).await?;
+            do_bind_oauth(pool, *user.id, provider_name, &token_resp, &user_info).await?;
 
             let login_resp = create_login_response_for_user(
                 &user,
@@ -183,7 +176,7 @@ pub async fn handle_callback(
 
     let user = auto_register_user(pool, provider_name, &user_info, aspect_engine).await?;
 
-    do_bind_oauth(pool, user.id, provider_name, &token_resp, &user_info).await?;
+    do_bind_oauth(pool, *user.id, provider_name, &token_resp, &user_info).await?;
 
     let login_resp = create_login_response_for_user(
         &user,
@@ -208,22 +201,22 @@ pub async fn unbind_oauth(
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
 
-    let cred_count = crate::models::user_credential::count_by_user(pool, user.id).await?;
+    let cred_count = crate::models::user_credential::count_by_user(pool, *user.id).await?;
     if cred_count <= 1 {
         return Err(AppError::BadRequest(
             "cannot unbind: this is the only login method".into(),
         ));
     }
 
-    let deleted = oauth::delete_account(pool, user.id, provider_name).await?;
+    let deleted = oauth::delete_account(pool, *user.id, provider_name).await?;
     if !deleted {
         return Err(AppError::not_found("oauth binding"));
     }
 
-    let creds = crate::models::user_credential::find_by_user_id(pool, user.id).await?;
+    let creds = crate::models::user_credential::find_by_user_id(pool, *user.id).await?;
     for cred in creds {
         if cred.auth_type == crate::models::user_credential::AuthType::Oauth {
-            crate::models::user_credential::delete_by_id(pool, cred.id).await?;
+            crate::models::user_credential::delete_by_id(pool, *cred.id).await?;
             break;
         }
     }
@@ -240,7 +233,7 @@ pub async fn list_bindings(
     let user = crate::models::user::find_by_id(pool, user_id, None)
         .await?
         .ok_or(AppError::Unauthorized)?;
-    let accounts = oauth::find_by_user_id(pool, user.id).await?;
+    let accounts = oauth::find_by_user_id(pool, *user.id).await?;
     Ok(accounts
         .into_iter()
         .map(|a| OAuthBindingInfo {
@@ -274,8 +267,7 @@ async fn create_login_response_for_user(
 ) -> AppResult<LoginResponse> {
     let user_role = user.role;
     let access_token = crate::services::auth::generate_access_token_internal(
-        &user.document_id,
-        user.id,
+        *user.id,
         user_role,
         user.tenant_id
             .as_deref()
@@ -289,7 +281,7 @@ async fn create_login_response_for_user(
 
     crate::models::refresh_token::create_token(
         pool,
-        user.id,
+        *user.id,
         &refresh_token_str,
         &expires_at.to_rfc3339(),
     )
@@ -350,7 +342,7 @@ async fn auto_register_user(
     if !email.is_empty() {
         crate::models::user_credential::create(
             pool,
-            user.id,
+            *user.id,
             crate::models::user_credential::AuthType::Email,
             &email,
             "",
@@ -359,7 +351,7 @@ async fn auto_register_user(
         .await?;
     }
 
-    let user = crate::models::user::find_by_pk(pool, user.id, None)
+    let user = crate::models::user::find_by_id(pool, *user.id, None)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch created user")))?;
 
@@ -441,7 +433,7 @@ async fn do_bind_oauth(
         oauth::create_account(
             pool,
             oauth::CreateOAuthAccountParams {
-                user_id,
+                user_id: crate::utils::id::SnowflakeId(user_id),
                 provider: provider_name,
                 provider_user_id: &user_info.provider_user_id,
                 email: user_info.email.as_deref(),
@@ -490,7 +482,7 @@ async fn update_oauth_account(
     oauth::update_account(
         pool,
         oauth::UpdateOAuthAccountParams {
-            id: account_id,
+            id: crate::utils::id::SnowflakeId(account_id),
             email: user_info.email.as_deref(),
             display_name: user_info.display_name.as_deref(),
             avatar_url: user_info.avatar_url.as_deref(),

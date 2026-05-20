@@ -79,7 +79,11 @@ impl QueryRoot {
             async_graphql::Error::new(format!("content type '{}' not found", r#type))
         })?;
 
-        let result = match do_get(&state, &ct, id.as_str(), &auth).await {
+        let int_id = id
+            .as_str()
+            .parse::<i64>()
+            .map_err(|_| async_graphql::Error::new("invalid id"))?;
+        let result = match do_get(&state, &ct, int_id, &auth).await {
             Ok(val) => val,
             Err(crate::errors::app_error::AppError::NotFound(_)) => return Ok(None),
             Err(e) => return Err(async_graphql::Error::new(e.to_string())),

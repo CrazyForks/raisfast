@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -35,15 +36,14 @@ define_enum!(
 
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct PaymentOrder {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
-    pub user_id: i64,
+    pub user_id: SnowflakeId,
     pub order_id: Option<String>,
     pub title: String,
     pub amount: i64,
     pub currency: String,
-    pub channel_id: i64,
+    pub channel_id: SnowflakeId,
     pub provider: String,
     pub provider_order_id: Option<String>,
     pub provider_method: Option<String>,
@@ -73,15 +73,6 @@ pub async fn find_by_id(
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentOrder>> {
     raisfast_derive::crud_find!(pool, "payment_orders", PaymentOrder, "id" => id, tenant: tenant_id)
-        .map_err(Into::into)
-}
-
-pub async fn find_by_document_id(
-    pool: &crate::db::Pool,
-    document_id: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<Option<PaymentOrder>> {
-    raisfast_derive::crud_find!(pool, "payment_orders", PaymentOrder, "document_id" => document_id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -146,13 +137,13 @@ pub async fn insert(
     cmd: &crate::commands::CreatePaymentOrderCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<PaymentOrder> {
-    let document_id = uuid::Uuid::now_v7().to_string();
+    let id = crate::utils::id::new_id();
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_insert!(
         pool,
         "payment_orders",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "user_id" => cmd.user_id,
             "order_id" => &cmd.order_id,
             "title" => &cmd.title,
@@ -175,13 +166,11 @@ pub async fn insert(
         ],
         tenant: tenant_id
     )?;
-    find_by_document_id(pool, &document_id, tenant_id)
-        .await?
-        .ok_or_else(|| {
-            crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
-                "inserted row not found: {document_id}"
-            ))
-        })
+    find_by_id(pool, id, tenant_id).await?.ok_or_else(|| {
+        crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
+            "inserted row not found: {id}"
+        ))
+    })
 }
 
 pub async fn update_provider_order_id(
@@ -243,17 +232,12 @@ mod tests {
     }
 
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
-        let doc_id = uuid::Uuid::now_v7().to_string();
-        let username = format!("testuser_{doc_id}");
-        sqlx::query("INSERT INTO users (document_id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')")
-            .bind(&doc_id)
+        let id = crate::utils::id::new_id();
+        let username = format!("testuser_{id}");
+        sqlx::query("INSERT INTO users (id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')")
+            .bind(id)
             .bind(&username)
             .execute(pool)
-            .await
-            .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
-            .bind(&doc_id)
-            .fetch_one(pool)
             .await
             .unwrap();
         id
@@ -326,7 +310,7 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let order = seed_payment_order(&pool, uid, ch_id, 1000).await;
-        let found = super::find_by_id(&pool, order.id, None)
+        let found = super::find_by_id(&pool, *order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -336,19 +320,6 @@ mod tests {
         assert_eq!(found.currency, "USD");
         assert_eq!(found.status, PaymentStatus::Pending);
         assert_eq!(found.channel_id, ch_id);
-    }
-
-    #[tokio::test]
-    async fn find_by_document_id_works() {
-        let pool = setup_pool().await;
-        let uid = seed_user(&pool).await;
-        let ch_id = seed_channel(&pool).await;
-        let order = seed_payment_order(&pool, uid, ch_id, 500).await;
-        let found = super::find_by_document_id(&pool, &order.document_id, None)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(found.id, order.id);
     }
 
     #[tokio::test]
@@ -370,7 +341,7 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let order = seed_payment_order(&pool, uid, ch_id, 500).await;
-        super::update_provider_order_id(&pool, order.id, "pi_test123", None, None)
+        super::update_provider_order_id(&pool, *order.id, "pi_test123", None, None)
             .await
             .unwrap();
         let found = super::find_by_provider_order_id(&pool, "pi_test123", None)
@@ -413,7 +384,7 @@ mod tests {
         let mut tx = pool.begin().await.unwrap();
         let rows = super::tx_update_status_cas(
             &mut tx,
-            order.id,
+            *order.id,
             PaymentStatus::Paid,
             Some("paid_at"),
             PaymentStatus::Pending,
@@ -422,7 +393,7 @@ mod tests {
         .unwrap();
         tx.commit().await.unwrap();
         assert_eq!(rows, 1);
-        let found = super::find_by_id(&pool, order.id, None)
+        let found = super::find_by_id(&pool, *order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -440,7 +411,7 @@ mod tests {
         let mut tx = pool.begin().await.unwrap();
         let rows = super::tx_update_status_cas(
             &mut tx,
-            order.id,
+            *order.id,
             PaymentStatus::Cancelled,
             Some("cancelled_at"),
             PaymentStatus::Pending,
@@ -449,7 +420,7 @@ mod tests {
         .unwrap();
         tx.commit().await.unwrap();
         assert_eq!(rows, 1);
-        let found = super::find_by_id(&pool, order.id, None)
+        let found = super::find_by_id(&pool, *order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -465,14 +436,14 @@ mod tests {
         let order = seed_payment_order(&pool, uid, ch_id, 1000).await;
         super::update_provider_order_id(
             &pool,
-            order.id,
+            *order.id,
             "pi_abc123",
             Some(r#"{"status":"requires_action"}"#),
             None,
         )
         .await
         .unwrap();
-        let found = super::find_by_id(&pool, order.id, None)
+        let found = super::find_by_id(&pool, *order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -524,7 +495,7 @@ mod tests {
             let mut tx = pool.begin().await.unwrap();
             let rows = super::tx_update_status_cas(
                 &mut tx,
-                order.id,
+                *order.id,
                 PaymentStatus::Paid,
                 Some("paid_at"),
                 PaymentStatus::Pending,
@@ -561,13 +532,13 @@ mod tests {
         let order = seed_payment_order(&pool, uid, ch_id, 2000).await;
         assert_eq!(order.status, PaymentStatus::Pending);
 
-        super::update_provider_order_id(&pool, order.id, "pi_xyz", None, None)
+        super::update_provider_order_id(&pool, *order.id, "pi_xyz", None, None)
             .await
             .unwrap();
         let mut tx = pool.begin().await.unwrap();
         let rows = super::tx_update_status_cas(
             &mut tx,
-            order.id,
+            *order.id,
             PaymentStatus::Paid,
             Some("paid_at"),
             PaymentStatus::Pending,
@@ -577,7 +548,7 @@ mod tests {
         assert_eq!(rows, 1);
         tx.commit().await.unwrap();
 
-        let found = super::find_by_id(&pool, order.id, None)
+        let found = super::find_by_id(&pool, *order.id, None)
             .await
             .unwrap()
             .unwrap();

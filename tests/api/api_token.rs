@@ -2,8 +2,8 @@ use super::*;
 
 async fn setup() -> (axum::Router, String, raisfast::db::Pool) {
     let (app, state) = test_app().await;
-    let (int_id, doc_id) = create_admin(&state.pool).await;
-    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin);
+    let (int_id, id) = create_admin(&state.pool).await;
+    let tok = make_token(&id, int_id, raisfast::models::user::UserRole::Admin);
     (app, tok, state.pool)
 }
 
@@ -74,7 +74,7 @@ async fn delete_token() {
 #[tokio::test]
 async fn delete_token_not_found() {
     let (mut app, tok, _) = setup().await;
-    let (status, _) = send(&mut app, delete_auth("/api/v1/tokens/nonexistent", &tok)).await;
+    let (status, _) = send(&mut app, delete_auth("/api/v1/tokens/9999999999999", &tok)).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -181,20 +181,12 @@ async fn delete_token_non_owner_forbidden() {
     let id = create_body["data"]["id"].as_str().unwrap();
 
     let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
-    let reader_doc_id = uuid::Uuid::now_v7().to_string();
-    let sql = format!(
-        "INSERT INTO users (document_id, username, role, status, registered_via) VALUES ({}, 'tokenreader', 'reader', 'active', 'email') RETURNING id",
-        raisfast::db::dialect::ph(1)
-    );
-    let reader_int_id: i64 = sqlx::query_scalar(&sql)
-        .bind(&reader_doc_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let sql = "INSERT INTO users (username, role, status, registered_via) VALUES ('tokenreader', 'reader', 'active', 'email') RETURNING id";
+    let reader_int_id: i64 = sqlx::query_scalar(sql).fetch_one(&pool).await.unwrap();
     let cred_data = serde_json::json!({"password_hash": reader_hash}).to_string();
-    let (cred_doc_id, cred_now) = raisfast::utils::id::new_document_id_and_timestamp();
+    let (cred_id, cred_now) = raisfast::utils::id::new_id_and_timestamp();
     let cred_sql = format!(
-        "INSERT INTO user_credentials (document_id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
+        "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
         raisfast::db::dialect::ph(1),
         raisfast::db::dialect::ph(2),
         raisfast::db::dialect::ph(3),
@@ -203,7 +195,7 @@ async fn delete_token_non_owner_forbidden() {
         raisfast::db::dialect::ph(6)
     );
     sqlx::query(&cred_sql)
-        .bind(&cred_doc_id)
+        .bind(cred_id)
         .bind(reader_int_id)
         .bind("reader-token@test.com")
         .bind(&cred_data)
@@ -213,7 +205,7 @@ async fn delete_token_non_owner_forbidden() {
         .await
         .unwrap();
     let reader_tok = make_token(
-        &reader_doc_id,
+        &reader_int_id.to_string(),
         reader_int_id,
         raisfast::models::user::UserRole::Reader,
     );
@@ -230,20 +222,12 @@ async fn delete_token_non_owner_forbidden() {
 async fn admin_can_delete_other_users_token() {
     let (mut app, tok, pool) = setup().await;
     let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
-    let reader_doc_id = uuid::Uuid::now_v7().to_string();
-    let sql = format!(
-        "INSERT INTO users (document_id, username, role, status, registered_via) VALUES ({}, 'readeradmindel', 'reader', 'active', 'email') RETURNING id",
-        raisfast::db::dialect::ph(1)
-    );
-    let reader_int_id: i64 = sqlx::query_scalar(&sql)
-        .bind(&reader_doc_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let sql = "INSERT INTO users (username, role, status, registered_via) VALUES ('readeradmindel', 'reader', 'active', 'email') RETURNING id";
+    let reader_int_id: i64 = sqlx::query_scalar(sql).fetch_one(&pool).await.unwrap();
     let cred_data = serde_json::json!({"password_hash": reader_hash}).to_string();
-    let (cred_doc_id, cred_now) = raisfast::utils::id::new_document_id_and_timestamp();
+    let (cred_id, cred_now) = raisfast::utils::id::new_id_and_timestamp();
     let cred_sql = format!(
-        "INSERT INTO user_credentials (document_id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
+        "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
         raisfast::db::dialect::ph(1),
         raisfast::db::dialect::ph(2),
         raisfast::db::dialect::ph(3),
@@ -252,7 +236,7 @@ async fn admin_can_delete_other_users_token() {
         raisfast::db::dialect::ph(6)
     );
     sqlx::query(&cred_sql)
-        .bind(&cred_doc_id)
+        .bind(cred_id)
         .bind(reader_int_id)
         .bind("reader-admin-del@test.com")
         .bind(&cred_data)
@@ -262,7 +246,7 @@ async fn admin_can_delete_other_users_token() {
         .await
         .unwrap();
     let reader_tok = make_token(
-        &reader_doc_id,
+        &reader_int_id.to_string(),
         reader_int_id,
         raisfast::models::user::UserRole::Reader,
     );
@@ -503,20 +487,12 @@ async fn each_user_sees_only_own_tokens() {
     let (mut app, tok, pool) = setup().await;
 
     let reader_hash = raisfast::services::auth::hash_password("ReaderPass123!").unwrap();
-    let reader_doc_id = uuid::Uuid::now_v7().to_string();
-    let sql = format!(
-        "INSERT INTO users (document_id, username, role, status, registered_via) VALUES ({}, 'isolationreader', 'reader', 'active', 'email') RETURNING id",
-        raisfast::db::dialect::ph(1)
-    );
-    let reader_int_id: i64 = sqlx::query_scalar(&sql)
-        .bind(&reader_doc_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let sql = "INSERT INTO users (username, role, status, registered_via) VALUES ('isolationreader', 'reader', 'active', 'email') RETURNING id";
+    let reader_int_id: i64 = sqlx::query_scalar(sql).fetch_one(&pool).await.unwrap();
     let cred_data = serde_json::json!({"password_hash": reader_hash}).to_string();
-    let (cred_doc_id, cred_now) = raisfast::utils::id::new_document_id_and_timestamp();
+    let (cred_id, cred_now) = raisfast::utils::id::new_id_and_timestamp();
     let cred_sql = format!(
-        "INSERT INTO user_credentials (document_id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
+        "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
         raisfast::db::dialect::ph(1),
         raisfast::db::dialect::ph(2),
         raisfast::db::dialect::ph(3),
@@ -525,7 +501,7 @@ async fn each_user_sees_only_own_tokens() {
         raisfast::db::dialect::ph(6)
     );
     sqlx::query(&cred_sql)
-        .bind(&cred_doc_id)
+        .bind(cred_id)
         .bind(reader_int_id)
         .bind("isolation@test.com")
         .bind(&cred_data)
@@ -535,7 +511,7 @@ async fn each_user_sees_only_own_tokens() {
         .await
         .unwrap();
     let reader_tok = make_token(
-        &reader_doc_id,
+        &reader_int_id.to_string(),
         reader_int_id,
         raisfast::models::user::UserRole::Reader,
     );

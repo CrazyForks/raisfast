@@ -203,7 +203,12 @@ async fn create_and_find_by_id() {
     assert_eq!(created["price"], 99);
 
     let found = repo
-        .find_by_id(&ct, created["document_id"].as_str().unwrap(), None, true)
+        .find_by_id(
+            &ct,
+            created["id"].as_str().unwrap().parse().unwrap(),
+            None,
+            true,
+        )
         .await
         .unwrap()
         .unwrap();
@@ -340,12 +345,12 @@ async fn update_changes_fields() {
         )
         .await
         .unwrap();
-    let id = created["document_id"].as_str().unwrap().to_string();
+    let id: i64 = created["id"].as_str().unwrap().parse().unwrap();
 
     let updated = repo
         .update(
             &ct,
-            &id,
+            id,
             json!({"title": "Updated", "price": 99}),
             None,
             &SaveContext::default(),
@@ -374,11 +379,11 @@ async fn delete_removes_record() {
         )
         .await
         .unwrap();
-    let id = created["document_id"].as_str().unwrap().to_string();
+    let id: i64 = created["id"].as_str().unwrap().parse().unwrap();
 
     repo.delete(
         &ct,
-        &id,
+        id,
         None,
         &test_protocol_registry(),
         &test_ct_registry(),
@@ -386,7 +391,7 @@ async fn delete_removes_record() {
     .await
     .unwrap();
 
-    let found = repo.find_by_id(&ct, &id, None, true).await.unwrap();
+    let found = repo.find_by_id(&ct, id, None, true).await.unwrap();
     assert!(found.is_none());
 
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM ct_products")
@@ -428,11 +433,11 @@ required = true
         )
         .await
         .unwrap();
-    let id = created["document_id"].as_str().unwrap().to_string();
+    let id: i64 = created["id"].as_str().unwrap().parse().unwrap();
 
     repo.delete(
         &ct,
-        &id,
+        id,
         None,
         &test_protocol_registry(),
         &test_ct_registry(),
@@ -440,12 +445,11 @@ required = true
     .await
     .unwrap();
 
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT deleted_at FROM ct_notes WHERE document_id = ?")
-            .bind(&id)
-            .fetch_optional(&repo.pool)
-            .await
-            .unwrap();
+    let row: Option<(String,)> = sqlx::query_as("SELECT deleted_at FROM ct_notes WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&repo.pool)
+        .await
+        .unwrap();
 
     let deleted_at = row.unwrap().0;
     assert!(!deleted_at.is_empty());
@@ -501,8 +505,8 @@ async fn tenant_isolation() {
         .await
         .unwrap();
 
-    let id_a = a["document_id"].as_str().unwrap();
-    let id_b = b["document_id"].as_str().unwrap();
+    let id_a: i64 = a["id"].as_str().unwrap().parse().unwrap();
+    let id_b: i64 = b["id"].as_str().unwrap().parse().unwrap();
 
     assert!(
         repo.find_by_id(&ct, id_a, Some("tenant_b"), true)
@@ -564,7 +568,7 @@ async fn delete_respects_tenant() {
         )
         .await
         .unwrap();
-    let id_a = a["document_id"].as_str().unwrap();
+    let id_a: i64 = a["id"].as_str().unwrap().parse().unwrap();
 
     repo.delete(
         &ct,
@@ -749,9 +753,7 @@ async fn create_auto_generates_id_and_timestamps() {
         .await
         .unwrap();
 
-    assert!(result["id"].is_i64());
-    assert!(result["document_id"].is_string());
-    assert!(!result["document_id"].as_str().unwrap().is_empty());
+    assert!(result["id"].is_string());
     assert!(result.get("created_at").is_some());
     assert!(result.get("updated_at").is_some());
 }
@@ -785,12 +787,12 @@ async fn update_with_no_fields_returns_error() {
         )
         .await
         .unwrap();
-    let id = created["document_id"].as_str().unwrap().to_string();
+    let id: i64 = created["id"].as_str().unwrap().parse().unwrap();
 
     let result = repo
         .update(
             &ct,
-            &id,
+            id,
             json!({"nonexistent_field": "v"}),
             None,
             &SaveContext::default(),
@@ -916,11 +918,12 @@ async fn versioning_creates_revision_on_update() {
         )
         .await
         .unwrap();
-    let id = created["document_id"].as_str().unwrap();
+    let id = created["id"].as_str().unwrap().to_string();
+    let int_id: i64 = id.parse().unwrap();
     let _updated = repo
         .update(
             &ct,
-            id,
+            int_id,
             json!({"title": "V2 Title", "content": "V2 Content"}),
             None,
             &SaveContext::default(),
@@ -928,17 +931,25 @@ async fn versioning_creates_revision_on_update() {
         .await
         .unwrap();
 
-    let revisions = raisfast::models::content_revision::list_revisions(&pool, "article", id)
-        .await
-        .unwrap();
+    let revisions = raisfast::models::content_revision::list_revisions(
+        &pool,
+        "article",
+        id.parse::<i64>().unwrap(),
+    )
+    .await
+    .unwrap();
     assert_eq!(revisions.len(), 1);
     assert_eq!(revisions[0].revision_number, 1);
 
-    let rev =
-        raisfast::models::content_revision::get_revision(&pool, "article", id, revisions[0].id)
-            .await
-            .unwrap()
-            .unwrap();
+    let rev = raisfast::models::content_revision::get_revision(
+        &pool,
+        "article",
+        id.parse::<i64>().unwrap(),
+        *revisions[0].id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let snapshot: serde_json::Value = serde_json::from_str(&rev.snapshot).unwrap();
     assert_eq!(snapshot["title"], "V1 Title");
     assert_eq!(snapshot["content"], "V1 Content");
@@ -961,10 +972,11 @@ async fn versioning_multiple_updates_create_multiple_revisions() {
         )
         .await
         .unwrap();
-    let id = created["document_id"].as_str().unwrap();
+    let id = created["id"].as_str().unwrap().to_string();
+    let int_id: i64 = id.parse().unwrap();
     repo.update(
         &ct,
-        id,
+        int_id,
         json!({"title": "Rev1"}),
         None,
         &SaveContext::default(),
@@ -973,7 +985,7 @@ async fn versioning_multiple_updates_create_multiple_revisions() {
     .unwrap();
     repo.update(
         &ct,
-        id,
+        int_id,
         json!({"title": "Rev2"}),
         None,
         &SaveContext::default(),
@@ -982,7 +994,7 @@ async fn versioning_multiple_updates_create_multiple_revisions() {
     .unwrap();
     repo.update(
         &ct,
-        id,
+        int_id,
         json!({"title": "Rev3"}),
         None,
         &SaveContext::default(),
@@ -990,9 +1002,13 @@ async fn versioning_multiple_updates_create_multiple_revisions() {
     .await
     .unwrap();
 
-    let revisions = raisfast::models::content_revision::list_revisions(&pool, "article", id)
-        .await
-        .unwrap();
+    let revisions = raisfast::models::content_revision::list_revisions(
+        &pool,
+        "article",
+        id.parse::<i64>().unwrap(),
+    )
+    .await
+    .unwrap();
     assert_eq!(revisions.len(), 3);
     assert_eq!(revisions[0].revision_number, 3);
     assert_eq!(revisions[1].revision_number, 2);
@@ -1016,11 +1032,12 @@ async fn versioning_delete_cleans_up_revisions() {
         )
         .await
         .unwrap();
-    let id = created["document_id"].as_str().unwrap();
+    let id = created["id"].as_str().unwrap().to_string();
+    let int_id: i64 = id.parse().unwrap();
 
     repo.update(
         &ct,
-        id,
+        int_id,
         json!({"title": "Updated"}),
         None,
         &SaveContext::default(),
@@ -1028,14 +1045,18 @@ async fn versioning_delete_cleans_up_revisions() {
     .await
     .unwrap();
 
-    let before = raisfast::models::content_revision::list_revisions(&pool, "article", id)
-        .await
-        .unwrap();
+    let before = raisfast::models::content_revision::list_revisions(
+        &pool,
+        "article",
+        id.parse::<i64>().unwrap(),
+    )
+    .await
+    .unwrap();
     assert_eq!(before.len(), 1);
 
     repo.delete(
         &ct,
-        id,
+        int_id,
         None,
         &test_protocol_registry(),
         &test_ct_registry(),
@@ -1043,9 +1064,13 @@ async fn versioning_delete_cleans_up_revisions() {
     .await
     .unwrap();
 
-    let after = raisfast::models::content_revision::list_revisions(&pool, "article", id)
-        .await
-        .unwrap();
+    let after = raisfast::models::content_revision::list_revisions(
+        &pool,
+        "article",
+        id.parse::<i64>().unwrap(),
+    )
+    .await
+    .unwrap();
     assert!(after.is_empty());
 }
 
@@ -1082,11 +1107,12 @@ required = true
         )
         .await
         .unwrap();
-    let id = created["document_id"].as_str().unwrap();
+    let id = created["id"].as_str().unwrap().to_string();
+    let int_id: i64 = id.parse().unwrap();
 
     repo.update(
         &ct,
-        id,
+        int_id,
         json!({"title": "Updated"}),
         None,
         &SaveContext::default(),
@@ -1094,9 +1120,13 @@ required = true
     .await
     .unwrap();
 
-    let revisions = raisfast::models::content_revision::list_revisions(&pool, "note", id)
-        .await
-        .unwrap();
+    let revisions = raisfast::models::content_revision::list_revisions(
+        &pool,
+        "note",
+        id.parse::<i64>().unwrap(),
+    )
+    .await
+    .unwrap();
     assert!(revisions.is_empty());
 }
 
@@ -1164,7 +1194,7 @@ target_field = "title"
         )
         .await
         .unwrap();
-    let deleted_id = deleted["document_id"].as_str().unwrap();
+    let deleted_id: i64 = deleted["id"].as_str().unwrap().parse().unwrap();
 
     let now = now_str();
     repo.soft_delete(&ct, deleted_id, &now, None, None)
@@ -1230,10 +1260,13 @@ target_field = "title"
         )
         .await
         .unwrap();
-    let id = created["document_id"].as_str().unwrap();
+    let id = created["id"].as_str().unwrap().to_string();
+    let int_id: i64 = id.parse().unwrap();
 
     let now = now_str();
-    repo.soft_delete(&ct, id, &now, None, None).await.unwrap();
+    repo.soft_delete(&ct, int_id, &now, None, None)
+        .await
+        .unwrap();
 
     let found = repo
         .find_by_slug(&ct, "gone", None, None, true)
@@ -1274,12 +1307,15 @@ required = true
         )
         .await
         .unwrap();
-    let id = created["document_id"].as_str().unwrap();
+    let id = created["id"].as_str().unwrap().to_string();
+    let int_id: i64 = id.parse().unwrap();
 
     let now = now_str();
-    repo.soft_delete(&ct, id, &now, None, None).await.unwrap();
+    repo.soft_delete(&ct, int_id, &now, None, None)
+        .await
+        .unwrap();
 
-    let found = repo.find_by_id(&ct, id, None, true).await.unwrap();
+    let found = repo.find_by_id(&ct, int_id, None, true).await.unwrap();
     assert!(found.is_some());
     assert_eq!(found.unwrap()["title"].as_str().unwrap(), "Soft Deleted");
 }
@@ -1316,20 +1352,19 @@ required = true
         )
         .await
         .unwrap();
-    let id = created["document_id"].as_str().unwrap();
+    let id: i64 = created["id"].as_str().unwrap().parse().unwrap();
 
     let now = now_str();
     repo.soft_delete(&ct, id, &now, Some(42), None)
         .await
         .unwrap();
 
-    let row: (String, i64) = sqlx::query_as(
-        "SELECT deleted_at, deleted_by FROM ct_soft_deleted_by WHERE document_id = ?",
-    )
-    .bind(id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let row: (String, i64) =
+        sqlx::query_as("SELECT deleted_at, deleted_by FROM ct_soft_deleted_by WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(!row.0.is_empty());
     assert_eq!(row.1, 42);
 }
@@ -1369,7 +1404,7 @@ required = true
         )
         .await
         .unwrap();
-    let id = created["document_id"].as_str().unwrap();
+    let id: i64 = created["id"].as_str().unwrap().parse().unwrap();
 
     let now = now_str();
     repo.soft_delete(&ct, id, &now, None, None).await.unwrap();

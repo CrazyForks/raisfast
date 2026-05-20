@@ -96,7 +96,7 @@ pub async fn resend_verification(
         return Err(AppError::BadRequest("email_already_verified".into()));
     }
 
-    trigger_email_verification(pool, aspect_engine, cred.user_id, &cred.identifier).await
+    trigger_email_verification(pool, aspect_engine, *cred.user_id, &cred.identifier).await
 }
 
 #[cfg(test)]
@@ -124,7 +124,7 @@ mod tests {
         .unwrap();
         crate::models::user_credential::create(
             pool,
-            user.id,
+            *user.id,
             crate::models::user_credential::AuthType::Email,
             email,
             &crate::models::user_credential::wrap_password_hash("hash"),
@@ -140,11 +140,11 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "verify@test.com").await;
         let ae = aspect_engine();
-        super::trigger_email_verification(&pool, &ae, user.id, "verify@test.com")
+        super::trigger_email_verification(&pool, &ae, *user.id, "verify@test.com")
             .await
             .unwrap();
         let row =
-            crate::models::email_verification::create(&pool, user.id, "verify@test.com", 3600)
+            crate::models::email_verification::create(&pool, *user.id, "verify@test.com", 3600)
                 .await
                 .unwrap();
         let found = crate::models::email_verification::find_by_token(&pool, &row.token)
@@ -158,7 +158,7 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "replace@test.com").await;
         let ae = aspect_engine();
-        super::trigger_email_verification(&pool, &ae, user.id, "replace@test.com")
+        super::trigger_email_verification(&pool, &ae, *user.id, "replace@test.com")
             .await
             .unwrap();
         let sql = format!(
@@ -171,7 +171,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count_before, 1);
-        super::trigger_email_verification(&pool, &ae, user.id, "replace@test.com")
+        super::trigger_email_verification(&pool, &ae, *user.id, "replace@test.com")
             .await
             .unwrap();
         let (count_after,): (i64,) = sqlx::query_as(&sql)
@@ -187,7 +187,7 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "v@test.com").await;
         let ae = aspect_engine();
-        super::trigger_email_verification(&pool, &ae, user.id, "v@test.com")
+        super::trigger_email_verification(&pool, &ae, *user.id, "v@test.com")
             .await
             .unwrap();
         let sql = format!(
@@ -246,7 +246,7 @@ mod tests {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "verified@test.com").await;
         let ae = aspect_engine();
-        super::trigger_email_verification(&pool, &ae, user.id, "verified@test.com")
+        super::trigger_email_verification(&pool, &ae, *user.id, "verified@test.com")
             .await
             .unwrap();
         let sql = format!(

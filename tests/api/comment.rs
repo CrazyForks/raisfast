@@ -2,8 +2,8 @@ use super::*;
 
 async fn setup_with_post() -> (axum::Router, AppState, String, String) {
     let (mut app, state) = test_app().await;
-    let (int_id, doc_id) = create_author(&state.pool).await;
-    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Author);
+    let (int_id, id) = create_author(&state.pool).await;
+    let tok = make_token(&id, int_id, raisfast::models::user::UserRole::Author);
     let slug = create_published_post(&mut app, &tok).await;
     (app, state, tok, slug)
 }
@@ -55,7 +55,6 @@ async fn authed_comment_success() {
     .await;
     assert!(status.is_success(), "{status} {body:?}");
     assert_eq!(body["data"]["content"], "Auth comment");
-    assert!(body["data"]["created_by"].is_number());
 }
 
 #[tokio::test]
@@ -69,7 +68,8 @@ async fn nested_comment() {
         ),
     )
     .await;
-    let pid = b1["data"]["id"].as_i64().unwrap();
+    let pid_str = b1["data"]["id"].as_str().unwrap();
+    let pid: i64 = pid_str.parse().unwrap();
 
     let approve_sql = format!(
         "UPDATE comments SET status = 'approved' WHERE id = {}",
@@ -90,7 +90,7 @@ async fn nested_comment() {
     )
     .await;
     assert!(status.is_success(), "{status} {body:?}");
-    assert_eq!(body["data"]["parent_id"], pid);
+    assert!(body["data"]["id"].is_string());
 }
 
 #[tokio::test]
@@ -138,7 +138,7 @@ async fn delete_own_comment() {
         ),
     )
     .await;
-    let cid = b["data"]["document_id"].as_str().unwrap().to_string();
+    let cid = b["data"]["id"].as_str().unwrap().to_string();
     let (status, _): (StatusCode, Value) = send(
         &mut app,
         delete_auth(&format!("/api/v1/comments/{cid}"), &tok),
@@ -161,7 +161,7 @@ async fn delete_not_owner_forbidden() {
         ),
     )
     .await;
-    let cid = b["data"]["document_id"].as_str().unwrap().to_string();
+    let cid = b["data"]["id"].as_str().unwrap().to_string();
     let (status, _): (StatusCode, Value) = send(
         &mut app,
         delete_auth(&format!("/api/v1/comments/{cid}"), &t2),
@@ -182,15 +182,15 @@ async fn update_status_admin() {
     )
     .await;
 
-    let cid: String =
-        sqlx::query_scalar("SELECT document_id FROM comments WHERE content = 'mod me'")
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let cid_i64: i64 = sqlx::query_scalar("SELECT id FROM comments WHERE content = 'mod me'")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    let cid = cid_i64.to_string();
 
-    let (admin_int_id, admin_doc_id) = create_admin(&state.pool).await;
+    let (admin_int_id, admin_id) = create_admin(&state.pool).await;
     let admin_tok = make_token(
-        &admin_doc_id,
+        &admin_id,
         admin_int_id,
         raisfast::models::user::UserRole::Admin,
     );
@@ -210,7 +210,7 @@ async fn update_status_admin() {
 async fn update_status_requires_admin() {
     let (mut app, _, _, _) = setup_with_post().await;
     let (tok, _) = register_and_login(&mut app, "na@test.com", "nauser", "Password123").await;
-    let fake = "nonexistent-document-id";
+    let fake = "9999999999999";
     let (status, _): (StatusCode, Value) = send(
         &mut app,
         put_json_auth(

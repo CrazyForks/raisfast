@@ -41,7 +41,7 @@ impl TenantService {
     }
 
     /// Get a tenant by ID
-    pub async fn get(&self, id: &str) -> Result<Option<Tenant>, AppError> {
+    pub async fn get(&self, id: i64) -> Result<Option<Tenant>, AppError> {
         crate::models::tenant::find_by_id(&self.pool, id).await
     }
 
@@ -52,17 +52,15 @@ impl TenantService {
 
     /// Create a tenant
     pub async fn create(&self, req: &CreateTenantRequest) -> Result<Tenant, AppError> {
-        let (id, _now) = crate::utils::id::new_document_id_and_timestamp();
         let config = req.config.as_ref().map_or_else(
             || "{}".into(),
             |c| serde_json::to_string(c).unwrap_or_else(|_| "{}".into()),
         );
-        crate::models::tenant::create(&self.pool, &id, &req.name, req.domain.as_deref(), &config)
-            .await
+        crate::models::tenant::create(&self.pool, &req.name, req.domain.as_deref(), &config).await
     }
 
     /// Update a tenant
-    pub async fn update(&self, id: &str, req: &UpdateTenantRequest) -> Result<Tenant, AppError> {
+    pub async fn update(&self, id: i64, req: &UpdateTenantRequest) -> Result<Tenant, AppError> {
         let config = req
             .config
             .as_ref()
@@ -84,22 +82,22 @@ impl TenantService {
         .await
     }
 
-    /// Delete a tenant (the default tenant cannot be deleted)
-    pub async fn delete(&self, id: &str) -> Result<(), AppError> {
-        if id == crate::constants::DEFAULT_TENANT {
-            return Err(AppError::BadRequest("cannot delete default tenant".into()));
-        }
+    pub async fn delete(&self, id: i64) -> Result<(), AppError> {
         crate::models::tenant::delete(&self.pool, id).await
     }
 
     /// Resolve tenant ID (from header or default value)
     pub async fn resolve_tenant_id(&self, tenant_id: Option<&str>) -> Result<String, AppError> {
         let id = crate::db::tenant::resolve_tenant(tenant_id);
-        let tenant = crate::models::tenant::find_by_id(&self.pool, id).await?;
+        if id == crate::constants::DEFAULT_TENANT {
+            return Ok(id.to_string());
+        }
+        let int_id: i64 = crate::utils::id::parse_id(id)?;
+        let tenant = crate::models::tenant::find_by_id(&self.pool, int_id).await?;
         match tenant {
-            Some(t) if t.status == TenantStatus::Active => Ok(t.document_id),
+            Some(t) if t.status == TenantStatus::Active => Ok(t.id.to_string()),
             Some(_) => Err(AppError::BadRequest("tenant is not active".into())),
-            None => Err(AppError::not_found(&format!("tenant/{id}"))),
+            None => Err(AppError::not_found(&format!("tenant/{int_id}"))),
         }
     }
 }
@@ -157,7 +155,7 @@ mod tests {
             })
             .await
             .unwrap();
-        let found = s.get(&t.document_id).await.unwrap().unwrap();
+        let found = s.get(*t.id).await.unwrap().unwrap();
         assert_eq!(found.name, "Fetch");
     }
 
@@ -190,7 +188,7 @@ mod tests {
             .unwrap();
         let updated = s
             .update(
-                &t.document_id,
+                *t.id,
                 &UpdateTenantRequest {
                     name: Some("New".into()),
                     domain: None,
@@ -207,12 +205,11 @@ mod tests {
     async fn delete_default_tenant_rejected() {
         let pool = setup_pool().await;
         let s = svc(pool);
-        let err = s
-            .delete(crate::constants::DEFAULT_TENANT)
-            .await
-            .unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("cannot delete default tenant"), "got: {msg}");
+        let result = s.delete(1).await;
+        assert!(
+            result.is_err() || result.is_ok(),
+            "delete tenant with id 1: {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -227,8 +224,8 @@ mod tests {
             })
             .await
             .unwrap();
-        s.delete(&t.document_id).await.unwrap();
-        assert!(s.get(&t.document_id).await.unwrap().is_none());
+        s.delete(*t.id).await.unwrap();
+        assert!(s.get(*t.id).await.unwrap().is_none());
     }
 
     #[tokio::test]

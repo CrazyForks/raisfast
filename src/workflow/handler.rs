@@ -158,14 +158,10 @@ pub async fn create(
     State(state): State<AppState>,
     Json(body): Json<CreateWorkflowRequest>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
+    let wf_id: i64 = crate::utils::id::parse_id(&body.id)?;
     let wf = state
         .workflow
-        .create_workflow(
-            &body.id,
-            &body.name,
-            body.description.as_deref(),
-            &body.steps,
-        )
+        .create_workflow(wf_id, &body.name, body.description.as_deref(), &body.steps)
         .await?;
     Ok(ApiResponse::success(
         serde_json::to_value(wf).unwrap_or_default(),
@@ -183,7 +179,8 @@ pub async fn get(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    let wf = state.workflow.get_workflow(&id).await?;
+    let wf_id: i64 = crate::utils::id::parse_id(&id)?;
+    let wf = state.workflow.get_workflow(wf_id).await?;
     Ok(ApiResponse::success(
         serde_json::to_value(wf).unwrap_or_default(),
     ))
@@ -193,7 +190,8 @@ pub async fn delete(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    state.workflow.delete_workflow(&id).await?;
+    let wf_id: i64 = crate::utils::id::parse_id(&id)?;
+    state.workflow.delete_workflow(wf_id).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -202,14 +200,12 @@ pub async fn start(
     Path(id): Path<String>,
     Json(body): Json<StartWorkflowRequest>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
+    let wf_id: i64 = crate::utils::id::parse_id(&id)?;
     let triggered_by_int: Option<i64> = match &body.triggered_by {
-        Some(doc_id) if !doc_id.is_empty() => {
-            let sql = format!(
-                "SELECT id FROM users WHERE document_id = {}",
-                dialect::ph(1)
-            );
+        Some(uid) if !uid.is_empty() => {
+            let sql = format!("SELECT id FROM users WHERE id = {}", dialect::ph(1));
             sqlx::query_scalar::<_, i64>(&sql)
-                .bind(doc_id)
+                .bind(uid.parse::<i64>().unwrap_or(0))
                 .fetch_optional(&state.pool)
                 .await
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
@@ -219,7 +215,7 @@ pub async fn start(
 
     let instance = state
         .workflow
-        .start_workflow(&id, &body.context, triggered_by_int)
+        .start_workflow(wf_id, &body.context, triggered_by_int)
         .await?;
     Ok(ApiResponse::success(
         serde_json::to_value(instance).unwrap_or_default(),
@@ -232,14 +228,13 @@ pub async fn list_instances(
 ) -> AppResult<ApiResponse<serde_json::Value>> {
     let page = query.page.unwrap_or(1).max(1);
     let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
+    let def_id: Option<i64> = match &query.definition_id {
+        Some(did) => Some(crate::utils::id::parse_id(did)?),
+        None => None,
+    };
     let (items, total) = state
         .workflow
-        .list_instances(
-            query.definition_id.as_deref(),
-            query.status,
-            page,
-            page_size,
-        )
+        .list_instances(def_id, query.status, page, page_size)
         .await?;
     Ok(ApiResponse::success(json!({
         "items": items,
@@ -253,9 +248,10 @@ pub async fn get_instance(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
+    let inst_id: i64 = crate::utils::id::parse_id(&id)?;
     let instance = state
         .workflow
-        .get_instance(&id)
+        .get_instance(inst_id)
         .await?
         .ok_or_else(|| AppError::not_found("workflow instance"))?;
     Ok(ApiResponse::success(
@@ -268,7 +264,8 @@ pub async fn execute_step(
     Path(id): Path<String>,
     Json(body): Json<ExecuteStepRequest>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    let instance = state.workflow.execute_step(&id, &body.output).await?;
+    let inst_id: i64 = crate::utils::id::parse_id(&id)?;
+    let instance = state.workflow.execute_step(inst_id, &body.output).await?;
     Ok(ApiResponse::success(
         serde_json::to_value(instance).unwrap_or_default(),
     ))
@@ -278,7 +275,8 @@ pub async fn cancel_instance(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    state.workflow.cancel_instance(&id).await?;
+    let inst_id: i64 = crate::utils::id::parse_id(&id)?;
+    state.workflow.cancel_instance(inst_id).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -286,7 +284,8 @@ pub async fn get_step_logs(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    let logs = state.workflow.get_step_logs(&id).await?;
+    let inst_id: i64 = crate::utils::id::parse_id(&id)?;
+    let logs = state.workflow.get_step_logs(inst_id).await?;
     Ok(ApiResponse::success(
         serde_json::to_value(logs).unwrap_or_default(),
     ))

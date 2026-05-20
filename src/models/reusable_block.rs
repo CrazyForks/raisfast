@@ -7,20 +7,20 @@ use ts_rs::TS;
 use crate::commands::{CreateReusableBlockCmd, UpdateReusableBlockCmd};
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct ReusableBlock {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
     pub name: String,
     pub block_type: String,
     pub content: String,
     pub description: Option<String>,
-    pub created_by: Option<i64>,
-    pub updated_by: Option<i64>,
+    pub created_by: Option<SnowflakeId>,
+    pub updated_by: Option<SnowflakeId>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -32,16 +32,6 @@ pub async fn find_reusable_by_id(
 ) -> AppResult<Option<ReusableBlock>> {
     Ok(
         raisfast_derive::crud_find!(pool, "reusable_blocks", ReusableBlock, "id" => id, tenant: tenant_id)?,
-    )
-}
-
-pub async fn find_reusable_by_document_id(
-    pool: &crate::db::Pool,
-    document_id: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<Option<ReusableBlock>> {
-    Ok(
-        raisfast_derive::crud_find!(pool, "reusable_blocks", ReusableBlock, "document_id" => document_id, tenant: tenant_id)?,
     )
 }
 
@@ -57,12 +47,12 @@ pub async fn create_reusable(
     cmd: &CreateReusableBlockCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<ReusableBlock> {
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     raisfast_derive::crud_insert!(
         pool,
         "reusable_blocks",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "name" => &cmd.name,
             "block_type" => &cmd.block_type,
             "content" => &cmd.content,
@@ -75,7 +65,7 @@ pub async fn create_reusable(
         tenant: tenant_id
     )?;
 
-    find_reusable_by_document_id(pool, &document_id, tenant_id)
+    find_reusable_by_id(pool, id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("reusable_block"))
 }
@@ -128,7 +118,7 @@ mod tests {
         )
         .await
         .unwrap();
-        user.id
+        *user.id
     }
 
     #[sqlx::test]
@@ -148,33 +138,9 @@ mod tests {
         )
         .await
         .unwrap();
-        let found = find_reusable_by_id(&pool, block.id, None).await.unwrap();
+        let found = find_reusable_by_id(&pool, *block.id, None).await.unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().name, "Block");
-    }
-
-    #[sqlx::test]
-    async fn find_by_document_id_test() {
-        let pool = setup_pool().await;
-        let uid = insert_user(&pool).await;
-        let block = create_reusable(
-            &pool,
-            &CreateReusableBlockCmd {
-                name: "Block".to_string(),
-                block_type: "text".to_string(),
-                content: "[]".to_string(),
-                description: None,
-                created_by: Some(uid),
-            },
-            None,
-        )
-        .await
-        .unwrap();
-        let found = super::find_reusable_by_document_id(&pool, &block.document_id, None)
-            .await
-            .unwrap();
-        assert!(found.is_some());
-        assert_eq!(found.unwrap().id, block.id);
     }
 
     #[sqlx::test]
@@ -220,7 +186,7 @@ mod tests {
         let updated = update_reusable(
             &pool,
             &UpdateReusableBlockCmd {
-                id: block.id,
+                id: *block.id,
                 name: Some("Updated".to_string()),
                 block_type: None,
                 content: None,
@@ -251,8 +217,8 @@ mod tests {
         )
         .await
         .unwrap();
-        delete_reusable(&pool, block.id, None).await.unwrap();
-        let found = find_reusable_by_id(&pool, block.id, None).await.unwrap();
+        delete_reusable(&pool, *block.id, None).await.unwrap();
+        let found = find_reusable_by_id(&pool, *block.id, None).await.unwrap();
         assert!(found.is_none());
     }
 }

@@ -5,7 +5,7 @@ use axum::extract::{Path, State};
 use serde::Deserialize;
 use validator::Validate;
 
-use crate::dto::{BatchRequest, BatchResponse};
+use crate::dto::{BatchRequest, BatchResponse, ReusableBlockResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
@@ -109,9 +109,13 @@ pub struct UpdateReusableRequest {
 pub async fn list_reusable(
     auth: AuthUser,
     State(state): State<crate::AppState>,
-) -> AppResult<ApiResponse<Vec<crate::models::reusable_block::ReusableBlock>>> {
+) -> AppResult<ApiResponse<Vec<ReusableBlockResponse>>> {
     auth.ensure_author()?;
     let items = reusable_service::list_reusable(&state.pool, &auth).await?;
+    let items: Vec<ReusableBlockResponse> = items
+        .into_iter()
+        .map(ReusableBlockResponse::from_block)
+        .collect();
     Ok(ApiResponse::success(items))
 }
 
@@ -124,12 +128,15 @@ pub async fn get_reusable(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
-) -> AppResult<ApiResponse<crate::models::reusable_block::ReusableBlock>> {
+) -> AppResult<ApiResponse<ReusableBlockResponse>> {
     auth.ensure_author()?;
-    let block = reusable_service::get_reusable(&state.pool, &id, &auth)
+    let id = crate::utils::id::parse_id(&id)?;
+    let block = reusable_service::get_reusable(&state.pool, id, &auth)
         .await?
         .ok_or_else(|| AppError::not_found("reusable_block"))?;
-    Ok(ApiResponse::success(block))
+    Ok(ApiResponse::success(ReusableBlockResponse::from_block(
+        block,
+    )))
 }
 
 #[utoipa::path(post, path = "/admin/reusable-blocks", tag = "reusable_blocks",
@@ -140,7 +147,7 @@ pub async fn create_reusable(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Json(req): Json<CreateReusableRequest>,
-) -> AppResult<ApiResponse<crate::models::reusable_block::ReusableBlock>> {
+) -> AppResult<ApiResponse<ReusableBlockResponse>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
     let block = reusable_service::create_reusable(
@@ -152,7 +159,9 @@ pub async fn create_reusable(
         req.description.as_deref(),
     )
     .await?;
-    Ok(ApiResponse::success(block))
+    Ok(ApiResponse::success(ReusableBlockResponse::from_block(
+        block,
+    )))
 }
 
 #[utoipa::path(put, path = "/admin/reusable-blocks/{id}", tag = "reusable_blocks",
@@ -165,12 +174,13 @@ pub async fn update_reusable(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateReusableRequest>,
-) -> AppResult<ApiResponse<crate::models::reusable_block::ReusableBlock>> {
+) -> AppResult<ApiResponse<ReusableBlockResponse>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
+    let id = crate::utils::id::parse_id(&id)?;
     let block = reusable_service::update_reusable(
         &state.pool,
-        &id,
+        id,
         &auth,
         req.name.as_deref(),
         req.block_type.as_deref(),
@@ -178,7 +188,9 @@ pub async fn update_reusable(
         req.description.as_deref(),
     )
     .await?;
-    Ok(ApiResponse::success(block))
+    Ok(ApiResponse::success(ReusableBlockResponse::from_block(
+        block,
+    )))
 }
 
 #[utoipa::path(delete, path = "/admin/reusable-blocks/{id}", tag = "reusable_blocks",
@@ -192,7 +204,8 @@ pub async fn delete_reusable(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_author()?;
-    reusable_service::delete_reusable(&state.pool, &id, &auth).await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    reusable_service::delete_reusable(&state.pool, id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -210,10 +223,11 @@ pub async fn admin_batch(
     validation::validate(&req)?;
     let mut affected = 0usize;
     if req.action == "delete" {
-        for id in &req.ids {
-            if reusable_service::delete_reusable(&state.pool, id, &auth)
-                .await
-                .is_ok()
+        for raw_id in &req.ids {
+            if let Ok(id) = crate::utils::id::parse_id(raw_id)
+                && reusable_service::delete_reusable(&state.pool, id, &auth)
+                    .await
+                    .is_ok()
             {
                 affected += 1;
             }

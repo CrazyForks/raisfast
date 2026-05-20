@@ -10,6 +10,7 @@ use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::models::post::CommentOpenStatus;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -22,8 +23,7 @@ define_enum!(
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct Page {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
     pub title: String,
     pub slug: String,
@@ -33,11 +33,11 @@ pub struct Page {
     pub meta_description: Option<String>,
     pub og_image: Option<String>,
     pub template: String,
-    pub parent_id: Option<i64>,
+    pub parent_id: Option<SnowflakeId>,
     pub sort_order: i64,
     pub status: PageStatus,
-    pub created_by: i64,
-    pub updated_by: Option<i64>,
+    pub created_by: SnowflakeId,
+    pub updated_by: Option<SnowflakeId>,
     pub cover_image: Option<String>,
     pub password: Option<String>,
     pub comment_status: CommentOpenStatus,
@@ -326,16 +326,6 @@ pub async fn find_by_id(
     Ok(raisfast_derive::crud_find!(pool, "pages", Page, "id" => id, tenant: tenant_id)?)
 }
 
-pub async fn find_by_document_id(
-    pool: &crate::db::Pool,
-    document_id: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<Option<Page>> {
-    Ok(
-        raisfast_derive::crud_find!(pool, "pages", Page, "document_id" => document_id, tenant: tenant_id)?,
-    )
-}
-
 pub async fn list_published(
     pool: &crate::db::Pool,
     page: i64,
@@ -379,7 +369,7 @@ pub async fn create(
     cmd: &CreatePageCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     let published_at = if cmd.status == PageStatus::Published {
         Some(now)
     } else {
@@ -390,7 +380,7 @@ pub async fn create(
         pool,
         "pages",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "title" => &cmd.title,
             "slug" => &cmd.slug,
             "content" => &cmd.content,
@@ -412,7 +402,7 @@ pub async fn create(
         tenant: tenant_id
     )?;
 
-    find_by_document_id(pool, &document_id, tenant_id)
+    find_by_id(pool, id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("page"))
 }
@@ -686,20 +676,14 @@ mod tests {
     }
 
     async fn create_user(pool: &crate::db::Pool) -> i64 {
-        let uid = uuid::Uuid::now_v7().to_string();
+        let id = crate::utils::id::new_id();
         sqlx::query(
-            "INSERT INTO users (document_id, username, role, status, registered_via) VALUES (?, 'testuser', 'author', 'active', 'email')",
+            "INSERT INTO users (id, username, role, status, registered_via) VALUES (?, 'testuser', 'author', 'active', 'email')",
         )
-        .bind(&uid)
+        .bind(id)
         .execute(pool)
         .await
         .unwrap();
-
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
-            .bind(&uid)
-            .fetch_one(pool)
-            .await
-            .unwrap();
         id
     }
 
@@ -746,19 +730,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn find_by_document_id_test() {
-        let pool = setup_pool().await;
-        let uid = create_user(&pool).await;
-        let page = create_test_page(&pool, "Contact", "contact", "draft", uid).await;
-
-        let found = super::find_by_document_id(&pool, &page.document_id, None)
-            .await
-            .unwrap();
-        assert!(found.is_some());
-        assert_eq!(found.unwrap().slug, "contact");
-    }
-
-    #[tokio::test]
     async fn list_published_excludes_drafts() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
@@ -780,7 +751,7 @@ mod tests {
         let updated = update(
             &pool,
             &UpdatePageCmd {
-                id: page.id,
+                id: *page.id,
                 title: Some("New Title".to_string()),
                 slug: None,
                 content: None,
@@ -809,7 +780,7 @@ mod tests {
         let uid = create_user(&pool).await;
         let page = create_test_page(&pool, "To Delete", "delete-me", "published", uid).await;
 
-        delete(&pool, page.id, None).await.unwrap();
+        delete(&pool, *page.id, None).await.unwrap();
         let found = find_by_slug(&pool, "delete-me", None).await.unwrap();
         assert!(found.is_none());
     }
@@ -822,7 +793,7 @@ mod tests {
 
         assert_eq!(page.status, PageStatus::Draft);
 
-        let updated = update_status(&pool, page.id, PageStatus::Published, None, None)
+        let updated = update_status(&pool, *page.id, PageStatus::Published, None, None)
             .await
             .unwrap();
         assert_eq!(updated.status, PageStatus::Published);

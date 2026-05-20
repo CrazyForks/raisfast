@@ -9,7 +9,6 @@
 -- 租户表
 CREATE TABLE IF NOT EXISTS tenants (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     domain TEXT UNIQUE,
     config TEXT NOT NULL DEFAULT '{}',
@@ -19,13 +18,12 @@ CREATE TABLE IF NOT EXISTS tenants (
 );
 
 -- 默认租户
-INSERT OR IGNORE INTO tenants (document_id, name, domain, config, status, created_at, updated_at) VALUES
-    ('default', 'Default', NULL, '{}', 'active', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+INSERT OR IGNORE INTO tenants (name, domain, config, status, created_at, updated_at) VALUES
+    ('Default', NULL, '{}', 'active', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- 用户
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     username TEXT UNIQUE NOT NULL,
     role TEXT NOT NULL DEFAULT 'reader',
@@ -50,7 +48,6 @@ CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
 -- 用户凭据
 CREATE TABLE IF NOT EXISTS user_credentials (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     user_id INTEGER NOT NULL REFERENCES users(id),
     auth_type TEXT NOT NULL,
     identifier TEXT NOT NULL,
@@ -68,7 +65,6 @@ CREATE INDEX IF NOT EXISTS idx_user_credentials_type ON user_credentials(auth_ty
 -- OAuth 账号绑定
 CREATE TABLE IF NOT EXISTS oauth_accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     user_id INTEGER NOT NULL REFERENCES users(id),
     provider TEXT NOT NULL,
     provider_user_id TEXT NOT NULL,
@@ -90,7 +86,6 @@ CREATE INDEX IF NOT EXISTS idx_oauth_accounts_provider ON oauth_accounts(provide
 -- OAuth 短期 state 存储（PKCE）
 CREATE TABLE IF NOT EXISTS oauth_states (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     provider TEXT NOT NULL,
     code_verifier TEXT NOT NULL,
     user_id INTEGER,
@@ -103,7 +98,6 @@ CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
 -- 币种配置
 CREATE TABLE IF NOT EXISTS currencies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     code TEXT NOT NULL UNIQUE CHECK(code = UPPER(code) AND LENGTH(code) BETWEEN 1 AND 10),
     name TEXT NOT NULL,
     decimals INTEGER NOT NULL DEFAULT 0 CHECK(decimals BETWEEN 0 AND 18),
@@ -118,7 +112,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_currencies_code ON currencies(code);
 -- 用户钱包（每用户每币种一个）
 CREATE TABLE IF NOT EXISTS wallets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id INTEGER NOT NULL REFERENCES users(id),
     currency TEXT NOT NULL,
@@ -137,7 +130,6 @@ CREATE INDEX IF NOT EXISTS idx_wallets_tenant ON wallets(tenant_id);
 -- 不可变交易流水
 CREATE TABLE IF NOT EXISTS wallet_transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     wallet_id INTEGER NOT NULL REFERENCES wallets(id),
     user_id INTEGER NOT NULL REFERENCES users(id),
@@ -166,7 +158,6 @@ CREATE INDEX IF NOT EXISTS idx_wallet_transactions_tenant ON wallet_transactions
 -- Refresh Tokens
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     user_id INTEGER NOT NULL REFERENCES users(id),
     token TEXT UNIQUE NOT NULL,
     expires_at TEXT NOT NULL,
@@ -180,7 +171,6 @@ CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expir
 -- 站点配置
 CREATE TABLE IF NOT EXISTS options (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     option_key TEXT NOT NULL,
     value TEXT NOT NULL,
@@ -201,7 +191,6 @@ CREATE INDEX IF NOT EXISTS idx_options_tenant_option_key ON options(tenant_id, o
 -- RBAC 角色
 CREATE TABLE IF NOT EXISTS roles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     name TEXT NOT NULL UNIQUE,
     description TEXT,
@@ -215,7 +204,6 @@ CREATE INDEX IF NOT EXISTS idx_roles_tenant ON roles(tenant_id);
 -- RBAC 权限
 CREATE TABLE IF NOT EXISTS permissions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     role_id INTEGER NOT NULL REFERENCES roles(id),
     action TEXT NOT NULL,
@@ -233,7 +221,6 @@ CREATE INDEX IF NOT EXISTS idx_permissions_tenant ON permissions(tenant_id);
 -- 审计日志
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     actor_id INTEGER,
     actor_role TEXT,
@@ -255,7 +242,6 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_tenant ON audit_log(tenant_id);
 -- API Token
 CREATE TABLE IF NOT EXISTS api_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     user_id INTEGER NOT NULL REFERENCES users(id),
     name TEXT NOT NULL,
     token_hash TEXT UNIQUE NOT NULL,
@@ -272,7 +258,6 @@ CREATE INDEX IF NOT EXISTS idx_api_tokens_token_hash ON api_tokens(token_hash);
 -- Webhook 订阅
 CREATE TABLE IF NOT EXISTS webhook_subscriptions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     url TEXT NOT NULL,
     secret TEXT NOT NULL,
@@ -301,9 +286,8 @@ CREATE INDEX IF NOT EXISTS idx_plugin_storage_plugin ON plugin_storage(plugin_id
 -- 内容版本历史
 CREATE TABLE IF NOT EXISTS content_revisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     content_type TEXT NOT NULL,
-    record_id TEXT NOT NULL,
+    record_id INTEGER NOT NULL,
     revision_number INTEGER NOT NULL,
     snapshot TEXT NOT NULL,
     created_by INTEGER,
@@ -319,7 +303,6 @@ CREATE INDEX IF NOT EXISTS idx_revisions_ct_record_rev
 -- 密码重置令牌
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     user_id INTEGER NOT NULL REFERENCES users(id),
     token TEXT NOT NULL UNIQUE,
     expires_at TEXT NOT NULL,
@@ -334,7 +317,6 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires_at ON password_rese
 -- 短信验证码
 CREATE TABLE IF NOT EXISTS sms_codes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     phone TEXT NOT NULL,
     code TEXT NOT NULL,
     purpose TEXT NOT NULL,
@@ -351,7 +333,6 @@ CREATE INDEX IF NOT EXISTS idx_sms_codes_expires ON sms_codes(expires_at);
 -- 邮箱验证令牌
 CREATE TABLE IF NOT EXISTS email_verification_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     user_id INTEGER NOT NULL REFERENCES users(id),
     token TEXT NOT NULL UNIQUE,
     email TEXT NOT NULL,
@@ -367,7 +348,6 @@ CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expires ON email_verifi
 -- 后台任务队列
 CREATE TABLE IF NOT EXISTS jobs (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id  TEXT NOT NULL UNIQUE,
     job_type     TEXT NOT NULL,
     payload      TEXT NOT NULL,
     status       TEXT NOT NULL DEFAULT 'pending',
@@ -386,7 +366,6 @@ CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs(job_type);
 -- 定时任务调度
 CREATE TABLE IF NOT EXISTS cron_schedules (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id  TEXT NOT NULL UNIQUE,
     label        TEXT NOT NULL,
     job_type     TEXT NOT NULL,
     payload      TEXT,
@@ -406,7 +385,6 @@ CREATE INDEX IF NOT EXISTS idx_cron_plugin ON cron_schedules(plugin_id);
 -- Cron 执行历史
 CREATE TABLE IF NOT EXISTS cron_execution_log (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id  TEXT NOT NULL UNIQUE,
     schedule_id  INTEGER NOT NULL,
     job_type     TEXT NOT NULL,
     label        TEXT NOT NULL,
@@ -426,7 +404,6 @@ CREATE INDEX IF NOT EXISTS idx_cron_log_started ON cron_execution_log(started_at
 -- 分类
 CREATE TABLE IF NOT EXISTS categories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     name TEXT UNIQUE NOT NULL,
     slug TEXT UNIQUE NOT NULL,
@@ -450,7 +427,6 @@ CREATE INDEX IF NOT EXISTS idx_categories_tenant ON categories(tenant_id);
 -- 标签
 CREATE TABLE IF NOT EXISTS tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     name TEXT UNIQUE NOT NULL,
     slug TEXT UNIQUE NOT NULL,
@@ -472,7 +448,6 @@ CREATE INDEX IF NOT EXISTS idx_tags_tenant ON tags(tenant_id);
 -- 文章
 CREATE TABLE IF NOT EXISTS posts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     title TEXT NOT NULL,
     slug TEXT UNIQUE NOT NULL,
@@ -526,7 +501,6 @@ CREATE INDEX IF NOT EXISTS idx_posts_tags_tag_id ON posts_tags(tag_id);
 -- 评论
 CREATE TABLE IF NOT EXISTS comments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     post_id INTEGER NOT NULL REFERENCES posts(id),
     created_by INTEGER REFERENCES users(id),
@@ -554,7 +528,6 @@ CREATE INDEX IF NOT EXISTS idx_comments_tenant ON comments(tenant_id);
 
 CREATE TABLE IF NOT EXISTS pages (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id      TEXT NOT NULL UNIQUE,
     tenant_id        TEXT NOT NULL DEFAULT 'default',
     title            TEXT NOT NULL,
     slug             TEXT NOT NULL UNIQUE,
@@ -589,7 +562,6 @@ CREATE INDEX IF NOT EXISTS idx_pages_tenant_status ON pages(tenant_id, status);
 
 CREATE TABLE IF NOT EXISTS reusable_blocks (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id   TEXT NOT NULL DEFAULT 'default',
     name        TEXT NOT NULL,
     block_type  TEXT NOT NULL,
@@ -607,7 +579,6 @@ CREATE INDEX IF NOT EXISTS idx_reusable_blocks_tenant ON reusable_blocks(tenant_
 
 CREATE TABLE IF NOT EXISTS media (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id INTEGER NOT NULL REFERENCES users(id),
     filename TEXT NOT NULL,
@@ -632,7 +603,6 @@ CREATE INDEX IF NOT EXISTS idx_media_tenant ON media(tenant_id);
 
 CREATE TABLE IF NOT EXISTS workflow_definitions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     description TEXT,
     steps TEXT NOT NULL,
@@ -645,7 +615,6 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
 
 CREATE TABLE IF NOT EXISTS workflow_instances (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     definition_id INTEGER NOT NULL REFERENCES workflow_definitions(id),
     status TEXT NOT NULL DEFAULT 'running',
     current_step TEXT,
@@ -661,7 +630,6 @@ CREATE INDEX IF NOT EXISTS idx_wf_instances_status ON workflow_instances(status)
 
 CREATE TABLE IF NOT EXISTS workflow_step_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     instance_id INTEGER NOT NULL REFERENCES workflow_instances(id),
     step_id TEXT NOT NULL,
     step_name TEXT NOT NULL,
@@ -680,53 +648,52 @@ CREATE INDEX IF NOT EXISTS idx_wf_step_logs_instance ON workflow_step_logs(insta
 -- ============================================================
 
 -- 系统角色
-INSERT OR IGNORE INTO roles (document_id, tenant_id, name, description, is_system, created_at, updated_at) VALUES
-    ('role-admin', 'default', 'admin', '超级管理员', 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('role-editor', 'default', 'editor', '编辑', 0, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('role-author', 'default', 'author', '作者', 0, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('role-reader', 'default', 'reader', '读者', 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+INSERT OR IGNORE INTO roles (tenant_id, name, description, is_system, created_at, updated_at) VALUES
+    ('default', 'admin', '超级管理员', 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', 'editor', '编辑', 0, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', 'author', '作者', 0, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', 'reader', '读者', 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- admin 全局权限
-INSERT OR IGNORE INTO permissions (document_id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('perm-admin-all', 'default', (SELECT id FROM roles WHERE document_id = 'role-admin'), '*', '*', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+INSERT OR IGNORE INTO permissions (tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    ('default', (SELECT id FROM roles WHERE name = 'admin'), '*', '*', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- editor 权限
-INSERT OR IGNORE INTO permissions (document_id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('perm-editor-ct-create', 'default', (SELECT id FROM roles WHERE document_id = 'role-editor'), 'content-type::*.*', 'content-type::*', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+INSERT OR IGNORE INTO permissions (tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    ('default', (SELECT id FROM roles WHERE name = 'editor'), 'content-type::*.*', 'content-type::*', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- author 权限
-INSERT OR IGNORE INTO permissions (document_id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('perm-author-post-create', 'default', (SELECT id FROM roles WHERE document_id = 'role-author'), 'content-type::post.create', 'content-type::post', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('perm-author-post-read', 'default', (SELECT id FROM roles WHERE document_id = 'role-author'), 'content-type::post.read', 'content-type::post', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('perm-author-post-update', 'default', (SELECT id FROM roles WHERE document_id = 'role-author'), 'content-type::post.update', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('perm-author-post-delete', 'default', (SELECT id FROM roles WHERE document_id = 'role-author'), 'content-type::post.delete', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+INSERT OR IGNORE INTO permissions (tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    ('default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.create', 'content-type::post', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.read', 'content-type::post', '["*"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.update', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', (SELECT id FROM roles WHERE name = 'author'), 'content-type::post.delete', 'content-type::post', '["*"]', '{"author_id":"$user.id"}', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- reader 权限
-INSERT OR IGNORE INTO permissions (document_id, tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
-    ('perm-reader-post-read', 'default', (SELECT id FROM roles WHERE document_id = 'role-reader'), 'content-type::post.read', 'content-type::post', '["title","slug","content","excerpt","status"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('perm-reader-comment-create', 'default', (SELECT id FROM roles WHERE document_id = 'role-reader'), 'content-type::comment.create', 'content-type::comment', '["content","nickname","email"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+INSERT OR IGNORE INTO permissions (tenant_id, role_id, action, subject, fields, conditions, created_at) VALUES
+    ('default', (SELECT id FROM roles WHERE name = 'reader'), 'content-type::post.read', 'content-type::post', '["title","slug","content","excerpt","status"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', (SELECT id FROM roles WHERE name = 'reader'), 'content-type::comment.create', 'content-type::comment', '["content","nickname","email"]', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- 站点配置
-INSERT OR IGNORE INTO options (document_id, tenant_id, option_key, value, type, group_name, label, description, validation, is_public, autoload, sort_order, updated_at) VALUES
-    ('opt-site-title', 'default', 'site_title', '"My Blog"', 'text', 'general', '站点标题', '显示在浏览器标题栏和页面头部', '{"max_length":100}', 1, 1, 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('opt-site-desc', 'default', 'site_description', '""', 'text', 'general', '站点描述', '简短描述站点用途', '{"max_length":500}', 1, 1, 2, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('opt-site-url', 'default', 'site_url', '""', 'url', 'general', '站点 URL', '如 https://example.com', NULL, 1, 1, 3, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('opt-admin-email', 'default', 'admin_email', '""', 'email', 'general', '管理员邮箱', NULL, NULL, 0, 1, 4, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('opt-timezone', 'default', 'timezone', '"UTC"', 'select', 'general', '时区', NULL, '{"values":["UTC","Asia/Shanghai","Asia/Tokyo","US/Eastern","US/Pacific","Europe/London","Europe/Berlin"]}', 1, 1, 5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('opt-date-fmt', 'default', 'date_format', '"%Y-%m-%d"', 'select', 'general', '日期格式', NULL, '{"values":["%Y-%m-%d","%d/%m/%Y","%m/%d/%Y","%Y年%m月%d日"]}', 1, 1, 6, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('opt-per-page', 'default', 'posts_per_page', '10', 'integer', 'reading', '每页文章数', NULL, '{"min":1,"max":100}', 1, 1, 10, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('opt-rss-items', 'default', 'rss_items', '20', 'integer', 'reading', 'RSS 条目数', NULL, '{"min":1,"max":100}', 1, 1, 11, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('opt-permalink', 'default', 'permalink_structure', '"/:year/:month/:slug"', 'select', 'reading', 'URL 结构', NULL, '{"values":["/:year/:month/:slug","/:slug","/posts/:slug"]}', 1, 1, 12, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('opt-comment-mod', 'default', 'comment_moderation', 'true', 'boolean', 'discussion', '评论需审核', '开启后新评论需管理员审批', NULL, 0, 1, 20, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('opt-comment-order', 'default', 'comment_order', '"asc"', 'select', 'discussion', '评论排序', NULL, '{"values":["asc","desc"]}', 1, 1, 21, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('opt-default-role', 'default', 'default_role', '"reader"', 'select', 'discussion', '新用户默认角色', NULL, '{"values":["reader","author"]}', 0, 1, 22, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('opt-theme', 'default', 'theme', '"default"', 'select', 'appearance', '当前主题', NULL, '{"values":["default","corporate","minimal","warm"]}', 1, 1, 30, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('opt-maintenance', 'default', 'maintenance_mode', 'false', 'boolean', 'appearance', '维护模式', '开启后前台显示维护页面', NULL, 1, 1, 31, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+INSERT OR IGNORE INTO options (tenant_id, option_key, value, type, group_name, label, description, validation, is_public, autoload, sort_order, updated_at) VALUES
+    ('default', 'site_title', '"My Blog"', 'text', 'general', '站点标题', '显示在浏览器标题栏和页面头部', '{"max_length":100}', 1, 1, 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', 'site_description', '""', 'text', 'general', '站点描述', '简短描述站点用途', '{"max_length":500}', 1, 1, 2, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', 'site_url', '""', 'url', 'general', '站点 URL', '如 https://example.com', NULL, 1, 1, 3, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', 'admin_email', '""', 'email', 'general', '管理员邮箱', NULL, NULL, 0, 1, 4, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', 'timezone', '"UTC"', 'select', 'general', '时区', NULL, '{"values":["UTC","Asia/Shanghai","Asia/Tokyo","US/Eastern","US/Pacific","Europe/London","Europe/Berlin"]}', 1, 1, 5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', 'date_format', '"%Y-%m-%d"', 'select', 'general', '日期格式', NULL, '{"values":["%Y-%m-%d","%d/%m/%Y","%m/%d/%Y","%Y年%m月%d日"]}', 1, 1, 6, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', 'posts_per_page', '10', 'integer', 'reading', '每页文章数', NULL, '{"min":1,"max":100}', 1, 1, 10, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', 'rss_items', '20', 'integer', 'reading', 'RSS 条目数', NULL, '{"min":1,"max":100}', 1, 1, 11, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', 'permalink_structure', '"/:year/:month/:slug"', 'select', 'reading', 'URL 结构', NULL, '{"values":["/:year/:month/:slug","/:slug","/posts/:slug"]}', 1, 1, 12, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', 'comment_moderation', 'true', 'boolean', 'discussion', '评论需审核', '开启后新评论需管理员审批', NULL, 0, 1, 20, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', 'comment_order', '"asc"', 'select', 'discussion', '评论排序', NULL, '{"values":["asc","desc"]}', 1, 1, 21, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', 'default_role', '"reader"', 'select', 'discussion', '新用户默认角色', NULL, '{"values":["reader","author"]}', 0, 1, 22, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', 'theme', '"default"', 'select', 'appearance', '当前主题', NULL, '{"values":["default","corporate","minimal","warm"]}', 1, 1, 30, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('default', 'maintenance_mode', 'false', 'boolean', 'appearance', '维护模式', '开启后前台显示维护页面', NULL, 1, 1, 31, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- Products
 CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     category_id INTEGER REFERENCES categories(id),
     title TEXT NOT NULL,
@@ -772,7 +739,6 @@ CREATE INDEX IF NOT EXISTS idx_products_tenant ON products(tenant_id);
 -- Product Variants
 CREATE TABLE IF NOT EXISTS product_variants (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     product_id INTEGER NOT NULL REFERENCES products(id),
     sku TEXT UNIQUE,
@@ -794,7 +760,6 @@ CREATE INDEX IF NOT EXISTS idx_product_variants_tenant ON product_variants(tenan
 -- User Addresses
 CREATE TABLE IF NOT EXISTS user_addresses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id INTEGER NOT NULL REFERENCES users(id),
     label TEXT NOT NULL DEFAULT '',
@@ -819,7 +784,6 @@ CREATE INDEX IF NOT EXISTS idx_user_addresses_tenant ON user_addresses(tenant_id
 -- Orders
 CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id INTEGER NOT NULL REFERENCES users(id),
     order_no TEXT NOT NULL UNIQUE,
@@ -860,7 +824,6 @@ CREATE INDEX IF NOT EXISTS idx_orders_tenant ON orders(tenant_id);
 -- Order Items
 CREATE TABLE IF NOT EXISTS order_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     order_id INTEGER NOT NULL REFERENCES orders(id),
     product_id INTEGER REFERENCES products(id),
@@ -882,7 +845,6 @@ CREATE INDEX IF NOT EXISTS idx_order_items_tenant ON order_items(tenant_id);
 
 CREATE TABLE IF NOT EXISTS cart_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id INTEGER NOT NULL REFERENCES users(id),
     product_id INTEGER NOT NULL REFERENCES products(id),
@@ -897,7 +859,6 @@ CREATE INDEX IF NOT EXISTS idx_cart_items_tenant ON cart_items(tenant_id);
 
 CREATE TABLE IF NOT EXISTS payment_channels (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     provider TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -920,7 +881,6 @@ CREATE INDEX IF NOT EXISTS idx_payment_channels_tenant ON payment_channels(tenan
 -- Payment Orders
 CREATE TABLE IF NOT EXISTS payment_orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id INTEGER NOT NULL REFERENCES users(id),
     order_id TEXT,
@@ -960,7 +920,6 @@ CREATE INDEX IF NOT EXISTS idx_payment_orders_tenant ON payment_orders(tenant_id
 -- Payment Transactions
 CREATE TABLE IF NOT EXISTS payment_transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     payment_order_id INTEGER NOT NULL REFERENCES payment_orders(id),
     order_id TEXT,
@@ -981,7 +940,6 @@ CREATE INDEX IF NOT EXISTS idx_payment_transactions_tenant ON payment_transactio
 -- Payment Refunds
 CREATE TABLE IF NOT EXISTS payment_refunds (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     payment_order_id INTEGER NOT NULL REFERENCES payment_orders(id),
     order_id TEXT,
@@ -1004,7 +962,6 @@ CREATE INDEX IF NOT EXISTS idx_payment_refunds_tenant ON payment_refunds(tenant_
 -- Wallet Outbox (ensures wallet operations are never lost)
 CREATE TABLE IF NOT EXISTS wallet_outbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id TEXT NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL DEFAULT 'default',
     user_id INTEGER NOT NULL,
     currency TEXT NOT NULL,

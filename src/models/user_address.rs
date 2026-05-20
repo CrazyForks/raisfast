@@ -3,15 +3,15 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct UserAddress {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
-    pub user_id: i64,
+    pub user_id: SnowflakeId,
     pub label: String,
     pub recipient_name: String,
     pub phone: String,
@@ -38,21 +38,6 @@ pub async fn find_by_id(
         "user_addresses",
         UserAddress,
         "id" => id,
-        tenant: tenant_id
-    )
-    .map_err(Into::into)
-}
-
-pub async fn find_by_document_id(
-    pool: &crate::db::Pool,
-    document_id: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<Option<UserAddress>> {
-    raisfast_derive::crud_find!(
-        pool,
-        "user_addresses",
-        UserAddress,
-        "document_id" => document_id,
         tenant: tenant_id
     )
     .map_err(Into::into)
@@ -94,13 +79,12 @@ pub async fn insert(
     cmd: &crate::commands::CreateUserAddressCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<UserAddress> {
-    let document_id = uuid::Uuid::now_v7().to_string();
-    let now = crate::utils::tz::now_utc();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     raisfast_derive::crud_insert!(
         pool,
         "user_addresses",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "user_id" => cmd.user_id,
             "label" => &cmd.label,
             "recipient_name" => &cmd.recipient_name,
@@ -119,13 +103,9 @@ pub async fn insert(
         ],
         tenant: tenant_id
     )?;
-    find_by_document_id(pool, &document_id, tenant_id)
+    find_by_id(pool, id, tenant_id)
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "user_address not found after insert: {document_id}"
-            ))
-        })
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("user_address not found after insert")))
 }
 
 pub async fn update(
@@ -192,21 +172,16 @@ mod tests {
     }
 
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
-        let doc_id = uuid::Uuid::now_v7().to_string();
-        let username = format!("testuser_{doc_id}");
+        let id = crate::utils::id::new_id();
+        let username = format!("testuser_{id}");
         sqlx::query(
-            "INSERT INTO users (document_id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')",
+            "INSERT INTO users (id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')",
         )
-        .bind(&doc_id)
+        .bind(id)
         .bind(&username)
         .execute(pool)
         .await
         .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
-            .bind(&doc_id)
-            .fetch_one(pool)
-            .await
-            .unwrap();
         id
     }
 
@@ -240,7 +215,7 @@ mod tests {
         let uid = seed_user(&pool).await;
         let addr = seed_address(&pool, uid, "Home").await;
 
-        let found = super::find_by_id(&pool, addr.id, None)
+        let found = super::find_by_id(&pool, *addr.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -249,18 +224,6 @@ mod tests {
         assert_eq!(found.phone, "13800138000");
         assert_eq!(found.country, "CN");
         assert_eq!(found.address_line1, "123 Main St");
-    }
-
-    #[tokio::test]
-    async fn find_by_document_id() {
-        let pool = setup_pool().await;
-        let uid = seed_user(&pool).await;
-        let addr = seed_address(&pool, uid, "Office").await;
-        let found = super::find_by_document_id(&pool, &addr.document_id, None)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(found.id, addr.id);
     }
 
     #[tokio::test]
@@ -326,7 +289,7 @@ mod tests {
         let ok = super::update(
             &pool,
             &crate::commands::UpdateUserAddressCmd {
-                id: addr.id,
+                id: *addr.id,
                 user_id: uid,
                 label: "Updated".to_string(),
                 recipient_name: "Jane".to_string(),
@@ -347,7 +310,7 @@ mod tests {
         .unwrap();
         assert!(ok);
 
-        let found = super::find_by_id(&pool, addr.id, None)
+        let found = super::find_by_id(&pool, *addr.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -368,7 +331,7 @@ mod tests {
         let ok = super::update(
             &pool,
             &crate::commands::UpdateUserAddressCmd {
-                id: addr.id,
+                id: *addr.id,
                 user_id: uid2,
                 label: "Hacked".to_string(),
                 recipient_name: "X".to_string(),
@@ -396,12 +359,12 @@ mod tests {
         let uid = seed_user(&pool).await;
         let addr = seed_address(&pool, uid, "Bye").await;
 
-        let ok = super::delete_by_id(&pool, addr.id, uid, None)
+        let ok = super::delete_by_id(&pool, *addr.id, uid, None)
             .await
             .unwrap();
         assert!(ok);
         assert!(
-            super::find_by_id(&pool, addr.id, None)
+            super::find_by_id(&pool, *addr.id, None)
                 .await
                 .unwrap()
                 .is_none()
@@ -415,7 +378,7 @@ mod tests {
         let uid2 = seed_user(&pool).await;
         let addr = seed_address(&pool, uid1, "Home").await;
 
-        let ok = super::delete_by_id(&pool, addr.id, uid2, None)
+        let ok = super::delete_by_id(&pool, *addr.id, uid2, None)
             .await
             .unwrap();
         assert!(!ok);

@@ -82,11 +82,11 @@ async fn change_password_wrong_old() {
 async fn get_user_by_id() {
     let (mut app, state) = test_app().await;
     let _ = register_and_login(&mut app, "pub@test.com", "pubuser", "Password123").await;
-    let user_id: String =
-        sqlx::query_scalar("SELECT document_id FROM users WHERE username = 'pubuser'")
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let user_id_i64: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = 'pubuser'")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    let user_id = user_id_i64.to_string();
     let (status, body): (StatusCode, Value) =
         send(&mut app, get_req(&format!("/api/v1/users/{user_id}"))).await;
     assert!(status.is_success());
@@ -96,7 +96,7 @@ async fn get_user_by_id() {
 #[tokio::test]
 async fn get_user_not_found() {
     let (mut app, _) = test_app().await;
-    let fake = "nonexistent-user-id";
+    let fake = "9999999999999";
     let (status, _): (StatusCode, Value) =
         send(&mut app, get_req(&format!("/api/v1/users/{fake}"))).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -170,11 +170,11 @@ async fn admin_can_update_role() {
         raisfast::models::user::UserRole::Admin,
     );
     let _ = register_and_login(&mut app, "roleuser@test.com", "roleuser", "Password123").await;
-    let reader_id: String =
-        sqlx::query_scalar("SELECT document_id FROM users WHERE username = 'roleuser'")
-            .fetch_one(&state.pool)
-            .await
-            .unwrap();
+    let reader_id_i64: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = 'roleuser'")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    let reader_id = reader_id_i64.to_string();
     let (status, body): (StatusCode, Value) = send(
         &mut app,
         put_json_auth(
@@ -192,11 +192,12 @@ async fn admin_can_update_role() {
 async fn get_user_by_id_returns_public_info() {
     let (mut app, state) = test_app().await;
     let _ = register_and_login(&mut app, "pubinfo@test.com", "pubinfouser", "Password123").await;
-    let user_id: String =
-        sqlx::query_scalar("SELECT document_id FROM users WHERE username = 'pubinfouser'")
+    let user_id_i64: i64 =
+        sqlx::query_scalar("SELECT id FROM users WHERE username = 'pubinfouser'")
             .fetch_one(&state.pool)
             .await
             .unwrap();
+    let user_id = user_id_i64.to_string();
     let (status, body): (StatusCode, Value) =
         send(&mut app, get_req(&format!("/api/v1/users/{user_id}"))).await;
     assert!(status.is_success());

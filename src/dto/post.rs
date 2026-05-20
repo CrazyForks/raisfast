@@ -50,9 +50,7 @@ pub struct PostResponse {
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
     pub status: PostStatus,
-    pub created_by: i64,
     pub author_name: Option<String>,
-    pub category_id: Option<i64>,
     pub category_name: Option<String>,
     pub tags: Vec<crate::models::post::TagBrief>,
     pub view_count: i64,
@@ -76,6 +74,8 @@ pub struct PostResponse {
     pub published_at: Option<Timestamp>,
     pub title_highlight: Option<String>,
     pub excerpt_highlight: Option<String>,
+    pub created_by: Option<String>,
+    pub category_id: Option<String>,
 }
 
 impl PostResponse {
@@ -83,15 +83,13 @@ impl PostResponse {
         let status = p.status;
         let comment_status = p.comment_status;
         Ok(Self {
-            id: p.document_id,
+            id: p.id.to_string(),
             title: p.title,
             slug: p.slug,
             content: p.content,
             status,
             cover_image: p.cover_image,
-            created_by: p.created_by,
             author_name: None,
-            category_id: p.category_id,
             category_name: None,
             tags: vec![],
             view_count: p.view_count,
@@ -113,6 +111,8 @@ impl PostResponse {
             published_at: p.published_at,
             title_highlight: None,
             excerpt_highlight: None,
+            created_by: None,
+            category_id: None,
         })
     }
 }

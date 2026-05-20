@@ -3,6 +3,7 @@
 //! Uses clap derive to define the command-line structure, dispatching each subcommand to its module.
 
 mod app_cmd;
+mod codegen_cmd;
 mod ct_cmd;
 mod db_cmd;
 mod doctor_cmd;
@@ -55,6 +56,11 @@ enum Commands {
     },
     /// System diagnostics
     Doctor,
+    /// Code generation
+    Codegen {
+        #[command(subcommand)]
+        action: CodegenAction,
+    },
     /// Proxy management (multi-tenant reverse proxy)
     #[cfg(feature = "proxy")]
     Proxy {
@@ -164,6 +170,21 @@ pub enum PluginAction {
     Check {
         /// Path to check (default: plugin_dir)
         path: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum CodegenAction {
+    /// Generate model scaffold from schema.sql
+    Model {
+        /// Table names to generate (omit to generate all)
+        tables: Vec<String>,
+        /// Overwrite existing files
+        #[arg(long)]
+        force: bool,
+        /// Print generated code without writing files
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -399,6 +420,17 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
 
         Some(Commands::Doctor) => {
             doctor_cmd::run(config).await;
+        }
+
+        Some(Commands::Codegen {
+            action:
+                CodegenAction::Model {
+                    tables,
+                    force,
+                    dry_run,
+                },
+        }) => {
+            codegen_cmd::run_model(&tables, force, dry_run)?;
         }
 
         #[cfg(feature = "proxy")]

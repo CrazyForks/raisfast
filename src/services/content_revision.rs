@@ -15,7 +15,7 @@ pub struct DiffResult {
 pub async fn list_revisions(
     pool: &Pool,
     content_type: &str,
-    content_id: &str,
+    content_id: i64,
     _page: i64,
     _page_size: i64,
 ) -> AppResult<(Vec<RevisionSummary>, i64)> {
@@ -36,7 +36,7 @@ pub async fn list_revisions(
 pub async fn get_revision(
     pool: &Pool,
     content_type: &str,
-    content_id: &str,
+    content_id: i64,
     revision_id: i64,
 ) -> AppResult<ContentRevision> {
     content_revision::get_revision(pool, content_type, content_id, revision_id)
@@ -47,7 +47,7 @@ pub async fn get_revision(
 pub async fn restore_revision(
     pool: &Pool,
     content_type: &str,
-    content_id: &str,
+    content_id: i64,
     revision_id: i64,
 ) -> AppResult<Value> {
     let revision = get_revision(pool, content_type, content_id, revision_id).await?;
@@ -64,7 +64,7 @@ pub async fn restore_revision(
 pub async fn diff_revisions(
     pool: &Pool,
     content_type: &str,
-    content_id: &str,
+    content_id: i64,
     rev_id_a: i64,
     rev_id_b: i64,
 ) -> AppResult<DiffResult> {

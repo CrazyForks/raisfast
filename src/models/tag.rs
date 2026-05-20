@@ -8,13 +8,13 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct Tag {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
     pub name: String,
     pub slug: String,
@@ -25,8 +25,8 @@ pub struct Tag {
     pub og_title: Option<String>,
     pub og_description: Option<String>,
     pub og_image: Option<String>,
-    pub created_by: Option<i64>,
-    pub updated_by: Option<i64>,
+    pub created_by: Option<SnowflakeId>,
+    pub updated_by: Option<SnowflakeId>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -63,15 +63,6 @@ pub async fn find_by_id(
         .map_err(Into::into)
 }
 
-pub async fn find_by_document_id(
-    pool: &crate::db::Pool,
-    document_id: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<Tag> {
-    raisfast_derive::crud_find_one!(pool, "tags", Tag, "document_id" => document_id, tenant: tenant_id)
-        .map_err(Into::into)
-}
-
 pub async fn create(
     pool: &crate::db::Pool,
     name: &str,
@@ -79,13 +70,13 @@ pub async fn create(
     tenant_id: Option<&str>,
     created_by: Option<i64>,
 ) -> AppResult<Tag> {
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
 
     raisfast_derive::crud_insert!(
         pool,
         "tags",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "name" => name,
             "slug" => slug,
             "created_by" => created_by,
@@ -96,12 +87,7 @@ pub async fn create(
         tenant: tenant_id
     )?;
 
-    find_by_document_id(pool, &document_id, tenant_id).await
-}
-
-pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
-    let result = raisfast_derive::crud_delete!(pool, "tags", "id" => id, tenant: tenant_id)?;
-    AppError::expect_affected(&result, "tag")
+    find_by_id(pool, id, tenant_id).await
 }
 
 pub async fn update(
@@ -121,6 +107,11 @@ pub async fn update(
     find_by_id(pool, id, tenant_id).await
 }
 
+pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
+    let result = raisfast_derive::crud_delete!(pool, "tags", "id" => id, tenant: tenant_id)?;
+    AppError::expect_affected(&result, "tag")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,21 +127,9 @@ mod tests {
         assert_eq!(tag.name, "rust");
         assert_eq!(tag.slug, "rust");
 
-        let found = find_by_id(&pool, tag.id, None).await.unwrap();
+        let found = find_by_id(&pool, *tag.id, None).await.unwrap();
         assert_eq!(found.id, tag.id);
         assert_eq!(found.name, "rust");
-    }
-
-    #[tokio::test]
-    async fn find_by_document_id() {
-        let pool = setup_pool().await;
-        let tag = create(&pool, "rust", "rust", None, None).await.unwrap();
-
-        let found = super::find_by_document_id(&pool, &tag.document_id, None)
-            .await
-            .unwrap();
-        assert_eq!(found.id, tag.id);
-        assert_eq!(found.document_id, tag.document_id);
     }
 
     #[tokio::test]
@@ -183,7 +162,7 @@ mod tests {
         let pool = setup_pool().await;
         let tag = create(&pool, "rust", "rust", None, None).await.unwrap();
 
-        let updated = update(&pool, tag.id, "Rust Lang", "rust-lang", None)
+        let updated = update(&pool, *tag.id, "Rust Lang", "rust-lang", None)
             .await
             .unwrap();
         assert_eq!(updated.name, "Rust Lang");
@@ -196,8 +175,8 @@ mod tests {
         let pool = setup_pool().await;
         let tag = create(&pool, "rust", "rust", None, None).await.unwrap();
 
-        delete(&pool, tag.id, None).await.unwrap();
-        let result = find_by_id(&pool, tag.id, None).await;
+        delete(&pool, *tag.id, None).await.unwrap();
+        let result = find_by_id(&pool, *tag.id, None).await;
         assert!(result.is_err());
     }
 }

@@ -11,14 +11,14 @@ use ts_rs::TS;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 /// API Token full database row model
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct ApiToken {
-    pub id: i64,
-    pub document_id: String,
-    pub user_id: i64,
+    pub id: SnowflakeId,
+    pub user_id: SnowflakeId,
     pub name: String,
     pub token_hash: String,
     pub token_prefix: String,
@@ -32,8 +32,7 @@ pub struct ApiToken {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct ApiTokenListItem {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub name: String,
     pub token_prefix: String,
     pub scopes: String,
@@ -52,9 +51,9 @@ pub async fn create(
     scopes: &str,
     expires_at: Option<&str>,
 ) -> AppResult<ApiToken> {
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     raisfast_derive::crud_insert!(pool, "api_tokens", [
-        "document_id" => &document_id,
+        "id" => id,
         "user_id" => user_id,
         "name" => name,
         "token_hash" => token_hash,
@@ -63,7 +62,7 @@ pub async fn create(
         "expires_at" => expires_at,
         "created_at" => now
     ])?;
-    find_by_id(pool, &document_id).await?.ok_or_else(|| {
+    find_by_id(pool, id).await?.ok_or_else(|| {
         crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
             "failed to fetch newly created api token"
         ))
@@ -84,7 +83,6 @@ pub async fn list_by_user(
     raisfast_derive::check_schema!(
         "api_tokens",
         "id",
-        "document_id",
         "name",
         "token_prefix",
         "scopes",
@@ -94,7 +92,7 @@ pub async fn list_by_user(
         "user_id"
     );
     let sql = format!(
-        "SELECT id, document_id, name, token_prefix, scopes, last_used_at, expires_at, created_at FROM api_tokens WHERE user_id = {} ORDER BY created_at DESC",
+        "SELECT id, name, token_prefix, scopes, last_used_at, expires_at, created_at FROM api_tokens WHERE user_id = {} ORDER BY created_at DESC",
         ph(1)
     );
     let rows = sqlx::query_as::<_, ApiTokenListItem>(&sql)
@@ -104,15 +102,14 @@ pub async fn list_by_user(
     Ok(rows)
 }
 
-/// Find API Token by document_id
-pub async fn find_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<Option<ApiToken>> {
-    raisfast_derive::crud_find!(pool, "api_tokens", ApiToken, "document_id" => document_id)
-        .map_err(Into::into)
+/// Find API Token by id
+pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<Option<ApiToken>> {
+    raisfast_derive::crud_find!(pool, "api_tokens", ApiToken, "id" => id).map_err(Into::into)
 }
 
-/// Delete API Token by document_id
-pub async fn delete_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<()> {
-    raisfast_derive::crud_delete!(pool, "api_tokens", "document_id" => document_id)?;
+/// Delete API Token by id
+pub async fn delete_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
+    raisfast_derive::crud_delete!(pool, "api_tokens", "id" => id)?;
     Ok(())
 }
 
@@ -138,14 +135,14 @@ mod tests {
         let user = crate::models::user::create(
             pool,
             &crate::commands::user::CreateUserCmd {
-                username: crate::utils::id::new_document_id(),
+                username: crate::utils::id::new_id().to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
         )
         .await
         .unwrap();
-        user.id
+        *user.id
     }
 
     #[tokio::test]
@@ -183,7 +180,7 @@ mod tests {
     #[tokio::test]
     async fn find_by_id_not_found() {
         let pool = setup_pool().await;
-        let result = find_by_id(&pool, "nonexistent-doc-id").await.unwrap();
+        let result = find_by_id(&pool, 99999).await.unwrap();
         assert!(result.is_none());
     }
 
@@ -227,8 +224,8 @@ mod tests {
         let row = create(&pool, user_id, "Del", "h3", "rblog_c", "[\"read\"]", None)
             .await
             .unwrap();
-        delete_by_id(&pool, &row.document_id).await.unwrap();
-        let found = find_by_id(&pool, &row.document_id).await.unwrap();
+        delete_by_id(&pool, *row.id).await.unwrap();
+        let found = find_by_id(&pool, *row.id).await.unwrap();
         assert!(found.is_none());
     }
 
@@ -241,8 +238,8 @@ mod tests {
             .unwrap();
         assert!(row.last_used_at.is_none());
 
-        touch_last_used(&pool, row.id).await.unwrap();
-        let updated = find_by_id(&pool, &row.document_id).await.unwrap().unwrap();
+        touch_last_used(&pool, *row.id).await.unwrap();
+        let updated = find_by_id(&pool, *row.id).await.unwrap().unwrap();
         assert!(updated.last_used_at.is_some());
     }
 

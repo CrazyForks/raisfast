@@ -58,7 +58,7 @@ pub async fn seed(
     let password_hash = raisfast::services::auth::hash_password(password)
         .map_err(|e| anyhow::anyhow!("password hashing failed: {e}"))?;
 
-    let (document_id, now) = raisfast::utils::id::new_document_id_and_timestamp();
+    let (id, now) = raisfast::utils::id::new_id_and_timestamp();
 
     let tid = if cfg!(feature = "db-sqlite") {
         let row: Option<(String,)> =
@@ -73,7 +73,7 @@ pub async fn seed(
     match tid {
         Some(tid) => {
             sqlx::query(&format!(
-                "INSERT INTO users (document_id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
+                "INSERT INTO users (id, tenant_id, username, created_at, updated_at, role, status, registered_via) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
                 dialect::ph(1),
                 dialect::ph(2),
                 dialect::ph(3),
@@ -83,7 +83,7 @@ pub async fn seed(
                 dialect::ph(7),
                 dialect::ph(8),
             ))
-            .bind(&document_id)
+            .bind(id)
             .bind(&tid)
             .bind(username)
             .bind(now)
@@ -96,7 +96,7 @@ pub async fn seed(
         }
         None => {
             sqlx::query(&format!(
-                "INSERT INTO users (document_id, username, created_at, updated_at, role, status, registered_via) VALUES ({}, {}, {}, {}, {}, {}, {})",
+                "INSERT INTO users (id, username, created_at, updated_at, role, status, registered_via) VALUES ({}, {}, {}, {}, {}, {}, {})",
                 dialect::ph(1),
                 dialect::ph(2),
                 dialect::ph(3),
@@ -105,7 +105,7 @@ pub async fn seed(
                 dialect::ph(6),
                 dialect::ph(7),
             ))
-            .bind(&document_id)
+            .bind(id)
             .bind(username)
             .bind(now)
             .bind(now)
@@ -118,17 +118,17 @@ pub async fn seed(
     }
 
     let (user_id,): (i64,) = sqlx::query_as(&format!(
-        "SELECT id FROM users WHERE document_id = {}",
+        "SELECT id FROM users WHERE id = {}",
         dialect::ph(1)
     ))
-    .bind(&document_id)
+    .bind(id)
     .fetch_one(&pool)
     .await?;
 
     let cred_data = serde_json::json!({"password_hash": password_hash}).to_string();
-    let (cred_doc_id, cred_now) = raisfast::utils::id::new_document_id_and_timestamp();
+    let (cred_id, cred_now) = raisfast::utils::id::new_id_and_timestamp();
     sqlx::query(&format!(
-        "INSERT INTO user_credentials (document_id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, 1, {}, {})",
+        "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, 1, {}, {})",
         dialect::ph(1),
         dialect::ph(2),
         dialect::ph(3),
@@ -137,7 +137,7 @@ pub async fn seed(
         dialect::ph(6),
         dialect::ph(7),
     ))
-    .bind(&cred_doc_id)
+    .bind(cred_id)
     .bind(user_id)
     .bind("email")
     .bind(email)

@@ -24,7 +24,7 @@ pub trait Policy {
 }
 
 fn owner_or_admin(user: &AuthUser, owner_id: i64) -> AppResult<()> {
-    let uid = user.user_int_id().ok_or(AppError::Unauthorized)?;
+    let uid = user.user_id().ok_or(AppError::Unauthorized)?;
     if user.is_admin() || uid == owner_id {
         Ok(())
     } else {
@@ -32,9 +32,12 @@ fn owner_or_admin(user: &AuthUser, owner_id: i64) -> AppResult<()> {
     }
 }
 
-fn owner_or_admin_opt(user: &AuthUser, owner_id: Option<i64>) -> AppResult<()> {
-    let uid = user.user_int_id().ok_or(AppError::Unauthorized)?;
-    if user.is_admin() || owner_id == Some(uid) {
+fn owner_or_admin_opt(
+    user: &AuthUser,
+    owner_id: Option<crate::utils::id::SnowflakeId>,
+) -> AppResult<()> {
+    let uid = user.user_id().ok_or(AppError::Unauthorized)?;
+    if user.is_admin() || owner_id == Some(crate::utils::id::SnowflakeId(uid)) {
         Ok(())
     } else {
         Err(AppError::Forbidden)
@@ -48,11 +51,11 @@ impl Policy for PostPolicy {
     type Resource = crate::models::post::Post;
 
     fn can_update(user: &AuthUser, post: &Self::Resource) -> AppResult<()> {
-        owner_or_admin(user, post.created_by)
+        owner_or_admin(user, *post.created_by)
     }
 
     fn can_delete(user: &AuthUser, post: &Self::Resource) -> AppResult<()> {
-        owner_or_admin(user, post.created_by)
+        owner_or_admin(user, *post.created_by)
     }
 }
 
@@ -77,27 +80,22 @@ mod tests {
     use crate::models::user::UserRole;
 
     fn admin() -> AuthUser {
-        AuthUser::from_parts(Some("u".into()), Some(1), UserRole::Admin, Some("t".into()))
+        AuthUser::from_parts(Some(1), UserRole::Admin, Some("t".into()))
     }
 
     fn author(uid: i64) -> AuthUser {
-        AuthUser::from_parts(
-            Some("u".into()),
-            Some(uid),
-            UserRole::Author,
-            Some("t".into()),
-        )
+        AuthUser::from_parts(Some(uid), UserRole::Author, Some("t".into()))
     }
 
     fn anon() -> AuthUser {
-        AuthUser::from_parts(None, None, UserRole::Reader, Some("t".into()))
+        AuthUser::from_parts(None, UserRole::Reader, Some("t".into()))
     }
 
     fn mock_post(created_by: i64) -> crate::models::post::Post {
+        use crate::utils::id::SnowflakeId;
         use crate::utils::tz::Timestamp;
         crate::models::post::Post {
-            id: 1,
-            document_id: "doc".into(),
+            id: SnowflakeId(1),
             tenant_id: None,
             title: String::new(),
             slug: String::new(),
@@ -105,7 +103,7 @@ mod tests {
             excerpt: None,
             cover_image: None,
             status: crate::models::post::PostStatus::Draft,
-            created_by,
+            created_by: SnowflakeId(created_by),
             updated_by: None,
             category_id: None,
             view_count: 0,
@@ -128,13 +126,13 @@ mod tests {
     }
 
     fn mock_comment(created_by: Option<i64>) -> crate::models::comment::Comment {
+        use crate::utils::id::SnowflakeId;
         use crate::utils::tz::Timestamp;
         crate::models::comment::Comment {
-            id: 1,
-            document_id: "doc".into(),
+            id: SnowflakeId(1),
             tenant_id: None,
-            post_id: 1,
-            created_by,
+            post_id: SnowflakeId(1),
+            created_by: created_by.map(SnowflakeId),
             updated_by: None,
             nickname: None,
             email: None,

@@ -2,8 +2,8 @@ use super::*;
 
 async fn setup_admin() -> (axum::Router, AppState, String) {
     let (app, state) = test_app().await;
-    let (int_id, doc_id) = create_admin(&state.pool).await;
-    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin);
+    let (int_id, id) = create_admin(&state.pool).await;
+    let tok = make_token(&id, int_id, raisfast::models::user::UserRole::Admin);
     (app, state, tok)
 }
 
@@ -126,7 +126,7 @@ async fn list_active_products_only() {
     )
     .await;
     let pid = create_body["data"]["id"].as_str().unwrap();
-    let int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE document_id = ?")
+    let int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE id = ?")
         .bind(pid)
         .fetch_one(&state.pool)
         .await

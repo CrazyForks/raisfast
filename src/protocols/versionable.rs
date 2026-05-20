@@ -79,14 +79,14 @@ impl Protocol for VersionableProtocol {
         &self,
         pool: &crate::db::pool::Pool,
         content_type_singular: &str,
-        record_id: &str,
+        record_id: i64,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send + '_>>
     {
         let pool = pool.clone();
         let singular = content_type_singular.to_string();
-        let id = record_id.to_string();
+        let id = record_id;
         Box::pin(async move {
-            let _ = crate::models::content_revision::delete_revisions(&pool, &singular, &id).await;
+            let _ = crate::models::content_revision::delete_revisions(&pool, &singular, id).await;
             Ok(())
         })
     }

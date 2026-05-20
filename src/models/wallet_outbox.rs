@@ -3,6 +3,7 @@ use sqlx::FromRow;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -17,9 +18,8 @@ define_enum!(
 
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct WalletOutbox {
-    pub id: i64,
-    pub document_id: String,
-    pub user_id: i64,
+    pub id: SnowflakeId,
+    pub user_id: SnowflakeId,
     pub currency: String,
     pub amount: i64,
     pub entry_type: String,
@@ -42,13 +42,13 @@ pub async fn tx_insert(
     cmd: &crate::commands::CreateWalletOutboxCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let document_id = uuid::Uuid::now_v7().to_string();
+    let id = crate::utils::id::new_id();
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_insert!(
         &mut *tx,
         "wallet_outbox",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "user_id" => cmd.user_id,
             "currency" => &cmd.currency,
             "amount" => cmd.amount,

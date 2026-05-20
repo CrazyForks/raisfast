@@ -14,32 +14,32 @@ async fn setup_admin() -> (axum::Router, AppState, String) {
     raisfast::models::currencies::create(&state.pool, "USD", "US Dollar", 2)
         .await
         .unwrap();
-    let (int_id, doc_id) = create_admin(&state.pool).await;
-    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin);
+    let (int_id, id) = create_admin(&state.pool).await;
+    let tok = make_token(&id, int_id, raisfast::models::user::UserRole::Admin);
     (app, state, tok)
 }
 
-async fn seed_user_get_doc_id(app: &mut axum::Router, tag: u64) -> (String, String) {
+async fn seed_user_get_id(app: &mut axum::Router, tag: u64) -> (String, String) {
     let email = format!("w{tag}@test.com");
     let username = format!("wuser{tag}");
     let (tok, _) = register_and_login(app, &email, &username, "Password123").await;
     let (_, body) = send(app, get_auth("/api/v1/users/me", &tok)).await;
-    let doc_id = body["data"]["id"].as_str().unwrap().to_string();
-    (tok, doc_id)
+    let id = body["data"]["id"].as_str().unwrap().to_string();
+    (tok, id)
 }
 
 #[tokio::test]
 async fn admin_credit_creates_wallet() {
     let tag = unique_tag();
     let (mut app, _state, tok) = setup_admin().await;
-    let (_user_tok, user_doc_id) = seed_user_get_doc_id(&mut app, tag).await;
+    let (_user_tok, user_id) = seed_user_get_id(&mut app, tag).await;
 
     let (status, body) = send(
         &mut app,
         post_json_auth(
             "/api/v1/admin/wallets/credit",
             json!({
-                "user_id": user_doc_id,
+                "user_id": user_id,
                 "currency": "CNY",
                 "transaction_no": format!("TXCREDIT{tag}"),
                 "amount": 10000,
@@ -57,14 +57,14 @@ async fn admin_credit_creates_wallet() {
 async fn admin_debit_deducts_balance() {
     let tag = unique_tag();
     let (mut app, _state, tok) = setup_admin().await;
-    let (_user_tok, user_doc_id) = seed_user_get_doc_id(&mut app, tag).await;
+    let (_user_tok, user_id) = seed_user_get_id(&mut app, tag).await;
 
     let _ = send(
         &mut app,
         post_json_auth(
             "/api/v1/admin/wallets/credit",
             json!({
-                "user_id": user_doc_id,
+                "user_id": user_id,
                 "currency": "CNY",
                 "transaction_no": format!("TXPRE{tag}"),
                 "amount": 5000,
@@ -79,7 +79,7 @@ async fn admin_debit_deducts_balance() {
         post_json_auth(
             "/api/v1/admin/wallets/debit",
             json!({
-                "user_id": user_doc_id,
+                "user_id": user_id,
                 "currency": "CNY",
                 "transaction_no": format!("TXDEBIT{tag}"),
                 "amount": 2000,
@@ -97,14 +97,14 @@ async fn admin_debit_deducts_balance() {
 async fn user_list_wallets_after_credit() {
     let tag = unique_tag();
     let (mut app, _state, tok) = setup_admin().await;
-    let (user_tok, user_doc_id) = seed_user_get_doc_id(&mut app, tag).await;
+    let (user_tok, user_id) = seed_user_get_id(&mut app, tag).await;
 
     let _ = send(
         &mut app,
         post_json_auth(
             "/api/v1/admin/wallets/credit",
             json!({
-                "user_id": user_doc_id,
+                "user_id": user_id,
                 "currency": "CNY",
                 "transaction_no": format!("TXLIST{tag}"),
                 "amount": 3000,
@@ -126,14 +126,14 @@ async fn user_list_wallets_after_credit() {
 async fn user_get_wallet_by_currency() {
     let tag = unique_tag();
     let (mut app, _state, tok) = setup_admin().await;
-    let (user_tok, user_doc_id) = seed_user_get_doc_id(&mut app, tag).await;
+    let (user_tok, user_id) = seed_user_get_id(&mut app, tag).await;
 
     let _ = send(
         &mut app,
         post_json_auth(
             "/api/v1/admin/wallets/credit",
             json!({
-                "user_id": user_doc_id,
+                "user_id": user_id,
                 "currency": "USD",
                 "transaction_no": format!("TXUSD{tag}"),
                 "amount": 5000,
@@ -153,14 +153,14 @@ async fn user_get_wallet_by_currency() {
 async fn admin_list_all_wallets() {
     let tag = unique_tag();
     let (mut app, _state, tok) = setup_admin().await;
-    let (_user_tok, user_doc_id) = seed_user_get_doc_id(&mut app, tag).await;
+    let (_user_tok, user_id) = seed_user_get_id(&mut app, tag).await;
 
     let _ = send(
         &mut app,
         post_json_auth(
             "/api/v1/admin/wallets/credit",
             json!({
-                "user_id": user_doc_id,
+                "user_id": user_id,
                 "currency": "CNY",
                 "transaction_no": format!("TXALIST{tag}"),
                 "amount": 1000,
@@ -184,14 +184,14 @@ async fn admin_list_all_wallets() {
 async fn admin_reversal_restores_balance() {
     let tag = unique_tag();
     let (mut app, _state, tok) = setup_admin().await;
-    let (_user_tok, user_doc_id) = seed_user_get_doc_id(&mut app, tag).await;
+    let (_user_tok, user_id) = seed_user_get_id(&mut app, tag).await;
 
     let (_, credit_body) = send(
         &mut app,
         post_json_auth(
             "/api/v1/admin/wallets/credit",
             json!({
-                "user_id": user_doc_id,
+                "user_id": user_id,
                 "currency": "CNY",
                 "transaction_no": format!("TXREVPRE{tag}"),
                 "amount": 5000,
@@ -201,12 +201,12 @@ async fn admin_reversal_restores_balance() {
     )
     .await;
 
-    let tx_doc_id = credit_body["data"]["id"].as_str().unwrap();
+    let tx_id = credit_body["data"]["id"].as_str().unwrap();
 
     let (status, body) = send(
         &mut app,
         post_json_auth(
-            &format!("/api/v1/admin/wallets/{tx_doc_id}/reversal"),
+            &format!("/api/v1/admin/wallets/{tx_id}/reversal"),
             json!({"transaction_no": format!("TXREV{tag}")}),
             &tok,
         ),
@@ -220,14 +220,14 @@ async fn admin_reversal_restores_balance() {
 async fn user_list_transactions() {
     let tag = unique_tag();
     let (mut app, _state, tok) = setup_admin().await;
-    let (user_tok, user_doc_id) = seed_user_get_doc_id(&mut app, tag).await;
+    let (user_tok, user_id) = seed_user_get_id(&mut app, tag).await;
 
     let _ = send(
         &mut app,
         post_json_auth(
             "/api/v1/admin/wallets/credit",
             json!({
-                "user_id": user_doc_id,
+                "user_id": user_id,
                 "currency": "CNY",
                 "transaction_no": format!("TXTXN{tag}"),
                 "amount": 1000,
@@ -254,14 +254,14 @@ async fn user_list_transactions() {
 async fn debit_insufficient_balance_rejected() {
     let tag = unique_tag();
     let (mut app, _state, tok) = setup_admin().await;
-    let (_user_tok, user_doc_id) = seed_user_get_doc_id(&mut app, tag).await;
+    let (_user_tok, user_id) = seed_user_get_id(&mut app, tag).await;
 
     let (status, _) = send(
         &mut app,
         post_json_auth(
             "/api/v1/admin/wallets/debit",
             json!({
-                "user_id": user_doc_id,
+                "user_id": user_id,
                 "currency": "CNY",
                 "transaction_no": format!("TXINSUFF{tag}"),
                 "amount": 99999,

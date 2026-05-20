@@ -108,7 +108,6 @@ pub struct ShipOrderRequest {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProductResponse {
     pub id: String,
-    pub category_id: Option<String>,
     pub title: String,
     pub description: Option<String>,
     pub cover_url: Option<String>,
@@ -153,8 +152,7 @@ pub struct ProductResponse {
 impl From<crate::models::product::Product> for ProductResponse {
     fn from(p: crate::models::product::Product) -> Self {
         Self {
-            id: p.document_id,
-            category_id: p.category_id.map(|_| String::new()),
+            id: p.id.to_string(),
             title: p.title,
             description: p.description,
             cover_url: p.cover_url,
@@ -191,8 +189,6 @@ impl From<crate::models::product::Product> for ProductResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct OrderItemResponse {
     pub id: String,
-    pub order_id: String,
-    pub product_id: Option<String>,
     pub title: String,
     pub description: Option<String>,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
@@ -209,9 +205,7 @@ pub struct OrderItemResponse {
 impl From<crate::models::order_item::OrderItem> for OrderItemResponse {
     fn from(i: crate::models::order_item::OrderItem) -> Self {
         Self {
-            id: i.document_id,
-            order_id: i.order_id.to_string(),
-            product_id: i.product_id.map(|id| id.to_string()),
+            id: i.id.to_string(),
             title: i.title,
             description: i.description,
             unit_price: i.unit_price,
@@ -228,7 +222,6 @@ impl From<crate::models::order_item::OrderItem> for OrderItemResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct OrderResponse {
     pub id: String,
-    pub user_id: String,
     pub order_no: String,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
     pub subtotal: i64,

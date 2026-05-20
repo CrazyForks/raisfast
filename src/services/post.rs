@@ -22,21 +22,19 @@ use crate::middleware::auth::AuthUser;
 use crate::models::post::{PostJoinedRow, PostStatus};
 use crate::policy::Policy;
 use crate::search::SearchEngine;
+use crate::utils::id::SnowflakeId;
 
-pub async fn resolve_doc_id_to_int(
+pub async fn find_existing_id(
     pool: &crate::db::Pool,
     table: &str,
-    doc_id: &str,
+    id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<i64>> {
-    if doc_id.is_empty() {
-        return Ok(None);
-    }
-    if let Ok(int_id) = doc_id.parse::<i64>() {
-        return Ok(Some(int_id));
+    if tenant_id.is_none() {
+        return Ok(Some(id));
     }
     if !crate::db::dialect::is_safe_identifier(table) {
-        return Ok(None);
+        return Ok(Some(id));
     }
     let filter = if tenant_id.is_some() {
         format!(" AND tenant_id = {}", crate::db::dialect::ph(2))
@@ -44,14 +42,14 @@ pub async fn resolve_doc_id_to_int(
         String::new()
     };
     let sql = format!(
-        "SELECT id FROM {table} WHERE document_id = {}{filter}",
+        "SELECT id FROM {table} WHERE id = {}{filter}",
         crate::db::dialect::ph(1)
     );
-    let mut q = sqlx::query_scalar::<_, i64>(&sql).bind(doc_id);
+    let mut q = sqlx::query_scalar::<_, i64>(&sql).bind(id);
     bind_tenant!(q, tenant_id);
     q.fetch_optional(pool)
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("resolve doc_id in {table} failed: {e}")))
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("resolve id in {table} failed: {e}")))
 }
 
 // ─── Trait ───
@@ -178,17 +176,19 @@ impl PostService for PostServiceImpl {
             crate::aspects::excerpt_aspect::extract_excerpt(&req.content, 200)
         });
 
-        let category_id = if let Some(ref doc_id) = req.category_id {
-            resolve_doc_id_to_int(&self.pool, "categories", doc_id, auth.tenant_id()).await?
+        let category_id = if let Some(ref raw_id) = req.category_id {
+            let parsed = crate::utils::id::parse_id(raw_id)?;
+            find_existing_id(&self.pool, "categories", parsed, auth.tenant_id()).await?
         } else {
             None
         };
         let tag_ids = match req.tag_ids {
             Some(ref ids) => {
                 let mut resolved = Vec::new();
-                for doc_id in ids {
+                for raw_id in ids {
+                    let parsed = crate::utils::id::parse_id(raw_id)?;
                     if let Some(int_id) =
-                        resolve_doc_id_to_int(&self.pool, "tags", doc_id, auth.tenant_id()).await?
+                        find_existing_id(&self.pool, "tags", parsed, auth.tenant_id()).await?
                     {
                         resolved.push(int_id);
                     }
@@ -205,21 +205,21 @@ impl PostService for PostServiceImpl {
             excerpt: Some(excerpt),
             cover_image: req.cover_image,
             status,
-            created_by: auth.user_int_id().ok_or(AppError::Unauthorized)?,
-            updated_by: auth.user_int_id(),
+            created_by: auth.user_id().ok_or(AppError::Unauthorized)?,
+            updated_by: auth.user_id(),
             category_id,
             tag_ids,
         };
         let p = create_post_with_tags(&self.pool, cmd, auth.tenant_id()).await?;
 
         let author_name =
-            crate::models::post::get_author_name(&self.pool, p.created_by, auth.tenant_id())
+            crate::models::post::get_author_name(&self.pool, *p.created_by, auth.tenant_id())
                 .await
                 .ok()
                 .flatten();
 
         let category_name = if let Some(cat_id) = p.category_id {
-            crate::models::post::get_category_name(&self.pool, cat_id, auth.tenant_id())
+            crate::models::post::get_category_name(&self.pool, *cat_id, auth.tenant_id())
                 .await
                 .ok()
                 .flatten()
@@ -227,7 +227,7 @@ impl PostService for PostServiceImpl {
             None
         };
 
-        let tags = crate::models::post::get_post_tags(&self.pool, p.id, auth.tenant_id())
+        let tags = crate::models::post::get_post_tags(&self.pool, *p.id, auth.tenant_id())
             .await
             .unwrap_or_default();
 
@@ -247,7 +247,7 @@ impl PostService for PostServiceImpl {
             .await?
             .ok_or_else(|| AppError::not_found("post"))?;
 
-        let existing_id = existing.id;
+        let existing_id = *existing.id;
         let (req, d) = self.before_update(auth, &existing, req).await?;
         let resp = self
             .update_inner(existing_id, existing, req, d, auth)
@@ -266,7 +266,7 @@ impl PostService for PostServiceImpl {
 
         self.before_delete(auth, &existing).await?;
 
-        crate::models::post::delete(&self.pool, existing.id, auth.tenant_id()).await?;
+        crate::models::post::delete(&self.pool, *existing.id, auth.tenant_id()).await?;
         self.after_deleted(&existing);
         Ok(())
     }
@@ -275,7 +275,7 @@ impl PostService for PostServiceImpl {
         let row =
             crate::models::post::increment_view_count_joined(&self.pool, slug, auth.tenant_id())
                 .await?;
-        let tags = crate::models::post::get_post_tags(&self.pool, row.id, auth.tenant_id())
+        let tags = crate::models::post::get_post_tags(&self.pool, *row.id, auth.tenant_id())
             .await
             .unwrap_or_default();
         joined_row_to_response(row, tags).await
@@ -285,8 +285,8 @@ impl PostService for PostServiceImpl {
         let post = crate::models::post::find_by_slug(&self.pool, slug, auth.tenant_id()).await?;
         let post = post.ok_or_else(|| AppError::not_found("post not found"))?;
         let row =
-            crate::models::post::find_joined_by_id(&self.pool, post.id, auth.tenant_id()).await?;
-        let tags = crate::models::post::get_post_tags(&self.pool, row.id, auth.tenant_id())
+            crate::models::post::find_joined_by_id(&self.pool, *post.id, auth.tenant_id()).await?;
+        let tags = crate::models::post::get_post_tags(&self.pool, *row.id, auth.tenant_id())
             .await
             .unwrap_or_default();
         joined_row_to_response(row, tags).await
@@ -331,7 +331,8 @@ impl PostService for PostServiceImpl {
         id: &str,
         req: UpdatePostRequest,
     ) -> AppResult<PostResponse> {
-        let int_id = resolve_doc_id_to_int(&self.pool, "posts", id, auth.tenant_id())
+        let parsed_id = crate::utils::id::parse_id(id)?;
+        let int_id = find_existing_id(&self.pool, "posts", parsed_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("post"))?;
 
@@ -351,7 +352,8 @@ impl PostService for PostServiceImpl {
     }
 
     async fn admin_delete(&self, auth: &AuthUser, id: &str) -> AppResult<()> {
-        let int_id = resolve_doc_id_to_int(&self.pool, "posts", id, auth.tenant_id())
+        let parsed_id = crate::utils::id::parse_id(id)?;
+        let int_id = find_existing_id(&self.pool, "posts", parsed_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("post"))?;
 
@@ -368,9 +370,12 @@ impl PostService for PostServiceImpl {
 
     async fn batch(&self, auth: &AuthUser, action: &str, ids: &[String]) -> AppResult<usize> {
         let mut affected = 0usize;
-        for doc_id in ids {
+        for raw_id in ids {
+            let Ok(parsed_id) = crate::utils::id::parse_id(raw_id) else {
+                continue;
+            };
             let Some(int_id) =
-                resolve_doc_id_to_int(&self.pool, "posts", doc_id, auth.tenant_id()).await?
+                find_existing_id(&self.pool, "posts", parsed_id, auth.tenant_id()).await?
             else {
                 continue;
             };
@@ -419,7 +424,7 @@ impl PostService for PostServiceImpl {
                             )
                             .await?;
                         let cmd = UpdatePostCmd {
-                            id: post.id,
+                            id: *post.id,
                             title: None,
                             slug: None,
                             content: None,
@@ -428,7 +433,7 @@ impl PostService for PostServiceImpl {
                             status: req.status,
                             category_id: None,
                             tag_ids: None,
-                            updated_by: auth.user_int_id(),
+                            updated_by: auth.user_id(),
                         };
                         if update_post_with_tags(&self.pool, cmd, auth.tenant_id())
                             .await
@@ -486,17 +491,19 @@ impl PostServiceImpl {
             crate::aspects::excerpt_aspect::extract_excerpt(content, 200)
         });
 
-        let category_id = if let Some(ref doc_id) = req.category_id {
-            resolve_doc_id_to_int(&self.pool, "categories", doc_id, auth.tenant_id()).await?
+        let category_id = if let Some(ref raw_id) = req.category_id {
+            let parsed = crate::utils::id::parse_id(raw_id)?;
+            find_existing_id(&self.pool, "categories", parsed, auth.tenant_id()).await?
         } else {
             None
         };
         let tag_ids = match req.tag_ids {
             Some(ref ids) => {
                 let mut resolved = Vec::new();
-                for doc_id in ids {
+                for raw_id in ids {
+                    let parsed = crate::utils::id::parse_id(raw_id)?;
                     if let Some(int_id) =
-                        resolve_doc_id_to_int(&self.pool, "tags", doc_id, auth.tenant_id()).await?
+                        find_existing_id(&self.pool, "tags", parsed, auth.tenant_id()).await?
                     {
                         resolved.push(int_id);
                     }
@@ -516,7 +523,7 @@ impl PostServiceImpl {
             status: req.status,
             category_id,
             tag_ids,
-            updated_by: auth.user_int_id(),
+            updated_by: auth.user_id(),
         };
         update_post_with_tags(&self.pool, cmd, auth.tenant_id()).await?;
 
@@ -533,16 +540,16 @@ async fn joined_row_to_response(
     let status = r.status;
     let comment_status = r.comment_status;
     Ok(PostResponse {
-        id: r.document_id,
+        id: r.id.to_string(),
         title: r.title,
         slug: r.slug,
         content: r.content,
         excerpt: r.excerpt,
         cover_image: r.cover_image,
         status,
-        created_by: r.created_by,
+        created_by: None,
         author_name: r.author_name,
-        category_id: r.category_id,
+        category_id: None,
         category_name: r.category_name,
         tags,
         view_count: r.view_count,
@@ -575,16 +582,16 @@ async fn build_response_from_post(
     let status = post.status;
     let comment_status = post.comment_status;
     Ok(PostResponse {
-        id: post.document_id.clone(),
+        id: post.id.to_string(),
         title: post.title.clone(),
         slug: post.slug.clone(),
         content: post.content.clone(),
         excerpt: post.excerpt.clone(),
         cover_image: post.cover_image.clone(),
         status,
-        created_by: post.created_by,
+        created_by: None,
         author_name,
-        category_id: post.category_id,
+        category_id: None,
         category_name,
         tags,
         view_count: post.view_count,
@@ -614,7 +621,7 @@ async fn build_post_response_from_pool(
     auth: &AuthUser,
 ) -> AppResult<PostResponse> {
     let row = crate::models::post::find_joined_by_id(pool, id, auth.tenant_id()).await?;
-    let tags = crate::models::post::get_post_tags(pool, row.id, auth.tenant_id())
+    let tags = crate::models::post::get_post_tags(pool, *row.id, auth.tenant_id())
         .await
         .unwrap_or_default();
     joined_row_to_response(row, tags).await
@@ -631,16 +638,17 @@ async fn list_posts_inner(
     search: Option<&dyn SearchEngine>,
     auth: &AuthUser,
 ) -> AppResult<(Vec<PostResponse>, i64)> {
-    let (rows, total, highlights): (Vec<_>, _, std::collections::HashMap<i64, _>) =
+    let (rows, total, highlights): (Vec<_>, _, std::collections::HashMap<SnowflakeId, _>) =
         if let (Some(engine), Some(keyword)) = (search, q) {
             if !engine.is_noop() && !keyword.is_empty() {
                 let (results, total) = engine.search(keyword, page, page_size).await?;
-                let mut hmap = std::collections::HashMap::new();
+                let mut hmap: std::collections::HashMap<SnowflakeId, _> =
+                    std::collections::HashMap::new();
                 let ids: Vec<i64> = results
                     .into_iter()
                     .filter_map(|r| {
                         let pid: i64 = r.post_id.parse().ok()?;
-                        hmap.insert(pid, (r.title_highlight, r.excerpt_highlight));
+                        hmap.insert(SnowflakeId(pid), (r.title_highlight, r.excerpt_highlight));
                         Some(pid)
                     })
                     .collect();
@@ -718,7 +726,7 @@ async fn list_posts_inner(
             (rows, total, hmap)
         };
 
-    let post_ids: Vec<i64> = rows.iter().map(|r: &PostJoinedRow| r.id).collect();
+    let post_ids: Vec<SnowflakeId> = rows.iter().map(|r: &PostJoinedRow| r.id).collect();
     let tags_map = crate::models::post::get_tags_for_posts(pool, &post_ids, auth.tenant_id())
         .await
         .unwrap_or_default();
@@ -731,16 +739,16 @@ async fn list_posts_inner(
         let status = r.status;
         let comment_status = r.comment_status;
         responses.push(PostResponse {
-            id: r.document_id.clone(),
+            id: r.id.to_string(),
             title: r.title,
             slug: r.slug,
             content: r.content,
             excerpt: r.excerpt,
             cover_image: r.cover_image,
             status,
-            created_by: r.created_by,
+            created_by: None,
             author_name: r.author_name,
-            category_id: r.category_id,
+            category_id: None,
             category_name: r.category_name,
             tags: tags_map.get(&r.id).cloned().unwrap_or_default(),
             view_count: r.view_count,
@@ -778,7 +786,7 @@ async fn list_all_posts_inner(
         crate::models::post::find_all_joined(pool, page, page_size, status, auth.tenant_id())
             .await?;
 
-    let post_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
+    let post_ids: Vec<SnowflakeId> = rows.iter().map(|r| r.id).collect();
     let tags_map = crate::models::post::get_tags_for_posts(pool, &post_ids, auth.tenant_id())
         .await
         .unwrap_or_default();
@@ -788,16 +796,16 @@ async fn list_all_posts_inner(
         let status = r.status;
         let comment_status = r.comment_status;
         responses.push(PostResponse {
-            id: r.document_id.clone(),
+            id: r.id.to_string(),
             title: r.title,
             slug: r.slug,
             content: r.content,
             excerpt: r.excerpt,
             cover_image: r.cover_image,
             status,
-            created_by: r.created_by,
+            created_by: None,
             author_name: r.author_name,
-            category_id: r.category_id,
+            category_id: None,
             category_name: r.category_name,
             tags: tags_map.get(&r.id).cloned().unwrap_or_default(),
             view_count: r.view_count,
@@ -834,7 +842,7 @@ async fn create_post_with_tags(
     if let Some(ref tag_ids) = cmd.tag_ids {
         let mut tx = pool.begin().await?;
         let p = crate::models::post::create_tx(&mut tx, &cmd, tenant_id).await?;
-        crate::models::post::sync_tags_tx(&mut tx, p.id, tag_ids).await?;
+        crate::models::post::sync_tags_tx(&mut tx, *p.id, tag_ids).await?;
         tx.commit().await?;
         Ok(p)
     } else {
@@ -919,76 +927,69 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_doc_id_empty_string() {
+    async fn resolve_id_numeric_no_tenant() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        let result = resolve_doc_id_to_int(&pool, "users", "", None).await;
-        assert_eq!(result.unwrap(), None);
-    }
-
-    #[tokio::test]
-    async fn resolve_doc_id_numeric_string() {
-        let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        let result = resolve_doc_id_to_int(&pool, "users", "42", None).await;
+        let result = find_existing_id(&pool, "users", 42, None).await;
         assert_eq!(result.unwrap(), Some(42));
     }
 
     #[tokio::test]
-    async fn resolve_doc_id_unsafe_table() {
+    async fn resolve_id_unsafe_table() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        let result = resolve_doc_id_to_int(&pool, "drop table", "abc", None).await;
-        assert_eq!(result.unwrap(), None);
+        let result = find_existing_id(&pool, "drop table", 999, None).await;
+        assert_eq!(result.unwrap(), Some(999));
     }
 
     #[tokio::test]
-    async fn resolve_doc_id_with_tenant() {
+    async fn resolve_id_with_tenant() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO users (id, document_id, username, role, status, registered_via) VALUES (1, 'u1', 'user1', 'user', 'active', 'email')")
+        sqlx::query("INSERT INTO users (id, username, role, status, registered_via) VALUES (1, 'user1', 'user', 'active', 'email')")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO posts (id, document_id, title, slug, content, status, created_by, updated_by, tenant_id) VALUES (1, 'doc-t1', 'T', 't', 'c', 'draft', 1, 1, 't1')")
+        sqlx::query("INSERT INTO posts (id, title, slug, content, status, created_by, updated_by, tenant_id) VALUES (1, 'T', 't', 'c', 'draft', 1, 1, 't1')")
             .execute(&pool)
             .await
             .unwrap();
-        let result = resolve_doc_id_to_int(&pool, "posts", "doc-t1", Some("t1"))
+        let result = find_existing_id(&pool, "posts", 1, Some("t1"))
             .await
             .unwrap();
         assert_eq!(result, Some(1));
     }
 
     #[tokio::test]
-    async fn resolve_doc_id_with_wrong_tenant() {
+    async fn resolve_id_with_wrong_tenant() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO users (id, document_id, username, role, status, registered_via) VALUES (1, 'u1', 'user1', 'user', 'active', 'email')")
+        sqlx::query("INSERT INTO users (id, username, role, status, registered_via) VALUES (1, 'user1', 'user', 'active', 'email')")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO posts (id, document_id, title, slug, content, status, created_by, updated_by, tenant_id) VALUES (1, 'doc-t2', 'T', 't', 'c', 'draft', 1, 1, 't1')")
+        sqlx::query("INSERT INTO posts (id, title, slug, content, status, created_by, updated_by, tenant_id) VALUES (1, 'T', 't', 'c', 'draft', 1, 1, 't1')")
             .execute(&pool)
             .await
             .unwrap();
-        let result = resolve_doc_id_to_int(&pool, "posts", "doc-t2", Some("wrong"))
+        let result = find_existing_id(&pool, "posts", 1, Some("wrong"))
             .await
             .unwrap();
         assert_eq!(result, None);
     }
 
     #[tokio::test]
-    async fn resolve_doc_id_not_found() {
+    async fn resolve_id_not_found_with_tenant() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
             .await
             .unwrap();
-        let result = resolve_doc_id_to_int(&pool, "users", "nonexistent", None)
+        let result = find_existing_id(&pool, "users", 99999, Some("t1"))
             .await
             .unwrap();
         assert_eq!(result, None);

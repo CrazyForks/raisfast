@@ -29,7 +29,7 @@ impl WalletResponse {
     pub fn from_wallet(w: Wallet) -> AppResult<Self> {
         Ok(Self {
             status: w.status,
-            id: w.document_id,
+            id: w.id.to_string(),
             currency: w.currency,
             balance: w.balance,
             created_at: w.created_at,
@@ -49,10 +49,10 @@ pub struct WalletTransactionResponse {
     pub tx_type: WalletTxType,
     pub currency: String,
     pub transaction_no: String,
-    pub related_tx_id: Option<String>,
     pub reference_type: Option<WalletReferenceType>,
     pub reference_id: Option<String>,
     pub metadata: Option<String>,
+    pub related_tx_id: Option<String>,
     #[schema(value_type = String)]
     pub created_at: Timestamp,
 }
@@ -63,14 +63,14 @@ impl WalletTransactionResponse {
             entry_type: tx.entry_type,
             tx_type: tx.tx_type,
             reference_type: tx.reference_type,
-            id: tx.document_id,
+            id: tx.id.to_string(),
             amount: tx.amount,
             balance_after: tx.balance_after,
             currency: tx.currency,
             transaction_no: tx.transaction_no,
-            related_tx_id: None,
             reference_id: tx.reference_id,
             metadata: tx.metadata,
+            related_tx_id: None,
             created_at: tx.created_at,
         })
     }

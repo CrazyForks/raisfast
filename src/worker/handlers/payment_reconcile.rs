@@ -54,7 +54,7 @@ impl JobHandler for ReconcilePaymentsHandler {
                 Err(e) => {
                     tracing::warn!(
                         "[reconcile_payments] error reconciling order {}: {e}",
-                        order.document_id
+                        order.id.to_string()
                     );
                 }
             }
@@ -83,7 +83,7 @@ impl ReconcilePaymentsHandler {
             Err(_) => return Ok(true),
         };
 
-        let channel = payment_channel::find_by_id(&self.pool, order.channel_id, None)
+        let channel = payment_channel::find_by_id(&self.pool, *order.channel_id, None)
             .await?
             .ok_or_else(|| {
                 crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
@@ -98,7 +98,7 @@ impl ReconcilePaymentsHandler {
         if status.status != PaymentStatus::Paid {
             let detail = format!(
                 "local=paid provider={:?} order={} amount={}",
-                status.status, order.document_id, order.amount
+                status.status, order.id, order.amount
             );
             tracing::error!("[reconcile_payments] critical: {detail}");
             if let Err(audit_err) = audit
@@ -108,7 +108,7 @@ impl ReconcilePaymentsHandler {
                     None,
                     "payment_reconcile_mismatch",
                     "payment_order",
-                    Some(&order.document_id),
+                    Some(&order.id.to_string()),
                     Some(&detail),
                     None,
                     None,
@@ -125,7 +125,7 @@ impl ReconcilePaymentsHandler {
         {
             let detail = format!(
                 "amount_mismatch local={} provider={} order={}",
-                order.amount, provider_amount, order.document_id
+                order.amount, provider_amount, order.id
             );
             tracing::error!("[reconcile_payments] critical: {detail}");
             if let Err(audit_err) = audit
@@ -135,7 +135,7 @@ impl ReconcilePaymentsHandler {
                     None,
                     "payment_reconcile_amount_mismatch",
                     "payment_order",
-                    Some(&order.document_id),
+                    Some(&order.id.to_string()),
                     Some(&detail),
                     None,
                     None,

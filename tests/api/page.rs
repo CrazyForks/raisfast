@@ -2,8 +2,8 @@ use super::*;
 
 async fn admin_author() -> (axum::Router, AppState, String) {
     let (app, state) = test_app().await;
-    let (int_id, doc_id) = create_author(&state.pool).await;
-    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Author);
+    let (int_id, id) = create_author(&state.pool).await;
+    let tok = make_token(&id, int_id, raisfast::models::user::UserRole::Author);
     (app, state, tok)
 }
 
@@ -94,11 +94,11 @@ async fn update_page() {
         ),
     )
     .await;
-    let doc_id = create_body["data"]["document_id"].as_str().unwrap();
+    let id = create_body["data"]["id"].as_str().unwrap();
     let (status, body) = send(
         &mut app,
         put_json_auth(
-            &format!("/api/v1/pages/{doc_id}"),
+            &format!("/api/v1/pages/{id}"),
             json!({"title": "Updated"}),
             &tok,
         ),
@@ -120,13 +120,9 @@ async fn delete_page() {
         ),
     )
     .await;
-    let doc_id = create_body["data"]["document_id"].as_str().unwrap();
+    let id = create_body["data"]["id"].as_str().unwrap();
     let slug = create_body["data"]["slug"].as_str().unwrap();
-    let (status, _) = send(
-        &mut app,
-        delete_auth(&format!("/api/v1/pages/{doc_id}"), &tok),
-    )
-    .await;
+    let (status, _) = send(&mut app, delete_auth(&format!("/api/v1/pages/{id}"), &tok)).await;
     assert!(status.is_success());
     let (s, _) = send(&mut app, get_req(&format!("/api/v1/pages/{slug}"))).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
@@ -162,11 +158,11 @@ async fn update_page_status() {
         ),
     )
     .await;
-    let doc_id = create_body["data"]["document_id"].as_str().unwrap();
+    let id = create_body["data"]["id"].as_str().unwrap();
     let (status, body) = send(
         &mut app,
         put_json_auth(
-            &format!("/api/v1/admin/pages/{doc_id}/status"),
+            &format!("/api/v1/admin/pages/{id}/status"),
             json!({"status": "published"}),
             &tok,
         ),

@@ -6,6 +6,7 @@ use ts_rs::TS;
 
 use crate::db::Pool;
 use crate::db::dialect::ph;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -67,8 +68,7 @@ pub struct StepDef {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct WorkflowDefinition {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub name: String,
     pub description: Option<String>,
     pub steps: String,
@@ -90,13 +90,12 @@ impl WorkflowDefinition {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct WorkflowInstance {
-    pub id: i64,
-    pub document_id: String,
-    pub definition_id: i64,
+    pub id: SnowflakeId,
+    pub definition_id: SnowflakeId,
     pub status: WorkflowInstanceStatus,
     pub current_step: Option<String>,
     pub context: String,
-    pub triggered_by: Option<i64>,
+    pub triggered_by: Option<SnowflakeId>,
     pub started_at: Timestamp,
     pub completed_at: Option<Timestamp>,
     pub updated_at: Timestamp,
@@ -113,9 +112,8 @@ impl WorkflowInstance {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct StepLog {
-    pub id: i64,
-    pub document_id: String,
-    pub instance_id: i64,
+    pub id: SnowflakeId,
+    pub instance_id: SnowflakeId,
     pub step_id: String,
     pub step_name: String,
     pub status: WorkflowStepStatus,
@@ -129,7 +127,7 @@ pub struct StepLog {
 /// Create workflow definition
 pub async fn create_definition(
     pool: &Pool,
-    document_id: &str,
+    id: i64,
     name: &str,
     description: Option<&str>,
     steps: &str,
@@ -137,7 +135,7 @@ pub async fn create_definition(
 ) -> anyhow::Result<WorkflowDefinition> {
     let now = crate::utils::tz::now_utc();
     let sql = format!(
-        "INSERT INTO workflow_definitions (document_id, name, description, steps, initial_step, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
+        "INSERT INTO workflow_definitions (id, name, description, steps, initial_step, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
@@ -147,7 +145,7 @@ pub async fn create_definition(
         ph(7)
     );
     sqlx::query(&sql)
-        .bind(document_id)
+        .bind(id)
         .bind(name)
         .bind(description)
         .bind(steps)
@@ -156,22 +154,19 @@ pub async fn create_definition(
         .bind(now)
         .execute(pool)
         .await?;
-    get_definition(pool, document_id)
+    get_definition(pool, id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("failed to fetch created workflow definition"))
 }
 
 /// Get workflow definition
-pub async fn get_definition(
-    pool: &Pool,
-    document_id: &str,
-) -> anyhow::Result<Option<WorkflowDefinition>> {
+pub async fn get_definition(pool: &Pool, id: i64) -> anyhow::Result<Option<WorkflowDefinition>> {
     let sql = format!(
-        "SELECT id, document_id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions WHERE document_id = {}",
+        "SELECT id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions WHERE id = {}",
         ph(1)
     );
     let row = sqlx::query_as::<_, WorkflowDefinition>(&sql)
-        .bind(document_id)
+        .bind(id)
         .fetch_optional(pool)
         .await?;
     Ok(row)
@@ -179,7 +174,7 @@ pub async fn get_definition(
 
 /// List all workflow definitions
 pub async fn list_definitions(pool: &Pool) -> anyhow::Result<Vec<WorkflowDefinition>> {
-    let sql = "SELECT id, document_id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions ORDER BY created_at DESC";
+    let sql = "SELECT id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions ORDER BY created_at DESC";
     let rows = sqlx::query_as::<_, WorkflowDefinition>(sql)
         .fetch_all(pool)
         .await?;
@@ -187,19 +182,16 @@ pub async fn list_definitions(pool: &Pool) -> anyhow::Result<Vec<WorkflowDefinit
 }
 
 /// Delete workflow definition
-pub async fn delete_definition(pool: &Pool, document_id: &str) -> anyhow::Result<()> {
-    let sql = format!(
-        "DELETE FROM workflow_definitions WHERE document_id = {}",
-        ph(1)
-    );
-    sqlx::query(&sql).bind(document_id).execute(pool).await?;
+pub async fn delete_definition(pool: &Pool, id: i64) -> anyhow::Result<()> {
+    let sql = format!("DELETE FROM workflow_definitions WHERE id = {}", ph(1));
+    sqlx::query(&sql).bind(id).execute(pool).await?;
     Ok(())
 }
 
 /// Create workflow instance
 pub async fn create_instance(
     pool: &Pool,
-    document_id: &str,
+    id: i64,
     definition_id: i64,
     context: &serde_json::Value,
     triggered_by: Option<i64>,
@@ -207,7 +199,7 @@ pub async fn create_instance(
     let now = crate::utils::tz::now_utc();
     let ctx_str = serde_json::to_string(context)?;
     let sql = format!(
-        "INSERT INTO workflow_instances (document_id, definition_id, status, context, triggered_by, started_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
+        "INSERT INTO workflow_instances (id, definition_id, status, context, triggered_by, started_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
@@ -217,7 +209,7 @@ pub async fn create_instance(
         ph(7)
     );
     sqlx::query(&sql)
-        .bind(document_id)
+        .bind(id)
         .bind(definition_id)
         .bind(WorkflowInstanceStatus::Running)
         .bind(&ctx_str)
@@ -226,22 +218,19 @@ pub async fn create_instance(
         .bind(now)
         .execute(pool)
         .await?;
-    get_instance(pool, document_id)
+    get_instance(pool, id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("failed to fetch created workflow instance"))
 }
 
 /// Get workflow instance
-pub async fn get_instance(
-    pool: &Pool,
-    document_id: &str,
-) -> anyhow::Result<Option<WorkflowInstance>> {
+pub async fn get_instance(pool: &Pool, id: i64) -> anyhow::Result<Option<WorkflowInstance>> {
     let sql = format!(
-        "SELECT id, document_id, definition_id, status, current_step, context, triggered_by, started_at, completed_at, updated_at FROM workflow_instances WHERE document_id = {}",
+        "SELECT id, definition_id, status, current_step, context, triggered_by, started_at, completed_at, updated_at FROM workflow_instances WHERE id = {}",
         ph(1)
     );
     let row = sqlx::query_as::<_, WorkflowInstance>(&sql)
-        .bind(document_id)
+        .bind(id)
         .fetch_optional(pool)
         .await?;
     Ok(row)
@@ -257,7 +246,7 @@ pub async fn list_instances(
 ) -> anyhow::Result<(Vec<WorkflowInstance>, i64)> {
     let offset = (page - 1) * page_size;
     let sql = format!(
-        "SELECT id, document_id, definition_id, status, current_step, context, triggered_by, started_at, completed_at, updated_at FROM workflow_instances WHERE ({} IS NULL OR definition_id = {}) AND ({} IS NULL OR status = {}) ORDER BY started_at DESC LIMIT {} OFFSET {}",
+        "SELECT id, definition_id, status, current_step, context, triggered_by, started_at, completed_at, updated_at FROM workflow_instances WHERE ({} IS NULL OR definition_id = {}) AND ({} IS NULL OR status = {}) ORDER BY started_at DESC LIMIT {} OFFSET {}",
         ph(1),
         ph(2),
         ph(3),
@@ -296,7 +285,7 @@ pub async fn list_instances(
 /// Update instance status and current step
 pub async fn update_instance_step(
     pool: &Pool,
-    document_id: &str,
+    id: i64,
     status: WorkflowInstanceStatus,
     current_step: Option<&str>,
     context: &serde_json::Value,
@@ -312,7 +301,7 @@ pub async fn update_instance_step(
         None
     };
     let sql = format!(
-        "UPDATE workflow_instances SET status = {}, current_step = {}, context = {}, completed_at = COALESCE({}, completed_at), updated_at = {} WHERE document_id = {}",
+        "UPDATE workflow_instances SET status = {}, current_step = {}, context = {}, completed_at = COALESCE({}, completed_at), updated_at = {} WHERE id = {}",
         ph(1),
         ph(2),
         ph(3),
@@ -326,7 +315,7 @@ pub async fn update_instance_step(
         .bind(&ctx_str)
         .bind(completed_at)
         .bind(now)
-        .bind(document_id)
+        .bind(id)
         .execute(pool)
         .await?;
     Ok(())
@@ -335,7 +324,7 @@ pub async fn update_instance_step(
 /// Create step execution log
 pub async fn create_step_log(
     pool: &Pool,
-    document_id: &str,
+    id: i64,
     instance_id: i64,
     step_id: &str,
     step_name: &str,
@@ -344,7 +333,7 @@ pub async fn create_step_log(
     let now = crate::utils::tz::now_utc();
     let input_str = input.map(|v| serde_json::to_string(v).unwrap_or_default());
     let sql = format!(
-        "INSERT INTO workflow_step_logs (document_id, instance_id, step_id, step_name, status, input, started_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
+        "INSERT INTO workflow_step_logs (id, instance_id, step_id, step_name, status, input, started_at) VALUES ({}, {}, {}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
@@ -354,7 +343,7 @@ pub async fn create_step_log(
         ph(7)
     );
     sqlx::query(&sql)
-        .bind(document_id)
+        .bind(id)
         .bind(instance_id)
         .bind(step_id)
         .bind(step_name)
@@ -364,11 +353,11 @@ pub async fn create_step_log(
         .execute(pool)
         .await?;
     let fetch_sql = format!(
-        "SELECT id, document_id, instance_id, step_id, step_name, status, input, output, error, started_at, completed_at FROM workflow_step_logs WHERE document_id = {}",
+        "SELECT id, instance_id, step_id, step_name, status, input, output, error, started_at, completed_at FROM workflow_step_logs WHERE id = {}",
         ph(1)
     );
     sqlx::query_as::<_, StepLog>(&fetch_sql)
-        .bind(document_id)
+        .bind(id)
         .fetch_one(pool)
         .await
         .map_err(|e| anyhow::anyhow!("failed to fetch created step log: {e}"))
@@ -377,13 +366,13 @@ pub async fn create_step_log(
 /// Complete step execution log
 pub async fn complete_step_log(
     pool: &Pool,
-    document_id: &str,
+    id: i64,
     output: Option<&serde_json::Value>,
 ) -> anyhow::Result<()> {
     let now = crate::utils::tz::now_utc();
     let output_str = output.map(|v| serde_json::to_string(v).unwrap_or_default());
     let sql = format!(
-        "UPDATE workflow_step_logs SET status = {}, output = {}, completed_at = {} WHERE document_id = {}",
+        "UPDATE workflow_step_logs SET status = {}, output = {}, completed_at = {} WHERE id = {}",
         ph(1),
         ph(2),
         ph(3),
@@ -393,17 +382,17 @@ pub async fn complete_step_log(
         .bind(WorkflowStepStatus::Completed)
         .bind(&output_str)
         .bind(now)
-        .bind(document_id)
+        .bind(id)
         .execute(pool)
         .await?;
     Ok(())
 }
 
 /// Mark step execution as failed
-pub async fn fail_step_log(pool: &Pool, document_id: &str, error: &str) -> anyhow::Result<()> {
+pub async fn fail_step_log(pool: &Pool, id: i64, error: &str) -> anyhow::Result<()> {
     let now = crate::utils::tz::now_utc();
     let sql = format!(
-        "UPDATE workflow_step_logs SET status = {}, error = {}, completed_at = {} WHERE document_id = {}",
+        "UPDATE workflow_step_logs SET status = {}, error = {}, completed_at = {} WHERE id = {}",
         ph(1),
         ph(2),
         ph(3),
@@ -413,7 +402,7 @@ pub async fn fail_step_log(pool: &Pool, document_id: &str, error: &str) -> anyho
         .bind(WorkflowStepStatus::Failed)
         .bind(error)
         .bind(now)
-        .bind(document_id)
+        .bind(id)
         .execute(pool)
         .await?;
     Ok(())
@@ -422,7 +411,7 @@ pub async fn fail_step_log(pool: &Pool, document_id: &str, error: &str) -> anyho
 /// List step logs for an instance
 pub async fn list_step_logs(pool: &Pool, instance_id: i64) -> anyhow::Result<Vec<StepLog>> {
     let sql = format!(
-        "SELECT id, document_id, instance_id, step_id, step_name, status, input, output, error, started_at, completed_at FROM workflow_step_logs WHERE instance_id = {} ORDER BY started_at ASC",
+        "SELECT id, instance_id, step_id, step_name, status, input, output, error, started_at, completed_at FROM workflow_step_logs WHERE instance_id = {} ORDER BY started_at ASC",
         ph(1)
     );
     let rows = sqlx::query_as::<_, StepLog>(&sql)
@@ -443,18 +432,14 @@ mod tests {
     #[tokio::test]
     async fn create_and_get_definition() {
         let pool = setup_pool().await;
-        let doc_id = crate::utils::id::new_document_id();
+        let id = crate::utils::id::new_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
-        let def = super::create_definition(&pool, &doc_id, "Test WF", Some("desc"), steps, "s1")
+        let def = super::create_definition(&pool, id, "Test WF", Some("desc"), steps, "s1")
             .await
             .unwrap();
-        assert_eq!(def.document_id, doc_id);
         assert_eq!(def.name, "Test WF");
 
-        let got = super::get_definition(&pool, &doc_id)
-            .await
-            .unwrap()
-            .unwrap();
+        let got = super::get_definition(&pool, id).await.unwrap().unwrap();
         assert_eq!(got.id, def.id);
     }
 
@@ -463,8 +448,8 @@ mod tests {
         let pool = setup_pool().await;
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
         for i in 0..3 {
-            let doc_id = crate::utils::id::new_document_id();
-            super::create_definition(&pool, &doc_id, &format!("WF {i}"), None, steps, "s1")
+            let id = crate::utils::id::new_id();
+            super::create_definition(&pool, id, &format!("WF {i}"), None, steps, "s1")
                 .await
                 .unwrap();
         }
@@ -475,64 +460,55 @@ mod tests {
     #[tokio::test]
     async fn delete_definition() {
         let pool = setup_pool().await;
-        let doc_id = crate::utils::id::new_document_id();
+        let id = crate::utils::id::new_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
-        super::create_definition(&pool, &doc_id, "To delete", None, steps, "s1")
+        super::create_definition(&pool, id, "To delete", None, steps, "s1")
             .await
             .unwrap();
 
-        super::delete_definition(&pool, &doc_id).await.unwrap();
-        assert!(
-            super::get_definition(&pool, &doc_id)
-                .await
-                .unwrap()
-                .is_none()
-        );
+        super::delete_definition(&pool, id).await.unwrap();
+        assert!(super::get_definition(&pool, id).await.unwrap().is_none());
     }
 
     #[tokio::test]
     async fn create_and_get_instance() {
         let pool = setup_pool().await;
-        let doc_id = crate::utils::id::new_document_id();
+        let def_id = crate::utils::id::new_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
-        let def = super::create_definition(&pool, &doc_id, "WF", None, steps, "s1")
+        let def = super::create_definition(&pool, def_id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
-        let inst_doc_id = crate::utils::id::new_document_id();
+        let inst_id = crate::utils::id::new_id();
         let ctx = serde_json::json!({"key": "value"});
-        let inst = super::create_instance(&pool, &inst_doc_id, def.id, &ctx, None)
+        let inst = super::create_instance(&pool, inst_id, *def.id, &ctx, None)
             .await
             .unwrap();
-        assert_eq!(inst.document_id, inst_doc_id);
         assert_eq!(inst.definition_id, def.id);
         assert_eq!(inst.status, WorkflowInstanceStatus::Running);
 
-        let got = super::get_instance(&pool, &inst_doc_id)
-            .await
-            .unwrap()
-            .unwrap();
+        let got = super::get_instance(&pool, inst_id).await.unwrap().unwrap();
         assert_eq!(got.id, inst.id);
     }
 
     #[tokio::test]
     async fn list_instances_test() {
         let pool = setup_pool().await;
-        let doc_id = crate::utils::id::new_document_id();
+        let def_id = crate::utils::id::new_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
-        let def = super::create_definition(&pool, &doc_id, "WF", None, steps, "s1")
+        let def = super::create_definition(&pool, def_id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
         for _ in 0..3 {
-            let inst_doc_id = crate::utils::id::new_document_id();
+            let inst_id = crate::utils::id::new_id();
             let ctx = serde_json::json!({});
-            super::create_instance(&pool, &inst_doc_id, def.id, &ctx, None)
+            super::create_instance(&pool, inst_id, *def.id, &ctx, None)
                 .await
                 .unwrap();
         }
 
-        let (rows, count) = super::list_instances(&pool, Some(def.id), None, 1, 10)
+        let (rows, count) = super::list_instances(&pool, Some(*def.id), None, 1, 10)
             .await
             .unwrap();
         assert_eq!(rows.len(), 3);
@@ -542,22 +518,22 @@ mod tests {
     #[tokio::test]
     async fn update_instance_step() {
         let pool = setup_pool().await;
-        let doc_id = crate::utils::id::new_document_id();
+        let def_id = crate::utils::id::new_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
-        let def = super::create_definition(&pool, &doc_id, "WF", None, steps, "s1")
+        let def = super::create_definition(&pool, def_id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
-        let inst_doc_id = crate::utils::id::new_document_id();
+        let inst_id = crate::utils::id::new_id();
         let ctx = serde_json::json!({});
-        super::create_instance(&pool, &inst_doc_id, def.id, &ctx, None)
+        super::create_instance(&pool, inst_id, *def.id, &ctx, None)
             .await
             .unwrap();
 
         let new_ctx = serde_json::json!({"progress": 50});
         super::update_instance_step(
             &pool,
-            &inst_doc_id,
+            inst_id,
             WorkflowInstanceStatus::Paused,
             Some("s1"),
             &new_ctx,
@@ -565,10 +541,7 @@ mod tests {
         .await
         .unwrap();
 
-        let inst = super::get_instance(&pool, &inst_doc_id)
-            .await
-            .unwrap()
-            .unwrap();
+        let inst = super::get_instance(&pool, inst_id).await.unwrap().unwrap();
         assert_eq!(inst.status, WorkflowInstanceStatus::Paused);
         assert_eq!(inst.current_step, Some("s1".to_string()));
     }
@@ -576,32 +549,32 @@ mod tests {
     #[tokio::test]
     async fn step_log_lifecycle() {
         let pool = setup_pool().await;
-        let doc_id = crate::utils::id::new_document_id();
+        let def_id = crate::utils::id::new_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
-        let def = super::create_definition(&pool, &doc_id, "WF", None, steps, "s1")
+        let def = super::create_definition(&pool, def_id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
-        let inst_doc_id = crate::utils::id::new_document_id();
+        let inst_id = crate::utils::id::new_id();
         let ctx = serde_json::json!({});
-        let inst = super::create_instance(&pool, &inst_doc_id, def.id, &ctx, None)
+        let inst = super::create_instance(&pool, inst_id, *def.id, &ctx, None)
             .await
             .unwrap();
 
-        let log_doc_id = crate::utils::id::new_document_id();
+        let log_id = crate::utils::id::new_id();
         let input = serde_json::json!({"data": 1});
-        let log = super::create_step_log(&pool, &log_doc_id, inst.id, "s1", "Step 1", Some(&input))
+        let log = super::create_step_log(&pool, log_id, *inst.id, "s1", "Step 1", Some(&input))
             .await
             .unwrap();
         assert_eq!(log.status, WorkflowStepStatus::Running);
         assert_eq!(log.step_id, "s1");
 
         let output = serde_json::json!({"result": "ok"});
-        super::complete_step_log(&pool, &log_doc_id, Some(&output))
+        super::complete_step_log(&pool, log_id, Some(&output))
             .await
             .unwrap();
 
-        let logs = super::list_step_logs(&pool, inst.id).await.unwrap();
+        let logs = super::list_step_logs(&pool, *inst.id).await.unwrap();
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].status, WorkflowStepStatus::Completed);
         assert!(logs[0].completed_at.is_some());
@@ -610,9 +583,9 @@ mod tests {
     #[tokio::test]
     async fn parse_steps_valid() {
         let pool = setup_pool().await;
-        let doc_id = crate::utils::id::new_document_id();
+        let id = crate::utils::id::new_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
-        let def = super::create_definition(&pool, &doc_id, "WF", None, steps, "s1")
+        let def = super::create_definition(&pool, id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
@@ -625,9 +598,9 @@ mod tests {
     #[tokio::test]
     async fn parse_steps_invalid_json() {
         let pool = setup_pool().await;
-        let doc_id = crate::utils::id::new_document_id();
+        let id = crate::utils::id::new_id();
         let steps = "not valid json!!!";
-        let def = super::create_definition(&pool, &doc_id, "WF", None, steps, "s1")
+        let def = super::create_definition(&pool, id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
@@ -637,28 +610,27 @@ mod tests {
     #[tokio::test]
     async fn fail_step_log_marks_failed() {
         let pool = setup_pool().await;
-        let doc_id = crate::utils::id::new_document_id();
+        let def_id = crate::utils::id::new_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
-        let def = super::create_definition(&pool, &doc_id, "WF", None, steps, "s1")
+        let def = super::create_definition(&pool, def_id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
-        let inst_doc_id = crate::utils::id::new_document_id();
-        let inst =
-            super::create_instance(&pool, &inst_doc_id, def.id, &serde_json::json!({}), None)
-                .await
-                .unwrap();
-
-        let log_doc_id = crate::utils::id::new_document_id();
-        super::create_step_log(&pool, &log_doc_id, inst.id, "s1", "Step 1", None)
+        let inst_id = crate::utils::id::new_id();
+        let inst = super::create_instance(&pool, inst_id, *def.id, &serde_json::json!({}), None)
             .await
             .unwrap();
 
-        super::fail_step_log(&pool, &log_doc_id, "something broke")
+        let log_id = crate::utils::id::new_id();
+        super::create_step_log(&pool, log_id, *inst.id, "s1", "Step 1", None)
             .await
             .unwrap();
 
-        let logs = super::list_step_logs(&pool, inst.id).await.unwrap();
+        super::fail_step_log(&pool, log_id, "something broke")
+            .await
+            .unwrap();
+
+        let logs = super::list_step_logs(&pool, *inst.id).await.unwrap();
         assert_eq!(logs[0].status, WorkflowStepStatus::Failed);
         assert_eq!(logs[0].error, Some("something broke".to_string()));
         assert!(logs[0].completed_at.is_some());
@@ -667,20 +639,20 @@ mod tests {
     #[tokio::test]
     async fn list_instances_filter_by_status() {
         let pool = setup_pool().await;
-        let doc_id = crate::utils::id::new_document_id();
+        let def_id = crate::utils::id::new_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
-        let def = super::create_definition(&pool, &doc_id, "WF", None, steps, "s1")
+        let def = super::create_definition(&pool, def_id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
-        let inst_doc_id = crate::utils::id::new_document_id();
-        super::create_instance(&pool, &inst_doc_id, def.id, &serde_json::json!({}), None)
+        let inst_id = crate::utils::id::new_id();
+        super::create_instance(&pool, inst_id, *def.id, &serde_json::json!({}), None)
             .await
             .unwrap();
 
         super::update_instance_step(
             &pool,
-            &inst_doc_id,
+            inst_id,
             WorkflowInstanceStatus::Completed,
             None,
             &serde_json::json!({}),
@@ -690,7 +662,7 @@ mod tests {
 
         let (running, _) = super::list_instances(
             &pool,
-            Some(def.id),
+            Some(*def.id),
             Some(WorkflowInstanceStatus::Running),
             1,
             10,
@@ -701,7 +673,7 @@ mod tests {
 
         let (completed, total) = super::list_instances(
             &pool,
-            Some(def.id),
+            Some(*def.id),
             Some(WorkflowInstanceStatus::Completed),
             1,
             10,
@@ -715,26 +687,26 @@ mod tests {
     #[tokio::test]
     async fn list_instances_pagination() {
         let pool = setup_pool().await;
-        let doc_id = crate::utils::id::new_document_id();
+        let def_id = crate::utils::id::new_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
-        let def = super::create_definition(&pool, &doc_id, "WF", None, steps, "s1")
+        let def = super::create_definition(&pool, def_id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
         for _ in 0..5 {
-            let inst_doc_id = crate::utils::id::new_document_id();
-            super::create_instance(&pool, &inst_doc_id, def.id, &serde_json::json!({}), None)
+            let inst_id = crate::utils::id::new_id();
+            super::create_instance(&pool, inst_id, *def.id, &serde_json::json!({}), None)
                 .await
                 .unwrap();
         }
 
-        let (page1, total) = super::list_instances(&pool, Some(def.id), None, 1, 2)
+        let (page1, total) = super::list_instances(&pool, Some(*def.id), None, 1, 2)
             .await
             .unwrap();
         assert_eq!(total, 5);
         assert_eq!(page1.len(), 2);
 
-        let (page2, _) = super::list_instances(&pool, Some(def.id), None, 2, 2)
+        let (page2, _) = super::list_instances(&pool, Some(*def.id), None, 2, 2)
             .await
             .unwrap();
         assert_eq!(page2.len(), 2);
@@ -743,20 +715,20 @@ mod tests {
     #[tokio::test]
     async fn update_instance_completed_sets_completed_at() {
         let pool = setup_pool().await;
-        let doc_id = crate::utils::id::new_document_id();
+        let def_id = crate::utils::id::new_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
-        let def = super::create_definition(&pool, &doc_id, "WF", None, steps, "s1")
+        let def = super::create_definition(&pool, def_id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
-        let inst_doc_id = crate::utils::id::new_document_id();
-        super::create_instance(&pool, &inst_doc_id, def.id, &serde_json::json!({}), None)
+        let inst_id = crate::utils::id::new_id();
+        super::create_instance(&pool, inst_id, *def.id, &serde_json::json!({}), None)
             .await
             .unwrap();
 
         super::update_instance_step(
             &pool,
-            &inst_doc_id,
+            inst_id,
             WorkflowInstanceStatus::Completed,
             None,
             &serde_json::json!({"done": true}),
@@ -764,10 +736,7 @@ mod tests {
         .await
         .unwrap();
 
-        let inst = super::get_instance(&pool, &inst_doc_id)
-            .await
-            .unwrap()
-            .unwrap();
+        let inst = super::get_instance(&pool, inst_id).await.unwrap().unwrap();
         assert_eq!(inst.status, WorkflowInstanceStatus::Completed);
         assert!(inst.completed_at.is_some());
         let ctx = inst.parse_context();
@@ -777,14 +746,14 @@ mod tests {
     #[tokio::test]
     async fn get_definition_not_found() {
         let pool = setup_pool().await;
-        let result = super::get_definition(&pool, "nonexistent").await.unwrap();
+        let result = super::get_definition(&pool, 9999999).await.unwrap();
         assert!(result.is_none());
     }
 
     #[tokio::test]
     async fn get_instance_not_found() {
         let pool = setup_pool().await;
-        let result = super::get_instance(&pool, "nonexistent").await.unwrap();
+        let result = super::get_instance(&pool, 9999999).await.unwrap();
         assert!(result.is_none());
     }
 }

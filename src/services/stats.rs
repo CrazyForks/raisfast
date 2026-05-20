@@ -410,40 +410,40 @@ mod tests {
         let pool = Pool::connect(":memory:").await.unwrap();
 
         sqlx::query(
-            "CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, title TEXT, slug TEXT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, slug TEXT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
         )
         .execute(&pool)
         .await
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL DEFAULT 'default', username TEXT NOT NULL, role TEXT NOT NULL, status TEXT NOT NULL, registered_via TEXT NOT NULL)",
+            "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default', username TEXT NOT NULL, role TEXT NOT NULL, status TEXT NOT NULL, registered_via TEXT NOT NULL)",
         )
         .execute(&pool)
         .await
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE comments (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, content TEXT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE comments (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
         )
         .execute(&pool)
         .await
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE media (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE media (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default')",
         )
         .execute(&pool)
         .await
         .unwrap();
 
-        sqlx::query("CREATE TABLE categories (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL DEFAULT 'default')")
+        sqlx::query("CREATE TABLE categories (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default')")
             .execute(&pool)
             .await
             .unwrap();
 
         sqlx::query(
-            "CREATE TABLE tags (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE tags (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default')",
         )
         .execute(&pool)
         .await
@@ -463,50 +463,50 @@ mod tests {
         let pool = Pool::connect(":memory:").await.unwrap();
 
         sqlx::query(
-            "CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, title TEXT, slug TEXT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, slug TEXT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
         )
         .execute(&pool)
         .await
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL DEFAULT 'default', username TEXT NOT NULL, role TEXT NOT NULL, status TEXT NOT NULL, registered_via TEXT NOT NULL)",
+            "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default', username TEXT NOT NULL, role TEXT NOT NULL, status TEXT NOT NULL, registered_via TEXT NOT NULL)",
         )
         .execute(&pool)
         .await
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE comments (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, content TEXT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE comments (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
         )
         .execute(&pool)
         .await
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE media (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE media (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default')",
         )
         .execute(&pool)
         .await
         .unwrap();
 
-        sqlx::query("CREATE TABLE categories (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL DEFAULT 'default')")
+        sqlx::query("CREATE TABLE categories (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default')")
             .execute(&pool)
             .await
             .unwrap();
 
         sqlx::query(
-            "CREATE TABLE tags (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE tags (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL DEFAULT 'default')",
         )
         .execute(&pool)
         .await
         .unwrap();
 
-        sqlx::query("INSERT INTO posts (document_id, title, slug, created_at) VALUES ('p1', 'Hello', 'hello', '2024-01-01T00:00:00Z')")
+        sqlx::query("INSERT INTO posts (id, title, slug, created_at) VALUES (1, 'Hello', 'hello', '2024-01-01T00:00:00Z')")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO users (document_id, username, role, status, registered_via) VALUES ('u1', 'user1', 'reader', 'active', 'email')")
+        sqlx::query("INSERT INTO users (id, username, role, status, registered_via) VALUES (1, 'user1', 'reader', 'active', 'email')")
             .execute(&pool)
             .await
             .unwrap();
@@ -528,21 +528,21 @@ mod tests {
         let pool = Pool::connect(":memory:").await.unwrap();
 
         sqlx::query(
-            "CREATE TABLE ct_test (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, status TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE ct_test (id INTEGER PRIMARY KEY AUTOINCREMENT, status TEXT, tenant_id TEXT NOT NULL DEFAULT 'default')",
         )
         .execute(&pool)
         .await
         .unwrap();
 
-        sqlx::query("INSERT INTO ct_test (document_id, status) VALUES ('1', 'draft')")
+        sqlx::query("INSERT INTO ct_test (id, status) VALUES (1, 'draft')")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO ct_test (document_id, status) VALUES ('2', 'published')")
+        sqlx::query("INSERT INTO ct_test (id, status) VALUES (2, 'published')")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO ct_test (document_id, status) VALUES ('3', 'published')")
+        sqlx::query("INSERT INTO ct_test (id, status) VALUES (3, 'published')")
             .execute(&pool)
             .await
             .unwrap();
@@ -560,14 +560,14 @@ mod tests {
         let pool = Pool::connect(":memory:").await.unwrap();
 
         sqlx::query(
-            "CREATE TABLE ct_trends (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
+            "CREATE TABLE ct_trends (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, tenant_id TEXT NOT NULL DEFAULT 'default')",
         )
         .execute(&pool)
         .await
         .unwrap();
 
         let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        sqlx::query("INSERT INTO ct_trends (document_id, created_at) VALUES ('1', ?)")
+        sqlx::query("INSERT INTO ct_trends (id, created_at) VALUES (1, ?)")
             .bind(&today)
             .execute(&pool)
             .await

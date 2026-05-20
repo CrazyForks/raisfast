@@ -67,8 +67,7 @@ fn to_order_response(
     items: Vec<crate::models::order_item::OrderItem>,
 ) -> OrderResponse {
     OrderResponse {
-        id: o.document_id,
-        user_id: o.user_id.to_string(),
+        id: o.id.to_string(),
         order_no: o.order_no,
         subtotal: o.subtotal,
         discount_amount: o.discount_amount,
@@ -106,7 +105,7 @@ pub async fn add_to_cart(
 ) -> AppResult<ApiResponse<()>> {
     let _user_id = auth.ensure_authenticated()?;
     let user_int_id = auth
-        .user_int_id()
+        .user_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
     validation::validate(&req)?;
     state
@@ -132,7 +131,7 @@ pub async fn list_cart(
 ) -> AppResult<ApiResponse<CartResponse>> {
     let _user_id = auth.ensure_authenticated()?;
     let user_int_id = auth
-        .user_int_id()
+        .user_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
     let cart = state.cart_service.list_items(&auth, user_int_id).await?;
     Ok(ApiResponse::success(cart))
@@ -152,12 +151,13 @@ pub async fn update_cart_item(
 ) -> AppResult<ApiResponse<()>> {
     let _user_id = auth.ensure_authenticated()?;
     let user_int_id = auth
-        .user_int_id()
+        .user_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
     validation::validate(&req)?;
+    let id = crate::utils::id::parse_id(&id)?;
     state
         .cart_service
-        .update_quantity(&auth, &id, user_int_id, req.quantity)
+        .update_quantity(&auth, id, user_int_id, req.quantity)
         .await?;
     Ok(ApiResponse::success(()))
 }
@@ -174,11 +174,12 @@ pub async fn remove_from_cart(
 ) -> AppResult<ApiResponse<()>> {
     let _user_id = auth.ensure_authenticated()?;
     let user_int_id = auth
-        .user_int_id()
+        .user_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
+    let id = crate::utils::id::parse_id(&id)?;
     state
         .cart_service
-        .remove_item(&auth, &id, user_int_id)
+        .remove_item(&auth, id, user_int_id)
         .await?;
     Ok(ApiResponse::success(()))
 }
@@ -193,7 +194,7 @@ pub async fn clear_cart(
 ) -> AppResult<ApiResponse<()>> {
     let _user_id = auth.ensure_authenticated()?;
     let user_int_id = auth
-        .user_int_id()
+        .user_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
     state.cart_service.clear_cart(&auth, user_int_id).await?;
     Ok(ApiResponse::success(()))
@@ -209,7 +210,7 @@ pub async fn checkout(
 ) -> AppResult<ApiResponse<OrderResponse>> {
     let _user_id = auth.ensure_authenticated()?;
     let user_int_id = auth
-        .user_int_id()
+        .user_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
     let (order, items) = state.cart_service.checkout(&auth, user_int_id).await?;
     Ok(ApiResponse::success(to_order_response(order, items)))

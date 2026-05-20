@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::errors::app_error::AppResult;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -22,8 +23,7 @@ define_enum!(
 /// Options table row model (with full metadata)
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OptionRow {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
     pub option_key: String,
     pub value: String,
@@ -45,7 +45,6 @@ impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for OptionRow {
         use sqlx::Row;
         Ok(Self {
             id: row.try_get("id")?,
-            document_id: row.try_get("document_id")?,
             tenant_id: row.try_get("tenant_id").ok(),
             option_key: row.try_get("option_key")?,
             value: row.try_get("value")?,
@@ -67,7 +66,6 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for OptionRow {
         use sqlx::Row;
         Ok(Self {
             id: row.try_get("id")?,
-            document_id: row.try_get("document_id")?,
             tenant_id: row.try_get("tenant_id").ok(),
             option_key: row.try_get("option_key")?,
             value: row.try_get("value")?,
@@ -89,7 +87,6 @@ impl<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> for OptionRow {
         use sqlx::Row;
         Ok(Self {
             id: row.try_get("id")?,
-            document_id: row.try_get("document_id")?,
             tenant_id: row.try_get("tenant_id").ok(),
             option_key: row.try_get("option_key")?,
             value: row.try_get("value")?,
@@ -174,10 +171,9 @@ mod tests {
         updated_at: &str,
     ) {
         sqlx::query(
-            "INSERT INTO options (document_id, option_key, value, type, group_name, label, autoload, sort_order, updated_at) \
-             VALUES (?, ?, ?, ?, 'test', 'test', ?, 0, ?)",
+            "INSERT INTO options (option_key, value, type, group_name, label, autoload, sort_order, updated_at) \
+             VALUES (?, ?, ?, 'test', 'test', ?, 0, ?)",
         )
-        .bind(crate::utils::id::new_document_id())
         .bind(key)
         .bind(value)
         .bind(OptionType::Text)
@@ -191,7 +187,7 @@ mod tests {
     #[tokio::test]
     async fn upsert_and_find_by_key() {
         let pool = setup_pool().await;
-        let key = format!("test.{}", crate::utils::id::new_document_id());
+        let key = format!("test.{}", crate::utils::id::new_id());
         let now_str = crate::utils::tz::now_utc().to_rfc3339();
 
         insert_test_option(&pool, &key, "initial", true, &now_str).await;
@@ -210,9 +206,9 @@ mod tests {
         let now = crate::utils::tz::now_utc();
         let now_str = now.to_rfc3339();
 
-        let k1 = format!("test.{}", crate::utils::id::new_document_id());
-        let k2 = format!("test.{}", crate::utils::id::new_document_id());
-        let k3 = format!("test.{}", crate::utils::id::new_document_id());
+        let k1 = format!("test.{}", crate::utils::id::new_id());
+        let k2 = format!("test.{}", crate::utils::id::new_id());
+        let k3 = format!("test.{}", crate::utils::id::new_id());
         insert_test_option(&pool, &k1, "v1", true, &now_str).await;
         insert_test_option(&pool, &k2, "v2", true, &now_str).await;
         insert_test_option(&pool, &k3, "v3", true, &now_str).await;
@@ -224,7 +220,7 @@ mod tests {
     #[tokio::test]
     async fn upsert_overwrites() {
         let pool = setup_pool().await;
-        let key = format!("test.{}", crate::utils::id::new_document_id());
+        let key = format!("test.{}", crate::utils::id::new_id());
         let now = crate::utils::tz::now_utc();
         let now_str = now.to_rfc3339();
 
@@ -238,7 +234,7 @@ mod tests {
     #[tokio::test]
     async fn delete_by_key_removes() {
         let pool = setup_pool().await;
-        let key = format!("test.{}", crate::utils::id::new_document_id());
+        let key = format!("test.{}", crate::utils::id::new_id());
         let now_str = crate::utils::tz::now_utc().to_rfc3339();
 
         insert_test_option(&pool, &key, "val", true, &now_str).await;
@@ -253,9 +249,9 @@ mod tests {
         let pool = setup_pool().await;
         let now_str = crate::utils::tz::now_utc().to_rfc3339();
 
-        let k1 = format!("test.{}", crate::utils::id::new_document_id());
-        let k2 = format!("test.{}", crate::utils::id::new_document_id());
-        let k3 = format!("test.{}", crate::utils::id::new_document_id());
+        let k1 = format!("test.{}", crate::utils::id::new_id());
+        let k2 = format!("test.{}", crate::utils::id::new_id());
+        let k3 = format!("test.{}", crate::utils::id::new_id());
         insert_test_option(&pool, &k1, "v1", true, &now_str).await;
         insert_test_option(&pool, &k2, "v2", true, &now_str).await;
         insert_test_option(&pool, &k3, "v3", false, &now_str).await;

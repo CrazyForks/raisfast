@@ -20,15 +20,15 @@ pub trait UserAddressService: Send + Sync {
         &self,
         auth: &AuthUser,
         user_id: i64,
-        id: &str,
+        id: i64,
         req: UpdateUserAddressRequest,
     ) -> AppResult<UserAddress>;
 
-    async fn delete(&self, auth: &AuthUser, user_id: i64, id: &str) -> AppResult<()>;
+    async fn delete(&self, auth: &AuthUser, user_id: i64, id: i64) -> AppResult<()>;
 
     async fn list(&self, auth: &AuthUser, user_id: i64) -> AppResult<Vec<UserAddress>>;
 
-    async fn get(&self, auth: &AuthUser, id: &str) -> AppResult<UserAddress>;
+    async fn get(&self, auth: &AuthUser, id: i64) -> AppResult<UserAddress>;
 }
 
 pub struct UserAddressServiceImpl {
@@ -75,13 +75,12 @@ impl UserAddressService for UserAddressServiceImpl {
         &self,
         auth: &AuthUser,
         user_id: i64,
-        id: &str,
+        id: i64,
         req: UpdateUserAddressRequest,
     ) -> AppResult<UserAddress> {
-        let existing =
-            crate::models::user_address::find_by_document_id(&self.pool, id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("user_address"))?;
+        let existing = crate::models::user_address::find_by_id(&self.pool, id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("user_address"))?;
 
         if existing.user_id != user_id {
             return Err(AppError::Forbidden);
@@ -90,7 +89,7 @@ impl UserAddressService for UserAddressServiceImpl {
         let updated = crate::models::user_address::update(
             &self.pool,
             &crate::commands::UpdateUserAddressCmd {
-                id: existing.id,
+                id: *existing.id,
                 user_id,
                 label: req.label.unwrap_or(existing.label),
                 recipient_name: req.recipient_name.unwrap_or(existing.recipient_name),
@@ -113,16 +112,15 @@ impl UserAddressService for UserAddressServiceImpl {
             return Err(AppError::not_found("user_address"));
         }
 
-        crate::models::user_address::find_by_id(&self.pool, existing.id, auth.tenant_id())
+        crate::models::user_address::find_by_id(&self.pool, *existing.id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("user_address"))
     }
 
-    async fn delete(&self, auth: &AuthUser, user_id: i64, id: &str) -> AppResult<()> {
-        let existing =
-            crate::models::user_address::find_by_document_id(&self.pool, id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("user_address"))?;
+    async fn delete(&self, auth: &AuthUser, user_id: i64, id: i64) -> AppResult<()> {
+        let existing = crate::models::user_address::find_by_id(&self.pool, id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("user_address"))?;
 
         if existing.user_id != user_id {
             return Err(AppError::Forbidden);
@@ -130,7 +128,7 @@ impl UserAddressService for UserAddressServiceImpl {
 
         crate::models::user_address::delete_by_id(
             &self.pool,
-            existing.id,
+            *existing.id,
             user_id,
             auth.tenant_id(),
         )
@@ -143,8 +141,8 @@ impl UserAddressService for UserAddressServiceImpl {
         crate::models::user_address::find_by_user_id(&self.pool, user_id, auth.tenant_id()).await
     }
 
-    async fn get(&self, auth: &AuthUser, id: &str) -> AppResult<UserAddress> {
-        crate::models::user_address::find_by_document_id(&self.pool, id, auth.tenant_id())
+    async fn get(&self, auth: &AuthUser, id: i64) -> AppResult<UserAddress> {
+        crate::models::user_address::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("user_address"))
     }

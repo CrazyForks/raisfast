@@ -9,7 +9,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 
 fn resolve_user_id(auth: &AuthUser) -> AppResult<i64> {
-    auth.user_int_id()
+    auth.user_id()
         .ok_or_else(|| crate::errors::app_error::AppError::Unauthorized)
 }
 
@@ -93,9 +93,10 @@ pub async fn update_address(
 ) -> AppResult<ApiResponse<UserAddressResponse>> {
     let user_id = resolve_user_id(&auth)?;
     validation::validate(&req)?;
+    let id = crate::utils::id::parse_id(&id)?;
     let addr = state
         .user_address_service
-        .update(&auth, user_id, &id, req)
+        .update(&auth, user_id, id, req)
         .await?;
     Ok(ApiResponse::success(UserAddressResponse::from(addr)))
 }
@@ -106,9 +107,10 @@ pub async fn delete_address(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     let user_id = resolve_user_id(&auth)?;
+    let id = crate::utils::id::parse_id(&id)?;
     state
         .user_address_service
-        .delete(&auth, user_id, &id)
+        .delete(&auth, user_id, id)
         .await?;
     Ok(ApiResponse::success(()))
 }

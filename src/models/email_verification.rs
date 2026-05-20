@@ -6,15 +6,15 @@ use sqlx::FromRow;
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::id;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 /// Email verification token database row model
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
 pub struct EmailVerificationToken {
-    pub id: i64,
-    pub document_id: String,
-    pub user_id: i64,
+    pub id: SnowflakeId,
+    pub user_id: SnowflakeId,
     pub token: String,
     pub email: String,
     pub expires_at: Timestamp,
@@ -29,7 +29,7 @@ pub async fn create(
     email: &str,
     expires_in_secs: i64,
 ) -> AppResult<EmailVerificationToken> {
-    let (document_id, now) = id::new_document_id_and_timestamp();
+    let (id, now) = id::new_id_and_timestamp();
 
     let mut token_bytes = [0u8; 32];
     getrandom::getrandom(&mut token_bytes).map_err(|e| {
@@ -42,7 +42,7 @@ pub async fn create(
     let expires_at = crate::utils::tz::now_utc() + chrono::Duration::seconds(expires_in_secs);
 
     raisfast_derive::crud_insert!(pool, "email_verification_tokens", [
-        "document_id" => &document_id,
+        "id" => id,
         "user_id" => user_id,
         "token" => &token,
         "email" => email,
@@ -116,14 +116,14 @@ mod tests {
         let user = crate::models::user::create(
             pool,
             &crate::commands::user::CreateUserCmd {
-                username: crate::utils::id::new_document_id(),
+                username: crate::utils::id::new_id().to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
         )
         .await
         .unwrap();
-        user.id
+        *user.id
     }
 
     #[tokio::test]
@@ -144,7 +144,7 @@ mod tests {
         let user_id = insert_user(&pool).await;
         let row = create(&pool, user_id, "ev2@test.com", 3600).await.unwrap();
         assert!(row.verified_at.is_none());
-        super::mark_verified(&pool, row.id).await.unwrap();
+        super::mark_verified(&pool, *row.id).await.unwrap();
         let found = find_by_token(&pool, &row.token).await.unwrap();
         assert!(found.is_none());
     }

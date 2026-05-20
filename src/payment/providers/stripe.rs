@@ -78,7 +78,7 @@ impl PaymentProvider for StripeProvider {
 
         let mut params = stripe::CreatePaymentIntent::new(order.amount, currency);
         let mut meta = HashMap::new();
-        meta.insert("payment_order_id".to_string(), order.document_id.clone());
+        meta.insert("payment_order_id".to_string(), order.id.to_string());
         params.metadata = Some(stripe::Metadata::from(meta));
 
         if let Some(url) = return_url {

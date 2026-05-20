@@ -16,6 +16,7 @@ use ts_rs::TS;
 use crate::db::dialect::ph;
 use crate::db::tenant::{tenant_filter_aliased_ph, tenant_filter_ph};
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -35,8 +36,7 @@ define_enum!(
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 #[non_exhaustive]
 pub struct Post {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
     pub title: String,
     pub slug: String,
@@ -44,9 +44,9 @@ pub struct Post {
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
     pub status: PostStatus,
-    pub created_by: i64,
-    pub updated_by: Option<i64>,
-    pub category_id: Option<i64>,
+    pub created_by: SnowflakeId,
+    pub updated_by: Option<SnowflakeId>,
+    pub category_id: Option<SnowflakeId>,
     pub view_count: i64,
     pub is_pinned: bool,
     pub password: Option<String>,
@@ -68,7 +68,7 @@ pub struct Post {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone, utoipa::ToSchema)]
 pub struct TagBrief {
-    pub id: i64,
+    pub id: String,
     pub name: String,
     pub slug: String,
 }
@@ -91,15 +91,6 @@ pub async fn find_by_id(
     Ok(post)
 }
 
-pub async fn find_by_document_id(
-    pool: &crate::db::Pool,
-    document_id: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<Option<Post>> {
-    let post = raisfast_derive::crud_find!(pool, "posts", Post, "document_id" => document_id, tenant: tenant_id)?;
-    Ok(post)
-}
-
 pub async fn create(
     pool: &crate::db::Pool,
     cmd: &crate::commands::CreatePostCmd,
@@ -107,9 +98,9 @@ pub async fn create(
 ) -> AppResult<Post> {
     let mut tx = pool.begin().await?;
     let post = create_tx(&mut tx, cmd, tenant_id).await?;
-    let doc_id = post.document_id.clone();
+    let post_id = post.id;
     tx.commit().await?;
-    find_by_document_id(pool, &doc_id, tenant_id)
+    find_by_id(pool, *post_id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("post"))
 }
@@ -119,7 +110,7 @@ pub async fn create_tx(
     cmd: &crate::commands::CreatePostCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Post> {
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     let published_at = if cmd.status == PostStatus::Published {
         Some(now)
     } else {
@@ -129,7 +120,7 @@ pub async fn create_tx(
         &mut **tx,
         "posts",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "title" => &cmd.title,
             "slug" => &cmd.slug,
             "content" => &cmd.content,
@@ -146,19 +137,19 @@ pub async fn create_tx(
         tenant: tenant_id
     )?;
 
-    let created = find_by_document_id_tx(tx, &document_id, tenant_id)
+    let created = find_by_id_tx(tx, id, tenant_id)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to read created post")))?;
 
     Ok(created)
 }
 
-async fn find_by_document_id_tx(
+async fn find_by_id_tx(
     tx: &mut crate::db::Transaction<'_>,
-    document_id: &str,
+    id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Post>> {
-    raisfast_derive::crud_find!(&mut **tx, "posts", Post, "document_id" => document_id, tenant: tenant_id)
+    raisfast_derive::crud_find!(&mut **tx, "posts", Post, "id" => id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -206,9 +197,9 @@ pub async fn update_tx(
         .as_deref()
         .map(std::string::ToString::to_string)
         .or(existing.cover_image);
-    let category_id: Option<i64> = cmd.category_id.or(existing.category_id);
+    let category_id: Option<i64> = cmd.category_id.or(existing.category_id.map(|v| *v));
     let slug = cmd.slug.as_deref().unwrap_or(&existing.slug);
-    let updated_by: Option<i64> = cmd.updated_by.or(existing.updated_by);
+    let updated_by: Option<i64> = cmd.updated_by.or(existing.updated_by.map(|v| *v));
 
     raisfast_derive::crud_update!(
         &mut **tx, "posts",
@@ -225,7 +216,6 @@ pub async fn update_tx(
 
     Ok(Post {
         id: existing.id,
-        document_id: existing.document_id,
         tenant_id: existing.tenant_id,
         title: title.to_string(),
         slug: slug.to_string(),
@@ -234,8 +224,8 @@ pub async fn update_tx(
         cover_image,
         status: new_status,
         created_by: existing.created_by,
-        updated_by,
-        category_id,
+        updated_by: updated_by.map(SnowflakeId),
+        category_id: category_id.map(SnowflakeId),
         view_count: existing.view_count,
         is_pinned: existing.is_pinned,
         password: existing.password,
@@ -299,7 +289,7 @@ pub async fn sync_tags_tx(
 
 #[derive(Debug, FromRow)]
 pub struct TagRow {
-    pub id: i64,
+    pub id: SnowflakeId,
     pub name: String,
     pub slug: String,
 }
@@ -323,7 +313,7 @@ pub async fn get_post_tags(
     Ok(rows
         .into_iter()
         .map(|r| TagBrief {
-            id: r.id,
+            id: r.id.to_string(),
             name: r.name,
             slug: r.slug,
         })
@@ -514,7 +504,7 @@ pub async fn find_all_joined(
         let result = raisfast_derive::crud_join_paged!(
             pool, PostJoinedRow,
             select: [
-                "p.id", "p.document_id", "p.tenant_id", "p.title", "p.slug",
+                "p.id", "p.tenant_id", "p.title", "p.slug",
                 "p.content", "p.excerpt", "p.cover_image", "p.status",
                 "p.created_by", "p.updated_by", "p.category_id", "p.view_count", "p.is_pinned",
                 "p.password", "p.comment_status", "p.format", "p.template",
@@ -540,7 +530,7 @@ pub async fn find_all_joined(
         let result = raisfast_derive::crud_join_paged!(
             pool, PostJoinedRow,
             select: [
-                "p.id", "p.document_id", "p.tenant_id", "p.title", "p.slug",
+                "p.id", "p.tenant_id", "p.title", "p.slug",
                 "p.content", "p.excerpt", "p.cover_image", "p.status",
                 "p.created_by", "p.updated_by", "p.category_id", "p.view_count", "p.is_pinned",
                 "p.password", "p.comment_status", "p.format", "p.template",
@@ -580,8 +570,7 @@ pub async fn find_all_joined(
 
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct PostJoinedRow {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
     pub title: String,
     pub slug: String,
@@ -589,9 +578,9 @@ pub struct PostJoinedRow {
     pub excerpt: Option<String>,
     pub cover_image: Option<String>,
     pub status: PostStatus,
-    pub created_by: i64,
-    pub updated_by: Option<i64>,
-    pub category_id: Option<i64>,
+    pub created_by: SnowflakeId,
+    pub updated_by: Option<SnowflakeId>,
+    pub category_id: Option<SnowflakeId>,
     pub view_count: i64,
     pub is_pinned: bool,
     pub password: Option<String>,
@@ -613,7 +602,7 @@ pub struct PostJoinedRow {
 }
 
 const JOIN_SQL: &str = "\
-    SELECT p.id, p.document_id, p.tenant_id, p.title, p.slug, p.content, p.excerpt, p.cover_image, p.status, \
+    SELECT p.id, p.tenant_id, p.title, p.slug, p.content, p.excerpt, p.cover_image, p.status, \
     p.created_by, p.updated_by, p.category_id, p.view_count, p.is_pinned, \
     p.password, p.comment_status, p.format, p.template, \
     p.meta_title, p.meta_description, p.og_title, p.og_description, p.og_image, p.canonical_url, p.reading_time, \
@@ -630,7 +619,7 @@ pub async fn find_joined_by_id(
 ) -> AppResult<PostJoinedRow> {
     raisfast_derive::crud_join!(
         pool, PostJoinedRow,
-        select: ["p.id", "p.document_id", "p.tenant_id", "p.title", "p.slug", "p.content", "p.excerpt", "p.cover_image", "p.status", "p.created_by", "p.updated_by", "p.category_id", "p.view_count", "p.is_pinned", "p.password", "p.comment_status", "p.format", "p.template", "p.meta_title", "p.meta_description", "p.og_title", "p.og_description", "p.og_image", "p.canonical_url", "p.reading_time", "p.created_at", "p.updated_at", "p.published_at", "u.username AS author_name", "c.name AS category_name"],
+        select: ["p.id", "p.tenant_id", "p.title", "p.slug", "p.content", "p.excerpt", "p.cover_image", "p.status", "p.created_by", "p.updated_by", "p.category_id", "p.view_count", "p.is_pinned", "p.password", "p.comment_status", "p.format", "p.template", "p.meta_title", "p.meta_description", "p.og_title", "p.og_description", "p.og_image", "p.canonical_url", "p.reading_time", "p.created_at", "p.updated_at", "p.published_at", "u.username AS author_name", "c.name AS category_name"],
         from: "posts p",
         joins: [
             LEFT "users u" ON "p.created_by = u.id",
@@ -650,7 +639,7 @@ pub async fn find_published_joined_by_slug(
 ) -> AppResult<PostJoinedRow> {
     raisfast_derive::crud_join!(
         pool, PostJoinedRow,
-        select: ["p.id", "p.document_id", "p.tenant_id", "p.title", "p.slug", "p.content", "p.excerpt", "p.cover_image", "p.status", "p.created_by", "p.updated_by", "p.category_id", "p.view_count", "p.is_pinned", "p.password", "p.comment_status", "p.format", "p.template", "p.meta_title", "p.meta_description", "p.og_title", "p.og_description", "p.og_image", "p.canonical_url", "p.reading_time", "p.created_at", "p.updated_at", "p.published_at", "u.username AS author_name", "c.name AS category_name"],
+        select: ["p.id", "p.tenant_id", "p.title", "p.slug", "p.content", "p.excerpt", "p.cover_image", "p.status", "p.created_by", "p.updated_by", "p.category_id", "p.view_count", "p.is_pinned", "p.password", "p.comment_status", "p.format", "p.template", "p.meta_title", "p.meta_description", "p.og_title", "p.og_description", "p.og_image", "p.canonical_url", "p.reading_time", "p.created_at", "p.updated_at", "p.published_at", "u.username AS author_name", "c.name AS category_name"],
         from: "posts p",
         joins: [
             LEFT "users u" ON "p.created_by = u.id",
@@ -666,17 +655,17 @@ pub async fn find_published_joined_by_slug(
 
 pub async fn get_tags_for_posts(
     pool: &crate::db::Pool,
-    post_ids: &[i64],
+    post_ids: &[SnowflakeId],
     tenant_id: Option<&str>,
-) -> AppResult<std::collections::HashMap<i64, Vec<TagBrief>>> {
+) -> AppResult<std::collections::HashMap<SnowflakeId, Vec<TagBrief>>> {
     if post_ids.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
 
     #[derive(Debug, FromRow)]
     struct TagWithPostId {
-        post_id: i64,
-        id: i64,
+        post_id: SnowflakeId,
+        id: SnowflakeId,
         name: String,
         slug: String,
     }
@@ -693,10 +682,11 @@ pub async fn get_tags_for_posts(
         method: fetch_all
     )?;
 
-    let mut map: std::collections::HashMap<i64, Vec<TagBrief>> = std::collections::HashMap::new();
+    let mut map: std::collections::HashMap<SnowflakeId, Vec<TagBrief>> =
+        std::collections::HashMap::new();
     for row in rows {
         map.entry(row.post_id).or_default().push(TagBrief {
-            id: row.id,
+            id: row.id.to_string(),
             name: row.name,
             slug: row.slug,
         });
@@ -717,7 +707,7 @@ pub async fn find_joined_by_ids(
         pool,
         PostJoinedRow,
         select: [
-            "p.id", "p.document_id", "p.tenant_id", "p.title", "p.slug",
+            "p.id", "p.tenant_id", "p.title", "p.slug",
             "p.content", "p.excerpt", "p.cover_image", "p.status",
             "p.created_by", "p.updated_by", "p.category_id", "p.view_count", "p.is_pinned",
             "p.password", "p.comment_status", "p.format", "p.template",
@@ -772,7 +762,6 @@ pub async fn find_published_joined(
     raisfast_derive::check_schema!(
         "posts",
         "id",
-        "document_id",
         "title",
         "slug",
         "content",
@@ -954,21 +943,15 @@ mod tests {
     }
 
     async fn create_user(pool: &crate::db::Pool) -> i64 {
-        let uid = uuid::Uuid::now_v7().to_string();
+        let uid = crate::utils::id::new_id();
         sqlx::query(
-            "INSERT INTO users (document_id, username, role, status, registered_via) VALUES (?, 'testuser', 'author', 'active', 'email')",
+            "INSERT INTO users (id, username, role, status, registered_via) VALUES (?, 'testuser', 'author', 'active', 'email')",
         )
-        .bind(&uid)
+        .bind(uid)
         .execute(pool)
         .await
         .unwrap();
-
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
-            .bind(&uid)
-            .fetch_one(pool)
-            .await
-            .unwrap();
-        id
+        uid
     }
 
     async fn create_test_post(
@@ -1009,7 +992,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
         let p = create_test_post(&pool, uid, "published", "Test Post").await;
-        let result = find_joined_by_ids(&pool, &[p.id], None).await.unwrap();
+        let result = find_joined_by_ids(&pool, &[*p.id], None).await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, p.id);
         assert_eq!(result[0].title, "Test Post");
@@ -1023,14 +1006,14 @@ mod tests {
         let p1 = create_test_post(&pool, uid, "published", "Post A").await;
         let p2 = create_test_post(&pool, uid, "published", "Post B").await;
         let p3 = create_test_post(&pool, uid, "published", "Post C").await;
-        let result = find_joined_by_ids(&pool, &[p1.id, p3.id], None)
+        let result = find_joined_by_ids(&pool, &[*p1.id, *p3.id], None)
             .await
             .unwrap();
         assert_eq!(result.len(), 2);
-        let ids: Vec<i64> = result.iter().map(|r| r.id).collect();
-        assert!(ids.contains(&p1.id));
-        assert!(ids.contains(&p3.id));
-        assert!(!ids.contains(&p2.id));
+        let ids: Vec<i64> = result.iter().map(|r| *r.id).collect();
+        assert!(ids.contains(&*p1.id));
+        assert!(ids.contains(&*p3.id));
+        assert!(!ids.contains(&*p2.id));
     }
 
     #[tokio::test]
@@ -1038,7 +1021,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
         let p = create_test_post(&pool, uid, "draft", "Draft Post").await;
-        let result = find_joined_by_ids(&pool, &[p.id], None).await.unwrap();
+        let result = find_joined_by_ids(&pool, &[*p.id], None).await.unwrap();
         assert!(result.is_empty());
     }
 
@@ -1055,7 +1038,7 @@ mod tests {
         let uid = create_user(&pool).await;
         let pub_post = create_test_post(&pool, uid, "published", "Published").await;
         let draft_post = create_test_post(&pool, uid, "draft", "Draft").await;
-        let result = find_joined_by_ids(&pool, &[pub_post.id, draft_post.id], None)
+        let result = find_joined_by_ids(&pool, &[*pub_post.id, *draft_post.id], None)
             .await
             .unwrap();
         assert_eq!(result.len(), 1);
@@ -1066,18 +1049,12 @@ mod tests {
     async fn find_joined_by_ids_with_category() {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
-        let cat_doc_id = uuid::Uuid::now_v7().to_string();
-        sqlx::query("INSERT INTO categories (document_id, name, slug) VALUES (?, 'Tech', 'tech')")
-            .bind(&cat_doc_id)
+        let cat_id = crate::utils::id::new_id();
+        sqlx::query("INSERT INTO categories (id, name, slug) VALUES (?, 'Tech', 'tech')")
+            .bind(cat_id)
             .execute(&pool)
             .await
             .unwrap();
-        let (cat_int_id,): (i64,) =
-            sqlx::query_as("SELECT id FROM categories WHERE document_id = ?")
-                .bind(&cat_doc_id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
         let p = create(
             &pool,
             &CreatePostCmd {
@@ -1089,14 +1066,14 @@ mod tests {
                 status: PostStatus::Published,
                 created_by: uid,
                 updated_by: Some(uid),
-                category_id: Some(cat_int_id),
+                category_id: Some(cat_id),
                 tag_ids: None,
             },
             None,
         )
         .await
         .unwrap();
-        let result = find_joined_by_ids(&pool, &[p.id], None).await.unwrap();
+        let result = find_joined_by_ids(&pool, &[*p.id], None).await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].category_name.as_deref(), Some("Tech"));
     }
@@ -1113,7 +1090,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
         let p = create_test_post(&pool, uid, "published", "Count Post").await;
-        let count = count_published_by_ids(&pool, &[p.id], None).await.unwrap();
+        let count = count_published_by_ids(&pool, &[*p.id], None).await.unwrap();
         assert_eq!(count, 1);
     }
 
@@ -1122,7 +1099,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = create_user(&pool).await;
         let p = create_test_post(&pool, uid, "draft", "Draft").await;
-        let count = count_published_by_ids(&pool, &[p.id], None).await.unwrap();
+        let count = count_published_by_ids(&pool, &[*p.id], None).await.unwrap();
         assert_eq!(count, 0);
     }
 
@@ -1133,7 +1110,7 @@ mod tests {
         let p1 = create_test_post(&pool, uid, "published", "A").await;
         let p2 = create_test_post(&pool, uid, "draft", "B").await;
         let p3 = create_test_post(&pool, uid, "published", "C").await;
-        let count = count_published_by_ids(&pool, &[p1.id, p2.id, p3.id], None)
+        let count = count_published_by_ids(&pool, &[*p1.id, *p2.id, *p3.id], None)
             .await
             .unwrap();
         assert_eq!(count, 2);

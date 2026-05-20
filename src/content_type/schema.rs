@@ -1483,7 +1483,6 @@ type = "text"
     #[test]
     fn check_api_access_none_rejects() {
         let auth = crate::middleware::auth::AuthUser::from_parts(
-            Some("u1".into()),
             Some(1),
             crate::models::user::UserRole::Admin,
             None,
@@ -1495,7 +1494,6 @@ type = "text"
     fn check_api_access_public_allows_all() {
         let anon = crate::middleware::auth::AuthUser::from_parts(
             None,
-            None,
             crate::models::user::UserRole::Reader,
             None,
         );
@@ -1506,13 +1504,11 @@ type = "text"
     fn check_api_access_member_requires_auth() {
         let anon = crate::middleware::auth::AuthUser::from_parts(
             None,
-            None,
             crate::models::user::UserRole::Reader,
             None,
         );
         assert!(check_api_access(ApiAccess::Member, &anon).is_err());
         let user = crate::middleware::auth::AuthUser::from_parts(
-            Some("u1".into()),
             Some(1),
             crate::models::user::UserRole::Reader,
             None,
@@ -1524,13 +1520,11 @@ type = "text"
     fn check_api_access_admin_requires_admin_role() {
         let anon = crate::middleware::auth::AuthUser::from_parts(
             None,
-            None,
             crate::models::user::UserRole::Reader,
             None,
         );
         assert!(check_api_access(ApiAccess::Admin, &anon).is_err());
         let user = crate::middleware::auth::AuthUser::from_parts(
-            Some("u1".into()),
             Some(1),
             crate::models::user::UserRole::Reader,
             None,
@@ -1538,7 +1532,6 @@ type = "text"
         let err = check_api_access(ApiAccess::Admin, &user).unwrap_err();
         assert!(matches!(err, AppError::Forbidden));
         let admin = crate::middleware::auth::AuthUser::from_parts(
-            Some("u1".into()),
             Some(1),
             crate::models::user::UserRole::Admin,
             None,

@@ -7,6 +7,35 @@ use validator::Validate;
 use super::validate_optional_uuid;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CategoryResponse {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub description: Option<String>,
+    #[cfg_attr(feature = "export-types", ts(type = "number"))]
+    pub sort_order: i64,
+    pub cover_image: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl CategoryResponse {
+    pub fn from_category(cat: crate::models::category::Category) -> Self {
+        Self {
+            id: cat.id.to_string(),
+            name: cat.name,
+            slug: cat.slug,
+            description: cat.description,
+            sort_order: cat.sort_order,
+            cover_image: cat.cover_image,
+            created_at: cat.created_at.to_rfc3339(),
+            updated_at: cat.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct CreateCategoryRequest {
     #[validate(length(min = 1, max = 100))]

@@ -1,16 +1,16 @@
 use serde::{Deserialize, Serialize};
 
 use crate::errors::app_error::AppResult;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct PaymentTransaction {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
-    pub payment_order_id: i64,
+    pub payment_order_id: SnowflakeId,
     pub order_id: Option<String>,
-    pub user_id: i64,
+    pub user_id: SnowflakeId,
     pub tx_type: String,
     pub amount: i64,
     pub currency: String,
@@ -56,15 +56,6 @@ pub async fn find_by_provider_tx_id(
         .map_err(Into::into)
 }
 
-async fn find_by_document_id(
-    pool: &crate::db::Pool,
-    document_id: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<Option<PaymentTransaction>> {
-    raisfast_derive::crud_find!(pool, "payment_transactions", PaymentTransaction, "document_id" => document_id, tenant: tenant_id)
-        .map_err(Into::into)
-}
-
 pub async fn find_all_admin_paginated(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
@@ -88,13 +79,13 @@ pub async fn insert(
     cmd: &crate::commands::CreatePaymentTransactionCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<PaymentTransaction> {
-    let document_id = uuid::Uuid::now_v7().to_string();
+    let id = crate::utils::id::new_id();
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_insert!(
         pool,
         "payment_transactions",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "payment_order_id" => cmd.payment_order_id,
             "order_id" => &cmd.order_id,
             "user_id" => cmd.user_id,
@@ -108,13 +99,11 @@ pub async fn insert(
         ],
         tenant: tenant_id
     )?;
-    find_by_document_id(pool, &document_id, tenant_id)
-        .await?
-        .ok_or_else(|| {
-            crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
-                "inserted row not found: {document_id}"
-            ))
-        })
+    find_by_id(pool, id, tenant_id).await?.ok_or_else(|| {
+        crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
+            "inserted row not found: {id}"
+        ))
+    })
 }
 
 pub async fn tx_insert(
@@ -122,13 +111,13 @@ pub async fn tx_insert(
     cmd: &crate::commands::CreatePaymentTransactionCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let document_id = uuid::Uuid::now_v7().to_string();
+    let id = crate::utils::id::new_id();
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_insert!(
         &mut *tx,
         "payment_transactions",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "payment_order_id" => cmd.payment_order_id,
             "order_id" => &cmd.order_id,
             "user_id" => cmd.user_id,
@@ -154,17 +143,12 @@ mod tests {
     }
 
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
-        let doc_id = uuid::Uuid::now_v7().to_string();
-        let username = format!("testuser_{doc_id}");
-        sqlx::query("INSERT INTO users (document_id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')")
-            .bind(&doc_id)
+        let id = crate::utils::id::new_id();
+        let username = format!("testuser_{id}");
+        sqlx::query("INSERT INTO users (id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')")
+            .bind(id)
             .bind(&username)
             .execute(pool)
-            .await
-            .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
-            .bind(&doc_id)
-            .fetch_one(pool)
             .await
             .unwrap();
         id
@@ -266,7 +250,7 @@ mod tests {
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
         let tx = seed_tx(&pool, po_id, uid, "charge", "ch_abc123").await;
-        let found = super::find_by_id(&pool, tx.id, None)
+        let found = super::find_by_id(&pool, *tx.id, None)
             .await
             .unwrap()
             .unwrap();

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 use crate::errors::app_error::AppResult;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -13,9 +14,8 @@ define_enum!(
 
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct Wallet {
-    pub id: i64,
-    pub document_id: String,
-    pub user_id: i64,
+    pub id: SnowflakeId,
+    pub user_id: SnowflakeId,
     pub currency: String,
     pub balance: i64,
     pub version: i64,
@@ -43,16 +43,15 @@ pub async fn find_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<Vec
 }
 
 pub async fn create(pool: &crate::db::Pool, user_id: i64, currency: &str) -> AppResult<Wallet> {
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     raisfast_derive::crud_insert!(pool, "wallets", [
-        "document_id" => &document_id,
+        "id" => id,
         "user_id" => user_id,
         "currency" => currency,
         "created_at" => now,
         "updated_at" => now
     ])?;
-    raisfast_derive::crud_find_one!(pool, "wallets", Wallet, "document_id" => &document_id)
-        .map_err(Into::into)
+    raisfast_derive::crud_find_one!(pool, "wallets", Wallet, "id" => id).map_err(Into::into)
 }
 
 pub async fn find_or_create(
@@ -97,7 +96,7 @@ mod tests {
         crate::models::user::create(
             pool,
             &crate::commands::user::CreateUserCmd {
-                username: crate::utils::id::new_document_id(),
+                username: crate::utils::id::new_id().to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
@@ -110,7 +109,7 @@ mod tests {
     async fn create_wallet() {
         let pool = setup_pool().await;
         let user = insert_user(&pool).await;
-        let w = create(&pool, user.id, "CNY").await.unwrap();
+        let w = create(&pool, *user.id, "CNY").await.unwrap();
         assert_eq!(w.user_id, user.id);
         assert_eq!(w.currency, "CNY");
         assert_eq!(w.balance, 0);
@@ -122,8 +121,8 @@ mod tests {
     async fn create_wallet_same_user_different_currency() {
         let pool = setup_pool().await;
         let user = insert_user(&pool).await;
-        let w1 = create(&pool, user.id, "CNY").await.unwrap();
-        let w2 = create(&pool, user.id, "USD").await.unwrap();
+        let w1 = create(&pool, *user.id, "CNY").await.unwrap();
+        let w2 = create(&pool, *user.id, "USD").await.unwrap();
         assert_ne!(w1.id, w2.id);
         assert_eq!(w2.currency, "USD");
     }
@@ -132,9 +131,9 @@ mod tests {
     async fn find_by_id_found() {
         let pool = setup_pool().await;
         let user = insert_user(&pool).await;
-        let w = create(&pool, user.id, "CNY").await.unwrap();
-        let found = find_by_id(&pool, w.id).await.unwrap().unwrap();
-        assert_eq!(found.document_id, w.document_id);
+        let w = create(&pool, *user.id, "CNY").await.unwrap();
+        let found = find_by_id(&pool, *w.id).await.unwrap().unwrap();
+        assert_eq!(found.id, w.id);
     }
 
     #[tokio::test]
@@ -147,8 +146,8 @@ mod tests {
     async fn find_by_user_and_currency_found() {
         let pool = setup_pool().await;
         let user = insert_user(&pool).await;
-        create(&pool, user.id, "CNY").await.unwrap();
-        let found = find_by_user_and_currency(&pool, user.id, "CNY")
+        create(&pool, *user.id, "CNY").await.unwrap();
+        let found = find_by_user_and_currency(&pool, *user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
@@ -159,9 +158,9 @@ mod tests {
     async fn find_by_user_and_currency_wrong_currency() {
         let pool = setup_pool().await;
         let user = insert_user(&pool).await;
-        create(&pool, user.id, "CNY").await.unwrap();
+        create(&pool, *user.id, "CNY").await.unwrap();
         assert!(
-            find_by_user_and_currency(&pool, user.id, "USD")
+            find_by_user_and_currency(&pool, *user.id, "USD")
                 .await
                 .unwrap()
                 .is_none()
@@ -172,9 +171,9 @@ mod tests {
     async fn find_by_user_returns_all_wallets() {
         let pool = setup_pool().await;
         let user = insert_user(&pool).await;
-        create(&pool, user.id, "CNY").await.unwrap();
-        create(&pool, user.id, "USD").await.unwrap();
-        let wallets = find_by_user(&pool, user.id).await.unwrap();
+        create(&pool, *user.id, "CNY").await.unwrap();
+        create(&pool, *user.id, "USD").await.unwrap();
+        let wallets = find_by_user(&pool, *user.id).await.unwrap();
         assert_eq!(wallets.len(), 2);
     }
 
@@ -189,7 +188,7 @@ mod tests {
     async fn find_or_create_creates_new() {
         let pool = setup_pool().await;
         let user = insert_user(&pool).await;
-        let w = find_or_create(&pool, user.id, "CNY").await.unwrap();
+        let w = find_or_create(&pool, *user.id, "CNY").await.unwrap();
         assert_eq!(w.currency, "CNY");
         assert_eq!(w.balance, 0);
     }
@@ -198,8 +197,8 @@ mod tests {
     async fn find_or_create_returns_existing() {
         let pool = setup_pool().await;
         let user = insert_user(&pool).await;
-        let w1 = find_or_create(&pool, user.id, "CNY").await.unwrap();
-        let w2 = find_or_create(&pool, user.id, "CNY").await.unwrap();
+        let w1 = find_or_create(&pool, *user.id, "CNY").await.unwrap();
+        let w2 = find_or_create(&pool, *user.id, "CNY").await.unwrap();
         assert_eq!(w1.id, w2.id);
     }
 
@@ -208,8 +207,8 @@ mod tests {
         let pool = setup_pool().await;
         let user1 = insert_user(&pool).await;
         let user2 = insert_user(&pool).await;
-        create(&pool, user1.id, "CNY").await.unwrap();
-        create(&pool, user2.id, "CNY").await.unwrap();
+        create(&pool, *user1.id, "CNY").await.unwrap();
+        create(&pool, *user2.id, "CNY").await.unwrap();
         let (rows, total) = find_all_wallets(&pool, 1, 10, None).await.unwrap();
         assert_eq!(total, 2);
         assert_eq!(rows.len(), 2);
@@ -219,7 +218,7 @@ mod tests {
     async fn find_all_wallets_page_two_empty() {
         let pool = setup_pool().await;
         let user = insert_user(&pool).await;
-        create(&pool, user.id, "CNY").await.unwrap();
+        create(&pool, *user.id, "CNY").await.unwrap();
         let (rows, total) = find_all_wallets(&pool, 2, 10, None).await.unwrap();
         assert_eq!(total, 1);
         assert!(rows.is_empty());

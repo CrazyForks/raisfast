@@ -14,6 +14,7 @@ use sqlx::FromRow;
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -27,16 +28,15 @@ define_enum!(
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 #[non_exhaustive]
 pub struct Comment {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
-    pub post_id: i64,
-    pub created_by: Option<i64>,
-    pub updated_by: Option<i64>,
+    pub post_id: SnowflakeId,
+    pub created_by: Option<SnowflakeId>,
+    pub updated_by: Option<SnowflakeId>,
     pub nickname: Option<String>,
     pub email: Option<String>,
     pub content: String,
-    pub parent_id: Option<i64>,
+    pub parent_id: Option<SnowflakeId>,
     pub author_ip: Option<String>,
     pub author_url: Option<String>,
     pub status: CommentStatus,
@@ -48,16 +48,15 @@ pub struct Comment {
 #[derive(Debug, Serialize, Clone)]
 #[non_exhaustive]
 pub struct CommentResponse {
-    pub id: i64,
-    pub document_id: String,
-    pub post_id: i64,
-    pub created_by: Option<i64>,
+    pub id: String,
     pub nickname: Option<String>,
     pub content: String,
-    pub parent_id: Option<i64>,
     pub depth: i32,
     pub replies: Vec<CommentResponse>,
     pub created_at: Timestamp,
+    pub post_id: Option<String>,
+    pub created_by: Option<String>,
+    pub parent_id: Option<String>,
 }
 
 pub async fn find_by_id(
@@ -68,28 +67,18 @@ pub async fn find_by_id(
     Ok(raisfast_derive::crud_find!(pool, "comments", Comment, "id" => id, tenant: tenant_id)?)
 }
 
-pub async fn find_by_document_id(
-    pool: &crate::db::Pool,
-    document_id: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<Option<Comment>> {
-    Ok(
-        raisfast_derive::crud_find!(pool, "comments", Comment, "document_id" => document_id, tenant: tenant_id)?,
-    )
-}
-
 pub async fn create(
     pool: &crate::db::Pool,
     cmd: &crate::commands::CreateCommentCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Comment> {
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
 
     raisfast_derive::crud_insert!(
         pool,
         "comments",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "post_id" => cmd.post_id,
             "created_by" => cmd.created_by,
             "updated_by" => cmd.created_by,
@@ -104,7 +93,7 @@ pub async fn create(
         tenant: tenant_id
     )?;
 
-    find_by_document_id(pool, &document_id, tenant_id)
+    find_by_id(pool, id, tenant_id)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch created comment")))
 }
@@ -147,18 +136,44 @@ pub async fn find_all_by_post(
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
-#[derive(Debug, FromRow, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct AdminCommentRow {
-    pub id: i64,
-    pub post_id: i64,
+    pub id: String,
     pub post_title: String,
-    pub created_by: Option<i64>,
     pub nickname: Option<String>,
     pub email: Option<String>,
     pub content: String,
-    pub parent_id: Option<i64>,
     pub status: CommentStatus,
     pub created_at: Timestamp,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, FromRow)]
+struct AdminCommentRowDb {
+    id: SnowflakeId,
+    post_id: SnowflakeId,
+    post_title: String,
+    created_by: Option<SnowflakeId>,
+    nickname: Option<String>,
+    email: Option<String>,
+    content: String,
+    parent_id: Option<SnowflakeId>,
+    status: CommentStatus,
+    created_at: Timestamp,
+}
+
+impl From<AdminCommentRowDb> for AdminCommentRow {
+    fn from(r: AdminCommentRowDb) -> Self {
+        Self {
+            id: r.id.to_string(),
+            post_title: r.post_title,
+            nickname: r.nickname,
+            email: r.email,
+            content: r.content,
+            status: r.status,
+            created_at: r.created_at,
+        }
+    }
 }
 
 pub async fn find_all_paginated(
@@ -168,7 +183,7 @@ pub async fn find_all_paginated(
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<AdminCommentRow>, i64)> {
     let result = raisfast_derive::crud_query_paged!(
-        pool, AdminCommentRow,
+        pool, AdminCommentRowDb,
         data_sql: "SELECT c.id, c.post_id, p.title AS post_title, c.created_by, c.nickname, c.email, c.content, c.parent_id, c.status, c.created_at FROM comments c JOIN posts p ON c.post_id = p.id WHERE 1=1{tenant} ORDER BY c.created_at DESC",
         count_sql: "SELECT COUNT(*) FROM comments WHERE 1=1{tenant}",
         binds: [],
@@ -176,7 +191,8 @@ pub async fn find_all_paginated(
         page: page,
         page_size: page_size
     );
-    Ok(result)
+    let (rows, total) = result;
+    Ok((rows.into_iter().map(AdminCommentRow::from).collect(), total))
 }
 
 pub async fn update_status(
@@ -220,18 +236,19 @@ fn get_depth(comments: &[Comment], comment: &Comment) -> i32 {
 
 #[must_use]
 pub fn build_tree(comments: &[Comment]) -> Vec<CommentResponse> {
-    let map: std::collections::HashMap<i64, Vec<Comment>> =
+    let root_key = SnowflakeId(0);
+    let map: std::collections::HashMap<SnowflakeId, Vec<Comment>> =
         comments
             .iter()
             .fold(std::collections::HashMap::new(), |mut acc, c| {
-                let key = c.parent_id.unwrap_or_default();
+                let key = c.parent_id.unwrap_or(root_key);
                 acc.entry(key).or_default().push(c.clone());
                 acc
             });
 
     fn build(
-        parent_id: i64,
-        map: &std::collections::HashMap<i64, Vec<Comment>>,
+        parent_id: SnowflakeId,
+        map: &std::collections::HashMap<SnowflakeId, Vec<Comment>>,
         comments: &[Comment],
     ) -> Vec<CommentResponse> {
         map.get(&parent_id)
@@ -242,16 +259,15 @@ pub fn build_tree(comments: &[Comment]) -> Vec<CommentResponse> {
                         let depth = get_depth(comments, c);
                         let replies = build(c.id, map, comments);
                         CommentResponse {
-                            id: c.id,
-                            document_id: c.document_id.clone(),
-                            post_id: c.post_id,
-                            created_by: c.created_by,
+                            id: c.id.to_string(),
                             nickname: c.nickname.clone(),
                             content: c.content.clone(),
-                            parent_id: c.parent_id,
                             depth,
                             replies,
                             created_at: c.created_at,
+                            post_id: None,
+                            created_by: None,
+                            parent_id: None,
                         }
                     })
                     .collect()
@@ -259,7 +275,7 @@ pub fn build_tree(comments: &[Comment]) -> Vec<CommentResponse> {
             .unwrap_or_default()
     }
 
-    build(0, &map, comments)
+    build(root_key, &map, comments)
 }
 
 const MAX_DEPTH: i32 = 3;
@@ -283,16 +299,15 @@ mod tests {
 
     fn make_comment(id: i64, post_id: i64, parent_id: Option<i64>) -> Comment {
         Comment {
-            id,
+            id: crate::utils::id::SnowflakeId(id),
             tenant_id: Some(crate::constants::DEFAULT_TENANT.to_string()),
-            document_id: format!("doc-{id}"),
-            post_id,
+            post_id: crate::utils::id::SnowflakeId(post_id),
             created_by: None,
             updated_by: None,
             nickname: None,
             email: None,
             content: "test".to_string(),
-            parent_id,
+            parent_id: parent_id.map(crate::utils::id::SnowflakeId),
             author_ip: None,
             author_url: None,
             status: CommentStatus::Approved,
@@ -319,11 +334,11 @@ mod tests {
         ];
         let tree = build_tree(&comments);
         assert_eq!(tree.len(), 1);
-        assert_eq!(tree[0].id, 1);
+        assert_eq!(tree[0].id, "1");
         assert_eq!(tree[0].replies.len(), 1);
-        assert_eq!(tree[0].replies[0].id, 2);
+        assert_eq!(tree[0].replies[0].id, "2");
         assert_eq!(tree[0].replies[0].replies.len(), 1);
-        assert_eq!(tree[0].replies[0].replies[0].id, 3);
+        assert_eq!(tree[0].replies[0].replies[0].id, "3");
     }
 
     #[test]
@@ -381,29 +396,23 @@ mod tests {
             )
             .await
             .unwrap();
-            user.id
+            *user.id
         }
 
         async fn insert_post(pool: &crate::db::Pool, user_id: i64) -> i64 {
-            let doc_id = crate::utils::id::new_document_id();
-            let slug = format!("slug-{doc_id}");
+            let post_id = crate::utils::id::new_id();
+            let slug = format!("slug-{post_id}");
             sqlx::query(
-                "INSERT INTO posts (document_id, title, slug, content, status, created_by, updated_by) VALUES (?, 'Test', ?, 'content', 'published', ?, ?)",
+                "INSERT INTO posts (id, title, slug, content, status, created_by, updated_by) VALUES (?, 'Test', ?, 'content', 'published', ?, ?)",
             )
-            .bind(&doc_id)
+            .bind(post_id)
             .bind(&slug)
             .bind(user_id)
             .bind(user_id)
             .execute(pool)
             .await
             .unwrap();
-
-            let (id,): (i64,) = sqlx::query_as("SELECT id FROM posts WHERE document_id = ?")
-                .bind(&doc_id)
-                .fetch_one(pool)
-                .await
-                .unwrap();
-            id
+            post_id
         }
 
         fn make_cmd(post_id: i64) -> CreateCommentCmd {
@@ -425,23 +434,18 @@ mod tests {
             let c = create(&pool, &make_cmd(pid), None).await.unwrap();
             assert_eq!(c.post_id, pid);
             assert_eq!(c.content, "hello");
-            let found = super::find_by_id(&pool, c.id, None).await.unwrap().unwrap();
-            assert_eq!(found.id, c.id);
-            assert_eq!(found.document_id, c.document_id);
-        }
-
-        #[tokio::test]
-        async fn find_by_document_id_test() {
-            let pool = setup_pool().await;
-            let uid = insert_user(&pool).await;
-            let pid = insert_post(&pool, uid).await;
-            let c = create(&pool, &make_cmd(pid), None).await.unwrap();
-            let found = super::find_by_document_id(&pool, &c.document_id, None)
+            let found = super::find_by_id(&pool, *c.id, None)
                 .await
                 .unwrap()
                 .unwrap();
             assert_eq!(found.id, c.id);
-            assert_eq!(found.content, "hello");
+        }
+
+        #[tokio::test]
+        async fn find_by_id_not_found() {
+            let pool = setup_pool().await;
+            let result = super::find_by_id(&pool, 99999, None).await.unwrap();
+            assert!(result.is_none());
         }
 
         #[tokio::test]
@@ -451,7 +455,7 @@ mod tests {
             let pid = insert_post(&pool, uid).await;
             let c1 = create(&pool, &make_cmd(pid), None).await.unwrap();
             let _c2 = create(&pool, &make_cmd(pid), None).await.unwrap();
-            update_status(&pool, c1.id, CommentStatus::Approved, None)
+            update_status(&pool, *c1.id, CommentStatus::Approved, None)
                 .await
                 .unwrap();
 
@@ -472,7 +476,7 @@ mod tests {
                 let mut cmd = make_cmd(pid);
                 cmd.content = format!("comment {i}");
                 let c = create(&pool, &cmd, None).await.unwrap();
-                update_status(&pool, c.id, CommentStatus::Approved, None)
+                update_status(&pool, *c.id, CommentStatus::Approved, None)
                     .await
                     .unwrap();
                 ids.push(c.id);
@@ -497,10 +501,13 @@ mod tests {
             let pid = insert_post(&pool, uid).await;
             let c = create(&pool, &make_cmd(pid), None).await.unwrap();
             assert_eq!(c.status, CommentStatus::Pending);
-            update_status(&pool, c.id, CommentStatus::Approved, None)
+            update_status(&pool, *c.id, CommentStatus::Approved, None)
                 .await
                 .unwrap();
-            let found = super::find_by_id(&pool, c.id, None).await.unwrap().unwrap();
+            let found = super::find_by_id(&pool, *c.id, None)
+                .await
+                .unwrap()
+                .unwrap();
             assert_eq!(found.status, CommentStatus::Approved);
         }
 
@@ -510,8 +517,8 @@ mod tests {
             let uid = insert_user(&pool).await;
             let pid = insert_post(&pool, uid).await;
             let c = create(&pool, &make_cmd(pid), None).await.unwrap();
-            super::delete(&pool, c.id, None).await.unwrap();
-            let found = super::find_by_id(&pool, c.id, None).await.unwrap();
+            super::delete(&pool, *c.id, None).await.unwrap();
+            let found = super::find_by_id(&pool, *c.id, None).await.unwrap();
             assert!(found.is_none());
         }
 

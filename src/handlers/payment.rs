@@ -90,11 +90,11 @@ pub fn routes(
         let mr = axum::routing::post(handle_callback).layer(axum::middleware::from_fn(
             crate::middleware::rate_limit::payment_callback_rate_limit,
         ));
-        r.route("/payment/callback/{channel_doc_id}", mr)
+        r.route("/payment/callback/{channel_id}", mr)
     };
     registry.record(
         "POST",
-        "/api/v1/payment/callback/{channel_doc_id}",
+        "/api/v1/payment/callback/{channel_id}",
         "system public",
         "payment",
     );
@@ -202,13 +202,11 @@ pub fn routes(
 
 fn to_order_response(o: crate::models::payment_order::PaymentOrder) -> PaymentOrderResponse {
     PaymentOrderResponse {
-        id: o.document_id,
-        user_id: o.user_id,
+        id: o.id.to_string(),
         order_id: o.order_id,
         title: o.title,
         amount: o.amount,
         currency: o.currency,
-        channel_id: o.channel_id.to_string(),
         provider: o.provider,
         provider_order_id: o.provider_order_id,
         provider_method: o.provider_method,
@@ -258,7 +256,7 @@ pub async fn create_payment_order_handler(
     Json(req): Json<CreatePaymentOrderRequest>,
 ) -> AppResult<ApiResponse<PaymentOrderResponse>> {
     let _user_id = auth.ensure_authenticated()?;
-    let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
+    let user_int_id = auth.user_id().ok_or(AppError::Unauthorized)?;
     validation::validate(&req)?;
     let client_ip = extract_client_ip(&headers);
     let client_language = extract_accept_language(&headers);
@@ -290,7 +288,7 @@ pub async fn list_user_orders(
     Query(mut params): Query<PaginationParams>,
 ) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<PaymentOrderResponse>>> {
     let _user_id = auth.ensure_authenticated()?;
-    let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
+    let user_int_id = auth.user_id().ok_or(AppError::Unauthorized)?;
     params.sanitize();
     let (orders, total) = state
         .payment_service
@@ -311,10 +309,11 @@ pub async fn get_payment_order_handler(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PaymentOrderResponse>> {
     let _user_id = auth.ensure_authenticated()?;
-    let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
+    let user_int_id = auth.user_id().ok_or(AppError::Unauthorized)?;
+    let id = crate::utils::id::parse_id(&id)?;
     let order = state
         .payment_service
-        .get_payment_order(&auth, user_int_id, &id)
+        .get_payment_order(&auth, user_int_id, id)
         .await?;
     Ok(ApiResponse::success(to_order_response(order)))
 }
@@ -330,10 +329,11 @@ pub async fn cancel_payment_order_handler(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     let _user_id = auth.ensure_authenticated()?;
-    let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
+    let user_int_id = auth.user_id().ok_or(AppError::Unauthorized)?;
+    let id = crate::utils::id::parse_id(&id)?;
     state
         .payment_service
-        .cancel_payment_order(&auth, &id, user_int_id)
+        .cancel_payment_order(&auth, id, user_int_id)
         .await?;
     Ok(ApiResponse::success(()))
 }
@@ -349,10 +349,11 @@ pub async fn list_order_transactions(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<Vec<PaymentTransactionResponse>>> {
     let _ = auth.ensure_authenticated()?;
-    let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
+    let user_int_id = auth.user_id().ok_or(AppError::Unauthorized)?;
+    let id = crate::utils::id::parse_id(&id)?;
     let txs = state
         .payment_service
-        .list_order_transactions(&auth, user_int_id, &id)
+        .list_order_transactions(&auth, user_int_id, id)
         .await?;
     let responses: Vec<PaymentTransactionResponse> = txs.into_iter().map(Into::into).collect();
     Ok(ApiResponse::success(responses))
@@ -369,29 +370,30 @@ pub async fn list_order_refunds(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<Vec<PaymentRefundResponse>>> {
     let _ = auth.ensure_authenticated()?;
-    let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
+    let user_int_id = auth.user_id().ok_or(AppError::Unauthorized)?;
+    let id = crate::utils::id::parse_id(&id)?;
     let refunds = state
         .payment_service
-        .list_order_refunds(&auth, user_int_id, &id)
+        .list_order_refunds(&auth, user_int_id, id)
         .await?;
     let responses: Vec<PaymentRefundResponse> = refunds.into_iter().map(Into::into).collect();
     Ok(ApiResponse::success(responses))
 }
 
-#[utoipa::path(post, path = "/payment/callback/{channel_doc_id}", tag = "payments",
-    params(("channel_doc_id" = String, Path, description = "Channel document ID")),
+#[utoipa::path(post, path = "/payment/callback/{channel_id}", tag = "payments",
+    params(("channel_id" = String, Path, description = "Channel ID")),
     request_body = String,
     responses((status = 200, description = "Callback processed"))
 )]
 pub async fn handle_callback(
     State(state): State<crate::AppState>,
-    Path(channel_doc_id): Path<String>,
+    Path(channel_id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> AppResult<ApiResponse<()>> {
     state
         .payment_service
-        .handle_callback(&channel_doc_id, &headers, &body)
+        .handle_callback(&channel_id, &headers, &body)
         .await?;
     Ok(ApiResponse::success(()))
 }
@@ -490,7 +492,8 @@ pub async fn admin_get_channel(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PaymentChannelResponse>> {
-    let channel = state.payment_service.get_channel(&auth, &id).await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    let channel = state.payment_service.get_channel(&auth, id).await?;
     Ok(ApiResponse::success(PaymentChannelResponse::from(channel)))
 }
 
@@ -507,10 +510,8 @@ pub async fn admin_update_channel(
     Json(req): Json<UpdatePaymentChannelRequest>,
 ) -> AppResult<ApiResponse<PaymentChannelResponse>> {
     validation::validate(&req)?;
-    let channel = state
-        .payment_service
-        .update_channel(&auth, &id, req)
-        .await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    let channel = state.payment_service.update_channel(&auth, id, req).await?;
     Ok(ApiResponse::success(PaymentChannelResponse::from(channel)))
 }
 
@@ -524,7 +525,8 @@ pub async fn admin_delete_channel(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    state.payment_service.delete_channel(&auth, &id).await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    state.payment_service.delete_channel(&auth, id).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -558,9 +560,10 @@ pub async fn admin_get_order(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PaymentOrderResponse>> {
     auth.ensure_admin()?;
+    let id = crate::utils::id::parse_id(&id)?;
     let order = state
         .payment_service
-        .get_payment_order(&auth, 0, &id)
+        .get_payment_order(&auth, 0, id)
         .await?;
     Ok(ApiResponse::success(to_order_response(order)))
 }
@@ -579,9 +582,10 @@ pub async fn admin_refund_order(
 ) -> AppResult<ApiResponse<PaymentRefundResponse>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
+    let id = crate::utils::id::parse_id(&id)?;
     let refund = state
         .payment_service
-        .refund_payment_order(&auth, &id, req)
+        .refund_payment_order(&auth, id, req)
         .await?;
     Ok(ApiResponse::success(PaymentRefundResponse::from(refund)))
 }

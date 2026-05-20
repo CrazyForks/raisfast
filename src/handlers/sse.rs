@@ -123,7 +123,7 @@ mod tests {
             excerpt: None,
             cover_image: None,
             status: PostStatus::Published,
-            created_by: 0,
+            created_by: None,
             author_name: None,
             category_id: None,
             category_name: None,
@@ -151,8 +151,7 @@ mod tests {
 
     fn make_post(id: i64, slug: &str) -> Post {
         Post {
-            id,
-            document_id: format!("doc-{id}"),
+            id: crate::utils::id::SnowflakeId(id),
             tenant_id: None,
             title: String::new(),
             slug: slug.into(),
@@ -160,7 +159,7 @@ mod tests {
             excerpt: None,
             cover_image: None,
             status: PostStatus::Published,
-            created_by: 0,
+            created_by: crate::utils::id::SnowflakeId(0),
             updated_by: None,
             category_id: None,
             view_count: 0,
@@ -184,10 +183,9 @@ mod tests {
 
     fn make_comment(id: i64) -> Comment {
         Comment {
-            id,
-            document_id: format!("doc-{id}"),
+            id: crate::utils::id::SnowflakeId(id),
             tenant_id: None,
-            post_id: 0,
+            post_id: crate::utils::id::SnowflakeId(0),
             created_by: None,
             updated_by: None,
             nickname: None,
@@ -204,8 +202,7 @@ mod tests {
 
     fn make_user(id: i64, username: &str) -> User {
         User {
-            id,
-            document_id: format!("doc-{id}"),
+            id: crate::utils::id::SnowflakeId(id),
             tenant_id: None,
             username: username.into(),
             role: UserRole::Reader,
@@ -226,10 +223,9 @@ mod tests {
 
     fn make_media(id: i64, filename: &str) -> Media {
         Media {
-            id,
-            document_id: format!("doc-{id}"),
+            id: crate::utils::id::SnowflakeId(id),
             tenant_id: None,
-            user_id: 1,
+            user_id: crate::utils::id::SnowflakeId(1),
             filename: filename.into(),
             filepath: String::new(),
             mimetype: String::new(),
@@ -247,9 +243,8 @@ mod tests {
 
     fn make_password_reset_token(user_id: i64) -> PasswordResetToken {
         PasswordResetToken {
-            id: 1,
-            document_id: "prt-1".into(),
-            user_id,
+            id: crate::utils::id::SnowflakeId(1),
+            user_id: crate::utils::id::SnowflakeId(user_id),
             token: "reset-token".into(),
             expires_at: ts(),
             used_at: None,
@@ -259,9 +254,8 @@ mod tests {
 
     fn make_email_verification_token(user_id: i64, email: &str) -> EmailVerificationToken {
         EmailVerificationToken {
-            id: 1,
-            document_id: "evt-1".into(),
-            user_id,
+            id: crate::utils::id::SnowflakeId(1),
+            user_id: crate::utils::id::SnowflakeId(user_id),
             token: "verify-token".into(),
             email: email.into(),
             expires_at: ts(),

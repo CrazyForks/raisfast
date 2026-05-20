@@ -25,33 +25,30 @@ macro_rules! skip_without_tenant {
     };
 }
 
-async fn create_tenant_in_db(pool: &raisfast::db::Pool, document_id: &str, name: &str) {
+async fn create_tenant_in_db(pool: &raisfast::db::Pool, name: &str) {
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
-        "INSERT OR IGNORE INTO tenants (document_id, name, config, status, created_at, updated_at) VALUES (?, ?, '{}', 'active', ?, ?)"
+        "INSERT OR IGNORE INTO tenants (name, config, status, created_at, updated_at) VALUES (?, '{}', 'active', ?, ?)"
     )
-    .bind(document_id).bind(name).bind(&now).bind(&now)
+    .bind(name).bind(&now).bind(&now)
     .execute(pool).await.unwrap();
 }
 
 async fn create_user_in_tenant(
     pool: &raisfast::db::Pool,
-    document_id: &str,
     email: &str,
     username: &str,
     role: &str,
     tenant_id: &str,
-) {
+) -> i64 {
     let hash = raisfast::services::auth::hash_password("TestPass123!").unwrap();
     let sql = format!(
-        "INSERT INTO users (document_id, tenant_id, username, role, status, registered_via) VALUES ({}, {}, {}, {}, 'active', 'email') RETURNING id",
+        "INSERT INTO users (tenant_id, username, role, status, registered_via) VALUES ({}, {}, {}, 'active', 'email') RETURNING id",
         raisfast::db::dialect::ph(1),
         raisfast::db::dialect::ph(2),
-        raisfast::db::dialect::ph(3),
-        raisfast::db::dialect::ph(4)
+        raisfast::db::dialect::ph(3)
     );
     let int_id: i64 = sqlx::query_scalar(&sql)
-        .bind(document_id)
         .bind(tenant_id)
         .bind(username)
         .bind(role)
@@ -59,9 +56,9 @@ async fn create_user_in_tenant(
         .await
         .unwrap();
     let cred_data = serde_json::json!({"password_hash": hash}).to_string();
-    let (cred_doc_id, cred_now) = raisfast::utils::id::new_document_id_and_timestamp();
+    let (cred_id, cred_now) = raisfast::utils::id::new_id_and_timestamp();
     let cred_sql = format!(
-        "INSERT INTO user_credentials (document_id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
+        "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
         raisfast::db::dialect::ph(1),
         raisfast::db::dialect::ph(2),
         raisfast::db::dialect::ph(3),
@@ -70,7 +67,7 @@ async fn create_user_in_tenant(
         raisfast::db::dialect::ph(6)
     );
     sqlx::query(&cred_sql)
-        .bind(&cred_doc_id)
+        .bind(cred_id)
         .bind(int_id)
         .bind(email)
         .bind(&cred_data)
@@ -79,34 +76,27 @@ async fn create_user_in_tenant(
         .execute(pool)
         .await
         .unwrap();
+    int_id
 }
 
 async fn create_published_post_in_tenant(
     pool: &raisfast::db::Pool,
-    document_id: &str,
     slug: &str,
     title: &str,
-    author_doc_id: &str,
+    author_int_id: i64,
     tenant_id: &str,
 ) {
     let now = chrono::Utc::now().to_rfc3339();
-    let author_int_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE document_id = ?")
-        .bind(author_doc_id)
-        .fetch_one(pool)
-        .await
-        .unwrap();
     let sql = format!(
-        "INSERT INTO posts (document_id, tenant_id, title, slug, content, excerpt, status, created_by, updated_by, created_at, updated_at) VALUES ({}, {}, {}, {}, 'content', 'excerpt', 'published', {}, NULL, {}, {})",
+        "INSERT INTO posts (tenant_id, title, slug, content, excerpt, status, created_by, updated_by, created_at, updated_at) VALUES ({}, {}, {}, 'content', 'excerpt', 'published', {}, NULL, {}, {})",
         raisfast::db::dialect::ph(1),
         raisfast::db::dialect::ph(2),
         raisfast::db::dialect::ph(3),
         raisfast::db::dialect::ph(4),
         raisfast::db::dialect::ph(5),
-        raisfast::db::dialect::ph(6),
-        raisfast::db::dialect::ph(7)
+        raisfast::db::dialect::ph(6)
     );
     sqlx::query(&sql)
-        .bind(document_id)
         .bind(tenant_id)
         .bind(title)
         .bind(slug)
@@ -164,13 +154,11 @@ async fn tenant_user_sees_own_data_only() {
     let pool = &state.pool;
     skip_without_tenant!(pool);
 
-    create_tenant_in_db(pool, "tenant_a", "Tenant A").await;
-    create_tenant_in_db(pool, "tenant_b", "Tenant B").await;
+    create_tenant_in_db(pool, "Tenant A").await;
+    create_tenant_in_db(pool, "Tenant B").await;
 
-    let author_a_id = uuid::Uuid::now_v7().to_string();
     create_user_in_tenant(
         pool,
-        &author_a_id,
         "author_a@tenant.test",
         "author_a",
         "author",
@@ -178,10 +166,8 @@ async fn tenant_user_sees_own_data_only() {
     )
     .await;
 
-    let author_b_id = uuid::Uuid::now_v7().to_string();
     create_user_in_tenant(
         pool,
-        &author_b_id,
         "author_b@tenant.test",
         "author_b",
         "author",
@@ -243,13 +229,11 @@ async fn admin_without_header_sees_all() {
     let pool = &state.pool;
     skip_without_tenant!(pool);
 
-    create_tenant_in_db(pool, "tenant_a", "Tenant A").await;
-    create_tenant_in_db(pool, "tenant_b", "Tenant B").await;
+    create_tenant_in_db(pool, "Tenant A").await;
+    create_tenant_in_db(pool, "Tenant B").await;
 
-    let admin_id = uuid::Uuid::now_v7().to_string();
     create_user_in_tenant(
         pool,
-        &admin_id,
         "admin_all@tenant.test",
         "admin_all",
         "admin",
@@ -257,10 +241,8 @@ async fn admin_without_header_sees_all() {
     )
     .await;
 
-    let author_a_id = uuid::Uuid::now_v7().to_string();
-    create_user_in_tenant(
+    let author_a_int_id = create_user_in_tenant(
         pool,
-        &author_a_id,
         "author_ta@tenant.test",
         "author_ta",
         "author",
@@ -268,10 +250,8 @@ async fn admin_without_header_sees_all() {
     )
     .await;
 
-    let author_b_id = uuid::Uuid::now_v7().to_string();
-    create_user_in_tenant(
+    let author_b_int_id = create_user_in_tenant(
         pool,
-        &author_b_id,
         "author_tb@tenant.test",
         "author_tb",
         "author",
@@ -281,20 +261,18 @@ async fn admin_without_header_sees_all() {
 
     create_published_post_in_tenant(
         pool,
-        &uuid::Uuid::now_v7().to_string(),
         "post-tenant-a",
         "Post in Tenant A",
-        &author_a_id,
+        author_a_int_id,
         "tenant_a",
     )
     .await;
 
     create_published_post_in_tenant(
         pool,
-        &uuid::Uuid::now_v7().to_string(),
         "post-tenant-b",
         "Post in Tenant B",
-        &author_b_id,
+        author_b_int_id,
         "tenant_b",
     )
     .await;
@@ -322,13 +300,11 @@ async fn admin_switches_tenant_with_header() {
     let pool = &state.pool;
     skip_without_tenant!(pool);
 
-    create_tenant_in_db(pool, "tenant_a", "Tenant A").await;
-    create_tenant_in_db(pool, "tenant_b", "Tenant B").await;
+    create_tenant_in_db(pool, "Tenant A").await;
+    create_tenant_in_db(pool, "Tenant B").await;
 
-    let admin_id = uuid::Uuid::now_v7().to_string();
     create_user_in_tenant(
         pool,
-        &admin_id,
         "admin_switch@tenant.test",
         "admin_switch",
         "admin",
@@ -336,10 +312,8 @@ async fn admin_switches_tenant_with_header() {
     )
     .await;
 
-    let author_a_id = uuid::Uuid::now_v7().to_string();
-    create_user_in_tenant(
+    let author_a_int_id = create_user_in_tenant(
         pool,
-        &author_a_id,
         "author_sw@tenant.test",
         "author_sw",
         "author",
@@ -349,10 +323,9 @@ async fn admin_switches_tenant_with_header() {
 
     create_published_post_in_tenant(
         pool,
-        &uuid::Uuid::now_v7().to_string(),
         "post-switch-a",
         "Post in Tenant A for Switch",
-        &author_a_id,
+        author_a_int_id,
         "tenant_a",
     )
     .await;
@@ -396,13 +369,11 @@ async fn public_api_scoped_by_tenant_header() {
     let pool = &state.pool;
     skip_without_tenant!(pool);
 
-    create_tenant_in_db(pool, "tenant_a", "Tenant A").await;
-    create_tenant_in_db(pool, "tenant_b", "Tenant B").await;
+    create_tenant_in_db(pool, "Tenant A").await;
+    create_tenant_in_db(pool, "Tenant B").await;
 
-    let author_a_id = uuid::Uuid::now_v7().to_string();
-    create_user_in_tenant(
+    let author_a_int_id = create_user_in_tenant(
         pool,
-        &author_a_id,
         "author_pub_a@tenant.test",
         "author_pub_a",
         "author",
@@ -410,10 +381,8 @@ async fn public_api_scoped_by_tenant_header() {
     )
     .await;
 
-    let author_b_id = uuid::Uuid::now_v7().to_string();
-    create_user_in_tenant(
+    let author_b_int_id = create_user_in_tenant(
         pool,
-        &author_b_id,
         "author_pub_b@tenant.test",
         "author_pub_b",
         "author",
@@ -423,20 +392,18 @@ async fn public_api_scoped_by_tenant_header() {
 
     create_published_post_in_tenant(
         pool,
-        &uuid::Uuid::now_v7().to_string(),
         "public-post-a",
         "Public Post A",
-        &author_a_id,
+        author_a_int_id,
         "tenant_a",
     )
     .await;
 
     create_published_post_in_tenant(
         pool,
-        &uuid::Uuid::now_v7().to_string(),
         "public-post-b",
         "Public Post B",
-        &author_b_id,
+        author_b_int_id,
         "tenant_b",
     )
     .await;
@@ -472,13 +439,11 @@ async fn cross_tenant_post_not_accessible() {
     let pool = &state.pool;
     skip_without_tenant!(pool);
 
-    create_tenant_in_db(pool, "tenant_a", "Tenant A").await;
-    create_tenant_in_db(pool, "tenant_b", "Tenant B").await;
+    create_tenant_in_db(pool, "Tenant A").await;
+    create_tenant_in_db(pool, "Tenant B").await;
 
-    let author_a_id = uuid::Uuid::now_v7().to_string();
-    create_user_in_tenant(
+    let author_a_int_id = create_user_in_tenant(
         pool,
-        &author_a_id,
         "author_cross@tenant.test",
         "author_cross",
         "author",
@@ -489,10 +454,9 @@ async fn cross_tenant_post_not_accessible() {
     let post_slug = "cross-tenant-post";
     create_published_post_in_tenant(
         pool,
-        &uuid::Uuid::now_v7().to_string(),
         post_slug,
         "Cross Tenant Post",
-        &author_a_id,
+        author_a_int_id,
         "tenant_a",
     )
     .await;

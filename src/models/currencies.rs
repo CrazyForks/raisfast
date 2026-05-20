@@ -2,12 +2,12 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 use crate::errors::app_error::AppResult;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct Currency {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub code: String,
     pub name: String,
     pub decimals: i64,
@@ -41,7 +41,6 @@ pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Currency>> {
     raisfast_derive::check_schema!(
         "currencies",
         "id",
-        "document_id",
         "code",
         "name",
         "decimals",
@@ -59,12 +58,12 @@ pub async fn create(
     name: &str,
     decimals: i64,
 ) -> AppResult<Currency> {
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     raisfast_derive::crud_insert!(
         pool,
         "currencies",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "code" => code,
             "name" => name,
             "decimals" => decimals,
@@ -73,8 +72,7 @@ pub async fn create(
         ]
     )?;
 
-    raisfast_derive::crud_find_one!(pool, "currencies", Currency, "document_id" => &document_id)
-        .map_err(Into::into)
+    raisfast_derive::crud_find_one!(pool, "currencies", Currency, "id" => id).map_err(Into::into)
 }
 
 pub async fn update(
@@ -156,7 +154,7 @@ mod tests {
         assert!(c.is_active);
 
         let found = find_by_code(&pool, "CNY").await.unwrap().unwrap();
-        assert_eq!(found.document_id, c.document_id);
+        assert_eq!(found.id, c.id);
     }
 
     #[tokio::test]
@@ -205,14 +203,14 @@ mod tests {
         let user = crate::models::user::create(
             &pool,
             &crate::commands::user::CreateUserCmd {
-                username: crate::utils::id::new_document_id(),
+                username: crate::utils::id::new_id().to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
         )
         .await
         .unwrap();
-        crate::models::wallet::create(&pool, user.id, "CNY")
+        crate::models::wallet::create(&pool, *user.id, "CNY")
             .await
             .unwrap();
 

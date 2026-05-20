@@ -57,7 +57,7 @@ pub async fn verify_sms_and_auth(
         .await?
         .ok_or_else(|| AppError::BadRequest("invalid_code".into()))?;
 
-    let result = crate::models::sms_code::verify_code(pool, sms.id, code).await?;
+    let result = crate::models::sms_code::verify_code(pool, *sms.id, code).await?;
 
     match result {
         crate::models::sms_code::VerifyResult::Verified => {}
@@ -83,7 +83,7 @@ pub async fn verify_sms_and_auth(
     .await?;
 
     let user = match cred {
-        Some(c) => crate::models::user::find_by_pk(pool, c.user_id, None)
+        Some(c) => crate::models::user::find_by_id(pool, *c.user_id, None)
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("user not found")))?,
         None => {
@@ -102,7 +102,7 @@ pub async fn verify_sms_and_auth(
             .await?;
             crate::models::user_credential::create(
                 pool,
-                user.id,
+                *user.id,
                 crate::models::user_credential::AuthType::Phone,
                 phone,
                 "",
@@ -115,8 +115,7 @@ pub async fn verify_sms_and_auth(
 
     let user_role = user.role;
     let access_token = crate::services::auth::generate_access_token_internal(
-        &user.document_id,
-        user.id,
+        *user.id,
         user_role,
         user.tenant_id
             .as_deref()
@@ -129,7 +128,7 @@ pub async fn verify_sms_and_auth(
     let expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
     crate::models::refresh_token::create_token(
         pool,
-        user.id,
+        *user.id,
         &refresh_token_str,
         &expires_at.to_rfc3339(),
     )
@@ -171,7 +170,7 @@ pub async fn bind_phone(
         .await?
         .ok_or_else(|| AppError::BadRequest("invalid_code".into()))?;
 
-    let result = crate::models::sms_code::verify_code(pool, sms.id, code).await?;
+    let result = crate::models::sms_code::verify_code(pool, *sms.id, code).await?;
 
     match result {
         crate::models::sms_code::VerifyResult::Verified => {}
@@ -191,7 +190,7 @@ pub async fn bind_phone(
 
     crate::models::user_credential::create(
         pool,
-        _user.id,
+        *_user.id,
         crate::models::user_credential::AuthType::Phone,
         phone,
         "",

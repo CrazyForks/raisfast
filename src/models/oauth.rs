@@ -7,14 +7,14 @@ use sqlx::FromRow;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 /// OAuth account binding record
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct OAuthAccount {
-    pub id: i64,
-    pub document_id: String,
-    pub user_id: i64,
+    pub id: SnowflakeId,
+    pub user_id: SnowflakeId,
     pub provider: String,
     pub provider_user_id: String,
     pub email: Option<String>,
@@ -31,11 +31,10 @@ pub struct OAuthAccount {
 /// OAuth short-lived state record
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct OAuthState {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub provider: String,
     pub code_verifier: String,
-    pub user_id: Option<i64>,
+    pub user_id: Option<SnowflakeId>,
     pub created_at: Timestamp,
     pub expires_at: Timestamp,
 }
@@ -47,41 +46,35 @@ pub async fn create_state(
     code_verifier: &str,
     user_id: Option<i64>,
     expires_at: &str,
-) -> AppResult<String> {
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+) -> AppResult<i64> {
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     raisfast_derive::crud_insert!(pool, "oauth_states", [
-        "document_id" => &document_id,
+        "id" => id,
         "provider" => provider,
         "code_verifier" => code_verifier,
         "user_id" => user_id,
         "expires_at" => expires_at,
         "created_at" => now,
     ])?;
-    Ok(document_id)
+    Ok(id)
 }
 
-/// Find and delete a state by document_id (one-time use)
-pub async fn consume_state(
-    pool: &crate::db::Pool,
-    document_id: &str,
-) -> AppResult<Option<OAuthState>> {
-    raisfast_derive::check_schema!("oauth_states", "document_id", "expires_at");
+/// Find and delete a state by id (one-time use)
+pub async fn consume_state(pool: &crate::db::Pool, id: i64) -> AppResult<Option<OAuthState>> {
+    raisfast_derive::check_schema!("oauth_states", "id", "expires_at");
     let sql = format!(
-        "SELECT * FROM oauth_states WHERE document_id = {} AND expires_at > {}",
+        "SELECT * FROM oauth_states WHERE id = {} AND expires_at > {}",
         ph(1),
         crate::db::dialect::now_fn(),
     );
     let state = sqlx::query_as::<_, OAuthState>(&sql)
-        .bind(document_id)
+        .bind(id)
         .fetch_optional(pool)
         .await?;
 
     if state.is_some() {
-        let del_sql = format!("DELETE FROM oauth_states WHERE document_id = {}", ph(1));
-        sqlx::query(&del_sql)
-            .bind(document_id)
-            .execute(pool)
-            .await?;
+        let del_sql = format!("DELETE FROM oauth_states WHERE id = {}", ph(1));
+        sqlx::query(&del_sql).bind(id).execute(pool).await?;
     }
 
     Ok(state)
@@ -117,7 +110,7 @@ pub async fn find_by_user_id(pool: &crate::db::Pool, user_id: i64) -> AppResult<
 
 /// Parameters for creating an OAuth account binding
 pub struct CreateOAuthAccountParams<'a> {
-    pub user_id: i64,
+    pub user_id: SnowflakeId,
     pub provider: &'a str,
     pub provider_user_id: &'a str,
     pub email: Option<&'a str>,
@@ -134,10 +127,10 @@ pub async fn create_account(
     pool: &crate::db::Pool,
     params: CreateOAuthAccountParams<'_>,
 ) -> AppResult<OAuthAccount> {
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
 
     raisfast_derive::crud_insert!(pool, "oauth_accounts", [
-        "document_id" => &document_id,
+        "id" => id,
         "user_id" => params.user_id,
         "provider" => params.provider,
         "provider_user_id" => params.provider_user_id,
@@ -152,14 +145,12 @@ pub async fn create_account(
         "updated_at" => now,
     ])?;
 
-    Ok(
-        raisfast_derive::crud_find_one!(pool, "oauth_accounts", OAuthAccount, "document_id" => &document_id)?,
-    )
+    Ok(raisfast_derive::crud_find_one!(pool, "oauth_accounts", OAuthAccount, "id" => id)?)
 }
 
 /// Parameters for updating an OAuth account binding
 pub struct UpdateOAuthAccountParams<'a> {
-    pub id: i64,
+    pub id: SnowflakeId,
     pub email: Option<&'a str>,
     pub display_name: Option<&'a str>,
     pub avatar_url: Option<&'a str>,
@@ -216,18 +207,18 @@ mod tests {
 
     async fn insert_user(pool: &crate::db::Pool) -> i64 {
         let cmd = crate::commands::user::CreateUserCmd {
-            username: crate::utils::id::new_document_id(),
+            username: crate::utils::id::new_id().to_string(),
             registered_via: crate::models::user::RegisteredVia::Email,
         };
         let user = crate::models::user::create(pool, &cmd, None).await.unwrap();
-        user.id
+        *user.id
     }
 
     #[tokio::test]
     async fn create_and_consume_state() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
-        let doc_id = create_state(
+        let state_id = create_state(
             &pool,
             "github",
             "verifier123",
@@ -236,18 +227,17 @@ mod tests {
         )
         .await
         .unwrap();
-        let state = consume_state(&pool, &doc_id).await.unwrap().unwrap();
-        assert_eq!(state.document_id, doc_id);
+        let state = consume_state(&pool, state_id).await.unwrap().unwrap();
         assert_eq!(state.provider, "github");
         assert_eq!(state.code_verifier, "verifier123");
-        assert_eq!(state.user_id, Some(user_id));
+        assert_eq!(state.user_id, Some(crate::utils::id::SnowflakeId(user_id)));
     }
 
     #[tokio::test]
     async fn consume_state_twice_returns_none() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
-        let doc_id = create_state(
+        let state_id = create_state(
             &pool,
             "github",
             "verifier123",
@@ -256,9 +246,9 @@ mod tests {
         )
         .await
         .unwrap();
-        let first = consume_state(&pool, &doc_id).await.unwrap();
+        let first = consume_state(&pool, state_id).await.unwrap();
         assert!(first.is_some());
-        let second = consume_state(&pool, &doc_id).await.unwrap();
+        let second = consume_state(&pool, state_id).await.unwrap();
         assert!(second.is_none());
     }
 
@@ -269,7 +259,7 @@ mod tests {
         let account = create_account(
             &pool,
             CreateOAuthAccountParams {
-                user_id,
+                user_id: crate::utils::id::SnowflakeId(user_id),
                 provider: "github",
                 provider_user_id: "github-123",
                 email: Some("user@example.com"),
@@ -299,7 +289,7 @@ mod tests {
         create_account(
             &pool,
             CreateOAuthAccountParams {
-                user_id,
+                user_id: crate::utils::id::SnowflakeId(user_id),
                 provider: "github",
                 provider_user_id: "github-123",
                 email: None,
@@ -316,7 +306,7 @@ mod tests {
         create_account(
             &pool,
             CreateOAuthAccountParams {
-                user_id,
+                user_id: crate::utils::id::SnowflakeId(user_id),
                 provider: "google",
                 provider_user_id: "google-456",
                 email: None,
@@ -341,7 +331,7 @@ mod tests {
         create_account(
             &pool,
             CreateOAuthAccountParams {
-                user_id,
+                user_id: crate::utils::id::SnowflakeId(user_id),
                 provider: "github",
                 provider_user_id: "github-123",
                 email: None,
@@ -374,7 +364,7 @@ mod tests {
         create_account(
             &pool,
             CreateOAuthAccountParams {
-                user_id,
+                user_id: crate::utils::id::SnowflakeId(user_id),
                 provider: "github",
                 provider_user_id: "github-123",
                 email: None,
@@ -391,7 +381,7 @@ mod tests {
         create_account(
             &pool,
             CreateOAuthAccountParams {
-                user_id,
+                user_id: crate::utils::id::SnowflakeId(user_id),
                 provider: "google",
                 provider_user_id: "google-456",
                 email: None,

@@ -47,7 +47,7 @@ impl JobHandler for ExpirePaymentOrdersHandler {
                     crate::in_transaction!(&self.pool, tx, {
                         let rows = crate::models::payment_order::tx_update_status_cas(
                             &mut tx,
-                            order.id,
+                            *order.id,
                             PaymentStatus::Expired,
                             Some("expired_at"),
                             PaymentStatus::Pending,
@@ -58,7 +58,7 @@ impl JobHandler for ExpirePaymentOrdersHandler {
                         } else {
                             tracing::info!(
                                 "[expire_payment_orders] order {} CAS failed, skipped",
-                                order.document_id
+                                order.id.to_string()
                             );
                             skipped += 1;
                         }
@@ -71,7 +71,7 @@ impl JobHandler for ExpirePaymentOrdersHandler {
                 Err(e) => {
                     tracing::warn!(
                         "[expire_payment_orders] error checking order {}: {e}",
-                        order.document_id
+                        order.id.to_string()
                     );
                     skipped += 1;
                 }
@@ -101,13 +101,13 @@ impl ExpirePaymentOrdersHandler {
                 tracing::warn!(
                     "[expire_payment_orders] provider '{}' not available, skipping order {}",
                     order.provider,
-                    order.document_id
+                    order.id.to_string()
                 );
                 return Ok(false);
             }
         };
 
-        let channel = payment_channel::find_by_id(&self.pool, order.channel_id, None)
+        let channel = payment_channel::find_by_id(&self.pool, *order.channel_id, None)
             .await?
             .ok_or_else(|| {
                 crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
@@ -123,7 +123,7 @@ impl ExpirePaymentOrdersHandler {
             PaymentStatus::Paid => {
                 tracing::info!(
                     "[expire_payment_orders] order {} is paid at provider, skipping expiry",
-                    order.document_id
+                    order.id.to_string()
                 );
                 Ok(false)
             }

@@ -42,8 +42,8 @@ pub struct SetPermissionsRequest {
 /// Handler-facing Permission view (fields/conditions already deserialized)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionView {
+    #[serde(serialize_with = "crate::utils::id::serialize_id_as_string")]
     pub id: i64,
-    pub document_id: String,
     pub role_id: i64,
     pub action: String,
     pub subject: String,
@@ -54,9 +54,8 @@ pub struct PermissionView {
 
 fn perm_to_view(p: &Permission) -> PermissionView {
     PermissionView {
-        id: p.id,
-        document_id: p.document_id.clone(),
-        role_id: p.role_id,
+        id: *p.id,
+        role_id: *p.role_id,
         action: p.action.clone(),
         subject: p.subject.clone(),
         fields: p.fields.as_ref().and_then(|f| serde_json::from_str(f).ok()),
@@ -85,19 +84,15 @@ impl RbacService {
     }
 
     /// Get a role by ID
-    pub async fn get_role(&self, id: &str) -> Result<Option<Role>, AppError> {
+    pub async fn get_role(&self, id: i64) -> Result<Option<Role>, AppError> {
         crate::models::rbac::find_role_by_id(&self.pool, id).await
     }
 
-    /// Create a role
     pub async fn create_role(&self, req: &CreateRoleRequest) -> Result<Role, AppError> {
-        let (id, _now) = crate::utils::id::new_document_id_and_timestamp();
-        crate::models::rbac::create_role(&self.pool, &id, &req.name, req.description.as_deref())
-            .await
+        crate::models::rbac::create_role(&self.pool, &req.name, req.description.as_deref()).await
     }
 
-    /// Update a role
-    pub async fn update_role(&self, id: &str, req: &UpdateRoleRequest) -> Result<Role, AppError> {
+    pub async fn update_role(&self, id: i64, req: &UpdateRoleRequest) -> Result<Role, AppError> {
         crate::models::rbac::update_role(
             &self.pool,
             id,
@@ -107,8 +102,7 @@ impl RbacService {
         .await
     }
 
-    /// Delete a role (system roles cannot be deleted)
-    pub async fn delete_role(&self, id: &str) -> Result<(), AppError> {
+    pub async fn delete_role(&self, id: i64) -> Result<(), AppError> {
         let role = crate::models::rbac::find_role_by_id(&self.pool, id)
             .await?
             .ok_or_else(|| AppError::not_found(&format!("role/{id}")))?;
@@ -118,12 +112,12 @@ impl RbacService {
         crate::models::rbac::delete_role(&self.pool, id).await
     }
 
-    /// Get all permissions for a role (fields/conditions deserialized from JSON)
     pub async fn get_permissions(&self, role_id: &str) -> Result<Vec<PermissionView>, AppError> {
-        let role = crate::models::rbac::find_role_by_id(&self.pool, role_id)
+        let rid: i64 = crate::utils::id::parse_id(role_id)?;
+        let role = crate::models::rbac::find_role_by_id(&self.pool, rid)
             .await?
             .ok_or_else(|| AppError::not_found(&format!("role/{role_id}")))?;
-        let perms = crate::models::rbac::find_permissions_by_role_id(&self.pool, role.id).await?;
+        let perms = crate::models::rbac::find_permissions_by_role_id(&self.pool, *role.id).await?;
         Ok(perms.iter().map(perm_to_view).collect())
     }
 
@@ -132,10 +126,11 @@ impl RbacService {
         role_id: &str,
         entries: &[PermissionEntry],
     ) -> Result<Vec<PermissionView>, AppError> {
-        let role = crate::models::rbac::find_role_by_id(&self.pool, role_id)
+        let rid: i64 = crate::utils::id::parse_id(role_id)?;
+        let role = crate::models::rbac::find_role_by_id(&self.pool, rid)
             .await?
             .ok_or_else(|| AppError::not_found(&format!("role/{role_id}")))?;
-        crate::models::rbac::delete_permissions_by_role_id(&self.pool, role.id).await?;
+        crate::models::rbac::delete_permissions_by_role_id(&self.pool, *role.id).await?;
 
         for entry in entries {
             let fields_json = entry
@@ -150,7 +145,7 @@ impl RbacService {
             crate::models::rbac::insert_permission(
                 &self.pool,
                 &CreatePermissionCmd {
-                    role_id: role.id,
+                    role_id: *role.id,
                     action: entry.action.clone(),
                     subject: entry.subject.clone(),
                     fields: fields_json,

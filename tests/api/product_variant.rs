@@ -2,8 +2,8 @@ use super::*;
 
 async fn setup_with_product() -> (axum::Router, AppState, String, String) {
     let (app, state) = test_app().await;
-    let (int_id, doc_id) = create_admin(&state.pool).await;
-    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin);
+    let (int_id, id) = create_admin(&state.pool).await;
+    let tok = make_token(&id, int_id, raisfast::models::user::UserRole::Admin);
 
     let (_, pbody) = send(
         &mut app.clone(),

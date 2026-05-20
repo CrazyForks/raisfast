@@ -13,9 +13,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::repository::{
-    ContentQuery, ContentRepository, SaveContext, resolve_document_id_to_int_id,
-};
+use super::repository::{ContentQuery, ContentRepository, SaveContext, find_existing_id};
 use super::rule_engine::compile_rule_sql;
 use super::schema::{ContentKind, ContentTypeSchema, FieldType, RelationType, check_api_access};
 use crate::AppState;
@@ -98,25 +96,17 @@ pub fn routes(
     r
 }
 
-fn looks_like_uuid(s: &str) -> bool {
-    s.len() == 36
-        && s.as_bytes().iter().enumerate().all(|(i, c)| match i {
-            8 | 13 | 18 | 23 => *c == b'-',
-            _ => c.is_ascii_hexdigit(),
-        })
-}
-
 fn make_base_ctx_from_auth(
     auth: &AuthUser,
     pool: &crate::db::pool::Pool,
 ) -> crate::aspects::BaseContext {
     crate::aspects::BaseContext::new(
-        auth.user_id().map(|s| s.to_string()),
+        auth.user_id().map(|id| id.to_string()),
         auth.tenant_id().unwrap_or(DEFAULT_TENANT).to_string(),
         crate::utils::tz::now_str(),
     )
     .with_pool(pool.clone())
-    .with_user_int_id(auth.user_int_id())
+    .with_user_int_id(auth.user_id())
 }
 
 fn make_base_ctx(state: &AppState, save_ctx: &SaveContext) -> crate::aspects::BaseContext {
@@ -260,7 +250,7 @@ pub fn register_content_routes(
                     }),
                 )
                 .route(
-                    &format!("{cms}/{plural}/{{id_or_slug}}"),
+                    &format!("{cms}/{plural}/{{id}}"),
                     axum::routing::get({
                         let singular = singular.clone();
                         move |auth, state, path| get_handler(auth, state, path, singular.clone())
@@ -284,7 +274,7 @@ pub fn register_content_routes(
                     }),
                 )
                 .route(
-                    &format!("{admin_cms}/{plural}/{{id_or_slug}}"),
+                    &format!("{admin_cms}/{plural}/{{id}}"),
                     axum::routing::get({
                         let singular = singular.clone();
                         move |state, path| admin_get_handler(state, path, singular.clone())
@@ -309,14 +299,14 @@ pub fn register_content_routes(
                     }),
                 )
                 .route(
-                    &format!("{cms}/{plural}/{{id_or_slug}}"),
+                    &format!("{cms}/{plural}/{{id}}"),
                     axum::routing::get({
                         let singular = singular.clone();
                         move |auth, state, path| get_handler(auth, state, path, singular.clone())
                     }),
                 )
                 .route(
-                    &format!("{cms}/{plural}/{{id_or_slug}}/update"),
+                    &format!("{cms}/{plural}/{{id}}/update"),
                     axum::routing::post({
                         let singular = singular.clone();
                         move |auth, state, path, data| {
@@ -325,7 +315,7 @@ pub fn register_content_routes(
                     }),
                 )
                 .route(
-                    &format!("{cms}/{plural}/{{id_or_slug}}/delete"),
+                    &format!("{cms}/{plural}/{{id}}/delete"),
                     axum::routing::post({
                         let singular = singular.clone();
                         move |auth, state, path| delete_handler(auth, state, path, singular.clone())
@@ -339,7 +329,7 @@ pub fn register_content_routes(
                     }),
                 )
                 .route(
-                    &format!("{admin_cms}/{plural}/{{id_or_slug}}"),
+                    &format!("{admin_cms}/{plural}/{{id}}"),
                     axum::routing::get({
                         let singular = singular.clone();
                         move |state, path| admin_get_handler(state, path, singular.clone())
@@ -357,7 +347,7 @@ pub fn register_content_routes(
     api
 }
 
-/// Parse catch-all path into (plural, optional id_or_slug)
+/// Parse catch-all path into (plural, optional id)
 fn parse_dynamic_path(path: &str) -> Option<(String, Option<String>)> {
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if segments.is_empty() {
@@ -384,7 +374,7 @@ fn resolve_content_type(
     None
 }
 
-/// Parse catch-all path into (segment, optional id_or_slug, optional action)
+/// Parse catch-all path into (segment, optional id, optional action)
 fn parse_dynamic_path_with_action(path: &str) -> Option<(String, Option<String>, Option<String>)> {
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if segments.is_empty() {
@@ -484,19 +474,22 @@ async fn dynamic_cms_dispatch_restful(
             }
             (axum::http::Method::GET, Some(id)) => {
                 check_api_access(ct.api.get.access, &auth)?;
-                let data = do_get(state, &ct, &id, &auth).await?;
+                let int_id = crate::utils::id::parse_id(&id)?;
+                let data = do_get(state, &ct, int_id, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             (axum::http::Method::PUT, Some(id)) => {
                 check_api_access(ct.api.update.access, &auth)?;
+                let int_id = crate::utils::id::parse_id(&id)?;
                 let Json(data) =
                     body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
-                let result = do_update(state, &ct, &id, data, &save_ctx, &auth).await?;
+                let result = do_update(state, &ct, int_id, data, &save_ctx, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
             }
             (axum::http::Method::DELETE, Some(id)) => {
                 check_api_access(ct.api.delete.access, &auth)?;
-                do_delete(state, &ct, &id, &auth).await?;
+                let int_id = crate::utils::id::parse_id(&id)?;
+                do_delete(state, &ct, int_id, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(
                     json!({"deleted": true}),
                 ))
@@ -561,19 +554,22 @@ async fn dynamic_cms_dispatch_simple(
             }
             (axum::http::Method::GET, Some(id), None) => {
                 check_api_access(ct.api.get.access, &auth)?;
-                let data = do_get(state, &ct, &id, &auth).await?;
+                let int_id = crate::utils::id::parse_id(&id)?;
+                let data = do_get(state, &ct, int_id, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             (axum::http::Method::POST, Some(id), Some("update")) => {
                 check_api_access(ct.api.update.access, &auth)?;
+                let int_id = crate::utils::id::parse_id(&id)?;
                 let Json(data) =
                     body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
-                let result = do_update(state, &ct, &id, data, &save_ctx, &auth).await?;
+                let result = do_update(state, &ct, int_id, data, &save_ctx, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(result)).into_response())
             }
             (axum::http::Method::POST, Some(id), Some("delete")) => {
                 check_api_access(ct.api.delete.access, &auth)?;
-                do_delete(state, &ct, &id, &auth).await?;
+                let int_id = crate::utils::id::parse_id(&id)?;
+                do_delete(state, &ct, int_id, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(
                     json!({"deleted": true}),
                 ))
@@ -629,7 +625,8 @@ async fn dynamic_admin_cms_dispatch_restful(
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             (axum::http::Method::GET, Some(id)) => {
-                let data = do_admin_get(state, &ct, &id).await?;
+                let int_id = crate::utils::id::parse_id(&id)?;
+                let data = do_admin_get(state, &ct, int_id).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             _ => Err(AppError::not_found(&format!("{method} {path}"))),
@@ -670,7 +667,8 @@ async fn dynamic_admin_cms_dispatch_simple(
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             (axum::http::Method::GET, Some(id)) => {
-                let data = do_admin_get(state, &ct, &id).await?;
+                let int_id = crate::utils::id::parse_id(&id)?;
+                let data = do_admin_get(state, &ct, int_id).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             _ => Err(AppError::not_found(&format!("{method} {path}"))),
@@ -703,8 +701,8 @@ pub fn cms_list_cache_key(ct: &ContentTypeSchema, query: &ContentQuery) -> Strin
     format!("cms:{}:{h:x}", ct.plural)
 }
 
-pub fn cms_detail_cache_key(ct: &ContentTypeSchema, id_or_slug: &str) -> String {
-    format!("cms:{}:detail:{id_or_slug}", ct.plural)
+pub fn cms_detail_cache_key(ct: &ContentTypeSchema, id: i64) -> String {
+    format!("cms:{}:detail:{id}", ct.plural)
 }
 
 fn invalidate_cms_cache(state: &AppState, ct: &ContentTypeSchema) {
@@ -749,7 +747,8 @@ pub async fn do_list(
                             .foreign_key
                             .clone()
                             .unwrap_or_else(|| format!("{}_id", field.name));
-                        let int_id = resolve_document_id_to_int_id(&state.pool, &rel.target, v)
+                        let parsed_id = crate::utils::id::parse_id(v).unwrap_or(-1);
+                        let int_id = find_existing_id(&state.pool, &rel.target, parsed_id)
                             .await
                             .ok()
                             .flatten()
@@ -852,10 +851,10 @@ pub async fn do_list(
 pub async fn do_get(
     state: &AppState,
     ct: &ContentTypeSchema,
-    id_or_slug: &str,
+    id: i64,
     auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
-    let cache_key = cms_detail_cache_key(ct, id_or_slug);
+    let cache_key = cms_detail_cache_key(ct, id);
     let cache_ttl = std::time::Duration::from_secs(state.config.rule_engine.cms_cache_ttl_secs);
     if ct.api.get.cache
         && let Some(entry) = state.cms_cache.get(&cache_key)
@@ -865,29 +864,15 @@ pub async fn do_get(
     }
 
     let repo = ContentRepository::new(state.pool.clone());
-
-    let item = if looks_like_uuid(id_or_slug) {
-        repo.find_by_id(ct, id_or_slug, None, false).await?
-    } else {
-        let by_slug = if ct.slug_field.is_some() {
-            repo.find_by_slug(ct, id_or_slug, None, None, false).await?
-        } else {
-            None
-        };
-        match by_slug {
-            Some(data) => Some(data),
-            None => repo.find_by_id(ct, id_or_slug, None, false).await?,
-        }
-    };
-
-    let result = item.ok_or_else(|| AppError::not_found(&format!("{}/{}", ct.name, id_or_slug)))?;
+    let item = repo.find_by_id(ct, id, None, false).await?;
+    let result = item.ok_or_else(|| AppError::not_found(&format!("{}/{}", ct.name, id)))?;
 
     if let Some(rules) = ct.cached_rules.as_ref()
         && let Some(rule) = rules.get.filter.as_ref()
     {
         let ctx = super::rule_engine::RuleContext::from_auth(auth);
         if !rule.evaluate(&result, &ctx, &state.config.rule_engine) {
-            return Err(AppError::not_found(&format!("{}/{}", ct.name, id_or_slug)));
+            return Err(AppError::not_found(&format!("{}/{}", ct.name, id)));
         }
     }
 
@@ -897,7 +882,7 @@ pub async fn do_get(
             "on_content_viewed",
             &json!({
                 "content_type": ct.singular,
-                "id": result.get(COL_DOCUMENT_ID).and_then(|v| v.as_str()).unwrap_or(""),
+                "id": result.get(COL_ID).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0),
             }),
         )
         .await;
@@ -951,9 +936,9 @@ pub async fn do_create(
     invalidate_cms_cache(state, ct);
 
     let id = result
-        .get(COL_DOCUMENT_ID)
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
+        .get(COL_ID)
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0)
         .to_string();
     let slug = result
         .get("slug")
@@ -995,7 +980,7 @@ pub async fn do_create(
 pub async fn do_update(
     state: &AppState,
     ct: &ContentTypeSchema,
-    id: &str,
+    id: i64,
     data: Value,
     save_ctx: &SaveContext,
     auth: &AuthUser,
@@ -1097,7 +1082,7 @@ pub async fn do_update(
 pub async fn do_delete(
     state: &AppState,
     ct: &ContentTypeSchema,
-    id: &str,
+    id: i64,
     auth: &AuthUser,
 ) -> Result<(), AppError> {
     let repo = ContentRepository::new(state.pool.clone());
@@ -1220,7 +1205,8 @@ async fn do_admin_list(
                             .foreign_key
                             .clone()
                             .unwrap_or_else(|| format!("{}_id", field.name));
-                        let int_id = resolve_document_id_to_int_id(&state.pool, &rel.target, v)
+                        let parsed_id = crate::utils::id::parse_id(v).unwrap_or(-1);
+                        let int_id = find_existing_id(&state.pool, &rel.target, parsed_id)
                             .await
                             .ok()
                             .flatten()
@@ -1264,7 +1250,7 @@ async fn do_admin_list(
 async fn do_admin_get(
     state: &AppState,
     ct: &ContentTypeSchema,
-    id: &str,
+    id: i64,
 ) -> Result<serde_json::Value, AppError> {
     let repo = ContentRepository::new(state.pool.clone());
     let item = repo.find_by_id(ct, id, None, true).await?;
@@ -1316,13 +1302,9 @@ pub async fn do_single_update(
 ) -> Result<serde_json::Value, AppError> {
     let repo = ContentRepository::new(state.pool.clone());
     let existing = repo.ensure_single(ct, None).await?;
-    let id = existing
-        .get(COL_DOCUMENT_ID)
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let id = existing.get(COL_ID).and_then(|v| v.as_i64()).unwrap_or(0);
 
-    do_update(state, ct, &id, data, save_ctx, auth).await
+    do_update(state, ct, id, data, save_ctx, auth).await
 }
 
 async fn do_admin_single_get(
@@ -1395,7 +1377,7 @@ async fn list_handler(
 async fn get_handler(
     auth: AuthUser,
     State(state): State<AppState>,
-    Path(id_or_slug): Path<String>,
+    Path(id): Path<String>,
     type_name: String,
 ) -> Result<impl IntoResponse, AppError> {
     let ct = state
@@ -1403,7 +1385,8 @@ async fn get_handler(
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
     check_api_access(ct.api.get.access, &auth)?;
-    let data = do_get(&state, &ct, &id_or_slug, &auth).await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    let data = do_get(&state, &ct, id, &auth).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(data)))
 }
 
@@ -1444,8 +1427,9 @@ async fn update_handler(
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
     check_api_access(ct.api.update.access, &auth)?;
+    let int_id = crate::utils::id::parse_id(&id)?;
     let save_ctx = SaveContext::from_auth(&auth);
-    let result = do_update(&state, &ct, &id, data, &save_ctx, &auth).await?;
+    let result = do_update(&state, &ct, int_id, data, &save_ctx, &auth).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(result)))
 }
 
@@ -1460,7 +1444,8 @@ async fn delete_handler(
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
     check_api_access(ct.api.delete.access, &auth)?;
-    do_delete(&state, &ct, &id, &auth).await?;
+    let int_id = crate::utils::id::parse_id(&id)?;
+    do_delete(&state, &ct, int_id, &auth).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(
         json!({"deleted": true}),
     )))
@@ -1488,7 +1473,8 @@ async fn admin_get_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
-    let data = do_admin_get(&state, &ct, &id).await?;
+    let int_id = crate::utils::id::parse_id(&id)?;
+    let data = do_admin_get(&state, &ct, int_id).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(data)))
 }
 
@@ -1703,7 +1689,7 @@ fn filter_fields(
     let protocol_cols: Vec<&str> = ct.protocol_column_names();
     let system_keys: Vec<String> = obj
         .keys()
-        .filter(|k| *k == COL_ID || *k == COL_DOCUMENT_ID || protocol_cols.contains(&k.as_str()))
+        .filter(|k| *k == COL_ID || protocol_cols.contains(&k.as_str()))
         .cloned()
         .collect();
     obj.retain(|k, _| allowed.contains(&k.to_string()) || system_keys.contains(k));
@@ -1870,13 +1856,11 @@ type = "text"
     #[test]
     fn filter_fields_with_whitelist() {
         let ct = parse_ct();
-        let data =
-            json!({"title": "Hello", "price": 100, "id": 1, "document_id": "abc", "extra": "x"});
+        let data = json!({"title": "Hello", "price": 100, "id": 1, "extra": "x"});
         let filtered = filter_fields(data, Some(&["title".to_string()]), &ct);
         let obj = filtered.as_object().unwrap();
         assert!(obj.contains_key("title"));
         assert!(obj.contains_key("id"));
-        assert!(obj.contains_key("document_id"));
         assert!(!obj.contains_key("price"));
         assert!(!obj.contains_key("extra"));
     }
@@ -1933,8 +1917,8 @@ type = "text"
     #[test]
     fn cms_detail_cache_key_format() {
         let ct = parse_ct();
-        let key = cms_detail_cache_key(&ct, "doc-123");
-        assert_eq!(key, "cms:products:detail:doc-123");
+        let key = cms_detail_cache_key(&ct, 123);
+        assert_eq!(key, "cms:products:detail:123");
     }
 
     #[test]

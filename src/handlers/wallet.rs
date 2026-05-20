@@ -119,7 +119,7 @@ pub fn routes(
         r,
         registry,
         restful,
-        "/admin/wallets/{tx_doc_id}/reversal",
+        "/admin/wallets/{tx_id}/reversal",
         post,
         admin_reversal,
         "admin wallet",
@@ -136,9 +136,10 @@ pub async fn list_wallets(
     State(state): State<crate::AppState>,
 ) -> Result<ApiResponse<Vec<dto::WalletResponse>>, AppError> {
     let user_id = auth.ensure_authenticated()?;
+    let user_id_str = user_id.to_string();
     let wallets = state
         .wallet_service
-        .list_wallets_by_user(user_id, auth.tenant_id())
+        .list_wallets_by_user(&user_id_str, auth.tenant_id())
         .await?;
     let items: Vec<dto::WalletResponse> = wallets
         .into_iter()
@@ -158,9 +159,10 @@ pub async fn get_wallet(
     Path(currency): Path<String>,
 ) -> Result<ApiResponse<dto::WalletResponse>, AppError> {
     let user_id = auth.ensure_authenticated()?;
+    let user_id_str = user_id.to_string();
     let w = state
         .wallet_service
-        .get_wallet_by_currency(user_id, &currency, auth.tenant_id())
+        .get_wallet_by_currency(&user_id_str, &currency, auth.tenant_id())
         .await?;
     Ok(ApiResponse::success(dto::WalletResponse::from_wallet(w)?))
 }
@@ -180,10 +182,11 @@ pub async fn list_transactions(
     AppError,
 > {
     let user_id = auth.ensure_authenticated()?;
+    let user_id_str = user_id.to_string();
     let (rows, total) = state
         .wallet_service
         .list_transactions_by_wallet(
-            user_id,
+            &user_id_str,
             &currency,
             params.page,
             params.page_size,
@@ -207,9 +210,15 @@ pub async fn list_all_transactions(
     AppError,
 > {
     let user_id = auth.ensure_authenticated()?;
+    let user_id_str = user_id.to_string();
     let (rows, total) = state
         .wallet_service
-        .list_transactions_by_user(user_id, params.page, params.page_size, auth.tenant_id())
+        .list_transactions_by_user(
+            &user_id_str,
+            params.page,
+            params.page_size,
+            auth.tenant_id(),
+        )
         .await?;
     let items = state.wallet_service.tx_list_to_response(rows).await?;
     Ok(params.paginate(items, total))
@@ -335,7 +344,7 @@ pub async fn admin_debit(
 pub async fn list_user_transactions(
     auth: AuthUser,
     State(state): State<crate::AppState>,
-    Path((user_doc_id, currency)): Path<(String, String)>,
+    Path((user_id, currency)): Path<(String, String)>,
     Query(params): Query<PaginationParams>,
 ) -> Result<
     ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>,
@@ -345,7 +354,7 @@ pub async fn list_user_transactions(
     let (rows, total) = state
         .wallet_service
         .list_transactions_by_wallet(
-            &user_doc_id,
+            &user_id,
             &currency,
             params.page,
             params.page_size,
@@ -365,7 +374,7 @@ pub async fn list_user_transactions(
 pub async fn list_user_all_transactions(
     auth: AuthUser,
     State(state): State<crate::AppState>,
-    Path(user_doc_id): Path<String>,
+    Path(user_id): Path<String>,
     Query(params): Query<PaginationParams>,
 ) -> Result<
     ApiResponse<crate::errors::response::PaginatedData<dto::WalletTransactionResponse>>,
@@ -374,28 +383,23 @@ pub async fn list_user_all_transactions(
     auth.ensure_admin()?;
     let (rows, total) = state
         .wallet_service
-        .list_transactions_by_user(
-            &user_doc_id,
-            params.page,
-            params.page_size,
-            auth.tenant_id(),
-        )
+        .list_transactions_by_user(&user_id, params.page, params.page_size, auth.tenant_id())
         .await?;
 
     let items = state.wallet_service.tx_list_to_response(rows).await?;
     Ok(params.paginate(items, total))
 }
 
-#[utoipa::path(post, path = "/admin/wallets/{tx_doc_id}/reversal", tag = "wallets",
+#[utoipa::path(post, path = "/admin/wallets/{tx_id}/reversal", tag = "wallets",
     security(("bearer_auth" = [])),
-    params(("tx_doc_id" = String, Path, description = "Transaction document ID")),
+    params(("tx_id" = String, Path, description = "Transaction ID")),
     request_body = dto::ReversalRequest,
     responses((status = 200, description = "Transaction reversed"))
 )]
 pub async fn admin_reversal(
     auth: AuthUser,
     State(state): State<crate::AppState>,
-    Path(tx_doc_id): Path<String>,
+    Path(tx_id): Path<String>,
     Json(req): Json<dto::ReversalRequest>,
 ) -> Result<ApiResponse<dto::WalletTransactionResponse>, AppError> {
     auth.ensure_admin()?;
@@ -403,12 +407,12 @@ pub async fn admin_reversal(
 
     let original = state
         .wallet_service
-        .find_tx_by_document_id(&tx_doc_id, auth.tenant_id())
+        .find_tx_by_id(&tx_id, auth.tenant_id())
         .await?;
 
     let tx = state
         .wallet_service
-        .reverse_transaction(original.id, &req.transaction_no)
+        .reverse_transaction(*original.id, &req.transaction_no)
         .await?;
 
     let resp = state.wallet_service.tx_to_response(tx).await?;

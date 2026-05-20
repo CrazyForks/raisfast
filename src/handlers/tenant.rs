@@ -4,10 +4,9 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 
 use crate::AppState;
-use crate::dto::{BatchRequest, BatchResponse};
+use crate::dto::{BatchRequest, BatchResponse, TenantResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
-use crate::models::tenant::Tenant;
 use crate::services::tenant::{CreateTenantRequest, UpdateTenantRequest};
 use crate::utils::pagination::PaginationParams;
 
@@ -87,9 +86,10 @@ pub fn routes(
 pub async fn list_tenants(
     State(state): State<AppState>,
     Query(mut params): Query<PaginationParams>,
-) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<Tenant>>> {
+) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<TenantResponse>>> {
     params.sanitize();
     let all = state.tenant.list().await?;
+    let all: Vec<TenantResponse> = all.into_iter().map(TenantResponse::from_tenant).collect();
     Ok(params.paginate_in_memory(all))
 }
 
@@ -102,13 +102,14 @@ pub async fn list_tenants(
 pub async fn get_tenant(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> AppResult<ApiResponse<Tenant>> {
+) -> AppResult<ApiResponse<TenantResponse>> {
+    let id = crate::utils::id::parse_id(&id)?;
     let tenant = state
         .tenant
-        .get(&id)
+        .get(id)
         .await?
         .ok_or_else(|| AppError::not_found(&format!("tenant/{id}")))?;
-    Ok(ApiResponse::success(tenant))
+    Ok(ApiResponse::success(TenantResponse::from_tenant(tenant)))
 }
 
 /// POST /admin/tenants — Create a tenant
@@ -119,9 +120,9 @@ pub async fn get_tenant(
 pub async fn create_tenant(
     State(state): State<AppState>,
     Json(req): Json<CreateTenantRequest>,
-) -> AppResult<ApiResponse<Tenant>> {
+) -> AppResult<ApiResponse<TenantResponse>> {
     let tenant = state.tenant.create(&req).await?;
-    Ok(ApiResponse::success(tenant))
+    Ok(ApiResponse::success(TenantResponse::from_tenant(tenant)))
 }
 
 /// PUT /admin/tenants/:id — Update a tenant
@@ -134,9 +135,10 @@ pub async fn update_tenant(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateTenantRequest>,
-) -> AppResult<ApiResponse<Tenant>> {
-    let tenant = state.tenant.update(&id, &req).await?;
-    Ok(ApiResponse::success(tenant))
+) -> AppResult<ApiResponse<TenantResponse>> {
+    let id = crate::utils::id::parse_id(&id)?;
+    let tenant = state.tenant.update(id, &req).await?;
+    Ok(ApiResponse::success(TenantResponse::from_tenant(tenant)))
 }
 
 /// DELETE /admin/tenants/:id — Delete a tenant
@@ -149,7 +151,8 @@ pub async fn delete_tenant(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    state.tenant.delete(&id).await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    state.tenant.delete(id).await?;
     Ok(ApiResponse::success(serde_json::json!({
         "deleted": true,
     })))
@@ -166,7 +169,10 @@ pub async fn admin_batch(
 ) -> AppResult<ApiResponse<BatchResponse>> {
     crate::errors::validation::validate(&req)?;
     let mut affected = 0usize;
-    for id in &req.ids {
+    for raw_id in &req.ids {
+        let Ok(id) = crate::utils::id::parse_id(raw_id) else {
+            continue;
+        };
         match req.action.as_str() {
             "delete" => {
                 if state.tenant.delete(id).await.is_ok() {

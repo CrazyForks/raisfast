@@ -8,15 +8,15 @@ use sqlx::FromRow;
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::id;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 /// Password reset token full database row model
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
 pub struct PasswordResetToken {
-    pub id: i64,
-    pub document_id: String,
-    pub user_id: i64,
+    pub id: SnowflakeId,
+    pub user_id: SnowflakeId,
     pub token: String,
     pub expires_at: Timestamp,
     pub used_at: Option<Timestamp>,
@@ -25,13 +25,13 @@ pub struct PasswordResetToken {
 
 /// Create a new password reset token
 ///
-/// Generates a document_id and a 32-byte random token. Validity is controlled by `expires_in_secs`.
+/// Generates a Snowflake ID and a 32-byte random token. Validity is controlled by `expires_in_secs`.
 pub async fn create(
     pool: &crate::db::Pool,
     user_id: i64,
     expires_in_secs: i64,
 ) -> AppResult<PasswordResetToken> {
-    let (document_id, now) = id::new_document_id_and_timestamp();
+    let (id, now) = id::new_id_and_timestamp();
 
     let mut token_bytes = [0u8; 32];
     getrandom::getrandom(&mut token_bytes).map_err(|e| {
@@ -44,7 +44,7 @@ pub async fn create(
     let expires_at = crate::utils::tz::now_utc() + chrono::Duration::seconds(expires_in_secs);
 
     raisfast_derive::crud_insert!(pool, "password_reset_tokens", [
-        "document_id" => &document_id,
+        "id" => id,
         "user_id" => user_id,
         "token" => &token,
         "expires_at" => expires_at,
@@ -117,14 +117,14 @@ mod tests {
         let user = crate::models::user::create(
             pool,
             &crate::commands::user::CreateUserCmd {
-                username: crate::utils::id::new_document_id(),
+                username: crate::utils::id::new_id().to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
         )
         .await
         .unwrap();
-        user.id
+        *user.id
     }
 
     #[tokio::test]
@@ -132,7 +132,7 @@ mod tests {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
         let row = create(&pool, user_id, 3600).await.unwrap();
-        assert!(row.id > 0);
+        assert!(*row.id > 0);
         assert_eq!(row.user_id, user_id);
         assert!(!row.token.is_empty());
         assert!(row.used_at.is_none());
@@ -149,7 +149,7 @@ mod tests {
         let row = create(&pool, user_id, 3600).await.unwrap();
         assert!(row.used_at.is_none());
 
-        super::mark_used(&pool, row.id).await.unwrap();
+        super::mark_used(&pool, *row.id).await.unwrap();
 
         let found = find_by_token(&pool, &row.token).await.unwrap();
         assert!(

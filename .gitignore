@@ -5,6 +5,7 @@
 *.db
 data/
 backups/
+.local-cache/
 
 node_modules
 *.pid

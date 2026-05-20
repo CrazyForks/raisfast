@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 
 use crate::errors::app_error::AppResult;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct PaymentChannel {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
     pub provider: String,
     pub name: String,
@@ -28,14 +28,6 @@ pub async fn find_by_id(
 ) -> AppResult<Option<PaymentChannel>> {
     raisfast_derive::crud_find!(pool, "payment_channels", PaymentChannel, "id" => id, tenant: tenant_id)
         .map_err(Into::into)
-}
-
-pub async fn find_by_document_id(
-    pool: &crate::db::Pool,
-    document_id: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<Option<PaymentChannel>> {
-    raisfast_derive::crud_find!(pool, "payment_channels", PaymentChannel, "document_id" => document_id, tenant: tenant_id).map_err(Into::into)
 }
 
 pub async fn find_all_active(
@@ -72,7 +64,7 @@ pub async fn insert(
     cmd: &crate::commands::CreatePaymentChannelCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<PaymentChannel> {
-    let document_id = uuid::Uuid::now_v7().to_string();
+    let id = crate::utils::id::new_id();
     let is_live_val = if cmd.is_live { 1_i64 } else { 0_i64 };
     let is_active_val = if cmd.is_active { 1_i64 } else { 0_i64 };
     let now = crate::utils::tz::now_utc();
@@ -80,7 +72,7 @@ pub async fn insert(
         pool,
         "payment_channels",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "provider" => &cmd.provider,
             "name" => &cmd.name,
             "is_live" => is_live_val,
@@ -94,13 +86,11 @@ pub async fn insert(
         ],
         tenant: tenant_id
     )?;
-    find_by_document_id(pool, &document_id, tenant_id)
-        .await?
-        .ok_or_else(|| {
-            crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
-                "inserted row not found: {document_id}"
-            ))
-        })
+    find_by_id(pool, id, tenant_id).await?.ok_or_else(|| {
+        crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
+            "inserted row not found: {id}"
+        ))
+    })
 }
 
 pub async fn update(
@@ -173,7 +163,7 @@ mod tests {
     async fn insert_and_find_by_id() {
         let pool = setup_pool().await;
         let ch = seed_channel(&pool, "stripe").await;
-        let found = super::find_by_id(&pool, ch.id, None)
+        let found = super::find_by_id(&pool, *ch.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -185,32 +175,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn find_by_document_id_works() {
-        let pool = setup_pool().await;
-        let ch = seed_channel(&pool, "alipay").await;
-        let found = super::find_by_document_id(&pool, &ch.document_id, None)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(found.id, ch.id);
-    }
-
-    #[tokio::test]
     async fn find_by_id_not_found() {
         let pool = setup_pool().await;
         assert!(
             super::find_by_id(&pool, 99999, None)
-                .await
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[tokio::test]
-    async fn find_by_document_id_not_found() {
-        let pool = setup_pool().await;
-        assert!(
-            super::find_by_document_id(&pool, "nonexistent", None)
                 .await
                 .unwrap()
                 .is_none()
@@ -268,7 +236,7 @@ mod tests {
         let ok = super::update(
             &pool,
             &crate::commands::UpdatePaymentChannelCmd {
-                id: ch.id,
+                id: *ch.id,
                 provider: "paypal".into(),
                 name: "PayPal Live".into(),
                 is_live: true,
@@ -284,7 +252,7 @@ mod tests {
         .await
         .unwrap();
         assert!(ok);
-        let found = super::find_by_id(&pool, ch.id, None)
+        let found = super::find_by_id(&pool, *ch.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -303,7 +271,7 @@ mod tests {
         let ok = super::update(
             &pool,
             &crate::commands::UpdatePaymentChannelCmd {
-                id: ch.id,
+                id: *ch.id,
                 provider: "stripe".into(),
                 name: "name".into(),
                 is_live: false,
@@ -325,10 +293,10 @@ mod tests {
     async fn delete_removes_channel() {
         let pool = setup_pool().await;
         let ch = seed_channel(&pool, "stripe").await;
-        let ok = super::delete_by_id(&pool, ch.id, None).await.unwrap();
+        let ok = super::delete_by_id(&pool, *ch.id, None).await.unwrap();
         assert!(ok);
         assert!(
-            super::find_by_id(&pool, ch.id, None)
+            super::find_by_id(&pool, *ch.id, None)
                 .await
                 .unwrap()
                 .is_none()

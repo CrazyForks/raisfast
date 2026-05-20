@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 use crate::errors::app_error::AppResult;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 /// Refresh token full database row model
@@ -16,9 +17,8 @@ use crate::utils::tz::Timestamp;
 /// `expires_at` is the expiration time in ISO 8601 format.
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct RefreshToken {
-    pub id: i64,
-    pub document_id: String,
-    pub user_id: i64,
+    pub id: SnowflakeId,
+    pub user_id: SnowflakeId,
     pub token: String,
     pub expires_at: Timestamp,
     pub created_at: Timestamp,
@@ -26,16 +26,16 @@ pub struct RefreshToken {
 
 /// Create a new refresh token record
 ///
-/// Automatically generates a UUID v7 as the document_id.
+/// Automatically generates a Snowflake ID as the primary key.
 pub async fn create_token(
     pool: &crate::db::Pool,
     user_id: i64,
     token: &str,
     expires_at: &str,
 ) -> AppResult<()> {
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     raisfast_derive::crud_insert!(pool, "refresh_tokens", [
-        "document_id" => document_id,
+        "id" => id,
         "user_id" => user_id,
         "token" => token,
         "expires_at" => expires_at,
@@ -78,18 +78,18 @@ mod tests {
 
     async fn insert_user(pool: &crate::db::Pool) -> i64 {
         let cmd = crate::commands::user::CreateUserCmd {
-            username: crate::utils::id::new_document_id(),
+            username: crate::utils::id::new_id().to_string(),
             registered_via: crate::models::user::RegisteredVia::Email,
         };
         let user = crate::models::user::create(pool, &cmd, None).await.unwrap();
-        user.id
+        *user.id
     }
 
     #[tokio::test]
     async fn create_and_find_by_token() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
-        let token = crate::utils::id::new_document_id();
+        let token = crate::utils::id::new_id().to_string();
         create_token(&pool, user_id, &token, "2099-12-31T00:00:00Z")
             .await
             .unwrap();
@@ -106,7 +106,7 @@ mod tests {
     async fn delete_by_token() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
-        let token = crate::utils::id::new_document_id();
+        let token = crate::utils::id::new_id().to_string();
         create_token(&pool, user_id, &token, "2099-12-31T00:00:00Z")
             .await
             .unwrap();
@@ -118,8 +118,8 @@ mod tests {
     async fn delete_by_user() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
-        let token1 = crate::utils::id::new_document_id();
-        let token2 = crate::utils::id::new_document_id();
+        let token1 = crate::utils::id::new_id().to_string();
+        let token2 = crate::utils::id::new_id().to_string();
         create_token(&pool, user_id, &token1, "2099-12-31T00:00:00Z")
             .await
             .unwrap();

@@ -3,7 +3,9 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 
-use crate::dto::{BatchRequest, BatchResponse, CreateCategoryRequest, UpdateCategoryRequest};
+use crate::dto::{
+    BatchRequest, BatchResponse, CategoryResponse, CreateCategoryRequest, UpdateCategoryRequest,
+};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
@@ -126,13 +128,16 @@ pub async fn list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Query(mut params): Query<PaginationParams>,
-) -> AppResult<ApiResponse<crate::errors::response::PaginatedData<crate::models::category::Category>>>
-{
+) -> AppResult<ApiResponse<PaginatedData<CategoryResponse>>> {
     params.sanitize();
     let (items, total) = state
         .category_service
         .list_paginated(&auth, params.page, params.page_size)
         .await?;
+    let items: Vec<CategoryResponse> = items
+        .into_iter()
+        .map(CategoryResponse::from_category)
+        .collect();
     Ok(params.paginate(items, total))
 }
 
@@ -145,9 +150,10 @@ pub async fn get(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
-) -> AppResult<ApiResponse<crate::models::category::Category>> {
-    let cat = state.category_service.get(&id, &auth).await?;
-    Ok(ApiResponse::success(cat))
+) -> AppResult<ApiResponse<CategoryResponse>> {
+    let id = crate::utils::id::parse_id(&id)?;
+    let cat = state.category_service.get(id, &auth).await?;
+    Ok(ApiResponse::success(CategoryResponse::from_category(cat)))
 }
 
 /// Create a new category
@@ -160,11 +166,11 @@ pub async fn create(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Json(req): Json<CreateCategoryRequest>,
-) -> AppResult<ApiResponse<crate::models::category::Category>> {
+) -> AppResult<ApiResponse<CategoryResponse>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
     let cat = state.category_service.create(&auth, req).await?;
-    Ok(ApiResponse::success(cat))
+    Ok(ApiResponse::success(CategoryResponse::from_category(cat)))
 }
 
 /// Update a category
@@ -179,11 +185,12 @@ pub async fn update(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateCategoryRequest>,
-) -> AppResult<ApiResponse<crate::models::category::Category>> {
+) -> AppResult<ApiResponse<CategoryResponse>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
-    let cat = state.category_service.update(&auth, &id, req).await?;
-    Ok(ApiResponse::success(cat))
+    let id = crate::utils::id::parse_id(&id)?;
+    let cat = state.category_service.update(&auth, id, req).await?;
+    Ok(ApiResponse::success(CategoryResponse::from_category(cat)))
 }
 
 /// Delete a category
@@ -198,7 +205,8 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_author()?;
-    state.category_service.delete(&id, &auth).await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    state.category_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -208,13 +216,17 @@ pub async fn admin_list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Query(mut params): Query<PaginationParams>,
-) -> AppResult<ApiResponse<PaginatedData<crate::models::category::Category>>> {
+) -> AppResult<ApiResponse<PaginatedData<CategoryResponse>>> {
     auth.ensure_admin()?;
     params.sanitize();
     let (items, total) = state
         .category_service
         .list_paginated(&auth, params.page, params.page_size)
         .await?;
+    let items: Vec<CategoryResponse> = items
+        .into_iter()
+        .map(CategoryResponse::from_category)
+        .collect();
     Ok(params.paginate(items, total))
 }
 
@@ -222,11 +234,11 @@ pub async fn admin_create(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Json(req): Json<CreateCategoryRequest>,
-) -> AppResult<ApiResponse<crate::models::category::Category>> {
+) -> AppResult<ApiResponse<CategoryResponse>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
     let cat = state.category_service.create(&auth, req).await?;
-    Ok(ApiResponse::success(cat))
+    Ok(ApiResponse::success(CategoryResponse::from_category(cat)))
 }
 
 pub async fn admin_update(
@@ -234,11 +246,12 @@ pub async fn admin_update(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateCategoryRequest>,
-) -> AppResult<ApiResponse<crate::models::category::Category>> {
+) -> AppResult<ApiResponse<CategoryResponse>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let cat = state.category_service.update(&auth, &id, req).await?;
-    Ok(ApiResponse::success(cat))
+    let id = crate::utils::id::parse_id(&id)?;
+    let cat = state.category_service.update(&auth, id, req).await?;
+    Ok(ApiResponse::success(CategoryResponse::from_category(cat)))
 }
 
 pub async fn admin_delete(
@@ -247,7 +260,8 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    state.category_service.delete(&id, &auth).await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    state.category_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -260,8 +274,10 @@ pub async fn admin_batch(
     validation::validate(&req)?;
     let mut affected = 0usize;
     if req.action == "delete" {
-        for id in &req.ids {
-            if state.category_service.delete(id, &auth).await.is_ok() {
+        for raw_id in &req.ids {
+            if let Ok(id) = crate::utils::id::parse_id(raw_id)
+                && state.category_service.delete(id, &auth).await.is_ok()
+            {
                 affected += 1;
             }
         }

@@ -9,13 +9,13 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct Category {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
     pub name: String,
     pub slug: String,
@@ -26,10 +26,10 @@ pub struct Category {
     pub og_title: Option<String>,
     pub og_description: Option<String>,
     pub og_image: Option<String>,
-    pub parent_id: Option<i64>,
+    pub parent_id: Option<SnowflakeId>,
     pub sort_order: i64,
-    pub created_by: Option<i64>,
-    pub updated_by: Option<i64>,
+    pub created_by: Option<SnowflakeId>,
+    pub updated_by: Option<SnowflakeId>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -65,28 +65,19 @@ pub async fn find_by_id(
         .map_err(Into::into)
 }
 
-pub async fn find_by_document_id(
-    pool: &crate::db::Pool,
-    document_id: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<Option<Category>> {
-    raisfast_derive::crud_find!(pool, "categories", Category, "document_id" => document_id, tenant: tenant_id)
-        .map_err(Into::into)
-}
-
 pub async fn create(
     pool: &crate::db::Pool,
     cmd: &crate::commands::CreateCategoryCmd,
     tenant_id: Option<&str>,
     created_by: Option<i64>,
 ) -> AppResult<Category> {
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
 
     raisfast_derive::crud_insert!(
         pool,
         "categories",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "name" => &cmd.name,
             "slug" => &cmd.slug,
             "description" => &cmd.description,
@@ -100,9 +91,9 @@ pub async fn create(
         tenant: tenant_id
     )?;
 
-    find_by_document_id(pool, &document_id, tenant_id)
-        .await?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch created category")))
+    find_by_id(pool, id, tenant_id)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to fetch created category: {e}")))
 }
 
 pub async fn update(
@@ -121,7 +112,7 @@ pub async fn update(
         .as_deref()
         .map(std::string::ToString::to_string)
         .or(existing.description);
-    let parent = cmd.parent_id.or(existing.parent_id);
+    let parent = cmd.parent_id.or(existing.parent_id.map(|v| *v));
     let sort = cmd.sort_order.unwrap_or(existing.sort_order);
 
     let now = crate::utils::tz::now_utc();
@@ -163,22 +154,9 @@ mod tests {
     async fn create_and_find_by_id() {
         let pool = setup_pool().await;
         let cat = create(&pool, &make_cmd("Tech"), None, None).await.unwrap();
-        let found = find_by_id(&pool, cat.id, None).await.unwrap();
+        let found = find_by_id(&pool, *cat.id, None).await.unwrap();
         assert_eq!(found.id, cat.id);
         assert_eq!(found.name, "Tech");
-    }
-
-    #[tokio::test]
-    async fn find_by_document_id() {
-        let pool = setup_pool().await;
-        let cat = create(&pool, &make_cmd("Science"), None, None)
-            .await
-            .unwrap();
-        let found = super::find_by_document_id(&pool, &cat.document_id, None)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(found.id, cat.id);
     }
 
     #[tokio::test]
@@ -209,7 +187,7 @@ mod tests {
         let updated = update(
             &pool,
             &UpdateCategoryCmd {
-                id: cat.id,
+                id: *cat.id,
                 name: Some("New".to_string()),
                 slug: None,
                 description: None,
@@ -228,8 +206,8 @@ mod tests {
     async fn delete_removes_category() {
         let pool = setup_pool().await;
         let cat = create(&pool, &make_cmd("Gone"), None, None).await.unwrap();
-        delete(&pool, cat.id, None).await.unwrap();
-        let result = find_by_id(&pool, cat.id, None).await;
+        delete(&pool, *cat.id, None).await.unwrap();
+        let result = find_by_id(&pool, *cat.id, None).await;
         assert!(result.is_err());
     }
 

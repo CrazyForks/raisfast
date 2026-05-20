@@ -3,15 +3,15 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct ProductVariant {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
-    pub product_id: i64,
+    pub product_id: SnowflakeId,
     pub sku: Option<String>,
     pub title: String,
     pub price: i64,
@@ -34,21 +34,6 @@ pub async fn find_by_id(
         "product_variants",
         ProductVariant,
         "id" => id,
-        tenant: tenant_id
-    )
-    .map_err(Into::into)
-}
-
-pub async fn find_by_document_id(
-    pool: &crate::db::Pool,
-    document_id: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<Option<ProductVariant>> {
-    raisfast_derive::crud_find!(
-        pool,
-        "product_variants",
-        ProductVariant,
-        "document_id" => document_id,
         tenant: tenant_id
     )
     .map_err(Into::into)
@@ -105,13 +90,12 @@ pub async fn insert(
     cmd: &crate::commands::CreateProductVariantCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<ProductVariant> {
-    let document_id = uuid::Uuid::now_v7().to_string();
-    let now = crate::utils::tz::now_utc();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     raisfast_derive::crud_insert!(
         pool,
         "product_variants",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "product_id" => cmd.product_id,
             "sku" => &cmd.sku,
             "title" => &cmd.title,
@@ -126,13 +110,9 @@ pub async fn insert(
         ],
         tenant: tenant_id
     )?;
-    find_by_document_id(pool, &document_id, tenant_id)
-        .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "product_variant not found after insert: {document_id}"
-            ))
-        })
+    find_by_id(pool, id, tenant_id).await?.ok_or_else(|| {
+        AppError::Internal(anyhow::anyhow!("product_variant not found after insert"))
+    })
 }
 
 pub async fn update(
@@ -280,25 +260,16 @@ mod tests {
         let pid = seed_product(&pool).await;
         let v = seed_variant(&pool, pid, "Red Shirt", "SKU-RED-001").await;
 
-        let found = super::find_by_id(&pool, v.id, None).await.unwrap().unwrap();
+        let found = super::find_by_id(&pool, *v.id, None)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.id, v.id);
         assert_eq!(found.title, "Red Shirt");
         assert_eq!(found.sku.unwrap(), "SKU-RED-001");
         assert_eq!(found.price, 1000);
         assert_eq!(found.stock, 50);
         assert!(found.is_active);
-    }
-
-    #[tokio::test]
-    async fn find_by_document_id() {
-        let pool = setup_pool().await;
-        let pid = seed_product(&pool).await;
-        let v = seed_variant(&pool, pid, "Blue", "SKU-BLU").await;
-        let found = super::find_by_document_id(&pool, &v.document_id, None)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(found.id, v.id);
     }
 
     #[tokio::test]
@@ -380,7 +351,7 @@ mod tests {
         let ok = super::update(
             &pool,
             &crate::commands::UpdateProductVariantCmd {
-                id: v.id,
+                id: *v.id,
                 sku: Some("SKU-NEW".to_string()),
                 title: "New".to_string(),
                 price: 2000,
@@ -396,7 +367,10 @@ mod tests {
         .unwrap();
         assert!(ok);
 
-        let found = super::find_by_id(&pool, v.id, None).await.unwrap().unwrap();
+        let found = super::find_by_id(&pool, *v.id, None)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.title, "New");
         assert_eq!(found.sku.unwrap(), "SKU-NEW");
         assert_eq!(found.price, 2000);
@@ -432,10 +406,10 @@ mod tests {
         let pool = setup_pool().await;
         let pid = seed_product(&pool).await;
         let v = seed_variant(&pool, pid, "Bye", "SKU-BYE").await;
-        let ok = super::delete_by_id(&pool, v.id, None).await.unwrap();
+        let ok = super::delete_by_id(&pool, *v.id, None).await.unwrap();
         assert!(ok);
         assert!(
-            super::find_by_id(&pool, v.id, None)
+            super::find_by_id(&pool, *v.id, None)
                 .await
                 .unwrap()
                 .is_none()

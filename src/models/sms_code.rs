@@ -5,14 +5,14 @@ use sqlx::FromRow;
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
 use crate::utils::id;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 /// SMS verification code database row model
 #[derive(Debug, FromRow)]
 #[non_exhaustive]
 pub struct SmsCode {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub phone: String,
     pub code: String,
     pub purpose: String,
@@ -49,12 +49,12 @@ pub async fn create(
     expires_in_secs: u64,
     ip_address: Option<&str>,
 ) -> AppResult<SmsCode> {
-    let (document_id, now) = id::new_document_id_and_timestamp();
+    let (id, now) = id::new_id_and_timestamp();
     let expires_at =
         crate::utils::tz::now_utc() + chrono::Duration::seconds(expires_in_secs as i64);
 
     raisfast_derive::crud_insert!(pool, "sms_codes", [
-        "document_id" => &document_id,
+        "id" => id,
         "phone" => phone,
         "code" => code,
         "purpose" => purpose,
@@ -63,12 +63,9 @@ pub async fn create(
         "created_at" => now
     ])?;
 
-    raisfast_derive::crud_find!(pool, "sms_codes", SmsCode, "document_id" => &document_id)?
-        .ok_or_else(|| {
-            crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
-                "failed to fetch sms code"
-            ))
-        })
+    raisfast_derive::crud_find!(pool, "sms_codes", SmsCode, "id" => id)?.ok_or_else(|| {
+        crate::errors::app_error::AppError::Internal(anyhow::anyhow!("failed to fetch sms code"))
+    })
 }
 
 /// Find a verification code by ID
@@ -177,8 +174,9 @@ mod tests {
     }
 
     fn unique_phone() -> String {
-        let id = crate::utils::id::new_document_id();
+        let id = crate::utils::id::new_id();
         let hash = id
+            .to_string()
             .bytes()
             .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
         format!("1380000{:04}", hash % 10000)
@@ -201,7 +199,7 @@ mod tests {
             .await
             .unwrap();
 
-        let found = super::find_by_id(&pool, sms.id).await.unwrap();
+        let found = super::find_by_id(&pool, *sms.id).await.unwrap();
         assert!(found.is_some());
         let row = found.unwrap();
         assert_eq!(row.phone, phone);
@@ -239,7 +237,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = super::verify_code(&pool, sms.id, code).await.unwrap();
+        let result = super::verify_code(&pool, *sms.id, code).await.unwrap();
         assert_eq!(result, super::VerifyResult::Verified);
     }
 
@@ -252,7 +250,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = super::verify_code(&pool, sms.id, "000000").await.unwrap();
+        let result = super::verify_code(&pool, *sms.id, "000000").await.unwrap();
         assert_eq!(result, super::VerifyResult::WrongCode);
     }
 

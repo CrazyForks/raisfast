@@ -32,11 +32,11 @@ pub trait PaymentService: Send + Sync {
     async fn update_channel(
         &self,
         auth: &AuthUser,
-        id: &str,
+        id: i64,
         req: UpdatePaymentChannelRequest,
     ) -> AppResult<PaymentChannel>;
-    async fn delete_channel(&self, auth: &AuthUser, id: &str) -> AppResult<()>;
-    async fn get_channel(&self, auth: &AuthUser, id: &str) -> AppResult<PaymentChannel>;
+    async fn delete_channel(&self, auth: &AuthUser, id: i64) -> AppResult<()>;
+    async fn get_channel(&self, auth: &AuthUser, id: i64) -> AppResult<PaymentChannel>;
     async fn list_channels(&self, auth: &AuthUser) -> AppResult<Vec<PaymentChannel>>;
     async fn list_available_channels(
         &self,
@@ -54,12 +54,12 @@ pub trait PaymentService: Send + Sync {
         client_language: Option<&str>,
         client_user_agent: Option<&str>,
     ) -> AppResult<(PaymentOrder, Option<ProviderResponse>)>;
-    async fn cancel_payment_order(&self, auth: &AuthUser, id: &str, user_id: i64) -> AppResult<()>;
+    async fn cancel_payment_order(&self, auth: &AuthUser, id: i64, user_id: i64) -> AppResult<()>;
     async fn get_payment_order(
         &self,
         auth: &AuthUser,
         user_id: i64,
-        id: &str,
+        id: i64,
     ) -> AppResult<PaymentOrder>;
     async fn list_user_payment_orders(
         &self,
@@ -70,14 +70,14 @@ pub trait PaymentService: Send + Sync {
     ) -> AppResult<(Vec<PaymentOrder>, i64)>;
     async fn handle_callback(
         &self,
-        channel_doc_id: &str,
+        channel_id: &str,
         headers: &axum::http::HeaderMap,
         body: &[u8],
     ) -> AppResult<PaymentOrder>;
     async fn refund_payment_order(
         &self,
         auth: &AuthUser,
-        id: &str,
+        id: i64,
         req: CreateRefundRequest,
     ) -> AppResult<PaymentRefund>;
     async fn list_admin_payment_orders(
@@ -109,13 +109,13 @@ pub trait PaymentService: Send + Sync {
         &self,
         auth: &AuthUser,
         user_id: i64,
-        order_id: &str,
+        order_id: i64,
     ) -> AppResult<Vec<PaymentTransaction>>;
     async fn list_order_refunds(
         &self,
         auth: &AuthUser,
         user_id: i64,
-        order_id: &str,
+        order_id: i64,
     ) -> AppResult<Vec<PaymentRefund>>;
 }
 
@@ -167,19 +167,19 @@ impl PaymentService for PaymentServiceImpl {
     async fn update_channel(
         &self,
         auth: &AuthUser,
-        id: &str,
+        id: i64,
         req: UpdatePaymentChannelRequest,
     ) -> AppResult<PaymentChannel> {
         let audit = AuditService::new((*self.pool).clone());
         update_channel(&self.pool, auth, &self.config, &audit, id, req).await
     }
 
-    async fn delete_channel(&self, auth: &AuthUser, id: &str) -> AppResult<()> {
+    async fn delete_channel(&self, auth: &AuthUser, id: i64) -> AppResult<()> {
         let audit = AuditService::new((*self.pool).clone());
         delete_channel(&self.pool, auth, &audit, id).await
     }
 
-    async fn get_channel(&self, auth: &AuthUser, id: &str) -> AppResult<PaymentChannel> {
+    async fn get_channel(&self, auth: &AuthUser, id: i64) -> AppResult<PaymentChannel> {
         get_channel(&self.pool, auth, id).await
     }
 
@@ -221,7 +221,7 @@ impl PaymentService for PaymentServiceImpl {
         Ok((order, resp))
     }
 
-    async fn cancel_payment_order(&self, auth: &AuthUser, id: &str, user_id: i64) -> AppResult<()> {
+    async fn cancel_payment_order(&self, auth: &AuthUser, id: i64, user_id: i64) -> AppResult<()> {
         let audit = AuditService::new((*self.pool).clone());
         cancel_payment_order(&self.pool, auth, &audit, &self.config, id, user_id).await
     }
@@ -230,7 +230,7 @@ impl PaymentService for PaymentServiceImpl {
         &self,
         auth: &AuthUser,
         user_id: i64,
-        id: &str,
+        id: i64,
     ) -> AppResult<PaymentOrder> {
         get_payment_order(&self.pool, auth, user_id, id).await
     }
@@ -247,20 +247,13 @@ impl PaymentService for PaymentServiceImpl {
 
     async fn handle_callback(
         &self,
-        channel_doc_id: &str,
+        channel_id: &str,
         headers: &axum::http::HeaderMap,
         body: &[u8],
     ) -> AppResult<PaymentOrder> {
         let audit = AuditService::new((*self.pool).clone());
-        let order = handle_callback(
-            &self.pool,
-            &audit,
-            &self.config,
-            channel_doc_id,
-            headers,
-            body,
-        )
-        .await?;
+        let order =
+            handle_callback(&self.pool, &audit, &self.config, channel_id, headers, body).await?;
         self.after_payment_paid(&order);
         Ok(order)
     }
@@ -268,14 +261,13 @@ impl PaymentService for PaymentServiceImpl {
     async fn refund_payment_order(
         &self,
         auth: &AuthUser,
-        id: &str,
+        id: i64,
         req: CreateRefundRequest,
     ) -> AppResult<PaymentRefund> {
         let audit = AuditService::new((*self.pool).clone());
         let refund = refund_payment_order(&self.pool, auth, &audit, &self.config, id, req).await?;
         if let Ok(Some(order)) =
-            crate::models::payment_order::find_by_document_id(&self.pool, id, auth.tenant_id())
-                .await
+            crate::models::payment_order::find_by_id(&self.pool, id, auth.tenant_id()).await
         {
             self.after_payment_refunded(&order);
         }
@@ -331,12 +323,12 @@ impl PaymentService for PaymentServiceImpl {
         &self,
         auth: &AuthUser,
         user_id: i64,
-        order_id: &str,
+        order_id: i64,
     ) -> AppResult<Vec<PaymentTransaction>> {
         let order = self.get_payment_order(auth, user_id, order_id).await?;
         crate::models::payment_transaction::find_by_payment_order_id(
             &self.pool,
-            order.id,
+            *order.id,
             auth.tenant_id(),
         )
         .await
@@ -346,12 +338,12 @@ impl PaymentService for PaymentServiceImpl {
         &self,
         auth: &AuthUser,
         user_id: i64,
-        order_id: &str,
+        order_id: i64,
     ) -> AppResult<Vec<PaymentRefund>> {
         let order = self.get_payment_order(auth, user_id, order_id).await?;
         crate::models::payment_refund::find_by_payment_order_id(
             &self.pool,
-            order.id,
+            *order.id,
             auth.tenant_id(),
         )
         .await
@@ -428,11 +420,11 @@ pub async fn create_channel(
     audit_log!(
         audit,
         auth.tenant_id().unwrap_or(""),
-        auth.user_id().and_then(|s| s.parse::<i64>().ok()),
+        auth.user_id(),
         Some(auth.role()),
         "payment.channel.create",
         "payment_channel",
-        Some(&channel.document_id),
+        Some(&channel.id.to_string()),
         None,
         None,
         None
@@ -445,11 +437,11 @@ pub async fn update_channel(
     auth: &AuthUser,
     config: &AppConfig,
     audit: &AuditService,
-    id: &str,
+    id: i64,
     req: UpdatePaymentChannelRequest,
 ) -> AppResult<PaymentChannel> {
     auth.ensure_admin()?;
-    let channel = crate::models::payment_channel::find_by_document_id(pool, id, auth.tenant_id())
+    let channel = crate::models::payment_channel::find_by_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))?;
 
@@ -470,7 +462,7 @@ pub async fn update_channel(
     let updated = crate::models::payment_channel::update(
         pool,
         &crate::commands::UpdatePaymentChannelCmd {
-            id: channel.id,
+            id: *channel.id,
             provider: channel.provider.clone(),
             name: req.name.clone().unwrap_or(channel.name.clone()),
             is_live: req.is_live.unwrap_or(channel.is_live != 0),
@@ -489,18 +481,18 @@ pub async fn update_channel(
         return Err(AppError::Conflict("version_conflict".into()));
     }
 
-    let result = crate::models::payment_channel::find_by_id(pool, channel.id, auth.tenant_id())
+    let result = crate::models::payment_channel::find_by_id(pool, *channel.id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))?;
 
     audit_log!(
         audit,
         auth.tenant_id().unwrap_or(""),
-        auth.user_id().and_then(|s| s.parse::<i64>().ok()),
+        auth.user_id(),
         Some(auth.role()),
         "payment.channel.update",
         "payment_channel",
-        Some(&result.document_id),
+        Some(&result.id.to_string()),
         None,
         None,
         None
@@ -513,25 +505,25 @@ pub async fn delete_channel(
     pool: &crate::db::Pool,
     auth: &AuthUser,
     audit: &AuditService,
-    id: &str,
+    id: i64,
 ) -> AppResult<()> {
     auth.ensure_admin()?;
-    let channel = crate::models::payment_channel::find_by_document_id(pool, id, auth.tenant_id())
+    let channel = crate::models::payment_channel::find_by_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))?;
     let deleted =
-        crate::models::payment_channel::delete_by_id(pool, channel.id, auth.tenant_id()).await?;
+        crate::models::payment_channel::delete_by_id(pool, *channel.id, auth.tenant_id()).await?;
     if !deleted {
         return Err(AppError::not_found("payment_channel"));
     }
     audit_log!(
         audit,
         auth.tenant_id().unwrap_or(""),
-        auth.user_id().and_then(|s| s.parse::<i64>().ok()),
+        auth.user_id(),
         Some(auth.role()),
         "payment.channel.delete",
         "payment_channel",
-        Some(&channel.document_id),
+        Some(&channel.id.to_string()),
         None,
         None,
         None
@@ -542,10 +534,10 @@ pub async fn delete_channel(
 pub async fn get_channel(
     pool: &crate::db::Pool,
     auth: &AuthUser,
-    id: &str,
+    id: i64,
 ) -> AppResult<PaymentChannel> {
     auth.ensure_admin()?;
-    crate::models::payment_channel::find_by_document_id(pool, id, auth.tenant_id())
+    crate::models::payment_channel::find_by_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))
 }
@@ -567,7 +559,8 @@ pub async fn list_available_channels(
 ) -> AppResult<AvailableChannelsResponse> {
     let _ = auth.ensure_authenticated()?;
 
-    let order = crate::models::order::find_by_document_id(pool, order_id, auth.tenant_id())
+    let order_id_parsed: i64 = crate::utils::id::parse_id(order_id)?;
+    let order = crate::models::order::find_by_id(pool, order_id_parsed, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("order"))?;
 
@@ -582,12 +575,12 @@ pub async fn list_available_channels(
     let recommended_channel_id = ranked
         .iter()
         .find(|r| r.is_recommended)
-        .map(|r| r.channel.document_id.clone());
+        .map(|r| r.channel.id.to_string());
 
     let channels = ranked
         .into_iter()
         .map(|r| AvailableChannelItem {
-            channel_id: r.channel.document_id,
+            channel_id: r.channel.id.to_string(),
             provider: r.channel.provider,
             name: r.channel.name,
             is_recommended: r.is_recommended,
@@ -614,7 +607,8 @@ pub async fn create_payment_order(
 ) -> AppResult<(PaymentOrder, Option<ProviderResponse>)> {
     let _ = auth.ensure_authenticated()?;
 
-    let order = crate::models::order::find_by_document_id(pool, &req.order_id, auth.tenant_id())
+    let order_id_parsed: i64 = crate::utils::id::parse_id(&req.order_id)?;
+    let order = crate::models::order::find_by_id(pool, order_id_parsed, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("order"))?;
 
@@ -626,14 +620,11 @@ pub async fn create_payment_order(
         return Err(AppError::BadRequest("order_amount_invalid".into()));
     }
 
-    let (channel, channel_selected_by) = if let Some(ref channel_doc_id) = req.channel_id {
-        let ch = crate::models::payment_channel::find_by_document_id(
-            pool,
-            channel_doc_id,
-            auth.tenant_id(),
-        )
-        .await?
-        .ok_or_else(|| AppError::not_found("payment_channel"))?;
+    let (channel, channel_selected_by) = if let Some(ref ch_id_str) = req.channel_id {
+        let ch_id: i64 = crate::utils::id::parse_id(ch_id_str)?;
+        let ch = crate::models::payment_channel::find_by_id(pool, ch_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("payment_channel"))?;
         if ch.is_active == 0 {
             return Err(AppError::BadRequest("channel_inactive".into()));
         }
@@ -653,7 +644,7 @@ pub async fn create_payment_order(
         (ch, "auto")
     };
 
-    let idempotency_key = format!("{}_{}", order.document_id, channel.document_id);
+    let idempotency_key = format!("{}_{}", order.id, channel.id);
 
     if let Some(existing) =
         crate::models::payment_order::find_by_idempotency_key(pool, &idempotency_key, None).await?
@@ -665,11 +656,11 @@ pub async fn create_payment_order(
 
     let cmd = CreatePaymentOrderCmd {
         user_id,
-        order_id: Some(order.document_id.clone()),
+        order_id: Some(order.id.to_string()),
         title,
         amount: order.total_amount,
         currency: order.currency.clone(),
-        channel_id: channel.id,
+        channel_id: *channel.id,
         provider: channel.provider.clone(),
         reference_type: None,
         reference_id: None,
@@ -710,7 +701,7 @@ pub async fn create_payment_order(
         Ok(resp) => {
             if let Err(e) = crate::models::payment_order::update_provider_order_id(
                 pool,
-                payment_order.id,
+                *payment_order.id,
                 &resp.provider_order_id,
                 None,
                 auth.tenant_id(),
@@ -724,7 +715,7 @@ pub async fn create_payment_order(
         Err(e) => {
             tracing::warn!(
                 "provider create failed for order {}: {e}",
-                payment_order.document_id
+                payment_order.id.to_string()
             );
             return Err(e);
         }
@@ -739,11 +730,11 @@ pub async fn cancel_payment_order(
     auth: &AuthUser,
     audit: &AuditService,
     config: &AppConfig,
-    id: &str,
+    id: i64,
     user_id: i64,
 ) -> AppResult<()> {
     let _ = auth.ensure_authenticated()?;
-    let order = crate::models::payment_order::find_by_document_id(pool, id, auth.tenant_id())
+    let order = crate::models::payment_order::find_by_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_order"))?;
 
@@ -758,7 +749,7 @@ pub async fn cancel_payment_order(
         && let Ok(key) = get_encrypt_key(config)
     {
         let channel =
-            crate::models::payment_channel::find_by_id(pool, order.channel_id, auth.tenant_id())
+            crate::models::payment_channel::find_by_id(pool, *order.channel_id, auth.tenant_id())
                 .await?;
         if let Some(ch) = channel
             && let Ok(provider) = crate::payment::providers::get_provider(&order.provider, &key)
@@ -766,7 +757,7 @@ pub async fn cancel_payment_order(
         {
             tracing::warn!(
                 "provider cancel failed for order {}: {e}",
-                order.document_id
+                order.id.to_string()
             );
         }
     }
@@ -774,7 +765,7 @@ pub async fn cancel_payment_order(
     crate::in_transaction!(pool, tx, {
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
-            order.id,
+            *order.id,
             PaymentStatus::Cancelled,
             Some("cancelled_at"),
             PaymentStatus::Pending,
@@ -789,11 +780,11 @@ pub async fn cancel_payment_order(
     audit_log!(
         audit,
         auth.tenant_id().unwrap_or(""),
-        auth.user_id().and_then(|s| s.parse::<i64>().ok()),
+        auth.user_id(),
         Some(auth.role()),
         "payment.order.cancel",
         "payment_order",
-        Some(&order.document_id),
+        Some(&order.id.to_string()),
         None,
         None,
         None
@@ -806,10 +797,10 @@ pub async fn get_payment_order(
     pool: &crate::db::Pool,
     auth: &AuthUser,
     user_id: i64,
-    id: &str,
+    id: i64,
 ) -> AppResult<PaymentOrder> {
     let _ = auth.ensure_authenticated()?;
-    let order = crate::models::payment_order::find_by_document_id(pool, id, auth.tenant_id())
+    let order = crate::models::payment_order::find_by_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_order"))?;
     if auth.role() != "admin" && order.user_id != user_id {
@@ -841,11 +832,12 @@ pub async fn handle_callback(
     pool: &crate::db::Pool,
     audit: &AuditService,
     config: &AppConfig,
-    channel_doc_id: &str,
+    channel_id: &str,
     headers: &axum::http::HeaderMap,
     body: &[u8],
 ) -> AppResult<PaymentOrder> {
-    let channel = crate::models::payment_channel::find_by_document_id(pool, channel_doc_id, None)
+    let ch_id: i64 = crate::utils::id::parse_id(channel_id)?;
+    let channel = crate::models::payment_channel::find_by_id(pool, ch_id, None)
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))?;
 
@@ -865,7 +857,7 @@ pub async fn handle_callback(
                 None,
                 "payment.callback.failed",
                 "payment_channel",
-                Some(channel_doc_id),
+                Some(channel_id),
                 Some(&format!("verification_error: {e}")),
                 None,
                 None
@@ -913,7 +905,7 @@ pub async fn handle_callback(
     crate::in_transaction!(pool, tx, {
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
-            payment_order.id,
+            *payment_order.id,
             PaymentStatus::Paid,
             Some("paid_at"),
             PaymentStatus::Pending,
@@ -923,16 +915,16 @@ pub async fn handle_callback(
         if rows == 0 {
             tracing::info!(
                 "callback for order {} skipped: CAS failed (already processed)",
-                payment_order.document_id
+                payment_order.id.to_string()
             );
         }
 
         if let Some(ref provider_tx_id) = callback.provider_tx_id {
             let raw_payload = serde_json::to_string(&callback).ok();
             let tx_cmd = CreatePaymentTransactionCmd {
-                payment_order_id: payment_order.id,
+                payment_order_id: *payment_order.id,
                 order_id: payment_order.order_id.clone(),
-                user_id: payment_order.user_id,
+                user_id: *payment_order.user_id,
                 tx_type: "charge".into(),
                 amount: payment_order.amount,
                 currency: payment_order.currency.clone(),
@@ -948,28 +940,28 @@ pub async fn handle_callback(
             .await?;
         }
 
-        if let Some(ref order_doc_id) = payment_order.order_id
-            && let Some(order_id) =
-                crate::models::order::tx_find_id_by_document_id(&mut tx, order_doc_id).await?
+        if let Some(ref order_id_str) = payment_order.order_id
+            && let Ok(order_id) = order_id_str.parse::<i64>()
         {
-            crate::models::order::tx_update_status(
+            crate::models::order::tx_update_status_cas(
                 &mut tx,
                 order_id,
                 crate::models::order::OrderStatus::Paid,
                 Some("paid_at"),
+                crate::models::order::OrderStatus::Pending,
             )
             .await?;
         }
 
         let outbox_cmd = CreateWalletOutboxCmd {
-            user_id: payment_order.user_id,
+            user_id: *payment_order.user_id,
             currency: payment_order.currency.clone(),
             amount: payment_order.amount,
             entry_type: "credit".into(),
             tx_type: WalletTxType::Recharge,
-            transaction_no: format!("PAY-{}", payment_order.document_id),
+            transaction_no: format!("PAY-{}", payment_order.id),
             reference_type: Some(WalletReferenceType::Payment),
-            reference_id: Some(payment_order.document_id.clone()),
+            reference_id: Some(payment_order.id.to_string()),
             metadata: None,
         };
         crate::models::wallet_outbox::tx_insert(
@@ -989,7 +981,7 @@ pub async fn handle_callback(
         None,
         "payment.callback.success",
         "payment_order",
-        Some(&payment_order.document_id),
+        Some(&payment_order.id.to_string()),
         None,
         None,
         None
@@ -1004,15 +996,14 @@ pub async fn refund_payment_order(
     auth: &AuthUser,
     audit: &AuditService,
     config: &AppConfig,
-    id: &str,
+    id: i64,
     req: CreateRefundRequest,
 ) -> AppResult<PaymentRefund> {
     raisfast_derive::check_schema!("payment_refunds", "provider_refund_id");
     auth.ensure_admin()?;
-    let payment_order =
-        crate::models::payment_order::find_by_document_id(pool, id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("payment_order"))?;
+    let payment_order = crate::models::payment_order::find_by_id(pool, id, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("payment_order"))?;
 
     if payment_order.status != PaymentStatus::Paid
         && payment_order.status != PaymentStatus::PartiallyRefunded
@@ -1025,7 +1016,7 @@ pub async fn refund_payment_order(
     let refund = crate::in_transaction!(pool, tx, {
         let already_refunded_in_tx = crate::models::payment_refund::tx_sum_refunded_by_order(
             &mut tx,
-            payment_order.id,
+            *payment_order.id,
             auth.tenant_id(),
         )
         .await?;
@@ -1043,7 +1034,7 @@ pub async fn refund_payment_order(
             let key = get_encrypt_key(config)?;
             let channel = crate::models::payment_channel::find_by_id(
                 pool,
-                payment_order.channel_id,
+                *payment_order.channel_id,
                 auth.tenant_id(),
             )
             .await?
@@ -1063,9 +1054,9 @@ pub async fn refund_payment_order(
         };
 
         let refund_cmd = CreatePaymentRefundCmd {
-            payment_order_id: payment_order.id,
+            payment_order_id: *payment_order.id,
             order_id: payment_order.order_id.clone(),
-            user_id: payment_order.user_id,
+            user_id: *payment_order.user_id,
             amount: req.amount,
             currency: payment_order.currency.clone(),
             reason: req.reason.clone(),
@@ -1083,9 +1074,9 @@ pub async fn refund_payment_order(
 
         let provider_tx_id = format!("txr_{}", uuid::Uuid::now_v7());
         let tx_cmd = CreatePaymentTransactionCmd {
-            payment_order_id: payment_order.id,
+            payment_order_id: *payment_order.id,
             order_id: payment_order.order_id.clone(),
-            user_id: payment_order.user_id,
+            user_id: *payment_order.user_id,
             tx_type: "refund".into(),
             amount: req.amount,
             currency: payment_order.currency.clone(),
@@ -1102,7 +1093,7 @@ pub async fn refund_payment_order(
 
         let already_refunded_in_tx = crate::models::payment_refund::tx_sum_refunded_by_order(
             &mut tx,
-            payment_order.id,
+            *payment_order.id,
             auth.tenant_id(),
         )
         .await?;
@@ -1114,7 +1105,7 @@ pub async fn refund_payment_order(
         };
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
-            payment_order.id,
+            *payment_order.id,
             new_status,
             None,
             payment_order.status,
@@ -1135,14 +1126,14 @@ pub async fn refund_payment_order(
             .map_err(|e: sqlx::Error| AppError::from(e))?;
 
         let outbox_cmd = CreateWalletOutboxCmd {
-            user_id: payment_order.user_id,
+            user_id: *payment_order.user_id,
             currency: payment_order.currency.clone(),
             amount: req.amount,
             entry_type: "debit".into(),
             tx_type: WalletTxType::Refund,
             transaction_no: wallet_tx_no,
             reference_type: Some(WalletReferenceType::PaymentRefund),
-            reference_id: Some(payment_order.document_id.clone()),
+            reference_id: Some(payment_order.id.to_string()),
             metadata: None,
         };
         crate::models::wallet_outbox::tx_insert(
@@ -1158,11 +1149,11 @@ pub async fn refund_payment_order(
     audit_log!(
         audit,
         auth.tenant_id().unwrap_or(""),
-        auth.user_id().and_then(|s| s.parse::<i64>().ok()),
+        auth.user_id(),
         Some(auth.role()),
         "payment.refund.initiated",
         "payment_order",
-        Some(&payment_order.document_id),
+        Some(&payment_order.id.to_string()),
         Some(&format!("amount={}", req.amount)),
         None,
         None
@@ -1172,11 +1163,11 @@ pub async fn refund_payment_order(
         audit_log!(
             audit,
             auth.tenant_id().unwrap_or(""),
-            auth.user_id().and_then(|s| s.parse::<i64>().ok()),
+            auth.user_id(),
             Some(auth.role()),
             "payment.refund.large",
             "payment_order",
-            Some(&payment_order.document_id),
+            Some(&payment_order.id.to_string()),
             Some(&format!("amount={} threshold=100000", req.amount)),
             None,
             None
@@ -1259,17 +1250,11 @@ mod tests {
 
     #[allow(dead_code)]
     fn admin_auth() -> AuthUser {
-        AuthUser::from_parts(
-            Some("admin".to_string()),
-            Some(1),
-            crate::models::user::UserRole::Admin,
-            None,
-        )
+        AuthUser::from_parts(Some(1), crate::models::user::UserRole::Admin, None)
     }
 
     fn user_auth(user_int_id: i64) -> AuthUser {
         AuthUser::from_parts(
-            Some(format!("u{user_int_id}")),
             Some(user_int_id),
             crate::models::user::UserRole::Reader,
             None,
@@ -1277,40 +1262,30 @@ mod tests {
     }
 
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
-        let doc_id = uuid::Uuid::now_v7().to_string();
-        let username = format!("testuser_{doc_id}");
+        let id = crate::utils::id::new_id();
+        let username = format!("testuser_{id}");
         sqlx::query(
-            "INSERT INTO users (document_id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')",
+            "INSERT INTO users (id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')",
         )
-        .bind(&doc_id)
+        .bind(id)
         .bind(&username)
         .execute(pool)
         .await
         .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
-            .bind(&doc_id)
-            .fetch_one(pool)
-            .await
-            .unwrap();
         id
     }
 
     async fn seed_admin(pool: &crate::db::Pool) -> i64 {
-        let doc_id = uuid::Uuid::now_v7().to_string();
-        let username = format!("admin_{doc_id}");
+        let id = crate::utils::id::new_id();
+        let username = format!("admin_{id}");
         sqlx::query(
-            "INSERT INTO users (document_id, username, role, status, registered_via) VALUES (?, ?, 'admin', 'active', 'email')",
+            "INSERT INTO users (id, username, role, status, registered_via) VALUES (?, ?, 'admin', 'active', 'email')",
         )
-        .bind(&doc_id)
+        .bind(id)
         .bind(&username)
         .execute(pool)
         .await
         .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
-            .bind(&doc_id)
-            .fetch_one(pool)
-            .await
-            .unwrap();
         id
     }
 
@@ -1414,8 +1389,8 @@ mod tests {
 
         let other_auth = user_auth(other_id);
         let req = CreatePaymentOrderRequest {
-            order_id: order.document_id.clone(),
-            channel_id: Some(channel.document_id.clone()),
+            order_id: order.id.to_string(),
+            channel_id: Some(channel.id.to_string()),
             method: None,
             country: None,
             language: None,
@@ -1454,8 +1429,8 @@ mod tests {
 
         let owner_auth = user_auth(owner_id);
         let req = CreatePaymentOrderRequest {
-            order_id: order.document_id.clone(),
-            channel_id: Some(channel.document_id.clone()),
+            order_id: order.id.to_string(),
+            channel_id: Some(channel.id.to_string()),
             method: None,
             country: None,
             language: None,
@@ -1492,8 +1467,8 @@ mod tests {
 
         let owner_auth = user_auth(owner_id);
         let req = CreatePaymentOrderRequest {
-            order_id: order.document_id.clone(),
-            channel_id: Some(channel.document_id.clone()),
+            order_id: order.id.to_string(),
+            channel_id: Some(channel.id.to_string()),
             method: None,
             country: None,
             language: None,
@@ -1527,10 +1502,10 @@ mod tests {
         let other_id = seed_user(&pool).await;
 
         let channel = seed_channel(&pool, "stripe").await;
-        let po = seed_payment_order(&pool, owner_id, channel.id, 500, "CNY").await;
+        let po = seed_payment_order(&pool, owner_id, *channel.id, 500, "CNY").await;
 
         let other_auth = user_auth(other_id);
-        let result = super::get_payment_order(&pool, &other_auth, other_id, &po.document_id).await;
+        let result = super::get_payment_order(&pool, &other_auth, other_id, *po.id).await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1545,10 +1520,10 @@ mod tests {
         let owner_id = seed_user(&pool).await;
 
         let channel = seed_channel(&pool, "stripe").await;
-        let po = seed_payment_order(&pool, owner_id, channel.id, 500, "CNY").await;
+        let po = seed_payment_order(&pool, owner_id, *channel.id, 500, "CNY").await;
 
         let owner_auth = user_auth(owner_id);
-        let result = super::get_payment_order(&pool, &owner_auth, owner_id, &po.document_id).await;
+        let result = super::get_payment_order(&pool, &owner_auth, owner_id, *po.id).await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().amount, 500);
@@ -1561,16 +1536,11 @@ mod tests {
         let admin_id = seed_admin(&pool).await;
 
         let channel = seed_channel(&pool, "stripe").await;
-        let po = seed_payment_order(&pool, owner_id, channel.id, 500, "CNY").await;
+        let po = seed_payment_order(&pool, owner_id, *channel.id, 500, "CNY").await;
 
-        let admin_auth_user = AuthUser::from_parts(
-            Some(format!("a{admin_id}")),
-            Some(admin_id),
-            crate::models::user::UserRole::Admin,
-            None,
-        );
-        let result =
-            super::get_payment_order(&pool, &admin_auth_user, admin_id, &po.document_id).await;
+        let admin_auth_user =
+            AuthUser::from_parts(Some(admin_id), crate::models::user::UserRole::Admin, None);
+        let result = super::get_payment_order(&pool, &admin_auth_user, admin_id, *po.id).await;
 
         assert!(result.is_ok());
     }
@@ -1583,20 +1553,14 @@ mod tests {
         let other_id = seed_user(&pool).await;
 
         let channel = seed_channel(&pool, "stripe").await;
-        let po = seed_payment_order(&pool, owner_id, channel.id, 500, "CNY").await;
+        let po = seed_payment_order(&pool, owner_id, *channel.id, 500, "CNY").await;
 
         let audit = AuditService::new(pool.clone());
 
         let other_auth = user_auth(other_id);
-        let result = super::cancel_payment_order(
-            &pool,
-            &other_auth,
-            &audit,
-            &config,
-            &po.document_id,
-            other_id,
-        )
-        .await;
+        let result =
+            super::cancel_payment_order(&pool, &other_auth, &audit, &config, *po.id, other_id)
+                .await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1612,23 +1576,16 @@ mod tests {
         let owner_id = seed_user(&pool).await;
 
         let channel = seed_channel(&pool, "stripe").await;
-        let po = seed_payment_order(&pool, owner_id, channel.id, 500, "CNY").await;
+        let po = seed_payment_order(&pool, owner_id, *channel.id, 500, "CNY").await;
 
         let audit = AuditService::new(pool.clone());
 
         let owner_auth = user_auth(owner_id);
-        super::cancel_payment_order(
-            &pool,
-            &owner_auth,
-            &audit,
-            &config,
-            &po.document_id,
-            owner_id,
-        )
-        .await
-        .unwrap();
+        super::cancel_payment_order(&pool, &owner_auth, &audit, &config, *po.id, owner_id)
+            .await
+            .unwrap();
 
-        let updated = crate::models::payment_order::find_by_id(&pool, po.id, None)
+        let updated = crate::models::payment_order::find_by_id(&pool, *po.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -1642,12 +1599,12 @@ mod tests {
         let owner_id = seed_user(&pool).await;
 
         let channel = seed_channel(&pool, "stripe").await;
-        let po = seed_payment_order(&pool, owner_id, channel.id, 500, "CNY").await;
+        let po = seed_payment_order(&pool, owner_id, *channel.id, 500, "CNY").await;
 
         let mut tx = pool.begin().await.unwrap();
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
-            po.id,
+            *po.id,
             PaymentStatus::Paid,
             Some("paid_at"),
             PaymentStatus::Pending,
@@ -1660,15 +1617,9 @@ mod tests {
         let audit = AuditService::new(pool.clone());
 
         let owner_auth = user_auth(owner_id);
-        let result = super::cancel_payment_order(
-            &pool,
-            &owner_auth,
-            &audit,
-            &config,
-            &po.document_id,
-            owner_id,
-        )
-        .await;
+        let result =
+            super::cancel_payment_order(&pool, &owner_auth, &audit, &config, *po.id, owner_id)
+                .await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1684,22 +1635,18 @@ mod tests {
         let admin_id = seed_admin(&pool).await;
 
         let channel = seed_channel(&pool, "stripe").await;
-        let po = seed_payment_order(&pool, admin_id, channel.id, 1000, "CNY").await;
+        let po = seed_payment_order(&pool, admin_id, *channel.id, 1000, "CNY").await;
 
         let audit = AuditService::new(pool.clone());
 
-        let admin_auth_user = AuthUser::from_parts(
-            Some(format!("a{admin_id}")),
-            Some(admin_id),
-            crate::models::user::UserRole::Admin,
-            None,
-        );
+        let admin_auth_user =
+            AuthUser::from_parts(Some(admin_id), crate::models::user::UserRole::Admin, None);
         let result = super::refund_payment_order(
             &pool,
             &admin_auth_user,
             &audit,
             &config,
-            &po.document_id,
+            *po.id,
             CreateRefundRequest {
                 amount: 500,
                 reason: Some("test".into()),
@@ -1722,12 +1669,12 @@ mod tests {
         let admin_id = seed_admin(&pool).await;
 
         let channel = seed_channel(&pool, "creem").await;
-        let po = seed_payment_order(&pool, user_id, channel.id, 1000, "CNY").await;
+        let po = seed_payment_order(&pool, user_id, *channel.id, 1000, "CNY").await;
 
         let mut tx = pool.begin().await.unwrap();
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
-            po.id,
+            *po.id,
             PaymentStatus::Paid,
             Some("paid_at"),
             PaymentStatus::Pending,
@@ -1743,9 +1690,9 @@ mod tests {
             "CNY",
             1000,
             WalletTxType::Recharge,
-            &format!("PAY-{}", po.document_id),
+            &format!("PAY-{}", po.id),
             Some(WalletReferenceType::Payment),
-            Some(&po.document_id),
+            Some(&po.id.to_string()),
             None,
         )
         .await
@@ -1753,18 +1700,14 @@ mod tests {
 
         let audit = AuditService::new(pool.clone());
 
-        let admin_auth_user = AuthUser::from_parts(
-            Some(format!("a{admin_id}")),
-            Some(admin_id),
-            crate::models::user::UserRole::Admin,
-            None,
-        );
+        let admin_auth_user =
+            AuthUser::from_parts(Some(admin_id), crate::models::user::UserRole::Admin, None);
         let result = super::refund_payment_order(
             &pool,
             &admin_auth_user,
             &audit,
             &config,
-            &po.document_id,
+            *po.id,
             CreateRefundRequest {
                 amount: 2000,
                 reason: None,
@@ -1787,12 +1730,12 @@ mod tests {
         let admin_id = seed_admin(&pool).await;
 
         let channel = seed_channel(&pool, "creem").await;
-        let po = seed_payment_order(&pool, user_id, channel.id, 1000, "CNY").await;
+        let po = seed_payment_order(&pool, user_id, *channel.id, 1000, "CNY").await;
 
         let mut tx = pool.begin().await.unwrap();
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
-            po.id,
+            *po.id,
             PaymentStatus::Paid,
             Some("paid_at"),
             PaymentStatus::Pending,
@@ -1808,9 +1751,9 @@ mod tests {
             "CNY",
             1000,
             WalletTxType::Recharge,
-            &format!("PAY-{}", po.document_id),
+            &format!("PAY-{}", po.id),
             Some(WalletReferenceType::Payment),
-            Some(&po.document_id),
+            Some(&po.id.to_string()),
             None,
         )
         .await
@@ -1818,19 +1761,15 @@ mod tests {
 
         let audit = AuditService::new(pool.clone());
 
-        let admin_auth_user = AuthUser::from_parts(
-            Some(format!("a{admin_id}")),
-            Some(admin_id),
-            crate::models::user::UserRole::Admin,
-            None,
-        );
+        let admin_auth_user =
+            AuthUser::from_parts(Some(admin_id), crate::models::user::UserRole::Admin, None);
 
         let refund1 = super::refund_payment_order(
             &pool,
             &admin_auth_user,
             &audit,
             &config,
-            &po.document_id,
+            *po.id,
             CreateRefundRequest {
                 amount: 400,
                 reason: Some("partial".into()),
@@ -1840,7 +1779,7 @@ mod tests {
         .unwrap();
         assert_eq!(refund1.amount, 400);
 
-        let updated = crate::models::payment_order::find_by_id(&pool, po.id, None)
+        let updated = crate::models::payment_order::find_by_id(&pool, *po.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -1851,7 +1790,7 @@ mod tests {
             &admin_auth_user,
             &audit,
             &config,
-            &po.document_id,
+            *po.id,
             CreateRefundRequest {
                 amount: 600,
                 reason: None,
@@ -1861,7 +1800,7 @@ mod tests {
         .unwrap();
         assert_eq!(refund2.amount, 600);
 
-        let updated = crate::models::payment_order::find_by_id(&pool, po.id, None)
+        let updated = crate::models::payment_order::find_by_id(&pool, *po.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -1892,7 +1831,7 @@ mod tests {
             &pool,
             &audit,
             &config,
-            &channel_b.document_id,
+            &channel_b.id.to_string(),
             &axum::http::HeaderMap::new(),
             b"test",
         )
@@ -1934,7 +1873,7 @@ mod tests {
             &pool,
             &audit,
             &config,
-            &channel.document_id,
+            &channel.id.to_string(),
             &axum::http::HeaderMap::new(),
             b"test",
         )
@@ -1948,13 +1887,13 @@ mod tests {
         let pool = setup_pool().await;
         let user_id = seed_user(&pool).await;
         let channel = seed_channel(&pool, "stripe").await;
-        let po = seed_payment_order(&pool, user_id, channel.id, 1000, "CNY").await;
+        let po = seed_payment_order(&pool, user_id, *channel.id, 1000, "CNY").await;
 
         let result: Result<(), crate::errors::app_error::AppError> = async {
             crate::in_transaction!(pool, tx, {
                 let rows = crate::models::payment_order::tx_update_status_cas(
                     &mut tx,
-                    po.id,
+                    *po.id,
                     PaymentStatus::Paid,
                     Some("paid_at"),
                     PaymentStatus::Pending,
@@ -1965,7 +1904,7 @@ mod tests {
 
                 let rows2 = crate::models::payment_order::tx_update_status_cas(
                     &mut tx,
-                    po.id,
+                    *po.id,
                     PaymentStatus::Paid,
                     Some("paid_at"),
                     PaymentStatus::Pending,
@@ -1989,17 +1928,17 @@ mod tests {
         let channel = seed_channel(&pool, "creem").await;
         let order = seed_order(&pool, user_id, 1000, "CNY").await;
 
-        let idem_key = format!("{}_{}", order.document_id, channel.document_id);
+        let idem_key = format!("{}_{}", order.id, channel.id);
 
         crate::models::payment_order::insert(
             &pool,
             &CreatePaymentOrderCmd {
                 user_id,
-                order_id: Some(order.document_id.clone()),
+                order_id: Some(order.id.to_string()),
                 title: "Test".into(),
                 amount: 1000,
                 currency: "CNY".into(),
-                channel_id: channel.id,
+                channel_id: *channel.id,
                 provider: "creem".into(),
                 reference_type: None,
                 reference_id: None,
@@ -2071,7 +2010,7 @@ mod tests {
         let result = super::list_available_channels(
             &pool,
             &auth,
-            &order.document_id,
+            &order.id.to_string(),
             Some("CN"),
             Some("zh"),
         )
@@ -2079,12 +2018,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.channels.len(), 2);
-        assert_eq!(
-            result.recommended_channel_id,
-            Some(ch_cny.document_id.clone())
-        );
+        assert_eq!(result.recommended_channel_id, Some(ch_cny.id.to_string()));
         assert!(result.channels[0].is_recommended);
-        assert_eq!(result.channels[0].channel_id, ch_cny.document_id);
+        assert_eq!(result.channels[0].channel_id, ch_cny.id.to_string());
         assert!(!result.channels[1].is_recommended);
     }
 
@@ -2113,9 +2049,10 @@ mod tests {
         let order = seed_order(&pool, user_id, 1000, "JPY").await;
         let auth = user_auth(user_id);
 
-        let result = super::list_available_channels(&pool, &auth, &order.document_id, None, None)
-            .await
-            .unwrap();
+        let result =
+            super::list_available_channels(&pool, &auth, &order.id.to_string(), None, None)
+                .await
+                .unwrap();
 
         assert!(result.channels.is_empty());
         assert!(result.recommended_channel_id.is_none());
@@ -2161,7 +2098,7 @@ mod tests {
 
         let auth = user_auth(user_id);
         let req = CreatePaymentOrderRequest {
-            order_id: order.document_id.clone(),
+            order_id: order.id.to_string(),
             channel_id: None,
             method: None,
             country: None,
@@ -2205,7 +2142,7 @@ mod tests {
 
         let auth = user_auth(user_id);
         let req = CreatePaymentOrderRequest {
-            order_id: order.document_id.clone(),
+            order_id: order.id.to_string(),
             channel_id: None,
             method: None,
             country: None,
@@ -2237,8 +2174,8 @@ mod tests {
 
         let auth = user_auth(user_id);
         let req = CreatePaymentOrderRequest {
-            order_id: order.document_id.clone(),
-            channel_id: Some(ch.document_id.clone()),
+            order_id: order.id.to_string(),
+            channel_id: Some(ch.id.to_string()),
             method: None,
             country: Some("CN".into()),
             language: None,

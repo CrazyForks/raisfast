@@ -3,17 +3,17 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::errors::app_error::AppResult;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct OrderItem {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
-    pub order_id: i64,
-    pub product_id: Option<i64>,
-    pub variant_id: Option<i64>,
+    pub order_id: SnowflakeId,
+    pub product_id: Option<SnowflakeId>,
+    pub variant_id: Option<SnowflakeId>,
     pub title: String,
     pub description: Option<String>,
     pub sku: Option<String>,
@@ -40,13 +40,12 @@ pub async fn insert(
     cmd: &crate::commands::CreateOrderItemCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<OrderItem> {
-    let document_id = uuid::Uuid::now_v7().to_string();
-    let now = crate::utils::tz::now_utc();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     raisfast_derive::crud_insert!(
         pool,
         "order_items",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "order_id" => cmd.order_id,
             "product_id" => cmd.product_id,
             "variant_id" => cmd.variant_id,
@@ -63,7 +62,7 @@ pub async fn insert(
         ],
         tenant: tenant_id
     )?;
-    raisfast_derive::crud_find_one!(pool, "order_items", OrderItem, "document_id" => &document_id, tenant: tenant_id)
+    raisfast_derive::crud_find_one!(pool, "order_items", OrderItem, "id" => id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -83,13 +82,12 @@ pub async fn tx_insert(
     cmd: &crate::commands::CreateOrderItemCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<OrderItem> {
-    let document_id = uuid::Uuid::now_v7().to_string();
-    let now = crate::utils::tz::now_utc();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     raisfast_derive::crud_insert!(
         &mut *tx,
         "order_items",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "order_id" => cmd.order_id,
             "product_id" => cmd.product_id,
             "variant_id" => cmd.variant_id,
@@ -106,7 +104,7 @@ pub async fn tx_insert(
         ],
         tenant: tenant_id
     )?;
-    raisfast_derive::crud_find_one!(&mut *tx, "order_items", OrderItem, "document_id" => &document_id, tenant: tenant_id)
+    raisfast_derive::crud_find_one!(&mut *tx, "order_items", OrderItem, "id" => id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -128,17 +126,12 @@ mod tests {
     }
 
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
-        let doc_id = uuid::Uuid::now_v7().to_string();
-        let username = format!("testuser_{doc_id}");
-        sqlx::query("INSERT INTO users (document_id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')")
-            .bind(&doc_id)
+        let id = crate::utils::id::new_id();
+        let username = format!("testuser_{id}");
+        sqlx::query("INSERT INTO users (id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')")
+            .bind(id)
             .bind(&username)
             .execute(pool)
-            .await
-            .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
-            .bind(&doc_id)
-            .fetch_one(pool)
             .await
             .unwrap();
         id
@@ -249,7 +242,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(item.order_id, order_id);
-        assert_eq!(item.product_id, Some(pid));
+        assert_eq!(item.product_id, Some(crate::utils::id::SnowflakeId(pid)));
         assert_eq!(item.title, "Widget");
         assert_eq!(item.unit_price, 1000);
         assert_eq!(item.quantity, 2);

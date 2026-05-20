@@ -2,8 +2,8 @@ use super::*;
 
 async fn admin_token() -> String {
     let pool = test_pool().await;
-    let (int_id, doc_id) = create_admin(&pool).await;
-    make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin)
+    let (int_id, id) = create_admin(&pool).await;
+    make_token(&id, int_id, raisfast::models::user::UserRole::Admin)
 }
 
 #[tokio::test]
@@ -33,12 +33,12 @@ async fn create_role_returns_in_list() {
     .await;
     assert!(status.is_success(), "create role: {status} {body:?}");
     assert_eq!(body["data"]["name"], role_name);
-    let role_id = body["data"]["document_id"].as_str().unwrap().to_string();
+    let role_id = body["data"]["id"].as_str().unwrap().to_string();
 
     let (status, body) = send(&mut app, get_auth("/api/v1/admin/rbac/roles", &tok)).await;
     assert!(status.is_success(), "list roles: {status} {body:?}");
     let items = body["data"]["items"].as_array().unwrap();
-    let found = items.iter().any(|r| r["document_id"] == role_id);
+    let found = items.iter().any(|r| r["id"] == role_id);
     assert!(found, "created role should appear in list");
 }
 
@@ -56,7 +56,7 @@ async fn update_role() {
         ),
     )
     .await;
-    let id = create_body["data"]["document_id"].as_str().unwrap();
+    let id = create_body["data"]["id"].as_str().unwrap();
 
     let new_name = format!("super-{}", &uuid::Uuid::now_v7().to_string()[..8]);
     let (status, body) = send(
@@ -83,7 +83,7 @@ async fn delete_role() {
         post_json_auth("/api/v1/admin/rbac/roles", json!({"name": role_name}), &tok),
     )
     .await;
-    let id = create_body["data"]["document_id"].as_str().unwrap();
+    let id = create_body["data"]["id"].as_str().unwrap();
 
     let (status, _) = send(
         &mut app,
@@ -95,7 +95,7 @@ async fn delete_role() {
     let (status, body) = send(&mut app, get_auth("/api/v1/admin/rbac/roles", &tok)).await;
     assert!(status.is_success());
     let items = body["data"]["items"].as_array().unwrap();
-    let found = items.iter().any(|r| r["document_id"] == id);
+    let found = items.iter().any(|r| r["id"] == id);
     assert!(!found, "deleted role should not appear in list");
 }
 
@@ -113,7 +113,7 @@ async fn set_and_get_permissions() {
         ),
     )
     .await;
-    let role_id = create_body["data"]["document_id"].as_str().unwrap();
+    let role_id = create_body["data"]["id"].as_str().unwrap();
 
     let (status, body) = send(
         &mut app,

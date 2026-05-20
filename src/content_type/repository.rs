@@ -31,8 +31,8 @@ pub struct SaveContext {
 impl SaveContext {
     pub fn from_auth(auth: &AuthUser) -> Self {
         Self {
-            user_id: auth.user_id().map(|s| s.to_string()),
-            user_int_id: auth.user_int_id(),
+            user_id: auth.user_id().map(|id| id.to_string()),
+            user_int_id: auth.user_id(),
             user_role: auth.is_authenticated().then(|| auth.role().to_string()),
             tenant_id: auth.tenant_id().map(|s| s.to_string()),
         }
@@ -208,7 +208,7 @@ impl ContentRepository {
     pub async fn find_by_id(
         &self,
         ct: &ContentTypeSchema,
-        id: &str,
+        id: i64,
         tenant_id: Option<&str>,
         include_private: bool,
     ) -> Result<Option<Value>, AppError> {
@@ -216,7 +216,7 @@ impl ContentRepository {
         let select_cols = columns.join(", ");
         let tid = self.resolve_tenant(ct, tenant_id);
 
-        let mut where_parts = vec![format!("{COL_DOCUMENT_ID} = {}", crate::db::dialect::ph(1))];
+        let mut where_parts = vec![format!("{COL_ID} = {}", crate::db::dialect::ph(1))];
         let mut idx = 2;
         if tid.is_some() {
             where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::dialect::ph(idx)));
@@ -309,6 +309,7 @@ impl ContentRepository {
     }
 
     /// Find by slug
+    #[allow(dead_code)]
     pub async fn find_by_slug(
         &self,
         ct: &ContentTypeSchema,
@@ -370,14 +371,13 @@ impl ContentRepository {
         let mut tx = self.pool.begin().await?;
 
         super::validation::validate_create_tx(&self.pool, ct, &data).await?;
-        let document_id = crate::utils::id::new_document_id();
+        let new_id = crate::utils::id::new_id();
 
         let obj = data
             .as_object_mut()
             .ok_or_else(|| AppError::BadRequest("request body must be a JSON object".into()))?;
 
         obj.remove(COL_ID);
-        obj.insert(COL_DOCUMENT_ID.into(), json!(document_id));
 
         let tid = self.resolve_tenant(ct, tenant_id);
 
@@ -385,6 +385,11 @@ impl ContentRepository {
         let mut placeholders = Vec::new();
         let mut values: Vec<String> = Vec::new();
         let mut idx = 1;
+
+        cols.push(COL_ID.to_string());
+        placeholders.push(crate::db::dialect::ph(idx));
+        idx += 1;
+        values.push(new_id.to_string());
 
         if let Some(ref tid) = tid {
             cols.push(COL_TENANT_ID.to_string());
@@ -454,18 +459,19 @@ impl ContentRepository {
             }
 
             if let Some((fk_col, target_table)) = fk_relation_map.get(key) {
-                let doc_id = value_to_string(val);
-                if doc_id.is_empty() {
+                let target_id = value_to_string(val);
+                if target_id.is_empty() {
                     cols.push(fk_col.clone());
                     placeholders.push(crate::db::dialect::ph(idx));
                     idx += 1;
                     values.push(String::new());
                 } else {
-                    let int_id = resolve_document_id_to_int_id(&self.pool, target_table, &doc_id)
+                    let parsed_id = crate::utils::id::parse_id(&target_id)?;
+                    let int_id = find_existing_id(&self.pool, target_table, parsed_id)
                         .await?
                         .ok_or_else(|| {
                             AppError::BadRequest(format!(
-                                "relation target '{doc_id}' not found in {target_table}"
+                                "relation target '{target_id}' not found in {target_table}"
                             ))
                         })?;
                     cols.push(fk_col.clone());
@@ -496,17 +502,7 @@ impl ContentRepository {
 
         query.execute(&mut *tx).await?;
 
-        let source_int_id: i64 = {
-            let id_sql = format!(
-                "SELECT {COL_ID} FROM {} WHERE {COL_DOCUMENT_ID} = {}",
-                ct.table,
-                crate::db::dialect::ph(1)
-            );
-            sqlx::query_scalar::<_, i64>(&id_sql)
-                .bind(&document_id)
-                .fetch_one(&mut *tx)
-                .await?
-        };
+        let source_int_id = new_id;
 
         for (field_name, through_table, target_table, source_col, target_col) in &junction_fields {
             if !crate::db::dialect::is_safe_identifier(through_table)
@@ -521,11 +517,12 @@ impl ContentRepository {
             let Some(val) = obj.get(field_name) else {
                 continue;
             };
-            let doc_ids = extract_document_ids(val);
-            if doc_ids.is_empty() {
+            let ids = extract_ids(val);
+            if ids.is_empty() {
                 continue;
             }
-            let int_ids = resolve_document_ids_batch(&self.pool, target_table, &doc_ids).await?;
+            let parsed_ids: Vec<i64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
+            let int_ids = find_existing_ids(&self.pool, target_table, &parsed_ids).await?;
             for target_int_id in int_ids {
                 let jsql = format!(
                     "INSERT OR IGNORE INTO {through_table} ({source_col}, {target_col}) VALUES ({}, {})",
@@ -552,11 +549,12 @@ impl ContentRepository {
             let Some(val) = obj.get(field_name) else {
                 continue;
             };
-            let doc_ids = extract_document_ids(val);
-            if doc_ids.is_empty() {
+            let ids = extract_ids(val);
+            if ids.is_empty() {
                 continue;
             }
-            let int_ids = resolve_document_ids_batch(&self.pool, target_table, &doc_ids).await?;
+            let parsed_ids: Vec<i64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
+            let int_ids = find_existing_ids(&self.pool, target_table, &parsed_ids).await?;
             let usql = format!(
                 "UPDATE {target_table} SET {fk_col} = {} WHERE {COL_ID} = {}",
                 crate::db::dialect::ph(1),
@@ -578,12 +576,12 @@ impl ContentRepository {
         let columns = ct.column_names(None, true);
         let select_cols = columns.join(", ");
         let sql = format!(
-            "SELECT {select_cols} FROM {} WHERE {COL_DOCUMENT_ID} = {}",
+            "SELECT {select_cols} FROM {} WHERE {COL_ID} = {}",
             ct.table,
             crate::db::dialect::ph(1)
         );
         let row = sqlx::query(&sql)
-            .bind(&document_id)
+            .bind(new_id.to_string())
             .fetch_optional(&self.pool)
             .await?;
 
@@ -598,7 +596,7 @@ impl ContentRepository {
     pub async fn update(
         &self,
         ct: &ContentTypeSchema,
-        id: &str,
+        id: i64,
         mut data: Value,
         tenant_id: Option<&str>,
         _save_ctx: &SaveContext,
@@ -626,7 +624,6 @@ impl ContentRepository {
             .ok_or_else(|| AppError::BadRequest("request body must be a JSON object".into()))?;
 
         obj.remove(COL_ID);
-        obj.remove(COL_DOCUMENT_ID);
 
         let tid = self.resolve_tenant(ct, tenant_id);
 
@@ -685,18 +682,7 @@ impl ContentRepository {
 
         let decl = ct.declaration();
 
-        let source_int_id: i64 = {
-            let id_sql = format!(
-                "SELECT {COL_ID} FROM {} WHERE {COL_DOCUMENT_ID} = {}",
-                ct.table,
-                crate::db::dialect::ph(1)
-            );
-            sqlx::query_scalar::<_, i64>(&id_sql)
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await?
-                .ok_or_else(|| AppError::not_found(&format!("{}/{}", ct.singular, id)))?
-        };
+        let source_int_id: i64 = id;
 
         for (key, val) in obj.iter() {
             if ct.get_field(key).is_some() || ct.is_protocol_column(key) {
@@ -709,20 +695,20 @@ impl ContentRepository {
                     continue;
                 }
                 if let Some((fk_col, target_table)) = fk_relation_map.get(key) {
-                    let doc_id = value_to_string(val);
-                    if doc_id.is_empty() {
+                    let target_id = value_to_string(val);
+                    if target_id.is_empty() {
                         set_clauses.push(format!("{fk_col} = {}", crate::db::dialect::ph(idx)));
                         idx += 1;
                         values.push(String::new());
                     } else {
-                        let int_id =
-                            resolve_document_id_to_int_id(&self.pool, target_table, &doc_id)
-                                .await?
-                                .ok_or_else(|| {
-                                    AppError::BadRequest(format!(
-                                        "relation target '{doc_id}' not found in {target_table}"
-                                    ))
-                                })?;
+                        let parsed_id = crate::utils::id::parse_id(&target_id)?;
+                        let int_id = find_existing_id(&self.pool, target_table, parsed_id)
+                            .await?
+                            .ok_or_else(|| {
+                                AppError::BadRequest(format!(
+                                    "relation target '{target_id}' not found in {target_table}"
+                                ))
+                            })?;
                         set_clauses.push(format!("{fk_col} = {}", crate::db::dialect::ph(idx)));
                         idx += 1;
                         values.push(int_id.to_string());
@@ -745,15 +731,14 @@ impl ContentRepository {
         }
 
         if !set_clauses.is_empty() {
-            let mut where_parts = vec![format!(
-                "{COL_DOCUMENT_ID} = {}",
-                crate::db::dialect::ph(idx)
-            )];
+            let set_value_count = values.len();
+
+            let mut where_parts = vec![format!("{COL_ID} = {}", crate::db::dialect::ph(idx))];
             idx += 1;
-            values.push(id.to_string());
 
             if let Some(ref tid) = tid {
                 where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::dialect::ph(idx)));
+                idx += 1;
                 values.push(tid.clone());
             }
 
@@ -772,7 +757,11 @@ impl ContentRepository {
             );
 
             let mut query = sqlx::query(&sql);
-            for v in &values {
+            for v in &values[..set_value_count] {
+                query = query.bind(v);
+            }
+            query = query.bind(id);
+            for v in &values[set_value_count..] {
                 query = query.bind(v);
             }
 
@@ -815,11 +804,12 @@ impl ContentRepository {
                     AppError::Internal(anyhow::Error::from(e).context("junction delete failed"))
                 })?;
 
-            let doc_ids = extract_document_ids(val);
-            if doc_ids.is_empty() {
+            let ids = extract_ids(val);
+            if ids.is_empty() {
                 continue;
             }
-            let int_ids = resolve_document_ids_batch(&self.pool, target_table, &doc_ids).await?;
+            let parsed_ids: Vec<i64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
+            let int_ids = find_existing_ids(&self.pool, target_table, &parsed_ids).await?;
             for target_int_id in int_ids {
                 let jsql = format!(
                     "INSERT OR IGNORE INTO {through_table} ({source_col}, {target_col}) VALUES ({}, {})",
@@ -858,11 +848,12 @@ impl ContentRepository {
                     AppError::Internal(anyhow::Error::from(e).context("one-to-many clear failed"))
                 })?;
 
-            let doc_ids = extract_document_ids(val);
-            if doc_ids.is_empty() {
+            let ids = extract_ids(val);
+            if ids.is_empty() {
                 continue;
             }
-            let int_ids = resolve_document_ids_batch(&self.pool, target_table, &doc_ids).await?;
+            let parsed_ids: Vec<i64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
+            let int_ids = find_existing_ids(&self.pool, target_table, &parsed_ids).await?;
             let usql = format!(
                 "UPDATE {target_table} SET {fk_col} = {} WHERE {COL_ID} = {}",
                 crate::db::dialect::ph(1),
@@ -894,7 +885,7 @@ impl ContentRepository {
     pub async fn delete(
         &self,
         ct: &ContentTypeSchema,
-        id: &str,
+        id: i64,
         tenant_id: Option<&str>,
         protocol_registry: &crate::protocols::ProtocolRegistry,
         ct_registry: &crate::content_type::ContentTypeRegistry,
@@ -952,12 +943,9 @@ impl ContentRepository {
         let has_cleanup = !source_junctions.is_empty() || !reverse_junctions.is_empty();
 
         let mut idx = 1;
-        let mut where_parts = vec![format!(
-            "{COL_DOCUMENT_ID} = {}",
-            crate::db::dialect::ph(idx)
-        )];
+        let mut where_parts = vec![format!("{COL_ID} = {}", crate::db::dialect::ph(idx))];
         idx += 1;
-        let mut values = vec![id.to_string()];
+        let mut values: Vec<String> = Vec::new();
         if let Some(ref tid) = tid {
             where_parts.push(format!("{COL_TENANT_ID} = {}", crate::db::dialect::ph(idx)));
             idx += 1;
@@ -974,6 +962,7 @@ impl ContentRepository {
                     where_parts.join(" AND ")
                 );
                 let mut query = sqlx::query_scalar::<_, i64>(&id_sql);
+                query = query.bind(id);
                 for v in &values {
                     query = query.bind(v);
                 }
@@ -1040,6 +1029,7 @@ impl ContentRepository {
                 );
                 let mut query = sqlx::query(&sql);
                 query = query.bind(now);
+                query = query.bind(id);
                 for v in &values {
                     query = query.bind(v);
                 }
@@ -1053,6 +1043,7 @@ impl ContentRepository {
                     where_parts.join(" AND ")
                 );
                 let mut query = sqlx::query(&sql);
+                query = query.bind(id);
                 for v in &values {
                     query = query.bind(v);
                 }
@@ -1080,6 +1071,7 @@ impl ContentRepository {
             );
             let mut query = sqlx::query(&sql);
             query = query.bind(now);
+            query = query.bind(id);
             for v in &values {
                 query = query.bind(v);
             }
@@ -1094,6 +1086,7 @@ impl ContentRepository {
                 where_parts.join(" AND ")
             );
             let mut query = sqlx::query(&sql);
+            query = query.bind(id);
             for v in &values {
                 query = query.bind(v);
             }
@@ -1115,7 +1108,7 @@ impl ContentRepository {
     pub async fn soft_delete(
         &self,
         ct: &ContentTypeSchema,
-        id: &str,
+        id: i64,
         deleted_at: &str,
         deleted_by: Option<i64>,
         tenant_id: Option<&str>,
@@ -1139,10 +1132,7 @@ impl ContentRepository {
             idx += 1;
         }
 
-        let mut where_parts = vec![format!(
-            "{COL_DOCUMENT_ID} = {}",
-            crate::db::dialect::ph(idx)
-        )];
+        let mut where_parts = vec![format!("{COL_ID} = {}", crate::db::dialect::ph(idx))];
         idx += 1;
 
         if tid.is_some() {
@@ -1368,7 +1358,6 @@ pub fn build_column_names(
 ) -> Vec<String> {
     let mut cols = Vec::new();
     cols.push(COL_ID.into());
-    cols.push(COL_DOCUMENT_ID.into());
 
     for field in &ct.fields {
         if !include_private && field.private {
@@ -1427,6 +1416,11 @@ pub(crate) fn row_to_value(row: &DbRow, columns: &[String]) -> Value {
 /// Note: bool is placed after i64 because SQLite does not distinguish bool from int;
 /// non-0/1 integers would be misidentified as true by bool.
 fn cell_to_json(row: &DbRow, col: &str) -> Value {
+    if col == COL_ID
+        && let Ok(Some(v)) = row.try_get::<Option<i64>, _>(col)
+    {
+        return json!(v.to_string());
+    }
     if let Ok(Some(v)) = row.try_get::<Option<i64>, _>(col) {
         return json!(v);
     }
@@ -1512,7 +1506,7 @@ fn value_to_string(v: &Value) -> String {
     }
 }
 
-fn extract_document_ids(val: &Value) -> Vec<String> {
+fn extract_ids(val: &Value) -> Vec<String> {
     match val {
         Value::String(s) if !s.is_empty() => vec![s.clone()],
         Value::Array(arr) => arr
@@ -1524,36 +1518,33 @@ fn extract_document_ids(val: &Value) -> Vec<String> {
     }
 }
 
-pub(crate) async fn resolve_document_id_to_int_id(
+pub(crate) async fn find_existing_id(
     pool: &Pool,
     target_table: &str,
-    document_id: &str,
+    id: i64,
 ) -> Result<Option<i64>, AppError> {
-    if document_id.is_empty() {
-        return Ok(None);
-    }
     if !crate::db::dialect::is_safe_identifier(target_table) {
         return Err(AppError::BadRequest(format!(
             "invalid target table: {target_table}"
         )));
     }
     let sql = format!(
-        "SELECT {COL_ID} FROM {target_table} WHERE {COL_DOCUMENT_ID} = {}",
+        "SELECT {COL_ID} FROM {target_table} WHERE {COL_ID} = {}",
         crate::db::dialect::ph(1)
     );
     let result = sqlx::query_scalar::<_, i64>(&sql)
-        .bind(document_id)
+        .bind(id)
         .fetch_optional(pool)
         .await?;
     Ok(result)
 }
 
-async fn resolve_document_ids_batch(
+async fn find_existing_ids(
     pool: &Pool,
     target_table: &str,
-    document_ids: &[String],
+    ids: &[i64],
 ) -> Result<Vec<i64>, AppError> {
-    if document_ids.is_empty() {
+    if ids.is_empty() {
         return Ok(Vec::new());
     }
     if !crate::db::dialect::is_safe_identifier(target_table) {
@@ -1561,33 +1552,30 @@ async fn resolve_document_ids_batch(
             "invalid target table: {target_table}"
         )));
     }
-    let placeholders: Vec<String> = (1..=document_ids.len())
-        .map(crate::db::dialect::ph)
-        .collect();
+    let placeholders: Vec<String> = (1..=ids.len()).map(crate::db::dialect::ph).collect();
     let sql = format!(
-        "SELECT {COL_ID}, {COL_DOCUMENT_ID} FROM {target_table} WHERE {COL_DOCUMENT_ID} IN ({})",
+        "SELECT {COL_ID} FROM {target_table} WHERE {COL_ID} IN ({})",
         placeholders.join(", ")
     );
     let mut q = sqlx::query(&sql);
-    for id in document_ids {
-        q = q.bind(id);
+    for id in ids {
+        q = q.bind(*id);
     }
     let rows = q.fetch_all(pool).await?;
-    let mut lookup: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut found: std::collections::HashSet<i64> = std::collections::HashSet::new();
     for row in &rows {
         let int_id: i64 = row.try_get(COL_ID).unwrap_or(0);
-        let doc_id: String = row.try_get(COL_DOCUMENT_ID).unwrap_or_default();
-        if int_id > 0 && !doc_id.is_empty() {
-            lookup.insert(doc_id, int_id);
+        if int_id > 0 {
+            found.insert(int_id);
         }
     }
     let mut result = Vec::new();
-    for doc_id in document_ids {
-        let int_id = lookup.remove(doc_id).ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "relation target document_id '{doc_id}' not found in {target_table}"
-            ))
-        })?;
+    for &int_id in ids {
+        if !found.contains(&int_id) {
+            return Err(AppError::BadRequest(format!(
+                "relation target id '{int_id}' not found in {target_table}"
+            )));
+        }
         result.push(int_id);
     }
     Ok(result)
@@ -1674,7 +1662,6 @@ unique = true
 
         let cols = build_column_names(&ct, None, false);
         assert!(cols.contains(&"id".to_string()));
-        assert!(cols.contains(&"document_id".to_string()));
         assert!(cols.contains(&"name".to_string()));
         assert!(cols.contains(&"slug".to_string()));
         assert!(cols.contains(&"created_at".to_string()));
@@ -1745,32 +1732,32 @@ type = "text"
     }
 
     #[test]
-    fn extract_document_ids_string() {
-        let ids = extract_document_ids(&json!("abc-123"));
+    fn extract_ids_string() {
+        let ids = extract_ids(&json!("abc-123"));
         assert_eq!(ids, vec!["abc-123"]);
     }
 
     #[test]
-    fn extract_document_ids_array() {
-        let ids = extract_document_ids(&json!(["a", "b", "c"]));
+    fn extract_ids_array() {
+        let ids = extract_ids(&json!(["a", "b", "c"]));
         assert_eq!(ids, vec!["a", "b", "c"]);
     }
 
     #[test]
-    fn extract_document_ids_empty_string() {
-        let ids = extract_document_ids(&json!(""));
+    fn extract_ids_empty_string() {
+        let ids = extract_ids(&json!(""));
         assert!(ids.is_empty());
     }
 
     #[test]
-    fn extract_document_ids_non_string() {
-        let ids = extract_document_ids(&json!(42));
+    fn extract_ids_non_string() {
+        let ids = extract_ids(&json!(42));
         assert!(ids.is_empty());
     }
 
     #[test]
-    fn extract_document_ids_array_filters_empty() {
-        let ids = extract_document_ids(&json!(["a", "", "c"]));
+    fn extract_ids_array_filters_empty() {
+        let ids = extract_ids(&json!(["a", "", "c"]));
         assert_eq!(ids, vec!["a", "c"]);
     }
 
@@ -1919,13 +1906,12 @@ type = "integer"
     #[test]
     fn save_context_from_auth() {
         let auth = crate::middleware::auth::AuthUser::from_parts(
-            Some("u1".to_string()),
             Some(42),
             crate::models::user::UserRole::Admin,
             Some("t1".to_string()),
         );
         let ctx = SaveContext::from_auth(&auth);
-        assert_eq!(ctx.user_id, Some("u1".to_string()));
+        assert_eq!(ctx.user_id, Some("42".to_string()));
         assert_eq!(ctx.user_int_id, Some(42));
         assert_eq!(
             ctx.user_role,

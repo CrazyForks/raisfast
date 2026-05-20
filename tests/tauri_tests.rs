@@ -76,8 +76,8 @@ async fn create_test_user(pool: &sqlx::SqlitePool, label: &str) -> (i64, String)
     let user = auth::register(&aspect_engine, req, None, false, pool)
         .await
         .unwrap();
-    let row: (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
-        .bind(&user.id)
+    let row: (i64,) = sqlx::query_as("SELECT id FROM users WHERE id = ?")
+        .bind(user.id.parse::<i64>().unwrap())
         .fetch_one(pool)
         .await
         .unwrap();
@@ -253,8 +253,7 @@ async fn tauri_auth_get_me_service() {
         .unwrap();
 
     let auth = raisfast::middleware::auth::AuthUser::from_parts(
-        Some(user.id.clone()),
-        None,
+        Some(user.id.parse().unwrap()),
         raisfast::models::user::UserRole::Author,
         None,
     );
@@ -270,7 +269,7 @@ async fn tauri_auth_get_me_service() {
 #[tokio::test]
 async fn tauri_post_create_and_list() {
     let pool = setup_pool().await;
-    let (author_int_id, author_doc_id) = create_test_user(&pool, "author-001").await;
+    let (author_int_id, _author_id) = create_test_user(&pool, "author-001").await;
     let svc = build_post_service(Arc::new(pool.clone()));
 
     let req = raisfast::dto::CreatePostRequest {
@@ -284,7 +283,6 @@ async fn tauri_post_create_and_list() {
     };
 
     let auth = raisfast::middleware::auth::AuthUser::from_parts(
-        Some(author_doc_id.clone()),
         Some(author_int_id),
         raisfast::models::user::UserRole::Author,
         None,
@@ -292,7 +290,7 @@ async fn tauri_post_create_and_list() {
     let created = svc.create(&auth, req).await.unwrap();
 
     assert_eq!(created.title, "Test Post");
-    assert_eq!(created.created_by, author_int_id);
+    assert!(created.created_by.is_none());
 
     let (items, total) = svc.list(&auth, 1, 20, None, None, None).await.unwrap();
 
@@ -303,7 +301,7 @@ async fn tauri_post_create_and_list() {
 #[tokio::test]
 async fn tauri_post_get_by_slug() {
     let pool = setup_pool().await;
-    let (author_int_id, author_doc_id) = create_test_user(&pool, "author-002").await;
+    let (author_int_id, _author_id) = create_test_user(&pool, "author-002").await;
     let svc = build_post_service(Arc::new(pool.clone()));
 
     let req = raisfast::dto::CreatePostRequest {
@@ -317,7 +315,6 @@ async fn tauri_post_get_by_slug() {
     };
 
     let auth = raisfast::middleware::auth::AuthUser::from_parts(
-        Some(author_doc_id.clone()),
         Some(author_int_id),
         raisfast::models::user::UserRole::Author,
         None,
@@ -388,8 +385,13 @@ async fn tauri_cms_get_by_id() {
     let data = with_timestamps(serde_json::json!({"title": "Read book", "done": false}));
     let created = repo.create(&ct, data, None, &save_ctx).await.unwrap();
 
-    let id = created["document_id"].as_str().unwrap();
-    let found = repo.find_by_id(&ct, id, None, true).await.unwrap().unwrap();
+    let id = created["id"].as_str().unwrap().to_string();
+    let int_id: i64 = id.parse().unwrap();
+    let found = repo
+        .find_by_id(&ct, int_id, None, true)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(found["title"], "Read book");
 }
 
@@ -404,14 +406,15 @@ async fn tauri_cms_update() {
     let data = with_timestamps(serde_json::json!({"title": "Original", "done": false}));
     let created = repo.create(&ct, data, None, &save_ctx).await.unwrap();
 
-    let id = created["document_id"].as_str().unwrap().to_string();
+    let id = created["id"].as_str().unwrap().to_string();
+    let int_id: i64 = id.parse().unwrap();
     let update_data = serde_json::json!({"title": "Updated", "done": true});
-    repo.update(&ct, &id, update_data, None, &save_ctx)
+    repo.update(&ct, int_id, update_data, None, &save_ctx)
         .await
         .unwrap();
 
     let found = repo
-        .find_by_id(&ct, &id, None, true)
+        .find_by_id(&ct, int_id, None, true)
         .await
         .unwrap()
         .unwrap();
@@ -429,10 +432,11 @@ async fn tauri_cms_delete() {
     let data = with_timestamps(serde_json::json!({"title": "To delete", "done": false}));
     let created = repo.create(&ct, data, None, &save_ctx).await.unwrap();
 
-    let id = created["document_id"].as_str().unwrap().to_string();
+    let id = created["id"].as_str().unwrap().to_string();
+    let int_id: i64 = id.parse().unwrap();
     repo.delete(
         &ct,
-        &id,
+        int_id,
         None,
         &test_protocol_registry(),
         &raisfast::content_type::ContentTypeRegistry::new(),
@@ -440,7 +444,7 @@ async fn tauri_cms_delete() {
     .await
     .unwrap();
 
-    let found = repo.find_by_id(&ct, &id, None, true).await.unwrap();
+    let found = repo.find_by_id(&ct, int_id, None, true).await.unwrap();
     assert!(found.is_none(), "deleted item should not exist");
 }
 

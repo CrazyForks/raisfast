@@ -3,7 +3,7 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 
-use crate::dto::{BatchRequest, BatchResponse, CreateTagRequest, UpdateTagRequest};
+use crate::dto::{BatchRequest, BatchResponse, CreateTagRequest, TagResponse, UpdateTagRequest};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
@@ -126,12 +126,13 @@ pub async fn list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Query(mut params): Query<PaginationParams>,
-) -> AppResult<ApiResponse<PaginatedData<crate::models::tag::Tag>>> {
+) -> AppResult<ApiResponse<PaginatedData<TagResponse>>> {
     params.sanitize();
     let (items, total) = state
         .tag_service
         .list_paginated(&auth, params.page, params.page_size)
         .await?;
+    let items: Vec<TagResponse> = items.into_iter().map(TagResponse::from_tag).collect();
     Ok(params.paginate(items, total))
 }
 
@@ -144,9 +145,10 @@ pub async fn get(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
-) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
-    let t = state.tag_service.get(&id, &auth).await?;
-    Ok(ApiResponse::success(t))
+) -> AppResult<ApiResponse<TagResponse>> {
+    let id = crate::utils::id::parse_id(&id)?;
+    let t = state.tag_service.get(id, &auth).await?;
+    Ok(ApiResponse::success(TagResponse::from_tag(t)))
 }
 
 /// Create a new tag
@@ -159,11 +161,11 @@ pub async fn create(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Json(req): Json<CreateTagRequest>,
-) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
+) -> AppResult<ApiResponse<TagResponse>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
     let t = state.tag_service.create(&auth, req).await?;
-    Ok(ApiResponse::success(t))
+    Ok(ApiResponse::success(TagResponse::from_tag(t)))
 }
 
 /// Delete a tag
@@ -178,7 +180,8 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_author()?;
-    state.tag_service.delete(&id, &auth).await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    state.tag_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -194,15 +197,16 @@ pub async fn update(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateTagRequest>,
-) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
+) -> AppResult<ApiResponse<TagResponse>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
     let slug = crate::services::tag::generate_slug(&req.name);
+    let id = crate::utils::id::parse_id(&id)?;
     let t = state
         .tag_service
-        .update(&auth, &id, req.name.clone(), slug)
+        .update(&auth, id, req.name.clone(), slug)
         .await?;
-    Ok(ApiResponse::success(t))
+    Ok(ApiResponse::success(TagResponse::from_tag(t)))
 }
 
 // ── Admin handlers ──
@@ -211,13 +215,14 @@ pub async fn admin_list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Query(mut params): Query<PaginationParams>,
-) -> AppResult<ApiResponse<PaginatedData<crate::models::tag::Tag>>> {
+) -> AppResult<ApiResponse<PaginatedData<TagResponse>>> {
     auth.ensure_admin()?;
     params.sanitize();
     let (items, total) = state
         .tag_service
         .list_paginated(&auth, params.page, params.page_size)
         .await?;
+    let items: Vec<TagResponse> = items.into_iter().map(TagResponse::from_tag).collect();
     Ok(params.paginate(items, total))
 }
 
@@ -225,11 +230,11 @@ pub async fn admin_create(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Json(req): Json<CreateTagRequest>,
-) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
+) -> AppResult<ApiResponse<TagResponse>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
     let t = state.tag_service.create(&auth, req).await?;
-    Ok(ApiResponse::success(t))
+    Ok(ApiResponse::success(TagResponse::from_tag(t)))
 }
 
 pub async fn admin_update(
@@ -237,15 +242,16 @@ pub async fn admin_update(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateTagRequest>,
-) -> AppResult<ApiResponse<crate::models::tag::Tag>> {
+) -> AppResult<ApiResponse<TagResponse>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
     let slug = crate::services::tag::generate_slug(&req.name);
+    let id = crate::utils::id::parse_id(&id)?;
     let t = state
         .tag_service
-        .update(&auth, &id, req.name.clone(), slug)
+        .update(&auth, id, req.name.clone(), slug)
         .await?;
-    Ok(ApiResponse::success(t))
+    Ok(ApiResponse::success(TagResponse::from_tag(t)))
 }
 
 pub async fn admin_delete(
@@ -254,7 +260,8 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    state.tag_service.delete(&id, &auth).await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    state.tag_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -267,8 +274,10 @@ pub async fn admin_batch(
     validation::validate(&req)?;
     let mut affected = 0usize;
     if req.action == "delete" {
-        for id in &req.ids {
-            if state.tag_service.delete(id, &auth).await.is_ok() {
+        for raw_id in &req.ids {
+            if let Ok(id) = crate::utils::id::parse_id(raw_id)
+                && state.tag_service.delete(id, &auth).await.is_ok()
+            {
                 affected += 1;
             }
         }

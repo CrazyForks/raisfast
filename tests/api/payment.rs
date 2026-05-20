@@ -2,8 +2,8 @@ use super::*;
 
 async fn setup_admin_with_channel() -> (axum::Router, AppState, String, String) {
     let (app, state) = test_app().await;
-    let (int_id, doc_id) = create_admin(&state.pool).await;
-    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin);
+    let (int_id, id) = create_admin(&state.pool).await;
+    let tok = make_token(&id, int_id, raisfast::models::user::UserRole::Admin);
 
     let (_, cbody) = send(
         &mut app.clone(),
@@ -26,8 +26,8 @@ async fn setup_admin_with_channel() -> (axum::Router, AppState, String, String) 
 
 async fn setup_admin_with_routing_channels() -> (axum::Router, AppState, String) {
     let (app, state) = test_app().await;
-    let (int_id, doc_id) = create_admin(&state.pool).await;
-    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin);
+    let (int_id, id) = create_admin(&state.pool).await;
+    let tok = make_token(&id, int_id, raisfast::models::user::UserRole::Admin);
 
     send(
         &mut app.clone(),
@@ -275,12 +275,11 @@ async fn list_available_channels_returns_channels() {
         )
         .await;
         product_id = pbody["data"]["id"].as_str().unwrap().to_string();
-        let product_int_id: i64 =
-            sqlx::query_scalar("SELECT id FROM products WHERE document_id = ?")
-                .bind(&product_id)
-                .fetch_one(&state.pool)
-                .await
-                .unwrap();
+        let product_int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE id = ?")
+            .bind(&product_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
         sqlx::query("UPDATE products SET status = 'active' WHERE id = ?")
             .bind(product_int_id)
             .execute(&state.pool)
@@ -335,7 +334,7 @@ async fn list_available_channels_no_match() {
     )
     .await;
     let product_id = pbody["data"]["id"].as_str().unwrap();
-    let product_int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE document_id = ?")
+    let product_int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE id = ?")
         .bind(product_id)
         .fetch_one(&state.pool)
         .await
@@ -398,7 +397,7 @@ async fn create_payment_order_auto_route() {
     )
     .await;
     let product_id = pbody["data"]["id"].as_str().unwrap();
-    let product_int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE document_id = ?")
+    let product_int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE id = ?")
         .bind(product_id)
         .fetch_one(&state.pool)
         .await
@@ -473,7 +472,7 @@ async fn create_payment_order_manual_channel() {
     )
     .await;
     let product_id = pbody["data"]["id"].as_str().unwrap();
-    let product_int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE document_id = ?")
+    let product_int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE id = ?")
         .bind(product_id)
         .fetch_one(&state.pool)
         .await
@@ -528,7 +527,7 @@ async fn create_payment_order_no_channel_no_match() {
     )
     .await;
     let product_id = pbody["data"]["id"].as_str().unwrap();
-    let product_int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE document_id = ?")
+    let product_int_id: i64 = sqlx::query_scalar("SELECT id FROM products WHERE id = ?")
         .bind(product_id)
         .fetch_one(&state.pool)
         .await

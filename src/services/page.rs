@@ -23,7 +23,7 @@ pub trait PageService: Send + Sync {
         auth: &AuthUser,
     ) -> AppResult<(Vec<Page>, i64)>;
     async fn get_by_slug(&self, slug: &str, auth: &AuthUser) -> AppResult<Page>;
-    async fn get_by_id(&self, id: &str, auth: &AuthUser) -> AppResult<Page>;
+    async fn get_by_id(&self, id: i64, auth: &AuthUser) -> AppResult<Page>;
     async fn list_all(
         &self,
         page_num: i64,
@@ -32,15 +32,9 @@ pub trait PageService: Send + Sync {
         auth: &AuthUser,
     ) -> AppResult<(Vec<Page>, i64)>;
     async fn create_page(&self, auth: &AuthUser, cmd: CreatePageCmd) -> AppResult<Page>;
-    async fn update_page(
-        &self,
-        auth: &AuthUser,
-        document_id: &str,
-        cmd: UpdatePageCmd,
-    ) -> AppResult<Page>;
-    async fn delete_page(&self, id: &str, auth: &AuthUser) -> AppResult<()>;
-    async fn update_status(&self, id: &str, status: PageStatus, auth: &AuthUser)
-    -> AppResult<Page>;
+    async fn update_page(&self, auth: &AuthUser, id: i64, cmd: UpdatePageCmd) -> AppResult<Page>;
+    async fn delete_page(&self, id: i64, auth: &AuthUser) -> AppResult<()>;
+    async fn update_status(&self, id: i64, status: PageStatus, auth: &AuthUser) -> AppResult<Page>;
     async fn reorder(&self, items: Vec<(String, i64)>, auth: &AuthUser) -> AppResult<()>;
     async fn sitemap(&self, auth: &AuthUser) -> AppResult<Vec<(String, Option<String>)>>;
 }
@@ -76,8 +70,8 @@ impl PageService for PageServiceImpl {
             .ok_or_else(|| AppError::not_found("page"))
     }
 
-    async fn get_by_id(&self, id: &str, auth: &AuthUser) -> AppResult<Page> {
-        page::find_by_document_id(&self.pool, id, auth.tenant_id())
+    async fn get_by_id(&self, id: i64, auth: &AuthUser) -> AppResult<Page> {
+        page::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("page"))
     }
@@ -105,14 +99,14 @@ impl PageService for PageServiceImpl {
     async fn update_page(
         &self,
         auth: &AuthUser,
-        document_id: &str,
+        id: i64,
         mut cmd: UpdatePageCmd,
     ) -> AppResult<Page> {
-        let existing = page::find_by_document_id(&self.pool, document_id, auth.tenant_id())
+        let existing = page::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("page"))?;
 
-        cmd.id = existing.id;
+        cmd.id = *existing.id;
         let (cmd, _d) = self.before_update(auth, &existing, cmd).await?;
         if let Some(ref blocks) = cmd.blocks {
             Self::validate_blocks_json(blocks)?;
@@ -122,47 +116,38 @@ impl PageService for PageServiceImpl {
         Ok(updated)
     }
 
-    async fn delete_page(&self, id: &str, auth: &AuthUser) -> AppResult<()> {
-        let p = page::find_by_document_id(&self.pool, id, auth.tenant_id())
+    async fn delete_page(&self, id: i64, auth: &AuthUser) -> AppResult<()> {
+        let p = page::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("page"))?;
         self.before_delete(auth, &p).await?;
-        page::delete(&self.pool, p.id, auth.tenant_id()).await?;
+        page::delete(&self.pool, *p.id, auth.tenant_id()).await?;
         self.after_deleted(&p);
         Ok(())
     }
 
-    async fn update_status(
-        &self,
-        id: &str,
-        status: PageStatus,
-        auth: &AuthUser,
-    ) -> AppResult<Page> {
-        let p = page::find_by_document_id(&self.pool, id, auth.tenant_id())
+    async fn update_status(&self, id: i64, status: PageStatus, auth: &AuthUser) -> AppResult<Page> {
+        let p = page::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("page"))?;
         self.aspect_engine
             .before_update("pages", auth, &p, status)
             .await?;
-        let updated = page::update_status(
-            &self.pool,
-            p.id,
-            status,
-            auth.user_int_id(),
-            auth.tenant_id(),
-        )
-        .await?;
+        let updated =
+            page::update_status(&self.pool, *p.id, status, auth.user_id(), auth.tenant_id())
+                .await?;
         self.after_updated(&updated);
         Ok(updated)
     }
 
     async fn reorder(&self, items: Vec<(String, i64)>, auth: &AuthUser) -> AppResult<()> {
         let mut resolved = Vec::new();
-        for (doc_id, sort_order) in items {
-            let p = page::find_by_document_id(&self.pool, &doc_id, auth.tenant_id())
+        for (raw_id, sort_order) in items {
+            let id: i64 = crate::utils::id::parse_id(&raw_id)?;
+            let p = page::find_by_id(&self.pool, id, auth.tenant_id())
                 .await?
                 .ok_or_else(|| AppError::not_found("page"))?;
-            resolved.push((p.id, sort_order));
+            resolved.push((*p.id, sort_order));
         }
         page::reorder(&self.pool, &resolved, auth.tenant_id()).await
     }

@@ -3,22 +3,22 @@ use serde::{Deserialize, Serialize};
 use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::AppResult;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct PaymentRefund {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
-    pub payment_order_id: i64,
+    pub payment_order_id: SnowflakeId,
     pub order_id: Option<String>,
-    pub user_id: i64,
+    pub user_id: SnowflakeId,
     pub amount: i64,
     pub currency: String,
     pub reason: Option<String>,
     pub provider_refund_id: Option<String>,
     pub status: String,
-    pub payment_tx_id: Option<i64>,
+    pub payment_tx_id: Option<SnowflakeId>,
     pub metadata: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -56,13 +56,13 @@ pub async fn insert(
     cmd: &crate::commands::CreatePaymentRefundCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<PaymentRefund> {
-    let document_id = uuid::Uuid::now_v7().to_string();
+    let id = crate::utils::id::new_id();
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_insert!(
         pool,
         "payment_refunds",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "payment_order_id" => cmd.payment_order_id,
             "order_id" => &cmd.order_id,
             "user_id" => cmd.user_id,
@@ -78,7 +78,7 @@ pub async fn insert(
         ],
         tenant: tenant_id
     )?;
-    raisfast_derive::crud_find_one!(pool, "payment_refunds", PaymentRefund, "document_id" => &document_id, tenant: tenant_id).map_err(Into::into)
+    raisfast_derive::crud_find_one!(pool, "payment_refunds", PaymentRefund, "id" => id, tenant: tenant_id).map_err(Into::into)
 }
 
 pub async fn update_status(
@@ -141,13 +141,13 @@ pub async fn tx_insert(
     cmd: &crate::commands::CreatePaymentRefundCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let document_id = uuid::Uuid::now_v7().to_string();
+    let id = crate::utils::id::new_id();
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_insert!(
         &mut *tx,
         "payment_refunds",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "payment_order_id" => cmd.payment_order_id,
             "order_id" => &cmd.order_id,
             "user_id" => cmd.user_id,
@@ -193,13 +193,6 @@ pub async fn tx_sum_refunded_by_order(
     Ok(total)
 }
 
-pub async fn tx_find_by_document_id(
-    tx: &mut crate::db::pool::DbConnection,
-    document_id: &str,
-) -> AppResult<Option<PaymentRefund>> {
-    raisfast_derive::crud_find!(&mut *tx, "payment_refunds", PaymentRefund, "document_id" => document_id).map_err(Into::into)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,17 +202,12 @@ mod tests {
     }
 
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
-        let doc_id = uuid::Uuid::now_v7().to_string();
-        let username = format!("testuser_{doc_id}");
-        sqlx::query("INSERT INTO users (document_id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')")
-            .bind(&doc_id)
+        let id = crate::utils::id::new_id();
+        let username = format!("testuser_{id}");
+        sqlx::query("INSERT INTO users (id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')")
+            .bind(id)
             .bind(&username)
             .execute(pool)
-            .await
-            .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
-            .bind(&doc_id)
-            .fetch_one(pool)
             .await
             .unwrap();
         id
@@ -323,7 +311,7 @@ mod tests {
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
         let refund = seed_refund(&pool, po_id, uid, 500, "pending").await;
-        let found = super::find_by_id(&pool, refund.id, None)
+        let found = super::find_by_id(&pool, *refund.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -380,10 +368,10 @@ mod tests {
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
         let refund = seed_refund(&pool, po_id, uid, 500, "pending").await;
-        super::update_status(&pool, refund.id, "succeeded", None)
+        super::update_status(&pool, *refund.id, "succeeded", None)
             .await
             .unwrap();
-        let found = super::find_by_id(&pool, refund.id, None)
+        let found = super::find_by_id(&pool, *refund.id, None)
             .await
             .unwrap()
             .unwrap();

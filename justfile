@@ -6,7 +6,7 @@
 set dotenv-load
 
 db        := "sqlite"
-db_url    := "sqlite:./data/raisfast.db"
+db_url    := "sqlite:./storage/db/raisfast.db?mode=rwc"
 plugin_type := "all"
 
 # ── 默认 ──────────────────────────────────────────────────────────

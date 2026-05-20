@@ -2,7 +2,7 @@ use crate::*;
 use serde_json::json;
 
 async fn create_simple_workflow(app: &mut axum::Router, token: &str) -> String {
-    let id = uuid::Uuid::now_v7().to_string();
+    let id = raisfast::utils::id::new_id().to_string();
     let (status, body) = send(
         app,
         post_json_auth(
@@ -71,7 +71,7 @@ async fn workflow_start_and_execute_steps() {
     )
     .await;
     assert!(status.is_success(), "start failed: {status} {body:?}");
-    let instance_id = body["data"]["document_id"].as_str().unwrap().to_string();
+    let instance_id = body["data"]["id"].as_str().unwrap().to_string();
     assert_eq!(body["data"]["status"], "running");
     assert_eq!(body["data"]["current_step"], "s1");
 
@@ -112,7 +112,7 @@ async fn workflow_branch_condition() {
     let (mut app, _) = test_app().await;
     let token = make_token("u1", 1, raisfast::models::user::UserRole::Admin);
 
-    let id = uuid::Uuid::now_v7().to_string();
+    let id = raisfast::utils::id::new_id().to_string();
     let (status, body) = send(
         &mut app,
         post_json_auth(
@@ -145,7 +145,7 @@ async fn workflow_branch_condition() {
     )
     .await;
     assert!(status.is_success());
-    let instance_id = body["data"]["document_id"].as_str().unwrap().to_string();
+    let instance_id = body["data"]["id"].as_str().unwrap().to_string();
 
     let (status, body) = send(
         &mut app,
@@ -165,8 +165,8 @@ async fn workflow_cancel_instance() {
     let (mut app, _) = test_app().await;
     let token = make_token("u1", 1, raisfast::models::user::UserRole::Admin);
 
-    let id = uuid::Uuid::now_v7().to_string();
-    let _ = send(
+    let id = raisfast::utils::id::new_id().to_string();
+    let (create_status, _) = send(
         &mut app,
         post_json_auth(
             "/api/v1/admin/workflows",
@@ -181,6 +181,7 @@ async fn workflow_cancel_instance() {
         ),
     )
     .await;
+    assert!(create_status.is_success(), "create: {create_status}");
 
     let (status, body) = send(
         &mut app,
@@ -191,8 +192,8 @@ async fn workflow_cancel_instance() {
         ),
     )
     .await;
-    assert!(status.is_success());
-    let instance_id = body["data"]["document_id"].as_str().unwrap().to_string();
+    assert!(status.is_success(), "start: {status} {body:?}");
+    let instance_id = body["data"]["id"].as_str().unwrap().to_string();
 
     let (status, _) = send(
         &mut app,
@@ -222,8 +223,8 @@ async fn workflow_step_logs() {
     let (mut app, _) = test_app().await;
     let token = make_token("u1", 1, raisfast::models::user::UserRole::Admin);
 
-    let id = uuid::Uuid::now_v7().to_string();
-    let _ = send(
+    let id = raisfast::utils::id::new_id().to_string();
+    let (create_status, _) = send(
         &mut app,
         post_json_auth(
             "/api/v1/admin/workflows",
@@ -238,6 +239,7 @@ async fn workflow_step_logs() {
         ),
     )
     .await;
+    assert!(create_status.is_success(), "create: {create_status}");
 
     let (status, body) = send(
         &mut app,
@@ -249,7 +251,7 @@ async fn workflow_step_logs() {
     )
     .await;
     assert!(status.is_success());
-    let instance_id = body["data"]["document_id"].as_str().unwrap().to_string();
+    let instance_id = body["data"]["id"].as_str().unwrap().to_string();
 
     let _ = send(
         &mut app,
@@ -282,7 +284,7 @@ async fn workflow_get_not_found() {
     let token = make_token("u1", 1, raisfast::models::user::UserRole::Admin);
     let (status, _) = send(
         &mut app,
-        get_auth("/api/v1/admin/workflows/nonexistent", &token),
+        get_auth("/api/v1/admin/workflows/9999999999999", &token),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -292,7 +294,7 @@ async fn workflow_get_not_found() {
 async fn workflow_create_no_steps() {
     let (mut app, _) = test_app().await;
     let token = make_token("u1", 1, raisfast::models::user::UserRole::Admin);
-    let id = uuid::Uuid::now_v7().to_string();
+    let id = raisfast::utils::id::new_id().to_string();
     let (status, _) = send(
         &mut app,
         post_json_auth(
@@ -312,7 +314,7 @@ async fn workflow_start_nonexistent() {
     let (status, _) = send(
         &mut app,
         post_json_auth(
-            "/api/v1/admin/workflows/nonexistent/start",
+            "/api/v1/admin/workflows/9999999999999/start",
             json!({"context": {}}),
             &token,
         ),
@@ -328,7 +330,7 @@ async fn workflow_execute_nonexistent_instance() {
     let (status, _) = send(
         &mut app,
         post_json_auth(
-            "/api/v1/admin/workflows/instances/nonexistent/execute",
+            "/api/v1/admin/workflows/instances/9999999999999/execute",
             json!({"output": {}}),
             &token,
         ),
@@ -342,8 +344,8 @@ async fn workflow_cancel_already_completed() {
     let (mut app, _) = test_app().await;
     let token = make_token("u1", 1, raisfast::models::user::UserRole::Admin);
 
-    let id = uuid::Uuid::now_v7().to_string();
-    let _ = send(
+    let id = raisfast::utils::id::new_id().to_string();
+    let (create_status, _) = send(
         &mut app,
         post_json_auth(
             "/api/v1/admin/workflows",
@@ -358,8 +360,9 @@ async fn workflow_cancel_already_completed() {
         ),
     )
     .await;
+    assert!(create_status.is_success(), "create: {create_status}");
 
-    let (_, body) = send(
+    let (start_status, body) = send(
         &mut app,
         post_json_auth(
             &format!("/api/v1/admin/workflows/{id}/start"),
@@ -368,7 +371,8 @@ async fn workflow_cancel_already_completed() {
         ),
     )
     .await;
-    let instance_id = body["data"]["document_id"].as_str().unwrap().to_string();
+    assert!(start_status.is_success(), "start: {start_status}");
+    let instance_id = body["data"]["id"].as_str().unwrap().to_string();
 
     let _ = send(
         &mut app,
@@ -397,8 +401,8 @@ async fn workflow_execute_not_running() {
     let (mut app, _) = test_app().await;
     let token = make_token("u1", 1, raisfast::models::user::UserRole::Admin);
 
-    let id = uuid::Uuid::now_v7().to_string();
-    let _ = send(
+    let id = raisfast::utils::id::new_id().to_string();
+    let (create_status, _) = send(
         &mut app,
         post_json_auth(
             "/api/v1/admin/workflows",
@@ -413,8 +417,9 @@ async fn workflow_execute_not_running() {
         ),
     )
     .await;
+    assert!(create_status.is_success(), "create: {create_status}");
 
-    let (_, body) = send(
+    let (start_status, body) = send(
         &mut app,
         post_json_auth(
             &format!("/api/v1/admin/workflows/{id}/start"),
@@ -423,7 +428,8 @@ async fn workflow_execute_not_running() {
         ),
     )
     .await;
-    let instance_id = body["data"]["document_id"].as_str().unwrap().to_string();
+    assert!(start_status.is_success(), "start: {start_status}");
+    let instance_id = body["data"]["id"].as_str().unwrap().to_string();
 
     let _ = send(
         &mut app,
@@ -483,7 +489,7 @@ async fn workflow_get_instance_not_found() {
     let token = make_token("u1", 1, raisfast::models::user::UserRole::Admin);
     let (status, _) = send(
         &mut app,
-        get_auth("/api/v1/admin/workflows/instances/nonexistent", &token),
+        get_auth("/api/v1/admin/workflows/instances/9999999999999", &token),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -495,7 +501,10 @@ async fn workflow_step_logs_not_found() {
     let token = make_token("u1", 1, raisfast::models::user::UserRole::Admin);
     let (status, _) = send(
         &mut app,
-        get_auth("/api/v1/admin/workflows/instances/nonexistent/logs", &token),
+        get_auth(
+            "/api/v1/admin/workflows/instances/9999999999999/logs",
+            &token,
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -507,7 +516,7 @@ async fn workflow_delete_nonexistent() {
     let token = make_token("u1", 1, raisfast::models::user::UserRole::Admin);
     let (status, _) = send(
         &mut app,
-        delete_auth("/api/v1/admin/workflows/nonexistent", &token),
+        delete_auth("/api/v1/admin/workflows/9999999999999", &token),
     )
     .await;
     assert!(status.is_success() || status == StatusCode::NOT_FOUND);
@@ -518,7 +527,7 @@ async fn workflow_parallel_with_join_next() {
     let (mut app, _) = test_app().await;
     let token = make_token("u1", 1, raisfast::models::user::UserRole::Admin);
 
-    let id = uuid::Uuid::now_v7().to_string();
+    let id = raisfast::utils::id::new_id().to_string();
     let (status, body) = send(
         &mut app,
         post_json_auth(
@@ -548,7 +557,7 @@ async fn workflow_parallel_with_join_next() {
         ),
     )
     .await;
-    let instance_id = body["data"]["document_id"].as_str().unwrap().to_string();
+    let instance_id = body["data"]["id"].as_str().unwrap().to_string();
     assert_eq!(body["data"]["current_step"], "s1");
 
     // Execute the parallel step — spawns branches s2 and s3, sets current to s2
@@ -622,8 +631,8 @@ async fn workflow_parallel_no_join_completes() {
     let (mut app, _) = test_app().await;
     let token = make_token("u1", 1, raisfast::models::user::UserRole::Admin);
 
-    let id = uuid::Uuid::now_v7().to_string();
-    let _ = send(
+    let id = raisfast::utils::id::new_id().to_string();
+    let (create_status, _) = send(
         &mut app,
         post_json_auth(
             "/api/v1/admin/workflows",
@@ -640,8 +649,9 @@ async fn workflow_parallel_no_join_completes() {
         ),
     )
     .await;
+    assert!(create_status.is_success(), "create: {create_status}");
 
-    let (_, body) = send(
+    let (start_status, body) = send(
         &mut app,
         post_json_auth(
             &format!("/api/v1/admin/workflows/{id}/start"),
@@ -650,7 +660,8 @@ async fn workflow_parallel_no_join_completes() {
         ),
     )
     .await;
-    let instance_id = body["data"]["document_id"].as_str().unwrap().to_string();
+    assert!(start_status.is_success(), "start: {start_status}");
+    let instance_id = body["data"]["id"].as_str().unwrap().to_string();
 
     // Execute parallel → s2
     let (_, body) = send(
@@ -695,8 +706,8 @@ async fn workflow_parallel_step_logs() {
     let (mut app, _) = test_app().await;
     let token = make_token("u1", 1, raisfast::models::user::UserRole::Admin);
 
-    let id = uuid::Uuid::now_v7().to_string();
-    let _ = send(
+    let id = raisfast::utils::id::new_id().to_string();
+    let (create_status, _) = send(
         &mut app,
         post_json_auth(
             "/api/v1/admin/workflows",
@@ -713,8 +724,9 @@ async fn workflow_parallel_step_logs() {
         ),
     )
     .await;
+    assert!(create_status.is_success(), "create: {create_status}");
 
-    let (_, body) = send(
+    let (start_status, body) = send(
         &mut app,
         post_json_auth(
             &format!("/api/v1/admin/workflows/{id}/start"),
@@ -723,7 +735,8 @@ async fn workflow_parallel_step_logs() {
         ),
     )
     .await;
-    let instance_id = body["data"]["document_id"].as_str().unwrap().to_string();
+    assert!(start_status.is_success(), "start: {start_status}");
+    let instance_id = body["data"]["id"].as_str().unwrap().to_string();
 
     // Execute parallel → spawns s2 + s3
     send(

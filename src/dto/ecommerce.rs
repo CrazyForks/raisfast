@@ -40,7 +40,6 @@ pub struct UpdateProductVariantRequest {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProductVariantResponse {
     pub id: String,
-    pub product_id: String,
     pub sku: Option<String>,
     pub title: String,
     #[cfg_attr(feature = "export-types", ts(type = "number"))]
@@ -59,8 +58,7 @@ pub struct ProductVariantResponse {
 impl From<crate::models::product_variant::ProductVariant> for ProductVariantResponse {
     fn from(v: crate::models::product_variant::ProductVariant) -> Self {
         Self {
-            id: v.document_id,
-            product_id: v.product_id.to_string(),
+            id: v.id.to_string(),
             sku: v.sku,
             title: v.title,
             price: v.price,
@@ -146,7 +144,7 @@ pub struct UserAddressResponse {
 impl From<crate::models::user_address::UserAddress> for UserAddressResponse {
     fn from(a: crate::models::user_address::UserAddress) -> Self {
         Self {
-            id: a.document_id,
+            id: a.id.to_string(),
             label: a.label,
             recipient_name: a.recipient_name,
             phone: a.phone,

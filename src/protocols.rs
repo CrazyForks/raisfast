@@ -230,7 +230,7 @@ pub trait Protocol: Send + Sync + 'static {
         &self,
         _pool: &crate::db::pool::Pool,
         _content_type_singular: &str,
-        _record_id: &str,
+        _record_id: i64,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send + '_>>
     {
         Box::pin(async { Ok(()) })
@@ -374,7 +374,7 @@ impl ProtocolRegistry {
         names: &[String],
         pool: &crate::db::pool::Pool,
         content_type_singular: &str,
-        record_id: &str,
+        record_id: i64,
     ) -> Result<(), anyhow::Error> {
         for name in names {
             if let Some(protocol) = self.protocols.get(name.as_str()) {

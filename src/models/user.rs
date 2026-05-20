@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 pub type SocialLinks = HashMap<String, String>;
@@ -41,8 +42,7 @@ define_enum!(
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 #[non_exhaustive]
 pub struct User {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
     pub username: String,
     pub role: UserRole,
@@ -84,19 +84,8 @@ pub async fn find_by_username(pool: &crate::db::Pool, username: &str) -> AppResu
     Ok(raisfast_derive::crud_find!(pool, "users", User, "username" => username)?)
 }
 
-/// Find user by document_id (external API)
-pub async fn find_by_id(
-    pool: &crate::db::Pool,
-    document_id: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<Option<User>> {
-    Ok(
-        raisfast_derive::crud_find!(pool, "users", User, "document_id" => document_id, tenant: tenant_id)?,
-    )
-}
-
 /// Find user by integer primary key (internal FK lookup)
-pub async fn find_by_pk(
+pub async fn find_by_id(
     pool: &crate::db::Pool,
     id: i64,
     tenant_id: Option<&str>,
@@ -110,13 +99,13 @@ pub async fn create(
     cmd: &crate::commands::CreateUserCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
 
     raisfast_derive::crud_insert!(
         pool,
         "users",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "username" => &cmd.username,
             "created_at" => now,
             "updated_at" => now,
@@ -127,7 +116,7 @@ pub async fn create(
         tenant: tenant_id
     )?;
 
-    let user = raisfast_derive::crud_find!(pool, "users", User, "document_id" => &document_id, tenant: tenant_id)?
+    let user = raisfast_derive::crud_find!(pool, "users", User, "id" => id, tenant: tenant_id)?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch newly created user")))?;
     Ok(user)
 }
@@ -138,7 +127,7 @@ pub async fn update_profile(
     cmd: &crate::commands::UpdateProfileCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
-    let user = find_by_pk(pool, cmd.id, tenant_id)
+    let user = find_by_id(pool, cmd.id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
     let username = cmd.username.as_deref().unwrap_or(&user.username);
@@ -173,7 +162,7 @@ pub async fn update_profile(
         where: "id" => user.id,
         tenant: tenant_id
     )?;
-    find_by_pk(pool, cmd.id, tenant_id)
+    find_by_id(pool, cmd.id, tenant_id)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch updated user")))
 }
@@ -200,28 +189,28 @@ pub async fn find_all(
 /// Admin updates user role
 pub async fn update_role(
     pool: &crate::db::Pool,
-    document_id: &str,
+    id: i64,
     role: UserRole,
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
     let now = crate::utils::tz::now_utc();
     let result = raisfast_derive::crud_update!(pool, "users",
         bind: ["role" => role, "updated_at" => &now],
-        where: "document_id" => document_id,
+        where: "id" => id,
         tenant: tenant_id
     )?;
     AppError::expect_affected(&result, "user")?;
-    find_by_id(pool, document_id, tenant_id)
+    find_by_id(pool, id, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))
 }
 
-pub async fn delete_by_document_id(
+pub async fn delete_by_id(
     pool: &crate::db::Pool,
-    document_id: &str,
+    id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    raisfast_derive::crud_delete!(pool, "users", "document_id" => document_id, tenant: tenant_id)?;
+    raisfast_derive::crud_delete!(pool, "users", "id" => id, tenant: tenant_id)?;
     Ok(())
 }
 
@@ -240,22 +229,12 @@ mod tests {
     #[tokio::test]
     async fn find_by_id() {
         let pool = setup_pool().await;
-        let user = create(&pool, &new_cmd("iduser"), None).await.unwrap();
-        let found = super::find_by_id(&pool, &user.document_id, None)
+        let user = create(&pool, &new_cmd("pkuser"), None).await.unwrap();
+        let found = super::find_by_id(&pool, *user.id, None)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(found.id, user.id);
-    }
-    #[tokio::test]
-    async fn find_by_pk() {
-        let pool = setup_pool().await;
-        let user = create(&pool, &new_cmd("pkuser"), None).await.unwrap();
-        let found = super::find_by_pk(&pool, user.id, None)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(found.document_id, user.document_id);
     }
     #[tokio::test]
     async fn update_profile() {
@@ -264,7 +243,7 @@ mod tests {
         let updated = super::update_profile(
             &pool,
             &crate::commands::user::UpdateProfileCmd {
-                id: user.id,
+                id: *user.id,
                 username: Some("newname".to_string()),
                 bio: Some("hello world".to_string()),
                 website: None,
@@ -295,7 +274,7 @@ mod tests {
         let pool = setup_pool().await;
         let user = create(&pool, &new_cmd("roleuser"), None).await.unwrap();
         assert_eq!(user.role, UserRole::Reader);
-        let updated = super::update_role(&pool, &user.document_id, UserRole::Author, None)
+        let updated = super::update_role(&pool, *user.id, UserRole::Author, None)
             .await
             .unwrap();
         assert_eq!(updated.role, UserRole::Author);

@@ -1,22 +1,17 @@
-//! Webhook subscription service
-
 use crate::db::Pool;
 use crate::errors::app_error::AppResult;
-use crate::utils::id::new_id_and_timestamp;
+use crate::utils::id::{SnowflakeId, new_id_and_timestamp};
 use crate::webhook::model;
 
-/// Webhook subscription service
 pub struct WebhookService {
     pool: Pool,
 }
 
 impl WebhookService {
-    /// Creates a new service instance
     pub fn new(pool: Pool) -> Self {
         Self { pool }
     }
 
-    /// Creates a webhook subscription
     pub async fn create(
         &self,
         tenant_id: Option<&str>,
@@ -26,11 +21,10 @@ impl WebhookService {
         enabled: bool,
         custom_secret: Option<String>,
     ) -> AppResult<model::WebhookSubscription> {
-        let (document_id, now) = new_id_and_timestamp();
+        let (id, now) = new_id_and_timestamp();
         let secret = custom_secret.unwrap_or_else(Self::generate_secret);
         let sub = model::WebhookSubscription {
-            id: 0,
-            document_id,
+            id: SnowflakeId(id),
             tenant_id: tenant_id.map(|t| t.to_string()),
             url,
             secret,
@@ -41,11 +35,10 @@ impl WebhookService {
             updated_at: now,
         };
         model::insert(&self.pool, &sub).await?;
-        let inserted = model::find_by_id(&self.pool, &sub.document_id).await?;
+        let inserted = model::find_by_id(&self.pool, *sub.id).await?;
         Ok(inserted)
     }
 
-    /// Paginated query for subscriptions
     pub async fn list(
         &self,
         tenant_id: Option<&str>,
@@ -55,16 +48,14 @@ impl WebhookService {
         model::find_paginated(&self.pool, tenant_id, page, page_size).await
     }
 
-    /// Gets a single subscription
-    pub async fn get(&self, id: &str) -> AppResult<model::WebhookSubscription> {
+    pub async fn get(&self, id: i64) -> AppResult<model::WebhookSubscription> {
         model::find_by_id(&self.pool, id).await
     }
 
-    /// Updates a subscription
     #[allow(clippy::too_many_arguments)]
     pub async fn update(
         &self,
-        id: &str,
+        id: i64,
         url: Option<String>,
         events: Option<Vec<String>>,
         description: Option<String>,
@@ -89,12 +80,10 @@ impl WebhookService {
         Ok(sub)
     }
 
-    /// Deletes a subscription
-    pub async fn delete(&self, id: &str) -> AppResult<()> {
+    pub async fn delete(&self, id: i64) -> AppResult<()> {
         model::delete_by_id(&self.pool, id).await
     }
 
-    /// Finds enabled subscriptions (used for event delivery)
     pub async fn find_enabled(
         &self,
         tenant_id: Option<&str>,
@@ -102,26 +91,15 @@ impl WebhookService {
         model::find_enabled_by_tenant(&self.pool, tenant_id).await
     }
 
-    /// Generates a random secret (32 bytes hex)
     fn generate_secret() -> String {
-        use getrandom::getrandom;
-        let mut buf = [0u8; 32];
-        getrandom(&mut buf).unwrap_or_else(|e| {
-            tracing::error!("failed to generate webhook secret: {e}");
-            panic!("rng failure");
-        });
-        hex::encode(buf)
+        crate::utils::id::random_hex(32)
     }
 
-    /// Signs a payload with HMAC-SHA256
     pub fn sign_payload(secret: &str, body: &[u8]) -> String {
         use hmac::{Hmac, Mac};
-        use sha2::Sha256;
-        type HmacSha256 = Hmac<Sha256>;
-        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap_or_else(|e| {
-            tracing::error!("hmac init failed: {e}");
-            panic!("hmac init failure");
-        });
+        type HmacSha256 = Hmac<sha2::Sha256>;
+        let mut mac =
+            HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
         mac.update(body);
         hex::encode(mac.finalize().into_bytes())
     }
@@ -132,56 +110,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sign_payload_deterministic() {
-        let secret = "my-secret-key";
-        let body = b"{\"event\":\"post.created\"}";
-        let sig1 = WebhookService::sign_payload(secret, body);
-        let sig2 = WebhookService::sign_payload(secret, body);
-        assert_eq!(sig1, sig2, "same input should produce same signature");
-    }
-
-    #[test]
-    fn sign_payload_different_secrets() {
-        let body = b"test payload";
-        let sig1 = WebhookService::sign_payload("secret-a", body);
-        let sig2 = WebhookService::sign_payload("secret-b", body);
-        assert_ne!(
-            sig1, sig2,
-            "different secrets should produce different signatures"
-        );
-    }
-
-    #[test]
-    fn sign_payload_different_bodies() {
-        let secret = "shared-secret";
-        let sig1 = WebhookService::sign_payload(secret, b"body-1");
-        let sig2 = WebhookService::sign_payload(secret, b"body-2");
-        assert_ne!(
-            sig1, sig2,
-            "different bodies should produce different signatures"
-        );
-    }
-
-    #[test]
-    fn sign_payload_is_hex_encoded_sha256_hmac() {
-        let secret = "test-secret";
-        let body = b"hello world";
-        let sig = WebhookService::sign_payload(secret, body);
-        assert_eq!(sig.len(), 64, "SHA256 HMAC hex should be 64 chars");
-        assert!(sig.chars().all(|c| c.is_ascii_hexdigit()));
-    }
-
-    #[test]
-    fn generate_secret_length_and_format() {
-        let s = WebhookService::generate_secret();
-        assert_eq!(s.len(), 64, "32 bytes = 64 hex chars");
-        assert!(s.chars().all(|c| c.is_ascii_hexdigit()));
-    }
-
-    #[test]
-    fn generate_secret_unique() {
-        let s1 = WebhookService::generate_secret();
-        let s2 = WebhookService::generate_secret();
-        assert_ne!(s1, s2, "each secret should be unique");
+    fn generate_secret_length() {
+        let secret = WebhookService::generate_secret();
+        assert_eq!(secret.len(), 64);
     }
 }

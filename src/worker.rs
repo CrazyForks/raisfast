@@ -154,7 +154,7 @@ impl From<Job> for NewJob {
 /// Dequeued job record
 #[derive(Debug, Clone)]
 pub struct QueuedJob {
-    pub document_id: String,
+    pub id: String,
     pub job: Job,
     pub attempts: u32,
     pub max_attempts: u32,
@@ -194,7 +194,7 @@ pub struct JobStats {
 /// Job list row (for admin API)
 #[derive(Debug, Clone, Serialize)]
 pub struct JobRow {
-    pub document_id: String,
+    pub id: String,
     pub job_type: String,
     pub payload: String,
     pub status: JobStatus,

@@ -42,10 +42,10 @@ pub trait CommentService: Send + Sync {
         page_size: i64,
         auth: &AuthUser,
     ) -> AppResult<(Vec<CommentResponse>, i64)>;
-    async fn delete(&self, comment_id: &str, auth: &AuthUser) -> AppResult<()>;
+    async fn delete(&self, comment_id: i64, auth: &AuthUser) -> AppResult<()>;
     async fn update_status(
         &self,
-        comment_id: &str,
+        comment_id: i64,
         status: CommentStatus,
         auth: &AuthUser,
     ) -> AppResult<()>;
@@ -106,11 +106,9 @@ impl CommentService for CommentServiceImpl {
             .ok_or_else(|| AppError::not_found("post"))?;
 
         if let Some(pid_str) = parent_id {
-            let pid: i64 = pid_str
-                .parse()
-                .map_err(|e| AppError::BadRequest(format!("invalid parent_id: {e}")))?;
+            let pid: i64 = crate::utils::id::parse_id(pid_str)?;
             let all_comments =
-                comment::find_approved_by_post(&self.pool, p.id, auth.tenant_id()).await?;
+                comment::find_approved_by_post(&self.pool, *p.id, auth.tenant_id()).await?;
             let parent = all_comments
                 .iter()
                 .find(|c| c.id == pid)
@@ -135,15 +133,16 @@ impl CommentService for CommentServiceImpl {
             .before_create("comments", auth, comment_input)
             .await?;
 
-        let parent_id = if let Some(ref doc_id) = filtered.parent_id {
-            if doc_id.is_empty() {
+        let parent_id = if let Some(ref raw_id) = filtered.parent_id {
+            if raw_id.is_empty() {
                 None
-            } else if let Ok(int_id) = doc_id.parse::<i64>() {
+            } else if let Ok(int_id) = raw_id.parse::<i64>() {
                 Some(int_id)
             } else {
-                comment::find_by_document_id(&self.pool, doc_id, auth.tenant_id())
+                let cid: i64 = crate::utils::id::parse_id(raw_id)?;
+                comment::find_by_id(&self.pool, cid, auth.tenant_id())
                     .await?
-                    .map(|c| c.id)
+                    .map(|c| *c.id)
             }
         } else {
             None
@@ -152,8 +151,8 @@ impl CommentService for CommentServiceImpl {
         let c = comment::create(
             &self.pool,
             &CreateCommentCmd {
-                post_id: p.id,
-                created_by: auth.user_int_id(),
+                post_id: *p.id,
+                created_by: auth.user_id(),
                 nickname: filtered.nickname,
                 email: filtered.email,
                 content: filtered.content,
@@ -166,16 +165,15 @@ impl CommentService for CommentServiceImpl {
         self.aspect_engine.emit(Event::CommentCreated(c.clone()));
 
         Ok(CommentResponse {
-            id: c.id,
-            document_id: c.document_id.clone(),
-            post_id: c.post_id,
-            created_by: c.created_by,
+            id: c.id.to_string(),
             nickname: c.nickname,
             content: c.content,
-            parent_id: c.parent_id,
             depth: 0,
             replies: vec![],
             created_at: c.created_at,
+            post_id: None,
+            created_by: None,
+            parent_id: None,
         })
     }
 
@@ -192,7 +190,7 @@ impl CommentService for CommentServiceImpl {
 
         let (comments, total) = comment::find_approved_by_post_paginated(
             &self.pool,
-            p.id,
+            *p.id,
             page,
             page_size,
             auth.tenant_id(),
@@ -201,30 +199,30 @@ impl CommentService for CommentServiceImpl {
         Ok((comment::build_tree(&comments), total))
     }
 
-    async fn delete(&self, comment_id: &str, auth: &AuthUser) -> AppResult<()> {
-        let c = comment::find_by_document_id(&self.pool, comment_id, auth.tenant_id())
+    async fn delete(&self, comment_id: i64, auth: &AuthUser) -> AppResult<()> {
+        let c = comment::find_by_id(&self.pool, comment_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("comment"))?;
 
         self.before_delete(auth, &c).await?;
-        comment::delete(&self.pool, c.id, auth.tenant_id()).await?;
+        comment::delete(&self.pool, *c.id, auth.tenant_id()).await?;
         self.after_deleted(&c);
         Ok(())
     }
 
     async fn update_status(
         &self,
-        comment_id: &str,
+        comment_id: i64,
         status: CommentStatus,
         auth: &AuthUser,
     ) -> AppResult<()> {
-        let c = comment::find_by_document_id(&self.pool, comment_id, auth.tenant_id())
+        let c = comment::find_by_id(&self.pool, comment_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("comment"))?;
         self.aspect_engine
             .before_update("comments", auth, &c, status)
             .await?;
-        comment::update_status(&self.pool, c.id, status, auth.tenant_id()).await?;
+        comment::update_status(&self.pool, *c.id, status, auth.tenant_id()).await?;
         self.after_updated(&c);
         Ok(())
     }
@@ -249,37 +247,27 @@ mod tests {
     }
 
     fn auth(user: &crate::models::user::User) -> AuthUser {
-        AuthUser::from_parts(
-            Some(user.document_id.clone()),
-            Some(user.id),
-            crate::models::user::UserRole::Admin,
-            None,
-        )
+        AuthUser::from_parts(Some(*user.id), crate::models::user::UserRole::Admin, None)
     }
 
     async fn insert_user(pool: &crate::db::Pool) -> crate::models::user::User {
         let user = crate::models::user::create(
             pool,
             &crate::commands::user::CreateUserCmd {
-                username: crate::utils::id::new_document_id(),
+                username: crate::utils::id::new_id().to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
         )
         .await
         .unwrap();
-        crate::models::user::update_role(
-            pool,
-            &user.document_id,
-            crate::models::user::UserRole::Admin,
-            None,
-        )
-        .await
-        .unwrap()
+        crate::models::user::update_role(pool, *user.id, crate::models::user::UserRole::Admin, None)
+            .await
+            .unwrap()
     }
 
     async fn insert_post(pool: &crate::db::Pool, user_id: i64) -> i64 {
-        crate::models::post::create(
+        *crate::models::post::create(
             pool,
             &crate::commands::CreatePostCmd {
                 title: "Test".into(),
@@ -325,13 +313,13 @@ mod tests {
     async fn update_comment_status_valid() {
         let pool = setup_pool().await;
         let user = insert_user(&pool).await;
-        let post_id = insert_post(&pool, user.id).await;
-        let c = insert_comment(&pool, post_id, user.id).await;
+        let post_id = insert_post(&pool, *user.id).await;
+        let c = insert_comment(&pool, post_id, *user.id).await;
         let svc = CommentServiceImpl::new(Arc::new(pool.clone()), Arc::new(AspectEngine::new()));
-        svc.update_status(&c.document_id, CommentStatus::Approved, &auth(&user))
+        svc.update_status(*c.id, CommentStatus::Approved, &auth(&user))
             .await
             .unwrap();
-        let updated = crate::models::comment::find_by_id(&pool, c.id, None)
+        let updated = crate::models::comment::find_by_id(&pool, *c.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -345,9 +333,9 @@ mod tests {
     async fn update_comment_status_not_found() {
         let pool = setup_pool().await;
         let svc = CommentServiceImpl::new(Arc::new(pool.clone()), Arc::new(AspectEngine::new()));
-        let a = AuthUser::new_test("any", crate::models::user::UserRole::Admin, "");
+        let a = AuthUser::new_test(0, crate::models::user::UserRole::Admin, "");
         assert!(
-            svc.update_status("missing", CommentStatus::Approved, &a)
+            svc.update_status(999999, CommentStatus::Approved, &a)
                 .await
                 .is_err()
         );
@@ -357,18 +345,13 @@ mod tests {
     async fn delete_comment_by_owner() {
         let pool = setup_pool().await;
         let user = insert_user(&pool).await;
-        let post_id = insert_post(&pool, user.id).await;
-        let c = insert_comment(&pool, post_id, user.id).await;
+        let post_id = insert_post(&pool, *user.id).await;
+        let c = insert_comment(&pool, post_id, *user.id).await;
         let svc = CommentServiceImpl::new(Arc::new(pool.clone()), Arc::new(AspectEngine::new()));
-        let a = AuthUser::from_parts(
-            Some(user.document_id.clone()),
-            Some(user.id),
-            crate::models::user::UserRole::Admin,
-            None,
-        );
-        svc.delete(&c.document_id, &a).await.unwrap();
+        let a = AuthUser::from_parts(Some(*user.id), crate::models::user::UserRole::Admin, None);
+        svc.delete(*c.id, &a).await.unwrap();
         assert!(
-            crate::models::comment::find_by_id(&pool, c.id, None)
+            crate::models::comment::find_by_id(&pool, *c.id, None)
                 .await
                 .unwrap()
                 .is_none()
@@ -379,21 +362,21 @@ mod tests {
     async fn delete_comment_not_found() {
         let pool = setup_pool().await;
         let svc = CommentServiceImpl::new(Arc::new(pool.clone()), Arc::new(AspectEngine::new()));
-        let a = AuthUser::new_test("any", crate::models::user::UserRole::Admin, "");
-        assert!(svc.delete("missing", &a).await.is_err());
+        let a = AuthUser::new_test(0, crate::models::user::UserRole::Admin, "");
+        assert!(svc.delete(999999, &a).await.is_err());
     }
 
     #[tokio::test]
     async fn update_comment_status_spam() {
         let pool = setup_pool().await;
         let user = insert_user(&pool).await;
-        let post_id = insert_post(&pool, user.id).await;
-        let c = insert_comment(&pool, post_id, user.id).await;
+        let post_id = insert_post(&pool, *user.id).await;
+        let c = insert_comment(&pool, post_id, *user.id).await;
         let svc = CommentServiceImpl::new(Arc::new(pool.clone()), Arc::new(AspectEngine::new()));
-        svc.update_status(&c.document_id, CommentStatus::Spam, &auth(&user))
+        svc.update_status(*c.id, CommentStatus::Spam, &auth(&user))
             .await
             .unwrap();
-        let updated = crate::models::comment::find_by_id(&pool, c.id, None)
+        let updated = crate::models::comment::find_by_id(&pool, *c.id, None)
             .await
             .unwrap()
             .unwrap();

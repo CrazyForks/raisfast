@@ -193,7 +193,8 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<CronSchedule>> {
     auth.ensure_admin()?;
-    let schedule = find_by_id(&state.pool, &id)
+    let id: i64 = crate::utils::id::parse_id(&id)?;
+    let schedule = find_by_id(&state.pool, id)
         .await?
         .ok_or_else(|| AppError::not_found("cron_schedule"))?;
     Ok(ApiResponse::success(schedule))
@@ -239,9 +240,10 @@ pub async fn update(
 ) -> AppResult<ApiResponse<CronSchedule>> {
     auth.ensure_admin()?;
     crate::errors::validation::validate(&req)?;
+    let id: i64 = crate::utils::id::parse_id(&id)?;
     let updated = update_schedule(
         &state.pool,
-        &id,
+        id,
         req.label,
         req.job_type,
         req.payload,
@@ -266,7 +268,8 @@ pub async fn toggle(
     Json(body): Json<ToggleBody>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    toggle_schedule(&state.pool, &id, body.enabled).await?;
+    let id: i64 = crate::utils::id::parse_id(&id)?;
+    toggle_schedule(&state.pool, id, body.enabled).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -282,7 +285,8 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    delete_schedule(&state.pool, &id).await?;
+    let id: i64 = crate::utils::id::parse_id(&id)?;
+    delete_schedule(&state.pool, id).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -303,7 +307,8 @@ pub async fn logs(
     auth.ensure_admin()?;
     let limit = params.limit.clamp(1, 100);
     let logs = if let Some(ref schedule_id) = params.schedule_id {
-        list_execution_logs(&state.pool, schedule_id, limit).await?
+        let sid: i64 = crate::utils::id::parse_id(schedule_id)?;
+        list_execution_logs(&state.pool, sid, limit).await?
     } else {
         recent_execution_logs(&state.pool, limit).await?
     };
@@ -343,7 +348,11 @@ pub async fn admin_batch(
     auth.ensure_admin()?;
     crate::errors::validation::validate(&req)?;
     let mut affected = 0usize;
-    for id in &req.ids {
+    for id_str in &req.ids {
+        let id: i64 = match id_str.parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
         match req.action.as_str() {
             "delete" => {
                 if delete_schedule(&state.pool, id).await.is_ok() {

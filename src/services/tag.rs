@@ -18,10 +18,9 @@ pub fn generate_slug(name: &str) -> String {
 #[async_trait]
 pub trait TagService: Send + Sync {
     async fn create(&self, auth: &AuthUser, req: CreateTagRequest) -> AppResult<Tag>;
-    async fn update(&self, auth: &AuthUser, id: &str, name: String, slug: String)
-    -> AppResult<Tag>;
-    async fn delete(&self, id: &str, auth: &AuthUser) -> AppResult<()>;
-    async fn get(&self, id: &str, auth: &AuthUser) -> AppResult<Tag>;
+    async fn update(&self, auth: &AuthUser, id: i64, name: String, slug: String) -> AppResult<Tag>;
+    async fn delete(&self, id: i64, auth: &AuthUser) -> AppResult<()>;
+    async fn get(&self, id: i64, auth: &AuthUser) -> AppResult<Tag>;
     async fn list(&self, auth: &AuthUser) -> AppResult<Vec<Tag>>;
     async fn list_paginated(
         &self,
@@ -48,38 +47,32 @@ impl TagService for TagServiceImpl {
             &req.name,
             &slug,
             auth.tenant_id(),
-            auth.user_int_id(),
+            auth.user_id(),
         )
         .await?;
         self.after_created(&tag);
         Ok(tag)
     }
 
-    async fn update(
-        &self,
-        auth: &AuthUser,
-        id: &str,
-        name: String,
-        slug: String,
-    ) -> AppResult<Tag> {
-        let tag = crate::models::tag::find_by_document_id(&self.pool, id, auth.tenant_id()).await?;
+    async fn update(&self, auth: &AuthUser, id: i64, name: String, slug: String) -> AppResult<Tag> {
+        let tag = crate::models::tag::find_by_id(&self.pool, id, auth.tenant_id()).await?;
         let ((name, slug), _d) = self.before_update(auth, &tag, (name, slug)).await?;
         let updated =
-            crate::models::tag::update(&self.pool, tag.id, &name, &slug, auth.tenant_id()).await?;
+            crate::models::tag::update(&self.pool, *tag.id, &name, &slug, auth.tenant_id()).await?;
         self.after_updated(&updated);
         Ok(updated)
     }
 
-    async fn delete(&self, id: &str, auth: &AuthUser) -> AppResult<()> {
-        let tag = crate::models::tag::find_by_document_id(&self.pool, id, auth.tenant_id()).await?;
+    async fn delete(&self, id: i64, auth: &AuthUser) -> AppResult<()> {
+        let tag = crate::models::tag::find_by_id(&self.pool, id, auth.tenant_id()).await?;
         self.before_delete(auth, &tag).await?;
-        crate::models::tag::delete(&self.pool, tag.id, auth.tenant_id()).await?;
+        crate::models::tag::delete(&self.pool, *tag.id, auth.tenant_id()).await?;
         self.after_deleted(&tag);
         Ok(())
     }
 
-    async fn get(&self, id: &str, auth: &AuthUser) -> AppResult<Tag> {
-        crate::models::tag::find_by_document_id(&self.pool, id, auth.tenant_id()).await
+    async fn get(&self, id: i64, auth: &AuthUser) -> AppResult<Tag> {
+        crate::models::tag::find_by_id(&self.pool, id, auth.tenant_id()).await
     }
 
     async fn list(&self, auth: &AuthUser) -> AppResult<Vec<Tag>> {
@@ -106,12 +99,7 @@ mod tests {
     }
 
     fn auth() -> AuthUser {
-        AuthUser::from_parts(
-            Some("u1".to_string()),
-            Some(1),
-            crate::models::user::UserRole::Admin,
-            None,
-        )
+        AuthUser::from_parts(Some(1), crate::models::user::UserRole::Admin, None)
     }
 
     fn make_service(pool: crate::db::Pool) -> Arc<dyn TagService> {
@@ -158,7 +146,7 @@ mod tests {
             .await
             .unwrap();
         let updated = svc
-            .update(&a, &tag.document_id, "New".into(), generate_slug("New"))
+            .update(&a, *tag.id, "New".into(), generate_slug("New"))
             .await
             .unwrap();
         assert_eq!(updated.name, "New");
@@ -174,7 +162,7 @@ mod tests {
             .create(&a, CreateTagRequest { name: "Del".into() })
             .await
             .unwrap();
-        svc.delete(&tag.document_id, &a).await.unwrap();
+        svc.delete(*tag.id, &a).await.unwrap();
         let tags = svc.list(&a).await.unwrap();
         assert!(tags.is_empty());
     }
@@ -184,7 +172,7 @@ mod tests {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
         let a = auth();
-        assert!(svc.delete("no-such-tag", &a).await.is_err());
+        assert!(svc.delete(999999, &a).await.is_err());
     }
 
     #[tokio::test]
@@ -193,7 +181,7 @@ mod tests {
         let svc = make_service(pool.clone());
         let a = auth();
         assert!(
-            svc.update(&a, "missing", "X".into(), generate_slug("X"))
+            svc.update(&a, 999999, "X".into(), generate_slug("X"))
                 .await
                 .is_err()
         );

@@ -42,7 +42,7 @@ impl JobHandler for ScheduledPublishHandler {
         crate::models::post::update(
             &self.pool,
             &crate::commands::UpdatePostCmd {
-                id: post.id,
+                id: *post.id,
                 title: None,
                 slug: None,
                 content: None,
@@ -88,15 +88,10 @@ mod tests {
         )
         .await
         .unwrap();
-        user::update_role(
-            pool,
-            &u.document_id,
-            crate::models::user::UserRole::Author,
-            None,
-        )
-        .await
-        .unwrap();
-        u.id
+        user::update_role(pool, *u.id, crate::models::user::UserRole::Author, None)
+            .await
+            .unwrap();
+        *u.id
     }
 
     #[tokio::test]
@@ -124,10 +119,10 @@ mod tests {
         .unwrap();
 
         let handler = ScheduledPublishHandler::new(pool.clone());
-        let job = Job::ScheduledPublish { post_id: p.id };
+        let job = Job::ScheduledPublish { post_id: *p.id };
         assert!(handler.handle(&job).await.is_ok());
 
-        let updated = post::find_by_id(&pool, p.id, None).await.unwrap().unwrap();
+        let updated = post::find_by_id(&pool, *p.id, None).await.unwrap().unwrap();
         assert_eq!(updated.status, PostStatus::Published);
         assert!(updated.published_at.is_some());
     }
@@ -157,7 +152,7 @@ mod tests {
         .unwrap();
 
         let handler = ScheduledPublishHandler::new(pool);
-        let job = Job::ScheduledPublish { post_id: p.id };
+        let job = Job::ScheduledPublish { post_id: *p.id };
         assert!(handler.handle(&job).await.is_ok());
     }
 

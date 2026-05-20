@@ -224,9 +224,9 @@ async fn build_app(
             for (method, suffix) in [
                 ("GET", ""),
                 ("POST", ""),
-                ("GET", "/{id_or_slug}"),
-                ("PUT", "/{id_or_slug}"),
-                ("DELETE", "/{id_or_slug}"),
+                ("GET", "/{id}"),
+                ("PUT", "/{id}"),
+                ("DELETE", "/{id}"),
             ] {
                 registry.record(
                     method,
@@ -243,11 +243,7 @@ async fn build_app(
             );
             registry.record(
                 "GET",
-                &format!(
-                    "{}/{}/{{id_or_slug}}",
-                    crate::constants::CMS_ADMIN_PREFIX,
-                    plural
-                ),
+                &format!("{}/{}/{{id}}", crate::constants::CMS_ADMIN_PREFIX, plural),
                 "content_type",
                 name,
             );
@@ -266,27 +262,19 @@ async fn build_app(
             );
             registry.record(
                 "GET",
-                &format!("{}/{}/{{id_or_slug}}", crate::constants::CMS_PREFIX, plural),
+                &format!("{}/{}/{{id}}", crate::constants::CMS_PREFIX, plural),
                 "content_type",
                 name,
             );
             registry.record(
                 "POST",
-                &format!(
-                    "{}/{}/{{id_or_slug}}/update",
-                    crate::constants::CMS_PREFIX,
-                    plural
-                ),
+                &format!("{}/{}/{{id}}/update", crate::constants::CMS_PREFIX, plural),
                 "content_type",
                 name,
             );
             registry.record(
                 "POST",
-                &format!(
-                    "{}/{}/{{id_or_slug}}/delete",
-                    crate::constants::CMS_PREFIX,
-                    plural
-                ),
+                &format!("{}/{}/{{id}}/delete", crate::constants::CMS_PREFIX, plural),
                 "content_type",
                 name,
             );
@@ -298,11 +286,7 @@ async fn build_app(
             );
             registry.record(
                 "GET",
-                &format!(
-                    "{}/{}/{{id_or_slug}}",
-                    crate::constants::CMS_ADMIN_PREFIX,
-                    plural
-                ),
+                &format!("{}/{}/{{id}}", crate::constants::CMS_ADMIN_PREFIX, plural),
                 "content_type",
                 name,
             );

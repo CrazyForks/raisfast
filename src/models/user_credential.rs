@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -39,9 +40,8 @@ pub fn extract_password_hash(credential_data: &str) -> AppResult<String> {
 
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct UserCredential {
-    pub id: i64,
-    pub document_id: String,
-    pub user_id: i64,
+    pub id: SnowflakeId,
+    pub user_id: SnowflakeId,
     pub auth_type: AuthType,
     pub identifier: String,
     pub credential_data: String,
@@ -79,9 +79,9 @@ pub async fn create(
     credential_data: &str,
     verified: bool,
 ) -> AppResult<UserCredential> {
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     raisfast_derive::crud_insert!(pool, "user_credentials", [
-        "document_id" => &document_id,
+        "id" => id,
         "user_id" => user_id,
         "auth_type" => auth_type,
         "identifier" => identifier,
@@ -90,7 +90,8 @@ pub async fn create(
         "created_at" => now,
         "updated_at" => now
     ])?;
-    let cred = raisfast_derive::crud_find_one!(pool, "user_credentials", UserCredential, "document_id" => &document_id)?;
+    let cred =
+        raisfast_derive::crud_find_one!(pool, "user_credentials", UserCredential, "id" => id)?;
     Ok(cred)
 }
 

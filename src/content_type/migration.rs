@@ -5,7 +5,7 @@
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
 
 use crate::aspects::ColumnDef;
-use crate::constants::{COL_DOCUMENT_ID, COL_ID};
+use crate::constants::COL_ID;
 
 /// Generate CREATE TABLE SQL from a content type definition
 ///
@@ -19,8 +19,7 @@ pub fn generate_create_table(ct: &ContentTypeSchema, protocol_columns: &[ColumnD
     }
     let mut cols = Vec::new();
 
-    cols.push(format!("    {COL_ID} INTEGER PRIMARY KEY AUTOINCREMENT"));
-    cols.push(format!("    {COL_DOCUMENT_ID} TEXT NOT NULL UNIQUE"));
+    cols.push(format!("    {COL_ID} INTEGER PRIMARY KEY"));
 
     for field in &ct.fields {
         if field.field_type == FieldType::Relation {
@@ -418,18 +417,11 @@ fn generate_create_table_for_rebuild(
     let mut cols = Vec::new();
 
     #[cfg(feature = "db-sqlite")]
-    cols.push(format!("    {COL_ID} INTEGER PRIMARY KEY AUTOINCREMENT"));
+    cols.push(format!("    {COL_ID} INTEGER PRIMARY KEY"));
     #[cfg(feature = "db-postgres")]
     cols.push(format!("    {COL_ID} BIGSERIAL PRIMARY KEY"));
     #[cfg(feature = "db-mysql")]
     cols.push(format!("    {COL_ID} BIGINT AUTO_INCREMENT PRIMARY KEY"));
-
-    #[cfg(feature = "db-sqlite")]
-    cols.push(format!("    {COL_DOCUMENT_ID} TEXT NOT NULL UNIQUE"));
-    #[cfg(feature = "db-postgres")]
-    cols.push(format!("    {COL_DOCUMENT_ID} VARCHAR(36) NOT NULL UNIQUE"));
-    #[cfg(feature = "db-mysql")]
-    cols.push(format!("    {COL_DOCUMENT_ID} VARCHAR(36) NOT NULL UNIQUE"));
 
     for field in &ct.fields {
         if field.field_type == FieldType::Relation {
@@ -520,7 +512,7 @@ fn type_compatible(expected: &str, actual: &str) -> bool {
 /// Get all column names expected by the content type schema (for comparison with DB)
 #[must_use]
 pub fn expected_columns(ct: &ContentTypeSchema, protocol_columns: &[ColumnDef]) -> Vec<String> {
-    let mut cols = vec![COL_ID.to_string(), COL_DOCUMENT_ID.to_string()];
+    let mut cols = vec![COL_ID.to_string()];
 
     for field in &ct.fields {
         if field.field_type == FieldType::Relation {
@@ -657,10 +649,10 @@ unique = true
 
         let sql = generate_create_table(&ct, &default_protocol_columns());
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS tags"));
-        assert!(sql.contains("document_id TEXT NOT NULL UNIQUE"));
         assert!(sql.contains("name TEXT NOT NULL"));
         assert!(sql.contains("created_at TEXT"));
         assert!(!sql.contains("status"));
+        assert!(!sql.contains("document_id"));
     }
 
     #[test]
@@ -721,7 +713,6 @@ default = false
 
         let existing = vec![
             "id".into(),
-            "document_id".into(),
             "title".into(),
             "slug".into(),
             "content".into(),
@@ -768,7 +759,6 @@ unique = true
 
         let existing = vec![
             "id".into(),
-            "document_id".into(),
             "name".into(),
             "slug".into(),
             "created_at".into(),
@@ -799,7 +789,7 @@ required = true
         )
         .unwrap();
 
-        let existing = vec!["id".into(), "document_id".into(), "title".into()];
+        let existing = vec!["id".into(), "title".into()];
 
         let stmts = generate_alter_table(&ct, &existing, &soft_delete_protocol_columns());
         assert!(stmts.iter().any(|s| s.contains("created_at TEXT")));
@@ -831,7 +821,6 @@ foreign_key = "author_id"
 
         let cols = expected_columns(&ct, &default_protocol_columns());
         assert!(cols.contains(&"id".to_string()));
-        assert!(cols.contains(&"document_id".to_string()));
         assert!(cols.contains(&"title".to_string()));
         assert!(cols.contains(&"author_id".to_string()));
         assert!(cols.contains(&"created_by".to_string()));

@@ -2,8 +2,8 @@ use super::*;
 
 async fn admin_token() -> String {
     let pool = test_pool_with_tenants().await;
-    let (int_id, doc_id) = create_admin(&pool).await;
-    make_token(&doc_id, int_id, raisfast::models::user::UserRole::Admin)
+    let (int_id, id) = create_admin(&pool).await;
+    make_token(&id, int_id, raisfast::models::user::UserRole::Admin)
 }
 
 #[tokio::test]
@@ -22,7 +22,7 @@ async fn create_and_get_tenant() {
     .await;
     assert!(status.is_success(), "create tenant: {status} {body:?}");
     assert_eq!(body["data"]["name"], "Acme Corp");
-    let id = body["data"]["document_id"].as_str().unwrap().to_string();
+    let id = body["data"]["id"].as_str().unwrap().to_string();
 
     let (status, body) = send(
         &mut app,
@@ -43,7 +43,7 @@ async fn update_tenant() {
         post_json_auth("/api/v1/admin/tenants", json!({"name": "Original"}), &tok),
     )
     .await;
-    let id = create_body["data"]["document_id"].as_str().unwrap();
+    let id = create_body["data"]["id"].as_str().unwrap();
 
     let (status, body) = send(
         &mut app,
@@ -68,7 +68,7 @@ async fn delete_tenant() {
         post_json_auth("/api/v1/admin/tenants", json!({"name": "ToDelete"}), &tok),
     )
     .await;
-    let id = create_body["data"]["document_id"].as_str().unwrap();
+    let id = create_body["data"]["id"].as_str().unwrap();
 
     let (status, _) = send(
         &mut app,
@@ -110,7 +110,7 @@ async fn list_tenants() {
 async fn get_tenant_not_found() {
     let (mut app, _) = test_app_with_tenants().await;
     let tok = admin_token().await;
-    let fake_id = uuid::Uuid::now_v7().to_string();
+    let fake_id = "9999999999999".to_string();
     let (status, _) = send(
         &mut app,
         get_auth(&format!("/api/v1/admin/tenants/{fake_id}"), &tok),
@@ -123,7 +123,7 @@ async fn get_tenant_not_found() {
 async fn update_tenant_not_found() {
     let (mut app, _) = test_app_with_tenants().await;
     let tok = admin_token().await;
-    let fake_id = uuid::Uuid::now_v7().to_string();
+    let fake_id = "9999999999999".to_string();
     let (status, _) = send(
         &mut app,
         put_json_auth(
@@ -140,7 +140,7 @@ async fn update_tenant_not_found() {
 async fn delete_tenant_not_found_is_idempotent() {
     let (mut app, _) = test_app_with_tenants().await;
     let tok = admin_token().await;
-    let fake_id = uuid::Uuid::now_v7().to_string();
+    let fake_id = "9999999999999".to_string();
     let (status, _) = send(
         &mut app,
         delete_auth(&format!("/api/v1/admin/tenants/{fake_id}"), &tok),

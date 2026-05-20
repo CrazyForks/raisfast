@@ -4,6 +4,7 @@ use ts_rs::TS;
 
 use crate::commands::{CreateProductCmd, UpdateProductCmd};
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -36,10 +37,9 @@ define_enum!(
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct Product {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
-    pub category_id: Option<i64>,
+    pub category_id: Option<SnowflakeId>,
     pub title: String,
     pub description: Option<String>,
     pub cover_url: Option<String>,
@@ -47,7 +47,7 @@ pub struct Product {
     pub fulfillment_type: FulfillmentType,
     pub delivery_hook: Option<String>,
     pub weight: Option<i64>,
-    pub shipping_template_id: Option<i64>,
+    pub shipping_template_id: Option<SnowflakeId>,
     pub price: i64,
     pub currency: String,
     pub status: ProductStatus,
@@ -83,15 +83,6 @@ pub async fn find_by_id(
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Product>> {
     raisfast_derive::crud_find!(pool, "products", Product, "id" => id, tenant: tenant_id)
-        .map_err(Into::into)
-}
-
-pub async fn find_by_document_id(
-    pool: &crate::db::Pool,
-    document_id: &str,
-    tenant_id: Option<&str>,
-) -> AppResult<Option<Product>> {
-    raisfast_derive::crud_find!(pool, "products", Product, "document_id" => document_id, tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -138,13 +129,12 @@ pub async fn insert(
     cmd: &CreateProductCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Product> {
-    let document_id = uuid::Uuid::now_v7().to_string();
-    let now = crate::utils::tz::now_utc();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     raisfast_derive::crud_insert!(
         pool,
         "products",
         [
-            "document_id" => &document_id,
+            "id" => id,
             "category_id" => cmd.category_id,
             "title" => &cmd.title,
             "description" => &cmd.description,
@@ -177,13 +167,9 @@ pub async fn insert(
         ],
         tenant: tenant_id
     )?;
-    find_by_document_id(pool, &document_id, tenant_id)
+    find_by_id(pool, id, tenant_id)
         .await?
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
-                "product not found after insert: {document_id}"
-            ))
-        })
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("product not found after insert")))
 }
 
 pub async fn update(
@@ -311,7 +297,10 @@ mod tests {
     async fn insert_and_find_by_id() {
         let pool = setup_pool().await;
         let p = seed_product(&pool, "Widget", "draft").await;
-        let found = super::find_by_id(&pool, p.id, None).await.unwrap().unwrap();
+        let found = super::find_by_id(&pool, *p.id, None)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.id, p.id);
         assert_eq!(found.title, "Widget");
         assert_eq!(found.price, 1000);
@@ -320,32 +309,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn find_by_document_id() {
-        let pool = setup_pool().await;
-        let p = seed_product(&pool, "Gadget", "draft").await;
-        let found = super::find_by_document_id(&pool, &p.document_id, None)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(found.id, p.id);
-    }
-
-    #[tokio::test]
     async fn find_by_id_not_found() {
         let pool = setup_pool().await;
         assert!(
             super::find_by_id(&pool, 99999, None)
-                .await
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[tokio::test]
-    async fn find_by_document_id_not_found() {
-        let pool = setup_pool().await;
-        assert!(
-            super::find_by_document_id(&pool, "nonexistent", None)
                 .await
                 .unwrap()
                 .is_none()
@@ -402,11 +369,11 @@ mod tests {
     async fn update_changes_title_and_price() {
         let pool = setup_pool().await;
         let p = seed_product(&pool, "Old", "draft").await;
-        let version = get_version(&pool, p.id).await;
+        let version = get_version(&pool, *p.id).await;
         let ok = super::update(
             &pool,
             &UpdateProductCmd {
-                id: p.id,
+                id: *p.id,
                 category_id: None,
                 title: "New".to_string(),
                 description: Some("desc".to_string()),
@@ -444,7 +411,10 @@ mod tests {
         .await
         .unwrap();
         assert!(ok);
-        let found = super::find_by_id(&pool, p.id, None).await.unwrap().unwrap();
+        let found = super::find_by_id(&pool, *p.id, None)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.title, "New");
         assert_eq!(found.price, 2000);
         assert_eq!(found.status, ProductStatus::Active);
@@ -459,7 +429,7 @@ mod tests {
         let ok = super::update(
             &pool,
             &UpdateProductCmd {
-                id: p.id,
+                id: *p.id,
                 category_id: None,
                 title: "New".to_string(),
                 description: None,
@@ -503,10 +473,10 @@ mod tests {
     async fn delete_removes_product() {
         let pool = setup_pool().await;
         let p = seed_product(&pool, "Bye", "draft").await;
-        let ok = super::delete_by_id(&pool, p.id, None).await.unwrap();
+        let ok = super::delete_by_id(&pool, *p.id, None).await.unwrap();
         assert!(ok);
         assert!(
-            super::find_by_id(&pool, p.id, None)
+            super::find_by_id(&pool, *p.id, None)
                 .await
                 .unwrap()
                 .is_none()
@@ -525,10 +495,10 @@ mod tests {
         let pool = setup_pool().await;
         for i in 0..5 {
             let p = seed_product(&pool, &format!("P{i}"), "draft").await;
-            set_status(&pool, p.id, "active").await;
+            set_status(&pool, *p.id, "active").await;
         }
         let p = seed_product(&pool, "Draft", "draft").await;
-        set_status(&pool, p.id, "draft").await;
+        set_status(&pool, *p.id, "draft").await;
 
         let (items, total) = super::find_active_paginated(&pool, None, 1, 3)
             .await
@@ -543,7 +513,7 @@ mod tests {
         let pool = setup_pool().await;
         for i in 0..5 {
             let p = seed_product(&pool, &format!("P{i}"), "draft").await;
-            set_status(&pool, p.id, "active").await;
+            set_status(&pool, *p.id, "active").await;
         }
         let (items, total) = super::find_active_paginated(&pool, None, 2, 3)
             .await
@@ -570,7 +540,7 @@ mod tests {
         let pool = setup_pool().await;
         for i in 0..3 {
             let p = seed_product(&pool, &format!("Active{i}"), "draft").await;
-            set_status(&pool, p.id, "active").await;
+            set_status(&pool, *p.id, "active").await;
         }
         seed_product(&pool, "Draft1", "draft").await;
 

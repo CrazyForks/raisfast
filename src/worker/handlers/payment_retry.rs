@@ -40,7 +40,7 @@ impl JobHandler for RetryPaymentCallbackHandler {
         if order.status != PaymentStatus::Pending {
             tracing::info!(
                 "[retry_payment_callback] order {} status is {:?}, skipping",
-                order.document_id,
+                order.id.to_string(),
                 order.status
             );
             return Ok(());
@@ -49,12 +49,12 @@ impl JobHandler for RetryPaymentCallbackHandler {
         let Some(ref provider_order_id) = order.provider_order_id else {
             tracing::warn!(
                 "[retry_payment_callback] order {} has no provider_order_id, expiring",
-                order.document_id
+                order.id.to_string()
             );
             crate::in_transaction!(&self.pool, tx, {
                 crate::models::payment_order::tx_update_status_cas(
                     &mut tx,
-                    order.id,
+                    *order.id,
                     PaymentStatus::Expired,
                     Some("expired_at"),
                     PaymentStatus::Pending,
@@ -72,13 +72,13 @@ impl JobHandler for RetryPaymentCallbackHandler {
                 tracing::warn!(
                     "[retry_payment_callback] provider '{}' not available for order {}: {e}",
                     order.provider,
-                    order.document_id
+                    order.id.to_string()
                 );
                 return Ok(());
             }
         };
 
-        let channel = payment_channel::find_by_id(&self.pool, order.channel_id, None)
+        let channel = payment_channel::find_by_id(&self.pool, *order.channel_id, None)
             .await?
             .ok_or_else(|| {
                 crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
@@ -93,12 +93,12 @@ impl JobHandler for RetryPaymentCallbackHandler {
             PaymentStatus::Paid => {
                 tracing::info!(
                     "[retry_payment_callback] order {} confirmed paid via provider query",
-                    order.document_id
+                    order.id.to_string()
                 );
                 crate::in_transaction!(&self.pool, tx, {
                     let rows = crate::models::payment_order::tx_update_status_cas(
                         &mut tx,
-                        order.id,
+                        *order.id,
                         PaymentStatus::Paid,
                         Some("paid_at"),
                         PaymentStatus::Pending,
@@ -107,20 +107,20 @@ impl JobHandler for RetryPaymentCallbackHandler {
                     if rows == 0 {
                         tracing::info!(
                             "[retry_payment_callback] order {} CAS failed, skipping",
-                            order.document_id
+                            order.id.to_string()
                         );
                         return Ok(());
                     }
 
                     let outbox_cmd = CreateWalletOutboxCmd {
-                        user_id: order.user_id,
+                        user_id: *order.user_id,
                         currency: order.currency.clone(),
                         amount: order.amount,
                         entry_type: "credit".into(),
                         tx_type: WalletTxType::Recharge,
-                        transaction_no: format!("PAY-{}", order.document_id),
+                        transaction_no: format!("PAY-{}", order.id),
                         reference_type: Some(WalletReferenceType::Payment),
-                        reference_id: Some(order.document_id.clone()),
+                        reference_id: Some(order.id.to_string()),
                         metadata: None,
                     };
                     crate::models::wallet_outbox::tx_insert(
@@ -137,7 +137,7 @@ impl JobHandler for RetryPaymentCallbackHandler {
                 crate::in_transaction!(&self.pool, tx, {
                     let rows = crate::models::payment_order::tx_update_status_cas(
                         &mut tx,
-                        order.id,
+                        *order.id,
                         PaymentStatus::Cancelled,
                         Some("cancelled_at"),
                         PaymentStatus::Pending,
@@ -146,7 +146,7 @@ impl JobHandler for RetryPaymentCallbackHandler {
                     if rows == 0 {
                         tracing::info!(
                             "[retry_payment_callback] order {} CAS failed for cancel",
-                            order.document_id
+                            order.id.to_string()
                         );
                     }
                     Ok(())
@@ -156,7 +156,7 @@ impl JobHandler for RetryPaymentCallbackHandler {
                 crate::in_transaction!(&self.pool, tx, {
                     let rows = crate::models::payment_order::tx_update_status_cas(
                         &mut tx,
-                        order.id,
+                        *order.id,
                         PaymentStatus::Expired,
                         Some("expired_at"),
                         PaymentStatus::Pending,
@@ -165,7 +165,7 @@ impl JobHandler for RetryPaymentCallbackHandler {
                     if rows == 0 {
                         tracing::info!(
                             "[retry_payment_callback] order {} CAS failed for expire",
-                            order.document_id
+                            order.id.to_string()
                         );
                     }
                     Ok(())
@@ -174,13 +174,13 @@ impl JobHandler for RetryPaymentCallbackHandler {
             PaymentStatus::Pending => {
                 tracing::info!(
                     "[retry_payment_callback] order {} still pending at provider, will retry later",
-                    order.document_id
+                    order.id.to_string()
                 );
             }
             _ => {
                 tracing::info!(
                     "[retry_payment_callback] order {} provider status {:?}, no action",
-                    order.document_id,
+                    order.id.to_string(),
                     status.status
                 );
             }

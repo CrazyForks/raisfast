@@ -103,7 +103,8 @@ pub async fn get_product(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<ProductResponse>> {
-    let p = state.product_service.get(&id, &auth).await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    let p = state.product_service.get(id, &auth).await?;
     Ok(ApiResponse::success(ProductResponse::from(p)))
 }
 
@@ -156,7 +157,8 @@ pub async fn admin_update(
 ) -> AppResult<ApiResponse<ProductResponse>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let p = state.product_service.update(&auth, &id, req).await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    let p = state.product_service.update(&auth, id, req).await?;
     Ok(ApiResponse::success(ProductResponse::from(p)))
 }
 
@@ -171,6 +173,7 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    state.product_service.delete(&id, &auth).await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    state.product_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
 }

@@ -102,7 +102,7 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<crate::webhook::model::WebhookSubscription>> {
     auth.ensure_admin()?;
-    let sub = state.webhook.get(&id).await?;
+    let sub = state.webhook.get(crate::utils::id::parse_id(&id)?).await?;
     Ok(ApiResponse::success(sub))
 }
 
@@ -148,7 +148,13 @@ pub async fn update(
     auth.ensure_admin()?;
     let sub = state
         .webhook
-        .update(&id, req.url, req.events, req.description, req.enabled)
+        .update(
+            crate::utils::id::parse_id(&id)?,
+            req.url,
+            req.events,
+            req.description,
+            req.enabled,
+        )
         .await?;
     Ok(ApiResponse::success(sub))
 }
@@ -160,7 +166,10 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    state.webhook.delete(&id).await?;
+    state
+        .webhook
+        .delete(crate::utils::id::parse_id(&id)?)
+        .await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -172,7 +181,11 @@ pub async fn admin_batch(
     auth.ensure_admin()?;
     crate::errors::validation::validate(&req)?;
     let mut affected = 0usize;
-    for id in &req.ids {
+    for raw_id in &req.ids {
+        let id: i64 = match raw_id.parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
         match req.action.as_str() {
             "delete" => {
                 if state.webhook.delete(id).await.is_ok() {

@@ -14,7 +14,7 @@ use serde_json::Value;
 use sqlx::Row;
 
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
-use crate::constants::COL_DOCUMENT_ID;
+use crate::constants::COL_ID;
 use crate::db::Pool;
 use crate::errors::app_error::AppError;
 
@@ -71,7 +71,7 @@ async fn do_validate_create(
                     RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay => {
                         if !val.is_string() && !val.is_null() {
                             errors.push(format!(
-                                "field '{}': expected string (document_id) or null",
+                                "field '{}': expected string (id) or null",
                                 field.name
                             ));
                         }
@@ -79,7 +79,7 @@ async fn do_validate_create(
                     RelationType::ManyToMany | RelationType::ManyWay => {
                         if !val.is_array() && !val.is_null() {
                             errors.push(format!(
-                                "field '{}': expected array of document_ids or null",
+                                "field '{}': expected array of ids or null",
                                 field.name
                             ));
                         }
@@ -187,7 +187,7 @@ async fn do_validate_create(
 pub async fn validate_update(
     pool: &Pool,
     ct: &ContentTypeSchema,
-    id: &str,
+    id: i64,
     data: &Value,
 ) -> Result<(), AppError> {
     do_validate_update(pool, ct, id, data).await
@@ -197,7 +197,7 @@ pub async fn validate_update(
 pub async fn validate_update_tx(
     pool: &Pool,
     ct: &ContentTypeSchema,
-    id: &str,
+    id: i64,
     data: &Value,
 ) -> Result<(), AppError> {
     do_validate_update(pool, ct, id, data).await
@@ -206,7 +206,7 @@ pub async fn validate_update_tx(
 async fn do_validate_update(
     pool: &Pool,
     ct: &ContentTypeSchema,
-    id: &str,
+    id: i64,
     data: &Value,
 ) -> Result<(), AppError> {
     let obj = data
@@ -240,7 +240,7 @@ async fn do_validate_update(
                     RelationType::ManyToOne | RelationType::OneToOne | RelationType::OneWay => {
                         if !val.is_string() && !val.is_null() {
                             errors.push(format!(
-                                "field '{}': expected string (document_id) or null",
+                                "field '{}': expected string (id) or null",
                                 field.name
                             ));
                         }
@@ -248,7 +248,7 @@ async fn do_validate_update(
                     RelationType::ManyToMany | RelationType::ManyWay => {
                         if !val.is_array() && !val.is_null() {
                             errors.push(format!(
-                                "field '{}': expected array of document_ids or null",
+                                "field '{}': expected array of ids or null",
                                 field.name
                             ));
                         }
@@ -356,7 +356,7 @@ async fn check_unique_fields(
     pool: &Pool,
     ct: &ContentTypeSchema,
     obj: &serde_json::Map<String, Value>,
-    exclude_id: Option<&str>,
+    exclude_id: Option<i64>,
     errors: &mut Vec<String>,
 ) -> Result<(), AppError> {
     let mut sql_builder = String::new();
@@ -375,7 +375,7 @@ async fn check_unique_fields(
         sql_builder.clear();
         if exclude_id.is_some() {
             sql_builder = format!(
-                "SELECT COUNT(*) as cnt FROM {} WHERE {} = {} AND {COL_DOCUMENT_ID} != {}",
+                "SELECT COUNT(*) as cnt FROM {} WHERE {} = {} AND {COL_ID} != {}",
                 ct.table,
                 field.name,
                 crate::db::dialect::ph(1),
@@ -676,9 +676,9 @@ immutable = true
             )
             .await
             .unwrap();
-        let id = created["document_id"].as_str().unwrap().to_string();
+        let id: i64 = created["id"].as_str().unwrap().parse().unwrap();
 
-        let result = validate_update(&pool, &ct, &id, &json!({"secret": "new"})).await;
+        let result = validate_update(&pool, &ct, id, &json!({"secret": "new"})).await;
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(
@@ -704,10 +704,10 @@ immutable = true
             )
             .await
             .unwrap();
-        let id = created["document_id"].as_str().unwrap().to_string();
+        let id: i64 = created["id"].as_str().unwrap().parse().unwrap();
 
         let result =
-            validate_update(&pool, &ct, &id, &json!({"name": "Updated", "code": "XYZ"})).await;
+            validate_update(&pool, &ct, id, &json!({"name": "Updated", "code": "XYZ"})).await;
         assert!(result.is_ok(), "updating same unique value should be ok");
     }
 
@@ -818,7 +818,7 @@ immutable = true
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
-        let result = validate_update(&pool, &ct, "some-id", &json!(42)).await;
+        let result = validate_update(&pool, &ct, 0, &json!(42)).await;
         assert!(result.is_err());
     }
 

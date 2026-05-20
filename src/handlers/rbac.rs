@@ -129,7 +129,8 @@ pub async fn update_role(
     Path(id): Path<String>,
     Json(req): Json<UpdateRoleRequest>,
 ) -> AppResult<ApiResponse<Role>> {
-    let role = state.rbac.update_role(&id, &req).await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    let role = state.rbac.update_role(id, &req).await?;
     Ok(ApiResponse::success(role))
 }
 
@@ -143,7 +144,8 @@ pub async fn delete_role(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    state.rbac.delete_role(&id).await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    state.rbac.delete_role(id).await?;
     Ok(ApiResponse::success(serde_json::json!({"deleted": true})))
 }
 
@@ -191,7 +193,10 @@ pub async fn admin_batch(
     crate::errors::validation::validate(&req)?;
     let mut affected = 0usize;
     if req.action == "delete" {
-        for id in &req.ids {
+        for raw_id in &req.ids {
+            let Ok(id) = crate::utils::id::parse_id(raw_id) else {
+                continue;
+            };
             if state.rbac.delete_role(id).await.is_ok() {
                 affected += 1;
             }

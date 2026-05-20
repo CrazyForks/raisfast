@@ -5,16 +5,16 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::errors::app_error::AppResult;
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 /// Full database row for an audit log entry
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct AuditEntry {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub tenant_id: Option<String>,
-    pub actor_id: Option<i64>,
+    pub actor_id: Option<SnowflakeId>,
     pub actor_role: Option<String>,
     pub action: String,
     pub subject: String,
@@ -31,7 +31,7 @@ pub async fn insert(pool: &crate::db::Pool, entry: &AuditEntry) -> AppResult<()>
         pool,
         "audit_log",
         [
-            "document_id" => &entry.document_id,
+            "id" => entry.id,
             "actor_id" => entry.actor_id,
             "actor_role" => &entry.actor_role,
             "action" => &entry.action,
@@ -72,12 +72,4 @@ pub async fn find_paginated(
 /// Find an audit log entry by ID
 pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<AuditEntry> {
     raisfast_derive::crud_find_one!(pool, "audit_log", AuditEntry, "id" => id).map_err(Into::into)
-}
-
-pub async fn find_by_document_id(
-    pool: &crate::db::Pool,
-    document_id: &str,
-) -> AppResult<AuditEntry> {
-    raisfast_derive::crud_find_one!(pool, "audit_log", AuditEntry, "document_id" => document_id)
-        .map_err(Into::into)
 }

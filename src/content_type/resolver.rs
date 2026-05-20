@@ -13,6 +13,11 @@ use sqlx::Row;
 
 use super::schema::{ContentTypeSchema, FieldType, RelationType};
 use crate::constants::COL_ID;
+
+fn extract_id_i64(v: &Value) -> Option<i64> {
+    v.as_i64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+}
 use crate::db::Pool;
 use crate::errors::app_error::AppError;
 
@@ -135,7 +140,7 @@ async fn resolve_many_to_one_batch(
     let mut lookup: std::collections::HashMap<i64, Value> = std::collections::HashMap::new();
     for row in &rows {
         let val = super::repository::row_to_value(row, &columns);
-        if let Some(id) = val.get(COL_ID).and_then(|v| v.as_i64()) {
+        if let Some(id) = val.get(COL_ID).and_then(extract_id_i64) {
             lookup.insert(id, val);
         }
     }
@@ -183,7 +188,7 @@ async fn resolve_one_to_many_batch(
 
     let item_ids: Vec<i64> = items
         .iter()
-        .filter_map(|item| item.get(COL_ID).and_then(|v| v.as_i64()))
+        .filter_map(|item| item.get(COL_ID).and_then(extract_id_i64))
         .filter(|&id| id > 0)
         .collect();
 
@@ -225,7 +230,7 @@ async fn resolve_one_to_many_batch(
     }
 
     for item in items.iter_mut() {
-        let Some(item_id) = item.get(COL_ID).and_then(|v| v.as_i64()) else {
+        let Some(item_id) = item.get(COL_ID).and_then(extract_id_i64) else {
             continue;
         };
         let targets = lookup.get(&item_id).cloned().unwrap_or_default();
@@ -266,7 +271,7 @@ async fn resolve_many_to_many_batch(
 
     let item_ids: Vec<i64> = items
         .iter()
-        .filter_map(|item| item.get(COL_ID).and_then(|v| v.as_i64()))
+        .filter_map(|item| item.get(COL_ID).and_then(extract_id_i64))
         .filter(|&id| id > 0)
         .collect();
 
@@ -310,7 +315,7 @@ async fn resolve_many_to_many_batch(
     }
 
     for item in items.iter_mut() {
-        let Some(item_id) = item.get(COL_ID).and_then(|v| v.as_i64()) else {
+        let Some(item_id) = item.get(COL_ID).and_then(extract_id_i64) else {
             continue;
         };
         let targets = lookup.get(&item_id).cloned().unwrap_or_default();
@@ -402,21 +407,21 @@ through = "ct_resolve_posts_tags"
         let pool = crate::db::Pool::connect(":memory:").await.unwrap();
 
         sqlx::query(
-            "CREATE TABLE ct_resolve_users (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, name TEXT, slug TEXT, title TEXT)",
+            "CREATE TABLE ct_resolve_users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, slug TEXT, title TEXT)",
         )
         .execute(&pool)
         .await
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE ct_resolve_tags (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, name TEXT, slug TEXT, title TEXT)",
+            "CREATE TABLE ct_resolve_tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, slug TEXT, title TEXT)",
         )
         .execute(&pool)
         .await
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE ct_resolve_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, title TEXT, author_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by INTEGER, updated_by INTEGER)",
+            "CREATE TABLE ct_resolve_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, author_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by INTEGER, updated_by INTEGER)",
         )
         .execute(&pool)
         .await
@@ -429,20 +434,22 @@ through = "ct_resolve_posts_tags"
         .await
         .unwrap();
 
-        sqlx::query("INSERT INTO ct_resolve_users (id, document_id, name, slug, title) VALUES (1, 'u1', 'Alice', 'alice', '')")
-            .execute(&pool)
-            .await
-            .unwrap();
-
         sqlx::query(
-            "INSERT INTO ct_resolve_tags (id, document_id, name, slug, title) VALUES (1, 't1', 'Rust', 'rust', '')",
+            "INSERT INTO ct_resolve_users (id, name, slug, title) VALUES (1, 'Alice', 'alice', '')",
         )
         .execute(&pool)
         .await
         .unwrap();
 
         sqlx::query(
-            "INSERT INTO ct_resolve_tags (id, document_id, name, slug, title) VALUES (2, 't2', 'Web', 'web', '')",
+            "INSERT INTO ct_resolve_tags (id, name, slug, title) VALUES (1, 'Rust', 'rust', '')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO ct_resolve_tags (id, name, slug, title) VALUES (2, 'Web', 'web', '')",
         )
         .execute(&pool)
         .await
@@ -458,7 +465,7 @@ through = "ct_resolve_posts_tags"
 
         let mut items = vec![serde_json::json!({
             "id": 1,
-            "document_id": "p1",
+
             "title": "Hello",
             "author_id": 1,
             "created_at": "2024-01-01T00:00:00Z",
@@ -479,7 +486,7 @@ through = "ct_resolve_posts_tags"
         let ct = make_ct_with_relations();
 
         sqlx::query(
-            "INSERT INTO ct_resolve_posts (id, document_id, title, author_id, created_at, updated_at) VALUES (1, 'p1', 'Hello', 1, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+            "INSERT INTO ct_resolve_posts (id, title, author_id, created_at, updated_at) VALUES (1, 'Hello', 1, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
         )
         .execute(&pool)
         .await
@@ -500,7 +507,7 @@ through = "ct_resolve_posts_tags"
 
         let mut items = vec![serde_json::json!({
             "id": 1,
-            "document_id": "p1",
+
             "title": "Hello",
             "author_id": 1,
             "created_at": "2024-01-01T00:00:00Z",
@@ -525,7 +532,7 @@ through = "ct_resolve_posts_tags"
 
         let mut items = vec![serde_json::json!({
             "id": 1,
-            "document_id": "p1",
+
             "title": "Hello",
             "author_id": 1,
             "created_at": "2024-01-01T00:00:00Z",
@@ -555,29 +562,29 @@ through = "ct_resolve_posts_tags"
         let pool = crate::db::Pool::connect(":memory:").await.unwrap();
 
         sqlx::query(
-            "CREATE TABLE ct_resolve_comments (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, text TEXT, post_id INTEGER)",
+            "CREATE TABLE ct_resolve_comments (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT, post_id INTEGER)",
         )
         .execute(&pool)
         .await
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE ct_resolve_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, title TEXT, author_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+            "CREATE TABLE ct_resolve_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, author_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
         )
         .execute(&pool)
         .await
         .unwrap();
 
-        sqlx::query("INSERT INTO ct_resolve_posts (id, document_id, title, author_id, created_at, updated_at) VALUES (1, 'p1', 'Hello', 0, '2024-01-01', '2024-01-01')")
+        sqlx::query("INSERT INTO ct_resolve_posts (id, title, author_id, created_at, updated_at) VALUES (1, 'Hello', 0, '2024-01-01', '2024-01-01')")
             .execute(&pool)
             .await
             .unwrap();
 
-        sqlx::query("INSERT INTO ct_resolve_comments (id, document_id, text, post_id) VALUES (1, 'c1', 'Nice', 1)")
+        sqlx::query("INSERT INTO ct_resolve_comments (id, text, post_id) VALUES (1, 'Nice', 1)")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO ct_resolve_comments (id, document_id, text, post_id) VALUES (2, 'c2', 'Great', 1)")
+        sqlx::query("INSERT INTO ct_resolve_comments (id, text, post_id) VALUES (2, 'Great', 1)")
             .execute(&pool)
             .await
             .unwrap();
@@ -604,7 +611,7 @@ foreign_key = "post_id"
 
         let mut items = vec![serde_json::json!({
             "id": 1,
-            "document_id": "p1",
+
             "title": "Hello",
             "created_at": "2024-01-01",
             "updated_at": "2024-01-01"
@@ -625,15 +632,13 @@ foreign_key = "post_id"
     async fn resolve_m2o_with_zero_fk_skipped() {
         let pool = crate::db::Pool::connect(":memory:").await.unwrap();
 
-        sqlx::query(
-            "CREATE TABLE ct_resolve_users (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, name TEXT)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("CREATE TABLE ct_resolve_users (id INTEGER PRIMARY KEY, name TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
 
         sqlx::query(
-            "CREATE TABLE ct_resolve_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, document_id TEXT NOT NULL UNIQUE, title TEXT, author_id INTEGER)",
+            "CREATE TABLE ct_resolve_posts (id INTEGER PRIMARY KEY, title TEXT, author_id INTEGER)",
         )
         .execute(&pool)
         .await
@@ -661,7 +666,7 @@ foreign_key = "author_id"
 
         let mut items = vec![serde_json::json!({
             "id": 1,
-            "document_id": "p1",
+
             "title": "NoAuthor",
             "author_id": 0
         })];

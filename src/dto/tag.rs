@@ -5,6 +5,30 @@ use utoipa::ToSchema;
 use validator::Validate;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TagResponse {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub description: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl TagResponse {
+    pub fn from_tag(tag: crate::models::tag::Tag) -> Self {
+        Self {
+            id: tag.id.to_string(),
+            name: tag.name,
+            slug: tag.slug,
+            description: tag.description,
+            created_at: tag.created_at.to_rfc3339(),
+            updated_at: tag.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
 pub struct CreateTagRequest {
     #[validate(length(min = 1, max = 50))]

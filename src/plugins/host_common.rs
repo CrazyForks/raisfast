@@ -368,7 +368,7 @@ impl HostContext {
     /// `params_json` is a JSON array string, corresponding in order to the `host.ph(N)` placeholders in the SQL.
     /// Example:
     /// ```js
-    /// const sql = `INSERT INTO tags (document_id, name) VALUES (${host.ph(1)}, ${host.ph(2)})`;
+    /// const sql = `INSERT INTO tags (id, name) VALUES (${host.ph(1)}, ${host.ph(2)})`;
     /// host.dbExecute(sql, JSON.stringify(["tag-1", "Rust"]));
     /// ```
     #[must_use]
@@ -1834,19 +1834,16 @@ mod tests {
         let ctx = HostContext::new("test", config, "p1".into(), perms, Some(pool));
 
         let result = ctx.db_execute(
-            "INSERT INTO tags (document_id, name, slug) VALUES ('tag-1', 'Test', 'test')",
+            "INSERT INTO tags (name, slug) VALUES ('Test', 'test')",
             "[]",
         );
         assert!(result.contains("rows_affected"));
         assert!(!result.contains("error"));
 
-        let update = ctx.db_execute(
-            "UPDATE tags SET name = 'Updated' WHERE document_id = 'tag-1'",
-            "[]",
-        );
+        let update = ctx.db_execute("UPDATE tags SET name = 'Updated' WHERE slug = 'test'", "[]");
         assert!(update.contains("rows_affected"));
 
-        let delete = ctx.db_execute("DELETE FROM tags WHERE document_id = 'tag-1'", "[]");
+        let delete = ctx.db_execute("DELETE FROM tags WHERE slug = 'test'", "[]");
         assert!(delete.contains("rows_affected"));
     }
 
@@ -1866,19 +1863,19 @@ mod tests {
         let ctx = HostContext::new("test", config, "p1".into(), perms, Some(pool));
 
         let result = ctx.db_execute(
-            "INSERT INTO tags (document_id, name, slug) VALUES (?, ?, ?)",
-            r#"["t2","Param Tag","param-tag"]"#,
+            "INSERT INTO tags (name, slug) VALUES (?, ?)",
+            r#"["Param Tag","param-tag"]"#,
         );
         assert!(result.contains("rows_affected"));
         assert!(!result.contains("error"));
 
         let update = ctx.db_execute(
-            "UPDATE tags SET name = ? WHERE document_id = ?",
-            r#"["Renamed","t2"]"#,
+            "UPDATE tags SET name = ? WHERE slug = ?",
+            r#"["Renamed","param-tag"]"#,
         );
         assert!(update.contains("rows_affected"));
 
-        let delete = ctx.db_execute("DELETE FROM tags WHERE document_id = ?", r#"["t2"]"#);
+        let delete = ctx.db_execute("DELETE FROM tags WHERE slug = ?", r#"["param-tag"]"#);
         assert!(delete.contains("rows_affected"));
     }
 
@@ -1890,10 +1887,7 @@ mod tests {
             ..Permissions::default()
         };
         let ctx = HostContext::new("test", config, "p1".into(), perms, None);
-        let result = ctx.db_execute(
-            "INSERT INTO tags (document_id, name, slug) VALUES (?)",
-            "not valid json",
-        );
+        let result = ctx.db_execute("INSERT INTO tags (name, slug) VALUES (?)", "not valid json");
         assert!(result.contains("invalid params JSON"));
     }
 
@@ -1906,7 +1900,7 @@ mod tests {
         };
         let ctx = HostContext::new("test", config, "p1".into(), perms, None);
         let result = ctx.db_execute(
-            "INSERT INTO tags (document_id, name, slug) VALUES (?, ?, ?)",
+            "INSERT INTO tags (name, slug) VALUES (?, ?)",
             r#"[{"nested":"object"}]"#,
         );
         assert!(result.contains("unsupported param type"));
@@ -1955,7 +1949,7 @@ mod tests {
         assert!(begin.contains(r#""ok":true"#), "begin failed: {begin}");
 
         let insert = ctx.db_execute(
-            "INSERT INTO tags (document_id, name, slug) VALUES ('tx-1', 'TxTest', 'tx-test')",
+            "INSERT INTO tags (name, slug) VALUES ('TxTest', 'tx-test')",
             "[]",
         );
         assert!(insert.contains("rows_affected"), "insert failed: {insert}");
@@ -1963,12 +1957,10 @@ mod tests {
         let commit = ctx.db_commit();
         assert!(commit.contains(r#""ok":true"#), "commit failed: {commit}");
 
-        let rows: Vec<(String,)> =
-            sqlx::query_as("SELECT document_id FROM tags WHERE document_id = 'tx-1'")
-                .bind("tx-1")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
+        let rows: Vec<(String,)> = sqlx::query_as("SELECT name FROM tags WHERE slug = 'tx-test'")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
         assert_eq!(rows.len(), 1, "row should be committed");
     }
 
@@ -1991,7 +1983,7 @@ mod tests {
         assert!(begin.contains(r#""ok":true"#));
 
         let insert = ctx.db_execute(
-            "INSERT INTO tags (document_id, name, slug) VALUES ('rb-1', 'RbTest', 'rb-test')",
+            "INSERT INTO tags (name, slug) VALUES ('RbTest', 'rb-test')",
             "[]",
         );
         assert!(insert.contains("rows_affected"));
@@ -1999,7 +1991,7 @@ mod tests {
         let rollback = ctx.db_rollback();
         assert!(rollback.contains(r#""ok":true"#));
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags WHERE document_id = 'rb-1'")
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags WHERE slug = 'rb-test'")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -2047,14 +2039,14 @@ mod tests {
         assert!(begin.contains(r#""ok":true"#));
 
         let insert = ctx.db_execute(
-            "INSERT INTO tags (document_id, name, slug) VALUES ('cl-1', 'CleanTest', 'cl-test')",
+            "INSERT INTO tags (name, slug) VALUES ('CleanTest', 'cl-test')",
             "[]",
         );
         assert!(insert.contains("rows_affected"));
 
         ctx.cleanup_tx();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags WHERE document_id = 'cl-1'")
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags WHERE slug = 'cl-test'")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -2101,14 +2093,10 @@ mod tests {
             .unwrap();
         let ctx = make_crud_ctx(&pool);
 
-        let result = ctx.db_insert(
-            "tags",
-            r#"{"document_id":"t1","name":"Rust","slug":"rust"}"#,
-            "{}",
-        );
+        let result = ctx.db_insert("tags", r#"{"name":"Rust","slug":"rust"}"#, "{}");
         assert!(result.contains(r#""rows_affected":1"#), "insert: {result}");
 
-        let found = ctx.db_fetch_one("tags", r#"{"document_id":"t1"}"#, "{}");
+        let found = ctx.db_fetch_one("tags", r#"{"slug":"rust"}"#, "{}");
         assert!(found.contains(r#""name":"Rust""#), "fetch_one: {found}");
     }
 
@@ -2121,7 +2109,7 @@ mod tests {
             .unwrap();
         let ctx = make_crud_ctx(&pool);
 
-        let found = ctx.db_fetch_one("tags", r#"{"document_id":"nonexistent"}"#, "{}");
+        let found = ctx.db_fetch_one("tags", r#"{"slug":"nonexistent"}"#, "{}");
         assert!(found.contains(r#""data":null"#), "not found: {found}");
     }
 
@@ -2134,11 +2122,7 @@ mod tests {
             .unwrap();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert(
-            "tags",
-            r#"{"document_id":"t2","name":"Go","slug":"go"}"#,
-            "{}",
-        );
+        let _ = ctx.db_insert("tags", r#"{"name":"Go","slug":"go"}"#, "{}");
 
         let found = ctx.db_fetch_one("tags", r#"name = 'Go'"#, "{}");
         assert!(found.contains(r#""slug":"go""#), "string where: {found}");
@@ -2153,17 +2137,10 @@ mod tests {
             .unwrap();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert(
-            "tags",
-            r#"{"document_id":"t3","name":"Python","slug":"python"}"#,
-            "{}",
-        );
+        let _ = ctx.db_insert("tags", r#"{"name":"Python","slug":"python"}"#, "{}");
 
         let found = ctx.db_fetch_one("tags", r#"["name = ?", "Python"]"#, "{}");
-        assert!(
-            found.contains(r#""document_id":"t3""#),
-            "array where: {found}"
-        );
+        assert!(found.contains(r#""slug":"python""#), "array where: {found}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2175,21 +2152,9 @@ mod tests {
             .unwrap();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert(
-            "tags",
-            r#"{"document_id":"a1","name":"A","slug":"a"}"#,
-            "{}",
-        );
-        let _ = ctx.db_insert(
-            "tags",
-            r#"{"document_id":"b2","name":"B","slug":"b"}"#,
-            "{}",
-        );
-        let _ = ctx.db_insert(
-            "tags",
-            r#"{"document_id":"c3","name":"C","slug":"c"}"#,
-            "{}",
-        );
+        let _ = ctx.db_insert("tags", r#"{"name":"A","slug":"a"}"#, "{}");
+        let _ = ctx.db_insert("tags", r#"{"name":"B","slug":"b"}"#, "{}");
+        let _ = ctx.db_insert("tags", r#"{"name":"C","slug":"c"}"#, "{}");
 
         let result = ctx.db_fetch_all("tags", "{}", r#"{"order_by":"name DESC","limit":2}"#);
         assert!(result.contains(r#""total":2"#), "fetch_all limit: {result}");
@@ -2204,16 +2169,12 @@ mod tests {
             .unwrap();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert(
-            "tags",
-            r#"{"document_id":"u1","name":"Old","slug":"old"}"#,
-            "{}",
-        );
+        let _ = ctx.db_insert("tags", r#"{"name":"Old","slug":"old"}"#, "{}");
 
-        let result = ctx.db_update("tags", r#"{"name":"New"}"#, r#"{"document_id":"u1"}"#, "{}");
+        let result = ctx.db_update("tags", r#"{"name":"New"}"#, r#"{"slug":"old"}"#, "{}");
         assert!(result.contains(r#""rows_affected":1"#), "update: {result}");
 
-        let found = ctx.db_fetch_one("tags", r#"{"document_id":"u1"}"#, "{}");
+        let found = ctx.db_fetch_one("tags", r#"{"slug":"old"}"#, "{}");
         assert!(found.contains(r#""name":"New""#), "after update: {found}");
     }
 
@@ -2239,16 +2200,12 @@ mod tests {
             .unwrap();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert(
-            "tags",
-            r#"{"document_id":"d1","name":"Delete","slug":"del"}"#,
-            "{}",
-        );
+        let _ = ctx.db_insert("tags", r#"{"name":"Delete","slug":"del"}"#, "{}");
 
-        let result = ctx.db_delete("tags", r#"{"document_id":"d1"}"#, "{}");
+        let result = ctx.db_delete("tags", r#"{"slug":"del"}"#, "{}");
         assert!(result.contains(r#""rows_affected":1"#), "delete: {result}");
 
-        let found = ctx.db_fetch_one("tags", r#"{"document_id":"d1"}"#, "{}");
+        let found = ctx.db_fetch_one("tags", r#"{"slug":"del"}"#, "{}");
         assert!(found.contains(r#""data":null"#), "after delete: {found}");
     }
 
@@ -2261,16 +2218,8 @@ mod tests {
             .unwrap();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert(
-            "tags",
-            r#"{"document_id":"c1","name":"Count1","slug":"c1"}"#,
-            "{}",
-        );
-        let _ = ctx.db_insert(
-            "tags",
-            r#"{"document_id":"c2","name":"Count2","slug":"c2"}"#,
-            "{}",
-        );
+        let _ = ctx.db_insert("tags", r#"{"name":"Count1","slug":"c1"}"#, "{}");
+        let _ = ctx.db_insert("tags", r#"{"name":"Count2","slug":"c2"}"#, "{}");
 
         let result = ctx.db_count("tags", "{}", "{}");
         assert!(result.contains(r#""count":2"#), "count: {result}");
@@ -2285,16 +2234,8 @@ mod tests {
             .unwrap();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert(
-            "tags",
-            r#"{"document_id":"cw1","name":"Go","slug":"go"}"#,
-            "{}",
-        );
-        let _ = ctx.db_insert(
-            "tags",
-            r#"{"document_id":"cw2","name":"Rust","slug":"rust"}"#,
-            "{}",
-        );
+        let _ = ctx.db_insert("tags", r#"{"name":"Go","slug":"go"}"#, "{}");
+        let _ = ctx.db_insert("tags", r#"{"name":"Rust","slug":"rust"}"#, "{}");
 
         let result = ctx.db_count("tags", r#"["name = ?", "Rust"]"#, "{}");
         assert!(
@@ -2378,30 +2319,30 @@ mod tests {
 
         let _ = ctx.db_insert(
             "categories",
-            r#"{"document_id":"p1","name":"Test","slug":"test","sort_order":"0"}"#,
+            r#"{"name":"Test","slug":"test","sort_order":"0"}"#,
             "{}",
         );
 
         let r = ctx.db_increment(
             "categories",
             r#"{"sort_order":1}"#,
-            r#"{"document_id":"p1"}"#,
+            r#"{"slug":"test"}"#,
             "{}",
         );
         assert!(r.contains(r#""rows_affected":1"#), "increment: {r}");
 
-        let s = ctx.db_sum("categories", "sort_order", r#"{"document_id":"p1"}"#, "{}");
+        let s = ctx.db_sum("categories", "sort_order", r#"{"slug":"test"}"#, "{}");
         assert!(s.contains(r#""sum":1"#), "after increment sum: {s}");
 
         let r2 = ctx.db_increment(
             "categories",
             r#"{"sort_order":1}"#,
-            r#"{"document_id":"p1"}"#,
+            r#"{"slug":"test"}"#,
             "{}",
         );
         assert!(r2.contains(r#""rows_affected":1"#));
 
-        let s2 = ctx.db_sum("categories", "sort_order", r#"{"document_id":"p1"}"#, "{}");
+        let s2 = ctx.db_sum("categories", "sort_order", r#"{"slug":"test"}"#, "{}");
         assert!(s2.contains(r#""sum":2"#), "after 2nd sum: {s2}");
     }
 
@@ -2416,19 +2357,19 @@ mod tests {
 
         let _ = ctx.db_insert(
             "categories",
-            r#"{"document_id":"p2","name":"Dec","slug":"dec","sort_order":"5"}"#,
+            r#"{"name":"Dec","slug":"dec","sort_order":"5"}"#,
             "{}",
         );
 
         let r = ctx.db_increment(
             "categories",
             r#"{"sort_order":-1}"#,
-            r#"{"document_id":"p2"}"#,
+            r#"{"slug":"dec"}"#,
             "{}",
         );
         assert!(r.contains(r#""rows_affected":1"#), "decrement: {r}");
 
-        let s = ctx.db_sum("categories", "sort_order", r#"{"document_id":"p2"}"#, "{}");
+        let s = ctx.db_sum("categories", "sort_order", r#"{"slug":"dec"}"#, "{}");
         assert!(s.contains(r#""sum":4"#), "after decrement sum: {s}");
     }
 
@@ -2443,19 +2384,19 @@ mod tests {
 
         let _ = ctx.db_insert(
             "categories",
-            r#"{"document_id":"p3","name":"Clamp","slug":"clamp","sort_order":"1"}"#,
+            r#"{"name":"Clamp","slug":"clamp","sort_order":"1"}"#,
             "{}",
         );
 
         let r = ctx.db_increment(
             "categories",
             r#"{"sort_order":-5}"#,
-            r#"{"document_id":"p3"}"#,
+            r#"{"slug":"clamp"}"#,
             r#"{"min":0}"#,
         );
         assert!(r.contains(r#""rows_affected":1"#), "clamp: {r}");
 
-        let s = ctx.db_sum("categories", "sort_order", r#"{"document_id":"p3"}"#, "{}");
+        let s = ctx.db_sum("categories", "sort_order", r#"{"slug":"clamp"}"#, "{}");
         assert!(s.contains(r#""sum":0"#), "clamped to 0 sum: {s}");
     }
 
@@ -2470,22 +2411,22 @@ mod tests {
 
         let _ = ctx.db_insert(
             "categories",
-            r#"{"document_id":"p4","name":"Set","slug":"set","sort_order":"0"}"#,
+            r#"{"name":"Set","slug":"set","sort_order":"0"}"#,
             "{}",
         );
 
         let r = ctx.db_increment(
             "categories",
             r#"{"sort_order":1}"#,
-            r#"{"document_id":"p4"}"#,
+            r#"{"slug":"set"}"#,
             r#"{"set":{"name":"Updated"}}"#,
         );
         assert!(r.contains(r#""rows_affected":1"#), "increment+set: {r}");
 
-        let s = ctx.db_sum("categories", "sort_order", r#"{"document_id":"p4"}"#, "{}");
+        let s = ctx.db_sum("categories", "sort_order", r#"{"slug":"set"}"#, "{}");
         assert!(s.contains(r#""sum":1"#), "incremented sum: {s}");
 
-        let found = ctx.db_fetch_one("categories", r#"{"document_id":"p4"}"#, "{}");
+        let found = ctx.db_fetch_one("categories", r#"{"slug":"set"}"#, "{}");
         assert!(found.contains(r#""name":"Updated""#), "set col: {found}");
     }
 
@@ -2531,12 +2472,12 @@ mod tests {
 
         let _ = ctx.db_insert(
             "categories",
-            r#"{"document_id":"s1","name":"A","slug":"sa","sort_order":"3"}"#,
+            r#"{"name":"A","slug":"sa","sort_order":"3"}"#,
             "{}",
         );
         let _ = ctx.db_insert(
             "categories",
-            r#"{"document_id":"s2","name":"B","slug":"sb","sort_order":"7"}"#,
+            r#"{"name":"B","slug":"sb","sort_order":"7"}"#,
             "{}",
         );
 
@@ -2585,17 +2526,17 @@ mod tests {
 
         let _ = ctx.db_insert(
             "categories",
-            r#"{"document_id":"g1","name":"Rust1","slug":"rust1","tenant_id":"t1"}"#,
+            r#"{"name":"Rust1","slug":"rust1","tenant_id":"t1"}"#,
             r#"{"tenant":"disabled"}"#,
         );
         let _ = ctx.db_insert(
             "categories",
-            r#"{"document_id":"g2","name":"Go","slug":"go","tenant_id":"t2"}"#,
+            r#"{"name":"Go","slug":"go","tenant_id":"t2"}"#,
             r#"{"tenant":"disabled"}"#,
         );
         let _ = ctx.db_insert(
             "categories",
-            r#"{"document_id":"g3","name":"Rust2","slug":"rust2","tenant_id":"t1"}"#,
+            r#"{"name":"Rust2","slug":"rust2","tenant_id":"t1"}"#,
             r#"{"tenant":"disabled"}"#,
         );
 
@@ -2619,17 +2560,17 @@ mod tests {
 
         let _ = ctx.db_insert(
             "categories",
-            r#"{"document_id":"gs1","name":"A1","slug":"gsa","sort_order":"3","tenant_id":"grpA"}"#,
+            r#"{"name":"A1","slug":"gsa","sort_order":"3","tenant_id":"grpA"}"#,
             r#"{"tenant":"disabled"}"#,
         );
         let _ = ctx.db_insert(
             "categories",
-            r#"{"document_id":"gs2","name":"A2","slug":"gsb","sort_order":"7","tenant_id":"grpA"}"#,
+            r#"{"name":"A2","slug":"gsb","sort_order":"7","tenant_id":"grpA"}"#,
             r#"{"tenant":"disabled"}"#,
         );
         let _ = ctx.db_insert(
             "categories",
-            r#"{"document_id":"gs3","name":"B1","slug":"gsc","sort_order":"2","tenant_id":"grpB"}"#,
+            r#"{"name":"B1","slug":"gsc","sort_order":"2","tenant_id":"grpB"}"#,
             r#"{"tenant":"disabled"}"#,
         );
 
@@ -2655,17 +2596,17 @@ mod tests {
 
         let _ = ctx.db_insert(
             "categories",
-            r#"{"document_id":"w1","name":"W1","slug":"wa","tenant_id":"tA"}"#,
+            r#"{"name":"W1","slug":"wa","tenant_id":"tA"}"#,
             r#"{"tenant":"disabled"}"#,
         );
         let _ = ctx.db_insert(
             "categories",
-            r#"{"document_id":"w2","name":"W2","slug":"wb","tenant_id":"tA"}"#,
+            r#"{"name":"W2","slug":"wb","tenant_id":"tA"}"#,
             r#"{"tenant":"disabled"}"#,
         );
         let _ = ctx.db_insert(
             "categories",
-            r#"{"document_id":"w3","name":"W3","slug":"wc","tenant_id":"tB"}"#,
+            r#"{"name":"W3","slug":"wc","tenant_id":"tB"}"#,
             r#"{"tenant":"disabled"}"#,
         );
 
@@ -2686,21 +2627,9 @@ mod tests {
             .unwrap();
         let ctx = make_crud_ctx(&pool);
 
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"document_id":"l1","name":"X","slug":"lx"}"#,
-            "{}",
-        );
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"document_id":"l2","name":"Y","slug":"ly"}"#,
-            "{}",
-        );
-        let _ = ctx.db_insert(
-            "categories",
-            r#"{"document_id":"l3","name":"Z","slug":"lz"}"#,
-            "{}",
-        );
+        let _ = ctx.db_insert("categories", r#"{"name":"X","slug":"lx"}"#, "{}");
+        let _ = ctx.db_insert("categories", r#"{"name":"Y","slug":"ly"}"#, "{}");
+        let _ = ctx.db_insert("categories", r#"{"name":"Z","slug":"lz"}"#, "{}");
 
         let r = ctx.db_group_by(
             "categories",
@@ -2764,19 +2693,19 @@ mod tests {
 
         let _ = ctx.db_insert(
             "categories",
-            r#"{"document_id":"m1","name":"Multi","slug":"multi","sort_order":"2"}"#,
+            r#"{"name":"Multi","slug":"multi","sort_order":"2"}"#,
             "{}",
         );
 
         let r = ctx.db_increment(
             "categories",
             r#"{"sort_order":-10}"#,
-            r#"{"document_id":"m1"}"#,
+            r#"{"slug":"multi"}"#,
             r#"{"min":0}"#,
         );
         assert!(r.contains(r#""rows_affected":1"#), "multi clamp: {r}");
 
-        let s = ctx.db_sum("categories", "sort_order", r#"{"document_id":"m1"}"#, "{}");
+        let s = ctx.db_sum("categories", "sort_order", r#"{"slug":"multi"}"#, "{}");
         assert!(s.contains(r#""sum":0"#), "clamped sum: {s}");
     }
 }

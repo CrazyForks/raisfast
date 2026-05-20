@@ -20,7 +20,7 @@ pub async fn forgot_password(
     )
     .await?;
     let user = match cred {
-        Some(c) => crate::models::user::find_by_pk(pool, c.user_id, None).await?,
+        Some(c) => crate::models::user::find_by_id(pool, *c.user_id, None).await?,
         None => None,
     };
 
@@ -29,9 +29,9 @@ pub async fn forgot_password(
         None => return Ok(()),
     };
 
-    crate::models::password_reset::delete_unused_by_user(pool, user.id).await?;
+    crate::models::password_reset::delete_unused_by_user(pool, *user.id).await?;
 
-    let reset_token = crate::models::password_reset::create(pool, user.id, 3600).await?;
+    let reset_token = crate::models::password_reset::create(pool, *user.id, 3600).await?;
 
     aspect_engine.emit(Event::PasswordResetRequested {
         user: user.clone(),
@@ -142,7 +142,7 @@ pub async fn set_password(
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
 
-    let creds = crate::models::user_credential::find_by_user_id(pool, user.id).await?;
+    let creds = crate::models::user_credential::find_by_user_id(pool, *user.id).await?;
     let has_password = creds.iter().any(|c| {
         c.auth_type == crate::models::user_credential::AuthType::Email
             && !c.credential_data.is_empty()
@@ -161,14 +161,14 @@ pub async fn set_password(
     {
         crate::models::user_credential::update_credential_data(
             pool,
-            cred.id,
+            *cred.id,
             &crate::models::user_credential::wrap_password_hash(&new_hash),
         )
         .await?;
     } else {
         crate::models::user_credential::create(
             pool,
-            user.id,
+            *user.id,
             crate::models::user_credential::AuthType::Email,
             email,
             &crate::models::user_credential::wrap_password_hash(&new_hash),
@@ -207,7 +207,7 @@ mod tests {
         .unwrap();
         crate::models::user_credential::create(
             pool,
-            user.id,
+            *user.id,
             crate::models::user_credential::AuthType::Email,
             email,
             &crate::models::user_credential::wrap_password_hash(
@@ -298,7 +298,7 @@ mod tests {
         .unwrap();
         crate::models::user_credential::create(
             &pool,
-            user.id,
+            *user.id,
             crate::models::user_credential::AuthType::Email,
             "oauth@test.com",
             "",
@@ -306,12 +306,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let a = AuthUser::from_parts(
-            Some(user.document_id.clone()),
-            Some(user.id),
-            crate::models::user::UserRole::Author,
-            None,
-        );
+        let a = AuthUser::from_parts(Some(*user.id), crate::models::user::UserRole::Author, None);
         super::set_password(&pool, &a, "oauth@test.com", "StrongPass1")
             .await
             .unwrap();
@@ -321,12 +316,7 @@ mod tests {
     async fn set_password_already_set_rejected() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "already@test.com").await;
-        let a = AuthUser::from_parts(
-            Some(user.document_id.clone()),
-            Some(user.id),
-            crate::models::user::UserRole::Author,
-            None,
-        );
+        let a = AuthUser::from_parts(Some(*user.id), crate::models::user::UserRole::Author, None);
         let err = super::set_password(&pool, &a, "already@test.com", "NewPass1")
             .await
             .unwrap_err();

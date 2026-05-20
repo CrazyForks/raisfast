@@ -138,7 +138,7 @@ pub struct BindEmailRequest {
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CredentialResponse {
-    pub id: i64,
+    pub id: String,
     pub auth_type: AuthType,
     pub identifier: String,
     pub verified: bool,
@@ -151,7 +151,7 @@ pub struct CredentialResponse {
 impl CredentialResponse {
     pub fn from_credential(c: crate::models::user_credential::UserCredential) -> AppResult<Self> {
         Ok(Self {
-            id: c.id,
+            id: c.id.to_string(),
             auth_type: c.auth_type,
             identifier: c.identifier,
             verified: c.verified == 1,
@@ -217,7 +217,7 @@ impl UserResponse {
         let status = user.status;
         let registered_via = user.registered_via;
         Ok(Self {
-            id: user.document_id,
+            id: user.id.to_string(),
             username: user.username,
             role,
             status,

@@ -23,14 +23,13 @@ pub trait OrderService: Send + Sync {
         user_id: i64,
         req: CreateOrderRequest,
     ) -> AppResult<(Order, Vec<OrderItem>)>;
-    async fn cancel(&self, auth: &AuthUser, order_id: &str, user_id: i64) -> AppResult<()>;
-    async fn mark_paid(&self, auth: &AuthUser, order_id: &str) -> AppResult<Order>;
-    async fn ship(&self, auth: &AuthUser, order_id: &str, req: &ShipOrderRequest) -> AppResult<()>;
-    async fn confirm_receipt(&self, auth: &AuthUser, order_id: &str, user_id: i64)
-    -> AppResult<()>;
-    async fn refund(&self, auth: &AuthUser, order_id: &str) -> AppResult<()>;
-    async fn admin_cancel(&self, auth: &AuthUser, order_id: &str) -> AppResult<()>;
-    async fn get(&self, auth: &AuthUser, order_id: &str) -> AppResult<(Order, Vec<OrderItem>)>;
+    async fn cancel(&self, auth: &AuthUser, order_id: i64, user_id: i64) -> AppResult<()>;
+    async fn mark_paid(&self, auth: &AuthUser, order_id: i64) -> AppResult<Order>;
+    async fn ship(&self, auth: &AuthUser, order_id: i64, req: &ShipOrderRequest) -> AppResult<()>;
+    async fn confirm_receipt(&self, auth: &AuthUser, order_id: i64, user_id: i64) -> AppResult<()>;
+    async fn refund(&self, auth: &AuthUser, order_id: i64) -> AppResult<()>;
+    async fn admin_cancel(&self, auth: &AuthUser, order_id: i64) -> AppResult<()>;
+    async fn get(&self, auth: &AuthUser, order_id: i64) -> AppResult<(Order, Vec<OrderItem>)>;
     async fn list_user(
         &self,
         auth: &AuthUser,
@@ -48,7 +47,7 @@ pub trait OrderService: Send + Sync {
     async fn update_admin_remark(
         &self,
         auth: &AuthUser,
-        order_id: &str,
+        order_id: i64,
         admin_remark: &str,
     ) -> AppResult<()>;
     async fn get_stats(&self, auth: &AuthUser) -> AppResult<crate::dto::OrderStatsResponse>;
@@ -122,13 +121,11 @@ impl OrderService for OrderServiceImpl {
             if item.quantity > MAX_QUANTITY {
                 return Err(AppError::BadRequest("quantity_exceeds_limit".into()));
             }
-            let product = crate::models::product::find_by_document_id(
-                &self.pool,
-                &item.product_id,
-                auth.tenant_id(),
-            )
-            .await?
-            .ok_or_else(|| AppError::not_found("product"))?;
+            let product_id: i64 = crate::utils::id::parse_id(&item.product_id)?;
+            let product =
+                crate::models::product::find_by_id(&self.pool, product_id, auth.tenant_id())
+                    .await?
+                    .ok_or_else(|| AppError::not_found("product"))?;
 
             if product.status != ProductStatus::Active {
                 return Err(AppError::BadRequest("product_not_active".into()));
@@ -177,8 +174,8 @@ impl OrderService for OrderServiceImpl {
             let mut items = Vec::new();
             for (quantity, line_total, product) in &order_items_data {
                 items.push(crate::commands::CreateOrderItemCmd {
-                    order_id: order.id,
-                    product_id: Some(product.id),
+                    order_id: *order.id,
+                    product_id: Some(*product.id),
                     variant_id: None,
                     title: product.title.clone(),
                     description: product.description.clone(),
@@ -198,16 +195,15 @@ impl OrderService for OrderServiceImpl {
 
         self.after_created(&order);
         let items =
-            crate::models::order_item::find_by_order_id(&self.pool, order.id, auth.tenant_id())
+            crate::models::order_item::find_by_order_id(&self.pool, *order.id, auth.tenant_id())
                 .await?;
         Ok((order, items))
     }
 
-    async fn cancel(&self, auth: &AuthUser, order_id: &str, user_id: i64) -> AppResult<()> {
-        let order =
-            crate::models::order::find_by_document_id(&self.pool, order_id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("order"))?;
+    async fn cancel(&self, auth: &AuthUser, order_id: i64, user_id: i64) -> AppResult<()> {
+        let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("order"))?;
 
         if order.user_id != user_id {
             return Err(AppError::Forbidden);
@@ -224,7 +220,7 @@ impl OrderService for OrderServiceImpl {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_status_cas(
                     &mut tx,
-                    order.id,
+                    *order.id,
                     OrderStatus::Cancelled,
                     Some("cancelled_at"),
                     OrderStatus::Pending,
@@ -243,12 +239,11 @@ impl OrderService for OrderServiceImpl {
         Ok(())
     }
 
-    async fn mark_paid(&self, auth: &AuthUser, order_id: &str) -> AppResult<Order> {
+    async fn mark_paid(&self, auth: &AuthUser, order_id: i64) -> AppResult<Order> {
         auth.ensure_admin()?;
-        let order =
-            crate::models::order::find_by_document_id(&self.pool, order_id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("order"))?;
+        let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("order"))?;
 
         if order.status != OrderStatus::Pending {
             return Err(AppError::BadRequest("only_pending_can_pay".into()));
@@ -262,7 +257,7 @@ impl OrderService for OrderServiceImpl {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_status_cas(
                     &mut tx,
-                    order.id,
+                    *order.id,
                     OrderStatus::Paid,
                     Some("paid_at"),
                     OrderStatus::Pending,
@@ -277,7 +272,7 @@ impl OrderService for OrderServiceImpl {
         .await;
         result?;
 
-        let paid = crate::models::order::find_by_id(&self.pool, order.id, auth.tenant_id())
+        let paid = crate::models::order::find_by_id(&self.pool, *order.id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("order"))?;
 
@@ -285,12 +280,11 @@ impl OrderService for OrderServiceImpl {
         Ok(paid)
     }
 
-    async fn ship(&self, auth: &AuthUser, order_id: &str, req: &ShipOrderRequest) -> AppResult<()> {
+    async fn ship(&self, auth: &AuthUser, order_id: i64, req: &ShipOrderRequest) -> AppResult<()> {
         auth.ensure_admin()?;
-        let order =
-            crate::models::order::find_by_document_id(&self.pool, order_id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("order"))?;
+        let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("order"))?;
 
         if order.status != OrderStatus::Paid {
             return Err(AppError::BadRequest("only_paid_can_ship".into()));
@@ -300,7 +294,7 @@ impl OrderService for OrderServiceImpl {
             .before_update("orders", auth, &order, OrderStatus::Shipped)
             .await?;
 
-        let order_id = order.id;
+        let order_id = *order.id;
         let result: Result<(), AppError> = async {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_shipped(
@@ -323,16 +317,10 @@ impl OrderService for OrderServiceImpl {
         Ok(())
     }
 
-    async fn confirm_receipt(
-        &self,
-        auth: &AuthUser,
-        order_id: &str,
-        user_id: i64,
-    ) -> AppResult<()> {
-        let order =
-            crate::models::order::find_by_document_id(&self.pool, order_id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("order"))?;
+    async fn confirm_receipt(&self, auth: &AuthUser, order_id: i64, user_id: i64) -> AppResult<()> {
+        let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("order"))?;
 
         if order.user_id != user_id {
             return Err(AppError::Forbidden);
@@ -349,7 +337,7 @@ impl OrderService for OrderServiceImpl {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_status_cas(
                     &mut tx,
-                    order.id,
+                    *order.id,
                     OrderStatus::Completed,
                     Some("completed_at"),
                     OrderStatus::Shipped,
@@ -368,12 +356,11 @@ impl OrderService for OrderServiceImpl {
         Ok(())
     }
 
-    async fn refund(&self, auth: &AuthUser, order_id: &str) -> AppResult<()> {
+    async fn refund(&self, auth: &AuthUser, order_id: i64) -> AppResult<()> {
         auth.ensure_admin()?;
-        let order =
-            crate::models::order::find_by_document_id(&self.pool, order_id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("order"))?;
+        let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("order"))?;
 
         if order.status != OrderStatus::Paid && order.status != OrderStatus::Shipped {
             return Err(AppError::BadRequest(
@@ -390,7 +377,7 @@ impl OrderService for OrderServiceImpl {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_status_cas(
                     &mut tx,
-                    order.id,
+                    *order.id,
                     OrderStatus::Refunding,
                     Some("refunding_at"),
                     expected,
@@ -406,12 +393,11 @@ impl OrderService for OrderServiceImpl {
         result
     }
 
-    async fn admin_cancel(&self, auth: &AuthUser, order_id: &str) -> AppResult<()> {
+    async fn admin_cancel(&self, auth: &AuthUser, order_id: i64) -> AppResult<()> {
         auth.ensure_admin()?;
-        let order =
-            crate::models::order::find_by_document_id(&self.pool, order_id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("order"))?;
+        let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("order"))?;
 
         if order.status != OrderStatus::Pending && order.status != OrderStatus::Paid {
             return Err(AppError::BadRequest(
@@ -428,7 +414,7 @@ impl OrderService for OrderServiceImpl {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_status_cas(
                     &mut tx,
-                    order.id,
+                    *order.id,
                     OrderStatus::Cancelled,
                     Some("cancelled_at"),
                     expected,
@@ -446,19 +432,18 @@ impl OrderService for OrderServiceImpl {
         Ok(())
     }
 
-    async fn get(&self, auth: &AuthUser, order_id: &str) -> AppResult<(Order, Vec<OrderItem>)> {
-        let order =
-            crate::models::order::find_by_document_id(&self.pool, order_id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("order"))?;
+    async fn get(&self, auth: &AuthUser, order_id: i64) -> AppResult<(Order, Vec<OrderItem>)> {
+        let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("order"))?;
         if auth.role() != "admin" {
-            let user_int_id = auth.user_int_id().ok_or(AppError::Unauthorized)?;
-            if order.user_id != user_int_id {
+            let user_id = auth.user_id().ok_or(AppError::Unauthorized)?;
+            if order.user_id != user_id {
                 return Err(AppError::Forbidden);
             }
         }
         let items =
-            crate::models::order_item::find_by_order_id(&self.pool, order.id, auth.tenant_id())
+            crate::models::order_item::find_by_order_id(&self.pool, *order.id, auth.tenant_id())
                 .await?;
         Ok((order, items))
     }
@@ -481,7 +466,7 @@ impl OrderService for OrderServiceImpl {
         let mut result = Vec::with_capacity(orders.len());
         for o in orders {
             let items =
-                crate::models::order_item::find_by_order_id(&self.pool, o.id, auth.tenant_id())
+                crate::models::order_item::find_by_order_id(&self.pool, *o.id, auth.tenant_id())
                     .await?;
             result.push((o, items));
         }
@@ -507,7 +492,7 @@ impl OrderService for OrderServiceImpl {
         let mut result = Vec::with_capacity(orders.len());
         for o in orders {
             let items =
-                crate::models::order_item::find_by_order_id(&self.pool, o.id, auth.tenant_id())
+                crate::models::order_item::find_by_order_id(&self.pool, *o.id, auth.tenant_id())
                     .await?;
             result.push((o, items));
         }
@@ -517,17 +502,16 @@ impl OrderService for OrderServiceImpl {
     async fn update_admin_remark(
         &self,
         auth: &AuthUser,
-        order_id: &str,
+        order_id: i64,
         admin_remark: &str,
     ) -> AppResult<()> {
         auth.ensure_admin()?;
-        let order =
-            crate::models::order::find_by_document_id(&self.pool, order_id, auth.tenant_id())
-                .await?
-                .ok_or_else(|| AppError::not_found("order"))?;
+        let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
+            .await?
+            .ok_or_else(|| AppError::not_found("order"))?;
         crate::models::order::update_admin_remark(
             &self.pool,
-            order.id,
+            *order.id,
             admin_remark,
             auth.tenant_id(),
         )
@@ -558,7 +542,6 @@ mod tests {
 
     fn auth(tid: Option<&str>) -> AuthUser {
         AuthUser::from_parts(
-            Some("u1".to_string()),
             Some(1),
             crate::models::user::UserRole::Admin,
             tid.map(|s| s.to_string()),
@@ -568,7 +551,6 @@ mod tests {
     #[allow(dead_code)]
     fn auth_with_id(user_int_id: i64) -> AuthUser {
         AuthUser::from_parts(
-            Some(format!("u{user_int_id}")),
             Some(user_int_id),
             crate::models::user::UserRole::Reader,
             None,
@@ -576,17 +558,12 @@ mod tests {
     }
 
     async fn seed_user(pool: &crate::db::Pool) -> i64 {
-        let doc_id = uuid::Uuid::now_v7().to_string();
-        let username = format!("testuser_{doc_id}");
-        sqlx::query("INSERT INTO users (document_id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')")
-            .bind(&doc_id)
+        let id = crate::utils::id::new_id();
+        let username = format!("testuser_{id}");
+        sqlx::query("INSERT INTO users (id, username, role, status, registered_via) VALUES (?, ?, 'reader', 'active', 'email')")
+            .bind(id)
             .bind(&username)
             .execute(pool)
-            .await
-            .unwrap();
-        let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE document_id = ?")
-            .bind(&doc_id)
-            .fetch_one(pool)
             .await
             .unwrap();
         id
@@ -637,16 +614,16 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
-        crate::models::product::find_by_id(pool, p.id, None)
+        crate::models::product::find_by_id(pool, *p.id, None)
             .await
             .unwrap()
             .unwrap()
     }
 
-    fn make_create_req(prod_doc_id: &str, quantity: i64) -> CreateOrderRequest {
+    fn make_create_req(prod_id: &str, quantity: i64) -> CreateOrderRequest {
         CreateOrderRequest {
             items: vec![CreateOrderItemRequest {
-                product_id: prod_doc_id.to_string(),
+                product_id: prod_id.to_string(),
                 quantity,
             }],
             currency: None,
@@ -666,7 +643,7 @@ mod tests {
         let uid = seed_user(pool).await;
         let prod = seed_active_product(pool, "Widget", 1000).await;
         let (order, _) = svc
-            .create(auth, uid, make_create_req(&prod.document_id, 1))
+            .create(auth, uid, make_create_req(&prod.id.to_string(), 1))
             .await
             .unwrap();
         (uid, order)
@@ -681,7 +658,7 @@ mod tests {
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
         let (order, items) = svc
-            .create(&a, uid, make_create_req(&prod.document_id, 2))
+            .create(&a, uid, make_create_req(&prod.id.to_string(), 2))
             .await
             .unwrap();
 
@@ -714,11 +691,11 @@ mod tests {
                 CreateOrderRequest {
                     items: vec![
                         CreateOrderItemRequest {
-                            product_id: p1.document_id.clone(),
+                            product_id: p1.id.to_string(),
                             quantity: 3,
                         },
                         CreateOrderItemRequest {
-                            product_id: p2.document_id.clone(),
+                            product_id: p2.id.to_string(),
                             quantity: 1,
                         },
                     ],
@@ -779,7 +756,7 @@ mod tests {
                 uid,
                 CreateOrderRequest {
                     items: vec![CreateOrderItemRequest {
-                        product_id: "nonexistent".into(),
+                        product_id: "99999999".into(),
                         quantity: 1,
                     }],
                     currency: None,
@@ -839,7 +816,7 @@ mod tests {
         .unwrap();
 
         let err = svc
-            .create(&a, uid, make_create_req(&draft_product.document_id, 1))
+            .create(&a, uid, make_create_req(&draft_product.id.to_string(), 1))
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "product_not_active"));
@@ -852,8 +829,8 @@ mod tests {
         let a = auth(None);
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        svc.cancel(&a, &order.document_id, uid).await.unwrap();
-        let found = crate::models::order::find_by_id(&pool, order.id, None)
+        svc.cancel(&a, *order.id, uid).await.unwrap();
+        let found = crate::models::order::find_by_id(&pool, *order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -868,7 +845,7 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let err = svc.cancel(&a, &order.document_id, 999).await.unwrap_err();
+        let err = svc.cancel(&a, *order.id, 999).await.unwrap_err();
         assert!(matches!(err, AppError::Forbidden));
     }
 
@@ -879,11 +856,11 @@ mod tests {
         let a = auth(None);
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        crate::models::order::update_status(&pool, order.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, *order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
 
-        let err = svc.cancel(&a, &order.document_id, uid).await.unwrap_err();
+        let err = svc.cancel(&a, *order.id, uid).await.unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "only_pending_can_cancel"));
     }
 
@@ -894,7 +871,7 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let paid = svc.mark_paid(&a, &order.document_id).await.unwrap();
+        let paid = svc.mark_paid(&a, *order.id).await.unwrap();
         assert_eq!(paid.status, OrderStatus::Paid);
         assert!(paid.paid_at.is_some());
     }
@@ -908,7 +885,7 @@ mod tests {
 
         crate::models::order::update_status(
             &pool,
-            order.id,
+            *order.id,
             "cancelled",
             Some("cancelled_at"),
             None,
@@ -916,7 +893,7 @@ mod tests {
         .await
         .unwrap();
 
-        let err = svc.mark_paid(&a, &order.document_id).await.unwrap_err();
+        let err = svc.mark_paid(&a, *order.id).await.unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "only_pending_can_pay"));
     }
 
@@ -927,12 +904,18 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        crate::models::order::update_status(&pool.clone(), order.id, "paid", Some("paid_at"), None)
-            .await
-            .unwrap();
+        crate::models::order::update_status(
+            &pool.clone(),
+            *order.id,
+            "paid",
+            Some("paid_at"),
+            None,
+        )
+        .await
+        .unwrap();
         svc.ship(
             &a,
-            &order.document_id,
+            *order.id,
             &ShipOrderRequest {
                 tracking_no: Some("TRK001".into()),
                 carrier: Some("FedEx".into()),
@@ -941,7 +924,7 @@ mod tests {
         .await
         .unwrap();
 
-        let found = crate::models::order::find_by_id(&pool, order.id, None)
+        let found = crate::models::order::find_by_id(&pool, *order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -960,7 +943,7 @@ mod tests {
         let err = svc
             .ship(
                 &a,
-                &order.document_id,
+                *order.id,
                 &ShipOrderRequest {
                     tracking_no: None,
                     carrier: None,
@@ -978,17 +961,15 @@ mod tests {
         let a = auth(None);
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        crate::models::order::update_status(&pool, order.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, *order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
-        crate::models::order::update_shipped(&pool, order.id, Some("TRK"), Some("UPS"), None)
+        crate::models::order::update_shipped(&pool, *order.id, Some("TRK"), Some("UPS"), None)
             .await
             .unwrap();
 
-        svc.confirm_receipt(&a, &order.document_id, uid)
-            .await
-            .unwrap();
-        let found = crate::models::order::find_by_id(&pool, order.id, None)
+        svc.confirm_receipt(&a, *order.id, uid).await.unwrap();
+        let found = crate::models::order::find_by_id(&pool, *order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -1003,17 +984,14 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        crate::models::order::update_status(&pool, order.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, *order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
-        crate::models::order::update_shipped(&pool, order.id, Some("TRK"), Some("UPS"), None)
+        crate::models::order::update_shipped(&pool, *order.id, Some("TRK"), Some("UPS"), None)
             .await
             .unwrap();
 
-        let err = svc
-            .confirm_receipt(&a, &order.document_id, 999)
-            .await
-            .unwrap_err();
+        let err = svc.confirm_receipt(&a, *order.id, 999).await.unwrap_err();
         assert!(matches!(err, AppError::Forbidden));
     }
 
@@ -1024,10 +1002,7 @@ mod tests {
         let a = auth(None);
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let err = svc
-            .confirm_receipt(&a, &order.document_id, uid)
-            .await
-            .unwrap_err();
+        let err = svc.confirm_receipt(&a, *order.id, uid).await.unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "only_shipped_can_confirm"));
     }
 
@@ -1038,12 +1013,12 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        crate::models::order::update_status(&pool, order.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, *order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
-        svc.refund(&a, &order.document_id).await.unwrap();
+        svc.refund(&a, *order.id).await.unwrap();
 
-        let found = crate::models::order::find_by_id(&pool, order.id, None)
+        let found = crate::models::order::find_by_id(&pool, *order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -1058,15 +1033,15 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        crate::models::order::update_status(&pool, order.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, *order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
-        crate::models::order::update_shipped(&pool, order.id, Some("TRK"), None, None)
+        crate::models::order::update_shipped(&pool, *order.id, Some("TRK"), None, None)
             .await
             .unwrap();
-        svc.refund(&a, &order.document_id).await.unwrap();
+        svc.refund(&a, *order.id).await.unwrap();
 
-        let found = crate::models::order::find_by_id(&pool, order.id, None)
+        let found = crate::models::order::find_by_id(&pool, *order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -1080,7 +1055,7 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let err = svc.refund(&a, &order.document_id).await.unwrap_err();
+        let err = svc.refund(&a, *order.id).await.unwrap_err();
         assert!(
             matches!(err, AppError::BadRequest(ref s) if s == "only_paid_or_shipped_can_refund")
         );
@@ -1093,7 +1068,7 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let (found_order, items) = svc.get(&a, &order.document_id).await.unwrap();
+        let (found_order, items) = svc.get(&a, *order.id).await.unwrap();
         assert_eq!(found_order.id, order.id);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Widget");
@@ -1104,7 +1079,7 @@ mod tests {
         let pool = setup_pool().await;
         let svc = make_service(pool);
         let a = auth(None);
-        assert!(svc.get(&a, "nonexistent").await.is_err());
+        assert!(svc.get(&a, 0).await.is_err());
     }
 
     #[tokio::test]
@@ -1116,7 +1091,7 @@ mod tests {
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
         for _ in 0..3 {
-            svc.create(&a, uid, make_create_req(&prod.document_id, 1))
+            svc.create(&a, uid, make_create_req(&prod.id.to_string(), 1))
                 .await
                 .unwrap();
         }
@@ -1134,7 +1109,7 @@ mod tests {
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
-        svc.create(&a, uid, make_create_req(&prod.document_id, 1))
+        svc.create(&a, uid, make_create_req(&prod.id.to_string(), 1))
             .await
             .unwrap();
 
@@ -1150,10 +1125,10 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        svc.update_admin_remark(&a, &order.document_id, "verified")
+        svc.update_admin_remark(&a, *order.id, "verified")
             .await
             .unwrap();
-        let found = crate::models::order::find_by_id(&pool, order.id, None)
+        let found = crate::models::order::find_by_id(&pool, *order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -1169,22 +1144,22 @@ mod tests {
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
         let (o1, _) = svc
-            .create(&a, uid, make_create_req(&prod.document_id, 1))
+            .create(&a, uid, make_create_req(&prod.id.to_string(), 1))
             .await
             .unwrap();
 
         let (_o2, _) = svc
-            .create(&a, uid, make_create_req(&prod.document_id, 2))
+            .create(&a, uid, make_create_req(&prod.id.to_string(), 2))
             .await
             .unwrap();
 
-        crate::models::order::update_status(&pool, o1.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, *o1.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
-        crate::models::order::update_status(&pool, o1.id, "shipped", None, None)
+        crate::models::order::update_status(&pool, *o1.id, "shipped", None, None)
             .await
             .unwrap();
-        crate::models::order::update_status(&pool, o1.id, "completed", Some("completed_at"), None)
+        crate::models::order::update_status(&pool, *o1.id, "completed", Some("completed_at"), None)
             .await
             .unwrap();
 
@@ -1202,16 +1177,16 @@ mod tests {
         let a = auth(None);
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let (o, items) = svc.get(&a, &order.document_id).await.unwrap();
+        let (o, items) = svc.get(&a, *order.id).await.unwrap();
         assert_eq!(o.status, OrderStatus::Pending);
         assert_eq!(items.len(), 1);
 
-        let paid = svc.mark_paid(&a, &order.document_id).await.unwrap();
+        let paid = svc.mark_paid(&a, *order.id).await.unwrap();
         assert_eq!(paid.status, OrderStatus::Paid);
 
         svc.ship(
             &a,
-            &order.document_id,
+            *order.id,
             &ShipOrderRequest {
                 tracking_no: Some("TRK123".into()),
                 carrier: Some("DHL".into()),
@@ -1220,11 +1195,9 @@ mod tests {
         .await
         .unwrap();
 
-        svc.confirm_receipt(&a, &order.document_id, uid)
-            .await
-            .unwrap();
+        svc.confirm_receipt(&a, *order.id, uid).await.unwrap();
 
-        let (final_order, _) = svc.get(&a, &order.document_id).await.unwrap();
+        let (final_order, _) = svc.get(&a, *order.id).await.unwrap();
         assert_eq!(final_order.status, OrderStatus::Completed);
         assert!(final_order.paid_at.is_some());
         assert!(final_order.completed_at.is_some());

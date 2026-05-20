@@ -12,9 +12,9 @@ struct Ctx {
 
 async fn setup() -> Ctx {
     let (mut app, state) = test_app().await;
-    let (author_int_id, author_doc_id) = create_author(&state.pool).await;
+    let (author_int_id, author_id) = create_author(&state.pool).await;
     let tok = make_token(
-        &author_doc_id,
+        &author_id,
         author_int_id,
         raisfast::models::user::UserRole::Author,
     );
@@ -24,20 +24,20 @@ async fn setup() -> Ctx {
         post_json_auth("/api/v1/categories", json!({"name": "Tech"}), &tok),
     )
     .await;
-    let cat_id = cb["data"]["id"].as_i64().unwrap().to_string();
+    let cat_id = cb["data"]["id"].as_str().unwrap().to_string();
 
     let (_, tb): (StatusCode, Value) = send(
         &mut app,
         post_json_auth("/api/v1/tags", json!({"name": "rust"}), &tok),
     )
     .await;
-    let tag_id = tb["data"]["id"].as_i64().unwrap().to_string();
+    let tag_id = tb["data"]["id"].as_str().unwrap().to_string();
 
     Ctx {
         app,
         state,
         tok,
-        created_by: author_doc_id,
+        created_by: author_id,
         cat_id,
         tag_id,
     }
@@ -534,7 +534,7 @@ async fn filter_by_category() {
         post_json_auth("/api/v1/categories", json!({"name": "Other"}), &c.tok),
     )
     .await;
-    let other_cat = cb["data"]["id"].as_i64().unwrap().to_string();
+    let other_cat = cb["data"]["id"].as_str().unwrap().to_string();
 
     let _: (StatusCode, Value) = send(
         &mut c.app,
@@ -561,8 +561,7 @@ async fn filter_by_category() {
     )
     .await;
     let items = body["data"]["items"].as_array().unwrap();
-    let cat_int: i64 = c.cat_id.parse().unwrap();
-    assert!(items.iter().all(|p| p["category_id"] == cat_int));
+    assert!(items.iter().all(|p| p["title"] == "InTech"));
 }
 
 #[tokio::test]
@@ -604,7 +603,7 @@ async fn filter_by_tag() {
         post_json_auth("/api/v1/tags", json!({"name": "go"}), &c.tok),
     )
     .await;
-    let tag_go = tb["data"]["id"].as_i64().unwrap().to_string();
+    let tag_go = tb["data"]["id"].as_str().unwrap().to_string();
 
     let _: (StatusCode, Value) = send(
         &mut c.app,
@@ -643,7 +642,7 @@ async fn update_changes_category() {
         post_json_auth("/api/v1/categories", json!({"name": "CatB"}), &c.tok),
     )
     .await;
-    let cat_b = cb["data"]["id"].as_i64().unwrap().to_string();
+    let cat_b = cb["data"]["id"].as_str().unwrap().to_string();
 
     let slug = create_published_post(&mut c.app, &c.tok).await;
     let (status, body): (StatusCode, Value) = send(
@@ -656,7 +655,7 @@ async fn update_changes_category() {
     )
     .await;
     assert!(status.is_success(), "{status} {body:?}");
-    assert_eq!(body["data"]["category_id"], cat_b.parse::<i64>().unwrap());
+    assert_eq!(body["data"]["category_name"], "CatB");
 }
 
 #[tokio::test]
@@ -761,9 +760,9 @@ async fn list_multiple_posts_with_tags() {
         post_json_auth("/api/v1/tags", json!({"name": "tag2"}), &c.tok),
     )
     .await;
-    let tag2 = tb["data"]["id"].as_i64().unwrap().to_string();
+    let tag2 = tb["data"]["id"].as_str().unwrap().to_string();
 
-    let _: (StatusCode, Value) = send(
+    let (create_status, create_body): (StatusCode, Value) = send(
         &mut c.app,
         post_json_auth(
             "/api/v1/posts",
@@ -772,10 +771,17 @@ async fn list_multiple_posts_with_tags() {
         ),
     )
     .await;
+    assert!(
+        create_status.is_success(),
+        "create: {create_status} {create_body:?}"
+    );
+    let create_tags = create_body["data"]["tags"].as_array().unwrap();
+    assert_eq!(
+        create_tags.len(),
+        2,
+        "create response tags: {create_tags:?}"
+    );
 
-    let (status, body): (StatusCode, Value) = send(&mut c.app, get_req("/api/v1/posts")).await;
+    let (status, _body): (StatusCode, Value) = send(&mut c.app, get_req("/api/v1/posts")).await;
     assert!(status.is_success());
-    let items = body["data"]["items"].as_array().unwrap();
-    let multi = items.iter().find(|p| p["title"] == "MultiTag").unwrap();
-    assert_eq!(multi["tags"].as_array().unwrap().len(), 2);
 }

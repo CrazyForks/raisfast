@@ -61,10 +61,7 @@ impl WorkerRunner {
                 Ok(jobs) => {
                     for job in &jobs {
                         if let Err(e) = self.execute(job).await {
-                            tracing::error!(
-                                "worker-{worker_id} job {} error: {e}",
-                                job.document_id
-                            );
+                            tracing::error!("worker-{worker_id} job {} error: {e}", job.id);
                         }
                     }
                 }
@@ -81,7 +78,7 @@ impl WorkerRunner {
 
         tracing::debug!(
             "executing job {} type={} attempt={}/{}",
-            job.document_id,
+            job.id,
             job_type,
             job.attempts,
             job.max_attempts,
@@ -94,20 +91,18 @@ impl WorkerRunner {
             dispatcher.dispatch(&job.job).await
         } else {
             tracing::warn!("no handler for job type '{job_type}', marking dead");
-            self.queue
-                .dead(&job.document_id, "no handler registered")
-                .await?;
+            self.queue.dead(&job.id, "no handler registered").await?;
             return Ok(());
         };
 
         match result {
-            Ok(()) => self.queue.complete(&job.document_id).await,
+            Ok(()) => self.queue.complete(&job.id).await,
             Err(e) => {
                 let err_msg = format!("{e}");
                 if job.attempts >= job.max_attempts {
-                    self.queue.dead(&job.document_id, &err_msg).await
+                    self.queue.dead(&job.id, &err_msg).await
                 } else {
-                    self.queue.fail(&job.document_id, &err_msg).await
+                    self.queue.fail(&job.id, &err_msg).await
                 }
             }
         }

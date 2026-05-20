@@ -166,7 +166,7 @@ pub async fn save_file(
     let media = media::create(
         pool,
         &CreateMediaCmd {
-            user_id: user.id,
+            user_id: *user.id,
             filename: filename.to_string(),
             filepath: key.clone(),
             mimetype: content_type.to_string(),
@@ -212,7 +212,7 @@ pub async fn list(
     let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
-    media::find_all(pool, user.id, page, page_size, auth.tenant_id()).await
+    media::find_all(pool, *user.id, page, page_size, auth.tenant_id()).await
 }
 
 pub async fn admin_list(
@@ -231,7 +231,7 @@ pub async fn admin_delete_media(
     auth: &AuthUser,
 ) -> AppResult<()> {
     let sql = format!(
-        "SELECT id FROM media WHERE document_id = {}{}",
+        "SELECT id FROM media WHERE id = {}{}",
         crate::db::dialect::ph(1),
         crate::db::tenant::tenant_filter_ph(auth.tenant_id(), 2)
     );
@@ -275,7 +275,7 @@ pub async fn delete_media(
         .ok_or(AppError::Unauthorized)?;
 
     let sql2 = format!(
-        "SELECT id FROM media WHERE document_id = {}{}",
+        "SELECT id FROM media WHERE id = {}{}",
         crate::db::dialect::ph(1),
         crate::db::tenant::tenant_filter_ph(auth.tenant_id(), 2)
     );
@@ -313,7 +313,7 @@ pub async fn stats(pool: &crate::db::Pool, auth: &AuthUser) -> AppResult<media::
     let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
-    media::stats(pool, user.id, auth.tenant_id()).await
+    media::stats(pool, *user.id, auth.tenant_id()).await
 }
 
 /// Validate whether the file's actual content magic bytes match the declared Content-Type.

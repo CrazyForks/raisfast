@@ -31,7 +31,6 @@ use crate::models::user_credential::AuthType;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     pub sub: String,
-    pub iid: i64,
     pub role: UserRole,
     #[serde(default = "default_tenant_id")]
     pub tenant_id: String,
@@ -104,8 +103,7 @@ pub fn verify_password(password: &str, hash: &str) -> AppResult<bool> {
 
 /// Generate an HS256-signed JWT access token.
 pub(crate) fn generate_access_token_internal(
-    user_id: &str,
-    user_int_id: i64,
+    user_id: i64,
     role: UserRole,
     tenant_id: &str,
     secret: &str,
@@ -116,7 +114,6 @@ pub(crate) fn generate_access_token_internal(
     let exp = (now.timestamp() as usize) + (expires_in as usize);
     let claims = Claims {
         sub: user_id.to_string(),
-        iid: user_int_id,
         role,
         tenant_id: tenant_id.to_string(),
         exp,
@@ -154,10 +151,9 @@ pub(crate) fn generate_refresh_token_string_internal() -> AppResult<String> {
 /// Test helper: generate a JWT token using a fixed secret.
 #[allow(clippy::doc_lazy_continuation)]
 #[must_use]
-pub fn generate_access_token_for_test(user_id: &str, user_int_id: i64, role: UserRole) -> String {
+pub fn generate_access_token_for_test(user_id: i64, role: UserRole) -> String {
     generate_access_token_internal(
         user_id,
-        user_int_id,
         role,
         crate::constants::DEFAULT_TENANT,
         "test-secret-key-at-least-32-characters-long",
@@ -192,7 +188,7 @@ pub async fn register(
     validate_password_strength(&req.password)?;
     let password_hash = hash_password(&req.password)?;
     let cred_data = crate::models::user_credential::wrap_password_hash(&password_hash);
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     let registered_via = crate::models::user::RegisteredVia::Email;
 
     let user = in_transaction!(pool, tx, {
@@ -200,7 +196,7 @@ pub async fn register(
             &mut *tx,
             "users",
             [
-                "document_id" => &document_id,
+                "id" => id,
                 "username" => &req.username,
                 "created_at" => now,
                 "updated_at" => now,
@@ -213,10 +209,10 @@ pub async fn register(
 
         let filter = crate::db::tenant::tenant_filter_ph(tenant_id, 2);
         let sql = format!(
-            "SELECT * FROM users WHERE document_id = {}{filter}",
+            "SELECT * FROM users WHERE id = {}{filter}",
             crate::db::dialect::ph(1)
         );
-        let mut q = sqlx::query_as::<_, crate::models::user::User>(&sql).bind(&document_id);
+        let mut q = sqlx::query_as::<_, crate::models::user::User>(&sql).bind(id);
         if let Some(tid) = tenant_id {
             q = q.bind(tid);
         }
@@ -224,10 +220,10 @@ pub async fn register(
             AppError::Internal(anyhow::anyhow!("failed to fetch newly created user"))
         })?;
 
-        let (cred_doc_id, cred_now) = crate::utils::id::new_document_id_and_timestamp();
+        let (cred_id, cred_now) = crate::utils::id::new_id_and_timestamp();
         let verified = if !require_email_verification { 1 } else { 0 };
         let cred_sql = format!(
-            "INSERT INTO user_credentials (document_id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
+            "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
             crate::db::dialect::ph(1),
             crate::db::dialect::ph(2),
             crate::db::dialect::ph(3),
@@ -238,7 +234,7 @@ pub async fn register(
             crate::db::dialect::ph(8)
         );
         sqlx::query(&cred_sql)
-            .bind(&cred_doc_id)
+            .bind(cred_id)
             .bind(user.id)
             .bind(AuthType::Email)
             .bind(&req.email)
@@ -258,7 +254,7 @@ pub async fn register(
         && let Err(e) = crate::services::email_verification::trigger_email_verification(
             pool,
             aspect_engine,
-            user.id,
+            *user.id,
             &req.email,
         )
         .await
@@ -304,7 +300,7 @@ pub async fn login(
         return Err(AppError::BadRequest("email_not_verified".into()));
     }
 
-    let user = crate::models::user::find_by_pk(pool, cred.user_id, tenant_id)
+    let user = crate::models::user::find_by_id(pool, *cred.user_id, tenant_id)
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
 
@@ -313,7 +309,8 @@ pub async fn login(
     }
 
     if let Some(ref tid) = user.tenant_id
-        && let Ok(Some(tenant)) = crate::models::tenant::find_by_id(pool, tid).await
+        && let Ok(tid_int) = tid.parse::<i64>()
+        && let Ok(Some(tenant)) = crate::models::tenant::find_by_id(pool, tid_int).await
         && tenant.status != crate::models::tenant::TenantStatus::Active
     {
         return Err(AppError::BadRequest("tenant_disabled".into()));
@@ -321,8 +318,7 @@ pub async fn login(
 
     let user_role = user.role;
     let access_token = generate_access_token_internal(
-        &user.document_id,
-        user.id,
+        *user.id,
         user_role,
         user.tenant_id
             .as_deref()
@@ -335,7 +331,7 @@ pub async fn login(
     let expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
     crate::models::refresh_token::create_token(
         pool,
-        user.id,
+        *user.id,
         &refresh_token_str,
         &expires_at.to_rfc3339(),
     )
@@ -370,7 +366,7 @@ pub async fn refresh(
     raisfast_derive::check_schema!(
         "refresh_tokens",
         "token",
-        "document_id",
+        "id",
         "user_id",
         "expires_at",
         "created_at"
@@ -384,14 +380,13 @@ pub async fn refresh(
         return Err(AppError::Unauthorized);
     }
 
-    let user = crate::models::user::find_by_pk(pool, stored.user_id, tenant_id)
+    let user = crate::models::user::find_by_id(pool, *stored.user_id, tenant_id)
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
 
     let user_role = user.role;
     let access_token = generate_access_token_internal(
-        &user.document_id,
-        user.id,
+        *user.id,
         user_role,
         user.tenant_id
             .as_deref()
@@ -402,7 +397,7 @@ pub async fn refresh(
     let new_refresh_token = generate_refresh_token_string_internal()?;
     let new_expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
     let new_expires_str = new_expires_at.to_rfc3339();
-    let new_id = uuid::Uuid::now_v7().to_string();
+    let new_id = crate::utils::id::new_id();
     let now = crate::utils::tz::now_str();
 
     in_transaction!(pool, tx, {
@@ -415,14 +410,14 @@ pub async fn refresh(
         .await?;
 
         sqlx::query(&format!(
-            "INSERT INTO refresh_tokens (document_id, user_id, token, expires_at, created_at) VALUES ({}, {}, {}, {}, {})",
+            "INSERT INTO refresh_tokens (id, user_id, token, expires_at, created_at) VALUES ({}, {}, {}, {}, {})",
             crate::db::dialect::ph(1),
             crate::db::dialect::ph(2),
             crate::db::dialect::ph(3),
             crate::db::dialect::ph(4),
             crate::db::dialect::ph(5)
         ))
-        .bind(&new_id)
+        .bind(new_id)
         .bind(user.id)
         .bind(&new_refresh_token)
         .bind(&new_expires_str)
@@ -444,11 +439,11 @@ pub async fn refresh(
 ///
 /// Deletes all refresh tokens for the user, invalidating sessions across all devices.
 pub async fn logout(pool: &crate::db::Pool, auth: &AuthUser) -> AppResult<()> {
-    let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
+    let uid = auth.ensure_authenticated()?;
+    let user = crate::models::user::find_by_id(pool, uid, auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
-    crate::models::refresh_token::delete_by_user(pool, user.id).await
+    crate::models::refresh_token::delete_by_user(pool, *user.id).await
 }
 
 /// Change password.
@@ -461,13 +456,13 @@ pub async fn change_password(
     req: UpdatePasswordRequest,
 ) -> AppResult<()> {
     raisfast_derive::check_schema!("refresh_tokens", "user_id");
-    let user_id = auth.ensure_authenticated()?;
+    let uid = auth.ensure_authenticated()?;
     let tenant_id = auth.tenant_id();
-    let _user = crate::models::user::find_by_id(pool, user_id, tenant_id)
+    let _user = crate::models::user::find_by_id(pool, uid, tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
 
-    let creds = crate::models::user_credential::find_by_user_id(pool, _user.id).await?;
+    let creds = crate::models::user_credential::find_by_user_id(pool, *_user.id).await?;
     let password_cred = creds
         .iter()
         .find(|c| c.auth_type == crate::models::user_credential::AuthType::Email)
@@ -484,7 +479,7 @@ pub async fn change_password(
     let new_hash = hash_password(&req.new_password)?;
     crate::models::user_credential::update_credential_data(
         pool,
-        password_cred.id,
+        *password_cred.id,
         &crate::models::user_credential::wrap_password_hash(&new_hash),
     )
     .await?;
@@ -506,8 +501,8 @@ pub async fn bind_email_credential(
     email: &str,
     password: &str,
 ) -> AppResult<()> {
-    let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
+    let uid = auth.ensure_authenticated()?;
+    let user = crate::models::user::find_by_id(pool, uid, auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -527,7 +522,7 @@ pub async fn bind_email_credential(
 
     crate::models::user_credential::create(
         pool,
-        user.id,
+        *user.id,
         AuthType::Email,
         email,
         &crate::models::user_credential::wrap_password_hash(&hash),
@@ -544,8 +539,8 @@ pub async fn delete_credential(
     auth: &AuthUser,
     credential_id: i64,
 ) -> AppResult<()> {
-    let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
+    let uid = auth.ensure_authenticated()?;
+    let user = crate::models::user::find_by_id(pool, uid, auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -557,7 +552,7 @@ pub async fn delete_credential(
         return Err(AppError::Forbidden);
     }
 
-    let count = crate::models::user_credential::count_by_user(pool, user.id).await?;
+    let count = crate::models::user_credential::count_by_user(pool, *user.id).await?;
     if count <= 1 {
         return Err(AppError::BadRequest("cannot_remove_last_credential".into()));
     }
@@ -571,12 +566,12 @@ pub async fn list_credentials(
     pool: &crate::db::Pool,
     auth: &AuthUser,
 ) -> AppResult<Vec<crate::models::user_credential::UserCredential>> {
-    let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
+    let uid = auth.ensure_authenticated()?;
+    let user = crate::models::user::find_by_id(pool, uid, auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
 
-    crate::models::user_credential::find_by_user_id(pool, user.id).await
+    crate::models::user_credential::find_by_user_id(pool, *user.id).await
 }
 
 #[cfg(test)]
@@ -623,25 +618,17 @@ mod tests {
     #[test]
     fn generate_and_verify_token() {
         let token =
-            generate_access_token_internal("user-1", 1, UserRole::Admin, "default", "secret", 900)
-                .unwrap();
+            generate_access_token_internal(1, UserRole::Admin, "default", "secret", 900).unwrap();
         let key = jsonwebtoken::DecodingKey::from_secret("secret".as_bytes());
         let claims = verify_token(&token, &key).unwrap();
-        assert_eq!(claims.sub, "user-1");
+        assert_eq!(claims.sub, "1");
         assert_eq!(claims.role, UserRole::Admin);
     }
 
     #[test]
     fn verify_token_rejects_wrong_secret() {
-        let token = generate_access_token_internal(
-            "user-1",
-            1,
-            UserRole::Admin,
-            "default",
-            "secret-a",
-            900,
-        )
-        .unwrap();
+        let token =
+            generate_access_token_internal(1, UserRole::Admin, "default", "secret-a", 900).unwrap();
         let key = jsonwebtoken::DecodingKey::from_secret("secret-b".as_bytes());
         assert!(verify_token(&token, &key).is_err());
     }
@@ -650,8 +637,7 @@ mod tests {
     fn verify_token_rejects_expired() {
         let now = chrono::Utc::now();
         let claims = Claims {
-            sub: "user-1".into(),
-            iid: 1,
+            sub: "1".into(),
             role: UserRole::Admin,
             tenant_id: "default".to_string(),
             exp: (now - chrono::Duration::seconds(120)).timestamp() as usize,
@@ -669,7 +655,7 @@ mod tests {
 
     #[test]
     fn generate_test_token_is_valid() {
-        let token = generate_access_token_for_test("user-1", 1, UserRole::Author);
+        let token = generate_access_token_for_test(1, UserRole::Author);
         assert!(token.len() > 20);
     }
 }

@@ -8,6 +8,7 @@ use sqlx::FromRow;
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
+use crate::utils::id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -21,8 +22,7 @@ define_enum!(
 #[cfg_attr(feature = "export-types", derive(TS))]
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
 pub struct Tenant {
-    pub id: i64,
-    pub document_id: String,
+    pub id: SnowflakeId,
     pub name: String,
     pub domain: Option<String>,
     pub config: String,
@@ -36,7 +36,6 @@ pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Tenant>> {
     raisfast_derive::check_schema!(
         "tenants",
         "id",
-        "document_id",
         "name",
         "domain",
         "config",
@@ -48,10 +47,9 @@ pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Tenant>> {
     Ok(tenants)
 }
 
-/// Find a tenant by document_id
-pub async fn find_by_id(pool: &crate::db::Pool, document_id: &str) -> AppResult<Option<Tenant>> {
-    let tenant =
-        raisfast_derive::crud_find!(pool, "tenants", Tenant, "document_id" => document_id)?;
+/// Find a tenant by integer primary key
+pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<Option<Tenant>> {
+    let tenant = raisfast_derive::crud_find!(pool, "tenants", Tenant, "id" => id)?;
     Ok(tenant)
 }
 
@@ -64,17 +62,16 @@ pub async fn find_by_domain(pool: &crate::db::Pool, domain: &str) -> AppResult<O
 /// Create a tenant
 pub async fn create(
     pool: &crate::db::Pool,
-    document_id: &str,
     name: &str,
     domain: Option<&str>,
     config: &str,
 ) -> AppResult<Tenant> {
-    let now = crate::utils::tz::now_utc();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     raisfast_derive::crud_insert!(
         pool,
         "tenants",
         [
-            "document_id" => document_id,
+            "id" => id,
             "name" => name,
             "domain" => domain,
             "config" => config,
@@ -85,7 +82,7 @@ pub async fn create(
     )
     .map_err(|e| AppError::Conflict(format!("create tenant failed: {e}")))?;
 
-    find_by_id(pool, document_id)
+    find_by_id(pool, id)
         .await?
         .ok_or_else(|| AppError::not_found("tenant"))
 }
@@ -93,7 +90,7 @@ pub async fn create(
 /// Update a tenant
 pub async fn update(
     pool: &crate::db::Pool,
-    document_id: &str,
+    id: i64,
     name: Option<&str>,
     domain: Option<&str>,
     config: Option<&str>,
@@ -104,17 +101,17 @@ pub async fn update(
         pool, "tenants",
         bind: ["updated_at" => now],
         optional: ["name" => name, "domain" => domain, "config" => config, "status" => status],
-        where: "document_id" => document_id
+        where: "id" => id
     )?;
 
-    find_by_id(pool, document_id)
+    find_by_id(pool, id)
         .await?
-        .ok_or_else(|| AppError::not_found(&format!("tenant/{document_id}")))
+        .ok_or_else(|| AppError::not_found(&format!("tenant/{id}")))
 }
 
 /// Delete a tenant
-pub async fn delete(pool: &crate::db::Pool, document_id: &str) -> AppResult<()> {
-    raisfast_derive::crud_delete!(pool, "tenants", "document_id" => document_id)?;
+pub async fn delete(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
+    raisfast_derive::crud_delete!(pool, "tenants", "id" => id)?;
     Ok(())
 }
 
@@ -134,37 +131,27 @@ mod tests {
     #[tokio::test]
     async fn create_and_find_by_id() {
         let pool = setup_pool().await;
-        let doc_id = "tenant-001";
-        let row = create(&pool, doc_id, "Test Tenant", Some("test.example.com"), "{}")
+        let row = create(&pool, "Test Tenant", Some("test.example.com"), "{}")
             .await
             .unwrap();
-        assert_eq!(row.document_id, doc_id);
         assert_eq!(row.name, "Test Tenant");
         assert_eq!(row.domain.unwrap(), "test.example.com");
 
-        let found = find_by_id(&pool, doc_id).await.unwrap().unwrap();
+        let found = find_by_id(&pool, *row.id).await.unwrap().unwrap();
         assert_eq!(found.id, row.id);
-        assert_eq!(found.document_id, doc_id);
     }
 
     #[tokio::test]
     async fn find_by_domain_returns_match() {
         let pool = setup_pool().await;
-        create(
-            &pool,
-            "tenant-002",
-            "Dom Tenant",
-            Some("dom.example.com"),
-            "{}",
-        )
-        .await
-        .unwrap();
+        create(&pool, "Dom Tenant", Some("dom.example.com"), "{}")
+            .await
+            .unwrap();
 
         let found = find_by_domain(&pool, "dom.example.com")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(found.document_id, "tenant-002");
         assert_eq!(found.name, "Dom Tenant");
 
         let missing = find_by_domain(&pool, "no.such.domain").await.unwrap();
@@ -174,15 +161,9 @@ mod tests {
     #[tokio::test]
     async fn find_all_returns_all() {
         let pool = setup_pool().await;
-        create(&pool, "tenant-a", "Alpha", None, "{}")
-            .await
-            .unwrap();
-        create(&pool, "tenant-b", "Bravo", None, "{}")
-            .await
-            .unwrap();
-        create(&pool, "tenant-c", "Charlie", None, "{}")
-            .await
-            .unwrap();
+        create(&pool, "Alpha", None, "{}").await.unwrap();
+        create(&pool, "Bravo", None, "{}").await.unwrap();
+        create(&pool, "Charlie", None, "{}").await.unwrap();
 
         let all = find_all(&pool).await.unwrap();
         assert!(all.len() >= 3);
@@ -191,12 +172,11 @@ mod tests {
     #[tokio::test]
     async fn update_changes_name() {
         let pool = setup_pool().await;
-        let doc_id = "tenant-003";
-        create(&pool, doc_id, "Original", Some("orig.example.com"), "{}")
+        let row = create(&pool, "Original", Some("orig.example.com"), "{}")
             .await
             .unwrap();
 
-        let updated = update(&pool, doc_id, Some("Updated Name"), None, None, None)
+        let updated = update(&pool, *row.id, Some("Updated Name"), None, None, None)
             .await
             .unwrap();
         assert_eq!(updated.name, "Updated Name");
@@ -206,11 +186,10 @@ mod tests {
     #[tokio::test]
     async fn delete_removes_tenant() {
         let pool = setup_pool().await;
-        let doc_id = "tenant-004";
-        create(&pool, doc_id, "ToDelete", None, "{}").await.unwrap();
+        let row = create(&pool, "ToDelete", None, "{}").await.unwrap();
 
-        delete(&pool, doc_id).await.unwrap();
-        let found = find_by_id(&pool, doc_id).await.unwrap();
+        delete(&pool, *row.id).await.unwrap();
+        let found = find_by_id(&pool, *row.id).await.unwrap();
         assert!(found.is_none());
     }
 }

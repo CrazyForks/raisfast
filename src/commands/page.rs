@@ -24,6 +24,7 @@ pub struct CreatePageCmd {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdatePageCmd {
+    #[serde(serialize_with = "crate::utils::id::serialize_id_as_string")]
     pub id: i64,
     pub title: Option<String>,
     pub slug: Option<String>,

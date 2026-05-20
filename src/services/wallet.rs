@@ -12,6 +12,7 @@ use crate::models::wallet;
 use crate::models::wallet::WalletStatus;
 use crate::models::wallet_transaction::WalletTransaction;
 use crate::models::wallet_transaction::{WalletEntryType, WalletReferenceType, WalletTxType};
+use crate::utils::id::SnowflakeId;
 
 #[async_trait]
 pub trait WalletService: Send + Sync {
@@ -70,24 +71,24 @@ pub trait WalletService: Send + Sync {
         rows: Vec<WalletTransaction>,
     ) -> AppResult<Vec<crate::dto::WalletTransactionResponse>>;
 
-    async fn find_user_int_id(&self, user_doc_id: &str, tenant_id: Option<&str>) -> AppResult<i64>;
+    async fn find_user_int_id(&self, user_id: &str, tenant_id: Option<&str>) -> AppResult<i64>;
 
     async fn list_wallets_by_user(
         &self,
-        user_doc_id: &str,
+        user_id: &str,
         tenant_id: Option<&str>,
     ) -> AppResult<Vec<crate::models::wallet::Wallet>>;
 
     async fn get_wallet_by_currency(
         &self,
-        user_doc_id: &str,
+        user_id: &str,
         currency: &str,
         tenant_id: Option<&str>,
     ) -> AppResult<crate::models::wallet::Wallet>;
 
     async fn list_transactions_by_wallet(
         &self,
-        user_doc_id: &str,
+        user_id: &str,
         currency: &str,
         page: i64,
         page_size: i64,
@@ -96,7 +97,7 @@ pub trait WalletService: Send + Sync {
 
     async fn list_transactions_by_user(
         &self,
-        user_doc_id: &str,
+        user_id: &str,
         page: i64,
         page_size: i64,
         tenant_id: Option<&str>,
@@ -116,9 +117,9 @@ pub trait WalletService: Send + Sync {
         tenant_id: Option<&str>,
     ) -> AppResult<(Vec<WalletTransaction>, i64)>;
 
-    async fn find_tx_by_document_id(
+    async fn find_tx_by_id(
         &self,
-        tx_doc_id: &str,
+        tx_id: &str,
         tenant_id: Option<&str>,
     ) -> AppResult<WalletTransaction>;
 }
@@ -177,7 +178,7 @@ async fn tx_find_or_create(
 ) -> AppResult<wallet::Wallet> {
     raisfast_derive::check_schema!(
         "wallets",
-        "document_id",
+        "id",
         "user_id",
         "currency",
         "created_at",
@@ -196,9 +197,9 @@ async fn tx_find_or_create(
     {
         return Ok(w);
     }
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     let sql = format!(
-        "INSERT INTO wallets (document_id, user_id, currency, created_at, updated_at) VALUES ({}, {}, {}, {}, {})",
+        "INSERT INTO wallets (id, user_id, currency, created_at, updated_at) VALUES ({}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
@@ -206,7 +207,7 @@ async fn tx_find_or_create(
         ph(5)
     );
     let insert_result = sqlx::query(&sql)
-        .bind(&document_id)
+        .bind(id)
         .bind(user_id)
         .bind(currency)
         .bind(now)
@@ -216,9 +217,9 @@ async fn tx_find_or_create(
 
     match insert_result {
         Ok(_) => {
-            let sql = format!("SELECT * FROM wallets WHERE document_id = {}", ph(1));
+            let sql = format!("SELECT * FROM wallets WHERE id = {}", ph(1));
             sqlx::query_as::<_, wallet::Wallet>(&sql)
-                .bind(&document_id)
+                .bind(id)
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(Into::into)
@@ -343,7 +344,7 @@ async fn reverse_single_tx(
     original: &WalletTransaction,
     reversal_tx_no: &str,
 ) -> AppResult<WalletTransaction> {
-    let w = tx_find_wallet_by_id(tx, original.wallet_id)
+    let w = tx_find_wallet_by_id(tx, *original.wallet_id)
         .await?
         .ok_or_else(|| AppError::not_found("wallet"))?;
 
@@ -362,9 +363,9 @@ async fn reverse_single_tx(
         ));
     }
 
-    apply_wallet_delta(tx, w.id, w.version, delta, w.balance).await?;
+    apply_wallet_delta(tx, *w.id, w.version, delta, w.balance).await?;
 
-    let updated = tx_find_wallet_by_id(tx, w.id)
+    let updated = tx_find_wallet_by_id(tx, *w.id)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("wallet not found")))?;
 
@@ -375,15 +376,15 @@ async fn reverse_single_tx(
     };
     insert_tx(
         tx,
-        updated.id,
-        original.user_id,
+        *updated.id,
+        *original.user_id,
         entry_type,
         original.amount,
         updated.balance,
         WalletTxType::Refund,
         &original.currency,
         reversal_tx_no,
-        Some(original.id),
+        Some(*original.id),
         original.reference_type,
         original.reference_id.as_deref(),
         None,
@@ -426,15 +427,15 @@ pub async fn credit_wallet(
             return Err(AppError::BadRequest("wallet_frozen".into()));
         }
 
-        apply_wallet_delta(&mut tx, w.id, w.version, amount, w.balance).await?;
+        apply_wallet_delta(&mut tx, *w.id, w.version, amount, w.balance).await?;
 
-        let updated = tx_find_wallet_by_id(&mut tx, w.id)
+        let updated = tx_find_wallet_by_id(&mut tx, *w.id)
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("wallet not found after update")))?;
 
         insert_tx(
             &mut tx,
-            updated.id,
+            *updated.id,
             user_id,
             WalletEntryType::Credit,
             amount,
@@ -486,15 +487,15 @@ pub async fn debit_wallet(
             return Err(AppError::BadRequest("wallet_frozen".into()));
         }
 
-        apply_wallet_delta(&mut tx, w.id, w.version, -amount, w.balance).await?;
+        apply_wallet_delta(&mut tx, *w.id, w.version, -amount, w.balance).await?;
 
-        let updated = tx_find_wallet_by_id(&mut tx, w.id)
+        let updated = tx_find_wallet_by_id(&mut tx, *w.id)
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("wallet not found after update")))?;
 
         insert_tx(
             &mut tx,
-            updated.id,
+            *updated.id,
             user_id,
             WalletEntryType::Debit,
             amount,
@@ -570,7 +571,7 @@ pub async fn transfer(
 
         apply_wallet_delta(
             &mut tx,
-            from_wallet.id,
+            *from_wallet.id,
             from_wallet.version,
             -amount,
             from_wallet.balance,
@@ -578,23 +579,23 @@ pub async fn transfer(
         .await?;
         apply_wallet_delta(
             &mut tx,
-            to_wallet.id,
+            *to_wallet.id,
             to_wallet.version,
             amount,
             to_wallet.balance,
         )
         .await?;
 
-        let updated_from = tx_find_wallet_by_id(&mut tx, from_wallet.id)
+        let updated_from = tx_find_wallet_by_id(&mut tx, *from_wallet.id)
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("wallet not found")))?;
-        let updated_to = tx_find_wallet_by_id(&mut tx, to_wallet.id)
+        let updated_to = tx_find_wallet_by_id(&mut tx, *to_wallet.id)
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("wallet not found")))?;
 
         let out_tx = insert_tx(
             &mut tx,
-            updated_from.id,
+            *updated_from.id,
             from_user_id,
             WalletEntryType::Debit,
             amount,
@@ -605,7 +606,7 @@ pub async fn transfer(
             None,
             reference_type,
             reference_id,
-            Some(updated_to.id),
+            Some(*updated_to.id),
             metadata,
         )
         .await?;
@@ -613,7 +614,7 @@ pub async fn transfer(
         let in_no = format!("{transaction_no}_in");
         let in_tx = insert_tx(
             &mut tx,
-            updated_to.id,
+            *updated_to.id,
             to_user_id,
             WalletEntryType::Credit,
             amount,
@@ -624,7 +625,7 @@ pub async fn transfer(
             None,
             reference_type,
             reference_id,
-            Some(updated_from.id),
+            Some(*updated_from.id),
             metadata,
         )
         .await?;
@@ -683,7 +684,7 @@ pub async fn reverse_transaction(
                 .await?
                 .ok_or_else(|| AppError::Internal(anyhow::anyhow!("transfer pair not found")))?;
 
-            if tx_has_reversal_for(&mut tx, pair.id).await? {
+            if tx_has_reversal_for(&mut tx, *pair.id).await? {
                 return Err(AppError::BadRequest(
                     "transfer_pair_already_reversed".into(),
                 ));
@@ -717,7 +718,7 @@ async fn insert_tx(
     debug_assert!(balance_after >= 0, "balance_after must be non-negative");
     raisfast_derive::check_schema!(
         "wallet_transactions",
-        "document_id",
+        "id",
         "wallet_id",
         "user_id",
         "entry_type",
@@ -733,9 +734,9 @@ async fn insert_tx(
         "metadata",
         "created_at"
     );
-    let (document_id, now) = crate::utils::id::new_document_id_and_timestamp();
+    let (id, now) = crate::utils::id::new_id_and_timestamp();
     let sql = format!(
-        "INSERT INTO wallet_transactions (document_id, wallet_id, user_id, entry_type, amount, balance_after, tx_type, currency, transaction_no, related_tx_id, reference_type, reference_id, counterparty_wallet_id, metadata, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+        "INSERT INTO wallet_transactions (id, wallet_id, user_id, entry_type, amount, balance_after, tx_type, currency, transaction_no, related_tx_id, reference_type, reference_id, counterparty_wallet_id, metadata, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
         ph(1),
         ph(2),
         ph(3),
@@ -753,7 +754,7 @@ async fn insert_tx(
         ph(15)
     );
     sqlx::query(&sql)
-        .bind(&document_id)
+        .bind(id)
         .bind(wallet_id)
         .bind(user_id)
         .bind(entry_type)
@@ -771,12 +772,9 @@ async fn insert_tx(
         .execute(&mut *tx)
         .await?;
 
-    let sql = format!(
-        "SELECT * FROM wallet_transactions WHERE document_id = {}",
-        ph(1)
-    );
+    let sql = format!("SELECT * FROM wallet_transactions WHERE id = {}", ph(1));
     let row = sqlx::query_as::<_, WalletTransaction>(&sql)
-        .bind(&document_id)
+        .bind(id)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -785,12 +783,12 @@ async fn insert_tx(
 
 async fn enrich_related_id(
     pool: &crate::db::Pool,
-    related_id: Option<i64>,
+    related_id: Option<SnowflakeId>,
 ) -> AppResult<Option<String>> {
     if let Some(rid) = related_id
-        && let Some(related) = crate::models::wallet_transaction::find_tx_by_id(pool, rid).await?
+        && let Some(related) = crate::models::wallet_transaction::find_tx_by_id(pool, *rid).await?
     {
-        return Ok(Some(related.document_id));
+        return Ok(Some(related.id.to_string()));
     }
     Ok(None)
 }
@@ -799,28 +797,28 @@ pub async fn tx_to_response(
     pool: &crate::db::Pool,
     tx: WalletTransaction,
 ) -> AppResult<crate::dto::WalletTransactionResponse> {
-    let related_doc_id = enrich_related_id(pool, tx.related_tx_id).await?;
+    let related_id = enrich_related_id(pool, tx.related_tx_id).await?;
     let mut resp = crate::dto::WalletTransactionResponse::from_tx(tx)?;
-    resp.related_tx_id = related_doc_id;
+    resp.related_tx_id = related_id;
     Ok(resp)
 }
 
 pub async fn tx_list_to_response(
-    pool: &crate::db::Pool,
+    _pool: &crate::db::Pool,
     rows: Vec<WalletTransaction>,
 ) -> AppResult<Vec<crate::dto::WalletTransactionResponse>> {
-    let related_ids: Vec<i64> = rows.iter().filter_map(|r| r.related_tx_id).collect();
+    let related_ids: Vec<SnowflakeId> = rows.iter().filter_map(|r| r.related_tx_id).collect();
 
-    let doc_id_map =
-        crate::models::wallet_transaction::find_document_ids_by_ids(pool, &related_ids).await?;
+    let id_map: std::collections::HashMap<SnowflakeId, String> = related_ids
+        .into_iter()
+        .map(|id| (id, id.to_string()))
+        .collect();
 
     let mut responses = Vec::with_capacity(rows.len());
     for row in rows {
-        let related_doc_id = row
-            .related_tx_id
-            .and_then(|rid| doc_id_map.get(&rid).cloned());
+        let related_id = row.related_tx_id.and_then(|rid| id_map.get(&rid).cloned());
         let mut resp = crate::dto::WalletTransactionResponse::from_tx(row)?;
-        resp.related_tx_id = related_doc_id;
+        resp.related_tx_id = related_id;
         responses.push(resp);
     }
     Ok(responses)
@@ -941,29 +939,30 @@ impl WalletService for WalletServiceImpl {
         tx_list_to_response(&self.pool, rows).await
     }
 
-    async fn find_user_int_id(&self, user_doc_id: &str, tenant_id: Option<&str>) -> AppResult<i64> {
-        let user = crate::models::user::find_by_id(&self.pool, user_doc_id, tenant_id)
+    async fn find_user_int_id(&self, user_id: &str, tenant_id: Option<&str>) -> AppResult<i64> {
+        let uid: i64 = crate::utils::id::parse_id(user_id)?;
+        let user = crate::models::user::find_by_id(&self.pool, uid, tenant_id)
             .await?
             .ok_or_else(|| AppError::not_found("user"))?;
-        Ok(user.id)
+        Ok(*user.id)
     }
 
     async fn list_wallets_by_user(
         &self,
-        user_doc_id: &str,
+        user_id: &str,
         tenant_id: Option<&str>,
     ) -> AppResult<Vec<crate::models::wallet::Wallet>> {
-        let user_id = self.find_user_int_id(user_doc_id, tenant_id).await?;
+        let user_id = self.find_user_int_id(user_id, tenant_id).await?;
         crate::models::wallet::find_by_user(&self.pool, user_id).await
     }
 
     async fn get_wallet_by_currency(
         &self,
-        user_doc_id: &str,
+        user_id: &str,
         currency: &str,
         tenant_id: Option<&str>,
     ) -> AppResult<crate::models::wallet::Wallet> {
-        let user_id = self.find_user_int_id(user_doc_id, tenant_id).await?;
+        let user_id = self.find_user_int_id(user_id, tenant_id).await?;
         crate::models::wallet::find_by_user_and_currency(&self.pool, user_id, currency)
             .await?
             .ok_or_else(|| AppError::not_found("wallet"))
@@ -971,30 +970,30 @@ impl WalletService for WalletServiceImpl {
 
     async fn list_transactions_by_wallet(
         &self,
-        user_doc_id: &str,
+        user_id: &str,
         currency: &str,
         page: i64,
         page_size: i64,
         tenant_id: Option<&str>,
     ) -> AppResult<(Vec<WalletTransaction>, i64)> {
-        let user_id = self.find_user_int_id(user_doc_id, tenant_id).await?;
+        let user_id = self.find_user_int_id(user_id, tenant_id).await?;
         let w = crate::models::wallet::find_by_user_and_currency(&self.pool, user_id, currency)
             .await?
             .ok_or_else(|| AppError::not_found("wallet"))?;
         crate::models::wallet_transaction::find_transactions_by_wallet(
-            &self.pool, w.id, page, page_size,
+            &self.pool, *w.id, page, page_size,
         )
         .await
     }
 
     async fn list_transactions_by_user(
         &self,
-        user_doc_id: &str,
+        user_id: &str,
         page: i64,
         page_size: i64,
         tenant_id: Option<&str>,
     ) -> AppResult<(Vec<WalletTransaction>, i64)> {
-        let user_id = self.find_user_int_id(user_doc_id, tenant_id).await?;
+        let user_id = self.find_user_int_id(user_id, tenant_id).await?;
         crate::models::wallet_transaction::find_transactions_by_user(
             &self.pool, user_id, page, page_size,
         )
@@ -1022,21 +1021,21 @@ impl WalletService for WalletServiceImpl {
         .await
     }
 
-    async fn find_tx_by_document_id(
+    async fn find_tx_by_id(
         &self,
-        tx_doc_id: &str,
+        tx_id: &str,
         tenant_id: Option<&str>,
     ) -> AppResult<WalletTransaction> {
-        let tx = crate::models::wallet_transaction::find_tx_by_document_id(&self.pool, tx_doc_id)
+        let id: i64 = crate::utils::id::parse_id(tx_id)?;
+        let tx = crate::models::wallet_transaction::find_tx_by_id(&self.pool, id)
             .await?
             .ok_or_else(|| AppError::not_found("transaction"))?;
         if let Some(tid) = tenant_id {
-            let wallet = crate::models::wallet::find_by_id(&self.pool, tx.wallet_id)
+            let wallet = crate::models::wallet::find_by_id(&self.pool, *tx.wallet_id)
                 .await?
                 .ok_or_else(|| AppError::not_found("wallet"))?;
             let user =
-                crate::models::user::find_by_id(&self.pool, &wallet.user_id.to_string(), Some(tid))
-                    .await?;
+                crate::models::user::find_by_id(&self.pool, *wallet.user_id, Some(tid)).await?;
             if user.is_none() {
                 return Err(AppError::not_found("transaction"));
             }
@@ -1121,7 +1120,7 @@ mod tests {
         crate::models::user::create(
             pool,
             &crate::commands::user::CreateUserCmd {
-                username: crate::utils::id::new_document_id(),
+                username: crate::utils::id::new_id().to_string(),
                 registered_via: crate::models::user::RegisteredVia::Email,
             },
             None,
@@ -1131,7 +1130,7 @@ mod tests {
     }
 
     fn new_tx_no() -> String {
-        format!("TX_{}", crate::utils::id::new_document_id())
+        format!("TX_{}", crate::utils::id::new_id())
     }
 
     // ── credit_wallet ──
@@ -1144,7 +1143,7 @@ mod tests {
 
         let tx = credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             500,
             T::Recharge,
@@ -1161,7 +1160,7 @@ mod tests {
         assert_eq!(tx.balance_after, 500);
         assert_eq!(tx.tx_type, T::Recharge);
 
-        let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
+        let w = wallet::find_by_user_and_currency(&ctx, *user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
@@ -1174,7 +1173,7 @@ mod tests {
         let user = insert_user(&ctx).await;
 
         assert!(
-            wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
+            wallet::find_by_user_and_currency(&ctx, *user.id, "CNY")
                 .await
                 .unwrap()
                 .is_none()
@@ -1183,7 +1182,7 @@ mod tests {
         let tx_no = new_tx_no();
         let tx1 = credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             500,
             T::Recharge,
@@ -1197,7 +1196,7 @@ mod tests {
 
         let tx2 = credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             500,
             T::Recharge,
@@ -1210,7 +1209,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(tx1.transaction_no, tx2.transaction_no);
-        let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
+        let w = wallet::find_by_user_and_currency(&ctx, *user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
@@ -1224,7 +1223,7 @@ mod tests {
 
         let err = credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             0,
             T::Recharge,
@@ -1249,7 +1248,7 @@ mod tests {
 
         let err = credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             -100,
             T::Recharge,
@@ -1274,7 +1273,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             300,
             T::Recharge,
@@ -1287,7 +1286,7 @@ mod tests {
         .unwrap();
         credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             700,
             T::Recharge,
@@ -1299,7 +1298,7 @@ mod tests {
         .await
         .unwrap();
 
-        let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
+        let w = wallet::find_by_user_and_currency(&ctx, *user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
@@ -1315,7 +1314,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             1000,
             T::Recharge,
@@ -1329,7 +1328,7 @@ mod tests {
 
         let tx = debit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             400,
             T::Payment,
@@ -1345,7 +1344,7 @@ mod tests {
         assert_eq!(tx.amount, 400);
         assert_eq!(tx.balance_after, 600);
 
-        let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
+        let w = wallet::find_by_user_and_currency(&ctx, *user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
@@ -1359,7 +1358,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             100,
             T::Recharge,
@@ -1373,7 +1372,7 @@ mod tests {
 
         let err = debit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             200,
             T::Payment,
@@ -1392,7 +1391,7 @@ mod tests {
             _ => panic!("expected BadRequest"),
         }
 
-        let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
+        let w = wallet::find_by_user_and_currency(&ctx, *user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
@@ -1406,7 +1405,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             500,
             T::Recharge,
@@ -1420,7 +1419,7 @@ mod tests {
 
         let tx = debit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             500,
             T::Payment,
@@ -1442,7 +1441,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             1000,
             T::Recharge,
@@ -1456,7 +1455,7 @@ mod tests {
 
         let tx1 = debit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             300,
             T::Payment,
@@ -1469,7 +1468,7 @@ mod tests {
         .unwrap();
         let tx2 = debit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             300,
             T::Payment,
@@ -1482,7 +1481,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(tx1.transaction_no, tx2.transaction_no);
-        let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
+        let w = wallet::find_by_user_and_currency(&ctx, *user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
@@ -1496,7 +1495,7 @@ mod tests {
 
         let err = debit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             0,
             T::Payment,
@@ -1521,7 +1520,7 @@ mod tests {
 
         let err = debit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             100,
             T::Payment,
@@ -1551,7 +1550,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            from_user.id,
+            *from_user.id,
             "CNY",
             1000,
             T::Recharge,
@@ -1566,8 +1565,8 @@ mod tests {
         let tx_no = new_tx_no();
         let (out_tx, in_tx) = transfer(
             &ctx,
-            from_user.id,
-            to_user.id,
+            *from_user.id,
+            *to_user.id,
             "CNY",
             300,
             &tx_no,
@@ -1588,12 +1587,12 @@ mod tests {
         assert_eq!(in_tx.amount, 300);
         assert_eq!(in_tx.balance_after, 300);
 
-        let from_w = wallet::find_by_user_and_currency(&ctx, from_user.id, "CNY")
+        let from_w = wallet::find_by_user_and_currency(&ctx, *from_user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
         assert_eq!(from_w.balance, 700);
-        let to_w = wallet::find_by_user_and_currency(&ctx, to_user.id, "CNY")
+        let to_w = wallet::find_by_user_and_currency(&ctx, *to_user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
@@ -1608,7 +1607,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            from_user.id,
+            *from_user.id,
             "CNY",
             100,
             T::Recharge,
@@ -1622,8 +1621,8 @@ mod tests {
 
         let err = transfer(
             &ctx,
-            from_user.id,
-            to_user.id,
+            *from_user.id,
+            *to_user.id,
             "CNY",
             200,
             &new_tx_no(),
@@ -1649,7 +1648,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             1000,
             T::Recharge,
@@ -1663,8 +1662,8 @@ mod tests {
 
         let err = transfer(
             &ctx,
-            user.id,
-            user.id,
+            *user.id,
+            *user.id,
             "CNY",
             100,
             &new_tx_no(),
@@ -1689,7 +1688,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            from_user.id,
+            *from_user.id,
             "CNY",
             1000,
             T::Recharge,
@@ -1704,8 +1703,8 @@ mod tests {
         let tx_no = new_tx_no();
         let (out1, in1) = transfer(
             &ctx,
-            from_user.id,
-            to_user.id,
+            *from_user.id,
+            *to_user.id,
             "CNY",
             300,
             &tx_no,
@@ -1717,8 +1716,8 @@ mod tests {
         .unwrap();
         let (out2, in2) = transfer(
             &ctx,
-            from_user.id,
-            to_user.id,
+            *from_user.id,
+            *to_user.id,
             "CNY",
             300,
             &tx_no,
@@ -1732,7 +1731,7 @@ mod tests {
         assert_eq!(out1.transaction_no, out2.transaction_no);
         assert_eq!(in1.transaction_no, in2.transaction_no);
 
-        let from_w = wallet::find_by_user_and_currency(&ctx, from_user.id, "CNY")
+        let from_w = wallet::find_by_user_and_currency(&ctx, *from_user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
@@ -1747,8 +1746,8 @@ mod tests {
 
         let err = transfer(
             &ctx,
-            from_user.id,
-            to_user.id,
+            *from_user.id,
+            *to_user.id,
             "CNY",
             0,
             &new_tx_no(),
@@ -1774,7 +1773,7 @@ mod tests {
 
         let original = credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             500,
             T::Recharge,
@@ -1786,7 +1785,7 @@ mod tests {
         .await
         .unwrap();
 
-        let rev_tx = reverse_transaction(&ctx, original.id, &new_tx_no())
+        let rev_tx = reverse_transaction(&ctx, *original.id, &new_tx_no())
             .await
             .unwrap();
 
@@ -1795,7 +1794,7 @@ mod tests {
         assert_eq!(rev_tx.balance_after, 0);
         assert_eq!(rev_tx.related_tx_id, Some(original.id));
 
-        let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
+        let w = wallet::find_by_user_and_currency(&ctx, *user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
@@ -1809,7 +1808,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             1000,
             T::Recharge,
@@ -1823,7 +1822,7 @@ mod tests {
 
         let original = debit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             300,
             T::Payment,
@@ -1835,7 +1834,7 @@ mod tests {
         .await
         .unwrap();
 
-        let rev_tx = reverse_transaction(&ctx, original.id, &new_tx_no())
+        let rev_tx = reverse_transaction(&ctx, *original.id, &new_tx_no())
             .await
             .unwrap();
 
@@ -1843,7 +1842,7 @@ mod tests {
         assert_eq!(rev_tx.amount, 300);
         assert_eq!(rev_tx.balance_after, 1000);
 
-        let w = wallet::find_by_user_and_currency(&ctx, user.id, "CNY")
+        let w = wallet::find_by_user_and_currency(&ctx, *user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
@@ -1857,7 +1856,7 @@ mod tests {
 
         let original = credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             500,
             T::Recharge,
@@ -1870,10 +1869,10 @@ mod tests {
         .unwrap();
 
         let rev_no = new_tx_no();
-        let rev1 = reverse_transaction(&ctx, original.id, &rev_no)
+        let rev1 = reverse_transaction(&ctx, *original.id, &rev_no)
             .await
             .unwrap();
-        let rev2 = reverse_transaction(&ctx, original.id, &rev_no)
+        let rev2 = reverse_transaction(&ctx, *original.id, &rev_no)
             .await
             .unwrap();
         assert_eq!(rev1.transaction_no, rev2.transaction_no);
@@ -1886,7 +1885,7 @@ mod tests {
 
         let original = credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             500,
             T::Recharge,
@@ -1897,11 +1896,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let rev = reverse_transaction(&ctx, original.id, &new_tx_no())
+        let rev = reverse_transaction(&ctx, *original.id, &new_tx_no())
             .await
             .unwrap();
 
-        let err = reverse_transaction(&ctx, rev.id, &new_tx_no())
+        let err = reverse_transaction(&ctx, *rev.id, &new_tx_no())
             .await
             .unwrap_err();
 
@@ -1918,7 +1917,7 @@ mod tests {
 
         let original = credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             500,
             T::Recharge,
@@ -1929,11 +1928,11 @@ mod tests {
         )
         .await
         .unwrap();
-        reverse_transaction(&ctx, original.id, &new_tx_no())
+        reverse_transaction(&ctx, *original.id, &new_tx_no())
             .await
             .unwrap();
 
-        let err = reverse_transaction(&ctx, original.id, &new_tx_no())
+        let err = reverse_transaction(&ctx, *original.id, &new_tx_no())
             .await
             .unwrap_err();
 
@@ -1950,7 +1949,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             1000,
             T::Recharge,
@@ -1963,7 +1962,7 @@ mod tests {
         .unwrap();
         let credit_tx = credit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             500,
             T::Recharge,
@@ -1976,7 +1975,7 @@ mod tests {
         .unwrap();
         debit_wallet(
             &ctx,
-            user.id,
+            *user.id,
             "CNY",
             1400,
             T::Payment,
@@ -1988,7 +1987,7 @@ mod tests {
         .await
         .unwrap();
 
-        let err = reverse_transaction(&ctx, credit_tx.id, &new_tx_no())
+        let err = reverse_transaction(&ctx, *credit_tx.id, &new_tx_no())
             .await
             .unwrap_err();
 
@@ -2022,7 +2021,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            from_user.id,
+            *from_user.id,
             "CNY",
             1000,
             T::Recharge,
@@ -2037,8 +2036,8 @@ mod tests {
         let tx_no = new_tx_no();
         let (out_tx, _in_tx) = transfer(
             &ctx,
-            from_user.id,
-            to_user.id,
+            *from_user.id,
+            *to_user.id,
             "CNY",
             300,
             &tx_no,
@@ -2050,20 +2049,22 @@ mod tests {
         .unwrap();
 
         let rev_no = new_tx_no();
-        let rev = reverse_transaction(&ctx, out_tx.id, &rev_no).await.unwrap();
+        let rev = reverse_transaction(&ctx, *out_tx.id, &rev_no)
+            .await
+            .unwrap();
 
         assert_eq!(rev.entry_type, E::Credit);
         assert_eq!(rev.amount, 300);
         assert_eq!(rev.tx_type, T::Refund);
         assert_eq!(rev.related_tx_id, Some(out_tx.id));
 
-        let from_w = wallet::find_by_user_and_currency(&ctx, from_user.id, "CNY")
+        let from_w = wallet::find_by_user_and_currency(&ctx, *from_user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
         assert_eq!(from_w.balance, 1000);
 
-        let to_w = wallet::find_by_user_and_currency(&ctx, to_user.id, "CNY")
+        let to_w = wallet::find_by_user_and_currency(&ctx, *to_user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
@@ -2078,7 +2079,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            from_user.id,
+            *from_user.id,
             "CNY",
             1000,
             T::Recharge,
@@ -2093,8 +2094,8 @@ mod tests {
         let tx_no = new_tx_no();
         let (_out_tx, in_tx) = transfer(
             &ctx,
-            from_user.id,
-            to_user.id,
+            *from_user.id,
+            *to_user.id,
             "CNY",
             300,
             &tx_no,
@@ -2105,18 +2106,18 @@ mod tests {
         .await
         .unwrap();
 
-        let rev = reverse_transaction(&ctx, in_tx.id, &new_tx_no())
+        let rev = reverse_transaction(&ctx, *in_tx.id, &new_tx_no())
             .await
             .unwrap();
         assert_eq!(rev.tx_type, T::Refund);
 
-        let from_w = wallet::find_by_user_and_currency(&ctx, from_user.id, "CNY")
+        let from_w = wallet::find_by_user_and_currency(&ctx, *from_user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
         assert_eq!(from_w.balance, 1000);
 
-        let to_w = wallet::find_by_user_and_currency(&ctx, to_user.id, "CNY")
+        let to_w = wallet::find_by_user_and_currency(&ctx, *to_user.id, "CNY")
             .await
             .unwrap()
             .unwrap();
@@ -2131,7 +2132,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            from_user.id,
+            *from_user.id,
             "CNY",
             1000,
             T::Recharge,
@@ -2146,8 +2147,8 @@ mod tests {
         let tx_no = new_tx_no();
         let (out_tx, _in_tx) = transfer(
             &ctx,
-            from_user.id,
-            to_user.id,
+            *from_user.id,
+            *to_user.id,
             "CNY",
             500,
             &tx_no,
@@ -2161,7 +2162,7 @@ mod tests {
         // receiver spends the money
         debit_wallet(
             &ctx,
-            to_user.id,
+            *to_user.id,
             "CNY",
             500,
             T::Payment,
@@ -2173,7 +2174,7 @@ mod tests {
         .await
         .unwrap();
 
-        let err = reverse_transaction(&ctx, out_tx.id, &new_tx_no())
+        let err = reverse_transaction(&ctx, *out_tx.id, &new_tx_no())
             .await
             .unwrap_err();
 
@@ -2191,7 +2192,7 @@ mod tests {
 
         credit_wallet(
             &ctx,
-            from_user.id,
+            *from_user.id,
             "CNY",
             1000,
             T::Recharge,
@@ -2206,8 +2207,8 @@ mod tests {
         let tx_no = new_tx_no();
         let (out_tx, in_tx) = transfer(
             &ctx,
-            from_user.id,
-            to_user.id,
+            *from_user.id,
+            *to_user.id,
             "CNY",
             300,
             &tx_no,
@@ -2219,12 +2220,12 @@ mod tests {
         .unwrap();
 
         // reverse the out_tx first
-        reverse_transaction(&ctx, out_tx.id, &new_tx_no())
+        reverse_transaction(&ctx, *out_tx.id, &new_tx_no())
             .await
             .unwrap();
 
         // trying to reverse in_tx should fail because it was already reversed as part of the pair
-        let err = reverse_transaction(&ctx, in_tx.id, &new_tx_no())
+        let err = reverse_transaction(&ctx, *in_tx.id, &new_tx_no())
             .await
             .unwrap_err();
 

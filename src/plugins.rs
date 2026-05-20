@@ -2022,7 +2022,7 @@ mod tests {
         let config = test_config();
         let mgr = PluginManager::new(config).await;
         let auth = crate::middleware::auth::AuthUser::new_test(
-            "",
+            0,
             crate::models::user::UserRole::Reader,
             "",
         );
@@ -2230,7 +2230,7 @@ export function handle_test(input) {
                 None,
                 None,
                 &crate::middleware::auth::AuthUser::new_test(
-                    "",
+                    0,
                     crate::models::user::UserRole::Reader,
                     "",
                 ),
@@ -2954,7 +2954,7 @@ end
                 None,
                 None,
                 &crate::middleware::auth::AuthUser::new_test(
-                    "",
+                    0,
                     crate::models::user::UserRole::Reader,
                     "",
                 ),
@@ -2969,7 +2969,7 @@ end
                 None,
                 None,
                 &crate::middleware::auth::AuthUser::new_test(
-                    "",
+                    0,
                     crate::models::user::UserRole::Reader,
                     "",
                 ),
@@ -2984,7 +2984,7 @@ end
                 None,
                 None,
                 &crate::middleware::auth::AuthUser::new_test(
-                    "",
+                    0,
                     crate::models::user::UserRole::Reader,
                     "",
                 ),
@@ -3306,7 +3306,7 @@ fn handle_test(input) {
                 None,
                 None,
                 &crate::middleware::auth::AuthUser::new_test(
-                    "",
+                    0,
                     crate::models::user::UserRole::Reader,
                     "",
                 ),
@@ -3618,7 +3618,7 @@ fn seo_health(input) {
                 None,
                 None,
                 &crate::middleware::auth::AuthUser::new_test(
-                    "",
+                    0,
                     crate::models::user::UserRole::Reader,
                     "",
                 ),
@@ -3634,7 +3634,7 @@ fn seo_health(input) {
                 None,
                 None,
                 &crate::middleware::auth::AuthUser::new_test(
-                    "",
+                    0,
                     crate::models::user::UserRole::Reader,
                     "",
                 ),
@@ -3650,7 +3650,7 @@ fn seo_health(input) {
                 None,
                 None,
                 &crate::middleware::auth::AuthUser::new_test(
-                    "",
+                    0,
                     crate::models::user::UserRole::Reader,
                     "",
                 ),
@@ -3666,7 +3666,7 @@ fn seo_health(input) {
                 None,
                 None,
                 &crate::middleware::auth::AuthUser::new_test(
-                    "",
+                    0,
                     crate::models::user::UserRole::Reader,
                     "",
                 ),

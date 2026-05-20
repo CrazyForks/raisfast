@@ -19,7 +19,7 @@ pub struct CurrencyResponse {
 impl From<Currency> for CurrencyResponse {
     fn from(c: Currency) -> Self {
         Self {
-            id: c.document_id,
+            id: c.id.to_string(),
             code: c.code,
             name: c.name,
             decimals: c.decimals,

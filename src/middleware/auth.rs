@@ -42,16 +42,14 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::models::user::UserRole;
 
 struct Claims {
-    user_id: String,
-    user_int_id: i64,
+    user_id: i64,
     role: UserRole,
     tenant_id: String,
 }
 
 #[derive(Debug, Clone)]
 struct RequestIdentity {
-    user_id: Option<String>,
-    user_int_id: Option<i64>,
+    user_id: Option<i64>,
     role: UserRole,
     tenant_id: Option<String>,
     is_super_admin: bool,
@@ -65,12 +63,8 @@ struct RequestIdentity {
 pub struct AuthUser(RequestIdentity);
 
 impl AuthUser {
-    pub fn user_id(&self) -> Option<&str> {
-        self.0.user_id.as_deref()
-    }
-
-    pub fn user_int_id(&self) -> Option<i64> {
-        self.0.user_int_id
+    pub fn user_id(&self) -> Option<i64> {
+        self.0.user_id
     }
 
     pub fn role(&self) -> &str {
@@ -97,8 +91,8 @@ impl AuthUser {
         self.0.is_super_admin
     }
 
-    pub fn ensure_authenticated(&self) -> AppResult<&str> {
-        self.0.user_id.as_deref().ok_or(AppError::Unauthorized)
+    pub fn ensure_authenticated(&self) -> AppResult<i64> {
+        self.0.user_id.ok_or(AppError::Unauthorized)
     }
 
     pub fn ensure_admin(&self) -> AppResult<()> {
@@ -117,15 +111,9 @@ impl AuthUser {
         }
     }
 
-    pub fn from_parts(
-        user_id: Option<String>,
-        user_int_id: Option<i64>,
-        role: UserRole,
-        tenant_id: Option<String>,
-    ) -> Self {
+    pub fn from_parts(user_id: Option<i64>, role: UserRole, tenant_id: Option<String>) -> Self {
         AuthUser(RequestIdentity {
             user_id,
-            user_int_id,
             role,
             tenant_id,
             is_super_admin: false,
@@ -135,14 +123,10 @@ impl AuthUser {
 
 #[cfg(test)]
 impl AuthUser {
-    pub fn new_test(user_id: &str, role: UserRole, tenant_id: &str) -> Self {
+    pub fn new_test(user_id: i64, role: UserRole, tenant_id: &str) -> Self {
+        let uid = if user_id == 0 { None } else { Some(user_id) };
         AuthUser(RequestIdentity {
-            user_id: if user_id.is_empty() {
-                None
-            } else {
-                Some(user_id.to_string())
-            },
-            user_int_id: None,
+            user_id: uid,
             role,
             tenant_id: if tenant_id.is_empty() {
                 None
@@ -153,14 +137,10 @@ impl AuthUser {
         })
     }
 
-    pub fn new_test_super_admin(user_id: &str, tenant_id: &str) -> Self {
+    pub fn new_test_super_admin(user_id: i64, tenant_id: &str) -> Self {
+        let uid = if user_id == 0 { None } else { Some(user_id) };
         AuthUser(RequestIdentity {
-            user_id: if user_id.is_empty() {
-                None
-            } else {
-                Some(user_id.to_string())
-            },
-            user_int_id: None,
+            user_id: uid,
             role: UserRole::Admin,
             tenant_id: if tenant_id.is_empty() {
                 None
@@ -193,22 +173,20 @@ async fn extract_claims(parts: &Parts, state: &AppState) -> Option<Claims> {
     let token = extract_bearer_token(parts)?;
 
     if crate::services::api_token::is_api_token(token) {
-        let (user_id, user_int_id, role, tenant_id) =
+        let (user_id, role, tenant_id) =
             crate::services::api_token::verify_api_token(&state.pool, &*state.cache, token)
                 .await
                 .ok()?;
         let role: UserRole = role.parse().ok()?;
         Some(Claims {
             user_id,
-            user_int_id,
             role,
             tenant_id: tenant_id.unwrap_or_else(|| crate::constants::DEFAULT_TENANT.to_string()),
         })
     } else {
         let claims = crate::services::auth::verify_token(token, &state.jwt_decoding_key).ok()?;
         Some(Claims {
-            user_id: claims.sub,
-            user_int_id: claims.iid,
+            user_id: claims.sub.parse().ok()?,
             role: claims.role,
             tenant_id: claims.tenant_id,
         })
@@ -232,35 +210,30 @@ impl FromRequestParts<AppState> for AuthUser {
             let identity = match (claims, header_tenant) {
                 (Some(c), Some(ht)) if c.role == UserRole::Admin => RequestIdentity {
                     user_id: Some(c.user_id),
-                    user_int_id: Some(c.user_int_id),
                     role: c.role,
                     tenant_id: if no_tenant { None } else { Some(ht) },
                     is_super_admin: true,
                 },
                 (Some(c), None) if c.role == UserRole::Admin => RequestIdentity {
                     user_id: Some(c.user_id),
-                    user_int_id: Some(c.user_int_id),
                     role: c.role,
                     tenant_id: None,
                     is_super_admin: true,
                 },
                 (Some(c), _) => RequestIdentity {
                     user_id: Some(c.user_id),
-                    user_int_id: Some(c.user_int_id),
                     role: c.role,
                     tenant_id: if no_tenant { None } else { Some(c.tenant_id) },
                     is_super_admin: false,
                 },
                 (None, Some(ht)) => RequestIdentity {
                     user_id: None,
-                    user_int_id: None,
                     role: UserRole::Reader,
                     tenant_id: if no_tenant { None } else { Some(ht) },
                     is_super_admin: false,
                 },
                 (None, None) => RequestIdentity {
                     user_id: None,
-                    user_int_id: None,
                     role: UserRole::Reader,
                     tenant_id: if no_tenant {
                         None
@@ -283,14 +256,8 @@ mod tests {
 
     #[test]
     fn from_parts_all_fields_accessors() {
-        let auth = AuthUser::from_parts(
-            Some("uid-123".to_string()),
-            Some(42),
-            UserRole::Author,
-            Some("tenant-1".to_string()),
-        );
-        assert_eq!(auth.user_id(), Some("uid-123"));
-        assert_eq!(auth.user_int_id(), Some(42));
+        let auth = AuthUser::from_parts(Some(42), UserRole::Author, Some("tenant-1".to_string()));
+        assert_eq!(auth.user_id(), Some(42));
         assert_eq!(auth.role(), "author");
         assert_eq!(auth.tenant_id(), Some("tenant-1"));
         assert!(auth.is_authenticated());
@@ -298,22 +265,16 @@ mod tests {
 
     #[test]
     fn from_parts_no_user_id_not_authenticated() {
-        let auth = AuthUser::from_parts(None, None, UserRole::Reader, Some("t1".to_string()));
+        let auth = AuthUser::from_parts(None, UserRole::Reader, Some("t1".to_string()));
         assert!(!auth.is_authenticated());
         assert!(auth.user_id().is_none());
-        assert!(auth.user_int_id().is_none());
         let err = auth.ensure_authenticated().unwrap_err();
         assert!(matches!(err, AppError::Unauthorized));
     }
 
     #[test]
     fn admin_role_passes_admin_checks() {
-        let auth = AuthUser::from_parts(
-            Some("uid".to_string()),
-            Some(1),
-            UserRole::Admin,
-            Some("t1".to_string()),
-        );
+        let auth = AuthUser::from_parts(Some(1), UserRole::Admin, Some("t1".to_string()));
         assert!(auth.is_admin());
         assert!(auth.ensure_admin().is_ok());
         assert!(auth.is_author());
@@ -322,12 +283,7 @@ mod tests {
 
     #[test]
     fn reader_role_denied_admin_and_author() {
-        let auth = AuthUser::from_parts(
-            Some("uid".to_string()),
-            Some(1),
-            UserRole::Reader,
-            Some("t1".to_string()),
-        );
+        let auth = AuthUser::from_parts(Some(1), UserRole::Reader, Some("t1".to_string()));
         assert!(!auth.is_admin());
         assert!(matches!(
             auth.ensure_admin().unwrap_err(),
@@ -342,12 +298,7 @@ mod tests {
 
     #[test]
     fn author_role_passes_author_checks() {
-        let auth = AuthUser::from_parts(
-            Some("uid".to_string()),
-            Some(1),
-            UserRole::Author,
-            Some("t1".to_string()),
-        );
+        let auth = AuthUser::from_parts(Some(1), UserRole::Author, Some("t1".to_string()));
         assert!(auth.is_author());
         assert!(auth.ensure_author().is_ok());
         assert!(!auth.is_admin());
@@ -359,7 +310,7 @@ mod tests {
 
     #[test]
     fn super_admin_flag_true() {
-        let auth = AuthUser::new_test_super_admin("uid", "t1");
+        let auth = AuthUser::new_test_super_admin(1, "t1");
         assert!(auth.is_super_admin());
         assert!(auth.is_admin());
         assert!(auth.is_authenticated());
@@ -367,35 +318,25 @@ mod tests {
 
     #[test]
     fn from_parts_super_admin_flag_false() {
-        let auth = AuthUser::from_parts(
-            Some("uid".to_string()),
-            Some(1),
-            UserRole::Admin,
-            Some("t1".to_string()),
-        );
+        let auth = AuthUser::from_parts(Some(1), UserRole::Admin, Some("t1".to_string()));
         assert!(!auth.is_super_admin());
     }
 
     #[test]
     fn tenant_id_some() {
-        let auth = AuthUser::from_parts(
-            Some("uid".to_string()),
-            Some(1),
-            UserRole::Reader,
-            Some("my-tenant".to_string()),
-        );
+        let auth = AuthUser::from_parts(Some(1), UserRole::Reader, Some("my-tenant".to_string()));
         assert_eq!(auth.tenant_id(), Some("my-tenant"));
     }
 
     #[test]
     fn tenant_id_none() {
-        let auth = AuthUser::from_parts(Some("uid".to_string()), Some(1), UserRole::Reader, None);
+        let auth = AuthUser::from_parts(Some(1), UserRole::Reader, None);
         assert!(auth.tenant_id().is_none());
     }
 
     #[test]
     fn unauthenticated_ensure_admin_and_author_forbidden() {
-        let auth = AuthUser::from_parts(None, None, UserRole::Reader, None);
+        let auth = AuthUser::from_parts(None, UserRole::Reader, None);
         assert!(matches!(
             auth.ensure_admin().unwrap_err(),
             AppError::Forbidden
@@ -407,8 +348,8 @@ mod tests {
     }
 
     #[test]
-    fn new_test_with_empty_strings_is_anonymous() {
-        let auth = AuthUser::new_test("", UserRole::Reader, "");
+    fn new_test_with_zero_id_is_anonymous() {
+        let auth = AuthUser::new_test(0, UserRole::Reader, "");
         assert!(!auth.is_authenticated());
         assert!(auth.user_id().is_none());
         assert!(auth.tenant_id().is_none());
@@ -416,12 +357,7 @@ mod tests {
 
     #[test]
     fn editor_role_not_admin_not_author() {
-        let auth = AuthUser::from_parts(
-            Some("uid".to_string()),
-            Some(1),
-            UserRole::Editor,
-            Some("t1".to_string()),
-        );
+        let auth = AuthUser::from_parts(Some(1), UserRole::Editor, Some("t1".to_string()));
         assert!(!auth.is_admin());
         assert!(!auth.is_author());
     }

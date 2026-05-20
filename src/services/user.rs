@@ -12,10 +12,10 @@ use crate::models::user::{User, UserRole};
 
 /// Get the current user's profile.
 pub async fn get_me(pool: &crate::db::Pool, auth: &AuthUser) -> AppResult<UserResponse> {
-    let user =
-        crate::models::user::find_by_id(pool, auth.ensure_authenticated()?, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("user"))?;
+    let uid = auth.ensure_authenticated()?;
+    let user = crate::models::user::find_by_id(pool, uid, auth.tenant_id())
+        .await?
+        .ok_or_else(|| AppError::not_found("user"))?;
     UserResponse::from_user(user)
 }
 
@@ -28,7 +28,7 @@ pub async fn update_me(
     let user = crate::models::user::update_profile(
         pool,
         &UpdateProfileCmd {
-            id: auth.user_int_id().ok_or(AppError::Unauthorized)?,
+            id: auth.user_id().ok_or(AppError::Unauthorized)?,
             username: req.username,
             bio: req.bio,
             website: req.website,
@@ -45,7 +45,7 @@ pub async fn update_me(
 /// Get a specific user's public profile.
 pub async fn get_public_user(
     pool: &crate::db::Pool,
-    id: &str,
+    id: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<UserResponse> {
     let user = crate::models::user::find_by_id(pool, id, tenant_id)
@@ -73,19 +73,19 @@ pub async fn list_users(
 pub trait UserService: Send + Sync {
     async fn update_role(
         &self,
-        user_doc_id: &str,
+        user_id: &str,
         role: UserRole,
         tenant_id: Option<&str>,
     ) -> AppResult<User>;
 
     async fn admin_update_user(
         &self,
-        user_doc_id: &str,
+        user_id: &str,
         req: &UpdateUserRequest,
         tenant_id: Option<&str>,
     ) -> AppResult<User>;
 
-    async fn delete_user(&self, user_doc_id: &str, tenant_id: Option<&str>) -> AppResult<()>;
+    async fn delete_user(&self, user_id: &str, tenant_id: Option<&str>) -> AppResult<()>;
 
     async fn batch_update_roles(
         &self,
@@ -108,24 +108,26 @@ impl UserServiceImpl {
 impl UserService for UserServiceImpl {
     async fn update_role(
         &self,
-        user_doc_id: &str,
+        user_id: &str,
         role: UserRole,
         tenant_id: Option<&str>,
     ) -> AppResult<User> {
-        crate::models::user::update_role(&self.pool, user_doc_id, role, tenant_id).await
+        let uid: i64 = crate::utils::id::parse_id(user_id)?;
+        crate::models::user::update_role(&self.pool, uid, role, tenant_id).await
     }
 
     async fn admin_update_user(
         &self,
-        user_doc_id: &str,
+        user_id: &str,
         req: &UpdateUserRequest,
         tenant_id: Option<&str>,
     ) -> AppResult<User> {
-        let user = crate::models::user::find_by_id(&self.pool, user_doc_id, tenant_id)
+        let uid: i64 = crate::utils::id::parse_id(user_id)?;
+        let user = crate::models::user::find_by_id(&self.pool, uid, tenant_id)
             .await?
             .ok_or_else(|| AppError::not_found("user"))?;
         let cmd = UpdateProfileCmd {
-            id: user.id,
+            id: *user.id,
             username: req.username.clone(),
             bio: req.bio.clone(),
             website: req.website.clone(),
@@ -136,8 +138,9 @@ impl UserService for UserServiceImpl {
         crate::models::user::update_profile(&self.pool, &cmd, tenant_id).await
     }
 
-    async fn delete_user(&self, user_doc_id: &str, tenant_id: Option<&str>) -> AppResult<()> {
-        crate::models::user::delete_by_document_id(&self.pool, user_doc_id, tenant_id).await
+    async fn delete_user(&self, user_id: &str, tenant_id: Option<&str>) -> AppResult<()> {
+        let uid: i64 = crate::utils::id::parse_id(user_id)?;
+        crate::models::user::delete_by_id(&self.pool, uid, tenant_id).await
     }
 
     async fn batch_update_roles(
@@ -146,8 +149,9 @@ impl UserService for UserServiceImpl {
         tenant_id: Option<&str>,
     ) -> AppResult<Vec<bool>> {
         let mut results = Vec::with_capacity(operations.len());
-        for (doc_id, role) in operations {
-            let ok = crate::models::user::update_role(&self.pool, doc_id, *role, tenant_id)
+        for (user_id, role) in operations {
+            let uid: i64 = crate::utils::id::parse_id(user_id)?;
+            let ok = crate::models::user::update_role(&self.pool, uid, *role, tenant_id)
                 .await
                 .is_ok();
             results.push(ok);
@@ -165,13 +169,9 @@ mod tests {
         crate::test_pool!()
     }
 
-    fn auth(doc_id: &str) -> AuthUser {
-        AuthUser::from_parts(
-            Some(doc_id.to_string()),
-            Some(1),
-            crate::models::user::UserRole::Admin,
-            None,
-        )
+    fn auth(id: &str) -> AuthUser {
+        let uid: i64 = id.parse().unwrap_or(1);
+        AuthUser::from_parts(Some(uid), crate::models::user::UserRole::Admin, None)
     }
 
     async fn insert_user(pool: &crate::db::Pool, username: &str) -> crate::models::user::User {
@@ -191,12 +191,7 @@ mod tests {
     async fn get_me_returns_user() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "meuser").await;
-        let a = AuthUser::from_parts(
-            Some(user.document_id.clone()),
-            Some(user.id),
-            crate::models::user::UserRole::Admin,
-            None,
-        );
+        let a = AuthUser::from_parts(Some(*user.id), crate::models::user::UserRole::Admin, None);
         let resp = super::get_me(&pool, &a).await.unwrap();
         assert_eq!(resp.username, "meuser");
     }
@@ -212,12 +207,7 @@ mod tests {
     async fn update_me_changes_bio() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "upduser").await;
-        let a = AuthUser::from_parts(
-            Some(user.document_id.clone()),
-            Some(user.id),
-            crate::models::user::UserRole::Admin,
-            None,
-        );
+        let a = AuthUser::from_parts(Some(*user.id), crate::models::user::UserRole::Admin, None);
         let resp = super::update_me(
             &pool,
             &a,
@@ -239,20 +229,14 @@ mod tests {
     async fn get_public_user_found() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "pubuser").await;
-        let resp = super::get_public_user(&pool, &user.document_id, None)
-            .await
-            .unwrap();
+        let resp = super::get_public_user(&pool, *user.id, None).await.unwrap();
         assert_eq!(resp.username, "pubuser");
     }
 
     #[tokio::test]
     async fn get_public_user_not_found() {
         let pool = setup_pool().await;
-        assert!(
-            super::get_public_user(&pool, "missing", None)
-                .await
-                .is_err()
-        );
+        assert!(super::get_public_user(&pool, 999999, None).await.is_err());
     }
 
     #[tokio::test]

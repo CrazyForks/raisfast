@@ -23,8 +23,8 @@ async fn upload_requires_auth() {
 #[tokio::test]
 async fn upload_success() {
     let (mut app, state) = test_app().await;
-    let (int_id, doc_id) = create_author(&state.pool).await;
-    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Author);
+    let (int_id, id) = create_author(&state.pool).await;
+    let tok = make_token(&id, int_id, raisfast::models::user::UserRole::Author);
 
     let boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW";
     let png_header = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR";
@@ -68,8 +68,8 @@ async fn list_requires_auth() {
 #[tokio::test]
 async fn list_success() {
     let (mut app, state) = test_app().await;
-    let (int_id, doc_id) = create_author(&state.pool).await;
-    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Author);
+    let (int_id, id) = create_author(&state.pool).await;
+    let tok = make_token(&id, int_id, raisfast::models::user::UserRole::Author);
     let (status, body): (StatusCode, Value) = send(&mut app, get_auth("/api/v1/media", &tok)).await;
     assert!(status.is_success());
     assert!(body["data"]["items"].is_array());
@@ -78,8 +78,8 @@ async fn list_success() {
 #[tokio::test]
 async fn delete_not_found() {
     let (mut app, state) = test_app().await;
-    let (int_id, doc_id) = create_author(&state.pool).await;
-    let tok = make_token(&doc_id, int_id, raisfast::models::user::UserRole::Author);
+    let (int_id, id) = create_author(&state.pool).await;
+    let tok = make_token(&id, int_id, raisfast::models::user::UserRole::Author);
     let fake = "nonexistent";
     let (status, _): (StatusCode, Value) = send(
         &mut app,

@@ -200,10 +200,10 @@ impl Event {
         let data = value.get("data")?;
 
         let subject_id = data
-            .get("document_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+            .get("id")
+            .and_then(|v| v.as_i64())
+            .map(|id| id.to_string())
+            .unwrap_or_default();
 
         let actor_id = data
             .get("user_id")
@@ -225,27 +225,27 @@ impl Event {
                 action: "create".into(),
                 subject: "post".into(),
                 subject_id: data.id.clone(),
-                actor_id: Some(data.created_by),
+                actor_id: data.created_by.as_deref().and_then(|s| s.parse().ok()),
                 detail: Some(format!("title={}", data.title)),
             }),
             Event::PostUpdated(data) => Some(AuditInfo {
                 action: "update".into(),
                 subject: "post".into(),
-                subject_id: data.document_id.clone(),
+                subject_id: data.id.to_string(),
                 actor_id: None,
                 detail: Some(format!("slug={}", data.slug)),
             }),
             Event::PostDeleted(data) => Some(AuditInfo {
                 action: "delete".into(),
                 subject: "post".into(),
-                subject_id: data.document_id.clone(),
+                subject_id: data.id.to_string(),
                 actor_id: None,
                 detail: Some(format!("slug={}", data.slug)),
             }),
             Event::CommentCreated(data) => Some(AuditInfo {
                 action: "create".into(),
                 subject: "comment".into(),
-                subject_id: data.document_id.clone(),
+                subject_id: data.id.to_string(),
                 actor_id: None,
                 detail: Some(format!(
                     "author={}",
@@ -255,35 +255,35 @@ impl Event {
             Event::UserRegistered(data) => Some(AuditInfo {
                 action: "register".into(),
                 subject: "user".into(),
-                subject_id: data.document_id.clone(),
+                subject_id: data.id.to_string(),
                 actor_id: None,
                 detail: Some(format!("username={}", data.username)),
             }),
             Event::UserLoggedIn { user, success } => Some(AuditInfo {
                 action: "login".into(),
                 subject: "user".into(),
-                subject_id: user.document_id.clone(),
-                actor_id: Some(user.id),
+                subject_id: user.id.to_string(),
+                actor_id: Some(*user.id),
                 detail: Some(format!("success={}", success)),
             }),
             Event::MediaUploaded(data) => Some(AuditInfo {
                 action: "upload".into(),
                 subject: "media".into(),
-                subject_id: data.document_id.clone(),
-                actor_id: Some(data.user_id),
+                subject_id: data.id.to_string(),
+                actor_id: Some(*data.user_id),
                 detail: Some(format!("filename={}", data.filename)),
             }),
             Event::MediaDeleted(data) => Some(AuditInfo {
                 action: "delete".into(),
                 subject: "media".into(),
-                subject_id: data.document_id.clone(),
+                subject_id: data.id.to_string(),
                 actor_id: None,
                 detail: None,
             }),
             Event::PasswordResetRequested { user, token: _ } => Some(AuditInfo {
                 action: "password_reset_request".into(),
                 subject: "user".into(),
-                subject_id: user.document_id.clone(),
+                subject_id: user.id.to_string(),
                 actor_id: None,
                 detail: Some(format!("username={}", user.username)),
             }),
@@ -312,7 +312,7 @@ mod tests {
             excerpt: None,
             cover_image: None,
             status: crate::models::post::PostStatus::Draft,
-            created_by: 0,
+            created_by: None,
             author_name: None,
             category_id: None,
             category_name: None,

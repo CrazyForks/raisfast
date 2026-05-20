@@ -343,7 +343,7 @@ impl PaymentProvider for WechatPayProvider {
             appid: creds.appid.clone(),
             mchid: creds.mchid.clone(),
             description: order.title.clone(),
-            out_trade_no: order.document_id.clone(),
+            out_trade_no: order.id.to_string(),
             time_expire: Some(expire.to_rfc3339()),
             notify_url: extract_notify_url(channel),
             amount: NativeAmount {
@@ -365,7 +365,7 @@ impl PaymentProvider for WechatPayProvider {
         .await?;
 
         Ok(ProviderResponse {
-            provider_order_id: order.document_id.clone(),
+            provider_order_id: order.id.to_string(),
             redirect_url: None,
             qr_code: resp.code_url,
             client_secret: None,
@@ -616,7 +616,6 @@ mod tests {
     fn extract_notify_url_works() {
         let channel = PaymentChannel {
             id: 1,
-            document_id: "doc1".into(),
             tenant_id: None,
             provider: "wechat".into(),
             name: "Wechat".into(),
@@ -640,7 +639,6 @@ mod tests {
     fn extract_notify_url_missing() {
         let channel = PaymentChannel {
             id: 1,
-            document_id: "doc1".into(),
             tenant_id: None,
             provider: "wechat".into(),
             name: "Wechat".into(),

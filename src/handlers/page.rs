@@ -10,13 +10,13 @@ use ts_rs::TS;
 use validator::Validate;
 
 use crate::commands::{CreatePageCmd, UpdatePageCmd};
-use crate::dto::{BatchRequest, BatchResponse};
+use crate::dto::{BatchRequest, BatchResponse, PageResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::{ApiResponse, PaginatedData};
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::models::page::PageStatus;
-use crate::services::post::resolve_doc_id_to_int;
+use crate::services::post::find_existing_id;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -151,10 +151,11 @@ async fn resolve_page_parent_id(
     pool: &crate::db::Pool,
     parent_id: Option<String>,
 ) -> AppResult<Option<i64>> {
-    let Some(doc_id) = parent_id else {
+    let Some(raw_id) = parent_id else {
         return Ok(None);
     };
-    resolve_doc_id_to_int(pool, "pages", &doc_id, None).await
+    let parsed_id = crate::utils::id::parse_id(&raw_id)?;
+    find_existing_id(pool, "pages", parsed_id, None).await
 }
 
 // ── DTO ──
@@ -245,7 +246,7 @@ pub async fn list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Query(query): Query<PageListQuery>,
-) -> AppResult<ApiResponse<PaginatedData<crate::models::page::Page>>> {
+) -> AppResult<ApiResponse<PaginatedData<PageResponse>>> {
     let pagination = PaginationParams::from_options(query.page, query.page_size);
 
     let (items, total) = state
@@ -253,6 +254,7 @@ pub async fn list(
         .list_published(pagination.page, pagination.page_size, &auth)
         .await?;
 
+    let items: Vec<PageResponse> = items.into_iter().map(PageResponse::from_page).collect();
     Ok(pagination.paginate(items, total))
 }
 
@@ -264,9 +266,9 @@ pub async fn get_by_slug(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Path(slug): Path<String>,
-) -> AppResult<ApiResponse<crate::models::page::Page>> {
+) -> AppResult<ApiResponse<PageResponse>> {
     let page = state.page_service.get_by_slug(&slug, &auth).await?;
-    Ok(ApiResponse::success(page))
+    Ok(ApiResponse::success(PageResponse::from_page(page)))
 }
 
 #[utoipa::path(get, path = "/pages/sitemap", tag = "pages",
@@ -296,7 +298,7 @@ pub async fn admin_list(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Query(query): Query<AdminPageListQuery>,
-) -> AppResult<ApiResponse<PaginatedData<crate::models::page::Page>>> {
+) -> AppResult<ApiResponse<PaginatedData<PageResponse>>> {
     auth.ensure_author()?;
     let pagination = PaginationParams::from_options(query.page, query.page_size);
 
@@ -305,6 +307,7 @@ pub async fn admin_list(
         .list_all(pagination.page, pagination.page_size, query.status, &auth)
         .await?;
 
+    let items: Vec<PageResponse> = items.into_iter().map(PageResponse::from_page).collect();
     Ok(pagination.paginate(items, total))
 }
 
@@ -317,10 +320,11 @@ pub async fn admin_get(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
-) -> AppResult<ApiResponse<crate::models::page::Page>> {
+) -> AppResult<ApiResponse<PageResponse>> {
     auth.ensure_author()?;
-    let page = state.page_service.get_by_id(&id, &auth).await?;
-    Ok(ApiResponse::success(page))
+    let id = crate::utils::id::parse_id(&id)?;
+    let page = state.page_service.get_by_id(id, &auth).await?;
+    Ok(ApiResponse::success(PageResponse::from_page(page)))
 }
 
 #[utoipa::path(post, path = "/pages", tag = "pages",
@@ -331,7 +335,7 @@ pub async fn create(
     auth: AuthUser,
     State(state): State<crate::AppState>,
     Json(req): Json<CreatePageRequest>,
-) -> AppResult<ApiResponse<crate::models::page::Page>> {
+) -> AppResult<ApiResponse<PageResponse>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
 
@@ -354,13 +358,13 @@ pub async fn create(
         parent_id: resolved_parent_id,
         sort_order: req.sort_order.unwrap_or(0),
         status,
-        created_by: auth.user_int_id().ok_or(AppError::Unauthorized)?,
+        created_by: auth.user_id().ok_or(AppError::Unauthorized)?,
         updated_by: None,
         cover_image: req.cover_image,
     };
 
     let page = state.page_service.create_page(&auth, cmd).await?;
-    Ok(ApiResponse::success(page))
+    Ok(ApiResponse::success(PageResponse::from_page(page)))
 }
 
 #[utoipa::path(put, path = "/admin/pages/{id}", tag = "pages",
@@ -373,7 +377,7 @@ pub async fn update(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdatePageRequest>,
-) -> AppResult<ApiResponse<crate::models::page::Page>> {
+) -> AppResult<ApiResponse<PageResponse>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
 
@@ -392,11 +396,12 @@ pub async fn update(
         sort_order: req.sort_order,
         status: req.status,
         cover_image: req.cover_image,
-        updated_by: auth.user_int_id(),
+        updated_by: auth.user_id(),
     };
 
-    let page = state.page_service.update_page(&auth, &id, cmd).await?;
-    Ok(ApiResponse::success(page))
+    let id = crate::utils::id::parse_id(&id)?;
+    let page = state.page_service.update_page(&auth, id, cmd).await?;
+    Ok(ApiResponse::success(PageResponse::from_page(page)))
 }
 
 #[utoipa::path(delete, path = "/admin/pages/{id}", tag = "pages",
@@ -410,7 +415,8 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_author()?;
-    state.page_service.delete_page(&id, &auth).await?;
+    let id = crate::utils::id::parse_id(&id)?;
+    state.page_service.delete_page(id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -424,13 +430,14 @@ pub async fn update_status(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateStatusRequest>,
-) -> AppResult<ApiResponse<crate::models::page::Page>> {
+) -> AppResult<ApiResponse<PageResponse>> {
     auth.ensure_author()?;
+    let id = crate::utils::id::parse_id(&id)?;
     let page = state
         .page_service
-        .update_status(&id, req.status, &auth)
+        .update_status(id, req.status, &auth)
         .await?;
-    Ok(ApiResponse::success(page))
+    Ok(ApiResponse::success(PageResponse::from_page(page)))
 }
 
 #[utoipa::path(put, path = "/admin/pages/reorder", tag = "pages",
@@ -465,7 +472,10 @@ pub async fn admin_batch(
     auth.ensure_admin()?;
     validation::validate(&req)?;
     let mut affected = 0usize;
-    for id in &req.ids {
+    for raw_id in &req.ids {
+        let Ok(id) = crate::utils::id::parse_id(raw_id) else {
+            continue;
+        };
         match req.action.as_str() {
             "delete" => {
                 if state.page_service.delete_page(id, &auth).await.is_ok() {
