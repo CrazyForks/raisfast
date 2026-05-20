@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::errors::app_error::{AppError, AppResult};
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 pub type SocialLinks = HashMap<String, String>;
@@ -87,7 +87,7 @@ pub async fn find_by_username(pool: &crate::db::Pool, username: &str) -> AppResu
 /// Find user by integer primary key (internal FK lookup)
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<User>> {
     Ok(raisfast_derive::crud_find!(pool, "users", User, "id" => id, tenant: tenant_id)?)
@@ -99,7 +99,10 @@ pub async fn create(
     cmd: &crate::commands::CreateUserCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
 
     raisfast_derive::crud_insert!(
         pool,
@@ -189,7 +192,7 @@ pub async fn find_all(
 /// Admin updates user role
 pub async fn update_role(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     role: UserRole,
     tenant_id: Option<&str>,
 ) -> AppResult<User> {
@@ -207,7 +210,7 @@ pub async fn update_role(
 
 pub async fn delete_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     raisfast_derive::crud_delete!(pool, "users", "id" => id, tenant: tenant_id)?;
@@ -230,7 +233,7 @@ mod tests {
     async fn find_by_id() {
         let pool = setup_pool().await;
         let user = create(&pool, &new_cmd("pkuser"), None).await.unwrap();
-        let found = super::find_by_id(&pool, *user.id, None)
+        let found = super::find_by_id(&pool, user.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -243,7 +246,7 @@ mod tests {
         let updated = super::update_profile(
             &pool,
             &crate::commands::user::UpdateProfileCmd {
-                id: *user.id,
+                id: user.id,
                 username: Some("newname".to_string()),
                 bio: Some("hello world".to_string()),
                 website: None,
@@ -274,7 +277,7 @@ mod tests {
         let pool = setup_pool().await;
         let user = create(&pool, &new_cmd("roleuser"), None).await.unwrap();
         assert_eq!(user.role, UserRole::Reader);
-        let updated = super::update_role(&pool, *user.id, UserRole::Author, None)
+        let updated = super::update_role(&pool, user.id, UserRole::Author, None)
             .await
             .unwrap();
         assert_eq!(updated.role, UserRole::Author);

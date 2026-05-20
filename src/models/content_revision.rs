@@ -12,7 +12,7 @@ use ts_rs::TS;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -39,11 +39,14 @@ pub struct RevisionSummary {
 pub async fn create_revision(
     pool: &crate::db::Pool,
     content_type: &str,
-    record_id: i64,
+    record_id: SnowflakeId,
     snapshot: &Value,
     created_by: Option<i64>,
 ) -> AppResult<ContentRevision> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
 
     let next_rev = next_revision_number(pool, content_type, record_id).await?;
 
@@ -66,7 +69,7 @@ pub async fn create_revision(
 async fn next_revision_number(
     pool: &crate::db::Pool,
     content_type: &str,
-    record_id: i64,
+    record_id: SnowflakeId,
 ) -> AppResult<i64> {
     raisfast_derive::check_schema!(
         "content_revisions",
@@ -91,7 +94,7 @@ async fn next_revision_number(
 pub async fn list_revisions(
     pool: &crate::db::Pool,
     content_type: &str,
-    record_id: i64,
+    record_id: SnowflakeId,
 ) -> AppResult<Vec<ContentRevision>> {
     Ok(
         raisfast_derive::crud_find_all!(pool, "content_revisions", ContentRevision, "content_type" => content_type, and: ["record_id" => record_id], order_by: "revision_number DESC")?,
@@ -101,8 +104,8 @@ pub async fn list_revisions(
 pub async fn get_revision(
     pool: &crate::db::Pool,
     content_type: &str,
-    record_id: i64,
-    revision_id: i64,
+    record_id: SnowflakeId,
+    revision_id: SnowflakeId,
 ) -> AppResult<Option<ContentRevision>> {
     Ok(
         raisfast_derive::crud_find!(pool, "content_revisions", ContentRevision, "id" => revision_id, and: ["content_type" => content_type, "record_id" => record_id])?,
@@ -153,7 +156,7 @@ pub fn compute_diff(old: &Value, new: &Value) -> Value {
 pub async fn delete_revisions(
     pool: &crate::db::Pool,
     content_type: &str,
-    record_id: i64,
+    record_id: SnowflakeId,
 ) -> AppResult<u64> {
     let result = raisfast_derive::crud_delete!(pool, "content_revisions", "content_type" => content_type, and: ["record_id" => record_id])?;
     Ok(result.rows_affected())

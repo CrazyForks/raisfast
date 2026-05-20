@@ -8,7 +8,7 @@ use sqlx::FromRow;
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -48,7 +48,7 @@ pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Tenant>> {
 }
 
 /// Find a tenant by integer primary key
-pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<Option<Tenant>> {
+pub async fn find_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<Option<Tenant>> {
     let tenant = raisfast_derive::crud_find!(pool, "tenants", Tenant, "id" => id)?;
     Ok(tenant)
 }
@@ -66,7 +66,10 @@ pub async fn create(
     domain: Option<&str>,
     config: &str,
 ) -> AppResult<Tenant> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
     raisfast_derive::crud_insert!(
         pool,
         "tenants",
@@ -90,7 +93,7 @@ pub async fn create(
 /// Update a tenant
 pub async fn update(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     name: Option<&str>,
     domain: Option<&str>,
     config: Option<&str>,
@@ -110,7 +113,7 @@ pub async fn update(
 }
 
 /// Delete a tenant
-pub async fn delete(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
+pub async fn delete(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
     raisfast_derive::crud_delete!(pool, "tenants", "id" => id)?;
     Ok(())
 }
@@ -137,7 +140,7 @@ mod tests {
         assert_eq!(row.name, "Test Tenant");
         assert_eq!(row.domain.unwrap(), "test.example.com");
 
-        let found = find_by_id(&pool, *row.id).await.unwrap().unwrap();
+        let found = find_by_id(&pool, row.id).await.unwrap().unwrap();
         assert_eq!(found.id, row.id);
     }
 
@@ -176,7 +179,7 @@ mod tests {
             .await
             .unwrap();
 
-        let updated = update(&pool, *row.id, Some("Updated Name"), None, None, None)
+        let updated = update(&pool, row.id, Some("Updated Name"), None, None, None)
             .await
             .unwrap();
         assert_eq!(updated.name, "Updated Name");
@@ -188,8 +191,8 @@ mod tests {
         let pool = setup_pool().await;
         let row = create(&pool, "ToDelete", None, "{}").await.unwrap();
 
-        delete(&pool, *row.id).await.unwrap();
-        let found = find_by_id(&pool, *row.id).await.unwrap();
+        delete(&pool, row.id).await.unwrap();
+        let found = find_by_id(&pool, row.id).await.unwrap();
         assert!(found.is_none());
     }
 }

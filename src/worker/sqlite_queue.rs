@@ -408,6 +408,7 @@ impl JobQueue for SqliteJobQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::snowflake_id::SnowflakeId;
     use crate::worker::{Job, NewJob};
 
     async fn setup() -> SqliteJobQueue {
@@ -691,7 +692,7 @@ mod tests {
     async fn enqueue_multiple_job_types() {
         let q = setup().await;
         q.enqueue(NewJob::from(Job::SendWelcomeEmail {
-            user_id: 1,
+            user_id: SnowflakeId(1),
             email: "a@b.com".into(),
             username: "alice".into(),
         }))
@@ -701,7 +702,7 @@ mod tests {
             .await
             .unwrap();
         q.enqueue(NewJob::from(Job::GenerateThumbnail {
-            media_id: 1,
+            media_id: SnowflakeId(1),
             size: 300,
         }))
         .await

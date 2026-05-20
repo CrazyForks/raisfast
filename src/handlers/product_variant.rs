@@ -88,7 +88,7 @@ pub async fn admin_update(
 ) -> AppResult<ApiResponse<ProductVariantResponse>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let v = state.product_variant_service.update(&auth, id, req).await?;
     Ok(ApiResponse::success(ProductVariantResponse::from(v)))
 }
@@ -99,7 +99,7 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state.product_variant_service.delete(&auth, id).await?;
     Ok(ApiResponse::success(()))
 }

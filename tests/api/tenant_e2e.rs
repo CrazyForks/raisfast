@@ -56,7 +56,8 @@ async fn create_user_in_tenant(
         .await
         .unwrap();
     let cred_data = serde_json::json!({"password_hash": hash}).to_string();
-    let (cred_id, cred_now) = raisfast::utils::id::new_id_and_timestamp();
+    let cred_id = raisfast::utils::id::new_id();
+    let cred_now = raisfast::utils::tz::now_utc();
     let cred_sql = format!(
         "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
         raisfast::db::dialect::ph(1),

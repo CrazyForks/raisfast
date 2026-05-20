@@ -7,6 +7,8 @@
 //! - Refresh token generation and rotation
 //! - User registration, login, logout
 
+use crate::types::snowflake_id::SnowflakeId;
+
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use chrono::Utc;
@@ -103,7 +105,7 @@ pub fn verify_password(password: &str, hash: &str) -> AppResult<bool> {
 
 /// Generate an HS256-signed JWT access token.
 pub(crate) fn generate_access_token_internal(
-    user_id: i64,
+    user_id: SnowflakeId,
     role: UserRole,
     tenant_id: &str,
     secret: &str,
@@ -151,7 +153,7 @@ pub(crate) fn generate_refresh_token_string_internal() -> AppResult<String> {
 /// Test helper: generate a JWT token using a fixed secret.
 #[allow(clippy::doc_lazy_continuation)]
 #[must_use]
-pub fn generate_access_token_for_test(user_id: i64, role: UserRole) -> String {
+pub fn generate_access_token_for_test(user_id: SnowflakeId, role: UserRole) -> String {
     generate_access_token_internal(
         user_id,
         role,
@@ -188,7 +190,10 @@ pub async fn register(
     validate_password_strength(&req.password)?;
     let password_hash = hash_password(&req.password)?;
     let cred_data = crate::models::user_credential::wrap_password_hash(&password_hash);
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
     let registered_via = crate::models::user::RegisteredVia::Email;
 
     let user = in_transaction!(pool, tx, {
@@ -220,7 +225,10 @@ pub async fn register(
             AppError::Internal(anyhow::anyhow!("failed to fetch newly created user"))
         })?;
 
-        let (cred_id, cred_now) = crate::utils::id::new_id_and_timestamp();
+        let (cred_id, cred_now) = (
+            crate::utils::id::new_snowflake_id(),
+            crate::utils::tz::now_utc(),
+        );
         let verified = if !require_email_verification { 1 } else { 0 };
         let cred_sql = format!(
             "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
@@ -254,7 +262,7 @@ pub async fn register(
         && let Err(e) = crate::services::email_verification::trigger_email_verification(
             pool,
             aspect_engine,
-            *user.id,
+            user.id,
             &req.email,
         )
         .await
@@ -300,7 +308,7 @@ pub async fn login(
         return Err(AppError::BadRequest("email_not_verified".into()));
     }
 
-    let user = crate::models::user::find_by_id(pool, *cred.user_id, tenant_id)
+    let user = crate::models::user::find_by_id(pool, cred.user_id, tenant_id)
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
 
@@ -310,7 +318,8 @@ pub async fn login(
 
     if let Some(ref tid) = user.tenant_id
         && let Ok(tid_int) = tid.parse::<i64>()
-        && let Ok(Some(tenant)) = crate::models::tenant::find_by_id(pool, tid_int).await
+        && let Ok(Some(tenant)) =
+            crate::models::tenant::find_by_id(pool, SnowflakeId(tid_int)).await
         && tenant.status != crate::models::tenant::TenantStatus::Active
     {
         return Err(AppError::BadRequest("tenant_disabled".into()));
@@ -318,7 +327,7 @@ pub async fn login(
 
     let user_role = user.role;
     let access_token = generate_access_token_internal(
-        *user.id,
+        user.id,
         user_role,
         user.tenant_id
             .as_deref()
@@ -331,7 +340,7 @@ pub async fn login(
     let expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
     crate::models::refresh_token::create_token(
         pool,
-        *user.id,
+        user.id,
         &refresh_token_str,
         &expires_at.to_rfc3339(),
     )
@@ -380,13 +389,13 @@ pub async fn refresh(
         return Err(AppError::Unauthorized);
     }
 
-    let user = crate::models::user::find_by_id(pool, *stored.user_id, tenant_id)
+    let user = crate::models::user::find_by_id(pool, stored.user_id, tenant_id)
         .await?
         .ok_or_else(|| AppError::Unauthorized)?;
 
     let user_role = user.role;
     let access_token = generate_access_token_internal(
-        *user.id,
+        user.id,
         user_role,
         user.tenant_id
             .as_deref()
@@ -440,10 +449,10 @@ pub async fn refresh(
 /// Deletes all refresh tokens for the user, invalidating sessions across all devices.
 pub async fn logout(pool: &crate::db::Pool, auth: &AuthUser) -> AppResult<()> {
     let uid = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, uid, auth.tenant_id())
+    let user = crate::models::user::find_by_id(pool, SnowflakeId(uid), auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
-    crate::models::refresh_token::delete_by_user(pool, *user.id).await
+    crate::models::refresh_token::delete_by_user(pool, user.id).await
 }
 
 /// Change password.
@@ -458,11 +467,11 @@ pub async fn change_password(
     raisfast_derive::check_schema!("refresh_tokens", "user_id");
     let uid = auth.ensure_authenticated()?;
     let tenant_id = auth.tenant_id();
-    let _user = crate::models::user::find_by_id(pool, uid, tenant_id)
+    let _user = crate::models::user::find_by_id(pool, SnowflakeId(uid), tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
 
-    let creds = crate::models::user_credential::find_by_user_id(pool, *_user.id).await?;
+    let creds = crate::models::user_credential::find_by_user_id(pool, _user.id).await?;
     let password_cred = creds
         .iter()
         .find(|c| c.auth_type == crate::models::user_credential::AuthType::Email)
@@ -479,7 +488,7 @@ pub async fn change_password(
     let new_hash = hash_password(&req.new_password)?;
     crate::models::user_credential::update_credential_data(
         pool,
-        *password_cred.id,
+        password_cred.id,
         &crate::models::user_credential::wrap_password_hash(&new_hash),
     )
     .await?;
@@ -502,7 +511,7 @@ pub async fn bind_email_credential(
     password: &str,
 ) -> AppResult<()> {
     let uid = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, uid, auth.tenant_id())
+    let user = crate::models::user::find_by_id(pool, SnowflakeId(uid), auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -522,7 +531,7 @@ pub async fn bind_email_credential(
 
     crate::models::user_credential::create(
         pool,
-        *user.id,
+        user.id,
         AuthType::Email,
         email,
         &crate::models::user_credential::wrap_password_hash(&hash),
@@ -537,10 +546,10 @@ pub async fn bind_email_credential(
 pub async fn delete_credential(
     pool: &crate::db::Pool,
     auth: &AuthUser,
-    credential_id: i64,
+    credential_id: SnowflakeId,
 ) -> AppResult<()> {
     let uid = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, uid, auth.tenant_id())
+    let user = crate::models::user::find_by_id(pool, SnowflakeId(uid), auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -552,7 +561,7 @@ pub async fn delete_credential(
         return Err(AppError::Forbidden);
     }
 
-    let count = crate::models::user_credential::count_by_user(pool, *user.id).await?;
+    let count = crate::models::user_credential::count_by_user(pool, user.id).await?;
     if count <= 1 {
         return Err(AppError::BadRequest("cannot_remove_last_credential".into()));
     }
@@ -567,11 +576,11 @@ pub async fn list_credentials(
     auth: &AuthUser,
 ) -> AppResult<Vec<crate::models::user_credential::UserCredential>> {
     let uid = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, uid, auth.tenant_id())
+    let user = crate::models::user::find_by_id(pool, SnowflakeId(uid), auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
 
-    crate::models::user_credential::find_by_user_id(pool, *user.id).await
+    crate::models::user_credential::find_by_user_id(pool, user.id).await
 }
 
 #[cfg(test)]
@@ -617,8 +626,14 @@ mod tests {
 
     #[test]
     fn generate_and_verify_token() {
-        let token =
-            generate_access_token_internal(1, UserRole::Admin, "default", "secret", 900).unwrap();
+        let token = generate_access_token_internal(
+            SnowflakeId(1),
+            UserRole::Admin,
+            "default",
+            "secret",
+            900,
+        )
+        .unwrap();
         let key = jsonwebtoken::DecodingKey::from_secret("secret".as_bytes());
         let claims = verify_token(&token, &key).unwrap();
         assert_eq!(claims.sub, "1");
@@ -627,8 +642,14 @@ mod tests {
 
     #[test]
     fn verify_token_rejects_wrong_secret() {
-        let token =
-            generate_access_token_internal(1, UserRole::Admin, "default", "secret-a", 900).unwrap();
+        let token = generate_access_token_internal(
+            SnowflakeId(1),
+            UserRole::Admin,
+            "default",
+            "secret-a",
+            900,
+        )
+        .unwrap();
         let key = jsonwebtoken::DecodingKey::from_secret("secret-b".as_bytes());
         assert!(verify_token(&token, &key).is_err());
     }
@@ -655,7 +676,7 @@ mod tests {
 
     #[test]
     fn generate_test_token_is_valid() {
-        let token = generate_access_token_for_test(1, UserRole::Author);
+        let token = generate_access_token_for_test(SnowflakeId(1), UserRole::Author);
         assert!(token.len() > 20);
     }
 }

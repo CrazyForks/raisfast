@@ -6,29 +6,31 @@ use crate::dto::ecommerce::{CreateUserAddressRequest, UpdateUserAddressRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::user_address::UserAddress;
+use crate::types::snowflake_id::SnowflakeId;
 
 #[async_trait]
 pub trait UserAddressService: Send + Sync {
     async fn create(
         &self,
         auth: &AuthUser,
-        user_id: i64,
+        user_id: SnowflakeId,
         req: CreateUserAddressRequest,
     ) -> AppResult<UserAddress>;
 
     async fn update(
         &self,
         auth: &AuthUser,
-        user_id: i64,
-        id: i64,
+        user_id: SnowflakeId,
+        id: SnowflakeId,
         req: UpdateUserAddressRequest,
     ) -> AppResult<UserAddress>;
 
-    async fn delete(&self, auth: &AuthUser, user_id: i64, id: i64) -> AppResult<()>;
+    async fn delete(&self, auth: &AuthUser, user_id: SnowflakeId, id: SnowflakeId)
+    -> AppResult<()>;
 
-    async fn list(&self, auth: &AuthUser, user_id: i64) -> AppResult<Vec<UserAddress>>;
+    async fn list(&self, auth: &AuthUser, user_id: SnowflakeId) -> AppResult<Vec<UserAddress>>;
 
-    async fn get(&self, auth: &AuthUser, id: i64) -> AppResult<UserAddress>;
+    async fn get(&self, auth: &AuthUser, id: SnowflakeId) -> AppResult<UserAddress>;
 }
 
 pub struct UserAddressServiceImpl {
@@ -46,7 +48,7 @@ impl UserAddressService for UserAddressServiceImpl {
     async fn create(
         &self,
         auth: &AuthUser,
-        user_id: i64,
+        user_id: SnowflakeId,
         req: CreateUserAddressRequest,
     ) -> AppResult<UserAddress> {
         crate::models::user_address::insert(
@@ -74,8 +76,8 @@ impl UserAddressService for UserAddressServiceImpl {
     async fn update(
         &self,
         auth: &AuthUser,
-        user_id: i64,
-        id: i64,
+        user_id: SnowflakeId,
+        id: SnowflakeId,
         req: UpdateUserAddressRequest,
     ) -> AppResult<UserAddress> {
         let existing = crate::models::user_address::find_by_id(&self.pool, id, auth.tenant_id())
@@ -89,7 +91,7 @@ impl UserAddressService for UserAddressServiceImpl {
         let updated = crate::models::user_address::update(
             &self.pool,
             &crate::commands::UpdateUserAddressCmd {
-                id: *existing.id,
+                id: existing.id,
                 user_id,
                 label: req.label.unwrap_or(existing.label),
                 recipient_name: req.recipient_name.unwrap_or(existing.recipient_name),
@@ -112,12 +114,17 @@ impl UserAddressService for UserAddressServiceImpl {
             return Err(AppError::not_found("user_address"));
         }
 
-        crate::models::user_address::find_by_id(&self.pool, *existing.id, auth.tenant_id())
+        crate::models::user_address::find_by_id(&self.pool, existing.id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("user_address"))
     }
 
-    async fn delete(&self, auth: &AuthUser, user_id: i64, id: i64) -> AppResult<()> {
+    async fn delete(
+        &self,
+        auth: &AuthUser,
+        user_id: SnowflakeId,
+        id: SnowflakeId,
+    ) -> AppResult<()> {
         let existing = crate::models::user_address::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("user_address"))?;
@@ -128,7 +135,7 @@ impl UserAddressService for UserAddressServiceImpl {
 
         crate::models::user_address::delete_by_id(
             &self.pool,
-            *existing.id,
+            existing.id,
             user_id,
             auth.tenant_id(),
         )
@@ -137,11 +144,11 @@ impl UserAddressService for UserAddressServiceImpl {
         Ok(())
     }
 
-    async fn list(&self, auth: &AuthUser, user_id: i64) -> AppResult<Vec<UserAddress>> {
+    async fn list(&self, auth: &AuthUser, user_id: SnowflakeId) -> AppResult<Vec<UserAddress>> {
         crate::models::user_address::find_by_user_id(&self.pool, user_id, auth.tenant_id()).await
     }
 
-    async fn get(&self, auth: &AuthUser, id: i64) -> AppResult<UserAddress> {
+    async fn get(&self, auth: &AuthUser, id: SnowflakeId) -> AppResult<UserAddress> {
         crate::models::user_address::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("user_address"))

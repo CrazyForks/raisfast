@@ -11,7 +11,7 @@ use ts_rs::TS;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 /// API Token full database row model
@@ -44,14 +44,17 @@ pub struct ApiTokenListItem {
 /// Create a new API Token record
 pub async fn create(
     pool: &crate::db::Pool,
-    user_id: i64,
+    user_id: SnowflakeId,
     name: &str,
     token_hash: &str,
     token_prefix: &str,
     scopes: &str,
     expires_at: Option<&str>,
 ) -> AppResult<ApiToken> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
     raisfast_derive::crud_insert!(pool, "api_tokens", [
         "id" => id,
         "user_id" => user_id,
@@ -78,7 +81,7 @@ pub async fn find_by_hash(pool: &crate::db::Pool, token_hash: &str) -> AppResult
 /// List all API Tokens for a given user (sanitized)
 pub async fn list_by_user(
     pool: &crate::db::Pool,
-    user_id: i64,
+    user_id: SnowflakeId,
 ) -> AppResult<Vec<ApiTokenListItem>> {
     raisfast_derive::check_schema!(
         "api_tokens",
@@ -103,18 +106,18 @@ pub async fn list_by_user(
 }
 
 /// Find API Token by id
-pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<Option<ApiToken>> {
+pub async fn find_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<Option<ApiToken>> {
     raisfast_derive::crud_find!(pool, "api_tokens", ApiToken, "id" => id).map_err(Into::into)
 }
 
 /// Delete API Token by id
-pub async fn delete_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
+pub async fn delete_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
     raisfast_derive::crud_delete!(pool, "api_tokens", "id" => id)?;
     Ok(())
 }
 
 /// Update last_used_at (by integer primary key)
-pub async fn touch_last_used(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
+pub async fn touch_last_used(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_update!(pool, "api_tokens",
         bind: ["last_used_at" => now],
@@ -126,6 +129,7 @@ pub async fn touch_last_used(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -151,7 +155,7 @@ mod tests {
         let user_id = insert_user(&pool).await;
         let row = create(
             &pool,
-            user_id,
+            SnowflakeId(user_id),
             "Test",
             "hash123",
             "rblog_ab",
@@ -180,7 +184,7 @@ mod tests {
     #[tokio::test]
     async fn find_by_id_not_found() {
         let pool = setup_pool().await;
-        let result = find_by_id(&pool, 99999).await.unwrap();
+        let result = find_by_id(&pool, SnowflakeId(99999)).await.unwrap();
         assert!(result.is_none());
     }
 
@@ -188,13 +192,21 @@ mod tests {
     async fn list_by_user_returns_tokens() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
-        create(&pool, user_id, "First", "h1", "rblog_a", "[\"read\"]", None)
-            .await
-            .unwrap();
+        create(
+            &pool,
+            SnowflakeId(user_id),
+            "First",
+            "h1",
+            "rblog_a",
+            "[\"read\"]",
+            None,
+        )
+        .await
+        .unwrap();
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         create(
             &pool,
-            user_id,
+            SnowflakeId(user_id),
             "Second",
             "h2",
             "rblog_b",
@@ -204,7 +216,7 @@ mod tests {
         .await
         .unwrap();
 
-        let list = list_by_user(&pool, user_id).await.unwrap();
+        let list = list_by_user(&pool, SnowflakeId(user_id)).await.unwrap();
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].name, "Second");
         assert_eq!(list[1].name, "First");
@@ -213,7 +225,7 @@ mod tests {
     #[tokio::test]
     async fn list_by_user_empty() {
         let pool = setup_pool().await;
-        let list = list_by_user(&pool, 99999).await.unwrap();
+        let list = list_by_user(&pool, SnowflakeId(99999)).await.unwrap();
         assert!(list.is_empty());
     }
 
@@ -221,11 +233,19 @@ mod tests {
     async fn delete_by_id_removes_token() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
-        let row = create(&pool, user_id, "Del", "h3", "rblog_c", "[\"read\"]", None)
-            .await
-            .unwrap();
-        delete_by_id(&pool, *row.id).await.unwrap();
-        let found = find_by_id(&pool, *row.id).await.unwrap();
+        let row = create(
+            &pool,
+            SnowflakeId(user_id),
+            "Del",
+            "h3",
+            "rblog_c",
+            "[\"read\"]",
+            None,
+        )
+        .await
+        .unwrap();
+        delete_by_id(&pool, row.id).await.unwrap();
+        let found = find_by_id(&pool, row.id).await.unwrap();
         assert!(found.is_none());
     }
 
@@ -233,13 +253,21 @@ mod tests {
     async fn touch_last_used_updates_field() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
-        let row = create(&pool, user_id, "Touch", "h4", "rblog_d", "[\"read\"]", None)
-            .await
-            .unwrap();
+        let row = create(
+            &pool,
+            SnowflakeId(user_id),
+            "Touch",
+            "h4",
+            "rblog_d",
+            "[\"read\"]",
+            None,
+        )
+        .await
+        .unwrap();
         assert!(row.last_used_at.is_none());
 
-        touch_last_used(&pool, *row.id).await.unwrap();
-        let updated = find_by_id(&pool, *row.id).await.unwrap().unwrap();
+        touch_last_used(&pool, row.id).await.unwrap();
+        let updated = find_by_id(&pool, row.id).await.unwrap().unwrap();
         assert!(updated.last_used_at.is_some());
     }
 
@@ -249,7 +277,7 @@ mod tests {
         let user_id = insert_user(&pool).await;
         let row = create(
             &pool,
-            user_id,
+            SnowflakeId(user_id),
             "Expiring",
             "h5",
             "rblog_e",
@@ -270,7 +298,7 @@ mod tests {
         let user_id = insert_user(&pool).await;
         create(
             &pool,
-            user_id,
+            SnowflakeId(user_id),
             "Safe",
             "secret_hash",
             "rblog_f",
@@ -279,7 +307,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let list = list_by_user(&pool, user_id).await.unwrap();
+        let list = list_by_user(&pool, SnowflakeId(user_id)).await.unwrap();
         let json = serde_json::to_value(&list[0]).unwrap();
         let obj = json.as_object().unwrap();
         assert!(!obj.contains_key("token_hash"));

@@ -7,6 +7,7 @@ use crate::cache::CacheStore;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::api_token;
+use crate::types::snowflake_id::{SnowflakeId, parse_id};
 use crate::utils::tz::Timestamp;
 #[cfg(feature = "export-types")]
 use ts_rs::TS;
@@ -35,7 +36,7 @@ fn scope_to_role(scopes: &[String]) -> String {
 /// Cached token authentication result
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CachedTokenAuth {
-    user_id: i64,
+    user_id: SnowflakeId,
     role: String,
     tenant_id: Option<String>,
     expires_at: Option<Timestamp>,
@@ -114,7 +115,7 @@ pub async fn create_token(
 
     let row = api_token::create(
         pool,
-        user_id,
+        SnowflakeId(user_id),
         name.trim(),
         &hash,
         prefix,
@@ -140,10 +141,10 @@ pub async fn list_tokens(
     auth: &AuthUser,
 ) -> AppResult<Vec<api_token::ApiTokenListItem>> {
     let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, user_id, None)
+    let user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), None)
         .await?
         .ok_or(AppError::Unauthorized)?;
-    api_token::list_by_user(pool, *user.id).await
+    api_token::list_by_user(pool, user.id).await
 }
 
 /// Delete an API token (only the owner or an admin can do this)
@@ -155,10 +156,10 @@ pub async fn delete_token(
 ) -> AppResult<()> {
     let user_id = auth.ensure_authenticated()?;
     let is_admin = auth.is_admin();
-    let token = api_token::find_by_id(pool, crate::utils::id::parse_id(token_id)?)
+    let token = api_token::find_by_id(pool, parse_id(token_id)?)
         .await?
         .ok_or_else(|| AppError::NotFound("api_token".into()))?;
-    let user = crate::models::user::find_by_id(pool, user_id, None)
+    let user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), None)
         .await?
         .ok_or(AppError::Unauthorized)?;
     if !is_admin && token.user_id != user.id {
@@ -170,7 +171,7 @@ pub async fn delete_token(
     {
         tracing::warn!("api_token cache delete on revoke: {e}");
     }
-    api_token::delete_by_id(pool, crate::utils::id::parse_id(token_id)?).await
+    api_token::delete_by_id(pool, parse_id(token_id)?).await
 }
 
 /// Verify an API token and return (user_id, role, tenant_id)
@@ -194,7 +195,7 @@ pub async fn verify_api_token(
             let _ = cache.delete(&cache_key).await;
             return Err(AppError::Unauthorized);
         }
-        return Ok((auth.user_id, auth.role, auth.tenant_id));
+        return Ok((*auth.user_id, auth.role, auth.tenant_id));
     }
 
     let token = api_token::find_by_hash(pool, &hash)
@@ -204,7 +205,7 @@ pub async fn verify_api_token(
     if let Some(ref exp) = token.expires_at
         && exp < &chrono::Utc::now()
     {
-        if let Err(e) = api_token::delete_by_id(pool, *token.id).await {
+        if let Err(e) = api_token::delete_by_id(pool, token.id).await {
             tracing::warn!("api_token delete expired: {e}");
         }
         if let Err(e) = cache.delete(&cache_key).await {
@@ -213,19 +214,19 @@ pub async fn verify_api_token(
         return Err(AppError::Unauthorized);
     }
 
-    let user = crate::models::user::find_by_id(pool, *token.user_id, None)
+    let user = crate::models::user::find_by_id(pool, token.user_id, None)
         .await?
         .ok_or(AppError::Unauthorized)?;
 
     let scopes: Vec<String> = serde_json::from_str(&token.scopes).unwrap_or_default();
     let role = scope_to_role(&scopes);
 
-    if let Err(e) = api_token::touch_last_used(pool, *token.id).await {
+    if let Err(e) = api_token::touch_last_used(pool, token.id).await {
         tracing::debug!("api_token touch_last_used: {e}");
     }
 
     let cached_auth = CachedTokenAuth {
-        user_id: *user.id,
+        user_id: user.id,
         role: role.clone(),
         tenant_id: user.tenant_id.clone(),
         expires_at: token.expires_at,
@@ -265,7 +266,7 @@ mod tests {
         )
         .await
         .unwrap();
-        crate::models::user::update_role(pool, *user.id, role, None)
+        crate::models::user::update_role(pool, user.id, role, None)
             .await
             .unwrap()
     }
@@ -432,7 +433,7 @@ mod tests {
         let past = "2000-01-01T00:00:00+00:00";
         crate::models::api_token::create(
             &pool,
-            *user.id,
+            user.id,
             "Expired",
             &token_hash,
             &plain[..8],
@@ -460,7 +461,7 @@ mod tests {
         let future = "2099-12-31T23:59:59+00:00";
         crate::models::api_token::create(
             &pool,
-            *user.id,
+            user.id,
             "Valid",
             &token_hash,
             &plain[..8],
@@ -485,7 +486,7 @@ mod tests {
         let token_hash = hash_token(plain);
         crate::models::api_token::create(
             &pool,
-            *user.id,
+            user.id,
             "TouchTest",
             &token_hash,
             &plain[..8],
@@ -520,7 +521,7 @@ mod tests {
         let user = insert_user(&pool, crate::models::user::UserRole::Reader).await;
         let row = crate::models::api_token::create(
             &pool,
-            *user.id,
+            user.id,
             "Own",
             "h-del",
             "rblog_d",
@@ -539,7 +540,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            crate::models::api_token::find_by_id(&pool, *row.id)
+            crate::models::api_token::find_by_id(&pool, row.id)
                 .await
                 .unwrap()
                 .is_none()
@@ -553,7 +554,7 @@ mod tests {
         let admin = insert_user(&pool, crate::models::user::UserRole::Admin).await;
         let row = crate::models::api_token::create(
             &pool,
-            *user.id,
+            user.id,
             "Target",
             "h-adm",
             "rblog_a",
@@ -579,7 +580,7 @@ mod tests {
         let user = insert_user(&pool, crate::models::user::UserRole::Reader).await;
         let row = crate::models::api_token::create(
             &pool,
-            *user.id,
+            user.id,
             "FB",
             "h-fb",
             "rblog_f",
@@ -625,7 +626,7 @@ mod tests {
         let token_hash = hash_token(plain);
         crate::models::api_token::create(
             &pool,
-            *user.id,
+            user.id,
             "Cached",
             &token_hash,
             &plain[..8],
@@ -644,7 +645,7 @@ mod tests {
 
         crate::models::api_token::delete_by_id(
             &pool,
-            *crate::models::api_token::find_by_hash(&pool, &token_hash)
+            crate::models::api_token::find_by_hash(&pool, &token_hash)
                 .await
                 .unwrap()
                 .unwrap()
@@ -666,7 +667,7 @@ mod tests {
         let past = "2000-01-01T00:00:00+00:00";
         crate::models::api_token::create(
             &pool,
-            *user.id,
+            user.id,
             "CacheExp",
             &token_hash,
             &plain[..8],
@@ -679,7 +680,7 @@ mod tests {
         let cache = test_cache();
         let cache_key = format!("{CACHE_PREFIX}{token_hash}");
         let cached = serde_json::to_string(&CachedTokenAuth {
-            user_id: *user.id,
+            user_id: user.id,
             role: "reader".into(),
             tenant_id: Some("default".to_string()),
             expires_at: Some(past.parse().unwrap()),

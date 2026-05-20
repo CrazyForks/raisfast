@@ -1,6 +1,6 @@
 use crate::db::Pool;
 use crate::errors::app_error::AppResult;
-use crate::utils::id::{SnowflakeId, new_id_and_timestamp};
+use crate::types::snowflake_id::SnowflakeId;
 use crate::webhook::model;
 
 pub struct WebhookService {
@@ -21,10 +21,13 @@ impl WebhookService {
         enabled: bool,
         custom_secret: Option<String>,
     ) -> AppResult<model::WebhookSubscription> {
-        let (id, now) = new_id_and_timestamp();
+        let (id, now) = (
+            crate::utils::id::new_snowflake_id(),
+            crate::utils::tz::now_utc(),
+        );
         let secret = custom_secret.unwrap_or_else(Self::generate_secret);
         let sub = model::WebhookSubscription {
-            id: SnowflakeId(id),
+            id,
             tenant_id: tenant_id.map(|t| t.to_string()),
             url,
             secret,
@@ -35,7 +38,7 @@ impl WebhookService {
             updated_at: now,
         };
         model::insert(&self.pool, &sub).await?;
-        let inserted = model::find_by_id(&self.pool, *sub.id).await?;
+        let inserted = model::find_by_id(&self.pool, sub.id).await?;
         Ok(inserted)
     }
 
@@ -48,21 +51,24 @@ impl WebhookService {
         model::find_paginated(&self.pool, tenant_id, page, page_size).await
     }
 
-    pub async fn get(&self, id: i64) -> AppResult<model::WebhookSubscription> {
+    pub async fn get(&self, id: SnowflakeId) -> AppResult<model::WebhookSubscription> {
         model::find_by_id(&self.pool, id).await
     }
 
     #[allow(clippy::too_many_arguments)]
     pub async fn update(
         &self,
-        id: i64,
+        id: SnowflakeId,
         url: Option<String>,
         events: Option<Vec<String>>,
         description: Option<String>,
         enabled: Option<bool>,
     ) -> AppResult<model::WebhookSubscription> {
         let mut sub = model::find_by_id(&self.pool, id).await?;
-        let (_, now) = new_id_and_timestamp();
+        let (_, now) = (
+            crate::utils::id::new_snowflake_id(),
+            crate::utils::tz::now_utc(),
+        );
         if let Some(u) = url {
             sub.url = u;
         }
@@ -80,7 +86,7 @@ impl WebhookService {
         Ok(sub)
     }
 
-    pub async fn delete(&self, id: i64) -> AppResult<()> {
+    pub async fn delete(&self, id: SnowflakeId) -> AppResult<()> {
         model::delete_by_id(&self.pool, id).await
     }
 

@@ -58,7 +58,10 @@ pub async fn seed(
     let password_hash = raisfast::services::auth::hash_password(password)
         .map_err(|e| anyhow::anyhow!("password hashing failed: {e}"))?;
 
-    let (id, now) = raisfast::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        raisfast::utils::id::new_id(),
+        raisfast::utils::tz::now_utc(),
+    );
 
     let tid = if cfg!(feature = "db-sqlite") {
         let row: Option<(String,)> =
@@ -126,7 +129,10 @@ pub async fn seed(
     .await?;
 
     let cred_data = serde_json::json!({"password_hash": password_hash}).to_string();
-    let (cred_id, cred_now) = raisfast::utils::id::new_id_and_timestamp();
+    let (cred_id, cred_now) = (
+        raisfast::utils::id::new_id(),
+        raisfast::utils::tz::now_utc(),
+    );
     sqlx::query(&format!(
         "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, {}, {}, {}, 1, {}, {})",
         dialect::ph(1),

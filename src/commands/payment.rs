@@ -1,10 +1,11 @@
+use crate::types::snowflake_id::SnowflakeId;
 pub struct CreatePaymentOrderCmd {
-    pub user_id: i64,
+    pub user_id: SnowflakeId,
     pub order_id: Option<String>,
     pub title: String,
     pub amount: i64,
     pub currency: String,
-    pub channel_id: i64,
+    pub channel_id: SnowflakeId,
     pub provider: String,
     pub reference_type: Option<String>,
     pub reference_id: Option<String>,
@@ -30,9 +31,9 @@ pub struct CreatePaymentChannelCmd {
 }
 
 pub struct CreatePaymentTransactionCmd {
-    pub payment_order_id: i64,
+    pub payment_order_id: SnowflakeId,
     pub order_id: Option<String>,
-    pub user_id: i64,
+    pub user_id: SnowflakeId,
     pub tx_type: String,
     pub amount: i64,
     pub currency: String,
@@ -42,9 +43,9 @@ pub struct CreatePaymentTransactionCmd {
 }
 
 pub struct CreatePaymentRefundCmd {
-    pub payment_order_id: i64,
+    pub payment_order_id: SnowflakeId,
     pub order_id: Option<String>,
-    pub user_id: i64,
+    pub user_id: SnowflakeId,
     pub amount: i64,
     pub currency: String,
     pub reason: Option<String>,
@@ -55,7 +56,7 @@ pub struct CreatePaymentRefundCmd {
 }
 
 pub struct UpdatePaymentChannelCmd {
-    pub id: i64,
+    pub id: SnowflakeId,
     pub provider: String,
     pub name: String,
     pub is_live: bool,

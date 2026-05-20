@@ -9,6 +9,7 @@
 //! Adding a new event: add variant + optional `#[event(table = "...", name = "...")]`.
 //! Audit logging is automatic for any event with a `table` attribute.
 
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 
 use crate::dto::PostResponse;
@@ -151,7 +152,7 @@ pub enum Event {
     },
     #[event(table = "users")]
     EmailVerificationRequested {
-        user_id: i64,
+        user_id: SnowflakeId,
         email: String,
         token: EmailVerificationToken,
     },

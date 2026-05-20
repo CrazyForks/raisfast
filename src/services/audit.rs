@@ -3,6 +3,7 @@
 use crate::db::Pool;
 use crate::errors::app_error::AppResult;
 use crate::models::audit_log::{self, AuditEntry};
+use crate::types::snowflake_id::SnowflakeId;
 
 /// Audit log service
 pub struct AuditService {
@@ -29,11 +30,14 @@ impl AuditService {
         ip_address: Option<&str>,
         user_agent: Option<&str>,
     ) -> AppResult<()> {
-        let (id, now) = crate::utils::id::new_id_and_timestamp();
+        let (id, now) = (
+            crate::utils::id::new_snowflake_id(),
+            crate::utils::tz::now_utc(),
+        );
         let entry = AuditEntry {
-            id: crate::utils::id::SnowflakeId(id),
+            id,
             tenant_id: Some(tenant_id.to_string()),
-            actor_id: actor_id.map(crate::utils::id::SnowflakeId),
+            actor_id: actor_id.map(crate::types::snowflake_id::SnowflakeId),
             actor_role: actor_role.map(|s| s.to_string()),
             action: action.to_string(),
             subject: subject.to_string(),
@@ -57,7 +61,7 @@ impl AuditService {
         audit_log::find_paginated(&self.pool, tenant_id, action, actor_id, page, page_size).await
     }
 
-    pub async fn get(&self, id: i64) -> AppResult<AuditEntry> {
+    pub async fn get(&self, id: SnowflakeId) -> AppResult<AuditEntry> {
         audit_log::find_by_id(&self.pool, id).await
     }
 }

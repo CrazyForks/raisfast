@@ -4,7 +4,7 @@ use ts_rs::TS;
 
 use crate::commands::{CreateProductCmd, UpdateProductCmd};
 use crate::errors::app_error::{AppError, AppResult};
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -79,7 +79,7 @@ pub struct Product {
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Product>> {
     raisfast_derive::crud_find!(pool, "products", Product, "id" => id, tenant: tenant_id)
@@ -129,7 +129,10 @@ pub async fn insert(
     cmd: &CreateProductCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Product> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
     raisfast_derive::crud_insert!(
         pool,
         "products",
@@ -222,7 +225,7 @@ pub async fn update(
 
 pub async fn delete_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
     let result = raisfast_derive::crud_delete!(pool, "products", "id" => id, tenant: tenant_id)?;
@@ -232,6 +235,7 @@ pub async fn delete_by_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -275,7 +279,7 @@ mod tests {
         .unwrap()
     }
 
-    async fn set_status(pool: &crate::db::Pool, id: i64, status: &str) {
+    async fn set_status(pool: &crate::db::Pool, id: SnowflakeId, status: &str) {
         sqlx::query("UPDATE products SET status = ? WHERE id = ?")
             .bind(status)
             .bind(id)
@@ -284,7 +288,7 @@ mod tests {
             .unwrap();
     }
 
-    async fn get_version(pool: &crate::db::Pool, id: i64) -> i64 {
+    async fn get_version(pool: &crate::db::Pool, id: SnowflakeId) -> i64 {
         let (v,): (i64,) = sqlx::query_as("SELECT version FROM products WHERE id = ?")
             .bind(id)
             .fetch_one(pool)
@@ -297,10 +301,7 @@ mod tests {
     async fn insert_and_find_by_id() {
         let pool = setup_pool().await;
         let p = seed_product(&pool, "Widget", "draft").await;
-        let found = super::find_by_id(&pool, *p.id, None)
-            .await
-            .unwrap()
-            .unwrap();
+        let found = super::find_by_id(&pool, p.id, None).await.unwrap().unwrap();
         assert_eq!(found.id, p.id);
         assert_eq!(found.title, "Widget");
         assert_eq!(found.price, 1000);
@@ -312,7 +313,7 @@ mod tests {
     async fn find_by_id_not_found() {
         let pool = setup_pool().await;
         assert!(
-            super::find_by_id(&pool, 99999, None)
+            super::find_by_id(&pool, SnowflakeId(99999), None)
                 .await
                 .unwrap()
                 .is_none()
@@ -369,11 +370,11 @@ mod tests {
     async fn update_changes_title_and_price() {
         let pool = setup_pool().await;
         let p = seed_product(&pool, "Old", "draft").await;
-        let version = get_version(&pool, *p.id).await;
+        let version = get_version(&pool, p.id).await;
         let ok = super::update(
             &pool,
             &UpdateProductCmd {
-                id: *p.id,
+                id: p.id,
                 category_id: None,
                 title: "New".to_string(),
                 description: Some("desc".to_string()),
@@ -411,10 +412,7 @@ mod tests {
         .await
         .unwrap();
         assert!(ok);
-        let found = super::find_by_id(&pool, *p.id, None)
-            .await
-            .unwrap()
-            .unwrap();
+        let found = super::find_by_id(&pool, p.id, None).await.unwrap().unwrap();
         assert_eq!(found.title, "New");
         assert_eq!(found.price, 2000);
         assert_eq!(found.status, ProductStatus::Active);
@@ -429,7 +427,7 @@ mod tests {
         let ok = super::update(
             &pool,
             &UpdateProductCmd {
-                id: *p.id,
+                id: p.id,
                 category_id: None,
                 title: "New".to_string(),
                 description: None,
@@ -473,10 +471,10 @@ mod tests {
     async fn delete_removes_product() {
         let pool = setup_pool().await;
         let p = seed_product(&pool, "Bye", "draft").await;
-        let ok = super::delete_by_id(&pool, *p.id, None).await.unwrap();
+        let ok = super::delete_by_id(&pool, p.id, None).await.unwrap();
         assert!(ok);
         assert!(
-            super::find_by_id(&pool, *p.id, None)
+            super::find_by_id(&pool, p.id, None)
                 .await
                 .unwrap()
                 .is_none()
@@ -486,7 +484,9 @@ mod tests {
     #[tokio::test]
     async fn delete_not_found() {
         let pool = setup_pool().await;
-        let ok = super::delete_by_id(&pool, 99999, None).await.unwrap();
+        let ok = super::delete_by_id(&pool, SnowflakeId(99999), None)
+            .await
+            .unwrap();
         assert!(!ok);
     }
 
@@ -495,10 +495,10 @@ mod tests {
         let pool = setup_pool().await;
         for i in 0..5 {
             let p = seed_product(&pool, &format!("P{i}"), "draft").await;
-            set_status(&pool, *p.id, "active").await;
+            set_status(&pool, p.id, "active").await;
         }
         let p = seed_product(&pool, "Draft", "draft").await;
-        set_status(&pool, *p.id, "draft").await;
+        set_status(&pool, p.id, "draft").await;
 
         let (items, total) = super::find_active_paginated(&pool, None, 1, 3)
             .await
@@ -513,7 +513,7 @@ mod tests {
         let pool = setup_pool().await;
         for i in 0..5 {
             let p = seed_product(&pool, &format!("P{i}"), "draft").await;
-            set_status(&pool, *p.id, "active").await;
+            set_status(&pool, p.id, "active").await;
         }
         let (items, total) = super::find_active_paginated(&pool, None, 2, 3)
             .await
@@ -540,7 +540,7 @@ mod tests {
         let pool = setup_pool().await;
         for i in 0..3 {
             let p = seed_product(&pool, &format!("Active{i}"), "draft").await;
-            set_status(&pool, *p.id, "active").await;
+            set_status(&pool, p.id, "active").await;
         }
         seed_product(&pool, "Draft1", "draft").await;
 

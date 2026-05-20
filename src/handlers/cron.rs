@@ -12,6 +12,7 @@ use crate::dto::{BatchRequest, BatchResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::pagination::PaginationParams;
 use crate::worker::{
     CronSchedule, cleanup_execution_logs, create_schedule, delete_schedule, find_by_id,
@@ -193,7 +194,7 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<CronSchedule>> {
     auth.ensure_admin()?;
-    let id: i64 = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let schedule = find_by_id(&state.pool, id)
         .await?
         .ok_or_else(|| AppError::not_found("cron_schedule"))?;
@@ -240,7 +241,7 @@ pub async fn update(
 ) -> AppResult<ApiResponse<CronSchedule>> {
     auth.ensure_admin()?;
     crate::errors::validation::validate(&req)?;
-    let id: i64 = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let updated = update_schedule(
         &state.pool,
         id,
@@ -268,7 +269,7 @@ pub async fn toggle(
     Json(body): Json<ToggleBody>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    let id: i64 = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     toggle_schedule(&state.pool, id, body.enabled).await?;
     Ok(ApiResponse::success(()))
 }
@@ -285,7 +286,7 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    let id: i64 = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     delete_schedule(&state.pool, id).await?;
     Ok(ApiResponse::success(()))
 }
@@ -307,7 +308,7 @@ pub async fn logs(
     auth.ensure_admin()?;
     let limit = params.limit.clamp(1, 100);
     let logs = if let Some(ref schedule_id) = params.schedule_id {
-        let sid: i64 = crate::utils::id::parse_id(schedule_id)?;
+        let sid = crate::types::snowflake_id::parse_id(schedule_id)?;
         list_execution_logs(&state.pool, sid, limit).await?
     } else {
         recent_execution_logs(&state.pool, limit).await?
@@ -349,8 +350,8 @@ pub async fn admin_batch(
     crate::errors::validation::validate(&req)?;
     let mut affected = 0usize;
     for id_str in &req.ids {
-        let id: i64 = match id_str.parse() {
-            Ok(v) => v,
+        let id = match id_str.parse::<i64>() {
+            Ok(v) => SnowflakeId(v),
             Err(_) => continue,
         };
         match req.action.as_str() {

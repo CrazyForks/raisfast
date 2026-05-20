@@ -184,7 +184,8 @@ async fn delete_token_non_owner_forbidden() {
     let sql = "INSERT INTO users (username, role, status, registered_via) VALUES ('tokenreader', 'reader', 'active', 'email') RETURNING id";
     let reader_int_id: i64 = sqlx::query_scalar(sql).fetch_one(&pool).await.unwrap();
     let cred_data = serde_json::json!({"password_hash": reader_hash}).to_string();
-    let (cred_id, cred_now) = raisfast::utils::id::new_id_and_timestamp();
+    let cred_id = raisfast::utils::id::new_id();
+    let cred_now = raisfast::utils::tz::now_utc();
     let cred_sql = format!(
         "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
         raisfast::db::dialect::ph(1),
@@ -225,7 +226,8 @@ async fn admin_can_delete_other_users_token() {
     let sql = "INSERT INTO users (username, role, status, registered_via) VALUES ('readeradmindel', 'reader', 'active', 'email') RETURNING id";
     let reader_int_id: i64 = sqlx::query_scalar(sql).fetch_one(&pool).await.unwrap();
     let cred_data = serde_json::json!({"password_hash": reader_hash}).to_string();
-    let (cred_id, cred_now) = raisfast::utils::id::new_id_and_timestamp();
+    let cred_id = raisfast::utils::id::new_id();
+    let cred_now = raisfast::utils::tz::now_utc();
     let cred_sql = format!(
         "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
         raisfast::db::dialect::ph(1),
@@ -490,7 +492,8 @@ async fn each_user_sees_only_own_tokens() {
     let sql = "INSERT INTO users (username, role, status, registered_via) VALUES ('isolationreader', 'reader', 'active', 'email') RETURNING id";
     let reader_int_id: i64 = sqlx::query_scalar(sql).fetch_one(&pool).await.unwrap();
     let cred_data = serde_json::json!({"password_hash": reader_hash}).to_string();
-    let (cred_id, cred_now) = raisfast::utils::id::new_id_and_timestamp();
+    let cred_id = raisfast::utils::id::new_id();
+    let cred_now = raisfast::utils::tz::now_utc();
     let cred_sql = format!(
         "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
         raisfast::db::dialect::ph(1),

@@ -6,6 +6,7 @@ use crate::dto::cart::{CartItemResponse, CartResponse};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::product::ProductStatus;
+use crate::types::snowflake_id::SnowflakeId;
 
 const MAX_CART_ITEMS: usize = 100;
 
@@ -14,30 +15,35 @@ pub trait CartService: Send + Sync {
     async fn add_item(
         &self,
         auth: &AuthUser,
-        user_id: i64,
+        user_id: SnowflakeId,
         product_id: String,
         quantity: i64,
         attributes: Option<String>,
     ) -> AppResult<()>;
 
-    async fn remove_item(&self, auth: &AuthUser, id: i64, user_id: i64) -> AppResult<()>;
+    async fn remove_item(
+        &self,
+        auth: &AuthUser,
+        id: SnowflakeId,
+        user_id: SnowflakeId,
+    ) -> AppResult<()>;
 
     async fn update_quantity(
         &self,
         auth: &AuthUser,
-        id: i64,
-        user_id: i64,
+        id: SnowflakeId,
+        user_id: SnowflakeId,
         quantity: i64,
     ) -> AppResult<()>;
 
-    async fn list_items(&self, auth: &AuthUser, user_id: i64) -> AppResult<CartResponse>;
+    async fn list_items(&self, auth: &AuthUser, user_id: SnowflakeId) -> AppResult<CartResponse>;
 
-    async fn clear_cart(&self, auth: &AuthUser, user_id: i64) -> AppResult<()>;
+    async fn clear_cart(&self, auth: &AuthUser, user_id: SnowflakeId) -> AppResult<()>;
 
     async fn checkout(
         &self,
         auth: &AuthUser,
-        user_id: i64,
+        user_id: SnowflakeId,
     ) -> AppResult<(
         crate::models::order::Order,
         Vec<crate::models::order_item::OrderItem>,
@@ -59,12 +65,12 @@ impl CartService for CartServiceImpl {
     async fn add_item(
         &self,
         auth: &AuthUser,
-        user_id: i64,
+        user_id: SnowflakeId,
         product_id: String,
         quantity: i64,
         attributes: Option<String>,
     ) -> AppResult<()> {
-        let product_id: i64 = crate::utils::id::parse_id(&product_id)?;
+        let product_id = crate::types::snowflake_id::parse_id(&product_id)?;
         let product = crate::models::product::find_by_id(&self.pool, product_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("product"))?;
@@ -80,7 +86,7 @@ impl CartService for CartServiceImpl {
         let existing = crate::models::cart_item::find_by_user_and_product(
             &self.pool,
             user_id,
-            *product.id,
+            product.id,
             None,
             auth.tenant_id(),
         )
@@ -93,7 +99,7 @@ impl CartService for CartServiceImpl {
                 .ok_or_else(|| AppError::BadRequest("quantity_overflow".into()))?;
             crate::models::cart_item::update_quantity(
                 &self.pool,
-                *item.id,
+                item.id,
                 new_quantity,
                 auth.tenant_id(),
             )
@@ -108,7 +114,7 @@ impl CartService for CartServiceImpl {
             crate::models::cart_item::insert(
                 &self.pool,
                 user_id,
-                *product.id,
+                product.id,
                 None,
                 quantity,
                 attributes.as_deref(),
@@ -120,7 +126,12 @@ impl CartService for CartServiceImpl {
         Ok(())
     }
 
-    async fn remove_item(&self, auth: &AuthUser, id: i64, user_id: i64) -> AppResult<()> {
+    async fn remove_item(
+        &self,
+        auth: &AuthUser,
+        id: SnowflakeId,
+        user_id: SnowflakeId,
+    ) -> AppResult<()> {
         let item = crate::models::cart_item::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("cart_item"))?;
@@ -137,8 +148,8 @@ impl CartService for CartServiceImpl {
     async fn update_quantity(
         &self,
         auth: &AuthUser,
-        id: i64,
-        user_id: i64,
+        id: SnowflakeId,
+        user_id: SnowflakeId,
         quantity: i64,
     ) -> AppResult<()> {
         if quantity < 1 {
@@ -153,13 +164,13 @@ impl CartService for CartServiceImpl {
             return Err(AppError::Forbidden);
         }
 
-        crate::models::cart_item::update_quantity(&self.pool, *item.id, quantity, auth.tenant_id())
+        crate::models::cart_item::update_quantity(&self.pool, item.id, quantity, auth.tenant_id())
             .await?;
 
         Ok(())
     }
 
-    async fn list_items(&self, auth: &AuthUser, user_id: i64) -> AppResult<CartResponse> {
+    async fn list_items(&self, auth: &AuthUser, user_id: SnowflakeId) -> AppResult<CartResponse> {
         let items =
             crate::models::cart_item::find_by_user_id(&self.pool, user_id, auth.tenant_id())
                 .await?;
@@ -169,7 +180,7 @@ impl CartService for CartServiceImpl {
 
         for item in &items {
             let product =
-                crate::models::product::find_by_id(&self.pool, *item.product_id, auth.tenant_id())
+                crate::models::product::find_by_id(&self.pool, item.product_id, auth.tenant_id())
                     .await?;
 
             let (title, price, cover_url) = match product {
@@ -198,7 +209,7 @@ impl CartService for CartServiceImpl {
         })
     }
 
-    async fn clear_cart(&self, auth: &AuthUser, user_id: i64) -> AppResult<()> {
+    async fn clear_cart(&self, auth: &AuthUser, user_id: SnowflakeId) -> AppResult<()> {
         crate::models::cart_item::delete_by_user_id(&self.pool, user_id, auth.tenant_id()).await?;
         Ok(())
     }
@@ -206,7 +217,7 @@ impl CartService for CartServiceImpl {
     async fn checkout(
         &self,
         auth: &AuthUser,
-        user_id: i64,
+        user_id: SnowflakeId,
     ) -> AppResult<(
         crate::models::order::Order,
         Vec<crate::models::order_item::OrderItem>,
@@ -224,7 +235,7 @@ impl CartService for CartServiceImpl {
 
         for item in &cart_items {
             let product =
-                crate::models::product::find_by_id(&self.pool, *item.product_id, auth.tenant_id())
+                crate::models::product::find_by_id(&self.pool, item.product_id, auth.tenant_id())
                     .await?
                     .ok_or_else(|| AppError::not_found("product"))?;
 
@@ -273,7 +284,7 @@ impl CartService for CartServiceImpl {
             let mut items = Vec::new();
             for (quantity, line_total, product) in &order_items_data {
                 items.push(crate::commands::CreateOrderItemCmd {
-                    order_id: *order.id,
+                    order_id: order.id,
                     product_id: Some(*product.id),
                     variant_id: None,
                     title: product.title.clone(),
@@ -296,7 +307,7 @@ impl CartService for CartServiceImpl {
         })?;
 
         let items =
-            crate::models::order_item::find_by_order_id(&self.pool, *order.id, auth.tenant_id())
+            crate::models::order_item::find_by_order_id(&self.pool, order.id, auth.tenant_id())
                 .await?;
         Ok((order, items))
     }

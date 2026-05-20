@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -26,7 +26,7 @@ pub struct ProductVariant {
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<ProductVariant>> {
     raisfast_derive::crud_find!(
@@ -56,7 +56,7 @@ pub async fn find_by_sku(
 
 pub async fn find_by_product_id(
     pool: &crate::db::Pool,
-    product_id: i64,
+    product_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<ProductVariant>> {
     Ok(raisfast_derive::crud_find_all!(
@@ -71,7 +71,7 @@ pub async fn find_by_product_id(
 
 pub async fn find_active_by_product_id(
     pool: &crate::db::Pool,
-    product_id: i64,
+    product_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<ProductVariant>> {
     Ok(raisfast_derive::crud_find_all!(
@@ -90,7 +90,10 @@ pub async fn insert(
     cmd: &crate::commands::CreateProductVariantCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<ProductVariant> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
     raisfast_derive::crud_insert!(
         pool,
         "product_variants",
@@ -142,7 +145,7 @@ pub async fn update(
 
 pub async fn delete_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
     let result: sqlx::sqlite::SqliteQueryResult =
@@ -152,7 +155,7 @@ pub async fn delete_by_id(
 
 pub async fn delete_by_product_id(
     pool: &crate::db::Pool,
-    product_id: i64,
+    product_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let result = raisfast_derive::crud_delete!(
@@ -166,7 +169,7 @@ pub async fn delete_by_product_id(
 
 pub async fn count_by_product(
     pool: &crate::db::Pool,
-    product_id: i64,
+    product_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<i64> {
     let count = raisfast_derive::crud_count!(
@@ -181,6 +184,7 @@ pub async fn count_by_product(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -238,7 +242,7 @@ mod tests {
         insert(
             pool,
             &crate::commands::CreateProductVariantCmd {
-                product_id,
+                product_id: SnowflakeId(product_id),
                 sku: Some(sku.to_string()),
                 title: title.to_string(),
                 price: 1000,
@@ -260,10 +264,7 @@ mod tests {
         let pid = seed_product(&pool).await;
         let v = seed_variant(&pool, pid, "Red Shirt", "SKU-RED-001").await;
 
-        let found = super::find_by_id(&pool, *v.id, None)
-            .await
-            .unwrap()
-            .unwrap();
+        let found = super::find_by_id(&pool, v.id, None).await.unwrap().unwrap();
         assert_eq!(found.id, v.id);
         assert_eq!(found.title, "Red Shirt");
         assert_eq!(found.sku.unwrap(), "SKU-RED-001");
@@ -291,7 +292,9 @@ mod tests {
         seed_variant(&pool, pid, "V1", "SKU1").await;
         seed_variant(&pool, pid, "V2", "SKU2").await;
 
-        let variants = super::find_by_product_id(&pool, pid, None).await.unwrap();
+        let variants = super::find_by_product_id(&pool, SnowflakeId(pid), None)
+            .await
+            .unwrap();
         assert_eq!(variants.len(), 2);
     }
 
@@ -303,7 +306,7 @@ mod tests {
         insert(
             &pool,
             &crate::commands::CreateProductVariantCmd {
-                product_id: pid,
+                product_id: SnowflakeId(pid),
                 sku: Some("SKU-ACTIVE".to_string()),
                 title: "Active".to_string(),
                 price: 100,
@@ -320,7 +323,7 @@ mod tests {
         insert(
             &pool,
             &crate::commands::CreateProductVariantCmd {
-                product_id: pid,
+                product_id: SnowflakeId(pid),
                 sku: Some("SKU-INACTIVE".to_string()),
                 title: "Inactive".to_string(),
                 price: 100,
@@ -335,7 +338,7 @@ mod tests {
         .await
         .unwrap();
 
-        let active = super::find_active_by_product_id(&pool, pid, None)
+        let active = super::find_active_by_product_id(&pool, SnowflakeId(pid), None)
             .await
             .unwrap();
         assert_eq!(active.len(), 1);
@@ -351,7 +354,7 @@ mod tests {
         let ok = super::update(
             &pool,
             &crate::commands::UpdateProductVariantCmd {
-                id: *v.id,
+                id: v.id,
                 sku: Some("SKU-NEW".to_string()),
                 title: "New".to_string(),
                 price: 2000,
@@ -367,10 +370,7 @@ mod tests {
         .unwrap();
         assert!(ok);
 
-        let found = super::find_by_id(&pool, *v.id, None)
-            .await
-            .unwrap()
-            .unwrap();
+        let found = super::find_by_id(&pool, v.id, None).await.unwrap().unwrap();
         assert_eq!(found.title, "New");
         assert_eq!(found.sku.unwrap(), "SKU-NEW");
         assert_eq!(found.price, 2000);
@@ -384,7 +384,7 @@ mod tests {
         let ok = super::update(
             &pool,
             &crate::commands::UpdateProductVariantCmd {
-                id: 99999,
+                id: SnowflakeId(99999),
                 sku: None,
                 title: "X".to_string(),
                 price: 100,
@@ -406,10 +406,10 @@ mod tests {
         let pool = setup_pool().await;
         let pid = seed_product(&pool).await;
         let v = seed_variant(&pool, pid, "Bye", "SKU-BYE").await;
-        let ok = super::delete_by_id(&pool, *v.id, None).await.unwrap();
+        let ok = super::delete_by_id(&pool, v.id, None).await.unwrap();
         assert!(ok);
         assert!(
-            super::find_by_id(&pool, *v.id, None)
+            super::find_by_id(&pool, v.id, None)
                 .await
                 .unwrap()
                 .is_none()
@@ -419,7 +419,9 @@ mod tests {
     #[tokio::test]
     async fn delete_not_found() {
         let pool = setup_pool().await;
-        let ok = super::delete_by_id(&pool, 99999, None).await.unwrap();
+        let ok = super::delete_by_id(&pool, SnowflakeId(99999), None)
+            .await
+            .unwrap();
         assert!(!ok);
     }
 
@@ -430,8 +432,12 @@ mod tests {
         seed_variant(&pool, pid, "V1", "SKU-D1").await;
         seed_variant(&pool, pid, "V2", "SKU-D2").await;
 
-        super::delete_by_product_id(&pool, pid, None).await.unwrap();
-        let variants = super::find_by_product_id(&pool, pid, None).await.unwrap();
+        super::delete_by_product_id(&pool, SnowflakeId(pid), None)
+            .await
+            .unwrap();
+        let variants = super::find_by_product_id(&pool, SnowflakeId(pid), None)
+            .await
+            .unwrap();
         assert!(variants.is_empty());
     }
 
@@ -439,11 +445,21 @@ mod tests {
     async fn count_by_product() {
         let pool = setup_pool().await;
         let pid = seed_product(&pool).await;
-        assert_eq!(super::count_by_product(&pool, pid, None).await.unwrap(), 0);
+        assert_eq!(
+            super::count_by_product(&pool, SnowflakeId(pid), None)
+                .await
+                .unwrap(),
+            0
+        );
 
         seed_variant(&pool, pid, "V1", "SKU-C1").await;
         seed_variant(&pool, pid, "V2", "SKU-C2").await;
-        assert_eq!(super::count_by_product(&pool, pid, None).await.unwrap(), 2);
+        assert_eq!(
+            super::count_by_product(&pool, SnowflakeId(pid), None)
+                .await
+                .unwrap(),
+            2
+        );
     }
 
     #[tokio::test]
@@ -454,7 +470,7 @@ mod tests {
         insert(
             &pool,
             &crate::commands::CreateProductVariantCmd {
-                product_id: pid,
+                product_id: SnowflakeId(pid),
                 sku: Some("SKU-TENANT".to_string()),
                 title: "TenantVariant".to_string(),
                 price: 500,
@@ -469,17 +485,19 @@ mod tests {
         .await
         .unwrap();
 
-        let a_variants = super::find_by_product_id(&pool, pid, Some("tenant_a"))
+        let a_variants = super::find_by_product_id(&pool, SnowflakeId(pid), Some("tenant_a"))
             .await
             .unwrap();
         assert_eq!(a_variants.len(), 1);
 
-        let b_variants = super::find_by_product_id(&pool, pid, Some("tenant_b"))
+        let b_variants = super::find_by_product_id(&pool, SnowflakeId(pid), Some("tenant_b"))
             .await
             .unwrap();
         assert!(b_variants.is_empty());
 
-        let all_variants = super::find_by_product_id(&pool, pid, None).await.unwrap();
+        let all_variants = super::find_by_product_id(&pool, SnowflakeId(pid), None)
+            .await
+            .unwrap();
         assert_eq!(all_variants.len(), 1);
     }
 }

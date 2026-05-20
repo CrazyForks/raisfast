@@ -96,7 +96,7 @@ mod tests {
 
     fn make_post(id: i64, slug: &str) -> Post {
         Post {
-            id: crate::utils::id::SnowflakeId(id),
+            id: crate::types::snowflake_id::SnowflakeId(id),
             tenant_id: None,
             title: String::new(),
             slug: slug.into(),
@@ -104,7 +104,7 @@ mod tests {
             excerpt: None,
             cover_image: None,
             status: PostStatus::Published,
-            created_by: crate::utils::id::SnowflakeId(0),
+            created_by: crate::types::snowflake_id::SnowflakeId(0),
             updated_by: None,
             category_id: None,
             view_count: 0,
@@ -128,7 +128,7 @@ mod tests {
 
     fn make_user(id: i64, username: &str) -> User {
         User {
-            id: crate::utils::id::SnowflakeId(id),
+            id: crate::types::snowflake_id::SnowflakeId(id),
             tenant_id: None,
             username: username.into(),
             role: UserRole::Reader,

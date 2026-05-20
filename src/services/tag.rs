@@ -10,6 +10,7 @@ use crate::dto::CreateTagRequest;
 use crate::errors::app_error::AppResult;
 use crate::middleware::auth::AuthUser;
 use crate::models::tag::Tag;
+use crate::types::snowflake_id::SnowflakeId;
 
 pub fn generate_slug(name: &str) -> String {
     crate::aspects::slug_aspect::generate_slug(name)
@@ -18,9 +19,15 @@ pub fn generate_slug(name: &str) -> String {
 #[async_trait]
 pub trait TagService: Send + Sync {
     async fn create(&self, auth: &AuthUser, req: CreateTagRequest) -> AppResult<Tag>;
-    async fn update(&self, auth: &AuthUser, id: i64, name: String, slug: String) -> AppResult<Tag>;
-    async fn delete(&self, id: i64, auth: &AuthUser) -> AppResult<()>;
-    async fn get(&self, id: i64, auth: &AuthUser) -> AppResult<Tag>;
+    async fn update(
+        &self,
+        auth: &AuthUser,
+        id: SnowflakeId,
+        name: String,
+        slug: String,
+    ) -> AppResult<Tag>;
+    async fn delete(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<()>;
+    async fn get(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<Tag>;
     async fn list(&self, auth: &AuthUser) -> AppResult<Vec<Tag>>;
     async fn list_paginated(
         &self,
@@ -54,24 +61,30 @@ impl TagService for TagServiceImpl {
         Ok(tag)
     }
 
-    async fn update(&self, auth: &AuthUser, id: i64, name: String, slug: String) -> AppResult<Tag> {
+    async fn update(
+        &self,
+        auth: &AuthUser,
+        id: SnowflakeId,
+        name: String,
+        slug: String,
+    ) -> AppResult<Tag> {
         let tag = crate::models::tag::find_by_id(&self.pool, id, auth.tenant_id()).await?;
         let ((name, slug), _d) = self.before_update(auth, &tag, (name, slug)).await?;
         let updated =
-            crate::models::tag::update(&self.pool, *tag.id, &name, &slug, auth.tenant_id()).await?;
+            crate::models::tag::update(&self.pool, tag.id, &name, &slug, auth.tenant_id()).await?;
         self.after_updated(&updated);
         Ok(updated)
     }
 
-    async fn delete(&self, id: i64, auth: &AuthUser) -> AppResult<()> {
+    async fn delete(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<()> {
         let tag = crate::models::tag::find_by_id(&self.pool, id, auth.tenant_id()).await?;
         self.before_delete(auth, &tag).await?;
-        crate::models::tag::delete(&self.pool, *tag.id, auth.tenant_id()).await?;
+        crate::models::tag::delete(&self.pool, tag.id, auth.tenant_id()).await?;
         self.after_deleted(&tag);
         Ok(())
     }
 
-    async fn get(&self, id: i64, auth: &AuthUser) -> AppResult<Tag> {
+    async fn get(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<Tag> {
         crate::models::tag::find_by_id(&self.pool, id, auth.tenant_id()).await
     }
 
@@ -146,7 +159,7 @@ mod tests {
             .await
             .unwrap();
         let updated = svc
-            .update(&a, *tag.id, "New".into(), generate_slug("New"))
+            .update(&a, tag.id, "New".into(), generate_slug("New"))
             .await
             .unwrap();
         assert_eq!(updated.name, "New");
@@ -162,7 +175,7 @@ mod tests {
             .create(&a, CreateTagRequest { name: "Del".into() })
             .await
             .unwrap();
-        svc.delete(*tag.id, &a).await.unwrap();
+        svc.delete(tag.id, &a).await.unwrap();
         let tags = svc.list(&a).await.unwrap();
         assert!(tags.is_empty());
     }
@@ -172,7 +185,7 @@ mod tests {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
         let a = auth();
-        assert!(svc.delete(999999, &a).await.is_err());
+        assert!(svc.delete(SnowflakeId(999999), &a).await.is_err());
     }
 
     #[tokio::test]
@@ -181,7 +194,7 @@ mod tests {
         let svc = make_service(pool.clone());
         let a = auth();
         assert!(
-            svc.update(&a, 999999, "X".into(), generate_slug("X"))
+            svc.update(&a, SnowflakeId(999999), "X".into(), generate_slug("X"))
                 .await
                 .is_err()
         );

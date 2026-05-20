@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::errors::app_error::AppResult;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(

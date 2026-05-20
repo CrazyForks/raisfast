@@ -11,6 +11,7 @@ use crate::middleware::auth::AuthUser;
 use crate::models::order::{Order, OrderStatus};
 use crate::models::order_item::OrderItem;
 use crate::models::product::ProductStatus;
+use crate::types::snowflake_id::SnowflakeId;
 
 const MAX_ITEMS_PER_ORDER: usize = 100;
 const MAX_QUANTITY: i64 = 10000;
@@ -20,20 +21,39 @@ pub trait OrderService: Send + Sync {
     async fn create(
         &self,
         auth: &AuthUser,
-        user_id: i64,
+        user_id: SnowflakeId,
         req: CreateOrderRequest,
     ) -> AppResult<(Order, Vec<OrderItem>)>;
-    async fn cancel(&self, auth: &AuthUser, order_id: i64, user_id: i64) -> AppResult<()>;
-    async fn mark_paid(&self, auth: &AuthUser, order_id: i64) -> AppResult<Order>;
-    async fn ship(&self, auth: &AuthUser, order_id: i64, req: &ShipOrderRequest) -> AppResult<()>;
-    async fn confirm_receipt(&self, auth: &AuthUser, order_id: i64, user_id: i64) -> AppResult<()>;
-    async fn refund(&self, auth: &AuthUser, order_id: i64) -> AppResult<()>;
-    async fn admin_cancel(&self, auth: &AuthUser, order_id: i64) -> AppResult<()>;
-    async fn get(&self, auth: &AuthUser, order_id: i64) -> AppResult<(Order, Vec<OrderItem>)>;
+    async fn cancel(
+        &self,
+        auth: &AuthUser,
+        order_id: SnowflakeId,
+        user_id: SnowflakeId,
+    ) -> AppResult<()>;
+    async fn mark_paid(&self, auth: &AuthUser, order_id: SnowflakeId) -> AppResult<Order>;
+    async fn ship(
+        &self,
+        auth: &AuthUser,
+        order_id: SnowflakeId,
+        req: &ShipOrderRequest,
+    ) -> AppResult<()>;
+    async fn confirm_receipt(
+        &self,
+        auth: &AuthUser,
+        order_id: SnowflakeId,
+        user_id: SnowflakeId,
+    ) -> AppResult<()>;
+    async fn refund(&self, auth: &AuthUser, order_id: SnowflakeId) -> AppResult<()>;
+    async fn admin_cancel(&self, auth: &AuthUser, order_id: SnowflakeId) -> AppResult<()>;
+    async fn get(
+        &self,
+        auth: &AuthUser,
+        order_id: SnowflakeId,
+    ) -> AppResult<(Order, Vec<OrderItem>)>;
     async fn list_user(
         &self,
         auth: &AuthUser,
-        user_id: i64,
+        user_id: SnowflakeId,
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<(Order, Vec<OrderItem>)>, i64)>;
@@ -47,7 +67,7 @@ pub trait OrderService: Send + Sync {
     async fn update_admin_remark(
         &self,
         auth: &AuthUser,
-        order_id: i64,
+        order_id: SnowflakeId,
         admin_remark: &str,
     ) -> AppResult<()>;
     async fn get_stats(&self, auth: &AuthUser) -> AppResult<crate::dto::OrderStatsResponse>;
@@ -102,7 +122,7 @@ impl OrderService for OrderServiceImpl {
     async fn create(
         &self,
         auth: &AuthUser,
-        user_id: i64,
+        user_id: SnowflakeId,
         req: CreateOrderRequest,
     ) -> AppResult<(Order, Vec<OrderItem>)> {
         let (req, _d) = self.before_create(auth, req).await?;
@@ -121,7 +141,7 @@ impl OrderService for OrderServiceImpl {
             if item.quantity > MAX_QUANTITY {
                 return Err(AppError::BadRequest("quantity_exceeds_limit".into()));
             }
-            let product_id: i64 = crate::utils::id::parse_id(&item.product_id)?;
+            let product_id = crate::types::snowflake_id::parse_id(&item.product_id)?;
             let product =
                 crate::models::product::find_by_id(&self.pool, product_id, auth.tenant_id())
                     .await?
@@ -174,7 +194,7 @@ impl OrderService for OrderServiceImpl {
             let mut items = Vec::new();
             for (quantity, line_total, product) in &order_items_data {
                 items.push(crate::commands::CreateOrderItemCmd {
-                    order_id: *order.id,
+                    order_id: order.id,
                     product_id: Some(*product.id),
                     variant_id: None,
                     title: product.title.clone(),
@@ -195,12 +215,17 @@ impl OrderService for OrderServiceImpl {
 
         self.after_created(&order);
         let items =
-            crate::models::order_item::find_by_order_id(&self.pool, *order.id, auth.tenant_id())
+            crate::models::order_item::find_by_order_id(&self.pool, order.id, auth.tenant_id())
                 .await?;
         Ok((order, items))
     }
 
-    async fn cancel(&self, auth: &AuthUser, order_id: i64, user_id: i64) -> AppResult<()> {
+    async fn cancel(
+        &self,
+        auth: &AuthUser,
+        order_id: SnowflakeId,
+        user_id: SnowflakeId,
+    ) -> AppResult<()> {
         let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("order"))?;
@@ -220,7 +245,7 @@ impl OrderService for OrderServiceImpl {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_status_cas(
                     &mut tx,
-                    *order.id,
+                    order.id,
                     OrderStatus::Cancelled,
                     Some("cancelled_at"),
                     OrderStatus::Pending,
@@ -239,7 +264,7 @@ impl OrderService for OrderServiceImpl {
         Ok(())
     }
 
-    async fn mark_paid(&self, auth: &AuthUser, order_id: i64) -> AppResult<Order> {
+    async fn mark_paid(&self, auth: &AuthUser, order_id: SnowflakeId) -> AppResult<Order> {
         auth.ensure_admin()?;
         let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
             .await?
@@ -257,7 +282,7 @@ impl OrderService for OrderServiceImpl {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_status_cas(
                     &mut tx,
-                    *order.id,
+                    order.id,
                     OrderStatus::Paid,
                     Some("paid_at"),
                     OrderStatus::Pending,
@@ -272,7 +297,7 @@ impl OrderService for OrderServiceImpl {
         .await;
         result?;
 
-        let paid = crate::models::order::find_by_id(&self.pool, *order.id, auth.tenant_id())
+        let paid = crate::models::order::find_by_id(&self.pool, order.id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("order"))?;
 
@@ -280,7 +305,12 @@ impl OrderService for OrderServiceImpl {
         Ok(paid)
     }
 
-    async fn ship(&self, auth: &AuthUser, order_id: i64, req: &ShipOrderRequest) -> AppResult<()> {
+    async fn ship(
+        &self,
+        auth: &AuthUser,
+        order_id: SnowflakeId,
+        req: &ShipOrderRequest,
+    ) -> AppResult<()> {
         auth.ensure_admin()?;
         let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
             .await?
@@ -294,7 +324,7 @@ impl OrderService for OrderServiceImpl {
             .before_update("orders", auth, &order, OrderStatus::Shipped)
             .await?;
 
-        let order_id = *order.id;
+        let order_id = order.id;
         let result: Result<(), AppError> = async {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_shipped(
@@ -317,7 +347,12 @@ impl OrderService for OrderServiceImpl {
         Ok(())
     }
 
-    async fn confirm_receipt(&self, auth: &AuthUser, order_id: i64, user_id: i64) -> AppResult<()> {
+    async fn confirm_receipt(
+        &self,
+        auth: &AuthUser,
+        order_id: SnowflakeId,
+        user_id: SnowflakeId,
+    ) -> AppResult<()> {
         let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("order"))?;
@@ -337,7 +372,7 @@ impl OrderService for OrderServiceImpl {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_status_cas(
                     &mut tx,
-                    *order.id,
+                    order.id,
                     OrderStatus::Completed,
                     Some("completed_at"),
                     OrderStatus::Shipped,
@@ -356,7 +391,7 @@ impl OrderService for OrderServiceImpl {
         Ok(())
     }
 
-    async fn refund(&self, auth: &AuthUser, order_id: i64) -> AppResult<()> {
+    async fn refund(&self, auth: &AuthUser, order_id: SnowflakeId) -> AppResult<()> {
         auth.ensure_admin()?;
         let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
             .await?
@@ -377,7 +412,7 @@ impl OrderService for OrderServiceImpl {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_status_cas(
                     &mut tx,
-                    *order.id,
+                    order.id,
                     OrderStatus::Refunding,
                     Some("refunding_at"),
                     expected,
@@ -393,7 +428,7 @@ impl OrderService for OrderServiceImpl {
         result
     }
 
-    async fn admin_cancel(&self, auth: &AuthUser, order_id: i64) -> AppResult<()> {
+    async fn admin_cancel(&self, auth: &AuthUser, order_id: SnowflakeId) -> AppResult<()> {
         auth.ensure_admin()?;
         let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
             .await?
@@ -414,7 +449,7 @@ impl OrderService for OrderServiceImpl {
             crate::in_transaction!(&self.pool, tx, {
                 let rows = crate::models::order::tx_update_status_cas(
                     &mut tx,
-                    *order.id,
+                    order.id,
                     OrderStatus::Cancelled,
                     Some("cancelled_at"),
                     expected,
@@ -432,7 +467,11 @@ impl OrderService for OrderServiceImpl {
         Ok(())
     }
 
-    async fn get(&self, auth: &AuthUser, order_id: i64) -> AppResult<(Order, Vec<OrderItem>)> {
+    async fn get(
+        &self,
+        auth: &AuthUser,
+        order_id: SnowflakeId,
+    ) -> AppResult<(Order, Vec<OrderItem>)> {
         let order = crate::models::order::find_by_id(&self.pool, order_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("order"))?;
@@ -443,7 +482,7 @@ impl OrderService for OrderServiceImpl {
             }
         }
         let items =
-            crate::models::order_item::find_by_order_id(&self.pool, *order.id, auth.tenant_id())
+            crate::models::order_item::find_by_order_id(&self.pool, order.id, auth.tenant_id())
                 .await?;
         Ok((order, items))
     }
@@ -451,7 +490,7 @@ impl OrderService for OrderServiceImpl {
     async fn list_user(
         &self,
         auth: &AuthUser,
-        user_id: i64,
+        user_id: SnowflakeId,
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<(Order, Vec<OrderItem>)>, i64)> {
@@ -466,7 +505,7 @@ impl OrderService for OrderServiceImpl {
         let mut result = Vec::with_capacity(orders.len());
         for o in orders {
             let items =
-                crate::models::order_item::find_by_order_id(&self.pool, *o.id, auth.tenant_id())
+                crate::models::order_item::find_by_order_id(&self.pool, o.id, auth.tenant_id())
                     .await?;
             result.push((o, items));
         }
@@ -492,7 +531,7 @@ impl OrderService for OrderServiceImpl {
         let mut result = Vec::with_capacity(orders.len());
         for o in orders {
             let items =
-                crate::models::order_item::find_by_order_id(&self.pool, *o.id, auth.tenant_id())
+                crate::models::order_item::find_by_order_id(&self.pool, o.id, auth.tenant_id())
                     .await?;
             result.push((o, items));
         }
@@ -502,7 +541,7 @@ impl OrderService for OrderServiceImpl {
     async fn update_admin_remark(
         &self,
         auth: &AuthUser,
-        order_id: i64,
+        order_id: SnowflakeId,
         admin_remark: &str,
     ) -> AppResult<()> {
         auth.ensure_admin()?;
@@ -511,7 +550,7 @@ impl OrderService for OrderServiceImpl {
             .ok_or_else(|| AppError::not_found("order"))?;
         crate::models::order::update_admin_remark(
             &self.pool,
-            *order.id,
+            order.id,
             admin_remark,
             auth.tenant_id(),
         )
@@ -614,7 +653,7 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
-        crate::models::product::find_by_id(pool, *p.id, None)
+        crate::models::product::find_by_id(pool, p.id, None)
             .await
             .unwrap()
             .unwrap()
@@ -643,7 +682,11 @@ mod tests {
         let uid = seed_user(pool).await;
         let prod = seed_active_product(pool, "Widget", 1000).await;
         let (order, _) = svc
-            .create(auth, uid, make_create_req(&prod.id.to_string(), 1))
+            .create(
+                auth,
+                SnowflakeId(uid),
+                make_create_req(&prod.id.to_string(), 1),
+            )
             .await
             .unwrap();
         (uid, order)
@@ -658,11 +701,15 @@ mod tests {
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
         let (order, items) = svc
-            .create(&a, uid, make_create_req(&prod.id.to_string(), 2))
+            .create(
+                &a,
+                SnowflakeId(uid),
+                make_create_req(&prod.id.to_string(), 2),
+            )
             .await
             .unwrap();
 
-        assert_eq!(order.user_id, uid);
+        assert_eq!(order.user_id, SnowflakeId(uid));
         assert_eq!(order.subtotal, 2000);
         assert_eq!(order.total_amount, 2000);
         assert_eq!(order.status, OrderStatus::Pending);
@@ -687,7 +734,7 @@ mod tests {
         let (order, items) = svc
             .create(
                 &a,
-                uid,
+                SnowflakeId(uid),
                 CreateOrderRequest {
                     items: vec![
                         CreateOrderItemRequest {
@@ -727,7 +774,7 @@ mod tests {
         let err = svc
             .create(
                 &a,
-                uid,
+                SnowflakeId(uid),
                 CreateOrderRequest {
                     items: vec![],
                     currency: None,
@@ -753,7 +800,7 @@ mod tests {
         let err = svc
             .create(
                 &a,
-                uid,
+                SnowflakeId(uid),
                 CreateOrderRequest {
                     items: vec![CreateOrderItemRequest {
                         product_id: "99999999".into(),
@@ -816,7 +863,11 @@ mod tests {
         .unwrap();
 
         let err = svc
-            .create(&a, uid, make_create_req(&draft_product.id.to_string(), 1))
+            .create(
+                &a,
+                SnowflakeId(uid),
+                make_create_req(&draft_product.id.to_string(), 1),
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "product_not_active"));
@@ -829,8 +880,8 @@ mod tests {
         let a = auth(None);
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        svc.cancel(&a, *order.id, uid).await.unwrap();
-        let found = crate::models::order::find_by_id(&pool, *order.id, None)
+        svc.cancel(&a, order.id, SnowflakeId(uid)).await.unwrap();
+        let found = crate::models::order::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -845,7 +896,10 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let err = svc.cancel(&a, *order.id, 999).await.unwrap_err();
+        let err = svc
+            .cancel(&a, order.id, SnowflakeId(999))
+            .await
+            .unwrap_err();
         assert!(matches!(err, AppError::Forbidden));
     }
 
@@ -856,11 +910,14 @@ mod tests {
         let a = auth(None);
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        crate::models::order::update_status(&pool, *order.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
 
-        let err = svc.cancel(&a, *order.id, uid).await.unwrap_err();
+        let err = svc
+            .cancel(&a, order.id, SnowflakeId(uid))
+            .await
+            .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "only_pending_can_cancel"));
     }
 
@@ -871,7 +928,7 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let paid = svc.mark_paid(&a, *order.id).await.unwrap();
+        let paid = svc.mark_paid(&a, order.id).await.unwrap();
         assert_eq!(paid.status, OrderStatus::Paid);
         assert!(paid.paid_at.is_some());
     }
@@ -885,7 +942,7 @@ mod tests {
 
         crate::models::order::update_status(
             &pool,
-            *order.id,
+            order.id,
             "cancelled",
             Some("cancelled_at"),
             None,
@@ -893,7 +950,7 @@ mod tests {
         .await
         .unwrap();
 
-        let err = svc.mark_paid(&a, *order.id).await.unwrap_err();
+        let err = svc.mark_paid(&a, order.id).await.unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "only_pending_can_pay"));
     }
 
@@ -904,18 +961,12 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        crate::models::order::update_status(
-            &pool.clone(),
-            *order.id,
-            "paid",
-            Some("paid_at"),
-            None,
-        )
-        .await
-        .unwrap();
+        crate::models::order::update_status(&pool.clone(), order.id, "paid", Some("paid_at"), None)
+            .await
+            .unwrap();
         svc.ship(
             &a,
-            *order.id,
+            order.id,
             &ShipOrderRequest {
                 tracking_no: Some("TRK001".into()),
                 carrier: Some("FedEx".into()),
@@ -924,7 +975,7 @@ mod tests {
         .await
         .unwrap();
 
-        let found = crate::models::order::find_by_id(&pool, *order.id, None)
+        let found = crate::models::order::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -943,7 +994,7 @@ mod tests {
         let err = svc
             .ship(
                 &a,
-                *order.id,
+                order.id,
                 &ShipOrderRequest {
                     tracking_no: None,
                     carrier: None,
@@ -961,15 +1012,17 @@ mod tests {
         let a = auth(None);
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        crate::models::order::update_status(&pool, *order.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
-        crate::models::order::update_shipped(&pool, *order.id, Some("TRK"), Some("UPS"), None)
+        crate::models::order::update_shipped(&pool, order.id, Some("TRK"), Some("UPS"), None)
             .await
             .unwrap();
 
-        svc.confirm_receipt(&a, *order.id, uid).await.unwrap();
-        let found = crate::models::order::find_by_id(&pool, *order.id, None)
+        svc.confirm_receipt(&a, order.id, SnowflakeId(uid))
+            .await
+            .unwrap();
+        let found = crate::models::order::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -984,14 +1037,17 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        crate::models::order::update_status(&pool, *order.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
-        crate::models::order::update_shipped(&pool, *order.id, Some("TRK"), Some("UPS"), None)
+        crate::models::order::update_shipped(&pool, order.id, Some("TRK"), Some("UPS"), None)
             .await
             .unwrap();
 
-        let err = svc.confirm_receipt(&a, *order.id, 999).await.unwrap_err();
+        let err = svc
+            .confirm_receipt(&a, order.id, SnowflakeId(999))
+            .await
+            .unwrap_err();
         assert!(matches!(err, AppError::Forbidden));
     }
 
@@ -1002,7 +1058,10 @@ mod tests {
         let a = auth(None);
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let err = svc.confirm_receipt(&a, *order.id, uid).await.unwrap_err();
+        let err = svc
+            .confirm_receipt(&a, order.id, SnowflakeId(uid))
+            .await
+            .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(ref s) if s == "only_shipped_can_confirm"));
     }
 
@@ -1013,12 +1072,12 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        crate::models::order::update_status(&pool, *order.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
-        svc.refund(&a, *order.id).await.unwrap();
+        svc.refund(&a, order.id).await.unwrap();
 
-        let found = crate::models::order::find_by_id(&pool, *order.id, None)
+        let found = crate::models::order::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -1033,15 +1092,15 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        crate::models::order::update_status(&pool, *order.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, order.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
-        crate::models::order::update_shipped(&pool, *order.id, Some("TRK"), None, None)
+        crate::models::order::update_shipped(&pool, order.id, Some("TRK"), None, None)
             .await
             .unwrap();
-        svc.refund(&a, *order.id).await.unwrap();
+        svc.refund(&a, order.id).await.unwrap();
 
-        let found = crate::models::order::find_by_id(&pool, *order.id, None)
+        let found = crate::models::order::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -1055,7 +1114,7 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let err = svc.refund(&a, *order.id).await.unwrap_err();
+        let err = svc.refund(&a, order.id).await.unwrap_err();
         assert!(
             matches!(err, AppError::BadRequest(ref s) if s == "only_paid_or_shipped_can_refund")
         );
@@ -1068,7 +1127,7 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let (found_order, items) = svc.get(&a, *order.id).await.unwrap();
+        let (found_order, items) = svc.get(&a, order.id).await.unwrap();
         assert_eq!(found_order.id, order.id);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Widget");
@@ -1079,7 +1138,7 @@ mod tests {
         let pool = setup_pool().await;
         let svc = make_service(pool);
         let a = auth(None);
-        assert!(svc.get(&a, 0).await.is_err());
+        assert!(svc.get(&a, SnowflakeId(0)).await.is_err());
     }
 
     #[tokio::test]
@@ -1091,12 +1150,16 @@ mod tests {
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
         for _ in 0..3 {
-            svc.create(&a, uid, make_create_req(&prod.id.to_string(), 1))
-                .await
-                .unwrap();
+            svc.create(
+                &a,
+                SnowflakeId(uid),
+                make_create_req(&prod.id.to_string(), 1),
+            )
+            .await
+            .unwrap();
         }
 
-        let (orders_with_items, total) = svc.list_user(&a, uid, 1, 10).await.unwrap();
+        let (orders_with_items, total) = svc.list_user(&a, SnowflakeId(uid), 1, 10).await.unwrap();
         assert_eq!(total, 3);
         assert_eq!(orders_with_items.len(), 3);
     }
@@ -1109,9 +1172,13 @@ mod tests {
         let uid = seed_user(&pool).await;
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
-        svc.create(&a, uid, make_create_req(&prod.id.to_string(), 1))
-            .await
-            .unwrap();
+        svc.create(
+            &a,
+            SnowflakeId(uid),
+            make_create_req(&prod.id.to_string(), 1),
+        )
+        .await
+        .unwrap();
 
         let (orders_with_items, total) = svc.list_admin(&a, 1, 10, None).await.unwrap();
         assert_eq!(total, 1);
@@ -1125,10 +1192,10 @@ mod tests {
         let a = auth(None);
         let (_, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        svc.update_admin_remark(&a, *order.id, "verified")
+        svc.update_admin_remark(&a, order.id, "verified")
             .await
             .unwrap();
-        let found = crate::models::order::find_by_id(&pool, *order.id, None)
+        let found = crate::models::order::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -1144,22 +1211,30 @@ mod tests {
         let prod = seed_active_product(&pool, "Widget", 1000).await;
 
         let (o1, _) = svc
-            .create(&a, uid, make_create_req(&prod.id.to_string(), 1))
+            .create(
+                &a,
+                SnowflakeId(uid),
+                make_create_req(&prod.id.to_string(), 1),
+            )
             .await
             .unwrap();
 
         let (_o2, _) = svc
-            .create(&a, uid, make_create_req(&prod.id.to_string(), 2))
+            .create(
+                &a,
+                SnowflakeId(uid),
+                make_create_req(&prod.id.to_string(), 2),
+            )
             .await
             .unwrap();
 
-        crate::models::order::update_status(&pool, *o1.id, "paid", Some("paid_at"), None)
+        crate::models::order::update_status(&pool, o1.id, "paid", Some("paid_at"), None)
             .await
             .unwrap();
-        crate::models::order::update_status(&pool, *o1.id, "shipped", None, None)
+        crate::models::order::update_status(&pool, o1.id, "shipped", None, None)
             .await
             .unwrap();
-        crate::models::order::update_status(&pool, *o1.id, "completed", Some("completed_at"), None)
+        crate::models::order::update_status(&pool, o1.id, "completed", Some("completed_at"), None)
             .await
             .unwrap();
 
@@ -1177,16 +1252,16 @@ mod tests {
         let a = auth(None);
         let (uid, order) = seed_order(svc.as_ref(), &pool, &a).await;
 
-        let (o, items) = svc.get(&a, *order.id).await.unwrap();
+        let (o, items) = svc.get(&a, order.id).await.unwrap();
         assert_eq!(o.status, OrderStatus::Pending);
         assert_eq!(items.len(), 1);
 
-        let paid = svc.mark_paid(&a, *order.id).await.unwrap();
+        let paid = svc.mark_paid(&a, order.id).await.unwrap();
         assert_eq!(paid.status, OrderStatus::Paid);
 
         svc.ship(
             &a,
-            *order.id,
+            order.id,
             &ShipOrderRequest {
                 tracking_no: Some("TRK123".into()),
                 carrier: Some("DHL".into()),
@@ -1195,9 +1270,11 @@ mod tests {
         .await
         .unwrap();
 
-        svc.confirm_receipt(&a, *order.id, uid).await.unwrap();
+        svc.confirm_receipt(&a, order.id, SnowflakeId(uid))
+            .await
+            .unwrap();
 
-        let (final_order, _) = svc.get(&a, *order.id).await.unwrap();
+        let (final_order, _) = svc.get(&a, order.id).await.unwrap();
         assert_eq!(final_order.status, OrderStatus::Completed);
         assert!(final_order.paid_at.is_some());
         assert!(final_order.completed_at.is_some());

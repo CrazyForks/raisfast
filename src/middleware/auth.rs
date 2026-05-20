@@ -34,6 +34,7 @@
 //! | Not logged in + `X-Tenant-ID` | `Some(header)` | Public API specifies tenant |
 //! | Not logged in + no Header | `Some("default")` | Fallback |
 
+use crate::types::snowflake_id::SnowflakeId;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 
@@ -42,7 +43,7 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::models::user::UserRole;
 
 struct Claims {
-    user_id: i64,
+    user_id: SnowflakeId,
     role: UserRole,
     tenant_id: String,
 }
@@ -179,7 +180,7 @@ async fn extract_claims(parts: &Parts, state: &AppState) -> Option<Claims> {
                 .ok()?;
         let role: UserRole = role.parse().ok()?;
         Some(Claims {
-            user_id,
+            user_id: SnowflakeId(user_id),
             role,
             tenant_id: tenant_id.unwrap_or_else(|| crate::constants::DEFAULT_TENANT.to_string()),
         })
@@ -209,19 +210,19 @@ impl FromRequestParts<AppState> for AuthUser {
 
             let identity = match (claims, header_tenant) {
                 (Some(c), Some(ht)) if c.role == UserRole::Admin => RequestIdentity {
-                    user_id: Some(c.user_id),
+                    user_id: Some(*c.user_id),
                     role: c.role,
                     tenant_id: if no_tenant { None } else { Some(ht) },
                     is_super_admin: true,
                 },
                 (Some(c), None) if c.role == UserRole::Admin => RequestIdentity {
-                    user_id: Some(c.user_id),
+                    user_id: Some(*c.user_id),
                     role: c.role,
                     tenant_id: None,
                     is_super_admin: true,
                 },
                 (Some(c), _) => RequestIdentity {
-                    user_id: Some(c.user_id),
+                    user_id: Some(*c.user_id),
                     role: c.role,
                     tenant_id: if no_tenant { None } else { Some(c.tenant_id) },
                     is_super_admin: false,

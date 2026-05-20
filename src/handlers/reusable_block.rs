@@ -130,7 +130,7 @@ pub async fn get_reusable(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<ReusableBlockResponse>> {
     auth.ensure_author()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let block = reusable_service::get_reusable(&state.pool, id, &auth)
         .await?
         .ok_or_else(|| AppError::not_found("reusable_block"))?;
@@ -177,7 +177,7 @@ pub async fn update_reusable(
 ) -> AppResult<ApiResponse<ReusableBlockResponse>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let block = reusable_service::update_reusable(
         &state.pool,
         id,
@@ -204,7 +204,7 @@ pub async fn delete_reusable(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_author()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     reusable_service::delete_reusable(&state.pool, id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
@@ -224,7 +224,7 @@ pub async fn admin_batch(
     let mut affected = 0usize;
     if req.action == "delete" {
         for raw_id in &req.ids {
-            if let Ok(id) = crate::utils::id::parse_id(raw_id)
+            if let Ok(id) = crate::types::snowflake_id::parse_id(raw_id)
                 && reusable_service::delete_reusable(&state.pool, id, &auth)
                     .await
                     .is_ok()

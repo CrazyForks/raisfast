@@ -16,7 +16,7 @@ use ts_rs::TS;
 use crate::db::dialect::ph;
 use crate::db::tenant::{tenant_filter_aliased_ph, tenant_filter_ph};
 use crate::errors::app_error::{AppError, AppResult};
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -84,7 +84,7 @@ pub async fn find_by_slug(
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Post>> {
     let post = raisfast_derive::crud_find!(pool, "posts", Post, "id" => id, tenant: tenant_id)?;
@@ -100,7 +100,7 @@ pub async fn create(
     let post = create_tx(&mut tx, cmd, tenant_id).await?;
     let post_id = post.id;
     tx.commit().await?;
-    find_by_id(pool, *post_id, tenant_id)
+    find_by_id(pool, SnowflakeId(*post_id), tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("post"))
 }
@@ -110,7 +110,10 @@ pub async fn create_tx(
     cmd: &crate::commands::CreatePostCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Post> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
     let published_at = if cmd.status == PostStatus::Published {
         Some(now)
     } else {
@@ -146,7 +149,7 @@ pub async fn create_tx(
 
 async fn find_by_id_tx(
     tx: &mut crate::db::Transaction<'_>,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Post>> {
     raisfast_derive::crud_find!(&mut **tx, "posts", Post, "id" => id, tenant: tenant_id)
@@ -169,7 +172,7 @@ pub async fn update_tx(
     cmd: &crate::commands::UpdatePostCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Post> {
-    let post_id: i64 = cmd.id;
+    let post_id = cmd.id;
     let existing =
         raisfast_derive::crud_find_one!(&mut **tx, "posts", Post, "id" => post_id, tenant: tenant_id)
             .map_err(|_| AppError::not_found("post"))?;
@@ -245,7 +248,11 @@ pub async fn update_tx(
     })
 }
 
-pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
+pub async fn delete(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
     let result = raisfast_derive::crud_delete!(pool, "posts", "id" => id, tenant: tenant_id)?;
     AppError::expect_affected(&result, "post")
 }
@@ -266,7 +273,11 @@ pub async fn increment_view_count_joined(
     find_published_joined_by_slug(pool, slug, tenant_id).await
 }
 
-pub async fn sync_tags(pool: &crate::db::Pool, post_id: i64, tag_ids: &[i64]) -> AppResult<()> {
+pub async fn sync_tags(
+    pool: &crate::db::Pool,
+    post_id: SnowflakeId,
+    tag_ids: &[i64],
+) -> AppResult<()> {
     let mut tx = pool.begin().await?;
     sync_tags_tx(&mut tx, post_id, tag_ids).await?;
     tx.commit().await?;
@@ -275,7 +286,7 @@ pub async fn sync_tags(pool: &crate::db::Pool, post_id: i64, tag_ids: &[i64]) ->
 
 pub async fn sync_tags_tx(
     tx: &mut crate::db::Transaction<'_>,
-    post_id: i64,
+    post_id: SnowflakeId,
     tag_ids: &[i64],
 ) -> AppResult<()> {
     raisfast_derive::crud_delete!(&mut **tx, "posts_tags", "post_id" => post_id)?;
@@ -296,7 +307,7 @@ pub struct TagRow {
 
 pub async fn get_post_tags(
     pool: &crate::db::Pool,
-    post_id: i64,
+    post_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<TagBrief>> {
     let rows: Vec<TagRow> = raisfast_derive::crud_join!(
@@ -333,7 +344,7 @@ pub async fn get_author_name(
 
 pub async fn get_category_name(
     pool: &crate::db::Pool,
-    category_id: i64,
+    category_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<String>> {
     let row: Option<(String,)> = raisfast_derive::crud_select!(
@@ -614,7 +625,7 @@ const JOIN_SQL: &str = "\
 
 pub async fn find_joined_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<PostJoinedRow> {
     raisfast_derive::crud_join!(
@@ -1011,9 +1022,9 @@ mod tests {
             .unwrap();
         assert_eq!(result.len(), 2);
         let ids: Vec<i64> = result.iter().map(|r| *r.id).collect();
-        assert!(ids.contains(&*p1.id));
-        assert!(ids.contains(&*p3.id));
-        assert!(!ids.contains(&*p2.id));
+        assert!(ids.contains(&p1.id));
+        assert!(ids.contains(&p3.id));
+        assert!(!ids.contains(&p2.id));
     }
 
     #[tokio::test]

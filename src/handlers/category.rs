@@ -151,7 +151,7 @@ pub async fn get(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<CategoryResponse>> {
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let cat = state.category_service.get(id, &auth).await?;
     Ok(ApiResponse::success(CategoryResponse::from_category(cat)))
 }
@@ -188,7 +188,7 @@ pub async fn update(
 ) -> AppResult<ApiResponse<CategoryResponse>> {
     auth.ensure_author()?;
     validation::validate(&req)?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let cat = state.category_service.update(&auth, id, req).await?;
     Ok(ApiResponse::success(CategoryResponse::from_category(cat)))
 }
@@ -205,7 +205,7 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_author()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state.category_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
@@ -249,7 +249,7 @@ pub async fn admin_update(
 ) -> AppResult<ApiResponse<CategoryResponse>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let cat = state.category_service.update(&auth, id, req).await?;
     Ok(ApiResponse::success(CategoryResponse::from_category(cat)))
 }
@@ -260,7 +260,7 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state.category_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
@@ -275,7 +275,7 @@ pub async fn admin_batch(
     let mut affected = 0usize;
     if req.action == "delete" {
         for raw_id in &req.ids {
-            if let Ok(id) = crate::utils::id::parse_id(raw_id)
+            if let Ok(id) = crate::types::snowflake_id::parse_id(raw_id)
                 && state.category_service.delete(id, &auth).await.is_ok()
             {
                 affected += 1;

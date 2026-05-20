@@ -9,6 +9,7 @@ use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -195,7 +196,10 @@ pub async fn create_order(
         .user_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
     validation::validate(&req)?;
-    let (o, items) = state.order_service.create(&auth, user_int_id, req).await?;
+    let (o, items) = state
+        .order_service
+        .create(&auth, SnowflakeId(user_int_id), req)
+        .await?;
     Ok(ApiResponse::success(to_order_response(o, items)))
 }
 
@@ -215,7 +219,12 @@ pub async fn list_orders(
     params.sanitize();
     let (orders, total) = state
         .order_service
-        .list_user(&auth, user_int_id, params.page, params.page_size)
+        .list_user(
+            &auth,
+            SnowflakeId(user_int_id),
+            params.page,
+            params.page_size,
+        )
         .await?;
     let responses: Vec<_> = orders
         .into_iter()
@@ -235,7 +244,7 @@ pub async fn get_order(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<OrderResponse>> {
     auth.ensure_authenticated()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let (o, items) = state.order_service.get(&auth, id).await?;
     Ok(ApiResponse::success(to_order_response(o, items)))
 }
@@ -256,8 +265,11 @@ pub async fn cancel_order_handler(
     let user_int_id = auth
         .user_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
-    let id = crate::utils::id::parse_id(&id)?;
-    state.order_service.cancel(&auth, id, user_int_id).await?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
+    state
+        .order_service
+        .cancel(&auth, id, SnowflakeId(user_int_id))
+        .await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -275,10 +287,10 @@ pub async fn confirm_receipt(
     let user_int_id = auth
         .user_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state
         .order_service
-        .confirm_receipt(&auth, id, user_int_id)
+        .confirm_receipt(&auth, id, SnowflakeId(user_int_id))
         .await?;
     Ok(ApiResponse::success(()))
 }
@@ -316,7 +328,7 @@ pub async fn admin_get(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<OrderResponse>> {
     auth.ensure_admin()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let (o, items) = state.order_service.get(&auth, id).await?;
     Ok(ApiResponse::success(to_order_response(o, items)))
 }
@@ -334,7 +346,7 @@ pub async fn admin_ship(
     Json(req): Json<ShipOrderRequest>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state.order_service.ship(&auth, id, &req).await?;
     Ok(ApiResponse::success(()))
 }
@@ -350,7 +362,7 @@ pub async fn admin_cancel(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state.order_service.admin_cancel(&auth, id).await?;
     Ok(ApiResponse::success(()))
 }
@@ -366,7 +378,7 @@ pub async fn admin_pay(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state.order_service.mark_paid(&auth, id).await?;
     Ok(ApiResponse::success(()))
 }
@@ -382,7 +394,7 @@ pub async fn admin_refund(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state.order_service.refund(&auth, id).await?;
     Ok(ApiResponse::success(()))
 }
@@ -400,7 +412,7 @@ pub async fn admin_update_remark(
     Json(req): Json<UpdateAdminRemarkRequest>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state
         .order_service
         .update_admin_remark(&auth, id, &req.admin_remark)

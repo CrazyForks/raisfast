@@ -7,7 +7,7 @@ use ts_rs::TS;
 use crate::commands::{CreateReusableBlockCmd, UpdateReusableBlockCmd};
 
 use crate::errors::app_error::{AppError, AppResult};
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -27,7 +27,7 @@ pub struct ReusableBlock {
 
 pub async fn find_reusable_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<ReusableBlock>> {
     Ok(
@@ -47,7 +47,10 @@ pub async fn create_reusable(
     cmd: &CreateReusableBlockCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<ReusableBlock> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
     raisfast_derive::crud_insert!(
         pool,
         "reusable_blocks",
@@ -91,7 +94,7 @@ pub async fn update_reusable(
 
 pub async fn delete_reusable(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let result =
@@ -102,7 +105,6 @@ pub async fn delete_reusable(
 #[cfg(test)]
 mod tests {
     use super::*;
-
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
     }
@@ -138,7 +140,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let found = find_reusable_by_id(&pool, *block.id, None).await.unwrap();
+        let found = find_reusable_by_id(&pool, block.id, None).await.unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().name, "Block");
     }
@@ -186,7 +188,7 @@ mod tests {
         let updated = update_reusable(
             &pool,
             &UpdateReusableBlockCmd {
-                id: *block.id,
+                id: block.id,
                 name: Some("Updated".to_string()),
                 block_type: None,
                 content: None,
@@ -217,8 +219,8 @@ mod tests {
         )
         .await
         .unwrap();
-        delete_reusable(&pool, *block.id, None).await.unwrap();
-        let found = find_reusable_by_id(&pool, *block.id, None).await.unwrap();
+        delete_reusable(&pool, block.id, None).await.unwrap();
+        let found = find_reusable_by_id(&pool, block.id, None).await.unwrap();
         assert!(found.is_none());
     }
 }

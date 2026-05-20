@@ -66,6 +66,7 @@ impl JobHandler for LogJobHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::snowflake_id::SnowflakeId;
 
     struct FailHandler;
 
@@ -119,13 +120,13 @@ mod tests {
         let handler = LogJobHandler;
         let jobs = vec![
             Job::SendWelcomeEmail {
-                user_id: 1,
+                user_id: SnowflakeId(1),
                 email: "a@b.com".into(),
                 username: "alice".into(),
             },
             Job::RebuildSearchIndex { post_ids: vec![1] },
             Job::GenerateThumbnail {
-                media_id: 1,
+                media_id: SnowflakeId(1),
                 size: 300,
             },
         ];

@@ -121,6 +121,7 @@ impl WorkerRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::snowflake_id::SnowflakeId;
     use crate::worker::{Job, LogJobHandler, NewJob, SqliteJobQueue};
 
     struct FailHandler;
@@ -176,7 +177,7 @@ mod tests {
         queue
             .enqueue(NewJob {
                 job: Job::SendWelcomeEmail {
-                    user_id: 1,
+                    user_id: SnowflakeId(1),
                     email: "a@b.com".into(),
                     username: "alice".into(),
                 },
@@ -204,7 +205,7 @@ mod tests {
         queue
             .enqueue(NewJob {
                 job: Job::SendWelcomeEmail {
-                    user_id: 1,
+                    user_id: SnowflakeId(1),
                     email: "a@b.com".into(),
                     username: "alice".into(),
                 },

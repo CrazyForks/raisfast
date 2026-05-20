@@ -3,7 +3,7 @@ use sqlx::FromRow;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -86,7 +86,7 @@ pub async fn fetch_pending(pool: &crate::db::Pool, limit: i64) -> AppResult<Vec<
         .map_err(Into::into)
 }
 
-pub async fn mark_processing(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
+pub async fn mark_processing(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
     raisfast_derive::check_schema!("wallet_outbox", "status", "updated_at", "id");
     let sql = format!(
         "UPDATE wallet_outbox SET status = 'processing', updated_at = datetime('now') WHERE id = {} AND status IN ('pending', 'failed')",
@@ -96,7 +96,7 @@ pub async fn mark_processing(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
     Ok(())
 }
 
-pub async fn mark_completed(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
+pub async fn mark_completed(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
     raisfast_derive::crud_update!(pool, "wallet_outbox",
         raw: ["status" => "'completed'", "updated_at" => "datetime('now')"],
         where: "id" => id
@@ -104,7 +104,7 @@ pub async fn mark_completed(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
     Ok(())
 }
 
-pub async fn mark_failed(pool: &crate::db::Pool, id: i64, error: &str) -> AppResult<()> {
+pub async fn mark_failed(pool: &crate::db::Pool, id: SnowflakeId, error: &str) -> AppResult<()> {
     raisfast_derive::check_schema!(
         "wallet_outbox",
         "status",

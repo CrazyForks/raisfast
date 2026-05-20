@@ -5,6 +5,7 @@ use crate::content_type::handler::cms_detail_cache_key;
 use crate::content_type::repository::{ContentRepository, SaveContext};
 use crate::content_type::schema::check_api_access;
 use crate::middleware::auth::AuthUser;
+use crate::types::snowflake_id::SnowflakeId;
 use async_graphql::*;
 use std::sync::Arc;
 
@@ -92,7 +93,7 @@ impl MutationRoot {
             .map_err(|e| async_graphql::Error::new(format!("invalid id: {e}")))?;
 
         let existing = repo
-            .find_by_id(&ct, int_id, None, true)
+            .find_by_id(&ct, SnowflakeId(int_id), None, true)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
@@ -119,11 +120,17 @@ impl MutationRoot {
         };
 
         let result = repo
-            .update(&ct, int_id, serde_json::Value::Object(obj), None, &save_ctx)
+            .update(
+                &ct,
+                SnowflakeId(int_id),
+                serde_json::Value::Object(obj),
+                None,
+                &save_ctx,
+            )
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        let cache_key = cms_detail_cache_key(&ct, int_id);
+        let cache_key = cms_detail_cache_key(&ct, SnowflakeId(int_id));
         state.cms_cache.remove(&cache_key);
 
         Ok(json_to_content_item(result))
@@ -154,7 +161,7 @@ impl MutationRoot {
             .map_err(|e| async_graphql::Error::new(format!("invalid id: {e}")))?;
 
         let existing = repo
-            .find_by_id(&ct, int_id, None, true)
+            .find_by_id(&ct, SnowflakeId(int_id), None, true)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
@@ -170,7 +177,7 @@ impl MutationRoot {
 
         repo.delete(
             &ct,
-            int_id,
+            SnowflakeId(int_id),
             None,
             &state.protocol_registry,
             &state.content_type_registry,
@@ -178,7 +185,7 @@ impl MutationRoot {
         .await
         .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        let cache_key = cms_detail_cache_key(&ct, int_id);
+        let cache_key = cms_detail_cache_key(&ct, SnowflakeId(int_id));
         state.cms_cache.remove(&cache_key);
 
         Ok(DeleteResult {

@@ -20,6 +20,7 @@ use crate::models::wallet_transaction::{WalletReferenceType, WalletTxType};
 use crate::payment::ProviderResponse;
 use crate::payment::routing::{RoutingContext, select_best_channel, select_channels};
 use crate::services::audit::AuditService;
+use crate::types::snowflake_id::SnowflakeId;
 use base64::Engine;
 
 #[async_trait]
@@ -32,11 +33,11 @@ pub trait PaymentService: Send + Sync {
     async fn update_channel(
         &self,
         auth: &AuthUser,
-        id: i64,
+        id: SnowflakeId,
         req: UpdatePaymentChannelRequest,
     ) -> AppResult<PaymentChannel>;
-    async fn delete_channel(&self, auth: &AuthUser, id: i64) -> AppResult<()>;
-    async fn get_channel(&self, auth: &AuthUser, id: i64) -> AppResult<PaymentChannel>;
+    async fn delete_channel(&self, auth: &AuthUser, id: SnowflakeId) -> AppResult<()>;
+    async fn get_channel(&self, auth: &AuthUser, id: SnowflakeId) -> AppResult<PaymentChannel>;
     async fn list_channels(&self, auth: &AuthUser) -> AppResult<Vec<PaymentChannel>>;
     async fn list_available_channels(
         &self,
@@ -48,23 +49,28 @@ pub trait PaymentService: Send + Sync {
     async fn create_payment_order(
         &self,
         auth: &AuthUser,
-        user_id: i64,
+        user_id: SnowflakeId,
         req: CreatePaymentOrderRequest,
         client_ip: Option<&str>,
         client_language: Option<&str>,
         client_user_agent: Option<&str>,
     ) -> AppResult<(PaymentOrder, Option<ProviderResponse>)>;
-    async fn cancel_payment_order(&self, auth: &AuthUser, id: i64, user_id: i64) -> AppResult<()>;
+    async fn cancel_payment_order(
+        &self,
+        auth: &AuthUser,
+        id: SnowflakeId,
+        user_id: SnowflakeId,
+    ) -> AppResult<()>;
     async fn get_payment_order(
         &self,
         auth: &AuthUser,
-        user_id: i64,
-        id: i64,
+        user_id: SnowflakeId,
+        id: SnowflakeId,
     ) -> AppResult<PaymentOrder>;
     async fn list_user_payment_orders(
         &self,
         auth: &AuthUser,
-        user_id: i64,
+        user_id: SnowflakeId,
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<PaymentOrder>, i64)>;
@@ -77,7 +83,7 @@ pub trait PaymentService: Send + Sync {
     async fn refund_payment_order(
         &self,
         auth: &AuthUser,
-        id: i64,
+        id: SnowflakeId,
         req: CreateRefundRequest,
     ) -> AppResult<PaymentRefund>;
     async fn list_admin_payment_orders(
@@ -108,14 +114,14 @@ pub trait PaymentService: Send + Sync {
     async fn list_order_transactions(
         &self,
         auth: &AuthUser,
-        user_id: i64,
-        order_id: i64,
+        user_id: SnowflakeId,
+        order_id: SnowflakeId,
     ) -> AppResult<Vec<PaymentTransaction>>;
     async fn list_order_refunds(
         &self,
         auth: &AuthUser,
-        user_id: i64,
-        order_id: i64,
+        user_id: SnowflakeId,
+        order_id: SnowflakeId,
     ) -> AppResult<Vec<PaymentRefund>>;
 }
 
@@ -167,19 +173,19 @@ impl PaymentService for PaymentServiceImpl {
     async fn update_channel(
         &self,
         auth: &AuthUser,
-        id: i64,
+        id: SnowflakeId,
         req: UpdatePaymentChannelRequest,
     ) -> AppResult<PaymentChannel> {
         let audit = AuditService::new((*self.pool).clone());
         update_channel(&self.pool, auth, &self.config, &audit, id, req).await
     }
 
-    async fn delete_channel(&self, auth: &AuthUser, id: i64) -> AppResult<()> {
+    async fn delete_channel(&self, auth: &AuthUser, id: SnowflakeId) -> AppResult<()> {
         let audit = AuditService::new((*self.pool).clone());
         delete_channel(&self.pool, auth, &audit, id).await
     }
 
-    async fn get_channel(&self, auth: &AuthUser, id: i64) -> AppResult<PaymentChannel> {
+    async fn get_channel(&self, auth: &AuthUser, id: SnowflakeId) -> AppResult<PaymentChannel> {
         get_channel(&self.pool, auth, id).await
     }
 
@@ -200,7 +206,7 @@ impl PaymentService for PaymentServiceImpl {
     async fn create_payment_order(
         &self,
         auth: &AuthUser,
-        user_id: i64,
+        user_id: SnowflakeId,
         req: CreatePaymentOrderRequest,
         client_ip: Option<&str>,
         client_language: Option<&str>,
@@ -221,7 +227,12 @@ impl PaymentService for PaymentServiceImpl {
         Ok((order, resp))
     }
 
-    async fn cancel_payment_order(&self, auth: &AuthUser, id: i64, user_id: i64) -> AppResult<()> {
+    async fn cancel_payment_order(
+        &self,
+        auth: &AuthUser,
+        id: SnowflakeId,
+        user_id: SnowflakeId,
+    ) -> AppResult<()> {
         let audit = AuditService::new((*self.pool).clone());
         cancel_payment_order(&self.pool, auth, &audit, &self.config, id, user_id).await
     }
@@ -229,8 +240,8 @@ impl PaymentService for PaymentServiceImpl {
     async fn get_payment_order(
         &self,
         auth: &AuthUser,
-        user_id: i64,
-        id: i64,
+        user_id: SnowflakeId,
+        id: SnowflakeId,
     ) -> AppResult<PaymentOrder> {
         get_payment_order(&self.pool, auth, user_id, id).await
     }
@@ -238,7 +249,7 @@ impl PaymentService for PaymentServiceImpl {
     async fn list_user_payment_orders(
         &self,
         auth: &AuthUser,
-        user_id: i64,
+        user_id: SnowflakeId,
         page: i64,
         page_size: i64,
     ) -> AppResult<(Vec<PaymentOrder>, i64)> {
@@ -261,7 +272,7 @@ impl PaymentService for PaymentServiceImpl {
     async fn refund_payment_order(
         &self,
         auth: &AuthUser,
-        id: i64,
+        id: SnowflakeId,
         req: CreateRefundRequest,
     ) -> AppResult<PaymentRefund> {
         let audit = AuditService::new((*self.pool).clone());
@@ -322,13 +333,13 @@ impl PaymentService for PaymentServiceImpl {
     async fn list_order_transactions(
         &self,
         auth: &AuthUser,
-        user_id: i64,
-        order_id: i64,
+        user_id: SnowflakeId,
+        order_id: SnowflakeId,
     ) -> AppResult<Vec<PaymentTransaction>> {
         let order = self.get_payment_order(auth, user_id, order_id).await?;
         crate::models::payment_transaction::find_by_payment_order_id(
             &self.pool,
-            *order.id,
+            order.id,
             auth.tenant_id(),
         )
         .await
@@ -337,13 +348,13 @@ impl PaymentService for PaymentServiceImpl {
     async fn list_order_refunds(
         &self,
         auth: &AuthUser,
-        user_id: i64,
-        order_id: i64,
+        user_id: SnowflakeId,
+        order_id: SnowflakeId,
     ) -> AppResult<Vec<PaymentRefund>> {
         let order = self.get_payment_order(auth, user_id, order_id).await?;
         crate::models::payment_refund::find_by_payment_order_id(
             &self.pool,
-            *order.id,
+            order.id,
             auth.tenant_id(),
         )
         .await
@@ -437,7 +448,7 @@ pub async fn update_channel(
     auth: &AuthUser,
     config: &AppConfig,
     audit: &AuditService,
-    id: i64,
+    id: SnowflakeId,
     req: UpdatePaymentChannelRequest,
 ) -> AppResult<PaymentChannel> {
     auth.ensure_admin()?;
@@ -462,7 +473,7 @@ pub async fn update_channel(
     let updated = crate::models::payment_channel::update(
         pool,
         &crate::commands::UpdatePaymentChannelCmd {
-            id: *channel.id,
+            id: channel.id,
             provider: channel.provider.clone(),
             name: req.name.clone().unwrap_or(channel.name.clone()),
             is_live: req.is_live.unwrap_or(channel.is_live != 0),
@@ -481,7 +492,7 @@ pub async fn update_channel(
         return Err(AppError::Conflict("version_conflict".into()));
     }
 
-    let result = crate::models::payment_channel::find_by_id(pool, *channel.id, auth.tenant_id())
+    let result = crate::models::payment_channel::find_by_id(pool, channel.id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))?;
 
@@ -505,14 +516,14 @@ pub async fn delete_channel(
     pool: &crate::db::Pool,
     auth: &AuthUser,
     audit: &AuditService,
-    id: i64,
+    id: SnowflakeId,
 ) -> AppResult<()> {
     auth.ensure_admin()?;
     let channel = crate::models::payment_channel::find_by_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))?;
     let deleted =
-        crate::models::payment_channel::delete_by_id(pool, *channel.id, auth.tenant_id()).await?;
+        crate::models::payment_channel::delete_by_id(pool, channel.id, auth.tenant_id()).await?;
     if !deleted {
         return Err(AppError::not_found("payment_channel"));
     }
@@ -534,7 +545,7 @@ pub async fn delete_channel(
 pub async fn get_channel(
     pool: &crate::db::Pool,
     auth: &AuthUser,
-    id: i64,
+    id: SnowflakeId,
 ) -> AppResult<PaymentChannel> {
     auth.ensure_admin()?;
     crate::models::payment_channel::find_by_id(pool, id, auth.tenant_id())
@@ -559,7 +570,7 @@ pub async fn list_available_channels(
 ) -> AppResult<AvailableChannelsResponse> {
     let _ = auth.ensure_authenticated()?;
 
-    let order_id_parsed: i64 = crate::utils::id::parse_id(order_id)?;
+    let order_id_parsed = crate::types::snowflake_id::parse_id(order_id)?;
     let order = crate::models::order::find_by_id(pool, order_id_parsed, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("order"))?;
@@ -598,7 +609,7 @@ pub async fn list_available_channels(
 pub async fn create_payment_order(
     pool: &crate::db::Pool,
     auth: &AuthUser,
-    user_id: i64,
+    user_id: SnowflakeId,
     req: CreatePaymentOrderRequest,
     config: &AppConfig,
     client_ip: Option<&str>,
@@ -607,7 +618,7 @@ pub async fn create_payment_order(
 ) -> AppResult<(PaymentOrder, Option<ProviderResponse>)> {
     let _ = auth.ensure_authenticated()?;
 
-    let order_id_parsed: i64 = crate::utils::id::parse_id(&req.order_id)?;
+    let order_id_parsed = crate::types::snowflake_id::parse_id(&req.order_id)?;
     let order = crate::models::order::find_by_id(pool, order_id_parsed, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("order"))?;
@@ -621,7 +632,7 @@ pub async fn create_payment_order(
     }
 
     let (channel, channel_selected_by) = if let Some(ref ch_id_str) = req.channel_id {
-        let ch_id: i64 = crate::utils::id::parse_id(ch_id_str)?;
+        let ch_id = crate::types::snowflake_id::parse_id(ch_id_str)?;
         let ch = crate::models::payment_channel::find_by_id(pool, ch_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("payment_channel"))?;
@@ -660,7 +671,7 @@ pub async fn create_payment_order(
         title,
         amount: order.total_amount,
         currency: order.currency.clone(),
-        channel_id: *channel.id,
+        channel_id: channel.id,
         provider: channel.provider.clone(),
         reference_type: None,
         reference_id: None,
@@ -701,7 +712,7 @@ pub async fn create_payment_order(
         Ok(resp) => {
             if let Err(e) = crate::models::payment_order::update_provider_order_id(
                 pool,
-                *payment_order.id,
+                payment_order.id,
                 &resp.provider_order_id,
                 None,
                 auth.tenant_id(),
@@ -730,8 +741,8 @@ pub async fn cancel_payment_order(
     auth: &AuthUser,
     audit: &AuditService,
     config: &AppConfig,
-    id: i64,
-    user_id: i64,
+    id: SnowflakeId,
+    user_id: SnowflakeId,
 ) -> AppResult<()> {
     let _ = auth.ensure_authenticated()?;
     let order = crate::models::payment_order::find_by_id(pool, id, auth.tenant_id())
@@ -749,7 +760,7 @@ pub async fn cancel_payment_order(
         && let Ok(key) = get_encrypt_key(config)
     {
         let channel =
-            crate::models::payment_channel::find_by_id(pool, *order.channel_id, auth.tenant_id())
+            crate::models::payment_channel::find_by_id(pool, order.channel_id, auth.tenant_id())
                 .await?;
         if let Some(ch) = channel
             && let Ok(provider) = crate::payment::providers::get_provider(&order.provider, &key)
@@ -765,7 +776,7 @@ pub async fn cancel_payment_order(
     crate::in_transaction!(pool, tx, {
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
-            *order.id,
+            order.id,
             PaymentStatus::Cancelled,
             Some("cancelled_at"),
             PaymentStatus::Pending,
@@ -796,8 +807,8 @@ pub async fn cancel_payment_order(
 pub async fn get_payment_order(
     pool: &crate::db::Pool,
     auth: &AuthUser,
-    user_id: i64,
-    id: i64,
+    user_id: SnowflakeId,
+    id: SnowflakeId,
 ) -> AppResult<PaymentOrder> {
     let _ = auth.ensure_authenticated()?;
     let order = crate::models::payment_order::find_by_id(pool, id, auth.tenant_id())
@@ -812,7 +823,7 @@ pub async fn get_payment_order(
 pub async fn list_user_payment_orders(
     pool: &crate::db::Pool,
     auth: &AuthUser,
-    user_id: i64,
+    user_id: SnowflakeId,
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<PaymentOrder>, i64)> {
@@ -836,7 +847,7 @@ pub async fn handle_callback(
     headers: &axum::http::HeaderMap,
     body: &[u8],
 ) -> AppResult<PaymentOrder> {
-    let ch_id: i64 = crate::utils::id::parse_id(channel_id)?;
+    let ch_id = crate::types::snowflake_id::parse_id(channel_id)?;
     let channel = crate::models::payment_channel::find_by_id(pool, ch_id, None)
         .await?
         .ok_or_else(|| AppError::not_found("payment_channel"))?;
@@ -905,7 +916,7 @@ pub async fn handle_callback(
     crate::in_transaction!(pool, tx, {
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
-            *payment_order.id,
+            payment_order.id,
             PaymentStatus::Paid,
             Some("paid_at"),
             PaymentStatus::Pending,
@@ -922,9 +933,9 @@ pub async fn handle_callback(
         if let Some(ref provider_tx_id) = callback.provider_tx_id {
             let raw_payload = serde_json::to_string(&callback).ok();
             let tx_cmd = CreatePaymentTransactionCmd {
-                payment_order_id: *payment_order.id,
+                payment_order_id: payment_order.id,
                 order_id: payment_order.order_id.clone(),
-                user_id: *payment_order.user_id,
+                user_id: payment_order.user_id,
                 tx_type: "charge".into(),
                 amount: payment_order.amount,
                 currency: payment_order.currency.clone(),
@@ -945,7 +956,7 @@ pub async fn handle_callback(
         {
             crate::models::order::tx_update_status_cas(
                 &mut tx,
-                order_id,
+                SnowflakeId(order_id),
                 crate::models::order::OrderStatus::Paid,
                 Some("paid_at"),
                 crate::models::order::OrderStatus::Pending,
@@ -954,7 +965,7 @@ pub async fn handle_callback(
         }
 
         let outbox_cmd = CreateWalletOutboxCmd {
-            user_id: *payment_order.user_id,
+            user_id: payment_order.user_id,
             currency: payment_order.currency.clone(),
             amount: payment_order.amount,
             entry_type: "credit".into(),
@@ -996,7 +1007,7 @@ pub async fn refund_payment_order(
     auth: &AuthUser,
     audit: &AuditService,
     config: &AppConfig,
-    id: i64,
+    id: SnowflakeId,
     req: CreateRefundRequest,
 ) -> AppResult<PaymentRefund> {
     raisfast_derive::check_schema!("payment_refunds", "provider_refund_id");
@@ -1016,7 +1027,7 @@ pub async fn refund_payment_order(
     let refund = crate::in_transaction!(pool, tx, {
         let already_refunded_in_tx = crate::models::payment_refund::tx_sum_refunded_by_order(
             &mut tx,
-            *payment_order.id,
+            payment_order.id,
             auth.tenant_id(),
         )
         .await?;
@@ -1034,7 +1045,7 @@ pub async fn refund_payment_order(
             let key = get_encrypt_key(config)?;
             let channel = crate::models::payment_channel::find_by_id(
                 pool,
-                *payment_order.channel_id,
+                payment_order.channel_id,
                 auth.tenant_id(),
             )
             .await?
@@ -1054,9 +1065,9 @@ pub async fn refund_payment_order(
         };
 
         let refund_cmd = CreatePaymentRefundCmd {
-            payment_order_id: *payment_order.id,
+            payment_order_id: payment_order.id,
             order_id: payment_order.order_id.clone(),
-            user_id: *payment_order.user_id,
+            user_id: payment_order.user_id,
             amount: req.amount,
             currency: payment_order.currency.clone(),
             reason: req.reason.clone(),
@@ -1074,9 +1085,9 @@ pub async fn refund_payment_order(
 
         let provider_tx_id = format!("txr_{}", uuid::Uuid::now_v7());
         let tx_cmd = CreatePaymentTransactionCmd {
-            payment_order_id: *payment_order.id,
+            payment_order_id: payment_order.id,
             order_id: payment_order.order_id.clone(),
-            user_id: *payment_order.user_id,
+            user_id: payment_order.user_id,
             tx_type: "refund".into(),
             amount: req.amount,
             currency: payment_order.currency.clone(),
@@ -1093,7 +1104,7 @@ pub async fn refund_payment_order(
 
         let already_refunded_in_tx = crate::models::payment_refund::tx_sum_refunded_by_order(
             &mut tx,
-            *payment_order.id,
+            payment_order.id,
             auth.tenant_id(),
         )
         .await?;
@@ -1105,7 +1116,7 @@ pub async fn refund_payment_order(
         };
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
-            *payment_order.id,
+            payment_order.id,
             new_status,
             None,
             payment_order.status,
@@ -1126,7 +1137,7 @@ pub async fn refund_payment_order(
             .map_err(|e: sqlx::Error| AppError::from(e))?;
 
         let outbox_cmd = CreateWalletOutboxCmd {
-            user_id: *payment_order.user_id,
+            user_id: payment_order.user_id,
             currency: payment_order.currency.clone(),
             amount: req.amount,
             entry_type: "debit".into(),
@@ -1318,7 +1329,7 @@ mod tests {
         crate::models::order::insert(
             pool,
             &CreateOrderCmd {
-                user_id,
+                user_id: SnowflakeId(user_id),
                 order_no,
                 subtotal: amount,
                 discount_amount: 0,
@@ -1352,12 +1363,12 @@ mod tests {
         crate::models::payment_order::insert(
             pool,
             &CreatePaymentOrderCmd {
-                user_id,
+                user_id: SnowflakeId(user_id),
                 order_id: None,
                 title: "Test Payment".into(),
                 amount,
                 currency: currency.into(),
-                channel_id,
+                channel_id: SnowflakeId(channel_id),
                 provider: "stripe".into(),
                 reference_type: None,
                 reference_id: None,
@@ -1401,7 +1412,7 @@ mod tests {
         let result = super::create_payment_order(
             &pool,
             &other_auth,
-            other_id,
+            SnowflakeId(other_id),
             req,
             &config,
             None,
@@ -1441,7 +1452,7 @@ mod tests {
         let result = super::create_payment_order(
             &pool,
             &owner_auth,
-            owner_id,
+            SnowflakeId(owner_id),
             req,
             &config,
             None,
@@ -1452,7 +1463,7 @@ mod tests {
 
         assert!(result.is_ok());
         let (payment_order, _) = result.unwrap();
-        assert_eq!(payment_order.user_id, owner_id);
+        assert_eq!(payment_order.user_id, SnowflakeId(owner_id));
         assert_eq!(payment_order.amount, 1000);
     }
 
@@ -1479,7 +1490,7 @@ mod tests {
         let result = super::create_payment_order(
             &pool,
             &owner_auth,
-            owner_id,
+            SnowflakeId(owner_id),
             req,
             &config,
             None,
@@ -1505,7 +1516,8 @@ mod tests {
         let po = seed_payment_order(&pool, owner_id, *channel.id, 500, "CNY").await;
 
         let other_auth = user_auth(other_id);
-        let result = super::get_payment_order(&pool, &other_auth, other_id, *po.id).await;
+        let result =
+            super::get_payment_order(&pool, &other_auth, SnowflakeId(other_id), po.id).await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1523,7 +1535,8 @@ mod tests {
         let po = seed_payment_order(&pool, owner_id, *channel.id, 500, "CNY").await;
 
         let owner_auth = user_auth(owner_id);
-        let result = super::get_payment_order(&pool, &owner_auth, owner_id, *po.id).await;
+        let result =
+            super::get_payment_order(&pool, &owner_auth, SnowflakeId(owner_id), po.id).await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().amount, 500);
@@ -1540,7 +1553,8 @@ mod tests {
 
         let admin_auth_user =
             AuthUser::from_parts(Some(admin_id), crate::models::user::UserRole::Admin, None);
-        let result = super::get_payment_order(&pool, &admin_auth_user, admin_id, *po.id).await;
+        let result =
+            super::get_payment_order(&pool, &admin_auth_user, SnowflakeId(admin_id), po.id).await;
 
         assert!(result.is_ok());
     }
@@ -1558,9 +1572,15 @@ mod tests {
         let audit = AuditService::new(pool.clone());
 
         let other_auth = user_auth(other_id);
-        let result =
-            super::cancel_payment_order(&pool, &other_auth, &audit, &config, *po.id, other_id)
-                .await;
+        let result = super::cancel_payment_order(
+            &pool,
+            &other_auth,
+            &audit,
+            &config,
+            po.id,
+            SnowflakeId(other_id),
+        )
+        .await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1581,11 +1601,18 @@ mod tests {
         let audit = AuditService::new(pool.clone());
 
         let owner_auth = user_auth(owner_id);
-        super::cancel_payment_order(&pool, &owner_auth, &audit, &config, *po.id, owner_id)
-            .await
-            .unwrap();
+        super::cancel_payment_order(
+            &pool,
+            &owner_auth,
+            &audit,
+            &config,
+            po.id,
+            SnowflakeId(owner_id),
+        )
+        .await
+        .unwrap();
 
-        let updated = crate::models::payment_order::find_by_id(&pool, *po.id, None)
+        let updated = crate::models::payment_order::find_by_id(&pool, po.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -1604,7 +1631,7 @@ mod tests {
         let mut tx = pool.begin().await.unwrap();
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
-            *po.id,
+            po.id,
             PaymentStatus::Paid,
             Some("paid_at"),
             PaymentStatus::Pending,
@@ -1617,9 +1644,15 @@ mod tests {
         let audit = AuditService::new(pool.clone());
 
         let owner_auth = user_auth(owner_id);
-        let result =
-            super::cancel_payment_order(&pool, &owner_auth, &audit, &config, *po.id, owner_id)
-                .await;
+        let result = super::cancel_payment_order(
+            &pool,
+            &owner_auth,
+            &audit,
+            &config,
+            po.id,
+            SnowflakeId(owner_id),
+        )
+        .await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1646,7 +1679,7 @@ mod tests {
             &admin_auth_user,
             &audit,
             &config,
-            *po.id,
+            po.id,
             CreateRefundRequest {
                 amount: 500,
                 reason: Some("test".into()),
@@ -1674,7 +1707,7 @@ mod tests {
         let mut tx = pool.begin().await.unwrap();
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
-            *po.id,
+            po.id,
             PaymentStatus::Paid,
             Some("paid_at"),
             PaymentStatus::Pending,
@@ -1686,7 +1719,7 @@ mod tests {
 
         crate::services::wallet::credit_wallet(
             &pool,
-            user_id,
+            SnowflakeId(user_id),
             "CNY",
             1000,
             WalletTxType::Recharge,
@@ -1707,7 +1740,7 @@ mod tests {
             &admin_auth_user,
             &audit,
             &config,
-            *po.id,
+            po.id,
             CreateRefundRequest {
                 amount: 2000,
                 reason: None,
@@ -1735,7 +1768,7 @@ mod tests {
         let mut tx = pool.begin().await.unwrap();
         let rows = crate::models::payment_order::tx_update_status_cas(
             &mut tx,
-            *po.id,
+            po.id,
             PaymentStatus::Paid,
             Some("paid_at"),
             PaymentStatus::Pending,
@@ -1747,7 +1780,7 @@ mod tests {
 
         crate::services::wallet::credit_wallet(
             &pool,
-            user_id,
+            SnowflakeId(user_id),
             "CNY",
             1000,
             WalletTxType::Recharge,
@@ -1769,7 +1802,7 @@ mod tests {
             &admin_auth_user,
             &audit,
             &config,
-            *po.id,
+            po.id,
             CreateRefundRequest {
                 amount: 400,
                 reason: Some("partial".into()),
@@ -1779,7 +1812,7 @@ mod tests {
         .unwrap();
         assert_eq!(refund1.amount, 400);
 
-        let updated = crate::models::payment_order::find_by_id(&pool, *po.id, None)
+        let updated = crate::models::payment_order::find_by_id(&pool, po.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -1790,7 +1823,7 @@ mod tests {
             &admin_auth_user,
             &audit,
             &config,
-            *po.id,
+            po.id,
             CreateRefundRequest {
                 amount: 600,
                 reason: None,
@@ -1800,7 +1833,7 @@ mod tests {
         .unwrap();
         assert_eq!(refund2.amount, 600);
 
-        let updated = crate::models::payment_order::find_by_id(&pool, *po.id, None)
+        let updated = crate::models::payment_order::find_by_id(&pool, po.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -1852,7 +1885,7 @@ mod tests {
         let user_id = seed_user(&pool).await;
 
         let channel = seed_channel(&pool, "stripe").await;
-        let po = seed_payment_order(&pool, user_id, channel.id, 500, "CNY").await;
+        let po = seed_payment_order(&pool, user_id, *channel.id, 500, "CNY").await;
 
         let mut tx = pool.begin().await.unwrap();
         let rows = crate::models::payment_order::tx_update_status_cas(
@@ -1893,7 +1926,7 @@ mod tests {
             crate::in_transaction!(pool, tx, {
                 let rows = crate::models::payment_order::tx_update_status_cas(
                     &mut tx,
-                    *po.id,
+                    po.id,
                     PaymentStatus::Paid,
                     Some("paid_at"),
                     PaymentStatus::Pending,
@@ -1904,7 +1937,7 @@ mod tests {
 
                 let rows2 = crate::models::payment_order::tx_update_status_cas(
                     &mut tx,
-                    *po.id,
+                    po.id,
                     PaymentStatus::Paid,
                     Some("paid_at"),
                     PaymentStatus::Pending,
@@ -1933,12 +1966,12 @@ mod tests {
         crate::models::payment_order::insert(
             &pool,
             &CreatePaymentOrderCmd {
-                user_id,
+                user_id: SnowflakeId(user_id),
                 order_id: Some(order.id.to_string()),
                 title: "Test".into(),
                 amount: 1000,
                 currency: "CNY".into(),
-                channel_id: *channel.id,
+                channel_id: channel.id,
                 provider: "creem".into(),
                 reference_type: None,
                 reference_id: None,
@@ -2110,7 +2143,7 @@ mod tests {
         let result = super::create_payment_order(
             &pool,
             &auth,
-            user_id,
+            SnowflakeId(user_id),
             req,
             &config,
             Some("127.0.0.1"),
@@ -2151,9 +2184,17 @@ mod tests {
             metadata: None,
         };
 
-        let result =
-            super::create_payment_order(&pool, &auth, user_id, req, &config, None, None, None)
-                .await;
+        let result = super::create_payment_order(
+            &pool,
+            &auth,
+            SnowflakeId(user_id),
+            req,
+            &config,
+            None,
+            None,
+            None,
+        )
+        .await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -2186,7 +2227,7 @@ mod tests {
         let result = super::create_payment_order(
             &pool,
             &auth,
-            user_id,
+            SnowflakeId(user_id),
             req,
             &config,
             Some("10.0.0.1"),

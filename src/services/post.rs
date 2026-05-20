@@ -22,19 +22,19 @@ use crate::middleware::auth::AuthUser;
 use crate::models::post::{PostJoinedRow, PostStatus};
 use crate::policy::Policy;
 use crate::search::SearchEngine;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 
 pub async fn find_existing_id(
     pool: &crate::db::Pool,
     table: &str,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<i64>> {
     if tenant_id.is_none() {
-        return Ok(Some(id));
+        return Ok(Some(*id));
     }
     if !crate::db::dialect::is_safe_identifier(table) {
-        return Ok(Some(id));
+        return Ok(Some(*id));
     }
     let filter = if tenant_id.is_some() {
         format!(" AND tenant_id = {}", crate::db::dialect::ph(2))
@@ -177,7 +177,7 @@ impl PostService for PostServiceImpl {
         });
 
         let category_id = if let Some(ref raw_id) = req.category_id {
-            let parsed = crate::utils::id::parse_id(raw_id)?;
+            let parsed = crate::types::snowflake_id::parse_id(raw_id)?;
             find_existing_id(&self.pool, "categories", parsed, auth.tenant_id()).await?
         } else {
             None
@@ -186,7 +186,7 @@ impl PostService for PostServiceImpl {
             Some(ref ids) => {
                 let mut resolved = Vec::new();
                 for raw_id in ids {
-                    let parsed = crate::utils::id::parse_id(raw_id)?;
+                    let parsed = crate::types::snowflake_id::parse_id(raw_id)?;
                     if let Some(int_id) =
                         find_existing_id(&self.pool, "tags", parsed, auth.tenant_id()).await?
                     {
@@ -219,7 +219,7 @@ impl PostService for PostServiceImpl {
                 .flatten();
 
         let category_name = if let Some(cat_id) = p.category_id {
-            crate::models::post::get_category_name(&self.pool, *cat_id, auth.tenant_id())
+            crate::models::post::get_category_name(&self.pool, cat_id, auth.tenant_id())
                 .await
                 .ok()
                 .flatten()
@@ -227,7 +227,7 @@ impl PostService for PostServiceImpl {
             None
         };
 
-        let tags = crate::models::post::get_post_tags(&self.pool, *p.id, auth.tenant_id())
+        let tags = crate::models::post::get_post_tags(&self.pool, p.id, auth.tenant_id())
             .await
             .unwrap_or_default();
 
@@ -247,7 +247,7 @@ impl PostService for PostServiceImpl {
             .await?
             .ok_or_else(|| AppError::not_found("post"))?;
 
-        let existing_id = *existing.id;
+        let existing_id = existing.id;
         let (req, d) = self.before_update(auth, &existing, req).await?;
         let resp = self
             .update_inner(existing_id, existing, req, d, auth)
@@ -266,7 +266,7 @@ impl PostService for PostServiceImpl {
 
         self.before_delete(auth, &existing).await?;
 
-        crate::models::post::delete(&self.pool, *existing.id, auth.tenant_id()).await?;
+        crate::models::post::delete(&self.pool, existing.id, auth.tenant_id()).await?;
         self.after_deleted(&existing);
         Ok(())
     }
@@ -275,7 +275,7 @@ impl PostService for PostServiceImpl {
         let row =
             crate::models::post::increment_view_count_joined(&self.pool, slug, auth.tenant_id())
                 .await?;
-        let tags = crate::models::post::get_post_tags(&self.pool, *row.id, auth.tenant_id())
+        let tags = crate::models::post::get_post_tags(&self.pool, row.id, auth.tenant_id())
             .await
             .unwrap_or_default();
         joined_row_to_response(row, tags).await
@@ -285,8 +285,8 @@ impl PostService for PostServiceImpl {
         let post = crate::models::post::find_by_slug(&self.pool, slug, auth.tenant_id()).await?;
         let post = post.ok_or_else(|| AppError::not_found("post not found"))?;
         let row =
-            crate::models::post::find_joined_by_id(&self.pool, *post.id, auth.tenant_id()).await?;
-        let tags = crate::models::post::get_post_tags(&self.pool, *row.id, auth.tenant_id())
+            crate::models::post::find_joined_by_id(&self.pool, post.id, auth.tenant_id()).await?;
+        let tags = crate::models::post::get_post_tags(&self.pool, row.id, auth.tenant_id())
             .await
             .unwrap_or_default();
         joined_row_to_response(row, tags).await
@@ -331,39 +331,42 @@ impl PostService for PostServiceImpl {
         id: &str,
         req: UpdatePostRequest,
     ) -> AppResult<PostResponse> {
-        let parsed_id = crate::utils::id::parse_id(id)?;
+        let parsed_id = crate::types::snowflake_id::parse_id(id)?;
         let int_id = find_existing_id(&self.pool, "posts", parsed_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("post"))?;
 
-        let existing = crate::models::post::find_by_id(&self.pool, int_id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("post"))?;
+        let existing =
+            crate::models::post::find_by_id(&self.pool, SnowflakeId(int_id), auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("post"))?;
 
         let (req, d) = self.before_update(auth, &existing, req).await?;
         let resp = self
-            .update_inner(int_id, existing.clone(), req, d, auth)
+            .update_inner(SnowflakeId(int_id), existing.clone(), req, d, auth)
             .await?;
-        let updated = crate::models::post::find_by_id(&self.pool, int_id, auth.tenant_id())
-            .await?
-            .unwrap_or(existing);
+        let updated =
+            crate::models::post::find_by_id(&self.pool, SnowflakeId(int_id), auth.tenant_id())
+                .await?
+                .unwrap_or(existing);
         self.after_updated(&updated);
         Ok(resp)
     }
 
     async fn admin_delete(&self, auth: &AuthUser, id: &str) -> AppResult<()> {
-        let parsed_id = crate::utils::id::parse_id(id)?;
+        let parsed_id = crate::types::snowflake_id::parse_id(id)?;
         let int_id = find_existing_id(&self.pool, "posts", parsed_id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("post"))?;
 
-        let existing = crate::models::post::find_by_id(&self.pool, int_id, auth.tenant_id())
-            .await?
-            .ok_or_else(|| AppError::not_found("post"))?;
+        let existing =
+            crate::models::post::find_by_id(&self.pool, SnowflakeId(int_id), auth.tenant_id())
+                .await?
+                .ok_or_else(|| AppError::not_found("post"))?;
 
         self.before_delete(auth, &existing).await?;
 
-        crate::models::post::delete(&self.pool, int_id, auth.tenant_id()).await?;
+        crate::models::post::delete(&self.pool, SnowflakeId(int_id), auth.tenant_id()).await?;
         self.after_deleted(&existing);
         Ok(())
     }
@@ -371,7 +374,7 @@ impl PostService for PostServiceImpl {
     async fn batch(&self, auth: &AuthUser, action: &str, ids: &[String]) -> AppResult<usize> {
         let mut affected = 0usize;
         for raw_id in ids {
-            let Ok(parsed_id) = crate::utils::id::parse_id(raw_id) else {
+            let Ok(parsed_id) = crate::types::snowflake_id::parse_id(raw_id) else {
                 continue;
             };
             let Some(int_id) =
@@ -382,17 +385,25 @@ impl PostService for PostServiceImpl {
 
             match action {
                 "delete" => {
-                    let Ok(Some(existing)) =
-                        crate::models::post::find_by_id(&self.pool, int_id, auth.tenant_id()).await
+                    let Ok(Some(existing)) = crate::models::post::find_by_id(
+                        &self.pool,
+                        SnowflakeId(int_id),
+                        auth.tenant_id(),
+                    )
+                    .await
                     else {
                         continue;
                     };
                     if self.before_delete(auth, &existing).await.is_err() {
                         continue;
                     }
-                    if crate::models::post::delete(&self.pool, int_id, auth.tenant_id())
-                        .await
-                        .is_ok()
+                    if crate::models::post::delete(
+                        &self.pool,
+                        SnowflakeId(int_id),
+                        auth.tenant_id(),
+                    )
+                    .await
+                    .is_ok()
                     {
                         self.after_deleted(&existing);
                         affected += 1;
@@ -404,9 +415,12 @@ impl PostService for PostServiceImpl {
                     } else {
                         PostStatus::Draft
                     };
-                    if let Some(post) =
-                        crate::models::post::find_by_id(&self.pool, int_id, auth.tenant_id())
-                            .await?
+                    if let Some(post) = crate::models::post::find_by_id(
+                        &self.pool,
+                        SnowflakeId(int_id),
+                        auth.tenant_id(),
+                    )
+                    .await?
                     {
                         let (req, _d) = self
                             .before_update(
@@ -424,7 +438,7 @@ impl PostService for PostServiceImpl {
                             )
                             .await?;
                         let cmd = UpdatePostCmd {
-                            id: *post.id,
+                            id: post.id,
                             title: None,
                             slug: None,
                             content: None,
@@ -466,7 +480,7 @@ impl PostService for PostServiceImpl {
 impl PostServiceImpl {
     async fn update_inner(
         &self,
-        id: i64,
+        id: SnowflakeId,
         existing: crate::models::post::Post,
         req: UpdatePostRequest,
         mut d: crate::aspects::Dispatched,
@@ -492,7 +506,7 @@ impl PostServiceImpl {
         });
 
         let category_id = if let Some(ref raw_id) = req.category_id {
-            let parsed = crate::utils::id::parse_id(raw_id)?;
+            let parsed = crate::types::snowflake_id::parse_id(raw_id)?;
             find_existing_id(&self.pool, "categories", parsed, auth.tenant_id()).await?
         } else {
             None
@@ -501,7 +515,7 @@ impl PostServiceImpl {
             Some(ref ids) => {
                 let mut resolved = Vec::new();
                 for raw_id in ids {
-                    let parsed = crate::utils::id::parse_id(raw_id)?;
+                    let parsed = crate::types::snowflake_id::parse_id(raw_id)?;
                     if let Some(int_id) =
                         find_existing_id(&self.pool, "tags", parsed, auth.tenant_id()).await?
                     {
@@ -617,11 +631,11 @@ async fn build_response_from_post(
 
 async fn build_post_response_from_pool(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     auth: &AuthUser,
 ) -> AppResult<PostResponse> {
     let row = crate::models::post::find_joined_by_id(pool, id, auth.tenant_id()).await?;
-    let tags = crate::models::post::get_post_tags(pool, *row.id, auth.tenant_id())
+    let tags = crate::models::post::get_post_tags(pool, row.id, auth.tenant_id())
         .await
         .unwrap_or_default();
     joined_row_to_response(row, tags).await
@@ -842,7 +856,7 @@ async fn create_post_with_tags(
     if let Some(ref tag_ids) = cmd.tag_ids {
         let mut tx = pool.begin().await?;
         let p = crate::models::post::create_tx(&mut tx, &cmd, tenant_id).await?;
-        crate::models::post::sync_tags_tx(&mut tx, *p.id, tag_ids).await?;
+        crate::models::post::sync_tags_tx(&mut tx, p.id, tag_ids).await?;
         tx.commit().await?;
         Ok(p)
     } else {
@@ -929,14 +943,14 @@ mod tests {
     #[tokio::test]
     async fn resolve_id_numeric_no_tenant() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        let result = find_existing_id(&pool, "users", 42, None).await;
+        let result = find_existing_id(&pool, "users", SnowflakeId(42), None).await;
         assert_eq!(result.unwrap(), Some(42));
     }
 
     #[tokio::test]
     async fn resolve_id_unsafe_table() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
-        let result = find_existing_id(&pool, "drop table", 999, None).await;
+        let result = find_existing_id(&pool, "drop table", SnowflakeId(999), None).await;
         assert_eq!(result.unwrap(), Some(999));
     }
 
@@ -955,7 +969,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let result = find_existing_id(&pool, "posts", 1, Some("t1"))
+        let result = find_existing_id(&pool, "posts", SnowflakeId(1), Some("t1"))
             .await
             .unwrap();
         assert_eq!(result, Some(1));
@@ -976,7 +990,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let result = find_existing_id(&pool, "posts", 1, Some("wrong"))
+        let result = find_existing_id(&pool, "posts", SnowflakeId(1), Some("wrong"))
             .await
             .unwrap();
         assert_eq!(result, None);
@@ -989,7 +1003,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let result = find_existing_id(&pool, "users", 99999, Some("t1"))
+        let result = find_existing_id(&pool, "users", SnowflakeId(99999), Some("t1"))
             .await
             .unwrap();
         assert_eq!(result, None);

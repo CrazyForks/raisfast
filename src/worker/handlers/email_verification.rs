@@ -72,6 +72,7 @@ mod tests {
     use super::*;
     use crate::config::app::AppConfig;
     use crate::notifier::email::LogSender;
+    use crate::types::snowflake_id::SnowflakeId;
 
     fn test_deps() -> (Arc<AppConfig>, Arc<dyn EmailSender>) {
         (Arc::new(AppConfig::test_defaults()), Arc::new(LogSender))
@@ -82,7 +83,7 @@ mod tests {
         let (config, sender) = test_deps();
         let handler = SendEmailVerificationHandler::new(config, sender);
         let job = Job::SendEmailVerification {
-            user_id: 1,
+            user_id: SnowflakeId(1),
             email: "alice@example.com".into(),
             verify_token: "abc123".into(),
         };

@@ -1,5 +1,6 @@
 //! Reusable block-related commands
 
+use crate::types::snowflake_id::SnowflakeId;
 pub struct CreateReusableBlockCmd {
     pub name: String,
     pub block_type: String,
@@ -9,7 +10,7 @@ pub struct CreateReusableBlockCmd {
 }
 
 pub struct UpdateReusableBlockCmd {
-    pub id: i64,
+    pub id: SnowflakeId,
     pub name: Option<String>,
     pub block_type: Option<String>,
     pub content: Option<String>,

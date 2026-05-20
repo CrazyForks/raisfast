@@ -183,13 +183,13 @@ pub async fn list(
     let pagination = PaginationParams::from_options(query.page, query.page_size);
 
     let cat_id = if let Some(ref cid) = query.category_id {
-        let parsed = crate::utils::id::parse_id(cid)?;
+        let parsed = crate::types::snowflake_id::parse_id(cid)?;
         post_service::find_existing_id(&state.pool, "categories", parsed, None).await?
     } else {
         None
     };
     let tg_id = if let Some(ref tid) = query.tag_id {
-        let parsed = crate::utils::id::parse_id(tid)?;
+        let parsed = crate::types::snowflake_id::parse_id(tid)?;
         post_service::find_existing_id(&state.pool, "tags", parsed, None).await?
     } else {
         None

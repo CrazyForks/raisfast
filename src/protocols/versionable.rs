@@ -3,6 +3,7 @@
 //! Declares `snapshot_before_update` and `revision_routes`;
 //! repository.update() proactively creates snapshots based on the declaration.
 
+use crate::types::snowflake_id::SnowflakeId;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -79,7 +80,7 @@ impl Protocol for VersionableProtocol {
         &self,
         pool: &crate::db::pool::Pool,
         content_type_singular: &str,
-        record_id: i64,
+        record_id: SnowflakeId,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send + '_>>
     {
         let pool = pool.clone();

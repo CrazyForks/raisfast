@@ -4,6 +4,7 @@ use super::types::{ContentConnection, ContentItem, JsonScalar, QueryRoot};
 use crate::content_type::handler::{ListParams, do_get, do_list};
 use crate::content_type::schema::check_api_access;
 use crate::middleware::auth::AuthUser;
+use crate::types::snowflake_id::SnowflakeId;
 use async_graphql::*;
 use std::sync::Arc;
 
@@ -83,7 +84,7 @@ impl QueryRoot {
             .as_str()
             .parse::<i64>()
             .map_err(|_| async_graphql::Error::new("invalid id"))?;
-        let result = match do_get(&state, &ct, int_id, &auth).await {
+        let result = match do_get(&state, &ct, SnowflakeId(int_id), &auth).await {
             Ok(val) => val,
             Err(crate::errors::app_error::AppError::NotFound(_)) => return Ok(None),
             Err(e) => return Err(async_graphql::Error::new(e.to_string())),

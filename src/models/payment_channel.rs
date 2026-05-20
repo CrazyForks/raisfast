@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::errors::app_error::AppResult;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
@@ -23,7 +23,7 @@ pub struct PaymentChannel {
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentChannel>> {
     raisfast_derive::crud_find!(pool, "payment_channels", PaymentChannel, "id" => id, tenant: tenant_id)
@@ -86,11 +86,13 @@ pub async fn insert(
         ],
         tenant: tenant_id
     )?;
-    find_by_id(pool, id, tenant_id).await?.ok_or_else(|| {
-        crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
-            "inserted row not found: {id}"
-        ))
-    })
+    find_by_id(pool, SnowflakeId(id), tenant_id)
+        .await?
+        .ok_or_else(|| {
+            crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
+                "inserted row not found: {id}"
+            ))
+        })
 }
 
 pub async fn update(
@@ -123,7 +125,7 @@ pub async fn update(
 
 pub async fn delete_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
     let affected =
@@ -163,7 +165,7 @@ mod tests {
     async fn insert_and_find_by_id() {
         let pool = setup_pool().await;
         let ch = seed_channel(&pool, "stripe").await;
-        let found = super::find_by_id(&pool, *ch.id, None)
+        let found = super::find_by_id(&pool, ch.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -178,7 +180,7 @@ mod tests {
     async fn find_by_id_not_found() {
         let pool = setup_pool().await;
         assert!(
-            super::find_by_id(&pool, 99999, None)
+            super::find_by_id(&pool, SnowflakeId(99999), None)
                 .await
                 .unwrap()
                 .is_none()
@@ -236,7 +238,7 @@ mod tests {
         let ok = super::update(
             &pool,
             &crate::commands::UpdatePaymentChannelCmd {
-                id: *ch.id,
+                id: ch.id,
                 provider: "paypal".into(),
                 name: "PayPal Live".into(),
                 is_live: true,
@@ -252,7 +254,7 @@ mod tests {
         .await
         .unwrap();
         assert!(ok);
-        let found = super::find_by_id(&pool, *ch.id, None)
+        let found = super::find_by_id(&pool, ch.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -271,7 +273,7 @@ mod tests {
         let ok = super::update(
             &pool,
             &crate::commands::UpdatePaymentChannelCmd {
-                id: *ch.id,
+                id: ch.id,
                 provider: "stripe".into(),
                 name: "name".into(),
                 is_live: false,
@@ -293,10 +295,10 @@ mod tests {
     async fn delete_removes_channel() {
         let pool = setup_pool().await;
         let ch = seed_channel(&pool, "stripe").await;
-        let ok = super::delete_by_id(&pool, *ch.id, None).await.unwrap();
+        let ok = super::delete_by_id(&pool, ch.id, None).await.unwrap();
         assert!(ok);
         assert!(
-            super::find_by_id(&pool, *ch.id, None)
+            super::find_by_id(&pool, ch.id, None)
                 .await
                 .unwrap()
                 .is_none()
@@ -306,7 +308,9 @@ mod tests {
     #[tokio::test]
     async fn delete_not_found() {
         let pool = setup_pool().await;
-        let ok = super::delete_by_id(&pool, 99999, None).await.unwrap();
+        let ok = super::delete_by_id(&pool, SnowflakeId(99999), None)
+            .await
+            .unwrap();
         assert!(!ok);
     }
 }

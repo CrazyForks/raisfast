@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -22,7 +22,7 @@ pub struct CartItem {
 
 pub async fn find_by_user_id(
     pool: &crate::db::Pool,
-    user_id: i64,
+    user_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<CartItem>> {
     Ok(raisfast_derive::crud_find_all!(
@@ -37,8 +37,8 @@ pub async fn find_by_user_id(
 
 pub async fn find_by_user_and_product(
     pool: &crate::db::Pool,
-    user_id: i64,
-    product_id: i64,
+    user_id: SnowflakeId,
+    product_id: SnowflakeId,
     variant_id: Option<i64>,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<CartItem>> {
@@ -68,14 +68,17 @@ pub async fn find_by_user_and_product(
 
 pub async fn insert(
     pool: &crate::db::Pool,
-    user_id: i64,
-    product_id: i64,
+    user_id: SnowflakeId,
+    product_id: SnowflakeId,
     variant_id: Option<i64>,
     quantity: i64,
     attributes: Option<&str>,
     tenant_id: Option<&str>,
 ) -> AppResult<CartItem> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
     raisfast_derive::crud_insert!(
         pool,
         "cart_items",
@@ -97,7 +100,7 @@ pub async fn insert(
 
 pub async fn update_quantity(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     quantity: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
@@ -114,7 +117,7 @@ pub async fn update_quantity(
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<CartItem>> {
     Ok(raisfast_derive::crud_find!(pool, "cart_items", CartItem, "id" => id, tenant: tenant_id)?)
@@ -122,7 +125,7 @@ pub async fn find_by_id(
 
 pub async fn delete_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let result = raisfast_derive::crud_delete!(pool, "cart_items", "id" => id, tenant: tenant_id)?;
@@ -131,7 +134,7 @@ pub async fn delete_by_id(
 
 pub async fn delete_by_user_id(
     pool: &crate::db::Pool,
-    user_id: i64,
+    user_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let result =
@@ -141,7 +144,7 @@ pub async fn delete_by_user_id(
 
 pub async fn tx_delete_by_user_id(
     tx: &mut crate::db::pool::DbConnection,
-    user_id: i64,
+    user_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let result = raisfast_derive::crud_delete!(&mut *tx, "cart_items", "user_id" => user_id, tenant: tenant_id)?;
@@ -150,7 +153,7 @@ pub async fn tx_delete_by_user_id(
 
 pub async fn count_by_user(
     pool: &crate::db::Pool,
-    user_id: i64,
+    user_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<i64> {
     let count =
@@ -160,6 +163,8 @@ pub async fn count_by_user(
 
 #[cfg(test)]
 mod tests {
+    use crate::types::snowflake_id::SnowflakeId;
+
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
     }
@@ -227,12 +232,20 @@ mod tests {
         let uid = seed_user(&pool).await;
         let pid = seed_product(&pool).await;
 
-        let item = super::insert(&pool, uid, pid, None, 2, Some(r#"{"color":"red"}"#), None)
-            .await
-            .unwrap();
+        let item = super::insert(
+            &pool,
+            SnowflakeId(uid),
+            SnowflakeId(pid),
+            None,
+            2,
+            Some(r#"{"color":"red"}"#),
+            None,
+        )
+        .await
+        .unwrap();
 
-        assert_eq!(item.user_id, uid);
-        assert_eq!(item.product_id, pid);
+        assert_eq!(item.user_id, SnowflakeId(uid));
+        assert_eq!(item.product_id, SnowflakeId(pid));
         assert_eq!(item.quantity, 2);
         assert_eq!(item.attributes.as_deref(), Some(r#"{"color":"red"}"#));
         assert!(*item.id > 0);
@@ -245,23 +258,43 @@ mod tests {
         let p1 = seed_product(&pool).await;
         let p2 = seed_product(&pool).await;
 
-        super::insert(&pool, uid, p1, None, 1, None, None)
-            .await
-            .unwrap();
-        super::insert(&pool, uid, p2, None, 3, None, None)
-            .await
-            .unwrap();
+        super::insert(
+            &pool,
+            SnowflakeId(uid),
+            SnowflakeId(p1),
+            None,
+            1,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        super::insert(
+            &pool,
+            SnowflakeId(uid),
+            SnowflakeId(p2),
+            None,
+            3,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
-        let items = super::find_by_user_id(&pool, uid, None).await.unwrap();
+        let items = super::find_by_user_id(&pool, SnowflakeId(uid), None)
+            .await
+            .unwrap();
         assert_eq!(items.len(), 2);
-        assert!(items.iter().all(|it| it.user_id == uid));
+        assert!(items.iter().all(|it| it.user_id == SnowflakeId(uid)));
     }
 
     #[tokio::test]
     async fn find_by_user_id_empty() {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
-        let items = super::find_by_user_id(&pool, uid, None).await.unwrap();
+        let items = super::find_by_user_id(&pool, SnowflakeId(uid), None)
+            .await
+            .unwrap();
         assert!(items.is_empty());
     }
 
@@ -271,13 +304,22 @@ mod tests {
         let uid = seed_user(&pool).await;
         let pid = seed_product(&pool).await;
 
-        super::insert(&pool, uid, pid, None, 5, None, None)
-            .await
-            .unwrap();
+        super::insert(
+            &pool,
+            SnowflakeId(uid),
+            SnowflakeId(pid),
+            None,
+            5,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
-        let found = super::find_by_user_and_product(&pool, uid, pid, None, None)
-            .await
-            .unwrap();
+        let found =
+            super::find_by_user_and_product(&pool, SnowflakeId(uid), SnowflakeId(pid), None, None)
+                .await
+                .unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().quantity, 5);
     }
@@ -286,9 +328,15 @@ mod tests {
     async fn find_by_user_and_product_not_found() {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
-        let found = super::find_by_user_and_product(&pool, uid, 99999, None, None)
-            .await
-            .unwrap();
+        let found = super::find_by_user_and_product(
+            &pool,
+            SnowflakeId(uid),
+            SnowflakeId(99999),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         assert!(found.is_none());
     }
 
@@ -298,19 +346,34 @@ mod tests {
         let uid = seed_user(&pool).await;
         let pid = seed_product(&pool).await;
 
-        let item = super::insert(&pool, uid, pid, None, 1, None, None)
-            .await
-            .unwrap();
+        let item = super::insert(
+            &pool,
+            SnowflakeId(uid),
+            SnowflakeId(pid),
+            None,
+            1,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
-        let found = super::find_by_user_and_product(&pool, uid, pid, None, None)
-            .await
-            .unwrap();
+        let found =
+            super::find_by_user_and_product(&pool, SnowflakeId(uid), SnowflakeId(pid), None, None)
+                .await
+                .unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().id, item.id);
 
-        let not_found = super::find_by_user_and_product(&pool, uid, 99999, None, None)
-            .await
-            .unwrap();
+        let not_found = super::find_by_user_and_product(
+            &pool,
+            SnowflakeId(uid),
+            SnowflakeId(99999),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         assert!(not_found.is_none());
     }
 
@@ -320,25 +383,34 @@ mod tests {
         let uid = seed_user(&pool).await;
         let pid = seed_product(&pool).await;
 
-        let item = super::insert(&pool, uid, pid, None, 1, None, None)
+        let item = super::insert(
+            &pool,
+            SnowflakeId(uid),
+            SnowflakeId(pid),
+            None,
+            1,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        super::update_quantity(&pool, item.id, 10, None)
             .await
             .unwrap();
 
-        super::update_quantity(&pool, *item.id, 10, None)
-            .await
-            .unwrap();
-
-        let updated = super::find_by_user_and_product(&pool, uid, pid, None, None)
-            .await
-            .unwrap()
-            .unwrap();
+        let updated =
+            super::find_by_user_and_product(&pool, SnowflakeId(uid), SnowflakeId(pid), None, None)
+                .await
+                .unwrap()
+                .unwrap();
         assert_eq!(updated.quantity, 10);
     }
 
     #[tokio::test]
     async fn update_quantity_nonexistent() {
         let pool = setup_pool().await;
-        let result = super::update_quantity(&pool, 99999, 10, None).await;
+        let result = super::update_quantity(&pool, SnowflakeId(99999), 10, None).await;
         assert!(result.is_err());
     }
 
@@ -348,22 +420,31 @@ mod tests {
         let uid = seed_user(&pool).await;
         let pid = seed_product(&pool).await;
 
-        let item = super::insert(&pool, uid, pid, None, 1, None, None)
-            .await
-            .unwrap();
+        let item = super::insert(
+            &pool,
+            SnowflakeId(uid),
+            SnowflakeId(pid),
+            None,
+            1,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
-        super::delete_by_id(&pool, *item.id, None).await.unwrap();
+        super::delete_by_id(&pool, item.id, None).await.unwrap();
 
-        let found = super::find_by_user_and_product(&pool, uid, pid, None, None)
-            .await
-            .unwrap();
+        let found =
+            super::find_by_user_and_product(&pool, SnowflakeId(uid), SnowflakeId(pid), None, None)
+                .await
+                .unwrap();
         assert!(found.is_none());
     }
 
     #[tokio::test]
     async fn delete_by_id_nonexistent() {
         let pool = setup_pool().await;
-        let result = super::delete_by_id(&pool, 99999, None).await;
+        let result = super::delete_by_id(&pool, SnowflakeId(99999), None).await;
         assert!(result.is_err());
     }
 
@@ -374,16 +455,36 @@ mod tests {
         let p1 = seed_product(&pool).await;
         let p2 = seed_product(&pool).await;
 
-        super::insert(&pool, uid, p1, None, 1, None, None)
-            .await
-            .unwrap();
-        super::insert(&pool, uid, p2, None, 2, None, None)
+        super::insert(
+            &pool,
+            SnowflakeId(uid),
+            SnowflakeId(p1),
+            None,
+            1,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        super::insert(
+            &pool,
+            SnowflakeId(uid),
+            SnowflakeId(p2),
+            None,
+            2,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        super::delete_by_user_id(&pool, SnowflakeId(uid), None)
             .await
             .unwrap();
 
-        super::delete_by_user_id(&pool, uid, None).await.unwrap();
-
-        let items = super::find_by_user_id(&pool, uid, None).await.unwrap();
+        let items = super::find_by_user_id(&pool, SnowflakeId(uid), None)
+            .await
+            .unwrap();
         assert!(items.is_empty());
     }
 
@@ -394,16 +495,36 @@ mod tests {
         let uid2 = seed_user(&pool).await;
         let pid = seed_product(&pool).await;
 
-        super::insert(&pool, uid1, pid, None, 1, None, None)
-            .await
-            .unwrap();
-        super::insert(&pool, uid2, pid, None, 2, None, None)
+        super::insert(
+            &pool,
+            SnowflakeId(uid1),
+            SnowflakeId(pid),
+            None,
+            1,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        super::insert(
+            &pool,
+            SnowflakeId(uid2),
+            SnowflakeId(pid),
+            None,
+            2,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        super::delete_by_user_id(&pool, SnowflakeId(uid1), None)
             .await
             .unwrap();
 
-        super::delete_by_user_id(&pool, uid1, None).await.unwrap();
-
-        let items2 = super::find_by_user_id(&pool, uid2, None).await.unwrap();
+        let items2 = super::find_by_user_id(&pool, SnowflakeId(uid2), None)
+            .await
+            .unwrap();
         assert_eq!(items2.len(), 1);
         assert_eq!(items2[0].quantity, 2);
     }
@@ -413,18 +534,44 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
 
-        assert_eq!(super::count_by_user(&pool, uid, None).await.unwrap(), 0);
+        assert_eq!(
+            super::count_by_user(&pool, SnowflakeId(uid), None)
+                .await
+                .unwrap(),
+            0
+        );
 
         let p1 = seed_product(&pool).await;
         let p2 = seed_product(&pool).await;
-        super::insert(&pool, uid, p1, None, 1, None, None)
-            .await
-            .unwrap();
-        super::insert(&pool, uid, p2, None, 1, None, None)
-            .await
-            .unwrap();
+        super::insert(
+            &pool,
+            SnowflakeId(uid),
+            SnowflakeId(p1),
+            None,
+            1,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        super::insert(
+            &pool,
+            SnowflakeId(uid),
+            SnowflakeId(p2),
+            None,
+            1,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
-        assert_eq!(super::count_by_user(&pool, uid, None).await.unwrap(), 2);
+        assert_eq!(
+            super::count_by_user(&pool, SnowflakeId(uid), None)
+                .await
+                .unwrap(),
+            2
+        );
     }
 
     #[tokio::test]
@@ -433,14 +580,23 @@ mod tests {
         let uid = seed_user(&pool).await;
         let pid = seed_product(&pool).await;
 
-        super::insert(&pool, uid, pid, None, 1, None, None).await?;
+        super::insert(
+            &pool,
+            SnowflakeId(uid),
+            SnowflakeId(pid),
+            None,
+            1,
+            None,
+            None,
+        )
+        .await?;
 
         crate::in_transaction!(&pool, tx, {
-            super::tx_delete_by_user_id(&mut tx, uid, None).await?;
+            super::tx_delete_by_user_id(&mut tx, SnowflakeId(uid), None).await?;
             Ok(())
         })?;
 
-        let items = super::find_by_user_id(&pool, uid, None).await?;
+        let items = super::find_by_user_id(&pool, SnowflakeId(uid), None).await?;
         assert!(items.is_empty());
         Ok(())
     }
@@ -452,25 +608,43 @@ mod tests {
         let p1 = seed_product(&pool).await;
         let p2 = seed_product(&pool).await;
 
-        super::insert(&pool, uid, p1, None, 1, None, Some("tenant_a"))
-            .await
-            .unwrap();
-        super::insert(&pool, uid, p2, None, 2, None, None)
-            .await
-            .unwrap();
+        super::insert(
+            &pool,
+            SnowflakeId(uid),
+            SnowflakeId(p1),
+            None,
+            1,
+            None,
+            Some("tenant_a"),
+        )
+        .await
+        .unwrap();
+        super::insert(
+            &pool,
+            SnowflakeId(uid),
+            SnowflakeId(p2),
+            None,
+            2,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
-        let items_a = super::find_by_user_id(&pool, uid, Some("tenant_a"))
+        let items_a = super::find_by_user_id(&pool, SnowflakeId(uid), Some("tenant_a"))
             .await
             .unwrap();
         assert_eq!(items_a.len(), 1);
-        assert_eq!(items_a[0].product_id, p1);
+        assert_eq!(items_a[0].product_id, SnowflakeId(p1));
 
-        let items_b = super::find_by_user_id(&pool, uid, Some("tenant_b"))
+        let items_b = super::find_by_user_id(&pool, SnowflakeId(uid), Some("tenant_b"))
             .await
             .unwrap();
         assert!(items_b.is_empty());
 
-        let items_none = super::find_by_user_id(&pool, uid, None).await.unwrap();
+        let items_none = super::find_by_user_id(&pool, SnowflakeId(uid), None)
+            .await
+            .unwrap();
         assert_eq!(items_none.len(), 2);
     }
 }

@@ -1,6 +1,7 @@
 //! Post-related commands
 
 use crate::models::post::PostStatus;
+use crate::types::snowflake_id::SnowflakeId;
 
 /// Create a post
 pub struct CreatePostCmd {
@@ -18,7 +19,7 @@ pub struct CreatePostCmd {
 
 /// Update a post
 pub struct UpdatePostCmd {
-    pub id: i64,
+    pub id: SnowflakeId,
     pub title: Option<String>,
     pub slug: Option<String>,
     pub content: Option<String>,

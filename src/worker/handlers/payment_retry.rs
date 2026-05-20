@@ -54,7 +54,7 @@ impl JobHandler for RetryPaymentCallbackHandler {
             crate::in_transaction!(&self.pool, tx, {
                 crate::models::payment_order::tx_update_status_cas(
                     &mut tx,
-                    *order.id,
+                    order.id,
                     PaymentStatus::Expired,
                     Some("expired_at"),
                     PaymentStatus::Pending,
@@ -78,7 +78,7 @@ impl JobHandler for RetryPaymentCallbackHandler {
             }
         };
 
-        let channel = payment_channel::find_by_id(&self.pool, *order.channel_id, None)
+        let channel = payment_channel::find_by_id(&self.pool, order.channel_id, None)
             .await?
             .ok_or_else(|| {
                 crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
@@ -98,7 +98,7 @@ impl JobHandler for RetryPaymentCallbackHandler {
                 crate::in_transaction!(&self.pool, tx, {
                     let rows = crate::models::payment_order::tx_update_status_cas(
                         &mut tx,
-                        *order.id,
+                        order.id,
                         PaymentStatus::Paid,
                         Some("paid_at"),
                         PaymentStatus::Pending,
@@ -113,7 +113,7 @@ impl JobHandler for RetryPaymentCallbackHandler {
                     }
 
                     let outbox_cmd = CreateWalletOutboxCmd {
-                        user_id: *order.user_id,
+                        user_id: order.user_id,
                         currency: order.currency.clone(),
                         amount: order.amount,
                         entry_type: "credit".into(),
@@ -137,7 +137,7 @@ impl JobHandler for RetryPaymentCallbackHandler {
                 crate::in_transaction!(&self.pool, tx, {
                     let rows = crate::models::payment_order::tx_update_status_cas(
                         &mut tx,
-                        *order.id,
+                        order.id,
                         PaymentStatus::Cancelled,
                         Some("cancelled_at"),
                         PaymentStatus::Pending,
@@ -156,7 +156,7 @@ impl JobHandler for RetryPaymentCallbackHandler {
                 crate::in_transaction!(&self.pool, tx, {
                     let rows = crate::models::payment_order::tx_update_status_cas(
                         &mut tx,
-                        *order.id,
+                        order.id,
                         PaymentStatus::Expired,
                         Some("expired_at"),
                         PaymentStatus::Pending,
@@ -213,6 +213,7 @@ fn get_encrypt_key(config: &AppConfig) -> AppResult<[u8; 32]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::snowflake_id::SnowflakeId;
 
     #[tokio::test]
     async fn ignores_wrong_job_type() {
@@ -237,7 +238,7 @@ mod tests {
         let config = Arc::new(AppConfig::test_defaults());
         let handler = RetryPaymentCallbackHandler::new(pool, config);
         let job = Job::RetryPaymentCallback {
-            payment_order_id: 42,
+            payment_order_id: SnowflakeId(42),
         };
         let result = handler.handle(&job).await;
         assert!(result.is_err());

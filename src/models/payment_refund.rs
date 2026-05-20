@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::AppResult;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
@@ -26,7 +26,7 @@ pub struct PaymentRefund {
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentRefund>> {
     raisfast_derive::crud_find!(pool, "payment_refunds", PaymentRefund, "id" => id, tenant: tenant_id)
@@ -35,7 +35,7 @@ pub async fn find_by_id(
 
 pub async fn find_by_payment_order_id(
     pool: &crate::db::Pool,
-    payment_order_id: i64,
+    payment_order_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<PaymentRefund>> {
     raisfast_derive::crud_find_all!(pool, "payment_refunds", PaymentRefund, "payment_order_id" => payment_order_id, tenant: tenant_id, order_by: "created_at DESC")
@@ -83,7 +83,7 @@ pub async fn insert(
 
 pub async fn update_status(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     status: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
@@ -99,7 +99,7 @@ pub async fn update_status(
 
 pub async fn sum_refunded_by_order(
     pool: &crate::db::Pool,
-    payment_order_id: i64,
+    payment_order_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<i64> {
     let sql = format!(
@@ -167,7 +167,7 @@ pub async fn tx_insert(
 
 pub async fn tx_sum_refunded_by_order(
     tx: &mut crate::db::pool::DbConnection,
-    payment_order_id: i64,
+    payment_order_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<i64> {
     let sql = if tenant_id.is_some() {
@@ -196,6 +196,7 @@ pub async fn tx_sum_refunded_by_order(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -245,12 +246,12 @@ mod tests {
         crate::models::payment_order::insert(
             pool,
             &crate::commands::CreatePaymentOrderCmd {
-                user_id,
+                user_id: SnowflakeId(user_id),
                 order_id: Some("order-ref-1".into()),
                 title: "Test Payment".into(),
                 amount: 1000,
                 currency: "USD".into(),
-                channel_id,
+                channel_id: SnowflakeId(channel_id),
                 provider: "stripe".into(),
                 reference_type: None,
                 reference_id: None,
@@ -287,9 +288,9 @@ mod tests {
         super::insert(
             pool,
             &crate::commands::CreatePaymentRefundCmd {
-                payment_order_id,
+                payment_order_id: SnowflakeId(payment_order_id),
                 order_id: Some("order-ref-1".into()),
-                user_id,
+                user_id: SnowflakeId(user_id),
                 amount,
                 currency: "USD".into(),
                 reason: Some("user_request".into()),
@@ -311,12 +312,12 @@ mod tests {
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
         let refund = seed_refund(&pool, po_id, uid, 500, "pending").await;
-        let found = super::find_by_id(&pool, *refund.id, None)
+        let found = super::find_by_id(&pool, refund.id, None)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(found.id, refund.id);
-        assert_eq!(found.payment_order_id, po_id);
+        assert_eq!(found.payment_order_id, SnowflakeId(po_id));
         assert_eq!(found.amount, 500);
         assert_eq!(found.status, "pending");
         assert_eq!(found.reason.unwrap(), "user_request");
@@ -326,7 +327,7 @@ mod tests {
     async fn find_by_id_not_found() {
         let pool = setup_pool().await;
         assert!(
-            super::find_by_id(&pool, 99999, None)
+            super::find_by_id(&pool, SnowflakeId(99999), None)
                 .await
                 .unwrap()
                 .is_none()
@@ -341,7 +342,7 @@ mod tests {
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
         seed_refund(&pool, po_id, uid, 300, "pending").await;
         seed_refund(&pool, po_id, uid, 200, "succeeded").await;
-        let refunds = super::find_by_payment_order_id(&pool, po_id, None)
+        let refunds = super::find_by_payment_order_id(&pool, SnowflakeId(po_id), None)
             .await
             .unwrap();
         assert_eq!(refunds.len(), 2);
@@ -368,10 +369,10 @@ mod tests {
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
         let refund = seed_refund(&pool, po_id, uid, 500, "pending").await;
-        super::update_status(&pool, *refund.id, "succeeded", None)
+        super::update_status(&pool, refund.id, "succeeded", None)
             .await
             .unwrap();
-        let found = super::find_by_id(&pool, *refund.id, None)
+        let found = super::find_by_id(&pool, refund.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -387,7 +388,7 @@ mod tests {
         seed_refund(&pool, po_id, uid, 300, "succeeded").await;
         seed_refund(&pool, po_id, uid, 200, "pending").await;
         seed_refund(&pool, po_id, uid, 100, "failed").await;
-        let total = super::sum_refunded_by_order(&pool, po_id, None)
+        let total = super::sum_refunded_by_order(&pool, SnowflakeId(po_id), None)
             .await
             .unwrap();
         assert_eq!(total, 500);
@@ -396,7 +397,7 @@ mod tests {
     #[tokio::test]
     async fn sum_refunded_by_order_empty() {
         let pool = setup_pool().await;
-        let total = super::sum_refunded_by_order(&pool, 99999, None)
+        let total = super::sum_refunded_by_order(&pool, SnowflakeId(99999), None)
             .await
             .unwrap();
         assert_eq!(total, 0);

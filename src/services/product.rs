@@ -12,6 +12,7 @@ use crate::dto::{CreateProductRequest, UpdateProductRequest};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::product::Product;
+use crate::types::snowflake_id::SnowflakeId;
 
 /// Product business logic trait.
 #[async_trait]
@@ -20,11 +21,11 @@ pub trait ProductService: Send + Sync {
     async fn update(
         &self,
         auth: &AuthUser,
-        id: i64,
+        id: SnowflakeId,
         req: UpdateProductRequest,
     ) -> AppResult<Product>;
-    async fn delete(&self, id: i64, auth: &AuthUser) -> AppResult<()>;
-    async fn get(&self, id: i64, auth: &AuthUser) -> AppResult<Product>;
+    async fn delete(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<()>;
+    async fn get(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<Product>;
     async fn list_active(
         &self,
         auth: &AuthUser,
@@ -97,7 +98,7 @@ impl ProductService for ProductServiceImpl {
     async fn update(
         &self,
         auth: &AuthUser,
-        id: i64,
+        id: SnowflakeId,
         req: UpdateProductRequest,
     ) -> AppResult<Product> {
         let existing = crate::models::product::find_by_id(&self.pool, id, auth.tenant_id())
@@ -142,7 +143,7 @@ impl ProductService for ProductServiceImpl {
         let updated = crate::models::product::update(
             &self.pool,
             &UpdateProductCmd {
-                id: *existing.id,
+                id: existing.id,
                 category_id: None,
                 title: title.to_string(),
                 description: req.description.or(existing.description),
@@ -183,24 +184,24 @@ impl ProductService for ProductServiceImpl {
             return Err(AppError::Conflict("version_conflict".into()));
         }
 
-        let result = crate::models::product::find_by_id(&self.pool, *existing.id, auth.tenant_id())
+        let result = crate::models::product::find_by_id(&self.pool, existing.id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("product"))?;
         self.after_updated(&result);
         Ok(result)
     }
 
-    async fn delete(&self, id: i64, auth: &AuthUser) -> AppResult<()> {
+    async fn delete(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<()> {
         let existing = crate::models::product::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("product"))?;
         self.before_delete(auth, &existing).await?;
-        crate::models::product::delete_by_id(&self.pool, *existing.id, auth.tenant_id()).await?;
+        crate::models::product::delete_by_id(&self.pool, existing.id, auth.tenant_id()).await?;
         self.after_deleted(&existing);
         Ok(())
     }
 
-    async fn get(&self, id: i64, auth: &AuthUser) -> AppResult<Product> {
+    async fn get(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<Product> {
         crate::models::product::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("product"))
@@ -382,7 +383,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let found = svc.get(*p.id, &a).await.unwrap();
+        let found = svc.get(p.id, &a).await.unwrap();
         assert_eq!(found.id, p.id);
     }
 
@@ -391,7 +392,7 @@ mod tests {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
         let a = auth(None);
-        assert!(svc.get(0, &a).await.is_err());
+        assert!(svc.get(SnowflakeId(0), &a).await.is_err());
     }
 
     #[tokio::test]
@@ -433,7 +434,7 @@ mod tests {
         let updated = svc
             .update(
                 &a,
-                *p.id,
+                p.id,
                 UpdateProductRequest {
                     title: Some("New".into()),
                     description: None,
@@ -513,7 +514,7 @@ mod tests {
         let err = svc
             .update(
                 &a,
-                *p.id,
+                p.id,
                 UpdateProductRequest {
                     title: Some("New".into()),
                     description: None,
@@ -555,7 +556,7 @@ mod tests {
         let err = svc
             .update(
                 &a,
-                99999999,
+                SnowflakeId(99999999),
                 UpdateProductRequest {
                     title: Some("X".into()),
                     description: None,
@@ -625,8 +626,8 @@ mod tests {
             )
             .await
             .unwrap();
-        svc.delete(*p.id, &a).await.unwrap();
-        assert!(svc.get(*p.id, &a).await.is_err());
+        svc.delete(p.id, &a).await.unwrap();
+        assert!(svc.get(p.id, &a).await.is_err());
     }
 
     #[tokio::test]
@@ -634,7 +635,7 @@ mod tests {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
         let a = auth(None);
-        assert!(svc.delete(0, &a).await.is_err());
+        assert!(svc.delete(SnowflakeId(0), &a).await.is_err());
     }
 
     #[tokio::test]

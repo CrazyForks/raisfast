@@ -47,7 +47,7 @@ impl JobHandler for ExpirePaymentOrdersHandler {
                     crate::in_transaction!(&self.pool, tx, {
                         let rows = crate::models::payment_order::tx_update_status_cas(
                             &mut tx,
-                            *order.id,
+                            order.id,
                             PaymentStatus::Expired,
                             Some("expired_at"),
                             PaymentStatus::Pending,
@@ -107,7 +107,7 @@ impl ExpirePaymentOrdersHandler {
             }
         };
 
-        let channel = payment_channel::find_by_id(&self.pool, *order.channel_id, None)
+        let channel = payment_channel::find_by_id(&self.pool, order.channel_id, None)
             .await?
             .ok_or_else(|| {
                 crate::errors::app_error::AppError::Internal(anyhow::anyhow!(

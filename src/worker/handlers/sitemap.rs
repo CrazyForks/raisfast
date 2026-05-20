@@ -91,6 +91,7 @@ impl JobHandler for GenerateSitemapHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::snowflake_id::SnowflakeId;
 
     #[test]
     fn build_xml_empty_posts() {
@@ -103,7 +104,7 @@ mod tests {
     fn build_xml_with_posts() {
         use crate::models::post::Post;
         let posts = vec![Post {
-            id: crate::utils::id::SnowflakeId(1i64),
+            id: crate::types::snowflake_id::SnowflakeId(1i64),
             tenant_id: Some(crate::constants::DEFAULT_TENANT.to_string()),
             title: "Hello".into(),
             slug: "hello".into(),
@@ -111,8 +112,8 @@ mod tests {
             excerpt: None,
             cover_image: None,
             status: crate::models::post::PostStatus::Published,
-            created_by: crate::utils::id::SnowflakeId(1i64),
-            updated_by: Some(crate::utils::id::SnowflakeId(1i64)),
+            created_by: crate::types::snowflake_id::SnowflakeId(1i64),
+            updated_by: Some(crate::types::snowflake_id::SnowflakeId(1i64)),
             category_id: None,
             view_count: 0,
             is_pinned: false,
@@ -142,7 +143,7 @@ mod tests {
         let config = Arc::new(test_config());
         let handler = GenerateSitemapHandler::new(pool, config);
         let job = Job::SendWelcomeEmail {
-            user_id: 1,
+            user_id: SnowflakeId(1),
             email: "a@b.com".into(),
             username: "alice".into(),
         };

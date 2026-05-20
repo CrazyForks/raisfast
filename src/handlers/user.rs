@@ -190,7 +190,7 @@ pub async fn get_user(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<UserResponse>> {
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let u = user::get_public_user(&state.pool, id, auth.tenant_id()).await?;
     Ok(ApiResponse::success(u))
 }
@@ -254,7 +254,7 @@ pub async fn admin_get_user(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<UserResponse>> {
     auth.ensure_admin()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let u = user::get_public_user(&state.pool, id, auth.tenant_id()).await?;
     Ok(ApiResponse::success(u))
 }

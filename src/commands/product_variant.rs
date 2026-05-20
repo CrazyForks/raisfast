@@ -1,5 +1,6 @@
+use crate::types::snowflake_id::SnowflakeId;
 pub struct CreateProductVariantCmd {
-    pub product_id: i64,
+    pub product_id: SnowflakeId,
     pub sku: Option<String>,
     pub title: String,
     pub price: i64,
@@ -11,7 +12,7 @@ pub struct CreateProductVariantCmd {
 }
 
 pub struct UpdateProductVariantCmd {
-    pub id: i64,
+    pub id: SnowflakeId,
     pub sku: Option<String>,
     pub title: String,
     pub price: i64,

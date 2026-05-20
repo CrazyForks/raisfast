@@ -6,6 +6,7 @@ use crate::aspects::engine::AspectEngine;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::event::Event;
 use crate::middleware::auth::AuthUser;
+use crate::types::snowflake_id::SnowflakeId;
 
 pub async fn forgot_password(
     pool: &crate::db::Pool,
@@ -20,7 +21,7 @@ pub async fn forgot_password(
     )
     .await?;
     let user = match cred {
-        Some(c) => crate::models::user::find_by_id(pool, *c.user_id, None).await?,
+        Some(c) => crate::models::user::find_by_id(pool, c.user_id, None).await?,
         None => None,
     };
 
@@ -29,9 +30,9 @@ pub async fn forgot_password(
         None => return Ok(()),
     };
 
-    crate::models::password_reset::delete_unused_by_user(pool, *user.id).await?;
+    crate::models::password_reset::delete_unused_by_user(pool, user.id).await?;
 
-    let reset_token = crate::models::password_reset::create(pool, *user.id, 3600).await?;
+    let reset_token = crate::models::password_reset::create(pool, user.id, 3600).await?;
 
     aspect_engine.emit(Event::PasswordResetRequested {
         user: user.clone(),
@@ -138,11 +139,11 @@ pub async fn set_password(
 ) -> AppResult<()> {
     let user_id = auth.ensure_authenticated()?;
     let tenant_id = auth.tenant_id();
-    let user = crate::models::user::find_by_id(pool, user_id, tenant_id)
+    let user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), tenant_id)
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
 
-    let creds = crate::models::user_credential::find_by_user_id(pool, *user.id).await?;
+    let creds = crate::models::user_credential::find_by_user_id(pool, user.id).await?;
     let has_password = creds.iter().any(|c| {
         c.auth_type == crate::models::user_credential::AuthType::Email
             && !c.credential_data.is_empty()
@@ -161,14 +162,14 @@ pub async fn set_password(
     {
         crate::models::user_credential::update_credential_data(
             pool,
-            *cred.id,
+            cred.id,
             &crate::models::user_credential::wrap_password_hash(&new_hash),
         )
         .await?;
     } else {
         crate::models::user_credential::create(
             pool,
-            *user.id,
+            user.id,
             crate::models::user_credential::AuthType::Email,
             email,
             &crate::models::user_credential::wrap_password_hash(&new_hash),
@@ -207,7 +208,7 @@ mod tests {
         .unwrap();
         crate::models::user_credential::create(
             pool,
-            *user.id,
+            user.id,
             crate::models::user_credential::AuthType::Email,
             email,
             &crate::models::user_credential::wrap_password_hash(
@@ -298,7 +299,7 @@ mod tests {
         .unwrap();
         crate::models::user_credential::create(
             &pool,
-            *user.id,
+            user.id,
             crate::models::user_credential::AuthType::Email,
             "oauth@test.com",
             "",

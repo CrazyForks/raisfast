@@ -10,7 +10,7 @@ use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::models::post::CommentOpenStatus;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -320,7 +320,7 @@ pub async fn find_by_slug(
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Page>> {
     Ok(raisfast_derive::crud_find!(pool, "pages", Page, "id" => id, tenant: tenant_id)?)
@@ -369,7 +369,10 @@ pub async fn create(
     cmd: &CreatePageCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Page> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
     let published_at = if cmd.status == PageStatus::Published {
         Some(now)
     } else {
@@ -562,14 +565,18 @@ pub async fn update(
         .ok_or_else(|| AppError::not_found("page"))
 }
 
-pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
+pub async fn delete(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
     let result = raisfast_derive::crud_delete!(pool, "pages", "id" => id, tenant: tenant_id)?;
     AppError::expect_affected(&result, "page")
 }
 
 pub async fn update_status(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     status: PageStatus,
     updated_by: Option<i64>,
     tenant_id: Option<&str>,
@@ -751,7 +758,7 @@ mod tests {
         let updated = update(
             &pool,
             &UpdatePageCmd {
-                id: *page.id,
+                id: page.id,
                 title: Some("New Title".to_string()),
                 slug: None,
                 content: None,
@@ -780,7 +787,7 @@ mod tests {
         let uid = create_user(&pool).await;
         let page = create_test_page(&pool, "To Delete", "delete-me", "published", uid).await;
 
-        delete(&pool, *page.id, None).await.unwrap();
+        delete(&pool, page.id, None).await.unwrap();
         let found = find_by_slug(&pool, "delete-me", None).await.unwrap();
         assert!(found.is_none());
     }
@@ -793,7 +800,7 @@ mod tests {
 
         assert_eq!(page.status, PageStatus::Draft);
 
-        let updated = update_status(&pool, *page.id, PageStatus::Published, None, None)
+        let updated = update_status(&pool, page.id, PageStatus::Published, None, None)
             .await
             .unwrap();
         assert_eq!(updated.status, PageStatus::Published);

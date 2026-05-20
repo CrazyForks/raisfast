@@ -6,6 +6,7 @@
 //! Query results are extracted column-by-column via `Row::get()`, building `serde_json::Value`
 //! directly, avoiding the performance overhead of `json_object()` double serialization.
 
+use crate::types::snowflake_id::SnowflakeId;
 use std::collections::HashMap;
 
 use serde_json::{Value, json};
@@ -208,7 +209,7 @@ impl ContentRepository {
     pub async fn find_by_id(
         &self,
         ct: &ContentTypeSchema,
-        id: i64,
+        id: SnowflakeId,
         tenant_id: Option<&str>,
         include_private: bool,
     ) -> Result<Option<Value>, AppError> {
@@ -466,7 +467,7 @@ impl ContentRepository {
                     idx += 1;
                     values.push(String::new());
                 } else {
-                    let parsed_id = crate::utils::id::parse_id(&target_id)?;
+                    let parsed_id = crate::types::snowflake_id::parse_id(&target_id)?;
                     let int_id = find_existing_id(&self.pool, target_table, parsed_id)
                         .await?
                         .ok_or_else(|| {
@@ -596,7 +597,7 @@ impl ContentRepository {
     pub async fn update(
         &self,
         ct: &ContentTypeSchema,
-        id: i64,
+        id: SnowflakeId,
         mut data: Value,
         tenant_id: Option<&str>,
         _save_ctx: &SaveContext,
@@ -682,7 +683,7 @@ impl ContentRepository {
 
         let decl = ct.declaration();
 
-        let source_int_id: i64 = id;
+        let source_int_id: i64 = *id;
 
         for (key, val) in obj.iter() {
             if ct.get_field(key).is_some() || ct.is_protocol_column(key) {
@@ -701,7 +702,7 @@ impl ContentRepository {
                         idx += 1;
                         values.push(String::new());
                     } else {
-                        let parsed_id = crate::utils::id::parse_id(&target_id)?;
+                        let parsed_id = crate::types::snowflake_id::parse_id(&target_id)?;
                         let int_id = find_existing_id(&self.pool, target_table, parsed_id)
                             .await?
                             .ok_or_else(|| {
@@ -885,7 +886,7 @@ impl ContentRepository {
     pub async fn delete(
         &self,
         ct: &ContentTypeSchema,
-        id: i64,
+        id: SnowflakeId,
         tenant_id: Option<&str>,
         protocol_registry: &crate::protocols::ProtocolRegistry,
         ct_registry: &crate::content_type::ContentTypeRegistry,
@@ -1108,7 +1109,7 @@ impl ContentRepository {
     pub async fn soft_delete(
         &self,
         ct: &ContentTypeSchema,
-        id: i64,
+        id: SnowflakeId,
         deleted_at: &str,
         deleted_by: Option<i64>,
         tenant_id: Option<&str>,
@@ -1521,7 +1522,7 @@ fn extract_ids(val: &Value) -> Vec<String> {
 pub(crate) async fn find_existing_id(
     pool: &Pool,
     target_table: &str,
-    id: i64,
+    id: SnowflakeId,
 ) -> Result<Option<i64>, AppError> {
     if !crate::db::dialect::is_safe_identifier(target_table) {
         return Err(AppError::BadRequest(format!(
@@ -1559,7 +1560,7 @@ async fn find_existing_ids(
     );
     let mut q = sqlx::query(&sql);
     for id in ids {
-        q = q.bind(*id);
+        q = q.bind(id);
     }
     let rows = q.fetch_all(pool).await?;
     let mut found: std::collections::HashSet<i64> = std::collections::HashSet::new();

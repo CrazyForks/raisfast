@@ -6,7 +6,7 @@ use ts_rs::TS;
 
 use crate::db::Pool;
 use crate::db::dialect::ph;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -127,7 +127,7 @@ pub struct StepLog {
 /// Create workflow definition
 pub async fn create_definition(
     pool: &Pool,
-    id: i64,
+    id: SnowflakeId,
     name: &str,
     description: Option<&str>,
     steps: &str,
@@ -160,7 +160,10 @@ pub async fn create_definition(
 }
 
 /// Get workflow definition
-pub async fn get_definition(pool: &Pool, id: i64) -> anyhow::Result<Option<WorkflowDefinition>> {
+pub async fn get_definition(
+    pool: &Pool,
+    id: SnowflakeId,
+) -> anyhow::Result<Option<WorkflowDefinition>> {
     let sql = format!(
         "SELECT id, name, description, steps, initial_step, version, enabled, created_at, updated_at FROM workflow_definitions WHERE id = {}",
         ph(1)
@@ -182,7 +185,7 @@ pub async fn list_definitions(pool: &Pool) -> anyhow::Result<Vec<WorkflowDefinit
 }
 
 /// Delete workflow definition
-pub async fn delete_definition(pool: &Pool, id: i64) -> anyhow::Result<()> {
+pub async fn delete_definition(pool: &Pool, id: SnowflakeId) -> anyhow::Result<()> {
     let sql = format!("DELETE FROM workflow_definitions WHERE id = {}", ph(1));
     sqlx::query(&sql).bind(id).execute(pool).await?;
     Ok(())
@@ -191,8 +194,8 @@ pub async fn delete_definition(pool: &Pool, id: i64) -> anyhow::Result<()> {
 /// Create workflow instance
 pub async fn create_instance(
     pool: &Pool,
-    id: i64,
-    definition_id: i64,
+    id: SnowflakeId,
+    definition_id: SnowflakeId,
     context: &serde_json::Value,
     triggered_by: Option<i64>,
 ) -> anyhow::Result<WorkflowInstance> {
@@ -224,7 +227,10 @@ pub async fn create_instance(
 }
 
 /// Get workflow instance
-pub async fn get_instance(pool: &Pool, id: i64) -> anyhow::Result<Option<WorkflowInstance>> {
+pub async fn get_instance(
+    pool: &Pool,
+    id: SnowflakeId,
+) -> anyhow::Result<Option<WorkflowInstance>> {
     let sql = format!(
         "SELECT id, definition_id, status, current_step, context, triggered_by, started_at, completed_at, updated_at FROM workflow_instances WHERE id = {}",
         ph(1)
@@ -285,7 +291,7 @@ pub async fn list_instances(
 /// Update instance status and current step
 pub async fn update_instance_step(
     pool: &Pool,
-    id: i64,
+    id: SnowflakeId,
     status: WorkflowInstanceStatus,
     current_step: Option<&str>,
     context: &serde_json::Value,
@@ -324,8 +330,8 @@ pub async fn update_instance_step(
 /// Create step execution log
 pub async fn create_step_log(
     pool: &Pool,
-    id: i64,
-    instance_id: i64,
+    id: SnowflakeId,
+    instance_id: SnowflakeId,
     step_id: &str,
     step_name: &str,
     input: Option<&serde_json::Value>,
@@ -366,7 +372,7 @@ pub async fn create_step_log(
 /// Complete step execution log
 pub async fn complete_step_log(
     pool: &Pool,
-    id: i64,
+    id: SnowflakeId,
     output: Option<&serde_json::Value>,
 ) -> anyhow::Result<()> {
     let now = crate::utils::tz::now_utc();
@@ -389,7 +395,7 @@ pub async fn complete_step_log(
 }
 
 /// Mark step execution as failed
-pub async fn fail_step_log(pool: &Pool, id: i64, error: &str) -> anyhow::Result<()> {
+pub async fn fail_step_log(pool: &Pool, id: SnowflakeId, error: &str) -> anyhow::Result<()> {
     let now = crate::utils::tz::now_utc();
     let sql = format!(
         "UPDATE workflow_step_logs SET status = {}, error = {}, completed_at = {} WHERE id = {}",
@@ -409,7 +415,7 @@ pub async fn fail_step_log(pool: &Pool, id: i64, error: &str) -> anyhow::Result<
 }
 
 /// List step logs for an instance
-pub async fn list_step_logs(pool: &Pool, instance_id: i64) -> anyhow::Result<Vec<StepLog>> {
+pub async fn list_step_logs(pool: &Pool, instance_id: SnowflakeId) -> anyhow::Result<Vec<StepLog>> {
     let sql = format!(
         "SELECT id, instance_id, step_id, step_name, status, input, output, error, started_at, completed_at FROM workflow_step_logs WHERE instance_id = {} ORDER BY started_at ASC",
         ph(1)
@@ -424,6 +430,7 @@ pub async fn list_step_logs(pool: &Pool, instance_id: i64) -> anyhow::Result<Vec
 #[cfg(test)]
 mod tests {
     use super::{WorkflowInstanceStatus, WorkflowStepStatus};
+    use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -432,7 +439,7 @@ mod tests {
     #[tokio::test]
     async fn create_and_get_definition() {
         let pool = setup_pool().await;
-        let id = crate::utils::id::new_id();
+        let id = crate::utils::id::new_snowflake_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
         let def = super::create_definition(&pool, id, "Test WF", Some("desc"), steps, "s1")
             .await
@@ -448,7 +455,7 @@ mod tests {
         let pool = setup_pool().await;
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
         for i in 0..3 {
-            let id = crate::utils::id::new_id();
+            let id = crate::utils::id::new_snowflake_id();
             super::create_definition(&pool, id, &format!("WF {i}"), None, steps, "s1")
                 .await
                 .unwrap();
@@ -460,7 +467,7 @@ mod tests {
     #[tokio::test]
     async fn delete_definition() {
         let pool = setup_pool().await;
-        let id = crate::utils::id::new_id();
+        let id = crate::utils::id::new_snowflake_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
         super::create_definition(&pool, id, "To delete", None, steps, "s1")
             .await
@@ -473,15 +480,15 @@ mod tests {
     #[tokio::test]
     async fn create_and_get_instance() {
         let pool = setup_pool().await;
-        let def_id = crate::utils::id::new_id();
+        let def_id = crate::utils::id::new_snowflake_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
         let def = super::create_definition(&pool, def_id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
-        let inst_id = crate::utils::id::new_id();
+        let inst_id = crate::utils::id::new_snowflake_id();
         let ctx = serde_json::json!({"key": "value"});
-        let inst = super::create_instance(&pool, inst_id, *def.id, &ctx, None)
+        let inst = super::create_instance(&pool, inst_id, def.id, &ctx, None)
             .await
             .unwrap();
         assert_eq!(inst.definition_id, def.id);
@@ -494,16 +501,16 @@ mod tests {
     #[tokio::test]
     async fn list_instances_test() {
         let pool = setup_pool().await;
-        let def_id = crate::utils::id::new_id();
+        let def_id = crate::utils::id::new_snowflake_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
         let def = super::create_definition(&pool, def_id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
         for _ in 0..3 {
-            let inst_id = crate::utils::id::new_id();
+            let inst_id = crate::utils::id::new_snowflake_id();
             let ctx = serde_json::json!({});
-            super::create_instance(&pool, inst_id, *def.id, &ctx, None)
+            super::create_instance(&pool, inst_id, def.id, &ctx, None)
                 .await
                 .unwrap();
         }
@@ -518,15 +525,15 @@ mod tests {
     #[tokio::test]
     async fn update_instance_step() {
         let pool = setup_pool().await;
-        let def_id = crate::utils::id::new_id();
+        let def_id = crate::utils::id::new_snowflake_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
         let def = super::create_definition(&pool, def_id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
-        let inst_id = crate::utils::id::new_id();
+        let inst_id = crate::utils::id::new_snowflake_id();
         let ctx = serde_json::json!({});
-        super::create_instance(&pool, inst_id, *def.id, &ctx, None)
+        super::create_instance(&pool, inst_id, def.id, &ctx, None)
             .await
             .unwrap();
 
@@ -549,21 +556,21 @@ mod tests {
     #[tokio::test]
     async fn step_log_lifecycle() {
         let pool = setup_pool().await;
-        let def_id = crate::utils::id::new_id();
+        let def_id = crate::utils::id::new_snowflake_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
         let def = super::create_definition(&pool, def_id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
-        let inst_id = crate::utils::id::new_id();
+        let inst_id = crate::utils::id::new_snowflake_id();
         let ctx = serde_json::json!({});
-        let inst = super::create_instance(&pool, inst_id, *def.id, &ctx, None)
+        let inst = super::create_instance(&pool, inst_id, def.id, &ctx, None)
             .await
             .unwrap();
 
-        let log_id = crate::utils::id::new_id();
+        let log_id = crate::utils::id::new_snowflake_id();
         let input = serde_json::json!({"data": 1});
-        let log = super::create_step_log(&pool, log_id, *inst.id, "s1", "Step 1", Some(&input))
+        let log = super::create_step_log(&pool, log_id, inst.id, "s1", "Step 1", Some(&input))
             .await
             .unwrap();
         assert_eq!(log.status, WorkflowStepStatus::Running);
@@ -574,7 +581,7 @@ mod tests {
             .await
             .unwrap();
 
-        let logs = super::list_step_logs(&pool, *inst.id).await.unwrap();
+        let logs = super::list_step_logs(&pool, inst.id).await.unwrap();
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].status, WorkflowStepStatus::Completed);
         assert!(logs[0].completed_at.is_some());
@@ -583,7 +590,7 @@ mod tests {
     #[tokio::test]
     async fn parse_steps_valid() {
         let pool = setup_pool().await;
-        let id = crate::utils::id::new_id();
+        let id = crate::utils::id::new_snowflake_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
         let def = super::create_definition(&pool, id, "WF", None, steps, "s1")
             .await
@@ -598,7 +605,7 @@ mod tests {
     #[tokio::test]
     async fn parse_steps_invalid_json() {
         let pool = setup_pool().await;
-        let id = crate::utils::id::new_id();
+        let id = crate::utils::id::new_snowflake_id();
         let steps = "not valid json!!!";
         let def = super::create_definition(&pool, id, "WF", None, steps, "s1")
             .await
@@ -610,19 +617,19 @@ mod tests {
     #[tokio::test]
     async fn fail_step_log_marks_failed() {
         let pool = setup_pool().await;
-        let def_id = crate::utils::id::new_id();
+        let def_id = crate::utils::id::new_snowflake_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
         let def = super::create_definition(&pool, def_id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
-        let inst_id = crate::utils::id::new_id();
-        let inst = super::create_instance(&pool, inst_id, *def.id, &serde_json::json!({}), None)
+        let inst_id = crate::utils::id::new_snowflake_id();
+        let inst = super::create_instance(&pool, inst_id, def.id, &serde_json::json!({}), None)
             .await
             .unwrap();
 
-        let log_id = crate::utils::id::new_id();
-        super::create_step_log(&pool, log_id, *inst.id, "s1", "Step 1", None)
+        let log_id = crate::utils::id::new_snowflake_id();
+        super::create_step_log(&pool, log_id, inst.id, "s1", "Step 1", None)
             .await
             .unwrap();
 
@@ -630,7 +637,7 @@ mod tests {
             .await
             .unwrap();
 
-        let logs = super::list_step_logs(&pool, *inst.id).await.unwrap();
+        let logs = super::list_step_logs(&pool, inst.id).await.unwrap();
         assert_eq!(logs[0].status, WorkflowStepStatus::Failed);
         assert_eq!(logs[0].error, Some("something broke".to_string()));
         assert!(logs[0].completed_at.is_some());
@@ -639,14 +646,14 @@ mod tests {
     #[tokio::test]
     async fn list_instances_filter_by_status() {
         let pool = setup_pool().await;
-        let def_id = crate::utils::id::new_id();
+        let def_id = crate::utils::id::new_snowflake_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
         let def = super::create_definition(&pool, def_id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
-        let inst_id = crate::utils::id::new_id();
-        super::create_instance(&pool, inst_id, *def.id, &serde_json::json!({}), None)
+        let inst_id = crate::utils::id::new_snowflake_id();
+        super::create_instance(&pool, inst_id, def.id, &serde_json::json!({}), None)
             .await
             .unwrap();
 
@@ -687,15 +694,15 @@ mod tests {
     #[tokio::test]
     async fn list_instances_pagination() {
         let pool = setup_pool().await;
-        let def_id = crate::utils::id::new_id();
+        let def_id = crate::utils::id::new_snowflake_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
         let def = super::create_definition(&pool, def_id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
         for _ in 0..5 {
-            let inst_id = crate::utils::id::new_id();
-            super::create_instance(&pool, inst_id, *def.id, &serde_json::json!({}), None)
+            let inst_id = crate::utils::id::new_snowflake_id();
+            super::create_instance(&pool, inst_id, def.id, &serde_json::json!({}), None)
                 .await
                 .unwrap();
         }
@@ -715,14 +722,14 @@ mod tests {
     #[tokio::test]
     async fn update_instance_completed_sets_completed_at() {
         let pool = setup_pool().await;
-        let def_id = crate::utils::id::new_id();
+        let def_id = crate::utils::id::new_snowflake_id();
         let steps = r#"[{"id":"s1","name":"Step 1","type":"task","config":{},"next":""}]"#;
         let def = super::create_definition(&pool, def_id, "WF", None, steps, "s1")
             .await
             .unwrap();
 
-        let inst_id = crate::utils::id::new_id();
-        super::create_instance(&pool, inst_id, *def.id, &serde_json::json!({}), None)
+        let inst_id = crate::utils::id::new_snowflake_id();
+        super::create_instance(&pool, inst_id, def.id, &serde_json::json!({}), None)
             .await
             .unwrap();
 
@@ -746,14 +753,18 @@ mod tests {
     #[tokio::test]
     async fn get_definition_not_found() {
         let pool = setup_pool().await;
-        let result = super::get_definition(&pool, 9999999).await.unwrap();
+        let result = super::get_definition(&pool, SnowflakeId(9999999))
+            .await
+            .unwrap();
         assert!(result.is_none());
     }
 
     #[tokio::test]
     async fn get_instance_not_found() {
         let pool = setup_pool().await;
-        let result = super::get_instance(&pool, 9999999).await.unwrap();
+        let result = super::get_instance(&pool, SnowflakeId(9999999))
+            .await
+            .unwrap();
         assert!(result.is_none());
     }
 }

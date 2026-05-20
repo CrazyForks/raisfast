@@ -67,20 +67,20 @@ impl JobEnqueuer {
             }
             Event::UserRegistered(data) => {
                 vec![NewJob::from(Job::SendWelcomeEmail {
-                    user_id: *data.id,
+                    user_id: data.id,
                     email: String::new(),
                     username: data.username.clone(),
                 })]
             }
             Event::MediaUploaded(data) => {
                 vec![NewJob::from(Job::GenerateThumbnail {
-                    media_id: *data.id,
+                    media_id: data.id,
                     size: 300,
                 })]
             }
             Event::PasswordResetRequested { user, token } => {
                 vec![NewJob::from(Job::SendPasswordResetEmail {
-                    user_id: *user.id,
+                    user_id: user.id,
                     email: String::new(),
                     reset_token: token.token.clone(),
                 })]
@@ -152,7 +152,7 @@ mod tests {
 
     fn make_user(id: i64, username: &str) -> User {
         User {
-            id: crate::utils::id::SnowflakeId(id),
+            id: crate::types::snowflake_id::SnowflakeId(id),
             tenant_id: None,
             username: username.into(),
             role: UserRole::Reader,
@@ -173,9 +173,9 @@ mod tests {
 
     fn make_media(id: i64, filename: &str) -> Media {
         Media {
-            id: crate::utils::id::SnowflakeId(id),
+            id: crate::types::snowflake_id::SnowflakeId(id),
             tenant_id: None,
-            user_id: crate::utils::id::SnowflakeId(1),
+            user_id: crate::types::snowflake_id::SnowflakeId(1),
             filename: filename.into(),
             filepath: String::new(),
             mimetype: String::new(),
@@ -193,9 +193,9 @@ mod tests {
 
     fn make_comment(id: i64) -> Comment {
         Comment {
-            id: crate::utils::id::SnowflakeId(id),
+            id: crate::types::snowflake_id::SnowflakeId(id),
             tenant_id: None,
-            post_id: crate::utils::id::SnowflakeId(0),
+            post_id: crate::types::snowflake_id::SnowflakeId(0),
             created_by: None,
             updated_by: None,
             nickname: None,

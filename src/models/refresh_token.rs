@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 use crate::errors::app_error::AppResult;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 /// Refresh token full database row model
@@ -29,11 +29,14 @@ pub struct RefreshToken {
 /// Automatically generates a Snowflake ID as the primary key.
 pub async fn create_token(
     pool: &crate::db::Pool,
-    user_id: i64,
+    user_id: SnowflakeId,
     token: &str,
     expires_at: &str,
 ) -> AppResult<()> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
     raisfast_derive::crud_insert!(pool, "refresh_tokens", [
         "id" => id,
         "user_id" => user_id,
@@ -63,7 +66,7 @@ pub async fn delete_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<(
 /// Delete all refresh tokens for a given user
 ///
 /// Used for logging out all devices or forcing re-login after a password change.
-pub async fn delete_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<()> {
+pub async fn delete_by_user(pool: &crate::db::Pool, user_id: SnowflakeId) -> AppResult<()> {
     raisfast_derive::crud_delete!(pool, "refresh_tokens", "user_id" => user_id)?;
     Ok(())
 }
@@ -71,6 +74,7 @@ pub async fn delete_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -90,12 +94,12 @@ mod tests {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
         let token = crate::utils::id::new_id().to_string();
-        create_token(&pool, user_id, &token, "2099-12-31T00:00:00Z")
+        create_token(&pool, SnowflakeId(user_id), &token, "2099-12-31T00:00:00Z")
             .await
             .unwrap();
         let found = find_by_token(&pool, &token).await.unwrap().unwrap();
         assert_eq!(found.token, token);
-        assert_eq!(found.user_id, user_id);
+        assert_eq!(found.user_id, SnowflakeId(user_id));
         assert_eq!(
             found.expires_at,
             "2099-12-31T00:00:00Z".parse::<Timestamp>().unwrap()
@@ -107,7 +111,7 @@ mod tests {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
         let token = crate::utils::id::new_id().to_string();
-        create_token(&pool, user_id, &token, "2099-12-31T00:00:00Z")
+        create_token(&pool, SnowflakeId(user_id), &token, "2099-12-31T00:00:00Z")
             .await
             .unwrap();
         super::delete_by_token(&pool, &token).await.unwrap();
@@ -120,13 +124,15 @@ mod tests {
         let user_id = insert_user(&pool).await;
         let token1 = crate::utils::id::new_id().to_string();
         let token2 = crate::utils::id::new_id().to_string();
-        create_token(&pool, user_id, &token1, "2099-12-31T00:00:00Z")
+        create_token(&pool, SnowflakeId(user_id), &token1, "2099-12-31T00:00:00Z")
             .await
             .unwrap();
-        create_token(&pool, user_id, &token2, "2099-12-31T00:00:00Z")
+        create_token(&pool, SnowflakeId(user_id), &token2, "2099-12-31T00:00:00Z")
             .await
             .unwrap();
-        super::delete_by_user(&pool, user_id).await.unwrap();
+        super::delete_by_user(&pool, SnowflakeId(user_id))
+            .await
+            .unwrap();
         assert!(find_by_token(&pool, &token1).await.unwrap().is_none());
         assert!(find_by_token(&pool, &token2).await.unwrap().is_none());
     }

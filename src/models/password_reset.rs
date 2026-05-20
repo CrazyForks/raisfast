@@ -7,8 +7,7 @@ use sqlx::FromRow;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
-use crate::utils::id;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 /// Password reset token full database row model
@@ -28,10 +27,13 @@ pub struct PasswordResetToken {
 /// Generates a Snowflake ID and a 32-byte random token. Validity is controlled by `expires_in_secs`.
 pub async fn create(
     pool: &crate::db::Pool,
-    user_id: i64,
+    user_id: SnowflakeId,
     expires_in_secs: i64,
 ) -> AppResult<PasswordResetToken> {
-    let (id, now) = id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
 
     let mut token_bytes = [0u8; 32];
     getrandom::getrandom(&mut token_bytes).map_err(|e| {
@@ -73,7 +75,7 @@ pub async fn find_by_token(
 }
 
 /// Mark a token as used
-pub async fn mark_used(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
+pub async fn mark_used(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_update!(pool, "password_reset_tokens",
         bind: ["used_at" => now],
@@ -83,7 +85,7 @@ pub async fn mark_used(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
 }
 
 /// Delete all unused reset tokens for a user (called before creating a new token to prevent token accumulation)
-pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<()> {
+pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: SnowflakeId) -> AppResult<()> {
     raisfast_derive::crud_delete!(
         pool,
         "password_reset_tokens",
@@ -108,6 +110,7 @@ pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -131,9 +134,9 @@ mod tests {
     async fn create_and_find_by_token() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
-        let row = create(&pool, user_id, 3600).await.unwrap();
+        let row = create(&pool, SnowflakeId(user_id), 3600).await.unwrap();
         assert!(*row.id > 0);
-        assert_eq!(row.user_id, user_id);
+        assert_eq!(row.user_id, SnowflakeId(user_id));
         assert!(!row.token.is_empty());
         assert!(row.used_at.is_none());
 
@@ -146,10 +149,10 @@ mod tests {
     async fn test_mark_used() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
-        let row = create(&pool, user_id, 3600).await.unwrap();
+        let row = create(&pool, SnowflakeId(user_id), 3600).await.unwrap();
         assert!(row.used_at.is_none());
 
-        super::mark_used(&pool, *row.id).await.unwrap();
+        super::mark_used(&pool, row.id).await.unwrap();
 
         let found = find_by_token(&pool, &row.token).await.unwrap();
         assert!(
@@ -173,10 +176,12 @@ mod tests {
     async fn test_delete_unused_by_user() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
-        let row1 = create(&pool, user_id, 3600).await.unwrap();
-        let row2 = create(&pool, user_id, 3600).await.unwrap();
+        let row1 = create(&pool, SnowflakeId(user_id), 3600).await.unwrap();
+        let row2 = create(&pool, SnowflakeId(user_id), 3600).await.unwrap();
 
-        super::delete_unused_by_user(&pool, user_id).await.unwrap();
+        super::delete_unused_by_user(&pool, SnowflakeId(user_id))
+            .await
+            .unwrap();
 
         let found1 = find_by_token(&pool, &row1.token).await.unwrap();
         let found2 = find_by_token(&pool, &row2.token).await.unwrap();
@@ -188,7 +193,7 @@ mod tests {
     async fn test_cleanup_expired() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
-        let _row = create(&pool, user_id, 1).await.unwrap();
+        let _row = create(&pool, SnowflakeId(user_id), 1).await.unwrap();
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -30,7 +30,7 @@ pub struct UserAddress {
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<UserAddress>> {
     raisfast_derive::crud_find!(
@@ -45,7 +45,7 @@ pub async fn find_by_id(
 
 pub async fn find_by_user_id(
     pool: &crate::db::Pool,
-    user_id: i64,
+    user_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<UserAddress>> {
     Ok(raisfast_derive::crud_find_all!(
@@ -60,7 +60,7 @@ pub async fn find_by_user_id(
 
 pub async fn find_default_by_user(
     pool: &crate::db::Pool,
-    user_id: i64,
+    user_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<UserAddress>> {
     raisfast_derive::crud_find!(
@@ -79,7 +79,10 @@ pub async fn insert(
     cmd: &crate::commands::CreateUserAddressCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<UserAddress> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
     raisfast_derive::crud_insert!(
         pool,
         "user_addresses",
@@ -140,8 +143,8 @@ pub async fn update(
 
 pub async fn delete_by_id(
     pool: &crate::db::Pool,
-    id: i64,
-    user_id: i64,
+    id: SnowflakeId,
+    user_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
     let result: sqlx::sqlite::SqliteQueryResult = raisfast_derive::crud_delete!(
@@ -156,7 +159,7 @@ pub async fn delete_by_id(
 
 pub async fn count_by_user(
     pool: &crate::db::Pool,
-    user_id: i64,
+    user_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<i64> {
     let count = raisfast_derive::crud_count!(pool, "user_addresses", "user_id" => user_id, tenant: tenant_id)?;
@@ -166,6 +169,7 @@ pub async fn count_by_user(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -189,7 +193,7 @@ mod tests {
         insert(
             pool,
             &crate::commands::CreateUserAddressCmd {
-                user_id,
+                user_id: SnowflakeId(user_id),
                 label: label.to_string(),
                 recipient_name: "John".to_string(),
                 phone: "13800138000".to_string(),
@@ -215,7 +219,7 @@ mod tests {
         let uid = seed_user(&pool).await;
         let addr = seed_address(&pool, uid, "Home").await;
 
-        let found = super::find_by_id(&pool, *addr.id, None)
+        let found = super::find_by_id(&pool, addr.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -233,7 +237,9 @@ mod tests {
         seed_address(&pool, uid, "Home").await;
         seed_address(&pool, uid, "Office").await;
 
-        let addrs = super::find_by_user_id(&pool, uid, None).await.unwrap();
+        let addrs = super::find_by_user_id(&pool, SnowflakeId(uid), None)
+            .await
+            .unwrap();
         assert_eq!(addrs.len(), 2);
     }
 
@@ -241,7 +247,9 @@ mod tests {
     async fn find_by_user_id_empty() {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
-        let addrs = super::find_by_user_id(&pool, uid, None).await.unwrap();
+        let addrs = super::find_by_user_id(&pool, SnowflakeId(uid), None)
+            .await
+            .unwrap();
         assert!(addrs.is_empty());
     }
 
@@ -253,7 +261,7 @@ mod tests {
         insert(
             &pool,
             &crate::commands::CreateUserAddressCmd {
-                user_id: uid,
+                user_id: SnowflakeId(uid),
                 label: "Default".to_string(),
                 recipient_name: "Jane".to_string(),
                 phone: "13900139000".to_string(),
@@ -272,7 +280,7 @@ mod tests {
         .await
         .unwrap();
 
-        let default = super::find_default_by_user(&pool, uid, None)
+        let default = super::find_default_by_user(&pool, SnowflakeId(uid), None)
             .await
             .unwrap()
             .unwrap();
@@ -289,8 +297,8 @@ mod tests {
         let ok = super::update(
             &pool,
             &crate::commands::UpdateUserAddressCmd {
-                id: *addr.id,
-                user_id: uid,
+                id: addr.id,
+                user_id: SnowflakeId(uid),
                 label: "Updated".to_string(),
                 recipient_name: "Jane".to_string(),
                 phone: "13900139000".to_string(),
@@ -310,7 +318,7 @@ mod tests {
         .unwrap();
         assert!(ok);
 
-        let found = super::find_by_id(&pool, *addr.id, None)
+        let found = super::find_by_id(&pool, addr.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -331,8 +339,8 @@ mod tests {
         let ok = super::update(
             &pool,
             &crate::commands::UpdateUserAddressCmd {
-                id: *addr.id,
-                user_id: uid2,
+                id: addr.id,
+                user_id: SnowflakeId(uid2),
                 label: "Hacked".to_string(),
                 recipient_name: "X".to_string(),
                 phone: "000".to_string(),
@@ -359,12 +367,12 @@ mod tests {
         let uid = seed_user(&pool).await;
         let addr = seed_address(&pool, uid, "Bye").await;
 
-        let ok = super::delete_by_id(&pool, *addr.id, uid, None)
+        let ok = super::delete_by_id(&pool, addr.id, SnowflakeId(uid), None)
             .await
             .unwrap();
         assert!(ok);
         assert!(
-            super::find_by_id(&pool, *addr.id, None)
+            super::find_by_id(&pool, addr.id, None)
                 .await
                 .unwrap()
                 .is_none()
@@ -378,7 +386,7 @@ mod tests {
         let uid2 = seed_user(&pool).await;
         let addr = seed_address(&pool, uid1, "Home").await;
 
-        let ok = super::delete_by_id(&pool, *addr.id, uid2, None)
+        let ok = super::delete_by_id(&pool, addr.id, SnowflakeId(uid2), None)
             .await
             .unwrap();
         assert!(!ok);
@@ -388,11 +396,21 @@ mod tests {
     async fn count_by_user() {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
-        assert_eq!(super::count_by_user(&pool, uid, None).await.unwrap(), 0);
+        assert_eq!(
+            super::count_by_user(&pool, SnowflakeId(uid), None)
+                .await
+                .unwrap(),
+            0
+        );
 
         seed_address(&pool, uid, "Home").await;
         seed_address(&pool, uid, "Office").await;
-        assert_eq!(super::count_by_user(&pool, uid, None).await.unwrap(), 2);
+        assert_eq!(
+            super::count_by_user(&pool, SnowflakeId(uid), None)
+                .await
+                .unwrap(),
+            2
+        );
     }
 
     #[tokio::test]
@@ -403,7 +421,7 @@ mod tests {
         insert(
             &pool,
             &crate::commands::CreateUserAddressCmd {
-                user_id: uid,
+                user_id: SnowflakeId(uid),
                 label: "TenantA".to_string(),
                 recipient_name: "TA".to_string(),
                 phone: "111".to_string(),
@@ -422,17 +440,19 @@ mod tests {
         .await
         .unwrap();
 
-        let a_addrs = super::find_by_user_id(&pool, uid, Some("tenant_a"))
+        let a_addrs = super::find_by_user_id(&pool, SnowflakeId(uid), Some("tenant_a"))
             .await
             .unwrap();
         assert_eq!(a_addrs.len(), 1);
 
-        let b_addrs = super::find_by_user_id(&pool, uid, Some("tenant_b"))
+        let b_addrs = super::find_by_user_id(&pool, SnowflakeId(uid), Some("tenant_b"))
             .await
             .unwrap();
         assert!(b_addrs.is_empty());
 
-        let all_addrs = super::find_by_user_id(&pool, uid, None).await.unwrap();
+        let all_addrs = super::find_by_user_id(&pool, SnowflakeId(uid), None)
+            .await
+            .unwrap();
         assert_eq!(all_addrs.len(), 1);
     }
 }

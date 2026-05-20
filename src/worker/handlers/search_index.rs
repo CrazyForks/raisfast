@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use crate::errors::app_error::AppResult;
 use crate::search::{SearchEngine, SearchablePost};
+use crate::types::snowflake_id::SnowflakeId;
 use crate::worker::{Job, JobHandler};
 
 /// Search index rebuild handler
@@ -45,7 +46,7 @@ impl JobHandler for RebuildSearchIndexHandler {
 
         let mut posts = Vec::with_capacity(post_ids.len());
         for id in post_ids {
-            match crate::models::post::find_by_id(&self.pool, *id, None).await {
+            match crate::models::post::find_by_id(&self.pool, SnowflakeId(*id), None).await {
                 Ok(Some(post)) => posts.push(SearchablePost {
                     id: post.id.to_string(),
                     title: post.title,

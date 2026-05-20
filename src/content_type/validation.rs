@@ -10,6 +10,7 @@
 //! - `pattern` — regex matching
 //! - Type compatibility — field value type must match `FieldType`
 
+use crate::types::snowflake_id::SnowflakeId;
 use serde_json::Value;
 use sqlx::Row;
 
@@ -187,7 +188,7 @@ async fn do_validate_create(
 pub async fn validate_update(
     pool: &Pool,
     ct: &ContentTypeSchema,
-    id: i64,
+    id: SnowflakeId,
     data: &Value,
 ) -> Result<(), AppError> {
     do_validate_update(pool, ct, id, data).await
@@ -197,7 +198,7 @@ pub async fn validate_update(
 pub async fn validate_update_tx(
     pool: &Pool,
     ct: &ContentTypeSchema,
-    id: i64,
+    id: SnowflakeId,
     data: &Value,
 ) -> Result<(), AppError> {
     do_validate_update(pool, ct, id, data).await
@@ -206,7 +207,7 @@ pub async fn validate_update_tx(
 async fn do_validate_update(
     pool: &Pool,
     ct: &ContentTypeSchema,
-    id: i64,
+    id: SnowflakeId,
     data: &Value,
 ) -> Result<(), AppError> {
     let obj = data
@@ -347,7 +348,7 @@ async fn do_validate_update(
         }
     }
 
-    check_unique_fields(pool, ct, obj, Some(id), &mut errors).await?;
+    check_unique_fields(pool, ct, obj, Some(*id), &mut errors).await?;
 
     finish_validation(errors)
 }
@@ -678,7 +679,7 @@ immutable = true
             .unwrap();
         let id: i64 = created["id"].as_str().unwrap().parse().unwrap();
 
-        let result = validate_update(&pool, &ct, id, &json!({"secret": "new"})).await;
+        let result = validate_update(&pool, &ct, SnowflakeId(id), &json!({"secret": "new"})).await;
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(
@@ -706,8 +707,13 @@ immutable = true
             .unwrap();
         let id: i64 = created["id"].as_str().unwrap().parse().unwrap();
 
-        let result =
-            validate_update(&pool, &ct, id, &json!({"name": "Updated", "code": "XYZ"})).await;
+        let result = validate_update(
+            &pool,
+            &ct,
+            SnowflakeId(id),
+            &json!({"name": "Updated", "code": "XYZ"}),
+        )
+        .await;
         assert!(result.is_ok(), "updating same unique value should be ok");
     }
 
@@ -818,7 +824,7 @@ immutable = true
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());
         repo.migrate(&ct, &test_protocol_registry()).await.unwrap();
 
-        let result = validate_update(&pool, &ct, 0, &json!(42)).await;
+        let result = validate_update(&pool, &ct, SnowflakeId(0), &json!(42)).await;
         assert!(result.is_err());
     }
 

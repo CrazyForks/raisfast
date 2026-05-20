@@ -83,7 +83,7 @@ impl ReconcilePaymentsHandler {
             Err(_) => return Ok(true),
         };
 
-        let channel = payment_channel::find_by_id(&self.pool, *order.channel_id, None)
+        let channel = payment_channel::find_by_id(&self.pool, order.channel_id, None)
             .await?
             .ok_or_else(|| {
                 crate::errors::app_error::AppError::Internal(anyhow::anyhow!(

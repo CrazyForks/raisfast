@@ -1,5 +1,6 @@
+use crate::types::snowflake_id::SnowflakeId;
 pub struct CreateUserAddressCmd {
-    pub user_id: i64,
+    pub user_id: SnowflakeId,
     pub label: String,
     pub recipient_name: String,
     pub phone: String,
@@ -15,8 +16,8 @@ pub struct CreateUserAddressCmd {
 }
 
 pub struct UpdateUserAddressCmd {
-    pub id: i64,
-    pub user_id: i64,
+    pub id: SnowflakeId,
+    pub user_id: SnowflakeId,
     pub label: String,
     pub recipient_name: String,
     pub phone: String,

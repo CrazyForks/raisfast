@@ -588,7 +588,10 @@ pub(crate) fn make_token(
     iid: i64,
     role: raisfast::models::user::UserRole,
 ) -> String {
-    raisfast::services::auth::generate_access_token_for_test(iid, role)
+    raisfast::services::auth::generate_access_token_for_test(
+        raisfast::types::snowflake_id::SnowflakeId(iid),
+        role,
+    )
 }
 
 pub(crate) async fn register_and_login(
@@ -628,7 +631,8 @@ pub(crate) async fn create_admin(pool: &raisfast::db::Pool) -> (i64, String) {
     let sql = "INSERT INTO users (username, role, status, registered_via) VALUES ('testadmin', 'admin', 'active', 'email') RETURNING id";
     let int_id: i64 = sqlx::query_scalar(sql).fetch_one(pool).await.unwrap();
     let cred_data = serde_json::json!({"password_hash": hash}).to_string();
-    let (cred_id, cred_now) = raisfast::utils::id::new_id_and_timestamp();
+    let cred_id = raisfast::utils::id::new_id();
+    let cred_now = raisfast::utils::tz::now_utc();
     let cred_sql = format!(
         "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
         raisfast::db::dialect::ph(1),
@@ -656,7 +660,8 @@ pub(crate) async fn create_author(pool: &raisfast::db::Pool) -> (i64, String) {
     let sql = "INSERT INTO users (username, role, status, registered_via) VALUES ('testauthor', 'author', 'active', 'email') RETURNING id";
     let int_id: i64 = sqlx::query_scalar(sql).fetch_one(pool).await.unwrap();
     let cred_data = serde_json::json!({"password_hash": hash}).to_string();
-    let (cred_id, cred_now) = raisfast::utils::id::new_id_and_timestamp();
+    let cred_id = raisfast::utils::id::new_id();
+    let cred_now = raisfast::utils::tz::now_utc();
     let cred_sql = format!(
         "INSERT INTO user_credentials (id, user_id, auth_type, identifier, credential_data, verified, created_at, updated_at) VALUES ({}, {}, 'email', {}, {}, 1, {}, {})",
         raisfast::db::dialect::ph(1),

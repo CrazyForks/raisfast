@@ -6,6 +6,7 @@
 
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
+use crate::types::snowflake_id::SnowflakeId;
 
 /// Trait for resource-level authorization.
 ///
@@ -23,9 +24,9 @@ pub trait Policy {
     fn can_delete(user: &AuthUser, resource: &Self::Resource) -> AppResult<()>;
 }
 
-fn owner_or_admin(user: &AuthUser, owner_id: i64) -> AppResult<()> {
+fn owner_or_admin(user: &AuthUser, owner_id: SnowflakeId) -> AppResult<()> {
     let uid = user.user_id().ok_or(AppError::Unauthorized)?;
-    if user.is_admin() || uid == owner_id {
+    if user.is_admin() || SnowflakeId(uid) == owner_id {
         Ok(())
     } else {
         Err(AppError::Forbidden)
@@ -34,10 +35,10 @@ fn owner_or_admin(user: &AuthUser, owner_id: i64) -> AppResult<()> {
 
 fn owner_or_admin_opt(
     user: &AuthUser,
-    owner_id: Option<crate::utils::id::SnowflakeId>,
+    owner_id: Option<crate::types::snowflake_id::SnowflakeId>,
 ) -> AppResult<()> {
     let uid = user.user_id().ok_or(AppError::Unauthorized)?;
-    if user.is_admin() || owner_id == Some(crate::utils::id::SnowflakeId(uid)) {
+    if user.is_admin() || owner_id == Some(crate::types::snowflake_id::SnowflakeId(uid)) {
         Ok(())
     } else {
         Err(AppError::Forbidden)
@@ -51,11 +52,11 @@ impl Policy for PostPolicy {
     type Resource = crate::models::post::Post;
 
     fn can_update(user: &AuthUser, post: &Self::Resource) -> AppResult<()> {
-        owner_or_admin(user, *post.created_by)
+        owner_or_admin(user, post.created_by)
     }
 
     fn can_delete(user: &AuthUser, post: &Self::Resource) -> AppResult<()> {
-        owner_or_admin(user, *post.created_by)
+        owner_or_admin(user, post.created_by)
     }
 }
 
@@ -92,7 +93,7 @@ mod tests {
     }
 
     fn mock_post(created_by: i64) -> crate::models::post::Post {
-        use crate::utils::id::SnowflakeId;
+        use crate::types::snowflake_id::SnowflakeId;
         use crate::utils::tz::Timestamp;
         crate::models::post::Post {
             id: SnowflakeId(1),
@@ -126,7 +127,7 @@ mod tests {
     }
 
     fn mock_comment(created_by: Option<i64>) -> crate::models::comment::Comment {
-        use crate::utils::id::SnowflakeId;
+        use crate::types::snowflake_id::SnowflakeId;
         use crate::utils::tz::Timestamp;
         crate::models::comment::Comment {
             id: SnowflakeId(1),

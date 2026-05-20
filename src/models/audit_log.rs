@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::errors::app_error::AppResult;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 /// Full database row for an audit log entry
@@ -70,6 +70,6 @@ pub async fn find_paginated(
 }
 
 /// Find an audit log entry by ID
-pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<AuditEntry> {
+pub async fn find_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<AuditEntry> {
     raisfast_derive::crud_find_one!(pool, "audit_log", AuditEntry, "id" => id).map_err(Into::into)
 }

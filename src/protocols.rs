@@ -34,6 +34,7 @@ pub mod tenantable;
 pub mod timestampable;
 pub mod versionable;
 
+use crate::types::snowflake_id::SnowflakeId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -230,7 +231,7 @@ pub trait Protocol: Send + Sync + 'static {
         &self,
         _pool: &crate::db::pool::Pool,
         _content_type_singular: &str,
-        _record_id: i64,
+        _record_id: SnowflakeId,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), anyhow::Error>> + Send + '_>>
     {
         Box::pin(async { Ok(()) })
@@ -374,7 +375,7 @@ impl ProtocolRegistry {
         names: &[String],
         pool: &crate::db::pool::Pool,
         content_type_singular: &str,
-        record_id: i64,
+        record_id: SnowflakeId,
     ) -> Result<(), anyhow::Error> {
         for name in names {
             if let Some(protocol) = self.protocols.get(name.as_str()) {

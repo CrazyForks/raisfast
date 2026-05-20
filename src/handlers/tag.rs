@@ -146,7 +146,7 @@ pub async fn get(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<TagResponse>> {
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let t = state.tag_service.get(id, &auth).await?;
     Ok(ApiResponse::success(TagResponse::from_tag(t)))
 }
@@ -180,7 +180,7 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_author()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state.tag_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
@@ -201,7 +201,7 @@ pub async fn update(
     auth.ensure_author()?;
     validation::validate(&req)?;
     let slug = crate::services::tag::generate_slug(&req.name);
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let t = state
         .tag_service
         .update(&auth, id, req.name.clone(), slug)
@@ -246,7 +246,7 @@ pub async fn admin_update(
     auth.ensure_admin()?;
     validation::validate(&req)?;
     let slug = crate::services::tag::generate_slug(&req.name);
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let t = state
         .tag_service
         .update(&auth, id, req.name.clone(), slug)
@@ -260,7 +260,7 @@ pub async fn admin_delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_admin()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state.tag_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
@@ -275,7 +275,7 @@ pub async fn admin_batch(
     let mut affected = 0usize;
     if req.action == "delete" {
         for raw_id in &req.ids {
-            if let Ok(id) = crate::utils::id::parse_id(raw_id)
+            if let Ok(id) = crate::types::snowflake_id::parse_id(raw_id)
                 && state.tag_service.delete(id, &auth).await.is_ok()
             {
                 affected += 1;

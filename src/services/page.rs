@@ -12,6 +12,7 @@ use crate::commands::{CreatePageCmd, UpdatePageCmd};
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::page::{self, Page, PageStatus};
+use crate::types::snowflake_id::SnowflakeId;
 
 /// Page business logic trait.
 #[async_trait]
@@ -23,7 +24,7 @@ pub trait PageService: Send + Sync {
         auth: &AuthUser,
     ) -> AppResult<(Vec<Page>, i64)>;
     async fn get_by_slug(&self, slug: &str, auth: &AuthUser) -> AppResult<Page>;
-    async fn get_by_id(&self, id: i64, auth: &AuthUser) -> AppResult<Page>;
+    async fn get_by_id(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<Page>;
     async fn list_all(
         &self,
         page_num: i64,
@@ -32,9 +33,19 @@ pub trait PageService: Send + Sync {
         auth: &AuthUser,
     ) -> AppResult<(Vec<Page>, i64)>;
     async fn create_page(&self, auth: &AuthUser, cmd: CreatePageCmd) -> AppResult<Page>;
-    async fn update_page(&self, auth: &AuthUser, id: i64, cmd: UpdatePageCmd) -> AppResult<Page>;
-    async fn delete_page(&self, id: i64, auth: &AuthUser) -> AppResult<()>;
-    async fn update_status(&self, id: i64, status: PageStatus, auth: &AuthUser) -> AppResult<Page>;
+    async fn update_page(
+        &self,
+        auth: &AuthUser,
+        id: SnowflakeId,
+        cmd: UpdatePageCmd,
+    ) -> AppResult<Page>;
+    async fn delete_page(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<()>;
+    async fn update_status(
+        &self,
+        id: SnowflakeId,
+        status: PageStatus,
+        auth: &AuthUser,
+    ) -> AppResult<Page>;
     async fn reorder(&self, items: Vec<(String, i64)>, auth: &AuthUser) -> AppResult<()>;
     async fn sitemap(&self, auth: &AuthUser) -> AppResult<Vec<(String, Option<String>)>>;
 }
@@ -70,7 +81,7 @@ impl PageService for PageServiceImpl {
             .ok_or_else(|| AppError::not_found("page"))
     }
 
-    async fn get_by_id(&self, id: i64, auth: &AuthUser) -> AppResult<Page> {
+    async fn get_by_id(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<Page> {
         page::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("page"))
@@ -99,14 +110,14 @@ impl PageService for PageServiceImpl {
     async fn update_page(
         &self,
         auth: &AuthUser,
-        id: i64,
+        id: SnowflakeId,
         mut cmd: UpdatePageCmd,
     ) -> AppResult<Page> {
         let existing = page::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("page"))?;
 
-        cmd.id = *existing.id;
+        cmd.id = existing.id;
         let (cmd, _d) = self.before_update(auth, &existing, cmd).await?;
         if let Some(ref blocks) = cmd.blocks {
             Self::validate_blocks_json(blocks)?;
@@ -116,17 +127,22 @@ impl PageService for PageServiceImpl {
         Ok(updated)
     }
 
-    async fn delete_page(&self, id: i64, auth: &AuthUser) -> AppResult<()> {
+    async fn delete_page(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<()> {
         let p = page::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("page"))?;
         self.before_delete(auth, &p).await?;
-        page::delete(&self.pool, *p.id, auth.tenant_id()).await?;
+        page::delete(&self.pool, p.id, auth.tenant_id()).await?;
         self.after_deleted(&p);
         Ok(())
     }
 
-    async fn update_status(&self, id: i64, status: PageStatus, auth: &AuthUser) -> AppResult<Page> {
+    async fn update_status(
+        &self,
+        id: SnowflakeId,
+        status: PageStatus,
+        auth: &AuthUser,
+    ) -> AppResult<Page> {
         let p = page::find_by_id(&self.pool, id, auth.tenant_id())
             .await?
             .ok_or_else(|| AppError::not_found("page"))?;
@@ -134,8 +150,7 @@ impl PageService for PageServiceImpl {
             .before_update("pages", auth, &p, status)
             .await?;
         let updated =
-            page::update_status(&self.pool, *p.id, status, auth.user_id(), auth.tenant_id())
-                .await?;
+            page::update_status(&self.pool, p.id, status, auth.user_id(), auth.tenant_id()).await?;
         self.after_updated(&updated);
         Ok(updated)
     }
@@ -143,7 +158,7 @@ impl PageService for PageServiceImpl {
     async fn reorder(&self, items: Vec<(String, i64)>, auth: &AuthUser) -> AppResult<()> {
         let mut resolved = Vec::new();
         for (raw_id, sort_order) in items {
-            let id: i64 = crate::utils::id::parse_id(&raw_id)?;
+            let id = crate::types::snowflake_id::parse_id(&raw_id)?;
             let p = page::find_by_id(&self.pool, id, auth.tenant_id())
                 .await?
                 .ok_or_else(|| AppError::not_found("page"))?;

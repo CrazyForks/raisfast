@@ -103,7 +103,7 @@ pub async fn get_tenant(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<TenantResponse>> {
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let tenant = state
         .tenant
         .get(id)
@@ -136,7 +136,7 @@ pub async fn update_tenant(
     Path(id): Path<String>,
     Json(req): Json<UpdateTenantRequest>,
 ) -> AppResult<ApiResponse<TenantResponse>> {
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let tenant = state.tenant.update(id, &req).await?;
     Ok(ApiResponse::success(TenantResponse::from_tenant(tenant)))
 }
@@ -151,7 +151,7 @@ pub async fn delete_tenant(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state.tenant.delete(id).await?;
     Ok(ApiResponse::success(serde_json::json!({
         "deleted": true,
@@ -170,7 +170,7 @@ pub async fn admin_batch(
     crate::errors::validation::validate(&req)?;
     let mut affected = 0usize;
     for raw_id in &req.ids {
-        let Ok(id) = crate::utils::id::parse_id(raw_id) else {
+        let Ok(id) = crate::types::snowflake_id::parse_id(raw_id) else {
             continue;
         };
         match req.action.as_str() {

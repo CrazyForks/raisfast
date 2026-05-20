@@ -1,3 +1,4 @@
+use crate::types::snowflake_id::SnowflakeId;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -15,7 +16,7 @@ pub struct DiffResult {
 pub async fn list_revisions(
     pool: &Pool,
     content_type: &str,
-    content_id: i64,
+    content_id: SnowflakeId,
     _page: i64,
     _page_size: i64,
 ) -> AppResult<(Vec<RevisionSummary>, i64)> {
@@ -36,8 +37,8 @@ pub async fn list_revisions(
 pub async fn get_revision(
     pool: &Pool,
     content_type: &str,
-    content_id: i64,
-    revision_id: i64,
+    content_id: SnowflakeId,
+    revision_id: SnowflakeId,
 ) -> AppResult<ContentRevision> {
     content_revision::get_revision(pool, content_type, content_id, revision_id)
         .await?
@@ -47,8 +48,8 @@ pub async fn get_revision(
 pub async fn restore_revision(
     pool: &Pool,
     content_type: &str,
-    content_id: i64,
-    revision_id: i64,
+    content_id: SnowflakeId,
+    revision_id: SnowflakeId,
 ) -> AppResult<Value> {
     let revision = get_revision(pool, content_type, content_id, revision_id).await?;
     let mut snapshot: Value = serde_json::from_str(&revision.snapshot)
@@ -64,12 +65,12 @@ pub async fn restore_revision(
 pub async fn diff_revisions(
     pool: &Pool,
     content_type: &str,
-    content_id: i64,
+    content_id: SnowflakeId,
     rev_id_a: i64,
     rev_id_b: i64,
 ) -> AppResult<DiffResult> {
-    let a = get_revision(pool, content_type, content_id, rev_id_a).await?;
-    let b = get_revision(pool, content_type, content_id, rev_id_b).await?;
+    let a = get_revision(pool, content_type, content_id, SnowflakeId(rev_id_a)).await?;
+    let b = get_revision(pool, content_type, content_id, SnowflakeId(rev_id_b)).await?;
     let snap_a: Value = serde_json::from_str(&a.snapshot)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("snapshot A parse: {e}")))?;
     let snap_b: Value = serde_json::from_str(&b.snapshot)

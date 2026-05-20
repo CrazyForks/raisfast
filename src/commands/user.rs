@@ -1,6 +1,7 @@
 //! User-related commands
 
 use crate::models::user::{RegisteredVia, SocialLinks, UserMetadata};
+use crate::types::snowflake_id::SnowflakeId;
 
 /// Create a user
 pub struct CreateUserCmd {
@@ -10,7 +11,7 @@ pub struct CreateUserCmd {
 
 /// Update user profile
 pub struct UpdateProfileCmd {
-    pub id: i64,
+    pub id: SnowflakeId,
     pub username: Option<String>,
     pub bio: Option<String>,
     pub website: Option<String>,

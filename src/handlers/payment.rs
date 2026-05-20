@@ -8,6 +8,7 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -265,7 +266,7 @@ pub async fn create_payment_order_handler(
         .payment_service
         .create_payment_order(
             &auth,
-            user_int_id,
+            SnowflakeId(user_int_id),
             req,
             client_ip.as_deref(),
             client_language.as_deref(),
@@ -292,7 +293,12 @@ pub async fn list_user_orders(
     params.sanitize();
     let (orders, total) = state
         .payment_service
-        .list_user_payment_orders(&auth, user_int_id, params.page, params.page_size)
+        .list_user_payment_orders(
+            &auth,
+            SnowflakeId(user_int_id),
+            params.page,
+            params.page_size,
+        )
         .await?;
     let responses: Vec<PaymentOrderResponse> = orders.into_iter().map(to_order_response).collect();
     Ok(params.paginate(responses, total))
@@ -310,10 +316,10 @@ pub async fn get_payment_order_handler(
 ) -> AppResult<ApiResponse<PaymentOrderResponse>> {
     let _user_id = auth.ensure_authenticated()?;
     let user_int_id = auth.user_id().ok_or(AppError::Unauthorized)?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let order = state
         .payment_service
-        .get_payment_order(&auth, user_int_id, id)
+        .get_payment_order(&auth, SnowflakeId(user_int_id), id)
         .await?;
     Ok(ApiResponse::success(to_order_response(order)))
 }
@@ -330,10 +336,10 @@ pub async fn cancel_payment_order_handler(
 ) -> AppResult<ApiResponse<()>> {
     let _user_id = auth.ensure_authenticated()?;
     let user_int_id = auth.user_id().ok_or(AppError::Unauthorized)?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state
         .payment_service
-        .cancel_payment_order(&auth, id, user_int_id)
+        .cancel_payment_order(&auth, id, SnowflakeId(user_int_id))
         .await?;
     Ok(ApiResponse::success(()))
 }
@@ -350,10 +356,10 @@ pub async fn list_order_transactions(
 ) -> AppResult<ApiResponse<Vec<PaymentTransactionResponse>>> {
     let _ = auth.ensure_authenticated()?;
     let user_int_id = auth.user_id().ok_or(AppError::Unauthorized)?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let txs = state
         .payment_service
-        .list_order_transactions(&auth, user_int_id, id)
+        .list_order_transactions(&auth, SnowflakeId(user_int_id), id)
         .await?;
     let responses: Vec<PaymentTransactionResponse> = txs.into_iter().map(Into::into).collect();
     Ok(ApiResponse::success(responses))
@@ -371,10 +377,10 @@ pub async fn list_order_refunds(
 ) -> AppResult<ApiResponse<Vec<PaymentRefundResponse>>> {
     let _ = auth.ensure_authenticated()?;
     let user_int_id = auth.user_id().ok_or(AppError::Unauthorized)?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let refunds = state
         .payment_service
-        .list_order_refunds(&auth, user_int_id, id)
+        .list_order_refunds(&auth, SnowflakeId(user_int_id), id)
         .await?;
     let responses: Vec<PaymentRefundResponse> = refunds.into_iter().map(Into::into).collect();
     Ok(ApiResponse::success(responses))
@@ -492,7 +498,7 @@ pub async fn admin_get_channel(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PaymentChannelResponse>> {
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let channel = state.payment_service.get_channel(&auth, id).await?;
     Ok(ApiResponse::success(PaymentChannelResponse::from(channel)))
 }
@@ -510,7 +516,7 @@ pub async fn admin_update_channel(
     Json(req): Json<UpdatePaymentChannelRequest>,
 ) -> AppResult<ApiResponse<PaymentChannelResponse>> {
     validation::validate(&req)?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let channel = state.payment_service.update_channel(&auth, id, req).await?;
     Ok(ApiResponse::success(PaymentChannelResponse::from(channel)))
 }
@@ -525,7 +531,7 @@ pub async fn admin_delete_channel(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state.payment_service.delete_channel(&auth, id).await?;
     Ok(ApiResponse::success(()))
 }
@@ -560,10 +566,10 @@ pub async fn admin_get_order(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PaymentOrderResponse>> {
     auth.ensure_admin()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let order = state
         .payment_service
-        .get_payment_order(&auth, 0, id)
+        .get_payment_order(&auth, SnowflakeId(0), id)
         .await?;
     Ok(ApiResponse::success(to_order_response(order)))
 }
@@ -582,7 +588,7 @@ pub async fn admin_refund_order(
 ) -> AppResult<ApiResponse<PaymentRefundResponse>> {
     auth.ensure_admin()?;
     validation::validate(&req)?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let refund = state
         .payment_service
         .refund_payment_order(&auth, id, req)

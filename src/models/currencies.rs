@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 use crate::errors::app_error::AppResult;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
@@ -58,7 +58,10 @@ pub async fn create(
     name: &str,
     decimals: i64,
 ) -> AppResult<Currency> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
     raisfast_derive::crud_insert!(
         pool,
         "currencies",
@@ -210,7 +213,7 @@ mod tests {
         )
         .await
         .unwrap();
-        crate::models::wallet::create(&pool, *user.id, "CNY")
+        crate::models::wallet::create(&pool, user.id, "CNY")
             .await
             .unwrap();
 

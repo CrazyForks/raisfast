@@ -11,6 +11,7 @@ use raisfast::content_type::ContentTypeRegistry;
 use raisfast::content_type::repository::{ContentQuery, ContentRepository, SaveContext};
 use raisfast::content_type::schema::ContentTypeSchema;
 use raisfast::db::tenant;
+use raisfast::types::snowflake_id::SnowflakeId;
 
 const PRODUCT_TOML: &str = r#"
 [content_type]
@@ -350,7 +351,7 @@ async fn update_changes_fields() {
     let updated = repo
         .update(
             &ct,
-            id,
+            raisfast::types::snowflake_id::SnowflakeId(id),
             json!({"title": "Updated", "price": 99}),
             None,
             &SaveContext::default(),
@@ -383,7 +384,7 @@ async fn delete_removes_record() {
 
     repo.delete(
         &ct,
-        id,
+        raisfast::types::snowflake_id::SnowflakeId(id),
         None,
         &test_protocol_registry(),
         &test_ct_registry(),
@@ -391,7 +392,10 @@ async fn delete_removes_record() {
     .await
     .unwrap();
 
-    let found = repo.find_by_id(&ct, id, None, true).await.unwrap();
+    let found = repo
+        .find_by_id(&ct, SnowflakeId(id), None, true)
+        .await
+        .unwrap();
     assert!(found.is_none());
 
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM ct_products")
@@ -437,7 +441,7 @@ required = true
 
     repo.delete(
         &ct,
-        id,
+        raisfast::types::snowflake_id::SnowflakeId(id),
         None,
         &test_protocol_registry(),
         &test_ct_registry(),
@@ -509,21 +513,21 @@ async fn tenant_isolation() {
     let id_b: i64 = b["id"].as_str().unwrap().parse().unwrap();
 
     assert!(
-        repo.find_by_id(&ct, id_a, Some("tenant_b"), true)
+        repo.find_by_id(&ct, SnowflakeId(id_a), Some("tenant_b"), true)
             .await
             .unwrap()
             .is_none(),
         "tenant_b should not see tenant_a's data"
     );
     assert!(
-        repo.find_by_id(&ct, id_b, Some("tenant_a"), true)
+        repo.find_by_id(&ct, SnowflakeId(id_b), Some("tenant_a"), true)
             .await
             .unwrap()
             .is_none(),
         "tenant_a should not see tenant_b's data"
     );
     assert!(
-        repo.find_by_id(&ct, id_a, Some("tenant_a"), true)
+        repo.find_by_id(&ct, SnowflakeId(id_a), Some("tenant_a"), true)
             .await
             .unwrap()
             .is_some(),
@@ -572,7 +576,7 @@ async fn delete_respects_tenant() {
 
     repo.delete(
         &ct,
-        id_a,
+        raisfast::types::snowflake_id::SnowflakeId(id_a),
         Some("tenant_b"),
         &test_protocol_registry(),
         &test_ct_registry(),
@@ -581,7 +585,7 @@ async fn delete_respects_tenant() {
     .unwrap();
 
     assert!(
-        repo.find_by_id(&ct, id_a, Some("tenant_a"), true)
+        repo.find_by_id(&ct, SnowflakeId(id_a), Some("tenant_a"), true)
             .await
             .unwrap()
             .is_some(),
@@ -590,7 +594,7 @@ async fn delete_respects_tenant() {
 
     repo.delete(
         &ct,
-        id_a,
+        raisfast::types::snowflake_id::SnowflakeId(id_a),
         Some("tenant_a"),
         &test_protocol_registry(),
         &test_ct_registry(),
@@ -598,7 +602,7 @@ async fn delete_respects_tenant() {
     .await
     .unwrap();
     assert!(
-        repo.find_by_id(&ct, id_a, Some("tenant_a"), true)
+        repo.find_by_id(&ct, SnowflakeId(id_a), Some("tenant_a"), true)
             .await
             .unwrap()
             .is_none(),
@@ -792,7 +796,7 @@ async fn update_with_no_fields_returns_error() {
     let result = repo
         .update(
             &ct,
-            id,
+            raisfast::types::snowflake_id::SnowflakeId(id),
             json!({"nonexistent_field": "v"}),
             None,
             &SaveContext::default(),
@@ -923,7 +927,7 @@ async fn versioning_creates_revision_on_update() {
     let _updated = repo
         .update(
             &ct,
-            int_id,
+            raisfast::types::snowflake_id::SnowflakeId(int_id),
             json!({"title": "V2 Title", "content": "V2 Content"}),
             None,
             &SaveContext::default(),
@@ -934,7 +938,7 @@ async fn versioning_creates_revision_on_update() {
     let revisions = raisfast::models::content_revision::list_revisions(
         &pool,
         "article",
-        id.parse::<i64>().unwrap(),
+        SnowflakeId(id.parse::<i64>().unwrap()),
     )
     .await
     .unwrap();
@@ -944,8 +948,8 @@ async fn versioning_creates_revision_on_update() {
     let rev = raisfast::models::content_revision::get_revision(
         &pool,
         "article",
-        id.parse::<i64>().unwrap(),
-        *revisions[0].id,
+        SnowflakeId(id.parse::<i64>().unwrap()),
+        SnowflakeId(*revisions[0].id),
     )
     .await
     .unwrap()
@@ -976,7 +980,7 @@ async fn versioning_multiple_updates_create_multiple_revisions() {
     let int_id: i64 = id.parse().unwrap();
     repo.update(
         &ct,
-        int_id,
+        SnowflakeId(int_id),
         json!({"title": "Rev1"}),
         None,
         &SaveContext::default(),
@@ -985,7 +989,7 @@ async fn versioning_multiple_updates_create_multiple_revisions() {
     .unwrap();
     repo.update(
         &ct,
-        int_id,
+        SnowflakeId(int_id),
         json!({"title": "Rev2"}),
         None,
         &SaveContext::default(),
@@ -994,7 +998,7 @@ async fn versioning_multiple_updates_create_multiple_revisions() {
     .unwrap();
     repo.update(
         &ct,
-        int_id,
+        SnowflakeId(int_id),
         json!({"title": "Rev3"}),
         None,
         &SaveContext::default(),
@@ -1005,7 +1009,7 @@ async fn versioning_multiple_updates_create_multiple_revisions() {
     let revisions = raisfast::models::content_revision::list_revisions(
         &pool,
         "article",
-        id.parse::<i64>().unwrap(),
+        SnowflakeId(id.parse::<i64>().unwrap()),
     )
     .await
     .unwrap();
@@ -1037,7 +1041,7 @@ async fn versioning_delete_cleans_up_revisions() {
 
     repo.update(
         &ct,
-        int_id,
+        SnowflakeId(int_id),
         json!({"title": "Updated"}),
         None,
         &SaveContext::default(),
@@ -1048,7 +1052,7 @@ async fn versioning_delete_cleans_up_revisions() {
     let before = raisfast::models::content_revision::list_revisions(
         &pool,
         "article",
-        id.parse::<i64>().unwrap(),
+        SnowflakeId(id.parse::<i64>().unwrap()),
     )
     .await
     .unwrap();
@@ -1056,7 +1060,7 @@ async fn versioning_delete_cleans_up_revisions() {
 
     repo.delete(
         &ct,
-        int_id,
+        raisfast::types::snowflake_id::SnowflakeId(int_id),
         None,
         &test_protocol_registry(),
         &test_ct_registry(),
@@ -1067,7 +1071,7 @@ async fn versioning_delete_cleans_up_revisions() {
     let after = raisfast::models::content_revision::list_revisions(
         &pool,
         "article",
-        id.parse::<i64>().unwrap(),
+        SnowflakeId(id.parse::<i64>().unwrap()),
     )
     .await
     .unwrap();
@@ -1112,7 +1116,7 @@ required = true
 
     repo.update(
         &ct,
-        int_id,
+        SnowflakeId(int_id),
         json!({"title": "Updated"}),
         None,
         &SaveContext::default(),
@@ -1123,7 +1127,7 @@ required = true
     let revisions = raisfast::models::content_revision::list_revisions(
         &pool,
         "note",
-        id.parse::<i64>().unwrap(),
+        SnowflakeId(id.parse::<i64>().unwrap()),
     )
     .await
     .unwrap();
@@ -1197,7 +1201,7 @@ target_field = "title"
     let deleted_id: i64 = deleted["id"].as_str().unwrap().parse().unwrap();
 
     let now = now_str();
-    repo.soft_delete(&ct, deleted_id, &now, None, None)
+    repo.soft_delete(&ct, SnowflakeId(deleted_id), &now, None, None)
         .await
         .unwrap();
 
@@ -1264,7 +1268,7 @@ target_field = "title"
     let int_id: i64 = id.parse().unwrap();
 
     let now = now_str();
-    repo.soft_delete(&ct, int_id, &now, None, None)
+    repo.soft_delete(&ct, SnowflakeId(int_id), &now, None, None)
         .await
         .unwrap();
 
@@ -1311,11 +1315,14 @@ required = true
     let int_id: i64 = id.parse().unwrap();
 
     let now = now_str();
-    repo.soft_delete(&ct, int_id, &now, None, None)
+    repo.soft_delete(&ct, SnowflakeId(int_id), &now, None, None)
         .await
         .unwrap();
 
-    let found = repo.find_by_id(&ct, int_id, None, true).await.unwrap();
+    let found = repo
+        .find_by_id(&ct, SnowflakeId(int_id), None, true)
+        .await
+        .unwrap();
     assert!(found.is_some());
     assert_eq!(found.unwrap()["title"].as_str().unwrap(), "Soft Deleted");
 }
@@ -1355,7 +1362,7 @@ required = true
     let id: i64 = created["id"].as_str().unwrap().parse().unwrap();
 
     let now = now_str();
-    repo.soft_delete(&ct, id, &now, Some(42), None)
+    repo.soft_delete(&ct, SnowflakeId(id), &now, Some(42), None)
         .await
         .unwrap();
 
@@ -1407,7 +1414,9 @@ required = true
     let id: i64 = created["id"].as_str().unwrap().parse().unwrap();
 
     let now = now_str();
-    repo.soft_delete(&ct, id, &now, None, None).await.unwrap();
+    repo.soft_delete(&ct, SnowflakeId(id), &now, None, None)
+        .await
+        .unwrap();
 
     let query = ContentQuery {
         page: 1,

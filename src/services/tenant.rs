@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use crate::errors::app_error::AppError;
 use crate::models::tenant::{Tenant, TenantStatus};
+use crate::types::snowflake_id::SnowflakeId;
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateTenantRequest {
@@ -41,7 +42,7 @@ impl TenantService {
     }
 
     /// Get a tenant by ID
-    pub async fn get(&self, id: i64) -> Result<Option<Tenant>, AppError> {
+    pub async fn get(&self, id: SnowflakeId) -> Result<Option<Tenant>, AppError> {
         crate::models::tenant::find_by_id(&self.pool, id).await
     }
 
@@ -60,7 +61,11 @@ impl TenantService {
     }
 
     /// Update a tenant
-    pub async fn update(&self, id: i64, req: &UpdateTenantRequest) -> Result<Tenant, AppError> {
+    pub async fn update(
+        &self,
+        id: SnowflakeId,
+        req: &UpdateTenantRequest,
+    ) -> Result<Tenant, AppError> {
         let config = req
             .config
             .as_ref()
@@ -82,7 +87,7 @@ impl TenantService {
         .await
     }
 
-    pub async fn delete(&self, id: i64) -> Result<(), AppError> {
+    pub async fn delete(&self, id: SnowflakeId) -> Result<(), AppError> {
         crate::models::tenant::delete(&self.pool, id).await
     }
 
@@ -92,7 +97,7 @@ impl TenantService {
         if id == crate::constants::DEFAULT_TENANT {
             return Ok(id.to_string());
         }
-        let int_id: i64 = crate::utils::id::parse_id(id)?;
+        let int_id = crate::types::snowflake_id::parse_id(id)?;
         let tenant = crate::models::tenant::find_by_id(&self.pool, int_id).await?;
         match tenant {
             Some(t) if t.status == TenantStatus::Active => Ok(t.id.to_string()),
@@ -155,7 +160,7 @@ mod tests {
             })
             .await
             .unwrap();
-        let found = s.get(*t.id).await.unwrap().unwrap();
+        let found = s.get(t.id).await.unwrap().unwrap();
         assert_eq!(found.name, "Fetch");
     }
 
@@ -188,7 +193,7 @@ mod tests {
             .unwrap();
         let updated = s
             .update(
-                *t.id,
+                t.id,
                 &UpdateTenantRequest {
                     name: Some("New".into()),
                     domain: None,
@@ -205,7 +210,7 @@ mod tests {
     async fn delete_default_tenant_rejected() {
         let pool = setup_pool().await;
         let s = svc(pool);
-        let result = s.delete(1).await;
+        let result = s.delete(SnowflakeId(1)).await;
         assert!(
             result.is_err() || result.is_ok(),
             "delete tenant with id 1: {result:?}"
@@ -224,8 +229,8 @@ mod tests {
             })
             .await
             .unwrap();
-        s.delete(*t.id).await.unwrap();
-        assert!(s.get(*t.id).await.unwrap().is_none());
+        s.delete(t.id).await.unwrap();
+        assert!(s.get(t.id).await.unwrap().is_none());
     }
 
     #[tokio::test]

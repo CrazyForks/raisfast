@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -42,9 +43,9 @@ pub struct SetPermissionsRequest {
 /// Handler-facing Permission view (fields/conditions already deserialized)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionView {
-    #[serde(serialize_with = "crate::utils::id::serialize_id_as_string")]
-    pub id: i64,
-    pub role_id: i64,
+    #[serde(serialize_with = "crate::types::snowflake_id::serialize_id_as_string")]
+    pub id: SnowflakeId,
+    pub role_id: SnowflakeId,
     pub action: String,
     pub subject: String,
     pub fields: Option<Vec<String>>,
@@ -54,8 +55,8 @@ pub struct PermissionView {
 
 fn perm_to_view(p: &Permission) -> PermissionView {
     PermissionView {
-        id: *p.id,
-        role_id: *p.role_id,
+        id: p.id,
+        role_id: p.role_id,
         action: p.action.clone(),
         subject: p.subject.clone(),
         fields: p.fields.as_ref().and_then(|f| serde_json::from_str(f).ok()),
@@ -84,7 +85,7 @@ impl RbacService {
     }
 
     /// Get a role by ID
-    pub async fn get_role(&self, id: i64) -> Result<Option<Role>, AppError> {
+    pub async fn get_role(&self, id: SnowflakeId) -> Result<Option<Role>, AppError> {
         crate::models::rbac::find_role_by_id(&self.pool, id).await
     }
 
@@ -92,7 +93,11 @@ impl RbacService {
         crate::models::rbac::create_role(&self.pool, &req.name, req.description.as_deref()).await
     }
 
-    pub async fn update_role(&self, id: i64, req: &UpdateRoleRequest) -> Result<Role, AppError> {
+    pub async fn update_role(
+        &self,
+        id: SnowflakeId,
+        req: &UpdateRoleRequest,
+    ) -> Result<Role, AppError> {
         crate::models::rbac::update_role(
             &self.pool,
             id,
@@ -102,7 +107,7 @@ impl RbacService {
         .await
     }
 
-    pub async fn delete_role(&self, id: i64) -> Result<(), AppError> {
+    pub async fn delete_role(&self, id: SnowflakeId) -> Result<(), AppError> {
         let role = crate::models::rbac::find_role_by_id(&self.pool, id)
             .await?
             .ok_or_else(|| AppError::not_found(&format!("role/{id}")))?;
@@ -113,11 +118,11 @@ impl RbacService {
     }
 
     pub async fn get_permissions(&self, role_id: &str) -> Result<Vec<PermissionView>, AppError> {
-        let rid: i64 = crate::utils::id::parse_id(role_id)?;
+        let rid = crate::types::snowflake_id::parse_id(role_id)?;
         let role = crate::models::rbac::find_role_by_id(&self.pool, rid)
             .await?
             .ok_or_else(|| AppError::not_found(&format!("role/{role_id}")))?;
-        let perms = crate::models::rbac::find_permissions_by_role_id(&self.pool, *role.id).await?;
+        let perms = crate::models::rbac::find_permissions_by_role_id(&self.pool, role.id).await?;
         Ok(perms.iter().map(perm_to_view).collect())
     }
 
@@ -126,11 +131,11 @@ impl RbacService {
         role_id: &str,
         entries: &[PermissionEntry],
     ) -> Result<Vec<PermissionView>, AppError> {
-        let rid: i64 = crate::utils::id::parse_id(role_id)?;
+        let rid = crate::types::snowflake_id::parse_id(role_id)?;
         let role = crate::models::rbac::find_role_by_id(&self.pool, rid)
             .await?
             .ok_or_else(|| AppError::not_found(&format!("role/{role_id}")))?;
-        crate::models::rbac::delete_permissions_by_role_id(&self.pool, *role.id).await?;
+        crate::models::rbac::delete_permissions_by_role_id(&self.pool, role.id).await?;
 
         for entry in entries {
             let fields_json = entry
@@ -145,7 +150,7 @@ impl RbacService {
             crate::models::rbac::insert_permission(
                 &self.pool,
                 &CreatePermissionCmd {
-                    role_id: *role.id,
+                    role_id: role.id,
                     action: entry.action.clone(),
                     subject: entry.subject.clone(),
                     fields: fields_json,

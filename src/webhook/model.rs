@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -84,7 +84,7 @@ pub async fn find_paginated(
     Ok(result)
 }
 
-pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<WebhookSubscription> {
+pub async fn find_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<WebhookSubscription> {
     raisfast_derive::crud_find_one!(pool, "webhook_subscriptions", WebhookSubscription, "id" => id)
         .map_err(Into::into)
 }
@@ -100,7 +100,7 @@ pub async fn update(pool: &crate::db::Pool, sub: &WebhookSubscription) -> AppRes
     Ok(())
 }
 
-pub async fn delete_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
+pub async fn delete_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
     let result = raisfast_derive::crud_delete!(pool, "webhook_subscriptions", "id" => id)?;
     AppError::expect_affected(&result, "webhook_subscription")?;
     Ok(())

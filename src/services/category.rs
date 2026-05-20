@@ -12,6 +12,7 @@ use crate::dto::{CreateCategoryRequest, UpdateCategoryRequest};
 use crate::errors::app_error::AppResult;
 use crate::middleware::auth::AuthUser;
 use crate::models::category::Category;
+use crate::types::snowflake_id::SnowflakeId;
 
 /// Category business logic trait.
 #[async_trait]
@@ -20,11 +21,11 @@ pub trait CategoryService: Send + Sync {
     async fn update(
         &self,
         auth: &AuthUser,
-        id: i64,
+        id: SnowflakeId,
         req: UpdateCategoryRequest,
     ) -> AppResult<Category>;
-    async fn delete(&self, id: i64, auth: &AuthUser) -> AppResult<()>;
-    async fn get(&self, id: i64, auth: &AuthUser) -> AppResult<Category>;
+    async fn delete(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<()>;
+    async fn get(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<Category>;
     async fn list(&self, auth: &AuthUser) -> AppResult<Vec<Category>>;
     async fn list_paginated(
         &self,
@@ -50,7 +51,7 @@ impl CategoryService for CategoryServiceImpl {
             if raw_id.parse::<i64>().is_ok() {
                 raw_id.parse::<i64>().ok()
             } else {
-                let pid: i64 = crate::utils::id::parse_id(raw_id)?;
+                let pid = crate::types::snowflake_id::parse_id(raw_id)?;
                 let parent =
                     crate::models::category::find_by_id(&self.pool, pid, auth.tenant_id()).await?;
                 Some(*parent.id)
@@ -75,7 +76,7 @@ impl CategoryService for CategoryServiceImpl {
     async fn update(
         &self,
         auth: &AuthUser,
-        id: i64,
+        id: SnowflakeId,
         req: UpdateCategoryRequest,
     ) -> AppResult<Category> {
         let existing =
@@ -91,7 +92,7 @@ impl CategoryService for CategoryServiceImpl {
             if raw_id.parse::<i64>().is_ok() {
                 raw_id.parse::<i64>().ok()
             } else {
-                let pid: i64 = crate::utils::id::parse_id(raw_id)?;
+                let pid = crate::types::snowflake_id::parse_id(raw_id)?;
                 let parent =
                     crate::models::category::find_by_id(&self.pool, pid, auth.tenant_id()).await?;
                 Some(*parent.id)
@@ -100,7 +101,7 @@ impl CategoryService for CategoryServiceImpl {
             None
         };
         let cmd = UpdateCategoryCmd {
-            id: *existing.id,
+            id: existing.id,
             name: req.name,
             slug: Some(new_slug),
             description: req.description,
@@ -114,16 +115,16 @@ impl CategoryService for CategoryServiceImpl {
         Ok(updated)
     }
 
-    async fn delete(&self, id: i64, auth: &AuthUser) -> AppResult<()> {
+    async fn delete(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<()> {
         let existing =
             crate::models::category::find_by_id(&self.pool, id, auth.tenant_id()).await?;
         self.before_delete(auth, &existing).await?;
-        crate::models::category::delete(&self.pool, *existing.id, auth.tenant_id()).await?;
+        crate::models::category::delete(&self.pool, existing.id, auth.tenant_id()).await?;
         self.after_deleted(&existing);
         Ok(())
     }
 
-    async fn get(&self, id: i64, auth: &AuthUser) -> AppResult<Category> {
+    async fn get(&self, id: SnowflakeId, auth: &AuthUser) -> AppResult<Category> {
         crate::models::category::find_by_id(&self.pool, id, auth.tenant_id()).await
     }
 
@@ -215,7 +216,7 @@ mod tests {
         let updated = svc
             .update(
                 &a,
-                *cat.id,
+                cat.id,
                 crate::dto::UpdateCategoryRequest {
                     name: Some("New".into()),
                     description: None,
@@ -246,7 +247,7 @@ mod tests {
             )
             .await
             .unwrap();
-        svc.delete(*cat.id, &a).await.unwrap();
+        svc.delete(cat.id, &a).await.unwrap();
         let cats = svc.list(&a).await.unwrap();
         assert!(cats.is_empty());
     }
@@ -256,7 +257,7 @@ mod tests {
         let pool = setup_pool().await;
         let svc = make_service(pool.clone());
         let a = auth(None);
-        assert!(svc.delete(999999, &a).await.is_err());
+        assert!(svc.delete(SnowflakeId(999999), &a).await.is_err());
     }
 
     #[tokio::test]

@@ -5,6 +5,7 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::page;
 use crate::models::reusable_block;
+use crate::types::snowflake_id::SnowflakeId;
 
 fn validate_blocks_json(blocks: &str) -> AppResult<Vec<page::PageBlock>> {
     serde_json::from_str(blocks)
@@ -20,7 +21,7 @@ pub async fn list_reusable(
 
 pub async fn get_reusable(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     auth: &AuthUser,
 ) -> AppResult<Option<reusable_block::ReusableBlock>> {
     reusable_block::find_reusable_by_id(pool, id, auth.tenant_id()).await
@@ -52,7 +53,7 @@ pub async fn create_reusable(
 
 pub async fn update_reusable(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     auth: &AuthUser,
     name: Option<&str>,
     block_type: Option<&str>,
@@ -68,7 +69,7 @@ pub async fn update_reusable(
     reusable_block::update_reusable(
         pool,
         &UpdateReusableBlockCmd {
-            id: *block.id,
+            id: block.id,
             name: name.map(|s| s.to_string()),
             block_type: block_type.map(|s| s.to_string()),
             content: content.map(|s| s.to_string()),
@@ -80,11 +81,15 @@ pub async fn update_reusable(
     .await
 }
 
-pub async fn delete_reusable(pool: &crate::db::Pool, id: i64, auth: &AuthUser) -> AppResult<()> {
+pub async fn delete_reusable(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    auth: &AuthUser,
+) -> AppResult<()> {
     let block = reusable_block::find_reusable_by_id(pool, id, auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("reusable_block"))?;
-    reusable_block::delete_reusable(pool, *block.id, auth.tenant_id()).await
+    reusable_block::delete_reusable(pool, block.id, auth.tenant_id()).await
 }
 
 #[cfg(test)]

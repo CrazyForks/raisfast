@@ -5,6 +5,7 @@ use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
+use crate::types::snowflake_id::SnowflakeId;
 use axum::Json;
 use axum::extract::{Path, State};
 
@@ -66,7 +67,10 @@ pub async fn list_addresses(
     State(state): State<crate::AppState>,
 ) -> AppResult<ApiResponse<Vec<UserAddressResponse>>> {
     let user_id = resolve_user_id(&auth)?;
-    let addrs = state.user_address_service.list(&auth, user_id).await?;
+    let addrs = state
+        .user_address_service
+        .list(&auth, SnowflakeId(user_id))
+        .await?;
     let resp: Vec<UserAddressResponse> = addrs.into_iter().map(Into::into).collect();
     Ok(ApiResponse::success(resp))
 }
@@ -80,7 +84,7 @@ pub async fn create_address(
     validation::validate(&req)?;
     let addr = state
         .user_address_service
-        .create(&auth, user_id, req)
+        .create(&auth, SnowflakeId(user_id), req)
         .await?;
     Ok(ApiResponse::success(UserAddressResponse::from(addr)))
 }
@@ -93,10 +97,10 @@ pub async fn update_address(
 ) -> AppResult<ApiResponse<UserAddressResponse>> {
     let user_id = resolve_user_id(&auth)?;
     validation::validate(&req)?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let addr = state
         .user_address_service
-        .update(&auth, user_id, id, req)
+        .update(&auth, SnowflakeId(user_id), id, req)
         .await?;
     Ok(ApiResponse::success(UserAddressResponse::from(addr)))
 }
@@ -107,10 +111,10 @@ pub async fn delete_address(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     let user_id = resolve_user_id(&auth)?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state
         .user_address_service
-        .delete(&auth, user_id, id)
+        .delete(&auth, SnowflakeId(user_id), id)
         .await?;
     Ok(ApiResponse::success(()))
 }

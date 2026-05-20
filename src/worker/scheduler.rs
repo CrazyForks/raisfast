@@ -40,7 +40,7 @@ use crate::db::Pool;
 use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::plugins::CronEntry;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 use super::{CronExecStatus, Job, JobQueue, NewJob};
@@ -49,7 +49,7 @@ macro_rules! cron_row_to_schedule {
     ($r:expr) => {{
         let r = $r;
         CronSchedule {
-            id: SnowflakeId(r.id),
+            id: r.id,
             label: r.label,
             job_type: r.job_type,
             payload: r.payload,
@@ -68,8 +68,8 @@ macro_rules! exec_log_row_to_struct {
     ($r:expr) => {{
         let r = $r;
         CronExecutionLog {
-            id: SnowflakeId(r.id),
-            schedule_id: SnowflakeId(r.schedule_id),
+            id: r.id,
+            schedule_id: r.schedule_id,
             job_type: r.job_type,
             label: r.label,
             status: r.status,
@@ -83,7 +83,7 @@ macro_rules! exec_log_row_to_struct {
 
 #[derive(sqlx::FromRow)]
 struct CronScheduleRow {
-    id: i64,
+    id: SnowflakeId,
     label: String,
     job_type: String,
     payload: Option<String>,
@@ -98,8 +98,8 @@ struct CronScheduleRow {
 
 #[derive(sqlx::FromRow)]
 struct CronExecLogRow {
-    id: i64,
-    schedule_id: i64,
+    id: SnowflakeId,
+    schedule_id: SnowflakeId,
     job_type: String,
     label: String,
     status: CronExecStatus,
@@ -111,7 +111,7 @@ struct CronExecLogRow {
 
 #[derive(sqlx::FromRow)]
 struct PluginCronRow {
-    id: i64,
+    id: SnowflakeId,
     job_type: String,
 }
 
@@ -209,7 +209,7 @@ pub async fn create_schedule_with_plugin(
 }
 
 /// Find by ID
-pub async fn find_by_id(pool: &Pool, id: i64) -> AppResult<Option<CronSchedule>> {
+pub async fn find_by_id(pool: &Pool, id: SnowflakeId) -> AppResult<Option<CronSchedule>> {
     let row = sqlx::query_as::<_, CronScheduleRow>(&format!(
         "SELECT id, label, job_type, payload, cron_expr, enabled, last_run_at, next_run_at, plugin_id, created_at, updated_at
          FROM cron_schedules WHERE id = {}",
@@ -235,7 +235,7 @@ pub async fn list_schedules(pool: &Pool) -> AppResult<Vec<CronSchedule>> {
 }
 
 /// Enable/disable a schedule
-pub async fn toggle_schedule(pool: &Pool, id: i64, enabled: bool) -> AppResult<()> {
+pub async fn toggle_schedule(pool: &Pool, id: SnowflakeId, enabled: bool) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     let result = sqlx::query(&format!(
         "UPDATE cron_schedules SET enabled = {}, updated_at = {} WHERE id = {}",
@@ -260,7 +260,7 @@ pub async fn toggle_schedule(pool: &Pool, id: i64, enabled: bool) -> AppResult<(
 /// Merges provided fields, recalculates `next_run_at`, persists and returns the updated schedule.
 pub async fn update_schedule(
     pool: &Pool,
-    id: i64,
+    id: SnowflakeId,
     label: Option<String>,
     job_type: Option<String>,
     payload: Option<Option<String>>,
@@ -309,7 +309,7 @@ pub async fn update_schedule(
 }
 
 /// Delete a schedule
-pub async fn delete_schedule(pool: &Pool, id: i64) -> AppResult<()> {
+pub async fn delete_schedule(pool: &Pool, id: SnowflakeId) -> AppResult<()> {
     let result = sqlx::query(&format!("DELETE FROM cron_schedules WHERE id = {}", ph(1)))
         .bind(id)
         .execute(pool)
@@ -394,14 +394,10 @@ impl CronScheduler {
             schedule.job_type
         );
 
-        let log_id = create_execution_log(
-            &self.pool,
-            *schedule.id,
-            &schedule.job_type,
-            &schedule.label,
-        )
-        .await
-        .ok();
+        let log_id =
+            create_execution_log(&self.pool, schedule.id, &schedule.job_type, &schedule.label)
+                .await
+                .ok();
 
         let start = std::time::Instant::now();
 
@@ -555,7 +551,7 @@ pub struct CronExecutionLog {
 /// Create an execution log (status: running)
 pub async fn create_execution_log(
     pool: &Pool,
-    schedule_id: i64,
+    schedule_id: SnowflakeId,
     job_type: &str,
     label: &str,
 ) -> AppResult<i64> {
@@ -585,7 +581,11 @@ pub async fn create_execution_log(
 }
 
 /// Mark execution log as succeeded
-pub async fn complete_execution_log(pool: &Pool, log_id: i64, duration_ms: i64) -> AppResult<()> {
+pub async fn complete_execution_log(
+    pool: &Pool,
+    log_id: SnowflakeId,
+    duration_ms: i64,
+) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     sqlx::query(&format!(
         "UPDATE cron_execution_log SET status = {}, duration_ms = {}, finished_at = {} WHERE id = {}",
@@ -603,7 +603,7 @@ pub async fn complete_execution_log(pool: &Pool, log_id: i64, duration_ms: i64) 
 /// Mark execution log as failed
 pub async fn fail_execution_log(
     pool: &Pool,
-    log_id: i64,
+    log_id: SnowflakeId,
     duration_ms: i64,
     error: &str,
 ) -> AppResult<()> {
@@ -625,7 +625,7 @@ pub async fn fail_execution_log(
 /// Query execution history for a schedule
 pub async fn list_execution_logs(
     pool: &Pool,
-    schedule_id: i64,
+    schedule_id: SnowflakeId,
     limit: i64,
 ) -> AppResult<Vec<CronExecutionLog>> {
     let rows = sqlx::query_as::<_, CronExecLogRow>(&format!(
@@ -843,7 +843,7 @@ mod tests {
         assert!(s.enabled);
         assert!(s.next_run_at.to_rfc3339().len() > 10);
 
-        let found = find_by_id(&pool, *s.id).await.unwrap().unwrap();
+        let found = find_by_id(&pool, s.id).await.unwrap().unwrap();
         assert_eq!(found.job_type, "generate_sitemap");
     }
 
@@ -866,12 +866,12 @@ mod tests {
         .await
         .unwrap();
 
-        toggle_schedule(&pool, *s.id, false).await.unwrap();
-        let found = find_by_id(&pool, *s.id).await.unwrap().unwrap();
+        toggle_schedule(&pool, s.id, false).await.unwrap();
+        let found = find_by_id(&pool, s.id).await.unwrap().unwrap();
         assert!(!found.enabled);
 
-        delete_schedule(&pool, *s.id).await.unwrap();
-        assert!(find_by_id(&pool, *s.id).await.unwrap().is_none());
+        delete_schedule(&pool, s.id).await.unwrap();
+        assert!(find_by_id(&pool, s.id).await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -882,7 +882,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = toggle_schedule(&pool, 9999999, true).await;
+        let result = toggle_schedule(&pool, SnowflakeId(9999999), true).await;
         assert!(result.is_err());
     }
 
@@ -1205,20 +1205,27 @@ mod tests {
         let pool = setup_log_tables().await;
         let sched_id = insert_test_schedule(&pool).await;
 
-        let log_id = create_execution_log(&pool, sched_id, "generate_sitemap", "Sitemap")
+        let log_id =
+            create_execution_log(&pool, SnowflakeId(sched_id), "generate_sitemap", "Sitemap")
+                .await
+                .unwrap();
+
+        let logs = list_execution_logs(&pool, SnowflakeId(sched_id), 10)
             .await
             .unwrap();
-
-        let logs = list_execution_logs(&pool, sched_id, 10).await.unwrap();
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].status, CronExecStatus::Running);
         assert_eq!(logs[0].job_type, "generate_sitemap");
         assert!(logs[0].duration_ms.is_none());
         assert!(logs[0].finished_at.is_none());
 
-        complete_execution_log(&pool, log_id, 42).await.unwrap();
+        complete_execution_log(&pool, SnowflakeId(log_id), 42)
+            .await
+            .unwrap();
 
-        let logs = list_execution_logs(&pool, sched_id, 10).await.unwrap();
+        let logs = list_execution_logs(&pool, SnowflakeId(sched_id), 10)
+            .await
+            .unwrap();
         assert_eq!(logs[0].status, CronExecStatus::Completed);
         assert_eq!(logs[0].duration_ms, Some(42));
         assert!(logs[0].finished_at.is_some());
@@ -1229,15 +1236,17 @@ mod tests {
         let pool = setup_log_tables().await;
         let sched_id = insert_test_schedule(&pool).await;
 
-        let log_id = create_execution_log(&pool, sched_id, "my_task", "Task")
+        let log_id = create_execution_log(&pool, SnowflakeId(sched_id), "my_task", "Task")
             .await
             .unwrap();
 
-        fail_execution_log(&pool, log_id, 100, "something broke")
+        fail_execution_log(&pool, SnowflakeId(log_id), 100, "something broke")
             .await
             .unwrap();
 
-        let logs = list_execution_logs(&pool, sched_id, 10).await.unwrap();
+        let logs = list_execution_logs(&pool, SnowflakeId(sched_id), 10)
+            .await
+            .unwrap();
         assert_eq!(logs[0].status, CronExecStatus::Failed);
         assert_eq!(logs[0].duration_ms, Some(100));
         assert_eq!(logs[0].error, Some("something broke".into()));
@@ -1249,20 +1258,24 @@ mod tests {
         let sched_a = insert_test_schedule(&pool).await;
         let sched_b = insert_test_schedule(&pool).await;
 
-        create_execution_log(&pool, sched_a, "task_a", "A")
+        create_execution_log(&pool, SnowflakeId(sched_a), "task_a", "A")
             .await
             .unwrap();
-        create_execution_log(&pool, sched_b, "task_b", "B")
+        create_execution_log(&pool, SnowflakeId(sched_b), "task_b", "B")
             .await
             .unwrap();
-        create_execution_log(&pool, sched_a, "task_a", "A2")
+        create_execution_log(&pool, SnowflakeId(sched_a), "task_a", "A2")
             .await
             .unwrap();
 
-        let a = list_execution_logs(&pool, sched_a, 10).await.unwrap();
+        let a = list_execution_logs(&pool, SnowflakeId(sched_a), 10)
+            .await
+            .unwrap();
         assert_eq!(a.len(), 2);
 
-        let b = list_execution_logs(&pool, sched_b, 10).await.unwrap();
+        let b = list_execution_logs(&pool, SnowflakeId(sched_b), 10)
+            .await
+            .unwrap();
         assert_eq!(b.len(), 1);
     }
 
@@ -1272,10 +1285,10 @@ mod tests {
         let s1 = insert_test_schedule(&pool).await;
         let s2 = insert_test_schedule(&pool).await;
 
-        create_execution_log(&pool, s1, "task_1", "First")
+        create_execution_log(&pool, SnowflakeId(s1), "task_1", "First")
             .await
             .unwrap();
-        create_execution_log(&pool, s2, "task_2", "Second")
+        create_execution_log(&pool, SnowflakeId(s2), "task_2", "Second")
             .await
             .unwrap();
 
@@ -1289,14 +1302,16 @@ mod tests {
         let pool = setup_log_tables().await;
         let s1 = insert_test_schedule(&pool).await;
 
-        create_execution_log(&pool, s1, "task_1", "Old")
+        create_execution_log(&pool, SnowflakeId(s1), "task_1", "Old")
             .await
             .unwrap();
 
         let count = cleanup_execution_logs(&pool, 0).await.unwrap();
         assert_eq!(count, 1);
 
-        let logs = list_execution_logs(&pool, s1, 10).await.unwrap();
+        let logs = list_execution_logs(&pool, SnowflakeId(s1), 10)
+            .await
+            .unwrap();
         assert!(logs.is_empty());
     }
 
@@ -1332,7 +1347,9 @@ mod tests {
 
         scheduler.tick().await.unwrap();
 
-        let logs = list_execution_logs(&pool, 3, 10).await.unwrap();
+        let logs = list_execution_logs(&pool, SnowflakeId(3), 10)
+            .await
+            .unwrap();
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].status, CronExecStatus::Completed);
         assert!(logs[0].duration_ms.is_some());

@@ -7,6 +7,7 @@ use crate::AppState;
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -68,7 +69,7 @@ pub async fn get(
     Path(id): Path<i64>,
 ) -> AppResult<ApiResponse<crate::models::audit_log::AuditEntry>> {
     auth.ensure_admin()?;
-    let entry = state.audit.get(id).await?;
+    let entry = state.audit.get(SnowflakeId(id)).await?;
     Ok(ApiResponse::success(entry))
 }
 

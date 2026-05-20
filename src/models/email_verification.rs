@@ -5,8 +5,7 @@ use sqlx::FromRow;
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
-use crate::utils::id;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 /// Email verification token database row model
@@ -25,11 +24,14 @@ pub struct EmailVerificationToken {
 /// Create a new email verification token
 pub async fn create(
     pool: &crate::db::Pool,
-    user_id: i64,
+    user_id: SnowflakeId,
     email: &str,
     expires_in_secs: i64,
 ) -> AppResult<EmailVerificationToken> {
-    let (id, now) = id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
 
     let mut token_bytes = [0u8; 32];
     getrandom::getrandom(&mut token_bytes).map_err(|e| {
@@ -72,7 +74,7 @@ pub async fn find_by_token(
 }
 
 /// Mark a token as verified
-pub async fn mark_verified(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
+pub async fn mark_verified(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_update!(pool, "email_verification_tokens",
         bind: ["verified_at" => now],
@@ -82,7 +84,7 @@ pub async fn mark_verified(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
 }
 
 /// Delete all unused verification tokens for a user
-pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<()> {
+pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: SnowflakeId) -> AppResult<()> {
     raisfast_derive::crud_delete!(
         pool,
         "email_verification_tokens",
@@ -107,6 +109,7 @@ pub async fn cleanup_expired(pool: &crate::db::Pool) -> AppResult<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -130,7 +133,9 @@ mod tests {
     async fn create_and_find_by_token() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
-        let row = create(&pool, user_id, "ev1@test.com", 3600).await.unwrap();
+        let row = create(&pool, SnowflakeId(user_id), "ev1@test.com", 3600)
+            .await
+            .unwrap();
         let found = find_by_token(&pool, &row.token).await.unwrap().unwrap();
         assert_eq!(found.id, row.id);
         assert_eq!(found.token, row.token);
@@ -142,9 +147,11 @@ mod tests {
     async fn mark_verified() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
-        let row = create(&pool, user_id, "ev2@test.com", 3600).await.unwrap();
+        let row = create(&pool, SnowflakeId(user_id), "ev2@test.com", 3600)
+            .await
+            .unwrap();
         assert!(row.verified_at.is_none());
-        super::mark_verified(&pool, *row.id).await.unwrap();
+        super::mark_verified(&pool, row.id).await.unwrap();
         let found = find_by_token(&pool, &row.token).await.unwrap();
         assert!(found.is_none());
     }
@@ -153,9 +160,15 @@ mod tests {
     async fn delete_unused_by_user() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
-        create(&pool, user_id, "ev3a@test.com", 3600).await.unwrap();
-        create(&pool, user_id, "ev3b@test.com", 3600).await.unwrap();
-        super::delete_unused_by_user(&pool, user_id).await.unwrap();
+        create(&pool, SnowflakeId(user_id), "ev3a@test.com", 3600)
+            .await
+            .unwrap();
+        create(&pool, SnowflakeId(user_id), "ev3b@test.com", 3600)
+            .await
+            .unwrap();
+        super::delete_unused_by_user(&pool, SnowflakeId(user_id))
+            .await
+            .unwrap();
         let sql = format!(
             "SELECT COUNT(*) FROM email_verification_tokens WHERE user_id = {}",
             ph(1),
@@ -172,7 +185,9 @@ mod tests {
     async fn cleanup_expired() {
         let pool = setup_pool().await;
         let user_id = insert_user(&pool).await;
-        create(&pool, user_id, "ev4@test.com", -1).await.unwrap();
+        create(&pool, SnowflakeId(user_id), "ev4@test.com", -1)
+            .await
+            .unwrap();
         let removed = super::cleanup_expired(&pool).await.unwrap();
         assert_eq!(removed, 1);
     }

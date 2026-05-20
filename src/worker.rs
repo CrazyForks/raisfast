@@ -15,6 +15,7 @@ mod runner;
 mod scheduler;
 mod sqlite_queue;
 
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::app_error::AppResult;
@@ -57,16 +58,16 @@ pub use sqlite_queue::SqliteJobQueue;
 #[non_exhaustive]
 pub enum Job {
     SendWelcomeEmail {
-        user_id: i64,
+        user_id: SnowflakeId,
         email: String,
         username: String,
     },
     GenerateThumbnail {
-        media_id: i64,
+        media_id: SnowflakeId,
         size: u32,
     },
     ScheduledPublish {
-        post_id: i64,
+        post_id: SnowflakeId,
     },
     WebhookNotify {
         url: String,
@@ -80,7 +81,7 @@ pub enum Job {
     },
     GenerateSitemap,
     SendPasswordResetEmail {
-        user_id: i64,
+        user_id: SnowflakeId,
         email: String,
         reset_token: String,
     },
@@ -90,13 +91,13 @@ pub enum Job {
         purpose: String,
     },
     SendEmailVerification {
-        user_id: i64,
+        user_id: SnowflakeId,
         email: String,
         verify_token: String,
     },
     ExpirePaymentOrders,
     RetryPaymentCallback {
-        payment_order_id: i64,
+        payment_order_id: SnowflakeId,
     },
     ReconcilePayments,
     ProcessWalletOutbox,
@@ -277,7 +278,7 @@ mod tests {
         assert_eq!(job.job_type(), "generate_sitemap");
 
         let job = Job::SendWelcomeEmail {
-            user_id: 1,
+            user_id: SnowflakeId(1),
             email: "a@b.com".into(),
             username: "alice".into(),
         };

@@ -17,6 +17,7 @@ use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::models::page::PageStatus;
 use crate::services::post::find_existing_id;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -154,7 +155,7 @@ async fn resolve_page_parent_id(
     let Some(raw_id) = parent_id else {
         return Ok(None);
     };
-    let parsed_id = crate::utils::id::parse_id(&raw_id)?;
+    let parsed_id = crate::types::snowflake_id::parse_id(&raw_id)?;
     find_existing_id(pool, "pages", parsed_id, None).await
 }
 
@@ -322,7 +323,7 @@ pub async fn admin_get(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<PageResponse>> {
     auth.ensure_author()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let page = state.page_service.get_by_id(id, &auth).await?;
     Ok(ApiResponse::success(PageResponse::from_page(page)))
 }
@@ -383,7 +384,7 @@ pub async fn update(
 
     let resolved_parent_id = resolve_page_parent_id(&state.pool, req.parent_id.flatten()).await?;
     let cmd = UpdatePageCmd {
-        id: 0,
+        id: SnowflakeId(0),
         title: req.title,
         slug: req.slug,
         content: req.content,
@@ -399,7 +400,7 @@ pub async fn update(
         updated_by: auth.user_id(),
     };
 
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let page = state.page_service.update_page(&auth, id, cmd).await?;
     Ok(ApiResponse::success(PageResponse::from_page(page)))
 }
@@ -415,7 +416,7 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
     auth.ensure_author()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state.page_service.delete_page(id, &auth).await?;
     Ok(ApiResponse::success(()))
 }
@@ -432,7 +433,7 @@ pub async fn update_status(
     Json(req): Json<UpdateStatusRequest>,
 ) -> AppResult<ApiResponse<PageResponse>> {
     auth.ensure_author()?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let page = state
         .page_service
         .update_status(id, req.status, &auth)
@@ -473,7 +474,7 @@ pub async fn admin_batch(
     validation::validate(&req)?;
     let mut affected = 0usize;
     for raw_id in &req.ids {
-        let Ok(id) = crate::utils::id::parse_id(raw_id) else {
+        let Ok(id) = crate::types::snowflake_id::parse_id(raw_id) else {
             continue;
         };
         match req.action.as_str() {

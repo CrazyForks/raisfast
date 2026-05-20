@@ -1,5 +1,6 @@
 //! User profile management service.
 
+use crate::types::snowflake_id::SnowflakeId;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -13,7 +14,7 @@ use crate::models::user::{User, UserRole};
 /// Get the current user's profile.
 pub async fn get_me(pool: &crate::db::Pool, auth: &AuthUser) -> AppResult<UserResponse> {
     let uid = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, uid, auth.tenant_id())
+    let user = crate::models::user::find_by_id(pool, SnowflakeId(uid), auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("user"))?;
     UserResponse::from_user(user)
@@ -28,7 +29,7 @@ pub async fn update_me(
     let user = crate::models::user::update_profile(
         pool,
         &UpdateProfileCmd {
-            id: auth.user_id().ok_or(AppError::Unauthorized)?,
+            id: SnowflakeId(auth.user_id().ok_or(AppError::Unauthorized)?),
             username: req.username,
             bio: req.bio,
             website: req.website,
@@ -45,7 +46,7 @@ pub async fn update_me(
 /// Get a specific user's public profile.
 pub async fn get_public_user(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<UserResponse> {
     let user = crate::models::user::find_by_id(pool, id, tenant_id)
@@ -112,7 +113,7 @@ impl UserService for UserServiceImpl {
         role: UserRole,
         tenant_id: Option<&str>,
     ) -> AppResult<User> {
-        let uid: i64 = crate::utils::id::parse_id(user_id)?;
+        let uid = crate::types::snowflake_id::parse_id(user_id)?;
         crate::models::user::update_role(&self.pool, uid, role, tenant_id).await
     }
 
@@ -122,12 +123,12 @@ impl UserService for UserServiceImpl {
         req: &UpdateUserRequest,
         tenant_id: Option<&str>,
     ) -> AppResult<User> {
-        let uid: i64 = crate::utils::id::parse_id(user_id)?;
+        let uid = crate::types::snowflake_id::parse_id(user_id)?;
         let user = crate::models::user::find_by_id(&self.pool, uid, tenant_id)
             .await?
             .ok_or_else(|| AppError::not_found("user"))?;
         let cmd = UpdateProfileCmd {
-            id: *user.id,
+            id: user.id,
             username: req.username.clone(),
             bio: req.bio.clone(),
             website: req.website.clone(),
@@ -139,7 +140,7 @@ impl UserService for UserServiceImpl {
     }
 
     async fn delete_user(&self, user_id: &str, tenant_id: Option<&str>) -> AppResult<()> {
-        let uid: i64 = crate::utils::id::parse_id(user_id)?;
+        let uid = crate::types::snowflake_id::parse_id(user_id)?;
         crate::models::user::delete_by_id(&self.pool, uid, tenant_id).await
     }
 
@@ -150,7 +151,7 @@ impl UserService for UserServiceImpl {
     ) -> AppResult<Vec<bool>> {
         let mut results = Vec::with_capacity(operations.len());
         for (user_id, role) in operations {
-            let uid: i64 = crate::utils::id::parse_id(user_id)?;
+            let uid = crate::types::snowflake_id::parse_id(user_id)?;
             let ok = crate::models::user::update_role(&self.pool, uid, *role, tenant_id)
                 .await
                 .is_ok();
@@ -229,14 +230,18 @@ mod tests {
     async fn get_public_user_found() {
         let pool = setup_pool().await;
         let user = insert_user(&pool, "pubuser").await;
-        let resp = super::get_public_user(&pool, *user.id, None).await.unwrap();
+        let resp = super::get_public_user(&pool, user.id, None).await.unwrap();
         assert_eq!(resp.username, "pubuser");
     }
 
     #[tokio::test]
     async fn get_public_user_not_found() {
         let pool = setup_pool().await;
-        assert!(super::get_public_user(&pool, 999999, None).await.is_err());
+        assert!(
+            super::get_public_user(&pool, SnowflakeId(999999), None)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

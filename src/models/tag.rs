@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -56,7 +56,7 @@ pub async fn find_paginated(
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Tag> {
     raisfast_derive::crud_find_one!(pool, "tags", Tag, "id" => id, tenant: tenant_id)
@@ -70,7 +70,10 @@ pub async fn create(
     tenant_id: Option<&str>,
     created_by: Option<i64>,
 ) -> AppResult<Tag> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
 
     raisfast_derive::crud_insert!(
         pool,
@@ -92,7 +95,7 @@ pub async fn create(
 
 pub async fn update(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     name: &str,
     slug: &str,
     tenant_id: Option<&str>,
@@ -107,7 +110,11 @@ pub async fn update(
     find_by_id(pool, id, tenant_id).await
 }
 
-pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
+pub async fn delete(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
     let result = raisfast_derive::crud_delete!(pool, "tags", "id" => id, tenant: tenant_id)?;
     AppError::expect_affected(&result, "tag")
 }
@@ -127,7 +134,7 @@ mod tests {
         assert_eq!(tag.name, "rust");
         assert_eq!(tag.slug, "rust");
 
-        let found = find_by_id(&pool, *tag.id, None).await.unwrap();
+        let found = find_by_id(&pool, tag.id, None).await.unwrap();
         assert_eq!(found.id, tag.id);
         assert_eq!(found.name, "rust");
     }
@@ -162,7 +169,7 @@ mod tests {
         let pool = setup_pool().await;
         let tag = create(&pool, "rust", "rust", None, None).await.unwrap();
 
-        let updated = update(&pool, *tag.id, "Rust Lang", "rust-lang", None)
+        let updated = update(&pool, tag.id, "Rust Lang", "rust-lang", None)
             .await
             .unwrap();
         assert_eq!(updated.name, "Rust Lang");
@@ -175,8 +182,8 @@ mod tests {
         let pool = setup_pool().await;
         let tag = create(&pool, "rust", "rust", None, None).await.unwrap();
 
-        delete(&pool, *tag.id, None).await.unwrap();
-        let result = find_by_id(&pool, *tag.id, None).await;
+        delete(&pool, tag.id, None).await.unwrap();
+        let result = find_by_id(&pool, tag.id, None).await;
         assert!(result.is_err());
     }
 }

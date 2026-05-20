@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::db::dialect::ph;
 use crate::db::tenant::tenant_filter_ph;
 use crate::errors::app_error::{AppError, AppResult};
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
@@ -38,7 +38,10 @@ pub async fn create(
     cmd: &crate::commands::CreateMediaCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Media> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
 
     raisfast_derive::crud_insert!(
         pool,
@@ -65,7 +68,7 @@ pub async fn create(
 
 pub async fn find_all(
     pool: &crate::db::Pool,
-    user_id: i64,
+    user_id: SnowflakeId,
     page: i64,
     page_size: i64,
     tenant_id: Option<&str>,
@@ -102,7 +105,7 @@ pub async fn find_all_admin(
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Media>> {
     Ok(raisfast_derive::crud_find!(pool, "media", Media, "id" => id, tenant: tenant_id)?)
@@ -124,7 +127,7 @@ pub struct MediaTypeInfo {
 
 pub async fn stats(
     pool: &crate::db::Pool,
-    user_id: i64,
+    user_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<MediaStats> {
     let filter = tenant_filter_ph(tenant_id, 2);
@@ -171,7 +174,11 @@ pub async fn stats(
     })
 }
 
-pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
+pub async fn delete(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
     let result = raisfast_derive::crud_delete!(pool, "media", "id" => id, tenant: tenant_id)?;
     AppError::expect_affected(&result, "media")
 }
@@ -180,6 +187,7 @@ pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) ->
 mod tests {
     use super::*;
     use crate::commands::media::CreateMediaCmd;
+    use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -201,7 +209,7 @@ mod tests {
 
     fn make_cmd(user_id: i64, filename: &str) -> CreateMediaCmd {
         CreateMediaCmd {
-            user_id,
+            user_id: SnowflakeId(user_id),
             filename: filename.to_string(),
             filepath: format!("/uploads/{filename}"),
             mimetype: "image/png".to_string(),
@@ -218,10 +226,10 @@ mod tests {
         let media = create(&pool, &make_cmd(uid, "photo.png"), None)
             .await
             .unwrap();
-        let found = find_by_id(&pool, *media.id, None).await.unwrap().unwrap();
+        let found = find_by_id(&pool, media.id, None).await.unwrap().unwrap();
         assert_eq!(found.id, media.id);
         assert_eq!(found.filename, "photo.png");
-        assert_eq!(found.user_id, uid);
+        assert_eq!(found.user_id, SnowflakeId(uid));
     }
 
     #[tokio::test]
@@ -233,7 +241,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let (items, total) = find_all(&pool, uid, 1, 3, None).await.unwrap();
+        let (items, total) = find_all(&pool, SnowflakeId(uid), 1, 3, None).await.unwrap();
         assert_eq!(total, 5);
         assert_eq!(items.len(), 3);
     }
@@ -247,7 +255,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let s = stats(&pool, uid, None).await.unwrap();
+        let s = stats(&pool, SnowflakeId(uid), None).await.unwrap();
         assert_eq!(s.total_files, 3);
         assert_eq!(s.total_size, 3 * 1024);
         assert_eq!(s.by_type.len(), 1);
@@ -262,15 +270,15 @@ mod tests {
         let media = create(&pool, &make_cmd(uid, "gone.png"), None)
             .await
             .unwrap();
-        delete(&pool, *media.id, None).await.unwrap();
-        let found = find_by_id(&pool, *media.id, None).await.unwrap();
+        delete(&pool, media.id, None).await.unwrap();
+        let found = find_by_id(&pool, media.id, None).await.unwrap();
         assert!(found.is_none());
     }
 
     #[tokio::test]
     async fn find_by_id_not_found() {
         let pool = setup_pool().await;
-        let found = find_by_id(&pool, 99999, None).await.unwrap();
+        let found = find_by_id(&pool, SnowflakeId(99999), None).await.unwrap();
         assert!(found.is_none());
     }
 }

@@ -7,6 +7,7 @@ use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
+use crate::types::snowflake_id::SnowflakeId;
 
 pub fn routes(
     registry: &mut crate::server::RouteRegistry,
@@ -112,7 +113,7 @@ pub async fn add_to_cart(
         .cart_service
         .add_item(
             &auth,
-            user_int_id,
+            SnowflakeId(user_int_id),
             req.product_id,
             req.quantity,
             req.attributes,
@@ -133,7 +134,10 @@ pub async fn list_cart(
     let user_int_id = auth
         .user_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
-    let cart = state.cart_service.list_items(&auth, user_int_id).await?;
+    let cart = state
+        .cart_service
+        .list_items(&auth, SnowflakeId(user_int_id))
+        .await?;
     Ok(ApiResponse::success(cart))
 }
 
@@ -154,10 +158,10 @@ pub async fn update_cart_item(
         .user_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
     validation::validate(&req)?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state
         .cart_service
-        .update_quantity(&auth, id, user_int_id, req.quantity)
+        .update_quantity(&auth, id, SnowflakeId(user_int_id), req.quantity)
         .await?;
     Ok(ApiResponse::success(()))
 }
@@ -176,10 +180,10 @@ pub async fn remove_from_cart(
     let user_int_id = auth
         .user_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     state
         .cart_service
-        .remove_item(&auth, id, user_int_id)
+        .remove_item(&auth, id, SnowflakeId(user_int_id))
         .await?;
     Ok(ApiResponse::success(()))
 }
@@ -196,7 +200,10 @@ pub async fn clear_cart(
     let user_int_id = auth
         .user_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
-    state.cart_service.clear_cart(&auth, user_int_id).await?;
+    state
+        .cart_service
+        .clear_cart(&auth, SnowflakeId(user_int_id))
+        .await?;
     Ok(ApiResponse::success(()))
 }
 
@@ -212,6 +219,9 @@ pub async fn checkout(
     let user_int_id = auth
         .user_id()
         .ok_or(crate::errors::app_error::AppError::Unauthorized)?;
-    let (order, items) = state.cart_service.checkout(&auth, user_int_id).await?;
+    let (order, items) = state
+        .cart_service
+        .checkout(&auth, SnowflakeId(user_int_id))
+        .await?;
     Ok(ApiResponse::success(to_order_response(order, items)))
 }

@@ -11,6 +11,7 @@ use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::media;
 use crate::storage::Storage;
+use crate::types::snowflake_id::SnowflakeId;
 
 /// Whitelist of allowed upload MIME types.
 pub(crate) const ALLOWED_TYPES: &[&str] = &[
@@ -159,14 +160,14 @@ pub async fn save_file(
         (None, None)
     };
 
-    let user = crate::models::user::find_by_id(pool, user_id, tenant_id)
+    let user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), tenant_id)
         .await?
         .ok_or(AppError::Unauthorized)?;
 
     let media = media::create(
         pool,
         &CreateMediaCmd {
-            user_id: *user.id,
+            user_id: user.id,
             filename: filename.to_string(),
             filepath: key.clone(),
             mimetype: content_type.to_string(),
@@ -209,10 +210,10 @@ pub async fn list(
     page_size: i64,
 ) -> AppResult<(Vec<media::Media>, i64)> {
     let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
+    let user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
-    media::find_all(pool, *user.id, page, page_size, auth.tenant_id()).await
+    media::find_all(pool, user.id, page, page_size, auth.tenant_id()).await
 }
 
 pub async fn admin_list(
@@ -246,11 +247,11 @@ pub async fn admin_delete_media(
     .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
     .ok_or_else(|| AppError::not_found("media"))?;
 
-    let m = crate::models::media::find_by_id(pool, media_pk, auth.tenant_id())
+    let m = crate::models::media::find_by_id(pool, SnowflakeId(media_pk), auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("media"))?;
 
-    media::delete(pool, media_pk, auth.tenant_id()).await?;
+    media::delete(pool, SnowflakeId(media_pk), auth.tenant_id()).await?;
 
     if let Err(e) = storage.delete(&m.filepath).await {
         tracing::warn!(key = %m.filepath, error = %e, "failed to delete file from storage");
@@ -270,7 +271,7 @@ pub async fn delete_media(
     auth: &AuthUser,
 ) -> AppResult<()> {
     let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
+    let user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -290,7 +291,7 @@ pub async fn delete_media(
     .map_err(|e| AppError::Internal(anyhow::anyhow!("{e}")))?
     .ok_or_else(|| AppError::not_found("media"))?;
 
-    let m = crate::models::media::find_by_id(pool, media_pk, auth.tenant_id())
+    let m = crate::models::media::find_by_id(pool, SnowflakeId(media_pk), auth.tenant_id())
         .await?
         .ok_or_else(|| AppError::not_found("media"))?;
 
@@ -298,7 +299,7 @@ pub async fn delete_media(
         return Err(AppError::Forbidden);
     }
 
-    media::delete(pool, media_pk, auth.tenant_id()).await?;
+    media::delete(pool, SnowflakeId(media_pk), auth.tenant_id()).await?;
 
     if let Err(e) = storage.delete(&m.filepath).await {
         tracing::warn!(key = %m.filepath, error = %e, "failed to delete file from storage");
@@ -310,10 +311,10 @@ pub async fn delete_media(
 /// Get storage statistics
 pub async fn stats(pool: &crate::db::Pool, auth: &AuthUser) -> AppResult<media::MediaStats> {
     let user_id = auth.ensure_authenticated()?;
-    let user = crate::models::user::find_by_id(pool, user_id, auth.tenant_id())
+    let user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), auth.tenant_id())
         .await?
         .ok_or(AppError::Unauthorized)?;
-    media::stats(pool, *user.id, auth.tenant_id()).await
+    media::stats(pool, user.id, auth.tenant_id()).await
 }
 
 /// Validate whether the file's actual content magic bytes match the declared Content-Type.

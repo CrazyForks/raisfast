@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -58,7 +58,7 @@ pub async fn find_paginated(
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Category> {
     raisfast_derive::crud_find_one!(pool, "categories", Category, "id" => id, tenant: tenant_id)
@@ -71,7 +71,10 @@ pub async fn create(
     tenant_id: Option<&str>,
     created_by: Option<i64>,
 ) -> AppResult<Category> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
 
     raisfast_derive::crud_insert!(
         pool,
@@ -102,7 +105,7 @@ pub async fn update(
     tenant_id: Option<&str>,
     updated_by: Option<i64>,
 ) -> AppResult<Category> {
-    let cat_id: i64 = cmd.id;
+    let cat_id = cmd.id;
     let existing = find_by_id(pool, cat_id, tenant_id).await?;
 
     let name = cmd.name.as_deref().unwrap_or(&existing.name);
@@ -125,7 +128,11 @@ pub async fn update(
     find_by_id(pool, cat_id, tenant_id).await
 }
 
-pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
+pub async fn delete(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
     let result = raisfast_derive::crud_delete!(pool, "categories", "id" => id, tenant: tenant_id)?;
     AppError::expect_affected(&result, "category")
 }
@@ -154,7 +161,7 @@ mod tests {
     async fn create_and_find_by_id() {
         let pool = setup_pool().await;
         let cat = create(&pool, &make_cmd("Tech"), None, None).await.unwrap();
-        let found = find_by_id(&pool, *cat.id, None).await.unwrap();
+        let found = find_by_id(&pool, cat.id, None).await.unwrap();
         assert_eq!(found.id, cat.id);
         assert_eq!(found.name, "Tech");
     }
@@ -187,7 +194,7 @@ mod tests {
         let updated = update(
             &pool,
             &UpdateCategoryCmd {
-                id: *cat.id,
+                id: cat.id,
                 name: Some("New".to_string()),
                 slug: None,
                 description: None,
@@ -206,15 +213,15 @@ mod tests {
     async fn delete_removes_category() {
         let pool = setup_pool().await;
         let cat = create(&pool, &make_cmd("Gone"), None, None).await.unwrap();
-        delete(&pool, *cat.id, None).await.unwrap();
-        let result = find_by_id(&pool, *cat.id, None).await;
+        delete(&pool, cat.id, None).await.unwrap();
+        let result = find_by_id(&pool, cat.id, None).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn find_by_id_not_found() {
         let pool = setup_pool().await;
-        let result = find_by_id(&pool, 99999, None).await;
+        let result = find_by_id(&pool, SnowflakeId(99999), None).await;
         assert!(result.is_err());
     }
 }

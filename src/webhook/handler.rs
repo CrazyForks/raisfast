@@ -7,6 +7,7 @@ use crate::dto::{BatchRequest, BatchResponse};
 use crate::errors::app_error::AppResult;
 use crate::errors::response::ApiResponse;
 use crate::middleware::auth::AuthUser;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::pagination::PaginationParams;
 use crate::webhook::model::{CreateWebhookRequest, UpdateWebhookRequest};
 
@@ -102,7 +103,10 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<crate::webhook::model::WebhookSubscription>> {
     auth.ensure_admin()?;
-    let sub = state.webhook.get(crate::utils::id::parse_id(&id)?).await?;
+    let sub = state
+        .webhook
+        .get(crate::types::snowflake_id::parse_id(&id)?)
+        .await?;
     Ok(ApiResponse::success(sub))
 }
 
@@ -149,7 +153,7 @@ pub async fn update(
     let sub = state
         .webhook
         .update(
-            crate::utils::id::parse_id(&id)?,
+            crate::types::snowflake_id::parse_id(&id)?,
             req.url,
             req.events,
             req.description,
@@ -168,7 +172,7 @@ pub async fn delete(
     auth.ensure_admin()?;
     state
         .webhook
-        .delete(crate::utils::id::parse_id(&id)?)
+        .delete(crate::types::snowflake_id::parse_id(&id)?)
         .await?;
     Ok(ApiResponse::success(()))
 }
@@ -182,8 +186,8 @@ pub async fn admin_batch(
     crate::errors::validation::validate(&req)?;
     let mut affected = 0usize;
     for raw_id in &req.ids {
-        let id: i64 = match raw_id.parse() {
-            Ok(v) => v,
+        let id = match raw_id.parse::<i64>() {
+            Ok(v) => SnowflakeId(v),
             Err(_) => continue,
         };
         match req.action.as_str() {

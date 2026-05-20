@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 use crate::errors::app_error::{AppError, AppResult};
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -61,25 +61,28 @@ pub async fn find_by_auth_type_and_identifier(
 
 pub async fn find_by_user_id(
     pool: &crate::db::Pool,
-    user_id: i64,
+    user_id: SnowflakeId,
 ) -> AppResult<Vec<UserCredential>> {
     raisfast_derive::crud_find_all!(pool, "user_credentials", UserCredential, "user_id" => user_id)
         .map_err(Into::into)
 }
 
-pub async fn count_by_user(pool: &crate::db::Pool, user_id: i64) -> AppResult<i64> {
+pub async fn count_by_user(pool: &crate::db::Pool, user_id: SnowflakeId) -> AppResult<i64> {
     Ok(raisfast_derive::crud_count!(pool, "user_credentials", "user_id" => user_id)?)
 }
 
 pub async fn create(
     pool: &crate::db::Pool,
-    user_id: i64,
+    user_id: SnowflakeId,
     auth_type: AuthType,
     identifier: &str,
     credential_data: &str,
     verified: bool,
 ) -> AppResult<UserCredential> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
     raisfast_derive::crud_insert!(pool, "user_credentials", [
         "id" => id,
         "user_id" => user_id,
@@ -97,7 +100,7 @@ pub async fn create(
 
 pub async fn update_credential_data(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     credential_data: &str,
 ) -> AppResult<()> {
     let now = crate::utils::tz::now_str();
@@ -108,7 +111,11 @@ pub async fn update_credential_data(
     Ok(())
 }
 
-pub async fn update_verified(pool: &crate::db::Pool, id: i64, verified: bool) -> AppResult<()> {
+pub async fn update_verified(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    verified: bool,
+) -> AppResult<()> {
     let now = crate::utils::tz::now_str();
     raisfast_derive::crud_update!(pool, "user_credentials",
         bind: ["verified" => if verified { 1 } else { 0 }, "updated_at" => &now],
@@ -117,12 +124,15 @@ pub async fn update_verified(pool: &crate::db::Pool, id: i64, verified: bool) ->
     Ok(())
 }
 
-pub async fn delete_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<bool> {
+pub async fn delete_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<bool> {
     let result = raisfast_derive::crud_delete!(pool, "user_credentials", "id" => id)?;
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn find_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<Option<UserCredential>> {
+pub async fn find_by_id(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+) -> AppResult<Option<UserCredential>> {
     raisfast_derive::crud_find!(pool, "user_credentials", UserCredential, "id" => id)
         .map_err(Into::into)
 }

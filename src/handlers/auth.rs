@@ -17,6 +17,7 @@ use crate::errors::response::ApiResponse;
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::services::{auth, email_verification, password_reset, sms};
+use crate::types::snowflake_id::SnowflakeId;
 
 pub fn routes(
     registry: &mut crate::server::RouteRegistry,
@@ -429,6 +430,6 @@ pub async fn delete_credential(
     State(state): State<crate::AppState>,
     axum::extract::Path(id): axum::extract::Path<i64>,
 ) -> AppResult<ApiResponse<()>> {
-    auth::delete_credential(&state.pool, &auth, id).await?;
+    auth::delete_credential(&state.pool, &auth, SnowflakeId(id)).await?;
     Ok(ApiResponse::success(()))
 }

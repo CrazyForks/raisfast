@@ -7,6 +7,7 @@ use crate::errors::response::ApiResponse;
 use crate::errors::validation;
 use crate::middleware::auth::AuthUser;
 use crate::models::wallet_transaction::{WalletReferenceType, WalletTxType};
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::pagination::PaginationParams;
 
 pub fn routes(
@@ -286,7 +287,7 @@ pub async fn admin_credit(
     let tx = state
         .wallet_service
         .credit(
-            user_id,
+            SnowflakeId(user_id),
             &req.currency,
             req.amount,
             WalletTxType::Recharge,
@@ -321,7 +322,7 @@ pub async fn admin_debit(
     let tx = state
         .wallet_service
         .debit(
-            user_id,
+            SnowflakeId(user_id),
             &req.currency,
             req.amount,
             WalletTxType::Payment,
@@ -412,7 +413,7 @@ pub async fn admin_reversal(
 
     let tx = state
         .wallet_service
-        .reverse_transaction(*original.id, &req.transaction_no)
+        .reverse_transaction(original.id, &req.transaction_no)
         .await?;
 
     let resp = state.wallet_service.tx_to_response(tx).await?;

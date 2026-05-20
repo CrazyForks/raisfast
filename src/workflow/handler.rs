@@ -158,7 +158,7 @@ pub async fn create(
     State(state): State<AppState>,
     Json(body): Json<CreateWorkflowRequest>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    let wf_id: i64 = crate::utils::id::parse_id(&body.id)?;
+    let wf_id = crate::types::snowflake_id::parse_id(&body.id)?;
     let wf = state
         .workflow
         .create_workflow(wf_id, &body.name, body.description.as_deref(), &body.steps)
@@ -179,7 +179,7 @@ pub async fn get(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    let wf_id: i64 = crate::utils::id::parse_id(&id)?;
+    let wf_id = crate::types::snowflake_id::parse_id(&id)?;
     let wf = state.workflow.get_workflow(wf_id).await?;
     Ok(ApiResponse::success(
         serde_json::to_value(wf).unwrap_or_default(),
@@ -190,7 +190,7 @@ pub async fn delete(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    let wf_id: i64 = crate::utils::id::parse_id(&id)?;
+    let wf_id = crate::types::snowflake_id::parse_id(&id)?;
     state.workflow.delete_workflow(wf_id).await?;
     Ok(ApiResponse::success(()))
 }
@@ -200,7 +200,7 @@ pub async fn start(
     Path(id): Path<String>,
     Json(body): Json<StartWorkflowRequest>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    let wf_id: i64 = crate::utils::id::parse_id(&id)?;
+    let wf_id = crate::types::snowflake_id::parse_id(&id)?;
     let triggered_by_int: Option<i64> = match &body.triggered_by {
         Some(uid) if !uid.is_empty() => {
             let sql = format!("SELECT id FROM users WHERE id = {}", dialect::ph(1));
@@ -229,7 +229,7 @@ pub async fn list_instances(
     let page = query.page.unwrap_or(1).max(1);
     let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
     let def_id: Option<i64> = match &query.definition_id {
-        Some(did) => Some(crate::utils::id::parse_id(did)?),
+        Some(did) => Some(*crate::types::snowflake_id::parse_id(did)?),
         None => None,
     };
     let (items, total) = state
@@ -248,7 +248,7 @@ pub async fn get_instance(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    let inst_id: i64 = crate::utils::id::parse_id(&id)?;
+    let inst_id = crate::types::snowflake_id::parse_id(&id)?;
     let instance = state
         .workflow
         .get_instance(inst_id)
@@ -264,7 +264,7 @@ pub async fn execute_step(
     Path(id): Path<String>,
     Json(body): Json<ExecuteStepRequest>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    let inst_id: i64 = crate::utils::id::parse_id(&id)?;
+    let inst_id = crate::types::snowflake_id::parse_id(&id)?;
     let instance = state.workflow.execute_step(inst_id, &body.output).await?;
     Ok(ApiResponse::success(
         serde_json::to_value(instance).unwrap_or_default(),
@@ -275,7 +275,7 @@ pub async fn cancel_instance(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
-    let inst_id: i64 = crate::utils::id::parse_id(&id)?;
+    let inst_id = crate::types::snowflake_id::parse_id(&id)?;
     state.workflow.cancel_instance(inst_id).await?;
     Ok(ApiResponse::success(()))
 }
@@ -284,7 +284,7 @@ pub async fn get_step_logs(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<serde_json::Value>> {
-    let inst_id: i64 = crate::utils::id::parse_id(&id)?;
+    let inst_id = crate::types::snowflake_id::parse_id(&id)?;
     let logs = state.workflow.get_step_logs(inst_id).await?;
     Ok(ApiResponse::success(
         serde_json::to_value(logs).unwrap_or_default(),

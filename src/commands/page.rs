@@ -1,5 +1,6 @@
 //! Page-related commands
 
+use crate::types::snowflake_id::SnowflakeId;
 use serde::{Deserialize, Serialize};
 
 use crate::models::page::PageStatus;
@@ -24,8 +25,8 @@ pub struct CreatePageCmd {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdatePageCmd {
-    #[serde(serialize_with = "crate::utils::id::serialize_id_as_string")]
-    pub id: i64,
+    #[serde(serialize_with = "crate::types::snowflake_id::serialize_id_as_string")]
+    pub id: SnowflakeId,
     pub title: Option<String>,
     pub slug: Option<String>,
     pub content: Option<String>,

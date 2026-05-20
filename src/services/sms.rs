@@ -5,6 +5,7 @@ use chrono::Utc;
 use crate::dto::LoginResponse;
 use crate::errors::app_error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
+use crate::types::snowflake_id::SnowflakeId;
 
 /// Send an SMS verification code.
 ///
@@ -57,7 +58,7 @@ pub async fn verify_sms_and_auth(
         .await?
         .ok_or_else(|| AppError::BadRequest("invalid_code".into()))?;
 
-    let result = crate::models::sms_code::verify_code(pool, *sms.id, code).await?;
+    let result = crate::models::sms_code::verify_code(pool, sms.id, code).await?;
 
     match result {
         crate::models::sms_code::VerifyResult::Verified => {}
@@ -83,7 +84,7 @@ pub async fn verify_sms_and_auth(
     .await?;
 
     let user = match cred {
-        Some(c) => crate::models::user::find_by_id(pool, *c.user_id, None)
+        Some(c) => crate::models::user::find_by_id(pool, c.user_id, None)
             .await?
             .ok_or_else(|| AppError::Internal(anyhow::anyhow!("user not found")))?,
         None => {
@@ -102,7 +103,7 @@ pub async fn verify_sms_and_auth(
             .await?;
             crate::models::user_credential::create(
                 pool,
-                *user.id,
+                user.id,
                 crate::models::user_credential::AuthType::Phone,
                 phone,
                 "",
@@ -115,7 +116,7 @@ pub async fn verify_sms_and_auth(
 
     let user_role = user.role;
     let access_token = crate::services::auth::generate_access_token_internal(
-        *user.id,
+        user.id,
         user_role,
         user.tenant_id
             .as_deref()
@@ -128,7 +129,7 @@ pub async fn verify_sms_and_auth(
     let expires_at = Utc::now() + chrono::Duration::seconds(jwt_refresh_expires as i64);
     crate::models::refresh_token::create_token(
         pool,
-        *user.id,
+        user.id,
         &refresh_token_str,
         &expires_at.to_rfc3339(),
     )
@@ -151,7 +152,7 @@ pub async fn bind_phone(
 ) -> AppResult<()> {
     let user_id = auth.ensure_authenticated()?;
     let tenant_id = auth.tenant_id();
-    let _user = crate::models::user::find_by_id(pool, user_id, tenant_id)
+    let _user = crate::models::user::find_by_id(pool, SnowflakeId(user_id), tenant_id)
         .await?
         .ok_or(AppError::Unauthorized)?;
 
@@ -170,7 +171,7 @@ pub async fn bind_phone(
         .await?
         .ok_or_else(|| AppError::BadRequest("invalid_code".into()))?;
 
-    let result = crate::models::sms_code::verify_code(pool, *sms.id, code).await?;
+    let result = crate::models::sms_code::verify_code(pool, sms.id, code).await?;
 
     match result {
         crate::models::sms_code::VerifyResult::Verified => {}
@@ -190,7 +191,7 @@ pub async fn bind_phone(
 
     crate::models::user_credential::create(
         pool,
-        *_user.id,
+        _user.id,
         crate::models::user_credential::AuthType::Phone,
         phone,
         "",

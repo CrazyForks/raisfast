@@ -4,6 +4,7 @@
 //! At startup, fixed routes are registered for known content types; content types added after
 //! startup are handled via catch-all dynamic routes. Both route types share the same core logic.
 
+use crate::types::snowflake_id::SnowflakeId;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -474,13 +475,13 @@ async fn dynamic_cms_dispatch_restful(
             }
             (axum::http::Method::GET, Some(id)) => {
                 check_api_access(ct.api.get.access, &auth)?;
-                let int_id = crate::utils::id::parse_id(&id)?;
+                let int_id = crate::types::snowflake_id::parse_id(&id)?;
                 let data = do_get(state, &ct, int_id, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             (axum::http::Method::PUT, Some(id)) => {
                 check_api_access(ct.api.update.access, &auth)?;
-                let int_id = crate::utils::id::parse_id(&id)?;
+                let int_id = crate::types::snowflake_id::parse_id(&id)?;
                 let Json(data) =
                     body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
                 let result = do_update(state, &ct, int_id, data, &save_ctx, &auth).await?;
@@ -488,7 +489,7 @@ async fn dynamic_cms_dispatch_restful(
             }
             (axum::http::Method::DELETE, Some(id)) => {
                 check_api_access(ct.api.delete.access, &auth)?;
-                let int_id = crate::utils::id::parse_id(&id)?;
+                let int_id = crate::types::snowflake_id::parse_id(&id)?;
                 do_delete(state, &ct, int_id, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(
                     json!({"deleted": true}),
@@ -554,13 +555,13 @@ async fn dynamic_cms_dispatch_simple(
             }
             (axum::http::Method::GET, Some(id), None) => {
                 check_api_access(ct.api.get.access, &auth)?;
-                let int_id = crate::utils::id::parse_id(&id)?;
+                let int_id = crate::types::snowflake_id::parse_id(&id)?;
                 let data = do_get(state, &ct, int_id, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             (axum::http::Method::POST, Some(id), Some("update")) => {
                 check_api_access(ct.api.update.access, &auth)?;
-                let int_id = crate::utils::id::parse_id(&id)?;
+                let int_id = crate::types::snowflake_id::parse_id(&id)?;
                 let Json(data) =
                     body.ok_or_else(|| AppError::BadRequest("body required".into()))?;
                 let result = do_update(state, &ct, int_id, data, &save_ctx, &auth).await?;
@@ -568,7 +569,7 @@ async fn dynamic_cms_dispatch_simple(
             }
             (axum::http::Method::POST, Some(id), Some("delete")) => {
                 check_api_access(ct.api.delete.access, &auth)?;
-                let int_id = crate::utils::id::parse_id(&id)?;
+                let int_id = crate::types::snowflake_id::parse_id(&id)?;
                 do_delete(state, &ct, int_id, &auth).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(
                     json!({"deleted": true}),
@@ -625,7 +626,7 @@ async fn dynamic_admin_cms_dispatch_restful(
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             (axum::http::Method::GET, Some(id)) => {
-                let int_id = crate::utils::id::parse_id(&id)?;
+                let int_id = crate::types::snowflake_id::parse_id(&id)?;
                 let data = do_admin_get(state, &ct, int_id).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
@@ -667,7 +668,7 @@ async fn dynamic_admin_cms_dispatch_simple(
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
             (axum::http::Method::GET, Some(id)) => {
-                let int_id = crate::utils::id::parse_id(&id)?;
+                let int_id = crate::types::snowflake_id::parse_id(&id)?;
                 let data = do_admin_get(state, &ct, int_id).await?;
                 Ok(Json(crate::errors::response::ApiResponse::success(data)).into_response())
             }
@@ -701,7 +702,7 @@ pub fn cms_list_cache_key(ct: &ContentTypeSchema, query: &ContentQuery) -> Strin
     format!("cms:{}:{h:x}", ct.plural)
 }
 
-pub fn cms_detail_cache_key(ct: &ContentTypeSchema, id: i64) -> String {
+pub fn cms_detail_cache_key(ct: &ContentTypeSchema, id: SnowflakeId) -> String {
     format!("cms:{}:detail:{id}", ct.plural)
 }
 
@@ -747,7 +748,8 @@ pub async fn do_list(
                             .foreign_key
                             .clone()
                             .unwrap_or_else(|| format!("{}_id", field.name));
-                        let parsed_id = crate::utils::id::parse_id(v).unwrap_or(-1);
+                        let parsed_id =
+                            crate::types::snowflake_id::parse_id(v).unwrap_or(SnowflakeId(-1));
                         let int_id = find_existing_id(&state.pool, &rel.target, parsed_id)
                             .await
                             .ok()
@@ -851,7 +853,7 @@ pub async fn do_list(
 pub async fn do_get(
     state: &AppState,
     ct: &ContentTypeSchema,
-    id: i64,
+    id: SnowflakeId,
     auth: &AuthUser,
 ) -> Result<serde_json::Value, AppError> {
     let cache_key = cms_detail_cache_key(ct, id);
@@ -980,7 +982,7 @@ pub async fn do_create(
 pub async fn do_update(
     state: &AppState,
     ct: &ContentTypeSchema,
-    id: i64,
+    id: SnowflakeId,
     data: Value,
     save_ctx: &SaveContext,
     auth: &AuthUser,
@@ -1082,7 +1084,7 @@ pub async fn do_update(
 pub async fn do_delete(
     state: &AppState,
     ct: &ContentTypeSchema,
-    id: i64,
+    id: SnowflakeId,
     auth: &AuthUser,
 ) -> Result<(), AppError> {
     let repo = ContentRepository::new(state.pool.clone());
@@ -1205,7 +1207,8 @@ async fn do_admin_list(
                             .foreign_key
                             .clone()
                             .unwrap_or_else(|| format!("{}_id", field.name));
-                        let parsed_id = crate::utils::id::parse_id(v).unwrap_or(-1);
+                        let parsed_id =
+                            crate::types::snowflake_id::parse_id(v).unwrap_or(SnowflakeId(-1));
                         let int_id = find_existing_id(&state.pool, &rel.target, parsed_id)
                             .await
                             .ok()
@@ -1250,7 +1253,7 @@ async fn do_admin_list(
 async fn do_admin_get(
     state: &AppState,
     ct: &ContentTypeSchema,
-    id: i64,
+    id: SnowflakeId,
 ) -> Result<serde_json::Value, AppError> {
     let repo = ContentRepository::new(state.pool.clone());
     let item = repo.find_by_id(ct, id, None, true).await?;
@@ -1304,7 +1307,7 @@ pub async fn do_single_update(
     let existing = repo.ensure_single(ct, None).await?;
     let id = existing.get(COL_ID).and_then(|v| v.as_i64()).unwrap_or(0);
 
-    do_update(state, ct, id, data, save_ctx, auth).await
+    do_update(state, ct, SnowflakeId(id), data, save_ctx, auth).await
 }
 
 async fn do_admin_single_get(
@@ -1385,7 +1388,7 @@ async fn get_handler(
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
     check_api_access(ct.api.get.access, &auth)?;
-    let id = crate::utils::id::parse_id(&id)?;
+    let id = crate::types::snowflake_id::parse_id(&id)?;
     let data = do_get(&state, &ct, id, &auth).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(data)))
 }
@@ -1427,7 +1430,7 @@ async fn update_handler(
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
     check_api_access(ct.api.update.access, &auth)?;
-    let int_id = crate::utils::id::parse_id(&id)?;
+    let int_id = crate::types::snowflake_id::parse_id(&id)?;
     let save_ctx = SaveContext::from_auth(&auth);
     let result = do_update(&state, &ct, int_id, data, &save_ctx, &auth).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(result)))
@@ -1444,7 +1447,7 @@ async fn delete_handler(
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
     check_api_access(ct.api.delete.access, &auth)?;
-    let int_id = crate::utils::id::parse_id(&id)?;
+    let int_id = crate::types::snowflake_id::parse_id(&id)?;
     do_delete(&state, &ct, int_id, &auth).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(
         json!({"deleted": true}),
@@ -1473,7 +1476,7 @@ async fn admin_get_handler(
         .content_type_registry
         .get(&type_name)
         .ok_or_else(|| AppError::not_found(&type_name))?;
-    let int_id = crate::utils::id::parse_id(&id)?;
+    let int_id = crate::types::snowflake_id::parse_id(&id)?;
     let data = do_admin_get(&state, &ct, int_id).await?;
     Ok(Json(crate::errors::response::ApiResponse::success(data)))
 }
@@ -1917,7 +1920,7 @@ type = "text"
     #[test]
     fn cms_detail_cache_key_format() {
         let ct = parse_ct();
-        let key = cms_detail_cache_key(&ct, 123);
+        let key = cms_detail_cache_key(&ct, SnowflakeId(123));
         assert_eq!(key, "cms:products:detail:123");
     }
 

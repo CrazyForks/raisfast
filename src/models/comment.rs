@@ -14,7 +14,7 @@ use sqlx::FromRow;
 use ts_rs::TS;
 
 use crate::errors::app_error::{AppError, AppResult};
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -61,7 +61,7 @@ pub struct CommentResponse {
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Comment>> {
     Ok(raisfast_derive::crud_find!(pool, "comments", Comment, "id" => id, tenant: tenant_id)?)
@@ -72,7 +72,10 @@ pub async fn create(
     cmd: &crate::commands::CreateCommentCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<Comment> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
 
     raisfast_derive::crud_insert!(
         pool,
@@ -100,7 +103,7 @@ pub async fn create(
 
 pub async fn find_approved_by_post(
     pool: &crate::db::Pool,
-    post_id: i64,
+    post_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<Comment>> {
     Ok(
@@ -110,7 +113,7 @@ pub async fn find_approved_by_post(
 
 pub async fn find_approved_by_post_paginated(
     pool: &crate::db::Pool,
-    post_id: i64,
+    post_id: SnowflakeId,
     page: i64,
     page_size: i64,
     tenant_id: Option<&str>,
@@ -129,7 +132,7 @@ pub async fn find_approved_by_post_paginated(
 
 pub async fn find_all_by_post(
     pool: &crate::db::Pool,
-    post_id: i64,
+    post_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<Comment>> {
     raisfast_derive::crud_find_all!(pool, "comments", Comment, "post_id" => post_id, tenant: tenant_id, order_by: "created_at ASC").map_err(Into::into)
@@ -197,7 +200,7 @@ pub async fn find_all_paginated(
 
 pub async fn update_status(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     status: CommentStatus,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
@@ -211,7 +214,11 @@ pub async fn update_status(
     AppError::expect_affected(&result, "comment")
 }
 
-pub async fn delete(pool: &crate::db::Pool, id: i64, tenant_id: Option<&str>) -> AppResult<()> {
+pub async fn delete(
+    pool: &crate::db::Pool,
+    id: SnowflakeId,
+    tenant_id: Option<&str>,
+) -> AppResult<()> {
     let result = raisfast_derive::crud_delete!(pool, "comments", "id" => id, tenant: tenant_id)?;
     AppError::expect_affected(&result, "comment")
 }
@@ -280,7 +287,7 @@ pub fn build_tree(comments: &[Comment]) -> Vec<CommentResponse> {
 
 const MAX_DEPTH: i32 = 3;
 
-pub fn validate_depth(comments: &[Comment], parent_id: i64) -> AppResult<()> {
+pub fn validate_depth(comments: &[Comment], parent_id: SnowflakeId) -> AppResult<()> {
     let parent = comments
         .iter()
         .find(|c| c.id == parent_id)
@@ -296,18 +303,19 @@ pub fn validate_depth(comments: &[Comment], parent_id: i64) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::snowflake_id::SnowflakeId;
 
     fn make_comment(id: i64, post_id: i64, parent_id: Option<i64>) -> Comment {
         Comment {
-            id: crate::utils::id::SnowflakeId(id),
+            id: SnowflakeId(id),
             tenant_id: Some(crate::constants::DEFAULT_TENANT.to_string()),
-            post_id: crate::utils::id::SnowflakeId(post_id),
+            post_id: SnowflakeId(post_id),
             created_by: None,
             updated_by: None,
             nickname: None,
             email: None,
             content: "test".to_string(),
-            parent_id: parent_id.map(crate::utils::id::SnowflakeId),
+            parent_id: parent_id.map(SnowflakeId),
             author_ip: None,
             author_url: None,
             status: CommentStatus::Approved,
@@ -357,7 +365,7 @@ mod tests {
     #[test]
     fn validate_depth_ok_within_limit() {
         let comments = vec![make_comment(1, 10, None), make_comment(2, 10, Some(1))];
-        assert!(validate_depth(&comments, 2).is_ok());
+        assert!(validate_depth(&comments, SnowflakeId(2)).is_ok());
     }
 
     #[test]
@@ -368,13 +376,13 @@ mod tests {
             make_comment(3, 10, Some(2)),
             make_comment(4, 10, Some(3)),
         ];
-        assert!(validate_depth(&comments, 4).is_err());
+        assert!(validate_depth(&comments, SnowflakeId(4)).is_err());
     }
 
     #[test]
     fn validate_depth_missing_parent() {
         let comments = vec![make_comment(1, 10, None)];
-        assert!(validate_depth(&comments, 999).is_err());
+        assert!(validate_depth(&comments, SnowflakeId(999)).is_err());
     }
 
     mod integration {
@@ -417,7 +425,7 @@ mod tests {
 
         fn make_cmd(post_id: i64) -> CreateCommentCmd {
             CreateCommentCmd {
-                post_id,
+                post_id: SnowflakeId(post_id),
                 created_by: None,
                 nickname: Some("Alice".into()),
                 email: Some("alice@test.com".into()),
@@ -432,9 +440,9 @@ mod tests {
             let uid = insert_user(&pool).await;
             let pid = insert_post(&pool, uid).await;
             let c = create(&pool, &make_cmd(pid), None).await.unwrap();
-            assert_eq!(c.post_id, pid);
+            assert_eq!(c.post_id, SnowflakeId(pid));
             assert_eq!(c.content, "hello");
-            let found = super::find_by_id(&pool, *c.id, None)
+            let found = super::super::find_by_id(&pool, c.id, None)
                 .await
                 .unwrap()
                 .unwrap();
@@ -444,7 +452,9 @@ mod tests {
         #[tokio::test]
         async fn find_by_id_not_found() {
             let pool = setup_pool().await;
-            let result = super::find_by_id(&pool, 99999, None).await.unwrap();
+            let result = super::super::find_by_id(&pool, SnowflakeId(99999), None)
+                .await
+                .unwrap();
             assert!(result.is_none());
         }
 
@@ -455,11 +465,11 @@ mod tests {
             let pid = insert_post(&pool, uid).await;
             let c1 = create(&pool, &make_cmd(pid), None).await.unwrap();
             let _c2 = create(&pool, &make_cmd(pid), None).await.unwrap();
-            update_status(&pool, *c1.id, CommentStatus::Approved, None)
+            update_status(&pool, c1.id, CommentStatus::Approved, None)
                 .await
                 .unwrap();
 
-            let approved = super::find_approved_by_post(&pool, pid, None)
+            let approved = super::super::find_approved_by_post(&pool, SnowflakeId(pid), None)
                 .await
                 .unwrap();
             assert_eq!(approved.len(), 1);
@@ -476,21 +486,23 @@ mod tests {
                 let mut cmd = make_cmd(pid);
                 cmd.content = format!("comment {i}");
                 let c = create(&pool, &cmd, None).await.unwrap();
-                update_status(&pool, *c.id, CommentStatus::Approved, None)
+                update_status(&pool, c.id, CommentStatus::Approved, None)
                     .await
                     .unwrap();
                 ids.push(c.id);
             }
 
-            let (page1, total) = super::find_approved_by_post_paginated(&pool, pid, 1, 2, None)
-                .await
-                .unwrap();
+            let (page1, total) =
+                super::super::find_approved_by_post_paginated(&pool, SnowflakeId(pid), 1, 2, None)
+                    .await
+                    .unwrap();
             assert_eq!(total, 5);
             assert_eq!(page1.len(), 2);
 
-            let (page3, _) = super::find_approved_by_post_paginated(&pool, pid, 3, 2, None)
-                .await
-                .unwrap();
+            let (page3, _) =
+                super::super::find_approved_by_post_paginated(&pool, SnowflakeId(pid), 3, 2, None)
+                    .await
+                    .unwrap();
             assert_eq!(page3.len(), 1);
         }
 
@@ -501,10 +513,10 @@ mod tests {
             let pid = insert_post(&pool, uid).await;
             let c = create(&pool, &make_cmd(pid), None).await.unwrap();
             assert_eq!(c.status, CommentStatus::Pending);
-            update_status(&pool, *c.id, CommentStatus::Approved, None)
+            update_status(&pool, c.id, CommentStatus::Approved, None)
                 .await
                 .unwrap();
-            let found = super::find_by_id(&pool, *c.id, None)
+            let found = super::super::find_by_id(&pool, c.id, None)
                 .await
                 .unwrap()
                 .unwrap();
@@ -517,8 +529,8 @@ mod tests {
             let uid = insert_user(&pool).await;
             let pid = insert_post(&pool, uid).await;
             let c = create(&pool, &make_cmd(pid), None).await.unwrap();
-            super::delete(&pool, *c.id, None).await.unwrap();
-            let found = super::find_by_id(&pool, *c.id, None).await.unwrap();
+            super::super::delete(&pool, c.id, None).await.unwrap();
+            let found = super::super::find_by_id(&pool, c.id, None).await.unwrap();
             assert!(found.is_none());
         }
 
@@ -533,11 +545,15 @@ mod tests {
                 create(&pool, &cmd, None).await.unwrap();
             }
 
-            let (page1, total) = super::find_all_paginated(&pool, 1, 2, None).await.unwrap();
+            let (page1, total) = super::super::find_all_paginated(&pool, 1, 2, None)
+                .await
+                .unwrap();
             assert_eq!(total, 5);
             assert_eq!(page1.len(), 2);
 
-            let (page3, _) = super::find_all_paginated(&pool, 3, 2, None).await.unwrap();
+            let (page3, _) = super::super::find_all_paginated(&pool, 3, 2, None)
+                .await
+                .unwrap();
             assert_eq!(page3.len(), 1);
         }
     }

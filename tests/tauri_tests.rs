@@ -388,7 +388,12 @@ async fn tauri_cms_get_by_id() {
     let id = created["id"].as_str().unwrap().to_string();
     let int_id: i64 = id.parse().unwrap();
     let found = repo
-        .find_by_id(&ct, int_id, None, true)
+        .find_by_id(
+            &ct,
+            raisfast::types::snowflake_id::SnowflakeId(int_id),
+            None,
+            true,
+        )
         .await
         .unwrap()
         .unwrap();
@@ -409,12 +414,23 @@ async fn tauri_cms_update() {
     let id = created["id"].as_str().unwrap().to_string();
     let int_id: i64 = id.parse().unwrap();
     let update_data = serde_json::json!({"title": "Updated", "done": true});
-    repo.update(&ct, int_id, update_data, None, &save_ctx)
-        .await
-        .unwrap();
+    repo.update(
+        &ct,
+        raisfast::types::snowflake_id::SnowflakeId(int_id),
+        update_data,
+        None,
+        &save_ctx,
+    )
+    .await
+    .unwrap();
 
     let found = repo
-        .find_by_id(&ct, int_id, None, true)
+        .find_by_id(
+            &ct,
+            raisfast::types::snowflake_id::SnowflakeId(int_id),
+            None,
+            true,
+        )
         .await
         .unwrap()
         .unwrap();
@@ -436,7 +452,7 @@ async fn tauri_cms_delete() {
     let int_id: i64 = id.parse().unwrap();
     repo.delete(
         &ct,
-        int_id,
+        raisfast::types::snowflake_id::SnowflakeId(int_id),
         None,
         &test_protocol_registry(),
         &raisfast::content_type::ContentTypeRegistry::new(),
@@ -444,7 +460,15 @@ async fn tauri_cms_delete() {
     .await
     .unwrap();
 
-    let found = repo.find_by_id(&ct, int_id, None, true).await.unwrap();
+    let found = repo
+        .find_by_id(
+            &ct,
+            raisfast::types::snowflake_id::SnowflakeId(int_id),
+            None,
+            true,
+        )
+        .await
+        .unwrap();
     assert!(found.is_none(), "deleted item should not exist");
 }
 

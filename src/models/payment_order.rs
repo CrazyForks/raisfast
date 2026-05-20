@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::dialect::ph;
 use crate::errors::app_error::AppResult;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -69,7 +69,7 @@ pub struct PaymentOrder {
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentOrder>> {
     raisfast_derive::crud_find!(pool, "payment_orders", PaymentOrder, "id" => id, tenant: tenant_id)
@@ -95,7 +95,7 @@ pub async fn find_by_provider_order_id(
 
 pub async fn find_by_user_paginated(
     pool: &crate::db::Pool,
-    user_id: i64,
+    user_id: SnowflakeId,
     tenant_id: Option<&str>,
     page: i64,
     page_size: i64,
@@ -166,16 +166,18 @@ pub async fn insert(
         ],
         tenant: tenant_id
     )?;
-    find_by_id(pool, id, tenant_id).await?.ok_or_else(|| {
-        crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
-            "inserted row not found: {id}"
-        ))
-    })
+    find_by_id(pool, SnowflakeId(id), tenant_id)
+        .await?
+        .ok_or_else(|| {
+            crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
+                "inserted row not found: {id}"
+            ))
+        })
 }
 
 pub async fn update_provider_order_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     provider_order_id: &str,
     provider_data: Option<&str>,
     tenant_id: Option<&str>,
@@ -192,7 +194,7 @@ pub async fn update_provider_order_id(
 
 pub async fn tx_update_status_cas(
     tx: &mut crate::db::pool::DbConnection,
-    id: i64,
+    id: SnowflakeId,
     new_status: PaymentStatus,
     timestamp_col: Option<&str>,
     expected_status: PaymentStatus,
@@ -226,6 +228,7 @@ pub async fn tx_update_status_cas(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -280,12 +283,12 @@ mod tests {
         super::insert(
             pool,
             &crate::commands::CreatePaymentOrderCmd {
-                user_id,
+                user_id: SnowflakeId(user_id),
                 order_id: None,
                 title: "Test Payment".into(),
                 amount,
                 currency: "USD".into(),
-                channel_id,
+                channel_id: SnowflakeId(channel_id),
                 provider: "stripe".into(),
                 reference_type: None,
                 reference_id: None,
@@ -310,16 +313,16 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let order = seed_payment_order(&pool, uid, ch_id, 1000).await;
-        let found = super::find_by_id(&pool, *order.id, None)
+        let found = super::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(found.id, order.id);
-        assert_eq!(found.user_id, uid);
+        assert_eq!(found.user_id, SnowflakeId(uid));
         assert_eq!(found.amount, 1000);
         assert_eq!(found.currency, "USD");
         assert_eq!(found.status, PaymentStatus::Pending);
-        assert_eq!(found.channel_id, ch_id);
+        assert_eq!(found.channel_id, SnowflakeId(ch_id));
     }
 
     #[tokio::test]
@@ -341,7 +344,7 @@ mod tests {
         let uid = seed_user(&pool).await;
         let ch_id = seed_channel(&pool).await;
         let order = seed_payment_order(&pool, uid, ch_id, 500).await;
-        super::update_provider_order_id(&pool, *order.id, "pi_test123", None, None)
+        super::update_provider_order_id(&pool, order.id, "pi_test123", None, None)
             .await
             .unwrap();
         let found = super::find_by_provider_order_id(&pool, "pi_test123", None)
@@ -355,7 +358,7 @@ mod tests {
     async fn find_by_id_not_found() {
         let pool = setup_pool().await;
         assert!(
-            super::find_by_id(&pool, 99999, None)
+            super::find_by_id(&pool, SnowflakeId(99999), None)
                 .await
                 .unwrap()
                 .is_none()
@@ -384,7 +387,7 @@ mod tests {
         let mut tx = pool.begin().await.unwrap();
         let rows = super::tx_update_status_cas(
             &mut tx,
-            *order.id,
+            order.id,
             PaymentStatus::Paid,
             Some("paid_at"),
             PaymentStatus::Pending,
@@ -393,7 +396,7 @@ mod tests {
         .unwrap();
         tx.commit().await.unwrap();
         assert_eq!(rows, 1);
-        let found = super::find_by_id(&pool, *order.id, None)
+        let found = super::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -411,7 +414,7 @@ mod tests {
         let mut tx = pool.begin().await.unwrap();
         let rows = super::tx_update_status_cas(
             &mut tx,
-            *order.id,
+            order.id,
             PaymentStatus::Cancelled,
             Some("cancelled_at"),
             PaymentStatus::Pending,
@@ -420,7 +423,7 @@ mod tests {
         .unwrap();
         tx.commit().await.unwrap();
         assert_eq!(rows, 1);
-        let found = super::find_by_id(&pool, *order.id, None)
+        let found = super::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -436,14 +439,14 @@ mod tests {
         let order = seed_payment_order(&pool, uid, ch_id, 1000).await;
         super::update_provider_order_id(
             &pool,
-            *order.id,
+            order.id,
             "pi_abc123",
             Some(r#"{"status":"requires_action"}"#),
             None,
         )
         .await
         .unwrap();
-        let found = super::find_by_id(&pool, *order.id, None)
+        let found = super::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();
@@ -462,12 +465,12 @@ mod tests {
         for _ in 0..3 {
             seed_payment_order(&pool, uid, ch_id, 100).await;
         }
-        let (items, total) = super::find_by_user_paginated(&pool, uid, None, 1, 10)
+        let (items, total) = super::find_by_user_paginated(&pool, SnowflakeId(uid), None, 1, 10)
             .await
             .unwrap();
         assert_eq!(total, 3);
         assert_eq!(items.len(), 3);
-        assert!(items.iter().all(|o| o.user_id == uid));
+        assert!(items.iter().all(|o| o.user_id == SnowflakeId(uid)));
     }
 
     #[tokio::test]
@@ -495,7 +498,7 @@ mod tests {
             let mut tx = pool.begin().await.unwrap();
             let rows = super::tx_update_status_cas(
                 &mut tx,
-                *order.id,
+                order.id,
                 PaymentStatus::Paid,
                 Some("paid_at"),
                 PaymentStatus::Pending,
@@ -532,13 +535,13 @@ mod tests {
         let order = seed_payment_order(&pool, uid, ch_id, 2000).await;
         assert_eq!(order.status, PaymentStatus::Pending);
 
-        super::update_provider_order_id(&pool, *order.id, "pi_xyz", None, None)
+        super::update_provider_order_id(&pool, order.id, "pi_xyz", None, None)
             .await
             .unwrap();
         let mut tx = pool.begin().await.unwrap();
         let rows = super::tx_update_status_cas(
             &mut tx,
-            *order.id,
+            order.id,
             PaymentStatus::Paid,
             Some("paid_at"),
             PaymentStatus::Pending,
@@ -548,7 +551,7 @@ mod tests {
         assert_eq!(rows, 1);
         tx.commit().await.unwrap();
 
-        let found = super::find_by_id(&pool, *order.id, None)
+        let found = super::find_by_id(&pool, order.id, None)
             .await
             .unwrap()
             .unwrap();

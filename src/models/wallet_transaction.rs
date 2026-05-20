@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 use crate::errors::app_error::AppResult;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 define_enum!(
@@ -57,7 +57,7 @@ pub struct WalletTransaction {
 
 pub async fn find_transactions_by_wallet(
     pool: &crate::db::Pool,
-    wallet_id: i64,
+    wallet_id: SnowflakeId,
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
@@ -75,7 +75,7 @@ pub async fn find_transactions_by_wallet(
 
 pub async fn find_transactions_by_user(
     pool: &crate::db::Pool,
-    user_id: i64,
+    user_id: SnowflakeId,
     page: i64,
     page_size: i64,
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
@@ -120,13 +120,16 @@ pub async fn find_tx_by_transaction_no(
 
 pub async fn find_tx_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
 ) -> AppResult<Option<WalletTransaction>> {
     raisfast_derive::crud_find!(pool, "wallet_transactions", WalletTransaction, "id" => id)
         .map_err(Into::into)
 }
 
-pub async fn has_reversal_for(pool: &crate::db::Pool, related_tx_id: i64) -> AppResult<bool> {
+pub async fn has_reversal_for(
+    pool: &crate::db::Pool,
+    related_tx_id: SnowflakeId,
+) -> AppResult<bool> {
     let count: i64 = raisfast_derive::crud_count!(
         pool, "wallet_transactions", "related_tx_id" => related_tx_id,
         and: ["tx_type" => WalletTxType::Refund]
@@ -163,11 +166,14 @@ mod tests {
         WalletTransaction,
     ) {
         let user = insert_user(pool).await;
-        let w = crate::models::wallet::create(pool, *user.id, "CNY")
+        let w = crate::models::wallet::create(pool, user.id, "CNY")
             .await
             .unwrap();
 
-        let (tx_id, now) = crate::utils::id::new_id_and_timestamp();
+        let (tx_id, now) = (
+            crate::utils::id::new_snowflake_id(),
+            crate::utils::tz::now_utc(),
+        );
         let tx_no = format!("TX_{tx_id}");
         sqlx::query(&format!(
             "INSERT INTO wallet_transactions (id, wallet_id, user_id, entry_type, amount, balance_after, tx_type, currency, transaction_no, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
@@ -224,21 +230,26 @@ mod tests {
     async fn find_tx_by_id_found() {
         let pool = setup_pool().await;
         let (_, _, tx) = seed_wallet_and_tx(&pool).await;
-        let found = find_tx_by_id(&pool, *tx.id).await.unwrap().unwrap();
+        let found = find_tx_by_id(&pool, tx.id).await.unwrap().unwrap();
         assert_eq!(found.transaction_no, tx.transaction_no);
     }
 
     #[tokio::test]
     async fn find_tx_by_id_not_found() {
         let pool = setup_pool().await;
-        assert!(find_tx_by_id(&pool, 99999).await.unwrap().is_none());
+        assert!(
+            find_tx_by_id(&pool, SnowflakeId(99999))
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
     async fn find_transactions_by_wallet_found() {
         let pool = setup_pool().await;
         let (_, w, _) = seed_wallet_and_tx(&pool).await;
-        let (rows, total) = find_transactions_by_wallet(&pool, *w.id, 1, 10)
+        let (rows, total) = find_transactions_by_wallet(&pool, w.id, 1, 10)
             .await
             .unwrap();
         assert_eq!(total, 1);
@@ -249,7 +260,7 @@ mod tests {
     #[tokio::test]
     async fn find_transactions_by_wallet_empty() {
         let pool = setup_pool().await;
-        let (rows, total) = find_transactions_by_wallet(&pool, 99999, 1, 10)
+        let (rows, total) = find_transactions_by_wallet(&pool, SnowflakeId(99999), 1, 10)
             .await
             .unwrap();
         assert_eq!(total, 0);
@@ -260,7 +271,7 @@ mod tests {
     async fn find_transactions_by_user_found() {
         let pool = setup_pool().await;
         let (user, _, _) = seed_wallet_and_tx(&pool).await;
-        let (rows, total) = find_transactions_by_user(&pool, *user.id, 1, 10)
+        let (rows, total) = find_transactions_by_user(&pool, user.id, 1, 10)
             .await
             .unwrap();
         assert_eq!(total, 1);
@@ -271,7 +282,7 @@ mod tests {
     async fn has_reversal_for_false() {
         let pool = setup_pool().await;
         let (_, _, tx) = seed_wallet_and_tx(&pool).await;
-        assert!(!has_reversal_for(&pool, *tx.id).await.unwrap());
+        assert!(!has_reversal_for(&pool, tx.id).await.unwrap());
     }
 
     #[tokio::test]
@@ -279,7 +290,10 @@ mod tests {
         let pool = setup_pool().await;
         let (_, _, tx) = seed_wallet_and_tx(&pool).await;
 
-        let (rev_id, rev_now) = crate::utils::id::new_id_and_timestamp();
+        let (rev_id, rev_now) = (
+            crate::utils::id::new_snowflake_id(),
+            crate::utils::tz::now_utc(),
+        );
         let rev_no = format!("REV_{rev_id}");
         sqlx::query(&format!(
             "INSERT INTO wallet_transactions (id, wallet_id, user_id, entry_type, amount, balance_after, tx_type, currency, transaction_no, related_tx_id, created_at) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
@@ -303,6 +317,6 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(has_reversal_for(&pool, *tx.id).await.unwrap());
+        assert!(has_reversal_for(&pool, tx.id).await.unwrap());
     }
 }

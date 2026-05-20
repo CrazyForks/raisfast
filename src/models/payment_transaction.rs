@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::errors::app_error::AppResult;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
@@ -22,7 +22,7 @@ pub struct PaymentTransaction {
 
 pub async fn find_by_id(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentTransaction>> {
     raisfast_derive::crud_find!(pool, "payment_transactions", PaymentTransaction, "id" => id, tenant: tenant_id)
@@ -31,7 +31,7 @@ pub async fn find_by_id(
 
 pub async fn find_by_payment_order_id(
     pool: &crate::db::Pool,
-    payment_order_id: i64,
+    payment_order_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<PaymentTransaction>> {
     raisfast_derive::crud_find_all!(pool, "payment_transactions", PaymentTransaction, "payment_order_id" => payment_order_id, tenant: tenant_id, order_by: "created_at DESC")
@@ -99,11 +99,13 @@ pub async fn insert(
         ],
         tenant: tenant_id
     )?;
-    find_by_id(pool, id, tenant_id).await?.ok_or_else(|| {
-        crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
-            "inserted row not found: {id}"
-        ))
-    })
+    find_by_id(pool, SnowflakeId(id), tenant_id)
+        .await?
+        .ok_or_else(|| {
+            crate::errors::app_error::AppError::Internal(anyhow::anyhow!(
+                "inserted row not found: {id}"
+            ))
+        })
 }
 
 pub async fn tx_insert(
@@ -137,6 +139,7 @@ pub async fn tx_insert(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::snowflake_id::SnowflakeId;
 
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
@@ -186,12 +189,12 @@ mod tests {
         crate::models::payment_order::insert(
             pool,
             &crate::commands::CreatePaymentOrderCmd {
-                user_id,
+                user_id: SnowflakeId(user_id),
                 order_id: Some("order-ref-1".into()),
                 title: "Test Payment".into(),
                 amount: 1000,
                 currency: "USD".into(),
-                channel_id,
+                channel_id: SnowflakeId(channel_id),
                 provider: "stripe".into(),
                 reference_type: None,
                 reference_id: None,
@@ -227,9 +230,9 @@ mod tests {
         super::insert(
             pool,
             &crate::commands::CreatePaymentTransactionCmd {
-                payment_order_id,
+                payment_order_id: SnowflakeId(payment_order_id),
                 order_id: Some("order-ref-1".into()),
-                user_id,
+                user_id: SnowflakeId(user_id),
                 tx_type: tx_type.into(),
                 amount: 1000,
                 currency: "USD".into(),
@@ -250,12 +253,12 @@ mod tests {
         let ch_id = seed_channel(&pool).await;
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
         let tx = seed_tx(&pool, po_id, uid, "charge", "ch_abc123").await;
-        let found = super::find_by_id(&pool, *tx.id, None)
+        let found = super::find_by_id(&pool, tx.id, None)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(found.id, tx.id);
-        assert_eq!(found.payment_order_id, po_id);
+        assert_eq!(found.payment_order_id, SnowflakeId(po_id));
         assert_eq!(found.tx_type, "charge");
         assert_eq!(found.amount, 1000);
         assert_eq!(found.provider_tx_id, "ch_abc123");
@@ -266,7 +269,7 @@ mod tests {
     async fn find_by_id_not_found() {
         let pool = setup_pool().await;
         assert!(
-            super::find_by_id(&pool, 99999, None)
+            super::find_by_id(&pool, SnowflakeId(99999), None)
                 .await
                 .unwrap()
                 .is_none()
@@ -281,7 +284,7 @@ mod tests {
         let po_id = seed_payment_order(&pool, uid, ch_id).await;
         seed_tx(&pool, po_id, uid, "charge", "ch_001").await;
         seed_tx(&pool, po_id, uid, "refund", "re_001").await;
-        let txs = super::find_by_payment_order_id(&pool, po_id, None)
+        let txs = super::find_by_payment_order_id(&pool, SnowflakeId(po_id), None)
             .await
             .unwrap();
         assert_eq!(txs.len(), 2);

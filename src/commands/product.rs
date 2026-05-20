@@ -1,5 +1,6 @@
 //! Product-related commands
 
+use crate::types::snowflake_id::SnowflakeId;
 pub struct CreateProductCmd {
     pub category_id: Option<i64>,
     pub title: String,
@@ -31,7 +32,7 @@ pub struct CreateProductCmd {
 }
 
 pub struct UpdateProductCmd {
-    pub id: i64,
+    pub id: SnowflakeId,
     pub category_id: Option<i64>,
     pub title: String,
     pub description: Option<String>,

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::errors::app_error::AppResult;
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -28,7 +28,7 @@ pub struct OrderItem {
 
 pub async fn find_by_order_id(
     pool: &crate::db::Pool,
-    order_id: i64,
+    order_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<OrderItem>> {
     raisfast_derive::crud_find_all!(pool, "order_items", OrderItem, "order_id" => order_id, tenant: tenant_id)
@@ -40,7 +40,10 @@ pub async fn insert(
     cmd: &crate::commands::CreateOrderItemCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<OrderItem> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
     raisfast_derive::crud_insert!(
         pool,
         "order_items",
@@ -82,7 +85,10 @@ pub async fn tx_insert(
     cmd: &crate::commands::CreateOrderItemCmd,
     tenant_id: Option<&str>,
 ) -> AppResult<OrderItem> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
     raisfast_derive::crud_insert!(
         &mut *tx,
         "order_items",
@@ -121,6 +127,8 @@ pub async fn tx_insert_batch(
 
 #[cfg(test)]
 mod tests {
+    use crate::types::snowflake_id::SnowflakeId;
+
     async fn setup_pool() -> crate::db::Pool {
         crate::test_pool!()
     }
@@ -142,7 +150,7 @@ mod tests {
         crate::models::order::insert(
             pool,
             &crate::commands::CreateOrderCmd {
-                user_id,
+                user_id: SnowflakeId(user_id),
                 order_no,
                 subtotal: 1000,
                 discount_amount: 0,
@@ -223,7 +231,7 @@ mod tests {
         let item = super::insert(
             &pool,
             &crate::commands::CreateOrderItemCmd {
-                order_id,
+                order_id: SnowflakeId(order_id),
                 product_id: Some(pid),
                 variant_id: None,
                 title: "Widget".into(),
@@ -241,8 +249,11 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(item.order_id, order_id);
-        assert_eq!(item.product_id, Some(crate::utils::id::SnowflakeId(pid)));
+        assert_eq!(item.order_id, SnowflakeId(order_id));
+        assert_eq!(
+            item.product_id,
+            Some(crate::types::snowflake_id::SnowflakeId(pid))
+        );
         assert_eq!(item.title, "Widget");
         assert_eq!(item.unit_price, 1000);
         assert_eq!(item.quantity, 2);
@@ -262,7 +273,7 @@ mod tests {
             super::insert(
                 &pool,
                 &crate::commands::CreateOrderItemCmd {
-                    order_id,
+                    order_id: SnowflakeId(order_id),
                     product_id: None,
                     variant_id: None,
                     title: format!("Item{i}"),
@@ -281,11 +292,11 @@ mod tests {
             .unwrap();
         }
 
-        let items = super::find_by_order_id(&pool, order_id, None)
+        let items = super::find_by_order_id(&pool, SnowflakeId(order_id), None)
             .await
             .unwrap();
         assert_eq!(items.len(), 3);
-        assert!(items.iter().all(|it| it.order_id == order_id));
+        assert!(items.iter().all(|it| it.order_id == SnowflakeId(order_id)));
     }
 
     #[tokio::test]
@@ -293,7 +304,7 @@ mod tests {
         let pool = setup_pool().await;
         let uid = seed_user(&pool).await;
         let order_id = seed_order(&pool, uid).await;
-        let items = super::find_by_order_id(&pool, order_id, None)
+        let items = super::find_by_order_id(&pool, SnowflakeId(order_id), None)
             .await
             .unwrap();
         assert!(items.is_empty());
@@ -309,7 +320,7 @@ mod tests {
         super::insert(
             &pool,
             &crate::commands::CreateOrderItemCmd {
-                order_id: order1,
+                order_id: SnowflakeId(order1),
                 product_id: None,
                 variant_id: None,
                 title: "Item1".into(),
@@ -329,7 +340,7 @@ mod tests {
         super::insert(
             &pool,
             &crate::commands::CreateOrderItemCmd {
-                order_id: order2,
+                order_id: SnowflakeId(order2),
                 product_id: None,
                 variant_id: None,
                 title: "Item2".into(),
@@ -347,8 +358,12 @@ mod tests {
         .await
         .unwrap();
 
-        let items1 = super::find_by_order_id(&pool, order1, None).await.unwrap();
-        let items2 = super::find_by_order_id(&pool, order2, None).await.unwrap();
+        let items1 = super::find_by_order_id(&pool, SnowflakeId(order1), None)
+            .await
+            .unwrap();
+        let items2 = super::find_by_order_id(&pool, SnowflakeId(order2), None)
+            .await
+            .unwrap();
         assert_eq!(items1.len(), 1);
         assert_eq!(items2.len(), 1);
         assert_eq!(items1[0].title, "Item1");
@@ -363,7 +378,7 @@ mod tests {
 
         let items = vec![
             crate::commands::CreateOrderItemCmd {
-                order_id,
+                order_id: SnowflakeId(order_id),
                 product_id: None,
                 variant_id: None,
                 title: "Batch1".into(),
@@ -377,7 +392,7 @@ mod tests {
                 attributes: None,
             },
             crate::commands::CreateOrderItemCmd {
-                order_id,
+                order_id: SnowflakeId(order_id),
                 product_id: None,
                 variant_id: None,
                 title: "Batch2".into(),
@@ -393,7 +408,7 @@ mod tests {
         ];
 
         super::insert_batch(&pool, items, None).await.unwrap();
-        let found = super::find_by_order_id(&pool, order_id, None)
+        let found = super::find_by_order_id(&pool, SnowflakeId(order_id), None)
             .await
             .unwrap();
         assert_eq!(found.len(), 2);

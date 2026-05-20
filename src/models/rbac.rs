@@ -10,7 +10,7 @@ use ts_rs::TS;
 use crate::commands::CreatePermissionCmd;
 use crate::db::dialect::ph;
 use crate::errors::app_error::{AppError, AppResult};
-use crate::utils::id::SnowflakeId;
+use crate::types::snowflake_id::SnowflakeId;
 use crate::utils::tz::Timestamp;
 
 /// Row model for the roles table
@@ -54,7 +54,7 @@ pub async fn list_roles(pool: &crate::db::Pool) -> AppResult<Vec<Role>> {
 }
 
 /// Find role by id
-pub async fn find_role_by_id(pool: &crate::db::Pool, id: i64) -> AppResult<Option<Role>> {
+pub async fn find_role_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<Option<Role>> {
     let role = raisfast_derive::crud_find!(pool, "roles", Role, "id" => id)?;
     Ok(role)
 }
@@ -77,7 +77,10 @@ pub async fn create_role(
     name: &str,
     description: Option<&str>,
 ) -> AppResult<Role> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
     raisfast_derive::crud_insert!(
         pool,
         "roles",
@@ -100,7 +103,7 @@ pub async fn create_role(
 /// Update role (dynamic SET clause)
 pub async fn update_role(
     pool: &crate::db::Pool,
-    id: i64,
+    id: SnowflakeId,
     name: Option<&str>,
     description: Option<&str>,
 ) -> AppResult<Role> {
@@ -118,7 +121,7 @@ pub async fn update_role(
 }
 
 /// Delete role
-pub async fn delete_role(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
+pub async fn delete_role(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
     raisfast_derive::crud_delete!(pool, "roles", "id" => id)?;
     Ok(())
 }
@@ -126,7 +129,7 @@ pub async fn delete_role(pool: &crate::db::Pool, id: i64) -> AppResult<()> {
 /// List all permissions for a role
 pub async fn find_permissions_by_role_id(
     pool: &crate::db::Pool,
-    role_id: i64,
+    role_id: SnowflakeId,
 ) -> AppResult<Vec<Permission>> {
     raisfast_derive::check_schema!(
         "permissions",
@@ -143,14 +146,20 @@ pub async fn find_permissions_by_role_id(
 }
 
 /// Delete all permissions for a role
-pub async fn delete_permissions_by_role_id(pool: &crate::db::Pool, role_id: i64) -> AppResult<()> {
+pub async fn delete_permissions_by_role_id(
+    pool: &crate::db::Pool,
+    role_id: SnowflakeId,
+) -> AppResult<()> {
     raisfast_derive::crud_delete!(pool, "permissions", "role_id" => role_id)?;
     Ok(())
 }
 
 /// Insert a single permission
 pub async fn insert_permission(pool: &crate::db::Pool, cmd: &CreatePermissionCmd) -> AppResult<()> {
-    let (id, now) = crate::utils::id::new_id_and_timestamp();
+    let (id, now) = (
+        crate::utils::id::new_snowflake_id(),
+        crate::utils::tz::now_utc(),
+    );
     raisfast_derive::crud_insert!(pool, "permissions", [
         "id" => id,
         "role_id" => cmd.role_id,
@@ -179,7 +188,7 @@ mod tests {
             .unwrap();
         assert_eq!(role.name, "admin_test");
 
-        let found = find_role_by_id(&pool, *role.id).await.unwrap().unwrap();
+        let found = find_role_by_id(&pool, role.id).await.unwrap().unwrap();
         assert_eq!(found.id, role.id);
     }
 
@@ -200,7 +209,7 @@ mod tests {
         let pool = setup_pool().await;
         let role = create_role(&pool, "original", None).await.unwrap();
 
-        let updated = update_role(&pool, *role.id, Some("new_name"), None)
+        let updated = update_role(&pool, role.id, Some("new_name"), None)
             .await
             .unwrap();
         assert_eq!(updated.name, "new_name");
@@ -211,8 +220,8 @@ mod tests {
         let pool = setup_pool().await;
         let role = create_role(&pool, "to_delete", None).await.unwrap();
 
-        super::delete_role(&pool, *role.id).await.unwrap();
-        let found = find_role_by_id(&pool, *role.id).await.unwrap();
+        super::delete_role(&pool, role.id).await.unwrap();
+        let found = find_role_by_id(&pool, role.id).await.unwrap();
         assert!(found.is_none());
     }
 
@@ -224,7 +233,7 @@ mod tests {
         insert_permission(
             &pool,
             &CreatePermissionCmd {
-                role_id: *role.id,
+                role_id: role.id,
                 action: "read".to_string(),
                 subject: "posts".to_string(),
                 fields: None,
@@ -236,7 +245,7 @@ mod tests {
         insert_permission(
             &pool,
             &CreatePermissionCmd {
-                role_id: *role.id,
+                role_id: role.id,
                 action: "write".to_string(),
                 subject: "posts".to_string(),
                 fields: None,
@@ -246,13 +255,11 @@ mod tests {
         .await
         .unwrap();
 
-        let perms = find_permissions_by_role_id(&pool, *role.id).await.unwrap();
+        let perms = find_permissions_by_role_id(&pool, role.id).await.unwrap();
         assert_eq!(perms.len(), 2);
 
-        delete_permissions_by_role_id(&pool, *role.id)
-            .await
-            .unwrap();
-        let perms = find_permissions_by_role_id(&pool, *role.id).await.unwrap();
+        delete_permissions_by_role_id(&pool, role.id).await.unwrap();
+        let perms = find_permissions_by_role_id(&pool, role.id).await.unwrap();
         assert!(perms.is_empty());
     }
 
@@ -265,6 +272,6 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(id, *role.id);
+        assert_eq!(SnowflakeId(id), role.id);
     }
 }

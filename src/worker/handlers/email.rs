@@ -146,6 +146,7 @@ mod tests {
     use super::*;
     use crate::config::app::AppConfig;
     use crate::notifier::email::LogSender;
+    use crate::types::snowflake_id::SnowflakeId;
 
     fn test_deps() -> (Arc<AppConfig>, Arc<dyn EmailSender>) {
         (Arc::new(AppConfig::test_defaults()), Arc::new(LogSender))
@@ -156,7 +157,7 @@ mod tests {
         let (config, sender) = test_deps();
         let handler = SendWelcomeEmailHandler::new(config, sender);
         let job = Job::SendWelcomeEmail {
-            user_id: 1,
+            user_id: SnowflakeId(1),
             email: "alice@example.com".into(),
             username: "alice".into(),
         };
@@ -168,7 +169,7 @@ mod tests {
         let (config, sender) = test_deps();
         let handler = SendPasswordResetEmailHandler::new(config, sender);
         let job = Job::SendPasswordResetEmail {
-            user_id: 1,
+            user_id: SnowflakeId(1),
             email: "alice@example.com".into(),
             reset_token: "abc123".into(),
         };

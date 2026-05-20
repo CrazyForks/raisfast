@@ -109,6 +109,7 @@ mod tests {
     use crate::models::password_reset::PasswordResetToken;
     use crate::models::post::{CommentOpenStatus, Post, PostStatus};
     use crate::models::user::{RegisteredVia, User, UserRole, UserStatus};
+    use crate::types::snowflake_id::SnowflakeId;
 
     fn ts() -> crate::utils::tz::Timestamp {
         "2025-01-01T00:00:00Z".parse().unwrap()
@@ -151,7 +152,7 @@ mod tests {
 
     fn make_post(id: i64, slug: &str) -> Post {
         Post {
-            id: crate::utils::id::SnowflakeId(id),
+            id: crate::types::snowflake_id::SnowflakeId(id),
             tenant_id: None,
             title: String::new(),
             slug: slug.into(),
@@ -159,7 +160,7 @@ mod tests {
             excerpt: None,
             cover_image: None,
             status: PostStatus::Published,
-            created_by: crate::utils::id::SnowflakeId(0),
+            created_by: crate::types::snowflake_id::SnowflakeId(0),
             updated_by: None,
             category_id: None,
             view_count: 0,
@@ -183,9 +184,9 @@ mod tests {
 
     fn make_comment(id: i64) -> Comment {
         Comment {
-            id: crate::utils::id::SnowflakeId(id),
+            id: crate::types::snowflake_id::SnowflakeId(id),
             tenant_id: None,
-            post_id: crate::utils::id::SnowflakeId(0),
+            post_id: crate::types::snowflake_id::SnowflakeId(0),
             created_by: None,
             updated_by: None,
             nickname: None,
@@ -202,7 +203,7 @@ mod tests {
 
     fn make_user(id: i64, username: &str) -> User {
         User {
-            id: crate::utils::id::SnowflakeId(id),
+            id: crate::types::snowflake_id::SnowflakeId(id),
             tenant_id: None,
             username: username.into(),
             role: UserRole::Reader,
@@ -223,9 +224,9 @@ mod tests {
 
     fn make_media(id: i64, filename: &str) -> Media {
         Media {
-            id: crate::utils::id::SnowflakeId(id),
+            id: crate::types::snowflake_id::SnowflakeId(id),
             tenant_id: None,
-            user_id: crate::utils::id::SnowflakeId(1),
+            user_id: crate::types::snowflake_id::SnowflakeId(1),
             filename: filename.into(),
             filepath: String::new(),
             mimetype: String::new(),
@@ -243,8 +244,8 @@ mod tests {
 
     fn make_password_reset_token(user_id: i64) -> PasswordResetToken {
         PasswordResetToken {
-            id: crate::utils::id::SnowflakeId(1),
-            user_id: crate::utils::id::SnowflakeId(user_id),
+            id: crate::types::snowflake_id::SnowflakeId(1),
+            user_id: crate::types::snowflake_id::SnowflakeId(user_id),
             token: "reset-token".into(),
             expires_at: ts(),
             used_at: None,
@@ -254,8 +255,8 @@ mod tests {
 
     fn make_email_verification_token(user_id: i64, email: &str) -> EmailVerificationToken {
         EmailVerificationToken {
-            id: crate::utils::id::SnowflakeId(1),
-            user_id: crate::utils::id::SnowflakeId(user_id),
+            id: crate::types::snowflake_id::SnowflakeId(1),
+            user_id: crate::types::snowflake_id::SnowflakeId(user_id),
             token: "verify-token".into(),
             email: email.into(),
             expires_at: ts(),
@@ -293,7 +294,7 @@ mod tests {
             ),
             (
                 Event::EmailVerificationRequested {
-                    user_id: 1,
+                    user_id: SnowflakeId(1),
                     email: "e".into(),
                     token: make_email_verification_token(1, "e"),
                 },

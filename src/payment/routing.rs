@@ -142,7 +142,7 @@ mod tests {
 
     fn make_channel(provider: &str, settings: Option<&str>) -> PaymentChannel {
         PaymentChannel {
-            id: crate::utils::id::SnowflakeId(1),
+            id: crate::types::snowflake_id::SnowflakeId(1),
             tenant_id: None,
             provider: provider.to_string(),
             name: provider.to_string(),

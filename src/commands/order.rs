@@ -1,5 +1,6 @@
+use crate::types::snowflake_id::SnowflakeId;
 pub struct CreateOrderCmd {
-    pub user_id: i64,
+    pub user_id: SnowflakeId,
     pub order_no: String,
     pub subtotal: i64,
     pub discount_amount: i64,
@@ -18,7 +19,7 @@ pub struct CreateOrderCmd {
 }
 
 pub struct CreateOrderItemCmd {
-    pub order_id: i64,
+    pub order_id: SnowflakeId,
     pub product_id: Option<i64>,
     pub variant_id: Option<i64>,
     pub title: String,
