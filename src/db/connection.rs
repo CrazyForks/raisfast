@@ -242,12 +242,11 @@ pub async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
         ph(1)
     );
 
-    let max_batch: i32 = sqlx::query_scalar::<_, i32>(
-        "SELECT COALESCE(MAX(batch), 0) FROM _migrations",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    let max_batch: i32 =
+        sqlx::query_scalar::<_, i32>("SELECT COALESCE(MAX(batch), 0) FROM _migrations")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
 
     let batch = max_batch + 1;
 
@@ -374,10 +373,7 @@ pub async fn rollback_migrations(pool: &Pool, step: Option<u32>) -> anyhow::Resu
         return Ok(());
     }
 
-    let delete_sql = format!(
-        "DELETE FROM _migrations WHERE filename = {}",
-        ph(1)
-    );
+    let delete_sql = format!("DELETE FROM _migrations WHERE filename = {}", ph(1));
 
     let mut rolled_back = 0u32;
 

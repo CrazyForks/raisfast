@@ -95,16 +95,26 @@ pub async fn backup_database(
         } = parse_mysql_url(url)?;
 
         let mut cmd = std::process::Command::new("mysqldump");
-        cmd.args(["-h", &host, "-P", &port, "-u", &user, "--single-transaction", "--routines"])
-            .stdout(std::process::Stdio::piped());
+        cmd.args([
+            "-h",
+            &host,
+            "-P",
+            &port,
+            "-u",
+            &user,
+            "--single-transaction",
+            "--routines",
+        ])
+        .stdout(std::process::Stdio::piped());
 
         if !password.is_empty() {
             cmd.env("MYSQL_PWD", &password);
         }
 
-        let output = cmd.arg(&dbname).output().map_err(|e| {
-            anyhow::anyhow!("mysqldump not found: {e}")
-        })?;
+        let output = cmd
+            .arg(&dbname)
+            .output()
+            .map_err(|e| anyhow::anyhow!("mysqldump not found: {e}"))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -139,9 +149,7 @@ fn parse_mysql_url(url: &str) -> anyhow::Result<ConnParts> {
     let (user_pass, rest) = stripped
         .split_once('@')
         .ok_or_else(|| anyhow::anyhow!("invalid MySQL URL: missing '@'"))?;
-    let (user, password) = user_pass
-        .split_once(':')
-        .unwrap_or((user_pass, ""));
+    let (user, password) = user_pass.split_once(':').unwrap_or((user_pass, ""));
 
     let (host_port_db, _) = rest.split_once('?').unwrap_or((rest, ""));
     let host_port_db = host_port_db.trim_end_matches('/');
@@ -150,9 +158,7 @@ fn parse_mysql_url(url: &str) -> anyhow::Result<ConnParts> {
         .rsplit_once('/')
         .ok_or_else(|| anyhow::anyhow!("invalid MySQL URL: missing database name"))?;
 
-    let (host, port) = host_port
-        .rsplit_once(':')
-        .unwrap_or((host_port, "3306"));
+    let (host, port) = host_port.rsplit_once(':').unwrap_or((host_port, "3306"));
 
     Ok(ConnParts {
         user: user.to_string(),
