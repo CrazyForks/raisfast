@@ -327,7 +327,7 @@ async fn auto_register_user(
         let now = crate::utils::tz::now_str();
         raisfast_derive::crud_update!(pool, "users",
             bind: ["avatar" => avatar, "updated_at" => &now],
-            where: "id" => user.id
+            where: ("id", user.id)
         )?;
     }
 

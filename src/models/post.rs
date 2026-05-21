@@ -78,7 +78,7 @@ pub async fn find_by_slug(
     slug: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Post>> {
-    let post = raisfast_derive::crud_find!(pool, "posts", Post, "slug" => slug, tenant: tenant_id)?;
+    let post = raisfast_derive::crud_find!(pool, "posts", Post, where: ("slug", slug), tenant: tenant_id)?;
     Ok(post)
 }
 
@@ -87,7 +87,7 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Post>> {
-    let post = raisfast_derive::crud_find!(pool, "posts", Post, "id" => id, tenant: tenant_id)?;
+    let post = raisfast_derive::crud_find!(pool, "posts", Post, where: ("id", id), tenant: tenant_id)?;
     Ok(post)
 }
 
@@ -152,7 +152,7 @@ async fn find_by_id_tx(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Post>> {
-    raisfast_derive::crud_find!(&mut **tx, "posts", Post, "id" => id, tenant: tenant_id)
+    raisfast_derive::crud_find!(&mut **tx, "posts", Post, where: ("id", id), tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -174,7 +174,7 @@ pub async fn update_tx(
 ) -> AppResult<Post> {
     let post_id = cmd.id;
     let existing =
-        raisfast_derive::crud_find_one!(&mut **tx, "posts", Post, "id" => post_id, tenant: tenant_id)
+        raisfast_derive::crud_find_one!(&mut **tx, "posts", Post, where: ("id", post_id), tenant: tenant_id)
             .map_err(|_| AppError::not_found("post"))?;
 
     let now = crate::utils::tz::now_utc();
@@ -213,7 +213,7 @@ pub async fn update_tx(
             "published_at" => published_at, "updated_by" => updated_by,
             "updated_at" => now
         ],
-        where: "id" => post_id,
+        where: ("id", post_id),
         tenant: tenant_id
     )?;
 
@@ -253,7 +253,7 @@ pub async fn delete(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let result = raisfast_derive::crud_delete!(pool, "posts", "id" => id, tenant: tenant_id)?;
+    let result = raisfast_derive::crud_delete!(pool, "posts", where: ("id", id), tenant: tenant_id)?;
     AppError::expect_affected(&result, "post")
 }
 
@@ -265,8 +265,7 @@ pub async fn increment_view_count_joined(
     raisfast_derive::crud_update!(
         pool, "posts",
         raw: ["view_count" => "view_count + 1"],
-        where: "slug" => slug,
-        and: ["status" => PostStatus::Published],
+        where: AND(("slug", slug), ("status", PostStatus::Published)),
         tenant: tenant_id
     )?;
 
@@ -289,7 +288,7 @@ pub async fn sync_tags_tx(
     post_id: SnowflakeId,
     tag_ids: &[i64],
 ) -> AppResult<()> {
-    raisfast_derive::crud_delete!(&mut **tx, "posts_tags", "post_id" => post_id)?;
+    raisfast_derive::crud_delete!(&mut **tx, "posts_tags", where: ("post_id", post_id))?;
 
     for tag_id in tag_ids {
         raisfast_derive::crud_insert!(&mut **tx, "posts_tags", ["post_id" => post_id, "tag_id" => *tag_id])?;
@@ -315,7 +314,7 @@ pub async fn get_post_tags(
         select: ["t.id", "t.name", "t.slug"],
         from: "tags t",
         joins: [INNER "posts_tags pt" ON "t.id = pt.tag_id"],
-        where: "pt.post_id" => post_id,
+        where: ("pt.post_id", post_id),
         tenant_alias: "t",
         tenant: tenant_id,
         method: fetch_all
@@ -337,7 +336,7 @@ pub async fn get_author_name(
     tenant_id: Option<&str>,
 ) -> AppResult<Option<String>> {
     let row: Option<(String,)> = raisfast_derive::crud_select!(
-        pool, "users", ["username"], "id" => created_by, tenant_id
+        pool, "users", ["username"], where: ("id", created_by), tenant: tenant_id
     )?;
     Ok(row.map(|(s,)| s))
 }
@@ -348,7 +347,7 @@ pub async fn get_category_name(
     tenant_id: Option<&str>,
 ) -> AppResult<Option<String>> {
     let row: Option<(String,)> = raisfast_derive::crud_select!(
-        pool, "categories", ["name"], "id" => category_id, tenant_id
+        pool, "categories", ["name"], where: ("id", category_id), tenant: tenant_id
     )?;
     Ok(row.map(|(s,)| s))
 }
@@ -529,7 +528,7 @@ pub async fn find_all_joined(
                 LEFT "users u" ON "p.created_by = u.id",
                 LEFT "categories c" ON "p.category_id = c.id"
             ],
-            and: ["p.status" => s],
+            where: ("p.status", s),
             tenant_alias: "p",
             tenant: tenant_id,
             order_by: "p.is_pinned DESC, p.created_at DESC",
@@ -636,7 +635,7 @@ pub async fn find_joined_by_id(
             LEFT "users u" ON "p.created_by = u.id",
             LEFT "categories c" ON "p.category_id = c.id"
         ],
-        where: "p.id" => id,
+        where: ("p.id", id),
         tenant_alias: "p",
         tenant: tenant_id,
         method: fetch_one
@@ -656,8 +655,7 @@ pub async fn find_published_joined_by_slug(
             LEFT "users u" ON "p.created_by = u.id",
             LEFT "categories c" ON "p.category_id = c.id"
         ],
-        where: "p.slug" => slug,
-        and: ["p.status" => PostStatus::Published],
+        where: AND(("p.slug", slug), ("p.status", PostStatus::Published)),
         tenant_alias: "p",
         tenant: tenant_id,
         method: fetch_one
@@ -687,7 +685,7 @@ pub async fn get_tags_for_posts(
         select: ["pt.post_id", "t.id", "t.name", "t.slug"],
         from: "posts_tags pt",
         joins: [JOIN "tags" ON "pt.tag_id = t.id"],
-        and_in: ["pt.post_id" => post_ids],
+        where: ("pt.post_id", IN, post_ids),
         tenant_alias: "t",
         tenant: tenant_id,
         method: fetch_all
@@ -732,8 +730,7 @@ pub async fn find_joined_by_ids(
             LEFT "users u" ON "p.created_by = u.id",
             LEFT "categories c" ON "p.category_id = c.id"
         ],
-        and: ["p.status" => PostStatus::Published],
-        and_in: ["p.id" => ids],
+        where: AND(("p.status", PostStatus::Published), ("p.id", IN, ids)),
         tenant_alias: "p",
         tenant: tenant_id,
         order_by: "p.is_pinned DESC, p.created_at DESC",
@@ -754,9 +751,8 @@ pub async fn count_published_by_ids(
     raisfast_derive::crud_count!(
         pool,
         "posts",
-        "status" => PostStatus::Published,
-        tenant: tenant_id,
-        and_in: ["id" => ids]
+        where: AND(("status", PostStatus::Published), ("id", IN, ids)),
+        tenant: tenant_id
     )
     .map_err(Into::into)
 }

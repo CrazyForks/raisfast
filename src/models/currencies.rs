@@ -18,14 +18,14 @@ pub struct Currency {
 }
 
 pub async fn find_by_code(pool: &crate::db::Pool, code: &str) -> AppResult<Option<Currency>> {
-    raisfast_derive::crud_find!(pool, "currencies", Currency, "code" => code).map_err(Into::into)
+    raisfast_derive::crud_find!(pool, "currencies", Currency, where: ("code", code)).map_err(Into::into)
 }
 
 pub async fn find_active_by_code(
     pool: &crate::db::Pool,
     code: &str,
 ) -> AppResult<Option<Currency>> {
-    raisfast_derive::crud_find!(pool, "currencies", Currency, "code" => code, and: ["is_active" => 1i64])
+    raisfast_derive::crud_find!(pool, "currencies", Currency, where: AND(("code", code), ("is_active", 1i64)))
         .map_err(Into::into)
 }
 
@@ -33,7 +33,7 @@ pub async fn find_by_code_tx(
     tx: &mut crate::db::pool::DbConnection,
     code: &str,
 ) -> AppResult<Option<Currency>> {
-    raisfast_derive::crud_find!(tx, "currencies", Currency, "code" => code, and: ["is_active" => 1i64])
+    raisfast_derive::crud_find!(tx, "currencies", Currency, where: AND(("code", code), ("is_active", 1i64)))
         .map_err(Into::into)
 }
 
@@ -75,7 +75,7 @@ pub async fn create(
         ]
     )?;
 
-    raisfast_derive::crud_find_one!(pool, "currencies", Currency, "id" => id).map_err(Into::into)
+    raisfast_derive::crud_find_one!(pool, "currencies", Currency, where: ("id", id)).map_err(Into::into)
 }
 
 pub async fn update(
@@ -106,8 +106,7 @@ pub async fn update(
     let result = raisfast_derive::crud_update!(pool, "currencies",
         bind: ["name" => name, "is_active" => is_active, "updated_at" => now],
         raw: ["version" => "version + 1"],
-        where: "id" => existing.id,
-        and: ["version" => existing.version]
+        where: AND(("id", existing.id), ("version", existing.version))
     )?;
     let affected = result.rows_affected();
 
@@ -127,7 +126,7 @@ pub async fn delete_by_code(pool: &crate::db::Pool, code: &str) -> AppResult<boo
         None => return Ok(false),
     };
 
-    let count: i64 = raisfast_derive::crud_count!(pool, "wallets", "currency" => code)?;
+    let count: i64 = raisfast_derive::crud_count!(pool, "wallets", where: ("currency", code))?;
 
     if count > 0 {
         return Err(crate::errors::app_error::AppError::BadRequest(format!(
@@ -135,7 +134,7 @@ pub async fn delete_by_code(pool: &crate::db::Pool, code: &str) -> AppResult<boo
         )));
     }
 
-    let result = raisfast_derive::crud_delete!(pool, "currencies", "id" => existing.id)?;
+    let result = raisfast_derive::crud_delete!(pool, "currencies", where: ("id", existing.id))?;
     Ok(result.rows_affected() > 0)
 }
 

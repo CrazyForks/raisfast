@@ -87,9 +87,15 @@ fn validate_table(table: &syn::LitStr) -> Option<TokenStream> {
 
 /// Validate that a column exists in a table. Returns `None` if valid, or a compile error.
 fn validate_column(table: &syn::LitStr, col: &syn::LitStr) -> Option<TokenStream> {
-    let table_str = table.value();
+    validate_column_inner(&table.value(), col).map(Into::into)
+}
+
+pub fn validate_column_inner(
+    table_str: &str,
+    col: &syn::LitStr,
+) -> Option<proc_macro2::TokenStream> {
     let col_str = col.value();
-    if let Some(ts) = get_schema().tables.get(&table_str)
+    if let Some(ts) = get_schema().tables.get(table_str)
         && ts.columns.iter().any(|c| c.name == col_str)
     {
         return None;
@@ -102,8 +108,7 @@ fn validate_column(table: &syn::LitStr, col: &syn::LitStr) -> Option<TokenStream
                 col_str, table_str
             ),
         )
-        .to_compile_error()
-        .into(),
+        .to_compile_error(),
     )
 }
 
@@ -122,145 +127,81 @@ fn validate_columns(table: &syn::LitStr, cols: &[syn::LitStr]) -> Option<TokenSt
 // Shared across all macros that support `and:`. These extra parameters allow
 // IS NULL checks and comparison operators alongside the existing `and:` (equality).
 
-#[derive(Default)]
-struct ExtraConds {
-    null_cols: Vec<syn::LitStr>,
-    gt_cols: Vec<syn::LitStr>,
-    gt_vals: Vec<syn::Expr>,
-    lt_cols: Vec<syn::LitStr>,
-    lt_vals: Vec<syn::Expr>,
-    gte_cols: Vec<syn::LitStr>,
-    gte_vals: Vec<syn::Expr>,
-    lte_cols: Vec<syn::LitStr>,
-    lte_vals: Vec<syn::Expr>,
-    in_cols: Vec<syn::LitStr>,
-    in_vals: Vec<syn::Expr>,
-}
-
-impl ExtraConds {
-    fn is_empty(&self) -> bool {
-        self.null_cols.is_empty()
-            && self.gt_cols.is_empty()
-            && self.lt_cols.is_empty()
-            && self.gte_cols.is_empty()
-            && self.lte_cols.is_empty()
-            && self.in_cols.is_empty()
-    }
-}
-
-/// Parse extra condition parameters from a `while` loop section dispatch.
-/// Call this inside the section-matching branch for each supported keyword.
-fn parse_extra_conds_section(
-    ecs: &mut ExtraConds,
-    section: &syn::Ident,
-    input: syn::parse::ParseStream,
-) -> syn::Result<bool> {
-    let s = section.to_string();
-    match s.as_str() {
-        "and_null" => {
-            let content;
-            syn::bracketed!(content in input);
-            while !content.is_empty() {
-                ecs.null_cols.push(content.parse()?);
-                let _ = content.parse::<syn::Token![,]>();
+fn emit_runtime_binds(binds: &[crate::where_dsl::BindKind]) -> (Vec<proc_macro2::TokenStream>, Vec<proc_macro2::TokenStream>) {
+    let local_stmts: Vec<_> = binds
+        .iter()
+        .enumerate()
+        .map(|(i, bk)| match bk {
+            crate::where_dsl::BindKind::Static(expr) => {
+                let ident = syn::Ident::new(&format!("__wb_{}", i), proc_macro2::Span::call_site());
+                quote! { let #ident = #expr; }
             }
-            Ok(true)
-        }
-        "and_gt" => {
-            let content;
-            syn::bracketed!(content in input);
-            let (c, v) = parse_kv_bracket(&content)?;
-            ecs.gt_cols = c;
-            ecs.gt_vals = v;
-            Ok(true)
-        }
-        "and_lt" => {
-            let content;
-            syn::bracketed!(content in input);
-            let (c, v) = parse_kv_bracket(&content)?;
-            ecs.lt_cols = c;
-            ecs.lt_vals = v;
-            Ok(true)
-        }
-        "and_gte" => {
-            let content;
-            syn::bracketed!(content in input);
-            let (c, v) = parse_kv_bracket(&content)?;
-            ecs.gte_cols = c;
-            ecs.gte_vals = v;
-            Ok(true)
-        }
-        "and_lte" => {
-            let content;
-            syn::bracketed!(content in input);
-            let (c, v) = parse_kv_bracket(&content)?;
-            ecs.lte_cols = c;
-            ecs.lte_vals = v;
-            Ok(true)
-        }
-        "and_in" => {
-            let content;
-            syn::bracketed!(content in input);
-            let (c, v) = parse_kv_bracket(&content)?;
-            ecs.in_cols = c;
-            ecs.in_vals = v;
-            Ok(true)
-        }
-        _ => Ok(false),
-    }
+            crate::where_dsl::BindKind::InLoop(expr) => {
+                let ident = syn::Ident::new(&format!("__in_{}", i), proc_macro2::Span::call_site());
+                quote! { let #ident = #expr; }
+            }
+        })
+        .collect();
+
+    let bind_stmts: Vec<_> = binds
+        .iter()
+        .enumerate()
+        .map(|(i, bk)| match bk {
+            crate::where_dsl::BindKind::Static(_) => {
+                let ident = syn::Ident::new(&format!("__wb_{}", i), proc_macro2::Span::call_site());
+                quote! { __q = __q.bind(#ident); }
+            }
+            crate::where_dsl::BindKind::InLoop(_) => {
+                let ident = syn::Ident::new(&format!("__in_{}", i), proc_macro2::Span::call_site());
+                quote! { for __iv in #ident { __q = __q.bind(__iv.clone()); } }
+            }
+        })
+        .collect();
+
+    (local_stmts, bind_stmts)
 }
 
-/// Build SQL fragments for extra conditions, appending to `parts` and incrementing `ph_idx`.
-/// Returns a list of value expressions to bind.
-fn build_extra_conds_sql(
-    ecs: &ExtraConds,
-    d: Dialect,
-    ph_idx: &mut usize,
-) -> (Vec<String>, Vec<syn::Expr>) {
-    let mut parts = Vec::new();
-    let mut vals = Vec::new();
+fn emit_tenant_code(tid: &Option<syn::Expr>, d: Dialect, tenant_alias: Option<&syn::LitStr>) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
+    let numbered = matches!(d, Dialect::Sqlite | Dialect::Postgres);
+    let numbered_lit = syn::LitBool::new(numbered, proc_macro2::Span::call_site());
+    let ph_prefix_lit = syn::LitStr::new(
+        match d {
+            Dialect::Postgres => "$",
+            _ => "?",
+        },
+        proc_macro2::Span::call_site(),
+    );
+    let alias_prefix = match tenant_alias {
+        Some(a) => format!("{}.", a.value()),
+        None => String::new(),
+    };
+    let alias_prefix_lit = syn::LitStr::new(&alias_prefix, proc_macro2::Span::call_site());
 
-    for col in &ecs.null_cols {
-        parts.push(format!("AND {} IS NULL", col.value()));
+    if tid.is_some() {
+        let tid_expr = tid.as_ref().unwrap();
+        let tenant_sql = quote! {
+            let (__tenant_sql, __tid_val) = match #tid_expr {
+                Some(_tid) => {
+                    let __tph = if #numbered_lit {
+                        format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
+                    } else {
+                        "?".to_string()
+                    };
+                    __ph_idx += 1;
+                    (format!(" AND {}tenant_id = {}", #alias_prefix_lit, __tph), Some(_tid))
+                },
+                None => (String::new(), None),
+            };
+        };
+        let tenant_bind = quote! {
+            if let Some(_tid) = __tid_val {
+                __q = __q.bind(_tid);
+            }
+        };
+        (tenant_sql, tenant_bind)
+    } else {
+        (quote! { let __tenant_sql = String::new(); }, quote! {})
     }
-    for (col, val) in ecs.gt_cols.iter().zip(&ecs.gt_vals) {
-        let ph = d.ph(*ph_idx);
-        *ph_idx += 1;
-        parts.push(format!("AND {} > {}", col.value(), ph));
-        vals.push(val.clone());
-    }
-    for (col, val) in ecs.lt_cols.iter().zip(&ecs.lt_vals) {
-        let ph = d.ph(*ph_idx);
-        *ph_idx += 1;
-        parts.push(format!("AND {} < {}", col.value(), ph));
-        vals.push(val.clone());
-    }
-    for (col, val) in ecs.gte_cols.iter().zip(&ecs.gte_vals) {
-        let ph = d.ph(*ph_idx);
-        *ph_idx += 1;
-        parts.push(format!("AND {} >= {}", col.value(), ph));
-        vals.push(val.clone());
-    }
-    for (col, val) in ecs.lte_cols.iter().zip(&ecs.lte_vals) {
-        let ph = d.ph(*ph_idx);
-        *ph_idx += 1;
-        parts.push(format!("AND {} <= {}", col.value(), ph));
-        vals.push(val.clone());
-    }
-
-    (parts, vals)
-}
-
-/// Build a list of extra column names for schema validation.
-fn extra_conds_columns(ecs: &ExtraConds) -> Vec<syn::LitStr> {
-    let mut cols = Vec::new();
-    cols.extend_from_slice(&ecs.null_cols);
-    cols.extend_from_slice(&ecs.gt_cols);
-    cols.extend_from_slice(&ecs.lt_cols);
-    cols.extend_from_slice(&ecs.gte_cols);
-    cols.extend_from_slice(&ecs.lte_cols);
-    cols.extend_from_slice(&ecs.in_cols);
-    cols
 }
 
 // ── crud_delete! ────────────────────────────────────────────────────────
@@ -270,129 +211,41 @@ pub fn crud_delete(input: TokenStream) -> TokenStream {
 }
 
 fn expand_delete(input: TokenStream) -> TokenStream {
-    let parsed = parse_macro_input!(input as DeleteInput);
+    let parsed = parse_macro_input!(input as WhereOnlyInput);
     let table = &parsed.table;
-    let col = &parsed.col;
 
     if let Some(err) = validate_table(table) {
         return err;
     }
-    if let Some(err) = validate_column(table, col) {
-        return err;
-    }
-    if let Some(err) = validate_columns(table, &parsed.and_cols) {
-        return err;
-    }
-    if let Some(err) = validate_columns(table, &extra_conds_columns(&parsed.ecs)) {
-        return err;
+    if let Some(err) = crate::where_dsl::validate_where_columns(&parsed.dsl_where, &table.value()) {
+        return err.into();
     }
 
     let pool = &parsed.pool;
-    let val = &parsed.val;
-    let tid = &parsed.tid;
-    let table_str = table.value();
-    let col_str = col.value();
-    let and_cols = &parsed.and_cols;
-    let and_vals = &parsed.and_vals;
-
     let d = dialect();
-    let mut ph_idx = 1usize;
-    let col_ph = d.ph(ph_idx);
-    ph_idx += 1;
-    let mut and_parts: Vec<String> = and_cols
-        .iter()
-        .map(|ac| {
-            let ph = d.ph(ph_idx);
-            ph_idx += 1;
-            format!("AND {} = {}", ac.value(), ph)
-        })
-        .collect();
-    let (ecs_parts, ecs_vals) = build_extra_conds_sql(&parsed.ecs, d, &mut ph_idx);
-    and_parts.extend(ecs_parts);
-    let all_extra_vals: Vec<syn::Expr> = and_vals.iter().chain(ecs_vals.iter()).cloned().collect();
-    let and_str = and_parts.join(" ");
+    let table_str = table.value();
+    let table_lit = syn::LitStr::new(&table_str, table.span());
 
-    let has_extra = !and_cols.is_empty() || !parsed.ecs.is_empty();
+    let wr = crate::where_dsl::generate_where_runtime(&parsed.dsl_where, d);
+    let (local_stmts, bind_stmts) = emit_runtime_binds(&wr.binds);
+    let (tenant_sql, tenant_bind) = emit_tenant_code(&parsed.tid, d, None);
+    let sql_code = wr.sql_code;
 
-    if parsed.tid.is_some() {
-        let tid_ph = d.ph(ph_idx);
-
-        let expanded = if !has_extra {
-            let sql_with_tenant = syn::LitStr::new(
-                &format!(
-                    "DELETE FROM {} WHERE {} = {} AND tenant_id = {}",
-                    table_str, col_str, col_ph, tid_ph
-                ),
-                table.span(),
-            );
-            let sql_without_tenant = syn::LitStr::new(
-                &format!("DELETE FROM {} WHERE {} = {}", table_str, col_str, col_ph),
-                table.span(),
-            );
-            quote! {
-                match #tid {
-                    Some(_tid) => sqlx::query!(#sql_with_tenant, #val, _tid).execute(#pool).await,
-                    None => sqlx::query!(#sql_without_tenant, #val).execute(#pool).await,
-                }
-            }
-        } else {
-            let extra_idents: Vec<syn::Ident> = (0..all_extra_vals.len())
-                .map(|i| syn::Ident::new(&format!("__da_{}", i), proc_macro2::Span::call_site()))
-                .collect();
-            let sql_with_tenant = syn::LitStr::new(
-                &format!(
-                    "DELETE FROM {} WHERE {} = {} {} AND tenant_id = {}",
-                    table_str, col_str, col_ph, and_str, tid_ph
-                ),
-                table.span(),
-            );
-            let sql_without_tenant = syn::LitStr::new(
-                &format!(
-                    "DELETE FROM {} WHERE {} = {} {}",
-                    table_str, col_str, col_ph, and_str
-                ),
-                table.span(),
-            );
-            quote! {
-                {
-                    #(let #extra_idents = #all_extra_vals;)*
-                    match #tid {
-                        Some(_tid) => sqlx::query!(#sql_with_tenant, #val, #(#extra_idents),*, _tid).execute(#pool).await,
-                        None => sqlx::query!(#sql_without_tenant, #val, #(#extra_idents),*).execute(#pool).await,
-                    }
-                }
-            }
-        };
-        TokenStream::from(expanded)
-    } else {
-        let expanded = if !has_extra {
-            let sql_lit = syn::LitStr::new(
-                &format!("DELETE FROM {} WHERE {} = {}", table_str, col_str, col_ph),
-                table.span(),
-            );
-            quote! {
-                sqlx::query!(#sql_lit, #val).execute(#pool).await
-            }
-        } else {
-            let extra_idents: Vec<syn::Ident> = (0..all_extra_vals.len())
-                .map(|i| syn::Ident::new(&format!("__da_{}", i), proc_macro2::Span::call_site()))
-                .collect();
-            let sql_lit = syn::LitStr::new(
-                &format!(
-                    "DELETE FROM {} WHERE {} = {} {}",
-                    table_str, col_str, col_ph, and_str
-                ),
-                table.span(),
-            );
-            quote! {
-                {
-                    #(let #extra_idents = #all_extra_vals;)*
-                    sqlx::query!(#sql_lit, #val, #(#extra_idents),*).execute(#pool).await
-                }
-            }
-        };
-        TokenStream::from(expanded)
-    }
+    let expanded = quote! {
+        {
+            #(#local_stmts)*
+            let mut __ph_idx: usize = 1;
+            let mut __where_sql = String::new();
+            #sql_code
+            #tenant_sql
+            let __sql = format!("DELETE FROM {} WHERE {}{}", #table_lit, __where_sql, __tenant_sql);
+            let mut __q = sqlx::query(&__sql);
+            #(#bind_stmts)*
+            #tenant_bind
+            __q.execute(#pool).await
+        }
+    };
+    TokenStream::from(expanded)
 }
 
 // ── crud_insert! ────────────────────────────────────────────────────────
@@ -527,113 +380,44 @@ fn expand_select(input: TokenStream) -> TokenStream {
     if let Some(err) = validate_table(table) {
         return err;
     }
-    if let Some(err) = validate_column(table, &parsed.col) {
-        return err;
-    }
     if let Some(err) = validate_columns(table, &parsed.sel_cols) {
         return err;
     }
-    if let Some(err) = validate_columns(table, &parsed.and_cols) {
-        return err;
+    if let Some(err) = crate::where_dsl::validate_where_columns(&parsed.dsl_where, &table.value()) {
+        return err.into();
     }
 
     let pool = &parsed.pool;
-    let val = &parsed.val;
     let table_str = table.value();
-    let col_str = parsed.col.value();
+    let table_lit = syn::LitStr::new(&table_str, table.span());
     let sel_str: String = parsed
         .sel_cols
         .iter()
         .map(|l| l.value())
         .collect::<Vec<_>>()
         .join(", ");
-    let and_cols = &parsed.and_cols;
-    let and_vals = &parsed.and_vals;
-
-    let table_lit = syn::LitStr::new(&table_str, table.span());
     let sel_lit = syn::LitStr::new(&sel_str, table.span());
-    let col_lit = syn::LitStr::new(&col_str, table.span());
 
-    let and_col_lits: Vec<syn::LitStr> = and_cols
-        .iter()
-        .enumerate()
-        .map(|(i, ac)| {
-            syn::LitStr::new(
-                &format!(" AND {} = {}", ac.value(), d.ph(2 + i)),
-                table.span(),
-            )
-        })
-        .collect();
+    let wr = crate::where_dsl::generate_where_runtime(&parsed.dsl_where, d);
+    let (local_stmts, bind_stmts) = emit_runtime_binds(&wr.binds);
+    let (tenant_sql, tenant_bind) = emit_tenant_code(&parsed.tid, d, None);
+    let sql_code = wr.sql_code;
 
-    let and_val_idents: Vec<syn::Ident> = (0..and_vals.len())
-        .map(|i| syn::Ident::new(&format!("__sav_{}", i), proc_macro2::Span::call_site()))
-        .collect();
-
-    if parsed.tid.is_some() {
-        let tid = &parsed.tid;
-        let tid_fmt = syn::LitStr::new(
-            &format!(
-                "SELECT {{}} FROM {{}} WHERE {{}} = {}{{}} AND tenant_id = {}",
-                d.ph(1),
-                d.ph(2 + and_cols.len())
-            ),
-            table.span(),
-        );
-        let no_tid_fmt = syn::LitStr::new(
-            &format!("SELECT {{}} FROM {{}} WHERE {{}} = {}{{}}", d.ph(1)),
-            table.span(),
-        );
-        let expanded = quote! {
-            {
-                let __sv = #val;
-                #(let #and_val_idents = #and_vals;)*
-                let __and_sql: &str = concat!(#(#and_col_lits),*);
-                let __sql = match #tid {
-                    Some(_tid) => format!(#tid_fmt, #sel_lit, #table_lit, #col_lit, __and_sql),
-                    None => format!(#no_tid_fmt, #sel_lit, #table_lit, #col_lit, __and_sql),
-                };
-                let mut _q = sqlx::query_as::<_, _>(&__sql).bind(__sv);
-                #(_q = _q.bind(#and_val_idents);)*
-                if let Some(_tid) = #tid {
-                    _q = _q.bind(_tid);
-                }
-                _q.fetch_optional(#pool).await
-            }
-        };
-        TokenStream::from(expanded)
-    } else {
-        let and_sql: String = and_cols
-            .iter()
-            .enumerate()
-            .map(|(i, ac)| format!(" AND {} = {}", ac.value(), d.ph(2 + i)))
-            .collect();
-        let sql_str = format!(
-            "SELECT {} FROM {} WHERE {} = {}{}",
-            sel_str,
-            table_str,
-            col_str,
-            d.ph(1),
-            and_sql
-        );
-        let sql = syn::LitStr::new(&sql_str, table.span());
-
-        if and_vals.is_empty() {
-            let expanded = quote! {
-                sqlx::query_as::<_, _>(#sql).bind(#val).fetch_optional(#pool).await
-            };
-            TokenStream::from(expanded)
-        } else {
-            let expanded = quote! {
-                {
-                    #(let #and_val_idents = #and_vals;)*
-                    let mut _q = sqlx::query_as::<_, _>(#sql).bind(#val);
-                    #(_q = _q.bind(#and_val_idents);)*
-                    _q.fetch_optional(#pool).await
-                }
-            };
-            TokenStream::from(expanded)
+    let expanded = quote! {
+        {
+            #(#local_stmts)*
+            let mut __ph_idx: usize = 1;
+            let mut __where_sql = String::new();
+            #sql_code
+            #tenant_sql
+            let __sql = format!("SELECT {} FROM {} WHERE {}{}", #sel_lit, #table_lit, __where_sql, __tenant_sql);
+            let mut __q = sqlx::query_as::<_, _>(&__sql);
+            #(#bind_stmts)*
+            #tenant_bind
+            __q.fetch_optional(#pool).await
         }
-    }
+    };
+    TokenStream::from(expanded)
 }
 
 // ── crud_query! ──────────────────────────────────────────
@@ -705,41 +489,31 @@ fn expand_find(input: TokenStream, method: FindMethod) -> TokenStream {
     if let Some(err) = validate_table(table) {
         return err;
     }
-    if let Some(err) = validate_column(table, &parsed.col) {
-        return err;
-    }
-    if let Some(err) = validate_columns(table, &parsed.and_cols) {
-        return err;
-    }
-    if let Some(err) = validate_columns(table, &extra_conds_columns(&parsed.ecs)) {
-        return err;
+    if let Some(err) = crate::where_dsl::validate_where_columns(&parsed.dsl_where, &table.value()) {
+        return err.into();
     }
 
     let pool = &parsed.pool;
     let ty = &parsed.ty;
-    let val = &parsed.val;
-    let tid = &parsed.tid;
-    let table_str = table.value();
-    let col_str = parsed.col.value();
-    let cols = get_select_columns(table);
     let d = dialect();
-    let in_base: usize = 2
-        + parsed.and_cols.len()
-        + parsed.ecs.gt_vals.len()
-        + parsed.ecs.lt_vals.len()
-        + parsed.ecs.gte_vals.len()
-        + parsed.ecs.lte_vals.len();
-    let numbered = matches!(d, Dialect::Sqlite | Dialect::Postgres);
-    let numbered_lit = syn::LitBool::new(numbered, proc_macro2::Span::call_site());
-    let ph_prefix_lit = syn::LitStr::new(
-        match d {
-            Dialect::Postgres => "$",
-            _ => "?",
-        },
-        proc_macro2::Span::call_site(),
-    );
-    let and_cols = &parsed.and_cols;
-    let and_vals = &parsed.and_vals;
+    let table_str = table.value();
+    let table_lit = syn::LitStr::new(&table_str, table.span());
+    let cols = get_select_columns(table);
+    let cols_lit = syn::LitStr::new(&cols, table.span());
+
+    let wr = crate::where_dsl::generate_where_runtime(&parsed.dsl_where, d);
+    let (local_stmts, bind_stmts) = emit_runtime_binds(&wr.binds);
+    let (tenant_sql, tenant_bind) = emit_tenant_code(&parsed.tid, d, None);
+    let sql_code = wr.sql_code;
+
+    let order_fragment = match &parsed.order_by {
+        Some(ob) => {
+            let ob_str = format!(" ORDER BY {}", ob.value());
+            let ob_lit = syn::LitStr::new(&ob_str, table.span());
+            quote! { #ob_lit }
+        }
+        None => quote! { "" },
+    };
 
     let method_call = match &method {
         FindMethod::FetchOptional => quote! { fetch_optional(#pool).await },
@@ -747,262 +521,21 @@ fn expand_find(input: TokenStream, method: FindMethod) -> TokenStream {
         FindMethod::FetchAll => quote! { fetch_all(#pool).await },
     };
 
-    if parsed.tid.is_some() {
-        let col_lit = syn::LitStr::new(&col_str, table.span());
-        let table_lit = syn::LitStr::new(&table_str, table.span());
-        let cols_lit = syn::LitStr::new(&cols, table.span());
-
-        let and_col_lits: Vec<syn::LitStr> = and_cols
-            .iter()
-            .enumerate()
-            .map(|(i, ac)| {
-                syn::LitStr::new(
-                    &format!(" AND {} = {}", ac.value(), d.ph(2 + i)),
-                    table.span(),
-                )
-            })
-            .collect();
-
-        let ecs_null_lits: Vec<syn::LitStr> = parsed
-            .ecs
-            .null_cols
-            .iter()
-            .map(|c| syn::LitStr::new(&format!(" AND {} IS NULL", c.value()), table.span()))
-            .collect();
-
-        let mut all_bind_vals: Vec<syn::Expr> = and_vals.to_vec();
-        all_bind_vals.extend(parsed.ecs.gt_vals.iter().cloned());
-        all_bind_vals.extend(parsed.ecs.lt_vals.iter().cloned());
-        all_bind_vals.extend(parsed.ecs.gte_vals.iter().cloned());
-        all_bind_vals.extend(parsed.ecs.lte_vals.iter().cloned());
-
-        let ecs_cmp_lits: Vec<syn::LitStr> = {
-            let mut idx: usize = 2 + and_cols.len();
-            let mut lits = Vec::new();
-            for _ in &parsed.ecs.gt_vals {
-                let ph = d.ph(idx);
-                idx += 1;
-                let col = &parsed.ecs.gt_cols[lits.len()];
-                lits.push(syn::LitStr::new(
-                    &format!(" AND {} > {}", col.value(), ph),
-                    table.span(),
-                ));
-            }
-            let mut lits2 = Vec::new();
-            for _ in &parsed.ecs.lt_vals {
-                let ph = d.ph(idx);
-                idx += 1;
-                let col = &parsed.ecs.lt_cols[lits2.len()];
-                lits2.push(syn::LitStr::new(
-                    &format!(" AND {} < {}", col.value(), ph),
-                    table.span(),
-                ));
-            }
-            let mut lits3 = Vec::new();
-            for _ in &parsed.ecs.gte_vals {
-                let ph = d.ph(idx);
-                idx += 1;
-                let col = &parsed.ecs.gte_cols[lits3.len()];
-                lits3.push(syn::LitStr::new(
-                    &format!(" AND {} >= {}", col.value(), ph),
-                    table.span(),
-                ));
-            }
-            let mut lits4 = Vec::new();
-            for _ in &parsed.ecs.lte_vals {
-                let ph = d.ph(idx);
-                idx += 1;
-                let col = &parsed.ecs.lte_cols[lits4.len()];
-                lits4.push(syn::LitStr::new(
-                    &format!(" AND {} <= {}", col.value(), ph),
-                    table.span(),
-                ));
-            }
-            lits.into_iter()
-                .chain(lits2)
-                .chain(lits3)
-                .chain(lits4)
-                .collect()
-        };
-
-        let in_col_lits: Vec<syn::LitStr> = parsed
-            .ecs
-            .in_cols
-            .iter()
-            .map(|c| syn::LitStr::new(&c.value(), table.span()))
-            .collect();
-        let in_vals = &parsed.ecs.in_vals;
-
-        let and_idents: Vec<syn::Ident> = (0..all_bind_vals.len())
-            .map(|i| syn::Ident::new(&format!("__fa_{}", i), proc_macro2::Span::call_site()))
-            .collect();
-
-        let order_by_fragment = match &parsed.order_by {
-            Some(ob) => {
-                let ob_str = ob.value();
-                let ob_lit = syn::LitStr::new(&format!(" ORDER BY {}", ob_str), table.span());
-                quote! { #ob_lit }
-            }
-            None => quote! { "" },
-        };
-
-        let ph1_lit = syn::LitStr::new(&d.ph(1), table.span());
-        let in_base_lit = syn::LitInt::new(&in_base.to_string(), proc_macro2::Span::call_site());
-        let expanded = quote! {
-            {
-                let __fv = #val;
-                #(let #and_idents = #all_bind_vals;)*
-                let __ob: &str = #order_by_fragment;
-                let mut __and_sql = String::new();
-                #(__and_sql.push_str(#and_col_lits);)*
-                #(__and_sql.push_str(#ecs_null_lits);)*
-                #(__and_sql.push_str(#ecs_cmp_lits);)*
-                let mut __ph_idx: usize = #in_base_lit;
-                #(
-                    if !#in_vals.is_empty() {
-                        let __in_ph: String = if #numbered_lit {
-                            (0..#in_vals.len()).map(|i| format!(concat!(#ph_prefix_lit, "{}"), __ph_idx + i)).collect::<Vec<_>>().join(",")
-                        } else {
-                            (0..#in_vals.len()).map(|_| "?").collect::<Vec<_>>().join(",")
-                        };
-                        __ph_idx += #in_vals.len();
-                        __and_sql.push_str(&format!(" AND {} IN ({})", #in_col_lits, __in_ph));
-                    }
-                )*
-                let __sql = match #tid {
-                    Some(_tid) => {
-                        let __tid_ph = if #numbered_lit {
-                            format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-                        } else {
-                            "?".to_string()
-                        };
-                        format!("SELECT {} FROM {} WHERE {} = {}{} AND tenant_id = {}{}", #cols_lit, #table_lit, #col_lit, #ph1_lit, __and_sql, __tid_ph, __ob)
-                    }
-                    None => format!("SELECT {} FROM {} WHERE {} = {}{}{}", #cols_lit, #table_lit, #col_lit, #ph1_lit, __and_sql, __ob),
-                };
-                let mut _q = sqlx::query_as::<_, #ty>(&__sql).bind(__fv);
-                #(_q = _q.bind(#and_idents);)*
-                #(
-                    for __iv in #in_vals {
-                        _q = _q.bind(__iv);
-                    }
-                )*
-                if let Some(_tid) = #tid {
-                    _q = _q.bind(_tid);
-                }
-                _q.#method_call
-            }
-        };
-        TokenStream::from(expanded)
-    } else {
-        let mut sql_str = format!(
-            "SELECT {} FROM {} WHERE {} = {}",
-            cols,
-            table_str,
-            col_str,
-            d.ph(1)
-        );
-        let mut all_extra_vals: Vec<syn::Expr> = and_vals.to_vec();
-        for (i, ac) in and_cols.iter().enumerate() {
-            sql_str.push_str(&format!(" AND {} = {}", ac.value(), d.ph(2 + i)));
-        }
-        for c in &parsed.ecs.null_cols {
-            sql_str.push_str(&format!(" AND {} IS NULL", c.value()));
-        }
+    let expanded = quote! {
         {
-            let mut idx = 2 + and_cols.len();
-            for (c, v) in parsed.ecs.gt_cols.iter().zip(&parsed.ecs.gt_vals) {
-                sql_str.push_str(&format!(" AND {} > {}", c.value(), d.ph(idx)));
-                idx += 1;
-                all_extra_vals.push(v.clone());
-            }
-            for (c, v) in parsed.ecs.lt_cols.iter().zip(&parsed.ecs.lt_vals) {
-                sql_str.push_str(&format!(" AND {} < {}", c.value(), d.ph(idx)));
-                idx += 1;
-                all_extra_vals.push(v.clone());
-            }
-            for (c, v) in parsed.ecs.gte_cols.iter().zip(&parsed.ecs.gte_vals) {
-                sql_str.push_str(&format!(" AND {} >= {}", c.value(), d.ph(idx)));
-                idx += 1;
-                all_extra_vals.push(v.clone());
-            }
-            for (c, v) in parsed.ecs.lte_cols.iter().zip(&parsed.ecs.lte_vals) {
-                sql_str.push_str(&format!(" AND {} <= {}", c.value(), d.ph(idx)));
-                idx += 1;
-                all_extra_vals.push(v.clone());
-            }
+            #(#local_stmts)*
+            let mut __ph_idx: usize = 1;
+            let mut __where_sql = String::new();
+            #sql_code
+            #tenant_sql
+            let __sql = format!("SELECT {} FROM {} WHERE {}{}{}", #cols_lit, #table_lit, __where_sql, __tenant_sql, #order_fragment);
+            let mut __q = sqlx::query_as::<_, #ty>(&__sql);
+            #(#bind_stmts)*
+            #tenant_bind
+            __q.#method_call
         }
-        if let Some(ref ob) = parsed.order_by {
-            sql_str.push_str(&format!(" ORDER BY {}", ob.value()));
-        }
-
-        let has_in = !parsed.ecs.in_cols.is_empty();
-
-        if has_in {
-            let in_col_lits: Vec<syn::LitStr> = parsed
-                .ecs
-                .in_cols
-                .iter()
-                .map(|c| syn::LitStr::new(&c.value(), table.span()))
-                .collect();
-            let in_vals = &parsed.ecs.in_vals;
-            let order_str = match &parsed.order_by {
-                Some(ob) => format!(" ORDER BY {}", ob.value()),
-                None => String::new(),
-            };
-            let sql_prefix_lit = syn::LitStr::new(&sql_str, table.span());
-            let order_lit = syn::LitStr::new(&order_str, table.span());
-
-            let and_idents: Vec<syn::Ident> = (0..all_extra_vals.len())
-                .map(|i| syn::Ident::new(&format!("__fa_{}", i), proc_macro2::Span::call_site()))
-                .collect();
-
-            let in_base_lit =
-                syn::LitInt::new(&in_base.to_string(), proc_macro2::Span::call_site());
-            let expanded = quote! {
-                {
-                    #(let #and_idents = #all_extra_vals;)*
-                    let mut __sql = #sql_prefix_lit.to_string();
-                    let mut __ph_idx: usize = #in_base_lit;
-                    #(
-                        if !#in_vals.is_empty() {
-                            let __in_ph: String = if #numbered_lit {
-                                (0..#in_vals.len()).map(|i| format!(concat!(#ph_prefix_lit, "{}"), __ph_idx + i)).collect::<Vec<_>>().join(",")
-                            } else {
-                                (0..#in_vals.len()).map(|_| "?").collect::<Vec<_>>().join(",")
-                            };
-                            __ph_idx += #in_vals.len();
-                            __sql.push_str(&format!(" AND {} IN ({})", #in_col_lits, __in_ph));
-                        }
-                    )*
-                    __sql.push_str(#order_lit);
-                    let mut _q = sqlx::query_as::<_, #ty>(&__sql).bind(#val);
-                    #(_q = _q.bind(#and_idents);)*
-                    #(
-                        for __iv in #in_vals {
-                            _q = _q.bind(__iv);
-                        }
-                    )*
-                    _q.#method_call
-                }
-            };
-            TokenStream::from(expanded)
-        } else {
-            let sql = syn::LitStr::new(&sql_str, table.span());
-
-            let and_idents: Vec<syn::Ident> = (0..all_extra_vals.len())
-                .map(|i| syn::Ident::new(&format!("__fa_{}", i), proc_macro2::Span::call_site()))
-                .collect();
-
-            let expanded = quote! {
-                {
-                    #(let #and_idents = #all_extra_vals;)*
-                    sqlx::query_as::<_, #ty>(#sql).bind(#val)#(.bind(#and_idents))*.#method_call
-                }
-            };
-            TokenStream::from(expanded)
-        }
-    }
+    };
+    TokenStream::from(expanded)
 }
 
 // ── crud_count! ─────────────────────────────────────────
@@ -1012,287 +545,41 @@ pub fn crud_count(input: TokenStream) -> TokenStream {
 }
 
 fn expand_count(input: TokenStream) -> TokenStream {
-    let parsed = parse_macro_input!(input as DeleteInput);
+    let parsed = parse_macro_input!(input as WhereOnlyInput);
     let table = &parsed.table;
-    let col = &parsed.col;
 
     if let Some(err) = validate_table(table) {
         return err;
     }
-    if let Some(err) = validate_column(table, col) {
-        return err;
-    }
-    if let Some(err) = validate_columns(table, &parsed.and_cols) {
-        return err;
-    }
-    if let Some(err) = validate_columns(table, &extra_conds_columns(&parsed.ecs)) {
-        return err;
+    if let Some(err) = crate::where_dsl::validate_where_columns(&parsed.dsl_where, &table.value()) {
+        return err.into();
     }
 
     let pool = &parsed.pool;
-    let val = &parsed.val;
-    let tid = &parsed.tid;
-    let table_str = table.value();
-    let col_str = col.value();
-    let and_cols = &parsed.and_cols;
-    let and_vals = &parsed.and_vals;
-
-    let has_in = !parsed.ecs.in_cols.is_empty();
-
     let d = dialect();
-    let mut ph_idx = 1usize;
-    let col_ph = d.ph(ph_idx);
-    ph_idx += 1;
-    let mut and_parts: Vec<String> = and_cols
-        .iter()
-        .map(|ac| {
-            let ph = d.ph(ph_idx);
-            ph_idx += 1;
-            format!("AND {} = {}", ac.value(), ph)
-        })
-        .collect();
-    let (ecs_parts, ecs_vals) = build_extra_conds_sql(&parsed.ecs, d, &mut ph_idx);
-    and_parts.extend(ecs_parts);
-    let all_extra_vals: Vec<syn::Expr> = and_vals.iter().chain(ecs_vals.iter()).cloned().collect();
-    let and_str = and_parts.join(" ");
+    let table_str = table.value();
+    let table_lit = syn::LitStr::new(&table_str, table.span());
 
-    let numbered = matches!(d, Dialect::Sqlite | Dialect::Postgres);
-    let numbered_lit = syn::LitBool::new(numbered, proc_macro2::Span::call_site());
-    let ph_prefix_lit = syn::LitStr::new(
-        match d {
-            Dialect::Postgres => "$",
-            _ => "?",
-        },
-        proc_macro2::Span::call_site(),
-    );
-    let in_base: usize = ph_idx;
+    let wr = crate::where_dsl::generate_where_runtime(&parsed.dsl_where, d);
+    let (local_stmts, bind_stmts) = emit_runtime_binds(&wr.binds);
+    let (tenant_sql, tenant_bind) = emit_tenant_code(&parsed.tid, d, None);
+    let sql_code = wr.sql_code;
 
-    let has_extra = !and_cols.is_empty() || !parsed.ecs.is_empty();
-
-    let in_col_lits: Vec<syn::LitStr> = parsed
-        .ecs
-        .in_cols
-        .iter()
-        .map(|c| syn::LitStr::new(&c.value(), table.span()))
-        .collect();
-    let in_vals = &parsed.ecs.in_vals;
-
-    if parsed.tid.is_some() {
-        if has_in {
-            let sql_prefix = format!(
-                "SELECT COUNT(*) FROM {} WHERE {} = {}{}",
-                table_str,
-                col_str,
-                col_ph,
-                if and_str.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {}", and_str)
-                },
-            );
-            let sql_prefix_lit = syn::LitStr::new(&sql_prefix, table.span());
-            let in_base_lit =
-                syn::LitInt::new(&in_base.to_string(), proc_macro2::Span::call_site());
-
-            let extra_idents: Vec<syn::Ident> = (0..all_extra_vals.len())
-                .map(|i| syn::Ident::new(&format!("__cnt_{}", i), proc_macro2::Span::call_site()))
-                .collect();
-
-            let and_bind = if all_extra_vals.is_empty() {
-                quote! {}
-            } else {
-                quote! { #(_q = _q.bind(#extra_idents);)* }
-            };
-
-            let expanded = quote! {
-                {
-                    #(let #extra_idents = #all_extra_vals;)*
-                    let mut __sql = #sql_prefix_lit.to_string();
-                    let mut __ph_idx: usize = #in_base_lit;
-                    #(
-                        if !#in_vals.is_empty() {
-                            let __in_ph: String = if #numbered_lit {
-                                (0..#in_vals.len()).map(|i| format!(concat!(#ph_prefix_lit, "{}"), __ph_idx + i)).collect::<Vec<_>>().join(",")
-                            } else {
-                                (0..#in_vals.len()).map(|_| "?").collect::<Vec<_>>().join(",")
-                            };
-                            __ph_idx += #in_vals.len();
-                            __sql.push_str(&format!(" AND {} IN ({})", #in_col_lits, __in_ph));
-                        }
-                    )*
-                    let __tenant_sql: String = match #tid {
-                        Some(_) => {
-                            let __tid_ph = if #numbered_lit {
-                                format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-                            } else {
-                                "?".to_string()
-                            };
-                            format!(" AND tenant_id = {}", __tid_ph)
-                        }
-                        None => String::new(),
-                    };
-                    __sql.push_str(&__tenant_sql);
-                    let mut _q = sqlx::query_scalar::<_, i64>(&__sql).bind(#val);
-                    #and_bind
-                    #(
-                        for __iv in #in_vals {
-                            _q = _q.bind(__iv);
-                        }
-                    )*
-                    if let Some(_tid) = #tid {
-                        _q = _q.bind(_tid);
-                    }
-                    _q.fetch_one(#pool).await
-                }
-            };
-            TokenStream::from(expanded)
-        } else {
-            let tid_ph = d.ph(ph_idx);
-
-            let expanded = if !has_extra {
-                let sql_with = syn::LitStr::new(
-                    &format!(
-                        "SELECT COUNT(*) FROM {} WHERE {} = {} AND tenant_id = {}",
-                        table_str, col_str, col_ph, tid_ph
-                    ),
-                    table.span(),
-                );
-                let sql_without = syn::LitStr::new(
-                    &format!(
-                        "SELECT COUNT(*) FROM {} WHERE {} = {}",
-                        table_str, col_str, col_ph
-                    ),
-                    table.span(),
-                );
-                quote! {
-                    {
-                        match #tid {
-                            Some(_tid) => sqlx::query_scalar::<_, i64>(#sql_with).bind(#val).bind(_tid).fetch_one(#pool).await,
-                            None => sqlx::query_scalar::< _, i64>(#sql_without).bind(#val).fetch_one(#pool).await,
-                        }
-                    }
-                }
-            } else {
-                let extra_idents: Vec<syn::Ident> = (0..all_extra_vals.len())
-                    .map(|i| {
-                        syn::Ident::new(&format!("__cnt_{}", i), proc_macro2::Span::call_site())
-                    })
-                    .collect();
-                let sql_with = syn::LitStr::new(
-                    &format!(
-                        "SELECT COUNT(*) FROM {} WHERE {} = {} {} AND tenant_id = {}",
-                        table_str, col_str, col_ph, and_str, tid_ph
-                    ),
-                    table.span(),
-                );
-                let sql_without = syn::LitStr::new(
-                    &format!(
-                        "SELECT COUNT(*) FROM {} WHERE {} = {} {}",
-                        table_str, col_str, col_ph, and_str
-                    ),
-                    table.span(),
-                );
-                quote! {
-                    {
-                        #(let #extra_idents = #all_extra_vals;)*
-                        match #tid {
-                            Some(_tid) => sqlx::query_scalar::< _, i64>(#sql_with).bind(#val)#(.bind(#extra_idents))*.bind(_tid).fetch_one(#pool).await,
-                            None => sqlx::query_scalar::< _, i64>(#sql_without).bind(#val)#(.bind(#extra_idents))*.fetch_one(#pool).await,
-                        }
-                    }
-                }
-            };
-            TokenStream::from(expanded)
+    let expanded = quote! {
+        {
+            #(#local_stmts)*
+            let mut __ph_idx: usize = 1;
+            let mut __where_sql = String::new();
+            #sql_code
+            #tenant_sql
+            let __sql = format!("SELECT COUNT(*) FROM {} WHERE {}{}", #table_lit, __where_sql, __tenant_sql);
+            let mut __q = sqlx::query_scalar::<_, i64>(&__sql);
+            #(#bind_stmts)*
+            #tenant_bind
+            __q.fetch_one(#pool).await
         }
-    } else {
-        if has_in {
-            let sql_prefix = format!(
-                "SELECT COUNT(*) FROM {} WHERE {} = {}{}",
-                table_str,
-                col_str,
-                col_ph,
-                if and_str.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {}", and_str)
-                }
-            );
-            let sql_prefix_lit = syn::LitStr::new(&sql_prefix, table.span());
-            let in_base_lit =
-                syn::LitInt::new(&in_base.to_string(), proc_macro2::Span::call_site());
-
-            let extra_idents: Vec<syn::Ident> = (0..all_extra_vals.len())
-                .map(|i| syn::Ident::new(&format!("__cnt_{}", i), proc_macro2::Span::call_site()))
-                .collect();
-
-            let and_bind = if all_extra_vals.is_empty() {
-                quote! {}
-            } else {
-                quote! { #(_q = _q.bind(#extra_idents);)* }
-            };
-
-            let expanded = quote! {
-                {
-                    #(let #extra_idents = #all_extra_vals;)*
-                    let mut __sql = #sql_prefix_lit.to_string();
-                    let mut __ph_idx: usize = #in_base_lit;
-                    #(
-                        if !#in_vals.is_empty() {
-                            let __in_ph: String = if #numbered_lit {
-                                (0..#in_vals.len()).map(|i| format!(concat!(#ph_prefix_lit, "{}"), __ph_idx + i)).collect::<Vec<_>>().join(",")
-                            } else {
-                                (0..#in_vals.len()).map(|_| "?").collect::<Vec<_>>().join(",")
-                            };
-                            __ph_idx += #in_vals.len();
-                            __sql.push_str(&format!(" AND {} IN ({})", #in_col_lits, __in_ph));
-                        }
-                    )*
-                    let mut _q = sqlx::query_scalar::<_, i64>(&__sql).bind(#val);
-                    #and_bind
-                    #(
-                        for __iv in #in_vals {
-                            _q = _q.bind(__iv);
-                        }
-                    )*
-                    _q.fetch_one(#pool).await
-                }
-            };
-            TokenStream::from(expanded)
-        } else {
-            let expanded = if !has_extra {
-                let sql_lit = syn::LitStr::new(
-                    &format!(
-                        "SELECT COUNT(*) FROM {} WHERE {} = {}",
-                        table_str, col_str, col_ph
-                    ),
-                    table.span(),
-                );
-                quote! {
-                    sqlx::query_scalar::< _, i64>(#sql_lit).bind(#val).fetch_one(#pool).await
-                }
-            } else {
-                let extra_idents: Vec<syn::Ident> = (0..all_extra_vals.len())
-                    .map(|i| {
-                        syn::Ident::new(&format!("__cnt_{}", i), proc_macro2::Span::call_site())
-                    })
-                    .collect();
-                let sql_lit = syn::LitStr::new(
-                    &format!(
-                        "SELECT COUNT(*) FROM {} WHERE {} = {} {}",
-                        table_str, col_str, col_ph, and_str
-                    ),
-                    table.span(),
-                );
-                quote! {
-                    {
-                        #(let #extra_idents = #all_extra_vals;)*
-                        sqlx::query_scalar::< _, i64>(#sql_lit).bind(#val)#(.bind(#extra_idents))*.fetch_one(#pool).await
-                    }
-                }
-            };
-            TokenStream::from(expanded)
-        }
-    }
+    };
+    TokenStream::from(expanded)
 }
 
 // ── crud_list! ────────────────────────────────────────────────────────
@@ -1360,9 +647,6 @@ fn expand_update(input: TokenStream) -> TokenStream {
     if let Some(err) = validate_table(table) {
         return err;
     }
-    if let Some(err) = validate_column(table, &parsed.pk_col) {
-        return err;
-    }
     if let Some(err) = validate_columns(table, &parsed.bind_cols) {
         return err;
     }
@@ -1374,21 +658,18 @@ fn expand_update(input: TokenStream) -> TokenStream {
     if let Some(err) = validate_columns(table, &parsed.opt_cols) {
         return err;
     }
-    if let Some(err) = validate_columns(table, &parsed.and_cols) {
-        return err;
+    if let Some(err) = crate::where_dsl::validate_where_columns(&parsed.dsl_where, &table.value()) {
+        return err.into();
     }
 
     let pool = &parsed.pool;
     let table_str = table.value();
+    let table_lit = syn::LitStr::new(&table_str, table.span());
     let bind_cols = &parsed.bind_cols;
     let bind_vals = &parsed.bind_vals;
     let opt_cols = &parsed.opt_cols;
     let opt_vals = &parsed.opt_vals;
     let raw_pairs = &parsed.raw_pairs;
-    let pk_col = &parsed.pk_col;
-    let pk_val = &parsed.pk_val;
-    let and_cols = &parsed.and_cols;
-    let and_vals = &parsed.and_vals;
 
     let has_optional = !opt_cols.is_empty();
 
@@ -1399,409 +680,6 @@ fn expand_update(input: TokenStream) -> TokenStream {
         .collect();
     let opt_idents: Vec<syn::Ident> = (0..opt_vals.len())
         .map(|i| syn::Ident::new(&format!("__ov_{}", i), proc_macro2::Span::call_site()))
-        .collect();
-    let and_idents: Vec<syn::Ident> = (0..and_vals.len())
-        .map(|i| syn::Ident::new(&format!("__ua_{}", i), proc_macro2::Span::call_site()))
-        .collect();
-
-    if has_optional {
-        let d = dialect();
-        let numbered = matches!(d, Dialect::Sqlite | Dialect::Postgres);
-        let numbered_lit = syn::LitBool::new(numbered, proc_macro2::Span::call_site());
-        let ph_prefix_lit = syn::LitStr::new(
-            match d {
-                Dialect::Postgres => "$",
-                _ => "?",
-            },
-            proc_macro2::Span::call_site(),
-        );
-        let dyn_start_lit = syn::LitInt::new(
-            &(bind_cols.len() + 1).to_string(),
-            proc_macro2::Span::call_site(),
-        );
-
-        let table_lit = syn::LitStr::new(&table_str, table.span());
-        let pk_col_lit = syn::LitStr::new(&pk_col.value(), table.span());
-
-        let bind_set_lits: Vec<syn::LitStr> = bind_col_strs
-            .iter()
-            .enumerate()
-            .map(|(i, c)| syn::LitStr::new(&format!("{} = {}", c, d.ph(1 + i)), table.span()))
-            .collect();
-
-        let raw_col_names: Vec<syn::LitStr> = raw_pairs.iter().map(|(rc, _)| rc.clone()).collect();
-        let raw_exprs: Vec<&syn::Expr> = raw_pairs.iter().map(|(_, rv)| rv).collect();
-
-        let opt_col_lits: Vec<syn::LitStr> = opt_cols
-            .iter()
-            .map(|c| syn::LitStr::new(&c.value(), c.span()))
-            .collect();
-
-        let and_col_names: Vec<syn::LitStr> = and_cols
-            .iter()
-            .map(|ac| syn::LitStr::new(&ac.value(), ac.span()))
-            .collect();
-
-        let tid = &parsed.tid;
-
-        let opt_bind_idents: Vec<syn::Ident> = (0..opt_vals.len())
-            .map(|i| syn::Ident::new(&format!("__obv_{}", i), proc_macro2::Span::call_site()))
-            .collect();
-        let and_ph_idents: Vec<syn::Ident> = (0..and_vals.len())
-            .map(|i| syn::Ident::new(&format!("__aph_{}", i), proc_macro2::Span::call_site()))
-            .collect();
-
-        let expanded = if parsed.tid.is_some() {
-            quote! {
-                {
-                    #(let #val_idents = #bind_vals;)*
-                    #(let #opt_idents = &(#opt_vals);)*
-                    #(let #and_idents = #and_vals;)*
-                    let __pkv = #pk_val;
-                    let mut __sets: Vec<String> = Vec::new();
-                    #(__sets.push(#bind_set_lits.to_string());)*
-                    #(__sets.push(format!("{} = {}", #raw_col_names, #raw_exprs));)*
-                    let mut __ph_idx: usize = #dyn_start_lit;
-                    #(
-                        if #opt_idents.is_some() {
-                            let __ph: String = if #numbered_lit {
-                                format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-                            } else {
-                                "?".to_string()
-                            };
-                            __ph_idx += 1;
-                            __sets.push(format!("{} = {}", #opt_col_lits, __ph));
-                        }
-                    )*
-                    let __pk_ph: String = if #numbered_lit {
-                        format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-                    } else {
-                        "?".to_string()
-                    };
-                    __ph_idx += 1;
-                    let mut __and_sql = String::new();
-                    #(
-                        let #and_ph_idents: String = if #numbered_lit {
-                            format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-                        } else {
-                            "?".to_string()
-                        };
-                        __ph_idx += 1;
-                        __and_sql.push_str(&format!(" AND {} = {}", #and_col_names, #and_ph_idents));
-                    )*
-                    let _sql = match #tid {
-                        Some(_tid) => {
-                            let __tid_ph: String = if #numbered_lit {
-                                format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-                            } else {
-                                "?".to_string()
-                            };
-                            format!(
-                                "UPDATE {} SET {} WHERE {} = {}{} AND tenant_id = {}",
-                                #table_lit, __sets.join(", "), #pk_col_lit, __pk_ph, __and_sql, __tid_ph
-                            )
-                        }
-                        None => format!(
-                            "UPDATE {} SET {} WHERE {} = {}{}",
-                            #table_lit, __sets.join(", "), #pk_col_lit, __pk_ph, __and_sql
-                        ),
-                    };
-                    let mut _q = sqlx::query(&_sql);
-                    #(_q = _q.bind(#val_idents);)*
-                    #(
-                        if let Some(#opt_bind_idents) = #opt_idents {
-                            _q = _q.bind(#opt_bind_idents);
-                        }
-                    )*
-                    _q = _q.bind(__pkv);
-                    #(_q = _q.bind(#and_idents);)*
-                    if let Some(_tid) = #tid {
-                        _q = _q.bind(_tid);
-                    }
-                    _q.execute(#pool).await
-                }
-            }
-        } else {
-            quote! {
-                {
-                    #(let #val_idents = #bind_vals;)*
-                    #(let #opt_idents = &(#opt_vals);)*
-                    #(let #and_idents = #and_vals;)*
-                    let __pkv = #pk_val;
-                    let mut __sets: Vec<String> = Vec::new();
-                    #(__sets.push(#bind_set_lits.to_string());)*
-                    #(__sets.push(format!("{} = {}", #raw_col_names, #raw_exprs));)*
-                    let mut __ph_idx: usize = #dyn_start_lit;
-                    #(
-                        if #opt_idents.is_some() {
-                            let __ph: String = if #numbered_lit {
-                                format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-                            } else {
-                                "?".to_string()
-                            };
-                            __ph_idx += 1;
-                            __sets.push(format!("{} = {}", #opt_col_lits, __ph));
-                        }
-                    )*
-                    let __pk_ph: String = if #numbered_lit {
-                        format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-                    } else {
-                        "?".to_string()
-                    };
-                    __ph_idx += 1;
-                    let mut __and_sql = String::new();
-                    #(
-                        let #and_ph_idents: String = if #numbered_lit {
-                            format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-                        } else {
-                            "?".to_string()
-                        };
-                        __ph_idx += 1;
-                        __and_sql.push_str(&format!(" AND {} = {}", #and_col_names, #and_ph_idents));
-                    )*
-                    let _sql = format!(
-                        "UPDATE {} SET {} WHERE {} = {}{}",
-                        #table_lit, __sets.join(", "), #pk_col_lit, __pk_ph, __and_sql
-                    );
-                    let mut _q = sqlx::query(&_sql);
-                    #(_q = _q.bind(#val_idents);)*
-                    #(
-                        if let Some(#opt_bind_idents) = #opt_idents {
-                            _q = _q.bind(#opt_bind_idents);
-                        }
-                    )*
-                    _q = _q.bind(__pkv);
-                    #(_q = _q.bind(#and_idents);)*
-                    _q.execute(#pool).await
-                }
-            }
-        };
-        return TokenStream::from(expanded);
-    }
-
-    // ── Static path (no optional columns — original logic) ──
-    let d = dialect();
-    let mut ph_idx = 1usize;
-    let mut set_parts: Vec<String> = Vec::new();
-    for _ in &bind_col_strs {
-        set_parts.push(d.ph(ph_idx));
-        ph_idx += 1;
-    }
-    let raw_col_names: Vec<syn::LitStr> = raw_pairs.iter().map(|(rc, _)| rc.clone()).collect();
-    let raw_exprs: Vec<&syn::Expr> = raw_pairs.iter().map(|(_, rv)| rv).collect();
-
-    let pk_ph = d.ph(ph_idx);
-    ph_idx += 1;
-
-    let and_parts: Vec<String> = and_cols
-        .iter()
-        .map(|ac| {
-            let ph = d.ph(ph_idx);
-            ph_idx += 1;
-            format!("AND {} = {}", ac.value(), ph)
-        })
-        .collect();
-
-    let set_str_prefix = bind_col_strs
-        .iter()
-        .zip(set_parts.iter())
-        .map(|(c, p)| format!("{} = {}", c, p))
-        .collect::<Vec<String>>()
-        .join(", ");
-
-    let and_str = and_parts.join("");
-
-    if parsed.tid.is_some() {
-        let tid = &parsed.tid;
-        let tenant_ph = d.ph(ph_idx);
-
-        // Store SQL fragments as literals for the generated format!() call
-        let table_lit = syn::LitStr::new(&table_str, table.span());
-        let set_prefix_lit = syn::LitStr::new(&set_str_prefix, table.span());
-        let pk_col_lit = syn::LitStr::new(&pk_col.value(), table.span());
-        let pk_ph_lit = syn::LitStr::new(&pk_ph, table.span());
-        let and_lit = syn::LitStr::new(&and_str, table.span());
-        let tenant_ph_lit = syn::LitStr::new(&tenant_ph, table.span());
-
-        let val_idents: Vec<syn::Ident> = (0..bind_vals.len())
-            .map(|i| syn::Ident::new(&format!("__uv_{}", i), proc_macro2::Span::call_site()))
-            .collect();
-        let and_idents: Vec<syn::Ident> = (0..and_vals.len())
-            .map(|i| syn::Ident::new(&format!("__ua_{}", i), proc_macro2::Span::call_site()))
-            .collect();
-
-        let has_raw = !raw_pairs.is_empty();
-        let expanded = if has_raw {
-            let sep = if set_str_prefix.is_empty() { "" } else { ", " };
-            let raw_parts: Vec<String> = raw_col_names
-                .iter()
-                .zip(raw_exprs.iter())
-                .enumerate()
-                .map(|(i, (c, _))| {
-                    if i == 0 {
-                        format!("{} = {{}}", c.value())
-                    } else {
-                        format!(", {} = {{}}", c.value())
-                    }
-                })
-                .collect();
-            let raw_fmt = format!("{}{}", sep, raw_parts.join(""));
-            let raw_fmt_lit = syn::LitStr::new(&raw_fmt, table.span());
-            quote! {
-                {
-                    #(let #val_idents = #bind_vals;)*
-                    #(let #and_idents = #and_vals;)*
-                    let __pkv = #pk_val;
-                    let __raw_suffix = format!(#raw_fmt_lit #(, #raw_exprs)*);
-                    let __set = format!("{}{}", #set_prefix_lit, __raw_suffix);
-                    let _sql = match #tid {
-                        Some(_tid) => format!(
-                            "UPDATE {} SET {} WHERE {} = {}{} AND tenant_id = {}",
-                            #table_lit, __set, #pk_col_lit, #pk_ph_lit, #and_lit, #tenant_ph_lit
-                        ),
-                        None => format!(
-                            "UPDATE {} SET {} WHERE {} = {}{}",
-                            #table_lit, __set, #pk_col_lit, #pk_ph_lit, #and_lit
-                        ),
-                    };
-                    let mut _q = sqlx::query(&_sql)#(.bind(#val_idents))*;
-                    _q = _q.bind(__pkv);
-                    #(_q = _q.bind(#and_idents);)*
-                    if let Some(_tid) = #tid {
-                        _q = _q.bind(_tid);
-                    }
-                    _q.execute(#pool).await
-                }
-            }
-        } else {
-            quote! {
-                {
-                    #(let #val_idents = #bind_vals;)*
-                    #(let #and_idents = #and_vals;)*
-                    let __pkv = #pk_val;
-                    let _sql = match #tid {
-                        Some(_tid) => format!(
-                            "UPDATE {} SET {} WHERE {} = {}{} AND tenant_id = {}",
-                            #table_lit, #set_prefix_lit, #pk_col_lit, #pk_ph_lit, #and_lit, #tenant_ph_lit
-                        ),
-                        None => format!(
-                            "UPDATE {} SET {} WHERE {} = {}{}",
-                            #table_lit, #set_prefix_lit, #pk_col_lit, #pk_ph_lit, #and_lit
-                        ),
-                    };
-                    let mut _q = sqlx::query(&_sql)#(.bind(#val_idents))*;
-                    _q = _q.bind(__pkv);
-                    #(_q = _q.bind(#and_idents);)*
-                    if let Some(_tid) = #tid {
-                        _q = _q.bind(_tid);
-                    }
-                    _q.execute(#pool).await
-                }
-            }
-        };
-        TokenStream::from(expanded)
-    } else {
-        let has_raw = !raw_pairs.is_empty();
-        let sql = if has_raw {
-            syn::LitStr::new(
-                &format!(
-                    "UPDATE {} SET {{}}{{}} WHERE {} = {}{}",
-                    table_str,
-                    pk_col.value(),
-                    pk_ph,
-                    and_str
-                ),
-                table.span(),
-            )
-        } else {
-            syn::LitStr::new(
-                &format!(
-                    "UPDATE {} SET {} WHERE {} = {}{}",
-                    table_str,
-                    set_str_prefix,
-                    pk_col.value(),
-                    pk_ph,
-                    and_str
-                ),
-                table.span(),
-            )
-        };
-        // E0716 fix: pre-bind all values to named locals
-        let val_idents: Vec<syn::Ident> = (0..bind_vals.len())
-            .map(|i| syn::Ident::new(&format!("__uv_{}", i), proc_macro2::Span::call_site()))
-            .collect();
-        let and_idents: Vec<syn::Ident> = (0..and_vals.len())
-            .map(|i| syn::Ident::new(&format!("__ua_{}", i), proc_macro2::Span::call_site()))
-            .collect();
-
-        let expanded = if has_raw {
-            let sep = if set_str_prefix.is_empty() { "" } else { ", " };
-            let raw_parts: Vec<String> = raw_col_names
-                .iter()
-                .zip(raw_exprs.iter())
-                .enumerate()
-                .map(|(i, (c, _))| {
-                    if i == 0 {
-                        format!("{} = {{}}", c.value())
-                    } else {
-                        format!(", {} = {{}}", c.value())
-                    }
-                })
-                .collect();
-            let raw_fmt = format!("{}{}", sep, raw_parts.join(""));
-            let raw_fmt_lit = syn::LitStr::new(&raw_fmt, table.span());
-            let set_prefix_lit = syn::LitStr::new(&set_str_prefix, table.span());
-            quote! {
-                {
-                    #(let #val_idents = #bind_vals;)*
-                    #(let #and_idents = #and_vals;)*
-                    let __pkv = #pk_val;
-                    let __raw_suffix = format!(#raw_fmt_lit #(, #raw_exprs)*);
-                    let __set = format!("{}{}", #set_prefix_lit, __raw_suffix);
-                    let _sql = format!(#sql, __set, "");
-                    sqlx::query(&_sql)#(.bind(#val_idents))*.bind(__pkv)#(.bind(#and_idents))*.execute(#pool).await
-                }
-            }
-        } else {
-            quote! {
-                {
-                    #(let #val_idents = #bind_vals;)*
-                    #(let #and_idents = #and_vals;)*
-                    let __pkv = #pk_val;
-                    sqlx::query(#sql)#(.bind(#val_idents))*.bind(__pkv)#(.bind(#and_idents))*.execute(#pool).await
-                }
-            }
-        };
-        TokenStream::from(expanded)
-    }
-}
-
-// ── crud_query_paged! ──────────────────────────────────────────────
-
-pub fn crud_query_paged(input: TokenStream) -> TokenStream {
-    let parsed = parse_macro_input!(input as QueryPagedInput);
-    let pool = &parsed.pool;
-    let ty = &parsed.ty;
-    let data_sql = &parsed.data_sql;
-    let count_sql = &parsed.count_sql;
-    let binds = &parsed.binds;
-    let tid = &parsed.tid;
-    let page = &parsed.page;
-    let page_size = &parsed.page_size;
-    let where_cols = &parsed.where_cols;
-    let where_vals = &parsed.where_vals;
-
-    let bind_idents: Vec<syn::Ident> = (0..binds.len())
-        .map(|i| syn::Ident::new(&format!("__pb_{}", i), proc_macro2::Span::call_site()))
-        .collect();
-
-    let where_bind_idents: Vec<syn::Ident> = (0..where_vals.len())
-        .map(|i| syn::Ident::new(&format!("__wp_{}", i), proc_macro2::Span::call_site()))
-        .collect();
-
-    let where_col_strs: Vec<syn::LitStr> = where_cols
-        .iter()
-        .map(|c| syn::LitStr::new(&c.value(), c.span()))
         .collect();
 
     let d = dialect();
@@ -1815,18 +693,249 @@ pub fn crud_query_paged(input: TokenStream) -> TokenStream {
         proc_macro2::Span::call_site(),
     );
 
-    let base_idx = binds.len() + 1;
-    let base_idx_lit = syn::LitInt::new(&base_idx.to_string(), proc_macro2::Span::call_site());
+    let bind_set_lits: Vec<syn::LitStr> = bind_col_strs
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let ph = d.ph(1 + i);
+            syn::LitStr::new(&format!("{} = {}", c, ph), table.span())
+        })
+        .collect();
+
+    let raw_col_names: Vec<syn::LitStr> = raw_pairs.iter().map(|(rc, _)| rc.clone()).collect();
+    let raw_exprs: Vec<&syn::Expr> = raw_pairs.iter().map(|(_, rv)| rv).collect();
+
+    let opt_col_lits: Vec<syn::LitStr> = opt_cols
+        .iter()
+        .map(|c| syn::LitStr::new(&c.value(), c.span()))
+        .collect();
+
+    let opt_bind_idents: Vec<syn::Ident> = (0..opt_vals.len())
+        .map(|i| syn::Ident::new(&format!("__obv_{}", i), proc_macro2::Span::call_site()))
+        .collect();
+
+    // SET clause building
+    let dyn_start = bind_cols.len() + 1;
+    let dyn_start_lit = syn::LitInt::new(&dyn_start.to_string(), proc_macro2::Span::call_site());
+
+    // WHERE clause via runtime codegen
+    let wr = crate::where_dsl::generate_where_runtime(&parsed.dsl_where, d);
+    let (where_local_stmts, where_bind_stmts) = emit_runtime_binds(&wr.binds);
+    let (tenant_sql, tenant_bind) = emit_tenant_code(&parsed.tid, d, None);
+    let where_sql_code = wr.sql_code;
+
+    let set_code = if has_optional {
+        quote! {
+            let mut __sets: Vec<String> = Vec::new();
+            #(__sets.push(#bind_set_lits.to_string());)*
+            #(__sets.push(format!("{} = {}", #raw_col_names, #raw_exprs));)*
+            let mut __ph_idx: usize = #dyn_start_lit;
+            #(
+                if #opt_idents.is_some() {
+                    let __ph: String = if #numbered_lit {
+                        format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
+                    } else {
+                        "?".to_string()
+                    };
+                    __ph_idx += 1;
+                    __sets.push(format!("{} = {}", #opt_col_lits, __ph));
+                }
+            )*
+        }
+    } else {
+        let static_set: String = {
+            let parts: Vec<String> = bind_col_strs
+                .iter()
+                .enumerate()
+                .map(|(i, c)| format!("{} = {}", c, d.ph(1 + i)))
+                .collect();
+            parts.join(", ")
+        };
+        let has_raw = !raw_pairs.is_empty();
+        if has_raw {
+            let sep = if static_set.is_empty() { "" } else { ", " };
+            let raw_parts: Vec<String> = raw_pairs
+                .iter()
+                .enumerate()
+                .map(|(i, (c, _))| {
+                    if i == 0 {
+                        format!("{} = {{}}", c.value())
+                    } else {
+                        format!(", {} = {{}}", c.value())
+                    }
+                })
+                .collect();
+            let raw_fmt = format!("{}{}", sep, raw_parts.join(""));
+            let raw_fmt_lit = syn::LitStr::new(&raw_fmt, table.span());
+            let static_set_lit = syn::LitStr::new(&static_set, table.span());
+            quote! {
+                let __raw_suffix = format!(#raw_fmt_lit #(, #raw_exprs)*);
+                let __set_str = format!("{}{}", #static_set_lit, __raw_suffix);
+            }
+        } else {
+            let static_set_lit = syn::LitStr::new(&static_set, table.span());
+            quote! {
+                let __set_str = #static_set_lit.to_string();
+            }
+        }
+    };
+
+    let set_join = if has_optional {
+        quote! { __sets.join(", ") }
+    } else {
+        quote! { __set_str }
+    };
+
+    let bind_code = if has_optional {
+        quote! {
+            #(let #val_idents = #bind_vals;)*
+            #(let #opt_idents = &(#opt_vals);)*
+        }
+    } else {
+        quote! {
+            #(let #val_idents = #bind_vals;)*
+        }
+    };
+
+    let opt_bind_code = if has_optional {
+        quote! {
+            #(
+                if let Some(#opt_bind_idents) = #opt_idents {
+                    __q = __q.bind(#opt_bind_idents);
+                }
+            )*
+        }
+    } else {
+        quote! {}
+    };
+
+    let where_ph_start_stmt = if has_optional {
+        quote! {} // __ph_idx is set by set_code and carries over
+    } else {
+        let start = 1 + bind_vals.len();
+        let start_lit = syn::LitInt::new(&start.to_string(), proc_macro2::Span::call_site());
+        quote! { let mut __ph_idx: usize = #start_lit; }
+    };
 
     let expanded = quote! {
         {
-            let __page_size = #page_size;
-            let __offset = (#page - 1).max(0) * __page_size;
-            #(let #bind_idents = #binds;)*
-            #(let #where_bind_idents = #where_vals;)*
-            let mut __ph_idx: usize = #base_idx_lit;
-            let __tenant_sql = match #tid {
-                Some(_tid) => {
+            #bind_code
+            #(#where_local_stmts)*
+            #set_code
+            let mut __where_sql = String::new();
+            #where_ph_start_stmt
+            #where_sql_code
+            #tenant_sql
+            let __sql = format!("UPDATE {} SET {} WHERE {}{}", #table_lit, #set_join, __where_sql, __tenant_sql);
+            let mut __q = sqlx::query(&__sql);
+            #(__q = __q.bind(#val_idents);)*
+            #opt_bind_code
+            #(#where_bind_stmts)*
+            #tenant_bind
+            __q.execute(#pool).await
+        }
+    };
+    TokenStream::from(expanded)
+}
+
+// ── crud_query_paged! ──────────────────────────────────────────────
+
+pub fn crud_query_paged(input: TokenStream) -> TokenStream {
+    let parsed = parse_macro_input!(input as QueryPagedInput);
+    expand_query_paged_dsl(&parsed)
+}
+
+fn expand_query_paged_dsl(parsed: &QueryPagedInput) -> TokenStream {
+    use crate::where_dsl::WhereCodegen;
+
+    let pool = &parsed.pool;
+    let ty = &parsed.ty;
+    let table = &parsed.table;
+    let tid = &parsed.tid;
+    let page = &parsed.page;
+    let page_size = &parsed.page_size;
+
+    if let Some(err) = validate_table(table) {
+        return err;
+    }
+
+    let d = dialect();
+    let cols = get_select_columns(table);
+    let table_str = table.value();
+
+    let where_sql: String;
+    let mut dsl_bind_count: usize = 0;
+    let dsl_bind_exprs: Vec<syn::Expr>;
+
+    if let Some(ref dsl_where) = parsed.dsl_where {
+        if let Some(err) = crate::where_dsl::validate_where_columns(dsl_where, &table_str) {
+            return err.into();
+        }
+        let mut cg = WhereCodegen::new(d, 1);
+        cg.generate(dsl_where);
+        where_sql = format!(" WHERE {}", cg.sql);
+        dsl_bind_count = cg.next_idx - 1;
+        dsl_bind_exprs = cg.binds;
+    } else {
+        where_sql = String::new();
+        dsl_bind_exprs = Vec::new();
+    }
+
+    let order_str = parsed
+        .order_by
+        .as_ref()
+        .map(|o| format!(" ORDER BY {}", o.value()))
+        .unwrap_or_default();
+    let order_str_lit = syn::LitStr::new(&order_str, table.span());
+
+    let needs_where_base = where_sql.is_empty() && (tid.is_some() || !parsed.where_cols.is_empty());
+    let where_base = if needs_where_base { " WHERE 1=1" } else { "" };
+
+    let numbered = matches!(d, Dialect::Sqlite | Dialect::Postgres);
+    let numbered_lit = syn::LitBool::new(numbered, proc_macro2::Span::call_site());
+    let ph_prefix_lit = syn::LitStr::new(
+        match d {
+            Dialect::Postgres => "$",
+            _ => "?",
+        },
+        proc_macro2::Span::call_site(),
+    );
+
+    let dsl_bind_idents: Vec<syn::Ident> = (0..dsl_bind_exprs.len())
+        .map(|i| syn::Ident::new(&format!("__db_{}", i), proc_macro2::Span::call_site()))
+        .collect();
+
+    let where_col_strs: Vec<syn::LitStr> = parsed
+        .where_cols
+        .iter()
+        .map(|c| syn::LitStr::new(&c.value(), c.span()))
+        .collect();
+    let where_bind_idents: Vec<syn::Ident> = (0..parsed.where_vals.len())
+        .map(|i| syn::Ident::new(&format!("__wp_{}", i), proc_macro2::Span::call_site()))
+        .collect();
+    let where_vals = &parsed.where_vals;
+
+    let data_sql_str = format!(
+        "SELECT {} FROM {}{}{}",
+        cols, table_str, where_sql, where_base
+    );
+    let count_sql_str = format!(
+        "SELECT COUNT(*) FROM {}{}{}",
+        table_str, where_sql, where_base
+    );
+
+    let data_sql_lit = syn::LitStr::new(&data_sql_str, table.span());
+    let count_sql_lit = syn::LitStr::new(&count_sql_str, table.span());
+
+    let (tenant_sql_block, tenant_bind_data, _tenant_bind_count) = if let Some(tid_expr) = tid {
+        let base_after_dsl = dsl_bind_count + 1;
+        let base_lit =
+            syn::LitInt::new(&base_after_dsl.to_string(), proc_macro2::Span::call_site());
+        let block: proc_macro2::TokenStream = quote! {
+            let mut __ph_idx: usize = #base_lit;
+            let __tenant_val = #tid_expr;
+            let __tenant_sql = match __tenant_val {
+                Some(_) => {
                     let __tph = if #numbered_lit {
                         format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
                     } else {
@@ -1837,7 +946,22 @@ pub fn crud_query_paged(input: TokenStream) -> TokenStream {
                 }
                 None => String::new(),
             };
-            let mut __where_sql = String::new();
+        };
+        (block, Some(tid_expr.clone()), 1)
+    } else {
+        let base_lit = syn::LitInt::new(
+            &(dsl_bind_count + 1).to_string(),
+            proc_macro2::Span::call_site(),
+        );
+        let block: proc_macro2::TokenStream = quote! {
+            let mut __ph_idx: usize = #base_lit;
+            let __tenant_sql = String::new();
+        };
+        (block, None, 0)
+    };
+
+    let where_bind_block: proc_macro2::TokenStream = if !parsed.where_cols.is_empty() {
+        quote! {
             #(
                 if let Some(ref __wv) = #where_bind_idents {
                     let __wph = if #numbered_lit {
@@ -1849,36 +973,50 @@ pub fn crud_query_paged(input: TokenStream) -> TokenStream {
                     __where_sql.push_str(&format!(" AND {} = {}", #where_col_strs, __wph));
                 }
             )*
-            let __limit_ph = if #numbered_lit {
-                format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-            } else {
-                "?".to_string()
-            };
-            __ph_idx += 1;
-            let __offset_ph = if #numbered_lit {
-                format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-            } else {
-                "?".to_string()
-            };
-            let __data_sql_raw = #data_sql.replace("{tenant}", &__tenant_sql);
-            let mut __data_sql = if let Some(__pos) = __data_sql_raw.find("ORDER BY") {
-                let mut __s = String::with_capacity(__data_sql_raw.len() + __where_sql.len() + 20);
-                __s.push_str(&__data_sql_raw[..__pos]);
-                __s.push_str(&__where_sql);
-                __s.push_str(&__data_sql_raw[__pos..]);
-                __s
-            } else {
-                let mut __s = __data_sql_raw;
-                __s.push_str(&__where_sql);
-                __s
-            };
+        }
+    } else {
+        quote! {}
+    };
+
+    let limit_offset_block: proc_macro2::TokenStream = quote! {
+        let __limit_ph = if #numbered_lit {
+            format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
+        } else {
+            "?".to_string()
+        };
+        __ph_idx += 1;
+        let __offset_ph = if #numbered_lit {
+            format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
+        } else {
+            "?".to_string()
+        };
+    };
+
+    let (tenant_bind_dq, tenant_bind_cq): (proc_macro2::TokenStream, proc_macro2::TokenStream) =
+        if tenant_bind_data.is_some() {
+            (
+                quote! { if let Some(ref _tid) = __tenant_val { __dq = __dq.bind(_tid); } },
+                quote! { if let Some(ref _tid) = __tenant_val { __cq = __cq.bind(_tid); } },
+            )
+        } else {
+            (quote! {}, quote! {})
+        };
+
+    let expanded = quote! {
+        {
+            let __page_size = #page_size;
+            let __offset = (#page - 1).max(0) * __page_size;
+            #(let #dsl_bind_idents = #dsl_bind_exprs;)*
+            #(let #where_bind_idents = #where_vals;)*
+            #tenant_sql_block
+            let mut __where_sql = String::new();
+            #where_bind_block
+            #limit_offset_block
+            let mut __data_sql = format!("{}{}{}{}", #data_sql_lit, __tenant_sql, __where_sql, #order_str_lit);
             __data_sql.push_str(&format!(" LIMIT {} OFFSET {}", __limit_ph, __offset_ph));
-            let mut __count_sql = #count_sql.replace("{tenant}", &__tenant_sql);
-            __count_sql.push_str(&__where_sql);
-            let mut __dq = sqlx::query_as::<_, #ty>(&__data_sql)#(.bind(#bind_idents))*;
-            if let Some(_tid) = #tid {
-                __dq = __dq.bind(_tid);
-            }
+            let mut __count_sql = format!("{}{}{}", #count_sql_lit, __tenant_sql, __where_sql);
+            let mut __dq = sqlx::query_as::<_, #ty>(&__data_sql)#(.bind(#dsl_bind_idents))*;
+            #tenant_bind_dq
             #(
                 if let Some(ref __wv) = #where_bind_idents {
                     __dq = __dq.bind(__wv);
@@ -1886,10 +1024,8 @@ pub fn crud_query_paged(input: TokenStream) -> TokenStream {
             )*
             __dq = __dq.bind(__page_size).bind(__offset);
             let __data = __dq.fetch_all(#pool).await?;
-            let mut __cq = sqlx::query_scalar::<_, i64>(&__count_sql)#(.bind(#bind_idents))*;
-            if let Some(_tid) = #tid {
-                __cq = __cq.bind(_tid);
-            }
+            let mut __cq = sqlx::query_scalar::<_, i64>(&__count_sql)#(.bind(#dsl_bind_idents))*;
+            #tenant_bind_cq
             #(
                 if let Some(ref __wv) = #where_bind_idents {
                     __cq = __cq.bind(__wv);
@@ -1909,135 +1045,41 @@ pub fn crud_exists(input: TokenStream) -> TokenStream {
 }
 
 fn expand_exists(input: TokenStream) -> TokenStream {
-    let parsed = parse_macro_input!(input as DeleteInput);
+    let parsed = parse_macro_input!(input as WhereOnlyInput);
     let table = &parsed.table;
-    let col = &parsed.col;
 
     if let Some(err) = validate_table(table) {
         return err;
     }
-    if let Some(err) = validate_column(table, col) {
-        return err;
-    }
-    if let Some(err) = validate_columns(table, &parsed.and_cols) {
-        return err;
-    }
-    if let Some(err) = validate_columns(table, &extra_conds_columns(&parsed.ecs)) {
-        return err;
+    if let Some(err) = crate::where_dsl::validate_where_columns(&parsed.dsl_where, &table.value()) {
+        return err.into();
     }
 
     let pool = &parsed.pool;
-    let val = &parsed.val;
-    let tid = &parsed.tid;
-    let table_str = table.value();
-    let col_str = col.value();
-    let and_cols = &parsed.and_cols;
-    let and_vals = &parsed.and_vals;
-
     let d = dialect();
-    let mut ph_idx = 1usize;
-    let col_ph = d.ph(ph_idx);
-    ph_idx += 1;
-    let mut and_parts: Vec<String> = and_cols
-        .iter()
-        .map(|ac| {
-            let ph = d.ph(ph_idx);
-            ph_idx += 1;
-            format!("AND {} = {}", ac.value(), ph)
-        })
-        .collect();
-    let (ecs_parts, ecs_vals) = build_extra_conds_sql(&parsed.ecs, d, &mut ph_idx);
-    and_parts.extend(ecs_parts);
-    let all_extra_vals: Vec<syn::Expr> = and_vals.iter().chain(ecs_vals.iter()).cloned().collect();
-    let and_str = and_parts.join(" ");
+    let table_str = table.value();
+    let table_lit = syn::LitStr::new(&table_str, table.span());
 
-    let has_extra = !and_cols.is_empty() || !parsed.ecs.is_empty();
+    let wr = crate::where_dsl::generate_where_runtime(&parsed.dsl_where, d);
+    let (local_stmts, bind_stmts) = emit_runtime_binds(&wr.binds);
+    let (tenant_sql, tenant_bind) = emit_tenant_code(&parsed.tid, d, None);
+    let sql_code = wr.sql_code;
 
-    if parsed.tid.is_some() {
-        let tid_ph = d.ph(ph_idx);
-
-        let expanded = if !has_extra {
-            let sql_with = syn::LitStr::new(
-                &format!(
-                    "SELECT EXISTS(SELECT 1 FROM {} WHERE {} = {} AND tenant_id = {}) as _e",
-                    table_str, col_str, col_ph, tid_ph
-                ),
-                table.span(),
-            );
-            let sql_without = syn::LitStr::new(
-                &format!(
-                    "SELECT EXISTS(SELECT 1 FROM {} WHERE {} = {}) as _e",
-                    table_str, col_str, col_ph
-                ),
-                table.span(),
-            );
-            quote! {
-                match #tid {
-                    Some(_tid) => sqlx::query_scalar::<_, bool>(#sql_with).bind(#val).bind(_tid).fetch_one(#pool).await,
-                    None => sqlx::query_scalar::<_, bool>(#sql_without).bind(#val).fetch_one(#pool).await,
-                }
-            }
-        } else {
-            let extra_idents: Vec<syn::Ident> = (0..all_extra_vals.len())
-                .map(|i| syn::Ident::new(&format!("__ex_{}", i), proc_macro2::Span::call_site()))
-                .collect();
-            let sql_with = syn::LitStr::new(
-                &format!(
-                    "SELECT EXISTS(SELECT 1 FROM {} WHERE {} = {} {} AND tenant_id = {}) as _e",
-                    table_str, col_str, col_ph, and_str, tid_ph
-                ),
-                table.span(),
-            );
-            let sql_without = syn::LitStr::new(
-                &format!(
-                    "SELECT EXISTS(SELECT 1 FROM {} WHERE {} = {} {}) as _e",
-                    table_str, col_str, col_ph, and_str
-                ),
-                table.span(),
-            );
-            quote! {
-                {
-                    #(let #extra_idents = #all_extra_vals;)*
-                    match #tid {
-                        Some(_tid) => sqlx::query_scalar::<_, bool>(#sql_with).bind(#val)#(.bind(#extra_idents))*.bind(_tid).fetch_one(#pool).await,
-                        None => sqlx::query_scalar::<_, bool>(#sql_without).bind(#val)#(.bind(#extra_idents))*.fetch_one(#pool).await,
-                    }
-                }
-            }
-        };
-        TokenStream::from(expanded)
-    } else {
-        let expanded = if !has_extra {
-            let sql_lit = syn::LitStr::new(
-                &format!(
-                    "SELECT EXISTS(SELECT 1 FROM {} WHERE {} = {}) as _e",
-                    table_str, col_str, col_ph
-                ),
-                table.span(),
-            );
-            quote! {
-                sqlx::query_scalar::<_, bool>(#sql_lit).bind(#val).fetch_one(#pool).await
-            }
-        } else {
-            let extra_idents: Vec<syn::Ident> = (0..all_extra_vals.len())
-                .map(|i| syn::Ident::new(&format!("__ex_{}", i), proc_macro2::Span::call_site()))
-                .collect();
-            let sql_lit = syn::LitStr::new(
-                &format!(
-                    "SELECT EXISTS(SELECT 1 FROM {} WHERE {} = {} {}) as _e",
-                    table_str, col_str, col_ph, and_str
-                ),
-                table.span(),
-            );
-            quote! {
-                {
-                    #(let #extra_idents = #all_extra_vals;)*
-                    sqlx::query_scalar::<_, bool>(#sql_lit).bind(#val)#(.bind(#extra_idents))*.fetch_one(#pool).await
-                }
-            }
-        };
-        TokenStream::from(expanded)
-    }
+    let expanded = quote! {
+        {
+            #(#local_stmts)*
+            let mut __ph_idx: usize = 1;
+            let mut __where_sql = String::new();
+            #sql_code
+            #tenant_sql
+            let __sql = format!("SELECT EXISTS(SELECT 1 FROM {} WHERE {}{}{}) as _e", #table_lit, __where_sql, __tenant_sql, "");
+            let mut __q = sqlx::query_scalar::<_, bool>(&__sql);
+            #(#bind_stmts)*
+            #tenant_bind
+            __q.fetch_one(#pool).await
+        }
+    };
+    TokenStream::from(expanded)
 }
 
 // ── crud_upsert! ────────────────────────────────────────────────────
@@ -2128,189 +1170,6 @@ fn expand_upsert(input: TokenStream) -> TokenStream {
     }
 }
 
-// ── crud_patch! ────────────────────────────────────────────────────
-
-pub fn crud_patch(input: TokenStream) -> TokenStream {
-    expand_patch(input)
-}
-
-fn expand_patch(input: TokenStream) -> TokenStream {
-    let parsed = parse_macro_input!(input as PatchInput);
-    let table = &parsed.table;
-
-    if let Some(err) = validate_table(table) {
-        return err;
-    }
-    if let Some(err) = validate_columns(table, &parsed.bind_cols) {
-        return err;
-    }
-    if let Some(err) = validate_columns(table, &parsed.opt_cols) {
-        return err;
-    }
-    if let Some(err) = validate_column(table, &parsed.pk_col) {
-        return err;
-    }
-    if let Some(err) = validate_columns(table, &parsed.and_cols) {
-        return err;
-    }
-
-    let pool = &parsed.pool;
-    let table_str = table.value();
-    let table_lit = syn::LitStr::new(&table_str, table.span());
-    let pk_col_lit = syn::LitStr::new(&parsed.pk_col.value(), table.span());
-
-    let bind_cols = &parsed.bind_cols;
-    let bind_vals = &parsed.bind_vals;
-    let opt_cols = &parsed.opt_cols;
-    let opt_vals = &parsed.opt_vals;
-    let raw_pairs = &parsed.raw_pairs;
-    let and_cols = &parsed.and_cols;
-    let and_vals = &parsed.and_vals;
-
-    let d = dialect();
-    let mut __ph_i: usize = 1;
-    let bind_col_lits: Vec<syn::LitStr> = bind_cols
-        .iter()
-        .map(|c| {
-            let ph = d.ph(__ph_i);
-            __ph_i += 1;
-            syn::LitStr::new(&format!("{} = {}", c.value(), ph), table.span())
-        })
-        .collect();
-    let opt_ph_start = __ph_i;
-    let opt_col_lits: Vec<syn::LitStr> = opt_cols
-        .iter()
-        .map(|c| syn::LitStr::new(&c.value(), c.span()))
-        .collect();
-    let raw_col_names: Vec<syn::LitStr> = raw_pairs.iter().map(|(c, _)| c.clone()).collect();
-    let raw_exprs: Vec<&syn::Expr> = raw_pairs.iter().map(|(_, v)| v).collect();
-    let and_col_lits: Vec<syn::LitStr> = and_cols
-        .iter()
-        .map(|ac| syn::LitStr::new(&ac.value(), table.span()))
-        .collect();
-
-    let bind_idents: Vec<syn::Ident> = (0..bind_vals.len())
-        .map(|i| syn::Ident::new(&format!("__pb_{}", i), proc_macro2::Span::call_site()))
-        .collect();
-    let opt_idents: Vec<syn::Ident> = (0..opt_vals.len())
-        .map(|i| syn::Ident::new(&format!("__po_{}", i), proc_macro2::Span::call_site()))
-        .collect();
-    let opt_bind_idents: Vec<syn::Ident> = (0..opt_vals.len())
-        .map(|i| syn::Ident::new(&format!("__pov_{}", i), proc_macro2::Span::call_site()))
-        .collect();
-    let and_idents: Vec<syn::Ident> = (0..and_vals.len())
-        .map(|i| syn::Ident::new(&format!("__pa_{}", i), proc_macro2::Span::call_site()))
-        .collect();
-
-    let opt_ph_start_lit =
-        syn::LitInt::new(&opt_ph_start.to_string(), proc_macro2::Span::call_site());
-    let ph_fn: syn::Expr = if matches!(d, Dialect::Postgres) {
-        syn::parse_quote!(|__i: usize| format!("${}", __i))
-    } else {
-        syn::parse_quote!(|_: usize| "?".to_string())
-    };
-
-    let pk_val = &parsed.pk_val;
-    let tid = &parsed.tid;
-
-    let expanded = if parsed.tid.is_some() {
-        quote! {
-            {
-                #(let #bind_idents = #bind_vals;)*
-                #(let #opt_idents = &(#opt_vals);)*
-                #(let #and_idents = #and_vals;)*
-                let __pkv = #pk_val;
-                let mut __sets: Vec<String> = Vec::new();
-                #(__sets.push(#bind_col_lits.to_string());)*
-                #(__sets.push(format!("{} = {}", #raw_col_names, #raw_exprs));)*
-                let mut __ph_idx: usize = #opt_ph_start_lit;
-                let __ph = #ph_fn;
-                #(
-                    if #opt_idents.is_some() {
-                        __sets.push(format!("{} = {}", #opt_col_lits, __ph(__ph_idx)));
-                        __ph_idx += 1;
-                    }
-                )*
-                let __pk_ph = __ph(__ph_idx);
-                __ph_idx += 1;
-                let mut __and_sql = String::new();
-                #(
-                    __and_sql.push_str(&format!("AND {} = {}", #and_col_lits, __ph(__ph_idx)));
-                    __ph_idx += 1;
-                )*
-                let _sql = match #tid {
-                    Some(_tid) => {
-                        let __tid_ph = __ph(__ph_idx);
-                        format!(
-                            "UPDATE {} SET {} WHERE {} = {}{} AND tenant_id = {}",
-                            #table_lit, __sets.join(", "), #pk_col_lit, __pk_ph, __and_sql, __tid_ph
-                        )
-                    }
-                    None => format!(
-                        "UPDATE {} SET {} WHERE {} = {}{}",
-                        #table_lit, __sets.join(", "), #pk_col_lit, __pk_ph, __and_sql
-                    ),
-                };
-                let mut _q = sqlx::query(&_sql);
-                #(_q = _q.bind(#bind_idents);)*
-                #(
-                    if let Some(#opt_bind_idents) = #opt_idents {
-                        _q = _q.bind(#opt_bind_idents);
-                    }
-                )*
-                _q = _q.bind(__pkv);
-                #(_q = _q.bind(#and_idents);)*
-                if let Some(_tid) = #tid {
-                    _q = _q.bind(_tid);
-                }
-                _q.execute(#pool).await
-            }
-        }
-    } else {
-        quote! {
-            {
-                #(let #bind_idents = #bind_vals;)*
-                #(let #opt_idents = &(#opt_vals);)*
-                #(let #and_idents = #and_vals;)*
-                let __pkv = #pk_val;
-                let mut __sets: Vec<String> = Vec::new();
-                #(__sets.push(#bind_col_lits.to_string());)*
-                #(__sets.push(format!("{} = {}", #raw_col_names, #raw_exprs));)*
-                let mut __ph_idx: usize = #opt_ph_start_lit;
-                let __ph = #ph_fn;
-                #(
-                    if #opt_idents.is_some() {
-                        __sets.push(format!("{} = {}", #opt_col_lits, __ph(__ph_idx)));
-                        __ph_idx += 1;
-                    }
-                )*
-                let __pk_ph = __ph(__ph_idx);
-                __ph_idx += 1;
-                let mut __and_sql = String::new();
-                #(
-                    __and_sql.push_str(&format!("AND {} = {}", #and_col_lits, __ph(__ph_idx)));
-                    __ph_idx += 1;
-                )*
-                let _sql = format!(
-                    "UPDATE {} SET {} WHERE {} = {}{}",
-                    #table_lit, __sets.join(", "), #pk_col_lit, __pk_ph, __and_sql
-                );
-                let mut _q = sqlx::query(&_sql);
-                #(_q = _q.bind(#bind_idents);)*
-                #(
-                    if let Some(#opt_bind_idents) = #opt_idents {
-                        _q = _q.bind(#opt_bind_idents);
-                    }
-                )*
-                _q = _q.bind(__pkv);
-                #(_q = _q.bind(#and_idents);)*
-                _q.execute(#pool).await
-            }
-        }
-    };
-    TokenStream::from(expanded)
-}
-
 // ── check_schema! ────────────────────────────────────────────────────
 
 /// Expand `check_schema!("table", "col1", "col2", ...)`.
@@ -2345,47 +1204,35 @@ pub fn check_schema(input: TokenStream) -> TokenStream {
 //   Tenant*Input — has a `tid` (tenant_id) field
 //   Crud*Input   — no `tid` field
 
-// ── Delete inputs ──
+// ── Where-only inputs (used by crud_delete!, crud_count!, crud_exists!) ──
 
-/// `tenant_delete!(pool, "table", "col" => val, tenant_id [, and: ["c" => v, ...]])`
-/// `crud_delete!(pool, "table", "col" => val [, tenant: expr, and: ["c" => v, ...], and_null: [...], ...])`
-struct DeleteInput {
+/// `crud_delete!(pool, "table", where: WhereExpr [, tenant: expr])`
+/// `crud_count!(pool, "table", where: WhereExpr [, tenant: expr])`
+/// `crud_exists!(pool, "table", where: WhereExpr [, tenant: expr])`
+struct WhereOnlyInput {
     pool: syn::Expr,
     table: syn::LitStr,
-    col: syn::LitStr,
-    val: syn::Expr,
+    dsl_where: crate::where_dsl::WhereExpr,
     tid: Option<syn::Expr>,
-    and_cols: Vec<syn::LitStr>,
-    and_vals: Vec<syn::Expr>,
-    ecs: ExtraConds,
 }
 
-impl syn::parse::Parse for DeleteInput {
+impl syn::parse::Parse for WhereOnlyInput {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let pool: syn::Expr = input.parse()?;
         let _: syn::Token![,] = input.parse()?;
         let table: syn::LitStr = input.parse()?;
-        let _: syn::Token![,] = input.parse()?;
-        let col: syn::LitStr = input.parse()?;
-        let _: syn::Token![=>] = input.parse()?;
-        let val: syn::Expr = input.parse()?;
 
+        let mut dsl_where = None;
         let mut tid = None;
-        let mut and_cols = Vec::new();
-        let mut and_vals = Vec::new();
-        let mut ecs = ExtraConds::default();
+
         while input.parse::<syn::Token![,]>().is_ok() {
             let section: syn::Ident = input.call(syn::Ident::parse_any)?;
             let _: syn::Token![:] = input.parse()?;
-            if section == "tenant" {
+            if section == "where" {
+                dsl_where = Some(input.parse()?);
+            } else if section == "tenant" {
                 tid = Some(input.parse()?);
-            } else if section == "and" {
-                let content;
-                syn::bracketed!(content in input);
-                let (c, v) = parse_kv_bracket(&content)?;
-                and_cols = c;
-                and_vals = v;
-            } else if !parse_extra_conds_section(&mut ecs, &section, input)? {
+            } else {
                 return Err(syn::Error::new(
                     section.span(),
                     format!("unknown section: {}", section),
@@ -2393,15 +1240,14 @@ impl syn::parse::Parse for DeleteInput {
             }
         }
 
+        let dsl_where =
+            dsl_where.ok_or_else(|| syn::Error::new(table.span(), "missing `where:` section"))?;
+
         Ok(Self {
             pool,
             table,
-            col,
-            val,
+            dsl_where,
             tid,
-            and_cols,
-            and_vals,
-            ecs,
         })
     }
 }
@@ -2431,19 +1277,13 @@ fn parse_insert_body(
     Ok((pool, table, cols, vals))
 }
 
-/// `tenant_select!(pool, "table", ["col1", "col2"], "where_col" => val, tenant_id [, and: ["col" => val]])`
-/// `crud_select!(pool, "table", ["col1", "col2"], "where_col" => val [, and: ["col" => val]])`
+/// `crud_select!(pool, "table", ["col1", "col2"], where: WhereExpr [, tenant: expr])`
 struct SelectInput {
     pool: syn::Expr,
     table: syn::LitStr,
     sel_cols: Vec<syn::LitStr>,
-    col: syn::LitStr,
-    val: syn::Expr,
+    dsl_where: crate::where_dsl::WhereExpr,
     tid: Option<syn::Expr>,
-    and_cols: Vec<syn::LitStr>,
-    and_vals: Vec<syn::Expr>,
-    #[allow(dead_code)]
-    ecs: ExtraConds,
 }
 
 impl syn::parse::Parse for SelectInput {
@@ -2459,50 +1299,34 @@ impl syn::parse::Parse for SelectInput {
             sel_cols.push(content.parse()?);
             let _ = content.parse::<syn::Token![,]>();
         }
-        let _: syn::Token![,] = input.parse()?;
-        let col: syn::LitStr = input.parse()?;
-        let _: syn::Token![=>] = input.parse()?;
-        let val: syn::Expr = input.parse()?;
 
+        let mut dsl_where = None;
         let mut tid = None;
-        let mut and_cols = Vec::new();
-        let mut and_vals = Vec::new();
-        let mut ecs = ExtraConds::default();
 
         while input.parse::<syn::Token![,]>().is_ok() {
-            if input.peek(syn::Ident)
-                && input.peek2(syn::Token![:])
-                && !input.peek2(syn::Token![::])
-            {
-                let section: syn::Ident = input.parse()?;
-                let _: syn::Token![:] = input.parse()?;
-                if section == "and" {
-                    let ac;
-                    syn::bracketed!(ac in input);
-                    let (c, v) = parse_kv_bracket(&ac)?;
-                    and_cols = c;
-                    and_vals = v;
-                } else if !parse_extra_conds_section(&mut ecs, &section, input)? {
-                    return Err(syn::Error::new(
-                        section.span(),
-                        format!("unknown section: {}", section),
-                    ));
-                }
-            } else {
+            let section: syn::Ident = input.call(syn::Ident::parse_any)?;
+            let _: syn::Token![:] = input.parse()?;
+            if section == "where" {
+                dsl_where = Some(input.parse()?);
+            } else if section == "tenant" {
                 tid = Some(input.parse()?);
+            } else {
+                return Err(syn::Error::new(
+                    section.span(),
+                    format!("unknown section: {}", section),
+                ));
             }
         }
+
+        let dsl_where =
+            dsl_where.ok_or_else(|| syn::Error::new(table.span(), "missing `where:` section"))?;
 
         Ok(Self {
             pool,
             table,
             sel_cols,
-            col,
-            val,
+            dsl_where,
             tid,
-            and_cols,
-            and_vals,
-            ecs,
         })
     }
 }
@@ -2531,18 +1355,14 @@ fn parse_joins(content: syn::parse::ParseStream) -> syn::Result<Vec<JoinClause>>
     Ok(joins)
 }
 
-/// `tenant_join!(pool, Type, select: [...], from: "...", joins: [LEFT "table" ON "..."], where: "col" => val, tenant_alias: "...", tenant: tid, method: fetch_one)`
+/// `crud_join!(pool, Type, select: [...], from: "...", joins: [LEFT "table" ON "..."], where: WhereExpr, tenant_alias: "...", tenant: tid, method: fetch_one)`
 struct JoinInput {
     pool: syn::Expr,
     ty: syn::Type,
     sel_cols: Vec<syn::LitStr>,
     from: syn::LitStr,
     joins: Vec<JoinClause>,
-    where_col: Option<syn::LitStr>,
-    where_val: Option<syn::Expr>,
-    and_cols: Vec<syn::LitStr>,
-    and_vals: Vec<syn::Expr>,
-    ecs: ExtraConds,
+    dsl_where: Option<crate::where_dsl::WhereExpr>,
     tenant_alias: Option<syn::LitStr>,
     tid: Option<syn::Expr>,
     method: syn::Ident,
@@ -2560,11 +1380,7 @@ impl syn::parse::Parse for JoinInput {
         let mut sel_cols = Vec::new();
         let mut from = None;
         let mut joins = Vec::new();
-        let mut where_col = None;
-        let mut where_val = None;
-        let mut and_cols = Vec::new();
-        let mut and_vals = Vec::new();
-        let mut ecs = ExtraConds::default();
+        let mut dsl_where = None;
         let mut tenant_alias = None;
         let mut tid = None;
         let mut method = None;
@@ -2590,17 +1406,7 @@ impl syn::parse::Parse for JoinInput {
                 syn::bracketed!(content in input);
                 joins = parse_joins(&content)?;
             } else if section == "where" {
-                where_col = Some(input.parse()?);
-                let _: syn::Token![=>] = input.parse()?;
-                where_val = Some(input.parse()?);
-            } else if section == "and" {
-                let content;
-                syn::bracketed!(content in input);
-                let (c, v) = parse_kv_bracket(&content)?;
-                and_cols = c;
-                and_vals = v;
-            } else if parse_extra_conds_section(&mut ecs, &section, input)? {
-                // handled
+                dsl_where = Some(input.parse()?);
             } else if section == "tenant_alias" {
                 tenant_alias = Some(input.parse()?);
             } else if section == "tenant" {
@@ -2622,11 +1428,7 @@ impl syn::parse::Parse for JoinInput {
             sel_cols,
             from: from.unwrap_or_else(|| syn::LitStr::new("", proc_macro2::Span::call_site())),
             joins,
-            where_col,
-            where_val,
-            and_cols,
-            and_vals,
-            ecs,
+            dsl_where,
             tenant_alias,
             tid,
             method: method.unwrap_or_else(|| {
@@ -2667,87 +1469,142 @@ pub fn crud_join_paged(input: TokenStream) -> TokenStream {
     let join_str = join_parts.join(" ");
 
     let d = dialect();
-    let mut where_parts: Vec<String> = Vec::new();
-    if let Some(ref wc) = parsed.where_col {
-        where_parts.push(format!("{} = {}", wc.value(), d.ph(1)));
-    }
-    for (i, ac) in parsed.and_cols.iter().enumerate() {
-        let idx = if parsed.where_col.is_some() {
-            2 + i
-        } else {
-            1 + i
-        };
-        where_parts.push(format!("{} = {}", ac.value(), d.ph(idx)));
-    }
-
-    let all_and_vals: Vec<syn::Expr> = parsed.and_vals.to_vec();
-
-    let has_primary_where = parsed.where_col.is_some();
-    let has_where = !where_parts.is_empty();
-    let where_str = if has_where {
-        where_parts.join(" AND ")
-    } else {
-        "1=1".to_string()
-    };
-
-    let order_str = match &parsed.order_by {
-        Some(ob) => format!(" ORDER BY {}", ob.value()),
-        None => String::new(),
-    };
 
     let sel_lit = syn::LitStr::new(&sel_str, proc_macro2::Span::call_site());
     let from_lit = syn::LitStr::new(&from_str, proc_macro2::Span::call_site());
     let join_lit = syn::LitStr::new(&join_str, proc_macro2::Span::call_site());
-    let where_lit = syn::LitStr::new(&where_str, proc_macro2::Span::call_site());
-    let order_lit = syn::LitStr::new(&order_str, proc_macro2::Span::call_site());
     let from_for_count = syn::LitStr::new(
         from_str.split_whitespace().next().unwrap_or(""),
         proc_macro2::Span::call_site(),
     );
 
-    let where_val = &parsed.where_val;
-    let tid = &parsed.tid;
+    let order_str = match &parsed.order_by {
+        Some(ob) => format!(" ORDER BY {}", ob.value()),
+        None => String::new(),
+    };
+    let order_lit = syn::LitStr::new(&order_str, proc_macro2::Span::call_site());
+
     let page = &parsed.page;
     let page_size = &parsed.page_size;
-    let tenant_alias = &parsed.tenant_alias;
 
-    let and_val_idents: Vec<syn::Ident> = (0..all_and_vals.len())
-        .map(|i| syn::Ident::new(&format!("__jav_{}", i), proc_macro2::Span::call_site()))
-        .collect();
+    let tenant_alias_ref = parsed.tenant_alias.as_ref();
 
-    let n_where = where_parts.len();
-    let tenant_sql_with = match tenant_alias {
-        Some(alias) => format!(" AND {}.tenant_id = {}", alias.value(), d.ph(n_where + 1)),
-        None => format!(" AND tenant_id = {}", d.ph(n_where + 1)),
+    let numbered = matches!(d, Dialect::Sqlite | Dialect::Postgres);
+    let numbered_lit = syn::LitBool::new(numbered, proc_macro2::Span::call_site());
+    let ph_prefix_lit = syn::LitStr::new(
+        match d {
+            Dialect::Postgres => "$",
+            _ => "?",
+        },
+        proc_macro2::Span::call_site(),
+    );
+
+    let tenant_sql_code = if let Some(tid_expr) = &parsed.tid {
+        let alias_prefix = match tenant_alias_ref {
+            Some(a) => format!("{}.", a.value()),
+            None => String::new(),
+        };
+        let alias_prefix_lit = syn::LitStr::new(&alias_prefix, proc_macro2::Span::call_site());
+        quote! {
+            let (__tenant_sql, __tid_val) = match #tid_expr {
+                Some(_tid) => {
+                    let __tph = if #numbered_lit {
+                        format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
+                    } else {
+                        "?".to_string()
+                    };
+                    __ph_idx += 1;
+                    (format!(" AND {}tenant_id = {}", #alias_prefix_lit, __tph), Some(_tid))
+                },
+                None => (String::new(), None),
+            };
+        }
+    } else {
+        quote! { let __tenant_sql = String::new(); let __tid_val: Option<_> = None; }
     };
-    let tenant_sql_with_lit = syn::LitStr::new(&tenant_sql_with, proc_macro2::Span::call_site());
-    let tenant_sql_empty_lit = syn::LitStr::new("", proc_macro2::Span::call_site());
 
-    let where_bind = if has_primary_where {
-        quote! { __dq = __dq.bind(__wv); __cq = __cq.bind(__wv); }
+    let tenant_bind = if parsed.tid.is_some() {
+        quote! {
+            if let Some(_tid) = __tid_val {
+                __dq = __dq.bind(_tid);
+                __cq = __cq.bind(_tid);
+            }
+        }
     } else {
         quote! {}
     };
 
+    let (where_sql_code, local_stmts, bind_stmts_dq, bind_stmts_cq) = if let Some(ref dsl_where) = parsed.dsl_where {
+        let wr = crate::where_dsl::generate_where_runtime(dsl_where, d);
+        let ls: Vec<_> = wr.binds.iter().enumerate().map(|(i, bk)| match bk {
+            crate::where_dsl::BindKind::Static(expr) => {
+                let ident = syn::Ident::new(&format!("__wb_{}", i), proc_macro2::Span::call_site());
+                quote! { let #ident = #expr; }
+            }
+            crate::where_dsl::BindKind::InLoop(expr) => {
+                let ident = syn::Ident::new(&format!("__in_{}", i), proc_macro2::Span::call_site());
+                quote! { let #ident = #expr; }
+            }
+        }).collect();
+        let bs_dq: Vec<_> = wr.binds.iter().enumerate().map(|(i, bk)| match bk {
+            crate::where_dsl::BindKind::Static(_) => {
+                let ident = syn::Ident::new(&format!("__wb_{}", i), proc_macro2::Span::call_site());
+                quote! { __dq = __dq.bind(#ident); }
+            }
+            crate::where_dsl::BindKind::InLoop(_) => {
+                let ident = syn::Ident::new(&format!("__in_{}", i), proc_macro2::Span::call_site());
+                quote! { for __iv in #ident { __dq = __dq.bind(__iv.clone()); } }
+            }
+        }).collect();
+        let bs_cq: Vec<_> = wr.binds.iter().enumerate().map(|(i, bk)| match bk {
+            crate::where_dsl::BindKind::Static(_) => {
+                let ident = syn::Ident::new(&format!("__wb_{}", i), proc_macro2::Span::call_site());
+                quote! { __cq = __cq.bind(#ident); }
+            }
+            crate::where_dsl::BindKind::InLoop(_) => {
+                let ident = syn::Ident::new(&format!("__in_{}", i), proc_macro2::Span::call_site());
+                quote! { for __iv in #ident { __cq = __cq.bind(__iv.clone()); } }
+            }
+        }).collect();
+        (wr.sql_code, ls, bs_dq, bs_cq)
+    } else {
+        let fallback = syn::LitStr::new("1=1", proc_macro2::Span::call_site());
+        let code = quote! { let __where_sql = #fallback.to_string(); };
+        (code, Vec::new(), Vec::new(), Vec::new())
+    };
+
+    let limit_sql_code = quote! {
+        let __limit_ph = if #numbered_lit {
+            format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
+        } else {
+            "?".to_string()
+        };
+        __ph_idx += 1;
+        let __offset_ph = if #numbered_lit {
+            format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
+        } else {
+            "?".to_string()
+        };
+        __ph_idx += 1;
+    };
+
     let expanded = quote! {
         {
+            #(#local_stmts)*
             let __page_size = #page_size;
             let __offset = (#page - 1).max(0) * __page_size;
-            let __tenant_sql: &str = match #tid {
-                Some(_) => #tenant_sql_with_lit,
-                None => #tenant_sql_empty_lit,
-            };
-            #(let #and_val_idents = #all_and_vals;)*
-            let __data_sql = format!("SELECT {} FROM {} {} WHERE {}{}{}", #sel_lit, #from_lit, #join_lit, #where_lit, __tenant_sql, #order_lit);
-            let __count_sql = format!("SELECT COUNT(*) FROM {} WHERE {}{}", #from_for_count, #where_lit, __tenant_sql);
+            let mut __ph_idx: usize = 1;
+            let mut __where_sql = String::new();
+            #where_sql_code
+            #tenant_sql_code
+            #limit_sql_code
+            let __data_sql = format!("SELECT {} FROM {} {} WHERE {}{}{}{} LIMIT {} OFFSET {}", #sel_lit, #from_lit, #join_lit, __where_sql, __tenant_sql, #order_lit, "", __limit_ph, __offset_ph);
+            let __count_sql = format!("SELECT COUNT(*) FROM {} WHERE {}{}", #from_for_count, __where_sql, __tenant_sql);
             let mut __dq = sqlx::query_as::<_, #ty>(&__data_sql);
             let mut __cq = sqlx::query_scalar::<_, i64>(&__count_sql);
-            #where_bind
-            #(__dq = __dq.bind(#and_val_idents); __cq = __cq.bind(#and_val_idents);)*
-            if let Some(_tid) = #tid {
-                __dq = __dq.bind(_tid);
-                __cq = __cq.bind(_tid);
-            }
+            #(#bind_stmts_dq)*
+            #(#bind_stmts_cq)*
+            #tenant_bind
             __dq = __dq.bind(__page_size).bind(__offset);
             let __data = __dq.fetch_all(#pool).await?;
             let __total = __cq.fetch_one(#pool).await?;
@@ -2755,18 +1612,7 @@ pub fn crud_join_paged(input: TokenStream) -> TokenStream {
         }
     };
 
-    let full_code = if has_primary_where {
-        quote! {
-            {
-                let __wv = #where_val;
-                #expanded
-            }
-        }
-    } else {
-        expanded
-    };
-
-    TokenStream::from(full_code)
+    TokenStream::from(expanded)
 }
 
 struct JoinPagedInput {
@@ -2775,10 +1621,7 @@ struct JoinPagedInput {
     sel_cols: Vec<syn::LitStr>,
     from: syn::LitStr,
     joins: Vec<JoinClause>,
-    where_col: Option<syn::LitStr>,
-    where_val: Option<syn::Expr>,
-    and_cols: Vec<syn::LitStr>,
-    and_vals: Vec<syn::Expr>,
+    dsl_where: Option<crate::where_dsl::WhereExpr>,
     tenant_alias: Option<syn::LitStr>,
     tid: Option<syn::Expr>,
     order_by: Option<syn::LitStr>,
@@ -2795,10 +1638,7 @@ impl syn::parse::Parse for JoinPagedInput {
         let mut sel_cols = Vec::new();
         let mut from = None;
         let mut joins = Vec::new();
-        let mut where_col = None;
-        let mut where_val = None;
-        let mut and_cols = Vec::new();
-        let mut and_vals = Vec::new();
+        let mut dsl_where = None;
         let mut tenant_alias = None;
         let mut tid = None;
         let mut order_by = None;
@@ -2823,15 +1663,7 @@ impl syn::parse::Parse for JoinPagedInput {
                 syn::bracketed!(content in input);
                 joins = parse_joins(&content)?;
             } else if section == "where" {
-                where_col = Some(input.parse()?);
-                let _: syn::Token![=>] = input.parse()?;
-                where_val = Some(input.parse()?);
-            } else if section == "and" {
-                let content;
-                syn::bracketed!(content in input);
-                let (c, v) = parse_kv_bracket(&content)?;
-                and_cols = c;
-                and_vals = v;
+                dsl_where = Some(input.parse()?);
             } else if section == "tenant_alias" {
                 tenant_alias = Some(input.parse()?);
             } else if section == "tenant" {
@@ -2856,10 +1688,7 @@ impl syn::parse::Parse for JoinPagedInput {
             sel_cols,
             from,
             joins,
-            where_col,
-            where_val,
-            and_cols,
-            and_vals,
+            dsl_where,
             tenant_alias,
             tid,
             order_by,
@@ -2892,397 +1721,103 @@ fn expand_join(input: TokenStream) -> TokenStream {
     let join_str = join_parts.join(" ");
 
     let d = dialect();
-    let mut where_parts: Vec<String> = Vec::new();
-    if let Some(ref wc) = parsed.where_col {
-        where_parts.push(format!("{} = {}", wc.value(), d.ph(1)));
-    }
-    for (i, ac) in parsed.and_cols.iter().enumerate() {
-        let idx = if parsed.where_col.is_some() {
-            2 + i
-        } else {
-            1 + i
-        };
-        where_parts.push(format!("{} = {}", ac.value(), d.ph(idx)));
-    }
-    for c in &parsed.ecs.null_cols {
-        where_parts.push(format!("{} IS NULL", c.value()));
-    }
 
-    let mut all_and_vals: Vec<syn::Expr> = parsed.and_vals.to_vec();
-    all_and_vals.extend(parsed.ecs.gt_vals.iter().cloned());
-    all_and_vals.extend(parsed.ecs.lt_vals.iter().cloned());
-    all_and_vals.extend(parsed.ecs.gte_vals.iter().cloned());
-    all_and_vals.extend(parsed.ecs.lte_vals.iter().cloned());
-
-    {
-        let mut idx = parsed.where_col.is_some() as usize + parsed.and_cols.len() + 1;
-        for (c, _) in parsed.ecs.gt_cols.iter().zip(&parsed.ecs.gt_vals) {
-            where_parts.push(format!("{} > {}", c.value(), d.ph(idx)));
-            idx += 1;
-        }
-        for (c, _) in parsed.ecs.lt_cols.iter().zip(&parsed.ecs.lt_vals) {
-            where_parts.push(format!("{} < {}", c.value(), d.ph(idx)));
-            idx += 1;
-        }
-        for (c, _) in parsed.ecs.gte_cols.iter().zip(&parsed.ecs.gte_vals) {
-            where_parts.push(format!("{} >= {}", c.value(), d.ph(idx)));
-            idx += 1;
-        }
-        for (c, _) in parsed.ecs.lte_cols.iter().zip(&parsed.ecs.lte_vals) {
-            where_parts.push(format!("{} <= {}", c.value(), d.ph(idx)));
-            idx += 1;
-        }
-    }
-
-    let numbered = matches!(d, Dialect::Sqlite | Dialect::Postgres);
-    let numbered_lit = syn::LitBool::new(numbered, proc_macro2::Span::call_site());
-    let ph_prefix_lit = syn::LitStr::new(
-        match d {
-            Dialect::Postgres => "$",
-            _ => "?",
-        },
-        proc_macro2::Span::call_site(),
-    );
-    let in_base: usize = parsed.where_col.is_some() as usize + all_and_vals.len() + 1;
-    let in_base_lit = syn::LitInt::new(&in_base.to_string(), proc_macro2::Span::call_site());
-
-    let has_in = !parsed.ecs.in_cols.is_empty();
-
-    let and_val_idents: Vec<syn::Ident> = (0..all_and_vals.len())
-        .map(|i| syn::Ident::new(&format!("__jav_{}", i), proc_macro2::Span::call_site()))
-        .collect();
-
-    let has_primary_where = parsed.where_col.is_some();
-    let has_where = !where_parts.is_empty();
-    let where_str = if has_where {
-        where_parts.join(" AND ")
-    } else {
-        "1=1".to_string()
-    };
+    let sel_lit = syn::LitStr::new(&sel_str, proc_macro2::Span::call_site());
+    let from_lit = syn::LitStr::new(&from_str, proc_macro2::Span::call_site());
+    let join_lit = syn::LitStr::new(&join_str, proc_macro2::Span::call_site());
+    let method = &parsed.method;
 
     let order_str = match &parsed.order_by {
         Some(ob) => format!(" ORDER BY {}", ob.value()),
         None => String::new(),
     };
+    let order_lit = syn::LitStr::new(&order_str, proc_macro2::Span::call_site());
 
-    let sel_lit = syn::LitStr::new(&sel_str, proc_macro2::Span::call_site());
-    let from_lit = syn::LitStr::new(&from_str, proc_macro2::Span::call_site());
-    let join_lit = syn::LitStr::new(&join_str, proc_macro2::Span::call_site());
-    let where_lit = syn::LitStr::new(&where_str, proc_macro2::Span::call_site());
-    let _order_lit = syn::LitStr::new(&order_str, proc_macro2::Span::call_site());
+    let tenant_alias_ref = parsed.tenant_alias.as_ref();
+    let (tenant_sql, tenant_bind) = emit_tenant_code(&parsed.tid, d, tenant_alias_ref);
 
-    let where_val = &parsed.where_val;
-    let method = &parsed.method;
-
-    let in_col_lits: Vec<syn::LitStr> = parsed
-        .ecs
-        .in_cols
-        .iter()
-        .map(|c| syn::LitStr::new(&c.value(), proc_macro2::Span::call_site()))
-        .collect();
-    let in_vals = &parsed.ecs.in_vals;
-
-    let in_loop_code = if has_in {
-        quote! {
-            #(
-                if !#in_vals.is_empty() {
-                    let __in_ph: String = if #numbered_lit {
-                        (0..#in_vals.len()).map(|i| format!(concat!(#ph_prefix_lit, "{}"), __ph_idx + i)).collect::<Vec<_>>().join(",")
-                    } else {
-                        (0..#in_vals.len()).map(|_| "?").collect::<Vec<_>>().join(",")
-                    };
-                    __ph_idx += #in_vals.len();
-                    __in_sql.push_str(&format!(" AND {} IN ({})", #in_col_lits, __in_ph));
-                }
-            )*
-        }
+    let (where_sql_code, local_stmts, bind_stmts) = if let Some(ref dsl_where) = parsed.dsl_where {
+        let wr = crate::where_dsl::generate_where_runtime(dsl_where, d);
+        let (ls, bs) = emit_runtime_binds(&wr.binds);
+        (wr.sql_code, ls, bs)
     } else {
-        quote! {}
+        let fallback = syn::LitStr::new("1=1", proc_macro2::Span::call_site());
+        let code = quote! { let __where_sql = #fallback.to_string(); };
+        (code, Vec::new(), Vec::new())
     };
 
-    let in_bind_code = if has_in {
-        quote! {
-            #(
-                for __iv in #in_vals {
-                    _q = _q.bind(__iv);
-                }
-            )*
-        }
-    } else {
-        quote! {}
-    };
-
-    if parsed.tid.is_some() {
-        let tid = &parsed.tid;
-        let tenant_alias = &parsed.tenant_alias;
-
-        let tenant_sql_code = match tenant_alias {
-            Some(alias) => {
-                quote! {
-                    let __tenant_sql = match #tid {
-                        Some(_) => {
-                            let __tid_ph = if #numbered_lit {
-                                format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-                            } else {
-                                "?".to_string()
-                            };
-                            __ph_idx += 1;
-                            format!(" AND {}.tenant_id = {}", #alias, __tid_ph)
-                        }
-                        None => String::new(),
-                    };
-                }
-            }
-            None => {
-                quote! {
-                    let __tenant_sql = match #tid {
-                        Some(_) => {
-                            let __tid_ph = if #numbered_lit {
-                                format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-                            } else {
-                                "?".to_string()
-                            };
-                            __ph_idx += 1;
-                            format!(" AND tenant_id = {}", __tid_ph)
-                        }
-                        None => String::new(),
-                    };
-                }
-            }
-        };
-
-        let limit_sql_code = if parsed.limit.is_some() {
-            if parsed.offset.is_some() {
-                quote! {
-                    {
-                        let __limit_ph = if #numbered_lit {
-                            format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-                        } else {
-                            "?".to_string()
-                        };
-                        __ph_idx += 1;
-                        let __offset_ph = if #numbered_lit {
-                            format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-                        } else {
-                            "?".to_string()
-                        };
-                        __ph_idx += 1;
-                        __sql.push_str(&format!(" LIMIT {} OFFSET {}", __limit_ph, __offset_ph));
-                    }
-                }
-            } else {
-                quote! {
-                    {
-                        let __limit_ph = if #numbered_lit {
-                            format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-                        } else {
-                            "?".to_string()
-                        };
-                        __ph_idx += 1;
-                        __sql.push_str(&format!(" LIMIT {}", __limit_ph));
-                    }
-                }
-            }
-        } else {
-            quote! {}
-        };
-
-        let limit_bind = if let Some(lim) = &parsed.limit {
-            let off = parsed.offset.as_ref();
-            match off {
-                Some(o) => quote! { _q = _q.bind(#lim).bind(#o); },
-                None => quote! { _q = _q.bind(#lim); },
-            }
-        } else {
-            quote! {}
-        };
-
-        let where_bind = if has_primary_where {
-            quote! { _q = _q.bind(__wv); }
-        } else {
-            quote! {}
-        };
-
-        let order_lit_for_sql = syn::LitStr::new(&order_str, proc_macro2::Span::call_site());
-
-        let expanded = quote! {
-            {
-                let mut __ph_idx: usize = #in_base_lit;
-                let mut __in_sql = String::new();
-                #in_loop_code
-                #tenant_sql_code
-                let mut __sql = format!("SELECT {} FROM {} {} WHERE {}{}{}", #sel_lit, #from_lit, #join_lit, #where_lit, __in_sql, __tenant_sql);
-                __sql.push_str(#order_lit_for_sql);
-                #limit_sql_code
-                let mut _q = sqlx::query_as::<_, #ty>(&__sql);
-                #where_bind
-                #(_q = _q.bind(#and_val_idents);)*
-                #in_bind_code
-                if let Some(_tid) = #tid {
-                    _q = _q.bind(_tid);
-                }
-                #limit_bind
-                _q.#method(#pool).await
-            }
-        };
-
-        let full_code = if has_primary_where {
-            quote! {
-                {
-                    let __wv = #where_val;
-                    #(let #and_val_idents = #all_and_vals;)*
-                    #expanded
-                }
-            }
-        } else {
-            quote! {
-                {
-                    #(let #and_val_idents = #all_and_vals;)*
-                    #expanded
-                }
-            }
-        };
-
-        TokenStream::from(full_code)
-    } else {
-        let sql_prefix = format!(
-            "SELECT {} FROM {} {} WHERE {}",
-            sel_str, from_str, join_str, where_str
+    let limit_sql_code = if parsed.limit.is_some() {
+        let numbered = matches!(d, Dialect::Sqlite | Dialect::Postgres);
+        let numbered_lit = syn::LitBool::new(numbered, proc_macro2::Span::call_site());
+        let ph_prefix_lit = syn::LitStr::new(
+            match d {
+                Dialect::Postgres => "$",
+                _ => "?",
+            },
+            proc_macro2::Span::call_site(),
         );
-
-        let lim = &parsed.limit;
-        let off = &parsed.offset;
-
-        let limit_code = if let Some(l) = lim.as_ref() {
-            let o = off.as_ref().unwrap();
-            quote! { _q = _q.bind(#l).bind(#o); }
+        if parsed.offset.is_some() {
+            quote! {
+                {
+                    let __limit_ph = if #numbered_lit {
+                        format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
+                    } else {
+                        "?".to_string()
+                    };
+                    __ph_idx += 1;
+                    let __offset_ph = if #numbered_lit {
+                        format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
+                    } else {
+                        "?".to_string()
+                    };
+                    __ph_idx += 1;
+                    __sql.push_str(&format!(" LIMIT {} OFFSET {}", __limit_ph, __offset_ph));
+                }
+            }
         } else {
-            quote! {}
-        };
-
-        if has_in {
-            let sql_prefix_lit = syn::LitStr::new(&sql_prefix, proc_macro2::Span::call_site());
-            let order_lit_inner = syn::LitStr::new(&order_str, proc_macro2::Span::call_site());
-
-            let limit_sql_code = if parsed.limit.is_some() {
-                if parsed.offset.is_some() {
-                    quote! {
-                        {
-                            let __limit_ph = if #numbered_lit {
-                                format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-                            } else {
-                                "?".to_string()
-                            };
-                            __ph_idx += 1;
-                            let __offset_ph = if #numbered_lit {
-                                format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-                            } else {
-                                "?".to_string()
-                            };
-                            __ph_idx += 1;
-                            __sql.push_str(&format!(" LIMIT {} OFFSET {}", __limit_ph, __offset_ph));
-                        }
-                    }
-                } else {
-                    quote! {
-                        {
-                            let __limit_ph = if #numbered_lit {
-                                format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
-                            } else {
-                                "?".to_string()
-                            };
-                            __ph_idx += 1;
-                            __sql.push_str(&format!(" LIMIT {}", __limit_ph));
-                        }
-                    }
+            quote! {
+                {
+                    let __limit_ph = if #numbered_lit {
+                        format!(concat!(#ph_prefix_lit, "{}"), __ph_idx)
+                    } else {
+                        "?".to_string()
+                    };
+                    __ph_idx += 1;
+                    __sql.push_str(&format!(" LIMIT {}", __limit_ph));
                 }
-            } else {
-                quote! {}
-            };
-
-            let full_code = if has_primary_where {
-                quote! {
-                    {
-                        let __wv = #where_val;
-                        #(let #and_val_idents = #all_and_vals;)*
-                        let mut __ph_idx: usize = #in_base_lit;
-                        let mut __in_sql = String::new();
-                        let mut __sql = #sql_prefix_lit.to_string();
-                        #in_loop_code
-                        __sql.push_str(&__in_sql);
-                        __sql.push_str(#order_lit_inner);
-                        #limit_sql_code
-                        let mut _q = sqlx::query_as::<_, #ty>(&__sql).bind(__wv);
-                        #(_q = _q.bind(#and_val_idents);)*
-                        #in_bind_code
-                        #limit_code
-                        _q.#method(#pool).await
-                    }
-                }
-            } else {
-                quote! {
-                    {
-                        #(let #and_val_idents = #all_and_vals;)*
-                        let mut __ph_idx: usize = #in_base_lit;
-                        let mut __in_sql = String::new();
-                        let mut __sql = #sql_prefix_lit.to_string();
-                        #in_loop_code
-                        __sql.push_str(&__in_sql);
-                        __sql.push_str(#order_lit_inner);
-                        #limit_sql_code
-                        let mut _q = sqlx::query_as::<_, #ty>(&__sql);
-                        #(_q = _q.bind(#and_val_idents);)*
-                        #in_bind_code
-                        #limit_code
-                        _q.#method(#pool).await
-                    }
-                }
-            };
-            TokenStream::from(full_code)
-        } else {
-            let mut sql_str = format!("{}{}", sql_prefix, order_str);
-
-            let limit_sql_code = if let Some(l) = lim.as_ref() {
-                let lo_idx = parsed.where_col.is_some() as usize + all_and_vals.len() + 1;
-                sql_str.push_str(&format!(
-                    " LIMIT {} OFFSET {}",
-                    d.ph(lo_idx),
-                    d.ph(lo_idx + 1)
-                ));
-                let o = off.as_ref().unwrap();
-                quote! { _q = _q.bind(#l).bind(#o); }
-            } else {
-                quote! {}
-            };
-
-            if has_primary_where {
-                let sql_lit = syn::LitStr::new(&sql_str, proc_macro2::Span::call_site());
-                let expanded = quote! {
-                    {
-                        let __wv = #where_val;
-                        #(let #and_val_idents = #all_and_vals;)*
-                        let mut _q = sqlx::query_as::<_, #ty>(#sql_lit).bind(__wv);
-                        #(_q = _q.bind(#and_val_idents);)*
-                        #limit_sql_code
-                        _q.#method(#pool).await
-                    }
-                };
-                TokenStream::from(expanded)
-            } else {
-                let sql_lit = syn::LitStr::new(&sql_str, proc_macro2::Span::call_site());
-                let expanded = quote! {
-                    {
-                        #(let #and_val_idents = #all_and_vals;)*
-                        let mut _q = sqlx::query_as::<_, #ty>(#sql_lit);
-                        #(_q = _q.bind(#and_val_idents);)*
-                        #limit_sql_code
-                        _q.#method(#pool).await
-                    }
-                };
-                TokenStream::from(expanded)
             }
         }
-    }
+    } else {
+        quote! {}
+    };
+
+    let limit_bind = if let Some(lim) = &parsed.limit {
+        let off = parsed.offset.as_ref();
+        match off {
+            Some(o) => quote! { __q = __q.bind(#lim).bind(#o); },
+            None => quote! { __q = __q.bind(#lim); },
+        }
+    } else {
+        quote! {}
+    };
+
+    let expanded = quote! {
+        {
+            #(#local_stmts)*
+            let mut __ph_idx: usize = 1;
+            let mut __where_sql = String::new();
+            #where_sql_code
+            #tenant_sql
+            let mut __sql = format!("SELECT {} FROM {} {} WHERE {}{}{}", #sel_lit, #from_lit, #join_lit, __where_sql, __tenant_sql, #order_lit);
+            #limit_sql_code
+            let mut __q = sqlx::query_as::<_, #ty>(&__sql);
+            #(#bind_stmts)*
+            #tenant_bind
+            #limit_bind
+            __q.#method(#pool).await
+        }
+    };
+    TokenStream::from(expanded)
 }
 
 /// `crud_insert!(pool, "table", ["col" => val, ...] [, tenant: expr])`
@@ -3426,18 +1961,14 @@ impl syn::parse::Parse for QueryInput {
 
 // ── Find inputs ──
 
-/// `crud_find!(pool, "table", Type, "col" => val [, tenant: expr, and: ["c" => v, ...], order_by: "expr"])`
+/// `crud_find!(pool, "table", Type, where: WhereExpr [, tenant: expr, order_by: "expr"])`
 struct FindInput {
     pool: syn::Expr,
     table: syn::LitStr,
     ty: syn::Type,
-    col: syn::LitStr,
-    val: syn::Expr,
+    dsl_where: crate::where_dsl::WhereExpr,
     tid: Option<syn::Expr>,
     order_by: Option<syn::LitStr>,
-    and_cols: Vec<syn::LitStr>,
-    and_vals: Vec<syn::Expr>,
-    ecs: ExtraConds,
 }
 
 impl syn::parse::Parse for FindInput {
@@ -3447,30 +1978,21 @@ impl syn::parse::Parse for FindInput {
         let table: syn::LitStr = input.parse()?;
         let _: syn::Token![,] = input.parse()?;
         let ty: syn::Type = input.parse()?;
-        let _: syn::Token![,] = input.parse()?;
-        let col: syn::LitStr = input.parse()?;
-        let _: syn::Token![=>] = input.parse()?;
-        let val: syn::Expr = input.parse()?;
 
+        let mut dsl_where = None;
         let mut tid = None;
         let mut order_by = None;
-        let mut and_cols = Vec::new();
-        let mut and_vals = Vec::new();
-        let mut ecs = ExtraConds::default();
+
         while input.parse::<syn::Token![,]>().is_ok() {
             let section: syn::Ident = input.call(syn::Ident::parse_any)?;
             let _: syn::Token![:] = input.parse()?;
-            if section == "tenant" {
+            if section == "where" {
+                dsl_where = Some(input.parse()?);
+            } else if section == "tenant" {
                 tid = Some(input.parse()?);
             } else if section == "order_by" {
                 order_by = Some(input.parse()?);
-            } else if section == "and" {
-                let content;
-                syn::bracketed!(content in input);
-                let (c, v) = parse_kv_bracket(&content)?;
-                and_cols = c;
-                and_vals = v;
-            } else if !parse_extra_conds_section(&mut ecs, &section, input)? {
+            } else {
                 return Err(syn::Error::new(
                     section.span(),
                     format!("unknown section: {}", section),
@@ -3478,17 +2000,16 @@ impl syn::parse::Parse for FindInput {
             }
         }
 
+        let dsl_where =
+            dsl_where.ok_or_else(|| syn::Error::new(ty.span(), "missing `where:` section"))?;
+
         Ok(Self {
             pool,
             table,
             ty,
-            col,
-            val,
+            dsl_where,
             tid,
             order_by,
-            and_cols,
-            and_vals,
-            ecs,
         })
     }
 }
@@ -3587,12 +2108,7 @@ struct UpdateInput {
     opt_cols: Vec<syn::LitStr>,
     opt_vals: Vec<syn::Expr>,
     raw_pairs: Vec<(syn::LitStr, syn::Expr)>,
-    pk_col: syn::LitStr,
-    pk_val: syn::Expr,
-    and_cols: Vec<syn::LitStr>,
-    and_vals: Vec<syn::Expr>,
-    #[allow(dead_code)]
-    ecs: ExtraConds,
+    dsl_where: crate::where_dsl::WhereExpr,
     tid: Option<syn::Expr>,
 }
 
@@ -3641,11 +2157,7 @@ impl syn::parse::Parse for UpdateInput {
         let mut opt_cols = Vec::new();
         let mut opt_vals = Vec::new();
         let mut raw_pairs: Vec<(syn::LitStr, syn::Expr)> = Vec::new();
-        let mut pk_col = None;
-        let mut pk_val = None;
-        let mut and_cols = Vec::new();
-        let mut and_vals = Vec::new();
-        let mut ecs = ExtraConds::default();
+        let mut dsl_where = None;
         let mut tid = None;
 
         while !input.is_empty() {
@@ -3673,38 +2185,23 @@ impl syn::parse::Parse for UpdateInput {
                     raw_pairs = parse_raw_bracket(&content)?;
                 }
                 "where" => {
-                    let col: syn::LitStr = input.parse()?;
-                    let _: syn::Token![=>] = input.parse()?;
-                    let val: syn::Expr = input.parse()?;
-                    pk_col = Some(col);
-                    pk_val = Some(val);
-                }
-                "and" => {
-                    let content;
-                    syn::bracketed!(content in input);
-                    let (c, v) = parse_kv_bracket(&content)?;
-                    and_cols = c;
-                    and_vals = v;
+                    dsl_where = Some(input.parse()?);
                 }
                 "tenant" => {
                     tid = Some(input.parse()?);
                 }
                 other => {
-                    if !parse_extra_conds_section(&mut ecs, &section, input)? {
-                        return Err(syn::Error::new(
-                            section.span(),
-                            format!("unknown section: {}", other),
-                        ));
-                    }
+                    return Err(syn::Error::new(
+                        section.span(),
+                        format!("unknown section: {}", other),
+                    ));
                 }
             }
             let _ = input.parse::<syn::Token![,]>();
         }
 
-        let pk_col =
-            pk_col.ok_or_else(|| syn::Error::new(table.span(), "missing `where:` section"))?;
-        let pk_val =
-            pk_val.ok_or_else(|| syn::Error::new(table.span(), "missing `where:` value"))?;
+        let dsl_where =
+            dsl_where.ok_or_else(|| syn::Error::new(table.span(), "missing `where:` section"))?;
 
         Ok(Self {
             pool,
@@ -3714,11 +2211,7 @@ impl syn::parse::Parse for UpdateInput {
             opt_cols,
             opt_vals,
             raw_pairs,
-            pk_col,
-            pk_val,
-            and_cols,
-            and_vals,
-            ecs,
+            dsl_where,
             tid,
         })
     }
@@ -3726,13 +2219,13 @@ impl syn::parse::Parse for UpdateInput {
 
 // ── QueryPaged input ──
 
-/// `crud_query_paged!(pool, Type, data_sql: "...", count_sql: "...", binds: [...], tenant: tid, page: page, page_size: page_size)`
+/// `crud_query_paged!(pool, Type, table: "...", where: DSL, order_by: "...", tenant: tid, page: page, page_size: page_size)`
 struct QueryPagedInput {
     pool: syn::Expr,
     ty: syn::Type,
-    data_sql: syn::LitStr,
-    count_sql: syn::LitStr,
-    binds: Vec<syn::Expr>,
+    table: syn::LitStr,
+    dsl_where: Option<crate::where_dsl::WhereExpr>,
+    order_by: Option<syn::LitStr>,
     tid: Option<syn::Expr>,
     page: syn::Expr,
     page_size: syn::Expr,
@@ -3747,9 +2240,9 @@ impl syn::parse::Parse for QueryPagedInput {
         let ty: syn::Type = input.parse()?;
         let _: syn::Token![,] = input.parse()?;
 
-        let mut data_sql = None;
-        let mut count_sql = None;
-        let mut binds = Vec::new();
+        let mut table = None;
+        let mut dsl_where = None;
+        let mut order_by = None;
         let mut tid = None;
         let mut page = None;
         let mut page_size = None;
@@ -3761,19 +2254,28 @@ impl syn::parse::Parse for QueryPagedInput {
             let _: syn::Token![:] = input.parse()?;
 
             match section.to_string().as_str() {
-                "data_sql" => {
-                    data_sql = Some(input.parse()?);
+                "table" => {
+                    table = Some(input.parse()?);
                 }
-                "count_sql" => {
-                    count_sql = Some(input.parse()?);
-                }
-                "binds" => {
-                    let content;
-                    syn::bracketed!(content in input);
-                    while !content.is_empty() {
-                        binds.push(content.parse()?);
-                        let _ = content.parse::<syn::Token![,]>();
+                "where" => {
+                    let fork = input.fork();
+                    if fork.peek(syn::token::Bracket) {
+                        let content;
+                        syn::bracketed!(content in input);
+                        while !content.is_empty() {
+                            let col: syn::LitStr = content.parse()?;
+                            let _: syn::Token![=>] = content.parse()?;
+                            let val: syn::Expr = content.parse()?;
+                            where_cols.push(col);
+                            where_vals.push(val);
+                            let _ = content.parse::<syn::Token![,]>();
+                        }
+                    } else {
+                        dsl_where = Some(input.parse()?);
                     }
+                }
+                "order_by" => {
+                    order_by = Some(input.parse()?);
                 }
                 "tenant" => {
                     tid = Some(input.parse()?);
@@ -3783,18 +2285,6 @@ impl syn::parse::Parse for QueryPagedInput {
                 }
                 "page_size" => {
                     page_size = Some(input.parse()?);
-                }
-                "where" => {
-                    let content;
-                    syn::bracketed!(content in input);
-                    while !content.is_empty() {
-                        let col: syn::LitStr = content.parse()?;
-                        let _: syn::Token![=>] = content.parse()?;
-                        let val: syn::Expr = content.parse()?;
-                        where_cols.push(col);
-                        where_vals.push(val);
-                        let _ = content.parse::<syn::Token![,]>();
-                    }
                 }
                 other => {
                     return Err(syn::Error::new(
@@ -3806,10 +2296,8 @@ impl syn::parse::Parse for QueryPagedInput {
             let _ = input.parse::<syn::Token![,]>();
         }
 
-        let data_sql =
-            data_sql.ok_or_else(|| syn::Error::new(ty.span(), "missing `data_sql:` section"))?;
-        let count_sql =
-            count_sql.ok_or_else(|| syn::Error::new(ty.span(), "missing `count_sql:` section"))?;
+        let table =
+            table.ok_or_else(|| syn::Error::new(ty.span(), "missing `table:` section"))?;
         let page = page.ok_or_else(|| syn::Error::new(ty.span(), "missing `page:` section"))?;
         let page_size =
             page_size.ok_or_else(|| syn::Error::new(ty.span(), "missing `page_size:` section"))?;
@@ -3817,9 +2305,9 @@ impl syn::parse::Parse for QueryPagedInput {
         Ok(Self {
             pool,
             ty,
-            data_sql,
-            count_sql,
-            binds,
+            table,
+            dsl_where,
+            order_by,
             tid,
             page,
             page_size,
@@ -3921,111 +2409,4 @@ impl syn::parse::Parse for UpsertInput {
     }
 }
 
-// ── Patch input ──
 
-/// `crud_patch!(pool, "table", bind: [...], optional: [...], raw: [...], where: "pk" => val, and: [...] [, tenant: tid])`
-struct PatchInput {
-    pool: syn::Expr,
-    table: syn::LitStr,
-    bind_cols: Vec<syn::LitStr>,
-    bind_vals: Vec<syn::Expr>,
-    opt_cols: Vec<syn::LitStr>,
-    opt_vals: Vec<syn::Expr>,
-    raw_pairs: Vec<(syn::LitStr, syn::Expr)>,
-    pk_col: syn::LitStr,
-    pk_val: syn::Expr,
-    and_cols: Vec<syn::LitStr>,
-    and_vals: Vec<syn::Expr>,
-    tid: Option<syn::Expr>,
-}
-
-impl syn::parse::Parse for PatchInput {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let pool: syn::Expr = input.parse()?;
-        let _: syn::Token![,] = input.parse()?;
-        let table: syn::LitStr = input.parse()?;
-        let _: syn::Token![,] = input.parse()?;
-
-        let mut bind_cols = Vec::new();
-        let mut bind_vals = Vec::new();
-        let mut opt_cols = Vec::new();
-        let mut opt_vals = Vec::new();
-        let mut raw_pairs: Vec<(syn::LitStr, syn::Expr)> = Vec::new();
-        let mut pk_col = None;
-        let mut pk_val = None;
-        let mut and_cols = Vec::new();
-        let mut and_vals = Vec::new();
-        let mut tid = None;
-
-        while !input.is_empty() {
-            let section: syn::Ident = input.call(syn::Ident::parse_any)?;
-            let _: syn::Token![:] = input.parse()?;
-
-            match section.to_string().as_str() {
-                "bind" => {
-                    let content;
-                    syn::bracketed!(content in input);
-                    let (c, v) = parse_kv_bracket(&content)?;
-                    bind_cols = c;
-                    bind_vals = v;
-                }
-                "optional" => {
-                    let content;
-                    syn::bracketed!(content in input);
-                    let (c, v) = parse_kv_bracket(&content)?;
-                    opt_cols = c;
-                    opt_vals = v;
-                }
-                "raw" => {
-                    let content;
-                    syn::bracketed!(content in input);
-                    raw_pairs = parse_raw_bracket(&content)?;
-                }
-                "where" => {
-                    let col: syn::LitStr = input.parse()?;
-                    let _: syn::Token![=>] = input.parse()?;
-                    let val: syn::Expr = input.parse()?;
-                    pk_col = Some(col);
-                    pk_val = Some(val);
-                }
-                "and" => {
-                    let content;
-                    syn::bracketed!(content in input);
-                    let (c, v) = parse_kv_bracket(&content)?;
-                    and_cols = c;
-                    and_vals = v;
-                }
-                "tenant" => {
-                    tid = Some(input.parse()?);
-                }
-                other => {
-                    return Err(syn::Error::new(
-                        section.span(),
-                        format!("unknown section: {}", other),
-                    ));
-                }
-            }
-            let _ = input.parse::<syn::Token![,]>();
-        }
-
-        let pk_col =
-            pk_col.ok_or_else(|| syn::Error::new(table.span(), "missing `where:` section"))?;
-        let pk_val =
-            pk_val.ok_or_else(|| syn::Error::new(table.span(), "missing `where:` value"))?;
-
-        Ok(Self {
-            pool,
-            table,
-            bind_cols,
-            bind_vals,
-            opt_cols,
-            opt_vals,
-            raw_pairs,
-            pk_col,
-            pk_val,
-            and_cols,
-            and_vals,
-            tid,
-        })
-    }
-}

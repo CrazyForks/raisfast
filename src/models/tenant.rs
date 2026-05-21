@@ -49,13 +49,13 @@ pub async fn find_all(pool: &crate::db::Pool) -> AppResult<Vec<Tenant>> {
 
 /// Find a tenant by integer primary key
 pub async fn find_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<Option<Tenant>> {
-    let tenant = raisfast_derive::crud_find!(pool, "tenants", Tenant, "id" => id)?;
+    let tenant = raisfast_derive::crud_find!(pool, "tenants", Tenant, where: ("id", id))?;
     Ok(tenant)
 }
 
 /// Find a tenant by domain
 pub async fn find_by_domain(pool: &crate::db::Pool, domain: &str) -> AppResult<Option<Tenant>> {
-    let tenant = raisfast_derive::crud_find!(pool, "tenants", Tenant, "domain" => domain)?;
+    let tenant = raisfast_derive::crud_find!(pool, "tenants", Tenant, where: ("domain", domain))?;
     Ok(tenant)
 }
 
@@ -104,7 +104,7 @@ pub async fn update(
         pool, "tenants",
         bind: ["updated_at" => now],
         optional: ["name" => name, "domain" => domain, "config" => config, "status" => status],
-        where: "id" => id
+        where: ("id", id)
     )?;
 
     find_by_id(pool, id)
@@ -114,7 +114,7 @@ pub async fn update(
 
 /// Delete a tenant
 pub async fn delete(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
-    raisfast_derive::crud_delete!(pool, "tenants", "id" => id)?;
+    raisfast_derive::crud_delete!(pool, "tenants", where: ("id", id))?;
     Ok(())
 }
 

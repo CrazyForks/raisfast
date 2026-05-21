@@ -63,10 +63,9 @@ pub async fn find_transactions_by_wallet(
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
     let result = raisfast_derive::crud_query_paged!(
         pool, WalletTransaction,
-        data_sql: "SELECT * FROM wallet_transactions WHERE wallet_id = ? ORDER BY created_at DESC",
-        count_sql: "SELECT COUNT(*) FROM wallet_transactions WHERE wallet_id = ?",
-        binds: [wallet_id],
-        tenant: None::<&str>,
+        table: "wallet_transactions",
+        where: ("wallet_id", wallet_id),
+        order_by: "created_at DESC",
         page: page,
         page_size: page_size
     );
@@ -81,10 +80,9 @@ pub async fn find_transactions_by_user(
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
     let result = raisfast_derive::crud_query_paged!(
         pool, WalletTransaction,
-        data_sql: "SELECT * FROM wallet_transactions WHERE user_id = ? ORDER BY created_at DESC",
-        count_sql: "SELECT COUNT(*) FROM wallet_transactions WHERE user_id = ?",
-        binds: [user_id],
-        tenant: None::<&str>,
+        table: "wallet_transactions",
+        where: ("user_id", user_id),
+        order_by: "created_at DESC",
         page: page,
         page_size: page_size
     );
@@ -97,12 +95,10 @@ pub async fn find_all_transactions(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<WalletTransaction>, i64)> {
-    raisfast_derive::check_schema!("wallet_transactions", "tenant_id", "created_at");
     let result = raisfast_derive::crud_query_paged!(
         pool, WalletTransaction,
-        data_sql: "SELECT * FROM wallet_transactions WHERE 1=1{tenant} ORDER BY created_at DESC",
-        count_sql: "SELECT COUNT(*) FROM wallet_transactions WHERE 1=1{tenant}",
-        binds: [],
+        table: "wallet_transactions",
+        order_by: "created_at DESC",
         tenant: tenant_id,
         page: page,
         page_size: page_size
@@ -114,7 +110,7 @@ pub async fn find_tx_by_transaction_no(
     pool: &crate::db::Pool,
     transaction_no: &str,
 ) -> AppResult<Option<WalletTransaction>> {
-    raisfast_derive::crud_find!(pool, "wallet_transactions", WalletTransaction, "transaction_no" => transaction_no)
+    raisfast_derive::crud_find!(pool, "wallet_transactions", WalletTransaction, where: ("transaction_no", transaction_no))
         .map_err(Into::into)
 }
 
@@ -122,7 +118,7 @@ pub async fn find_tx_by_id(
     pool: &crate::db::Pool,
     id: SnowflakeId,
 ) -> AppResult<Option<WalletTransaction>> {
-    raisfast_derive::crud_find!(pool, "wallet_transactions", WalletTransaction, "id" => id)
+    raisfast_derive::crud_find!(pool, "wallet_transactions", WalletTransaction, where: ("id", id))
         .map_err(Into::into)
 }
 
@@ -131,8 +127,7 @@ pub async fn has_reversal_for(
     related_tx_id: SnowflakeId,
 ) -> AppResult<bool> {
     Ok(raisfast_derive::crud_exists!(
-        pool, "wallet_transactions", "related_tx_id" => related_tx_id,
-        and: ["tx_type" => WalletTxType::Refund]
+        pool, "wallet_transactions", where: AND(("related_tx_id", related_tx_id), ("tx_type", WalletTxType::Refund))
     )?)
 }
 

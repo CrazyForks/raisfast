@@ -55,7 +55,7 @@ pub async fn list_roles(pool: &crate::db::Pool) -> AppResult<Vec<Role>> {
 
 /// Find role by id
 pub async fn find_role_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<Option<Role>> {
-    let role = raisfast_derive::crud_find!(pool, "roles", Role, "id" => id)?;
+    let role = raisfast_derive::crud_find!(pool, "roles", Role, where: ("id", id))?;
     Ok(role)
 }
 
@@ -112,7 +112,7 @@ pub async fn update_role(
         pool, "roles",
         bind: ["updated_at" => now],
         optional: ["name" => name, "description" => description],
-        where: "id" => id
+        where: ("id", id)
     )?;
 
     find_role_by_id(pool, id)
@@ -122,7 +122,7 @@ pub async fn update_role(
 
 /// Delete role
 pub async fn delete_role(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
-    raisfast_derive::crud_delete!(pool, "roles", "id" => id)?;
+    raisfast_derive::crud_delete!(pool, "roles", where: ("id", id))?;
     Ok(())
 }
 
@@ -141,7 +141,7 @@ pub async fn find_permissions_by_role_id(
         "conditions",
         "created_at"
     );
-    let perms = raisfast_derive::crud_find_all!(pool, "permissions", Permission, "role_id" => role_id, order_by: "action")?;
+    let perms = raisfast_derive::crud_find_all!(pool, "permissions", Permission, where: ("role_id", role_id), order_by: "action")?;
     Ok(perms)
 }
 
@@ -150,7 +150,7 @@ pub async fn delete_permissions_by_role_id(
     pool: &crate::db::Pool,
     role_id: SnowflakeId,
 ) -> AppResult<()> {
-    raisfast_derive::crud_delete!(pool, "permissions", "role_id" => role_id)?;
+    raisfast_derive::crud_delete!(pool, "permissions", where: ("role_id", role_id))?;
     Ok(())
 }
 

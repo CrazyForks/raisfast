@@ -81,7 +81,7 @@ pub fn encode_metadata(meta: &Option<UserMetadata>) -> Option<String> {
 
 /// Find user by username
 pub async fn find_by_username(pool: &crate::db::Pool, username: &str) -> AppResult<Option<User>> {
-    Ok(raisfast_derive::crud_find!(pool, "users", User, "username" => username)?)
+    Ok(raisfast_derive::crud_find!(pool, "users", User, where: ("username", username))?)
 }
 
 /// Find user by integer primary key (internal FK lookup)
@@ -90,7 +90,7 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<User>> {
-    Ok(raisfast_derive::crud_find!(pool, "users", User, "id" => id, tenant: tenant_id)?)
+    Ok(raisfast_derive::crud_find!(pool, "users", User, where: ("id", id), tenant: tenant_id)?)
 }
 
 /// Create a new user
@@ -119,7 +119,7 @@ pub async fn create(
         tenant: tenant_id
     )?;
 
-    let user = raisfast_derive::crud_find!(pool, "users", User, "id" => id, tenant: tenant_id)?
+    let user = raisfast_derive::crud_find!(pool, "users", User, where: ("id", id), tenant: tenant_id)?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch newly created user")))?;
     Ok(user)
 }
@@ -162,7 +162,7 @@ pub async fn update_profile(
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_update!(pool, "users",
         bind: ["username" => username, "bio" => bio, "website" => website, "avatar" => avatar, "social_links" => social_links, "metadata" => metadata, "updated_at" => &now],
-        where: "id" => user.id,
+        where: ("id", user.id),
         tenant: tenant_id
     )?;
     find_by_id(pool, cmd.id, tenant_id)
@@ -179,9 +179,8 @@ pub async fn find_all(
 ) -> AppResult<(Vec<User>, i64)> {
     let result = raisfast_derive::crud_query_paged!(
         pool, User,
-        data_sql: "SELECT * FROM users WHERE 1=1{tenant} ORDER BY created_at DESC",
-        count_sql: "SELECT COUNT(*) FROM users WHERE 1=1{tenant}",
-        binds: [],
+        table: "users",
+        order_by: "created_at DESC",
         tenant: tenant_id,
         page: page,
         page_size: page_size
@@ -199,7 +198,7 @@ pub async fn update_role(
     let now = crate::utils::tz::now_utc();
     let result = raisfast_derive::crud_update!(pool, "users",
         bind: ["role" => role, "updated_at" => &now],
-        where: "id" => id,
+        where: ("id", id),
         tenant: tenant_id
     )?;
     AppError::expect_affected(&result, "user")?;
@@ -213,7 +212,7 @@ pub async fn delete_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    raisfast_derive::crud_delete!(pool, "users", "id" => id, tenant: tenant_id)?;
+    raisfast_derive::crud_delete!(pool, "users", where: ("id", id), tenant: tenant_id)?;
     Ok(())
 }
 

@@ -64,7 +64,7 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Comment>> {
-    Ok(raisfast_derive::crud_find!(pool, "comments", Comment, "id" => id, tenant: tenant_id)?)
+    Ok(raisfast_derive::crud_find!(pool, "comments", Comment, where: ("id", id), tenant: tenant_id)?)
 }
 
 pub async fn create(
@@ -107,7 +107,7 @@ pub async fn find_approved_by_post(
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<Comment>> {
     Ok(
-        raisfast_derive::crud_find_all!(pool, "comments", Comment, "post_id" => post_id, tenant: tenant_id, and: ["status" => CommentStatus::Approved], order_by: "created_at ASC")?,
+        raisfast_derive::crud_find_all!(pool, "comments", Comment, where: AND(("post_id", post_id), ("status", CommentStatus::Approved)), tenant: tenant_id, order_by: "created_at ASC")?,
     )
 }
 
@@ -120,9 +120,9 @@ pub async fn find_approved_by_post_paginated(
 ) -> AppResult<(Vec<Comment>, i64)> {
     let result = raisfast_derive::crud_query_paged!(
         pool, Comment,
-        data_sql: "SELECT * FROM comments WHERE post_id = ? AND status = ?{tenant} ORDER BY created_at ASC",
-        count_sql: "SELECT COUNT(*) FROM comments WHERE post_id = ? AND status = ?{tenant}",
-        binds: [post_id, CommentStatus::Approved],
+        table: "comments",
+        where: AND(("post_id", post_id), ("status", CommentStatus::Approved)),
+        order_by: "created_at ASC",
         tenant: tenant_id,
         page: page,
         page_size: page_size
@@ -135,7 +135,7 @@ pub async fn find_all_by_post(
     post_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<Comment>> {
-    raisfast_derive::crud_find_all!(pool, "comments", Comment, "post_id" => post_id, tenant: tenant_id, order_by: "created_at ASC").map_err(Into::into)
+    raisfast_derive::crud_find_all!(pool, "comments", Comment, where: ("post_id", post_id), tenant: tenant_id, order_by: "created_at ASC").map_err(Into::into)
 }
 
 #[cfg_attr(feature = "export-types", derive(TS))]
@@ -185,16 +185,17 @@ pub async fn find_all_paginated(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<AdminCommentRow>, i64)> {
-    let result = raisfast_derive::crud_query_paged!(
+    let (rows, total) = raisfast_derive::crud_join_paged!(
         pool, AdminCommentRowDb,
-        data_sql: "SELECT c.id, c.post_id, p.title AS post_title, c.created_by, c.nickname, c.email, c.content, c.parent_id, c.status, c.created_at FROM comments c JOIN posts p ON c.post_id = p.id WHERE 1=1{tenant} ORDER BY c.created_at DESC",
-        count_sql: "SELECT COUNT(*) FROM comments WHERE 1=1{tenant}",
-        binds: [],
+        select: ["c.id", "c.post_id", "p.title AS post_title", "c.created_by", "c.nickname", "c.email", "c.content", "c.parent_id", "c.status", "c.created_at"],
+        from: "comments c",
+        joins: [INNER "posts p" ON "c.post_id = p.id"],
+        tenant_alias: "c",
         tenant: tenant_id,
+        order_by: "c.created_at DESC",
         page: page,
         page_size: page_size
     );
-    let (rows, total) = result;
     Ok((rows.into_iter().map(AdminCommentRow::from).collect(), total))
 }
 
@@ -207,7 +208,7 @@ pub async fn update_status(
     let now = crate::utils::tz::now_utc();
     let result = raisfast_derive::crud_update!(pool, "comments",
         bind: ["status" => status, "updated_at" => &now],
-        where: "id" => id,
+        where: ("id", id),
         tenant: tenant_id
     )?;
 
@@ -219,7 +220,7 @@ pub async fn delete(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let result = raisfast_derive::crud_delete!(pool, "comments", "id" => id, tenant: tenant_id)?;
+    let result = raisfast_derive::crud_delete!(pool, "comments", where: ("id", id), tenant: tenant_id)?;
     AppError::expect_affected(&result, "comment")
 }
 

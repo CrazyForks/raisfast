@@ -40,7 +40,7 @@ pub async fn seed(
 ) -> anyhow::Result<()> {
     let pool = init_pool(&config.database_url, 1).await?;
 
-    if raisfast_derive::crud_exists!(&pool, "users", "username" => username)? {
+    if raisfast_derive::crud_exists!(&pool, "users", where: ("username", username))? {
         println!("seed: admin user already exists ({username}), skipping");
         return Ok(());
     }

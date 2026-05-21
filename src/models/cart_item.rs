@@ -29,7 +29,7 @@ pub async fn find_by_user_id(
         pool,
         "cart_items",
         CartItem,
-        "user_id" => user_id,
+        where: ("user_id", user_id),
         order_by: "created_at DESC",
         tenant: tenant_id
     )?)
@@ -47,8 +47,7 @@ pub async fn find_by_user_and_product(
             pool,
             "cart_items",
             CartItem,
-            "user_id" => user_id,
-            and: ["product_id" => product_id, "variant_id" => vid],
+            where: AND(("user_id", user_id), ("product_id", product_id), ("variant_id", vid)),
             tenant: tenant_id
         )
         .map_err(Into::into)
@@ -57,9 +56,7 @@ pub async fn find_by_user_and_product(
             pool,
             "cart_items",
             CartItem,
-            "user_id" => user_id,
-            and: ["product_id" => product_id],
-            and_null: ["variant_id"],
+            where: AND(("user_id", user_id), ("product_id", product_id), ("variant_id", IS_NULL)),
             tenant: tenant_id
         )
         .map_err(Into::into)
@@ -94,7 +91,7 @@ pub async fn insert(
         ],
         tenant: tenant_id
     )?;
-    raisfast_derive::crud_find_one!(pool, "cart_items", CartItem, "id" => id, tenant: tenant_id)
+    raisfast_derive::crud_find_one!(pool, "cart_items", CartItem, where: ("id", id), tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -109,7 +106,7 @@ pub async fn update_quantity(
         pool,
         "cart_items",
         bind: ["quantity" => quantity, "updated_at" => &now],
-        where: "id" => id,
+        where: ("id", id),
         tenant: tenant_id
     )?;
     AppError::expect_affected(&result, "cart_item")
@@ -120,7 +117,7 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<CartItem>> {
-    Ok(raisfast_derive::crud_find!(pool, "cart_items", CartItem, "id" => id, tenant: tenant_id)?)
+    Ok(raisfast_derive::crud_find!(pool, "cart_items", CartItem, where: ("id", id), tenant: tenant_id)?)
 }
 
 pub async fn delete_by_id(
@@ -128,7 +125,7 @@ pub async fn delete_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let result = raisfast_derive::crud_delete!(pool, "cart_items", "id" => id, tenant: tenant_id)?;
+    let result = raisfast_derive::crud_delete!(pool, "cart_items", where: ("id", id), tenant: tenant_id)?;
     AppError::expect_affected(&result, "cart_item")
 }
 
@@ -138,7 +135,7 @@ pub async fn delete_by_user_id(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let result =
-        raisfast_derive::crud_delete!(pool, "cart_items", "user_id" => user_id, tenant: tenant_id)?;
+        raisfast_derive::crud_delete!(pool, "cart_items", where: ("user_id", user_id), tenant: tenant_id)?;
     AppError::expect_affected(&result, "cart_item")
 }
 
@@ -147,7 +144,7 @@ pub async fn tx_delete_by_user_id(
     user_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let result = raisfast_derive::crud_delete!(&mut *tx, "cart_items", "user_id" => user_id, tenant: tenant_id)?;
+    let result = raisfast_derive::crud_delete!(&mut *tx, "cart_items", where: ("user_id", user_id), tenant: tenant_id)?;
     AppError::expect_affected(&result, "cart_item")
 }
 
@@ -157,7 +154,7 @@ pub async fn count_by_user(
     tenant_id: Option<&str>,
 ) -> AppResult<i64> {
     let count =
-        raisfast_derive::crud_count!(pool, "cart_items", "user_id" => user_id, tenant: tenant_id)?;
+        raisfast_derive::crud_count!(pool, "cart_items", where: ("user_id", user_id), tenant: tenant_id)?;
     Ok(count)
 }
 

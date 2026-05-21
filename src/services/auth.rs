@@ -391,7 +391,7 @@ pub async fn refresh(
     let now = crate::utils::tz::now_str();
 
     in_transaction!(pool, tx, {
-        raisfast_derive::crud_delete!(&mut *tx, "refresh_tokens", "token" => refresh_token_str)?;
+        raisfast_derive::crud_delete!(&mut *tx, "refresh_tokens", where: ("token", refresh_token_str))?;
 
         raisfast_derive::crud_insert!(&mut *tx, "refresh_tokens", [
             "id" => new_id,

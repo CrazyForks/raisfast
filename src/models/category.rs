@@ -46,9 +46,8 @@ pub async fn find_paginated(
 ) -> AppResult<(Vec<Category>, i64)> {
     let result = raisfast_derive::crud_query_paged!(
         pool, Category,
-        data_sql: "SELECT * FROM categories WHERE 1=1{tenant} ORDER BY sort_order, name",
-        count_sql: "SELECT COUNT(*) FROM categories WHERE 1=1{tenant}",
-        binds: [],
+        table: "categories",
+        order_by: "sort_order, name",
         tenant: tenant_id,
         page: page,
         page_size: page_size
@@ -61,7 +60,7 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Category> {
-    raisfast_derive::crud_find_one!(pool, "categories", Category, "id" => id, tenant: tenant_id)
+    raisfast_derive::crud_find_one!(pool, "categories", Category, where: ("id", id), tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -121,7 +120,7 @@ pub async fn update(
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_update!(pool, "categories",
         bind: ["name" => name, "slug" => slug, "description" => desc, "parent_id" => parent, "sort_order" => sort, "updated_by" => updated_by, "updated_at" => &now],
-        where: "id" => cat_id,
+        where: ("id", cat_id),
         tenant: tenant_id
     )?;
 
@@ -133,7 +132,7 @@ pub async fn delete(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let result = raisfast_derive::crud_delete!(pool, "categories", "id" => id, tenant: tenant_id)?;
+    let result = raisfast_derive::crud_delete!(pool, "categories", where: ("id", id), tenant: tenant_id)?;
     AppError::expect_affected(&result, "category")
 }
 

@@ -65,14 +65,14 @@ pub async fn create(
         "created_at" => now
     ])?;
 
-    raisfast_derive::crud_find!(pool, "sms_codes", SmsCode, "id" => id)?.ok_or_else(|| {
+    raisfast_derive::crud_find!(pool, "sms_codes", SmsCode, where: ("id", id))?.ok_or_else(|| {
         crate::errors::app_error::AppError::Internal(anyhow::anyhow!("failed to fetch sms code"))
     })
 }
 
 /// Find a verification code by ID
 pub async fn find_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<Option<SmsCode>> {
-    Ok(raisfast_derive::crud_find!(pool, "sms_codes", SmsCode, "id" => id)?)
+    Ok(raisfast_derive::crud_find!(pool, "sms_codes", SmsCode, where: ("id", id))?)
 }
 
 /// Find the most recent unverified code for a phone number
@@ -85,9 +85,7 @@ pub async fn find_latest_unverified(
         pool,
         "sms_codes",
         SmsCode,
-        "phone" => phone,
-        and: ["purpose" => purpose],
-        and_null: ["verified_at"],
+        where: AND(("phone", phone), ("purpose", purpose), ("verified_at", IS_NULL)),
         order_by: "created_at DESC LIMIT 1"
     )?)
 }
@@ -103,9 +101,7 @@ pub async fn is_rate_limited(
     let cnt = raisfast_derive::crud_count!(
         pool,
         "sms_codes",
-        "phone" => phone,
-        and: ["purpose" => purpose],
-        and_gt: ["created_at" => cutoff]
+        where: AND(("phone", phone), ("purpose", purpose), ("created_at", GT, cutoff))
     )?;
     Ok(cnt > 0)
 }
@@ -136,7 +132,7 @@ pub async fn verify_code(
         raisfast_derive::crud_update!(pool, "sms_codes",
             bind: [],
             raw: ["attempts" => "attempts + 1"],
-            where: "id" => id
+            where: ("id", id)
         )?;
         return Ok(VerifyResult::WrongCode);
     }
@@ -144,7 +140,7 @@ pub async fn verify_code(
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_update!(pool, "sms_codes",
         bind: ["verified_at" => now],
-        where: "id" => id
+        where: ("id", id)
     )?;
 
     Ok(VerifyResult::Verified)

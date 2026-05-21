@@ -51,7 +51,7 @@ pub async fn create_token(
 ///
 /// Returns `Ok(Some(token))` or `Ok(None)` when not found.
 pub async fn find_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<Option<RefreshToken>> {
-    raisfast_derive::crud_find!(pool, "refresh_tokens", RefreshToken, "token" => token)
+    raisfast_derive::crud_find!(pool, "refresh_tokens", RefreshToken, where: ("token", token))
         .map_err(Into::into)
 }
 
@@ -59,7 +59,7 @@ pub async fn find_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<Opt
 ///
 /// Used to revoke a specific refresh token on logout.
 pub async fn delete_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<()> {
-    raisfast_derive::crud_delete!(pool, "refresh_tokens", "token" => token)?;
+    raisfast_derive::crud_delete!(pool, "refresh_tokens", where: ("token", token))?;
     Ok(())
 }
 
@@ -67,7 +67,7 @@ pub async fn delete_by_token(pool: &crate::db::Pool, token: &str) -> AppResult<(
 ///
 /// Used for logging out all devices or forcing re-login after a password change.
 pub async fn delete_by_user(pool: &crate::db::Pool, user_id: SnowflakeId) -> AppResult<()> {
-    raisfast_derive::crud_delete!(pool, "refresh_tokens", "user_id" => user_id)?;
+    raisfast_derive::crud_delete!(pool, "refresh_tokens", where: ("user_id", user_id))?;
     Ok(())
 }
 

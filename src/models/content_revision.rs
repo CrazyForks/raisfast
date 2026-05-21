@@ -63,7 +63,7 @@ pub async fn create_revision(
         "created_at" => now,
     ])?;
 
-    Ok(raisfast_derive::crud_find_one!(pool, "content_revisions", ContentRevision, "id" => id)?)
+    Ok(raisfast_derive::crud_find_one!(pool, "content_revisions", ContentRevision, where: ("id", id))?)
 }
 
 async fn next_revision_number(
@@ -97,7 +97,7 @@ pub async fn list_revisions(
     record_id: SnowflakeId,
 ) -> AppResult<Vec<ContentRevision>> {
     Ok(
-        raisfast_derive::crud_find_all!(pool, "content_revisions", ContentRevision, "content_type" => content_type, and: ["record_id" => record_id], order_by: "revision_number DESC")?,
+        raisfast_derive::crud_find_all!(pool, "content_revisions", ContentRevision, where: AND(("content_type", content_type), ("record_id", record_id)), order_by: "revision_number DESC")?,
     )
 }
 
@@ -108,7 +108,7 @@ pub async fn get_revision(
     revision_id: SnowflakeId,
 ) -> AppResult<Option<ContentRevision>> {
     Ok(
-        raisfast_derive::crud_find!(pool, "content_revisions", ContentRevision, "id" => revision_id, and: ["content_type" => content_type, "record_id" => record_id])?,
+        raisfast_derive::crud_find!(pool, "content_revisions", ContentRevision, where: AND(("id", revision_id), ("content_type", content_type), ("record_id", record_id)))?,
     )
 }
 
@@ -158,7 +158,7 @@ pub async fn delete_revisions(
     content_type: &str,
     record_id: SnowflakeId,
 ) -> AppResult<u64> {
-    let result = raisfast_derive::crud_delete!(pool, "content_revisions", "content_type" => content_type, and: ["record_id" => record_id])?;
+    let result = raisfast_derive::crud_delete!(pool, "content_revisions", where: AND(("content_type", content_type), ("record_id", record_id)))?;
     Ok(result.rows_affected())
 }
 

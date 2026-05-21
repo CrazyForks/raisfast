@@ -58,11 +58,9 @@ pub async fn find_paginated(
 ) -> AppResult<(Vec<AuditEntry>, i64)> {
     let result = raisfast_derive::crud_query_paged!(
         pool, AuditEntry,
-        data_sql: "SELECT * FROM audit_log WHERE 1=1 ORDER BY created_at DESC",
-        count_sql: "SELECT COUNT(*) FROM audit_log WHERE 1=1",
-        binds: [],
-        where: ["tenant_id" => tenant_id, "action" => action, "actor_id" => actor_id],
-        tenant: None::<&str>,
+        table: "audit_log",
+        where: AND(("tenant_id", tenant_id), ("action", action), ("actor_id", actor_id)),
+        order_by: "created_at DESC",
         page: page,
         page_size: page_size
     );
@@ -71,5 +69,5 @@ pub async fn find_paginated(
 
 /// Find an audit log entry by ID
 pub async fn find_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<AuditEntry> {
-    raisfast_derive::crud_find_one!(pool, "audit_log", AuditEntry, "id" => id).map_err(Into::into)
+    raisfast_derive::crud_find_one!(pool, "audit_log", AuditEntry, where: ("id", id)).map_err(Into::into)
 }

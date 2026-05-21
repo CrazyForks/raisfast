@@ -148,7 +148,7 @@ pub async fn get_definition(
     pool: &Pool,
     id: SnowflakeId,
 ) -> anyhow::Result<Option<WorkflowDefinition>> {
-    Ok(raisfast_derive::crud_find!(pool, "workflow_definitions", WorkflowDefinition, "id" => id)?)
+    Ok(raisfast_derive::crud_find!(pool, "workflow_definitions", WorkflowDefinition, where: ("id", id))?)
 }
 
 /// List all workflow definitions
@@ -160,7 +160,7 @@ pub async fn list_definitions(pool: &Pool) -> anyhow::Result<Vec<WorkflowDefinit
 
 /// Delete workflow definition
 pub async fn delete_definition(pool: &Pool, id: SnowflakeId) -> anyhow::Result<()> {
-    raisfast_derive::crud_delete!(pool, "workflow_definitions", "id" => id)?;
+    raisfast_derive::crud_delete!(pool, "workflow_definitions", where: ("id", id))?;
     Ok(())
 }
 
@@ -188,7 +188,7 @@ pub async fn get_instance(
     pool: &Pool,
     id: SnowflakeId,
 ) -> anyhow::Result<Option<WorkflowInstance>> {
-    Ok(raisfast_derive::crud_find!(pool, "workflow_instances", WorkflowInstance, "id" => id)?)
+    Ok(raisfast_derive::crud_find!(pool, "workflow_instances", WorkflowInstance, where: ("id", id))?)
 }
 
 /// List workflow instances
@@ -291,7 +291,7 @@ pub async fn create_step_log(
         pool, "workflow_step_logs",
         ["id" => id, "instance_id" => instance_id, "step_id" => step_id, "step_name" => step_name, "status" => WorkflowStepStatus::Running, "input" => input_str, "started_at" => now]
     )?;
-    raisfast_derive::crud_find_one!(pool, "workflow_step_logs", StepLog, "id" => id)
+    raisfast_derive::crud_find_one!(pool, "workflow_step_logs", StepLog, where: ("id", id))
         .map_err(|e| anyhow::anyhow!("failed to fetch created step log: {e}"))
 }
 
@@ -306,7 +306,7 @@ pub async fn complete_step_log(
     raisfast_derive::crud_update!(
         pool, "workflow_step_logs",
         bind: ["status" => WorkflowStepStatus::Completed, "output" => output_str, "completed_at" => now],
-        where: "id" => id
+        where: ("id", id)
     )?;
     Ok(())
 }
@@ -317,7 +317,7 @@ pub async fn fail_step_log(pool: &Pool, id: SnowflakeId, error: &str) -> anyhow:
     raisfast_derive::crud_update!(
         pool, "workflow_step_logs",
         bind: ["status" => WorkflowStepStatus::Failed, "error" => error, "completed_at" => now],
-        where: "id" => id
+        where: ("id", id)
     )?;
     Ok(())
 }
@@ -325,7 +325,7 @@ pub async fn fail_step_log(pool: &Pool, id: SnowflakeId, error: &str) -> anyhow:
 /// List step logs for an instance
 pub async fn list_step_logs(pool: &Pool, instance_id: SnowflakeId) -> anyhow::Result<Vec<StepLog>> {
     Ok(
-        raisfast_derive::crud_find_all!(pool, "workflow_step_logs", StepLog, "instance_id" => instance_id, order_by: "started_at ASC")?,
+        raisfast_derive::crud_find_all!(pool, "workflow_step_logs", StepLog, where: ("instance_id", instance_id), order_by: "started_at ASC")?,
     )
 }
 

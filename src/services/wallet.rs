@@ -165,7 +165,7 @@ async fn tx_find_wallet_by_id(
     tx: &mut DbConnection,
     id: SnowflakeId,
 ) -> AppResult<Option<wallet::Wallet>> {
-    Ok(raisfast_derive::crud_find!(tx, "wallets", wallet::Wallet, "id" => id)?)
+    Ok(raisfast_derive::crud_find!(tx, "wallets", wallet::Wallet, where: ("id", id))?)
 }
 
 async fn tx_find_or_create(
@@ -174,8 +174,7 @@ async fn tx_find_or_create(
     currency: &str,
 ) -> AppResult<wallet::Wallet> {
     if let Some(w) = raisfast_derive::crud_find!(
-        &mut *tx, "wallets", wallet::Wallet, "user_id" => user_id,
-        and: ["currency" => currency]
+        &mut *tx, "wallets", wallet::Wallet, where: AND(("user_id", user_id), ("currency", currency))
     )? {
         return Ok(w);
     }
@@ -190,11 +189,10 @@ async fn tx_find_or_create(
 
     match insert_result {
         Ok(_) => {
-            Ok(raisfast_derive::crud_find_one!(&mut *tx, "wallets", wallet::Wallet, "id" => id)?)
+            Ok(raisfast_derive::crud_find_one!(&mut *tx, "wallets", wallet::Wallet, where: ("id", id))?)
         }
         Err(_) => Ok(raisfast_derive::crud_find_one!(
-            &mut *tx, "wallets", wallet::Wallet, "user_id" => user_id,
-            and: ["currency" => currency]
+            &mut *tx, "wallets", wallet::Wallet, where: AND(("user_id", user_id), ("currency", currency))
         )?),
     }
 }
@@ -203,7 +201,7 @@ async fn tx_find_tx_by_id(
     tx: &mut DbConnection,
     id: SnowflakeId,
 ) -> AppResult<Option<WalletTransaction>> {
-    Ok(raisfast_derive::crud_find!(tx, "wallet_transactions", WalletTransaction, "id" => id)?)
+    Ok(raisfast_derive::crud_find!(tx, "wallet_transactions", WalletTransaction, where: ("id", id))?)
 }
 
 async fn tx_find_tx_by_transaction_no(
@@ -211,14 +209,13 @@ async fn tx_find_tx_by_transaction_no(
     transaction_no: &str,
 ) -> AppResult<Option<WalletTransaction>> {
     Ok(
-        raisfast_derive::crud_find!(tx, "wallet_transactions", WalletTransaction, "transaction_no" => transaction_no)?,
+        raisfast_derive::crud_find!(tx, "wallet_transactions", WalletTransaction, where: ("transaction_no", transaction_no))?,
     )
 }
 
 async fn tx_has_reversal_for(tx: &mut DbConnection, related_tx_id: SnowflakeId) -> AppResult<bool> {
     Ok(raisfast_derive::crud_exists!(
-        tx, "wallet_transactions", "related_tx_id" => related_tx_id,
-        and: ["tx_type" => WalletTxType::Refund]
+        tx, "wallet_transactions", where: AND(("related_tx_id", related_tx_id), ("tx_type", WalletTxType::Refund))
     )?)
 }
 
@@ -684,7 +681,7 @@ async fn insert_tx(
         ["id" => id, "wallet_id" => wallet_id, "user_id" => user_id, "entry_type" => entry_type, "amount" => amount, "balance_after" => balance_after, "tx_type" => tx_type, "currency" => currency, "transaction_no" => transaction_no, "related_tx_id" => related_tx_id, "reference_type" => reference_type, "reference_id" => reference_id, "counterparty_wallet_id" => counterparty_wallet_id, "metadata" => metadata, "created_at" => now]
     )?;
 
-    let row = raisfast_derive::crud_find_one!(&mut *tx, "wallet_transactions", WalletTransaction, "id" => id)?;
+    let row = raisfast_derive::crud_find_one!(&mut *tx, "wallet_transactions", WalletTransaction, where: ("id", id))?;
 
     Ok(row)
 }

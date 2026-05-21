@@ -74,7 +74,7 @@ pub async fn create(
 
 /// Find API Token by token_hash
 pub async fn find_by_hash(pool: &crate::db::Pool, token_hash: &str) -> AppResult<Option<ApiToken>> {
-    raisfast_derive::crud_find!(pool, "api_tokens", ApiToken, "token_hash" => token_hash)
+    raisfast_derive::crud_find!(pool, "api_tokens", ApiToken, where: ("token_hash", token_hash))
         .map_err(Into::into)
 }
 
@@ -107,12 +107,12 @@ pub async fn list_by_user(
 
 /// Find API Token by id
 pub async fn find_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<Option<ApiToken>> {
-    raisfast_derive::crud_find!(pool, "api_tokens", ApiToken, "id" => id).map_err(Into::into)
+    raisfast_derive::crud_find!(pool, "api_tokens", ApiToken, where: ("id", id)).map_err(Into::into)
 }
 
 /// Delete API Token by id
 pub async fn delete_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
-    raisfast_derive::crud_delete!(pool, "api_tokens", "id" => id)?;
+    raisfast_derive::crud_delete!(pool, "api_tokens", where: ("id", id))?;
     Ok(())
 }
 
@@ -121,7 +121,7 @@ pub async fn touch_last_used(pool: &crate::db::Pool, id: SnowflakeId) -> AppResu
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_update!(pool, "api_tokens",
         bind: ["last_used_at" => now],
-        where: "id" => id
+        where: ("id", id)
     )?;
     Ok(())
 }

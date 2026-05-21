@@ -68,8 +68,7 @@ pub async fn find_by_token(
         pool,
         "email_verification_tokens",
         EmailVerificationToken,
-        "token" => token,
-        and_null: ["verified_at"]
+        where: AND(("token", token), ("verified_at", IS_NULL))
     )?)
 }
 
@@ -78,7 +77,7 @@ pub async fn mark_verified(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult
     let now = crate::utils::tz::now_utc();
     raisfast_derive::crud_update!(pool, "email_verification_tokens",
         bind: ["verified_at" => now],
-        where: "id" => id
+        where: ("id", id)
     )?;
     Ok(())
 }
@@ -88,8 +87,7 @@ pub async fn delete_unused_by_user(pool: &crate::db::Pool, user_id: SnowflakeId)
     raisfast_derive::crud_delete!(
         pool,
         "email_verification_tokens",
-        "user_id" => user_id,
-        and_null: ["verified_at"]
+        where: AND(("user_id", user_id), ("verified_at", IS_NULL))
     )?;
     Ok(())
 }

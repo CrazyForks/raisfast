@@ -62,7 +62,7 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Order>> {
-    raisfast_derive::crud_find!(pool, "orders", Order, "id" => id, tenant: tenant_id)
+    raisfast_derive::crud_find!(pool, "orders", Order, where: ("id", id), tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -71,7 +71,7 @@ pub async fn find_by_order_no(
     order_no: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Order>> {
-    raisfast_derive::crud_find!(pool, "orders", Order, "order_no" => order_no, tenant: tenant_id)
+    raisfast_derive::crud_find!(pool, "orders", Order, where: ("order_no", order_no), tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -84,9 +84,9 @@ pub async fn find_by_user_paginated(
 ) -> AppResult<(Vec<Order>, i64)> {
     let result = raisfast_derive::crud_query_paged!(
         pool, Order,
-        data_sql: "SELECT * FROM orders WHERE user_id = ?{tenant} ORDER BY created_at DESC",
-        count_sql: "SELECT COUNT(*) FROM orders WHERE user_id = ?{tenant}",
-        binds: [user_id],
+        table: "orders",
+        where: ("user_id", user_id),
+        order_by: "created_at DESC",
         tenant: tenant_id,
         page: page,
         page_size: page_size
@@ -103,10 +103,9 @@ pub async fn find_all_admin_paginated(
 ) -> AppResult<(Vec<Order>, i64)> {
     let result = raisfast_derive::crud_query_paged!(
         pool, Order,
-        data_sql: "SELECT * FROM orders WHERE 1=1{tenant} ORDER BY created_at DESC",
-        count_sql: "SELECT COUNT(*) FROM orders WHERE 1=1{tenant}",
-        binds: [],
+        table: "orders",
         where: ["status" => status],
+        order_by: "created_at DESC",
         tenant: tenant_id,
         page: page,
         page_size: page_size
@@ -225,7 +224,7 @@ pub async fn update_shipped(
             "carrier" => carrier,
         ],
         raw: ["updated_at" => crate::db::Driver::now_fn()],
-        where: "id" => id,
+        where: ("id", id),
         tenant: tenant_id
     )?;
     Ok(())
@@ -241,7 +240,7 @@ pub async fn update_admin_remark(
         pool, "orders",
         bind: ["admin_remark" => admin_remark],
         raw: ["updated_at" => crate::db::Driver::now_fn()],
-        where: "id" => id,
+        where: ("id", id),
         tenant: tenant_id
     )?;
     Ok(())
@@ -257,7 +256,7 @@ pub async fn update_delivery_data(
         pool, "orders",
         bind: ["delivery_data" => delivery_data],
         raw: ["updated_at" => crate::db::Driver::now_fn()],
-        where: "id" => id,
+        where: ("id", id),
         tenant: tenant_id
     )?;
     Ok(())
@@ -361,8 +360,7 @@ pub async fn tx_update_shipped(
             "carrier" => carrier
         ],
         raw: ["updated_at" => crate::db::Driver::now_fn()],
-        where: "id" => id,
-        and: ["status" => OrderStatus::Paid.as_str()]
+        where: AND(("id", id), ("status", OrderStatus::Paid.as_str()))
     )?;
     Ok(result.rows_affected())
 }

@@ -72,7 +72,7 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentOrder>> {
-    raisfast_derive::crud_find!(pool, "payment_orders", PaymentOrder, "id" => id, tenant: tenant_id)
+    raisfast_derive::crud_find!(pool, "payment_orders", PaymentOrder, where: ("id", id), tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -81,7 +81,7 @@ pub async fn find_by_idempotency_key(
     key: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentOrder>> {
-    raisfast_derive::crud_find!(pool, "payment_orders", PaymentOrder, "idempotency_key" => key, tenant: tenant_id)
+    raisfast_derive::crud_find!(pool, "payment_orders", PaymentOrder, where: ("idempotency_key", key), tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -90,7 +90,7 @@ pub async fn find_by_provider_order_id(
     provider_order_id: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentOrder>> {
-    raisfast_derive::crud_find!(pool, "payment_orders", PaymentOrder, "provider_order_id" => provider_order_id, tenant: tenant_id).map_err(Into::into)
+    raisfast_derive::crud_find!(pool, "payment_orders", PaymentOrder, where: ("provider_order_id", provider_order_id), tenant: tenant_id).map_err(Into::into)
 }
 
 pub async fn find_by_user_paginated(
@@ -102,9 +102,9 @@ pub async fn find_by_user_paginated(
 ) -> AppResult<(Vec<PaymentOrder>, i64)> {
     let result = raisfast_derive::crud_query_paged!(
         pool, PaymentOrder,
-        data_sql: "SELECT * FROM payment_orders WHERE user_id = ?{tenant} ORDER BY created_at DESC",
-        count_sql: "SELECT COUNT(*) FROM payment_orders WHERE user_id = ?{tenant}",
-        binds: [user_id],
+        table: "payment_orders",
+        where: ("user_id", user_id),
+        order_by: "created_at DESC",
         tenant: tenant_id,
         page: page,
         page_size: page_size
@@ -121,10 +121,9 @@ pub async fn find_all_admin_paginated(
 ) -> AppResult<(Vec<PaymentOrder>, i64)> {
     let result = raisfast_derive::crud_query_paged!(
         pool, PaymentOrder,
-        data_sql: "SELECT * FROM payment_orders WHERE 1=1{tenant} ORDER BY created_at DESC",
-        count_sql: "SELECT COUNT(*) FROM payment_orders WHERE 1=1{tenant}",
-        binds: [],
+        table: "payment_orders",
         where: ["status" => status],
+        order_by: "created_at DESC",
         tenant: tenant_id,
         page: page,
         page_size: page_size
@@ -186,7 +185,7 @@ pub async fn update_provider_order_id(
         pool, "payment_orders",
         bind: ["provider_order_id" => provider_order_id, "provider_data" => provider_data],
         raw: ["updated_at" => crate::db::Driver::now_fn()],
-        where: "id" => id,
+        where: ("id", id),
         tenant: tenant_id
     )?;
     Ok(())

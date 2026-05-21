@@ -38,7 +38,7 @@ pub async fn find_by_id(
         pool,
         "user_addresses",
         UserAddress,
-        "id" => id,
+        where: ("id", id),
         tenant: tenant_id
     )
     .map_err(Into::into)
@@ -53,7 +53,7 @@ pub async fn find_by_user_id(
         pool,
         "user_addresses",
         UserAddress,
-        "user_id" => user_id,
+        where: ("user_id", user_id),
         order_by: "is_default DESC, created_at DESC",
         tenant: tenant_id
     )?)
@@ -68,8 +68,7 @@ pub async fn find_default_by_user(
         pool,
         "user_addresses",
         UserAddress,
-        "user_id" => user_id,
-        and: ["is_default" => true],
+        where: AND(("user_id", user_id), ("is_default", true)),
         tenant: tenant_id
     )
     .map_err(Into::into)
@@ -135,8 +134,7 @@ pub async fn update(
             "address_type" => &cmd.address_type,
         ],
         raw: ["updated_at" => crate::db::Driver::now_fn()],
-        where: "id" => cmd.id,
-        and: ["user_id" => cmd.user_id],
+        where: AND(("id", cmd.id), ("user_id", cmd.user_id)),
         tenant: tenant_id
     )?;
     Ok(result.rows_affected() > 0)
@@ -151,8 +149,7 @@ pub async fn delete_by_id(
     let result: crate::db::DbQueryResult = raisfast_derive::crud_delete!(
         pool,
         "user_addresses",
-        "id" => id,
-        and: ["user_id" => user_id],
+        where: AND(("id", id), ("user_id", user_id)),
         tenant: tenant_id
     )?;
     Ok(result.rows_affected() > 0)
@@ -163,7 +160,7 @@ pub async fn count_by_user(
     user_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<i64> {
-    let count = raisfast_derive::crud_count!(pool, "user_addresses", "user_id" => user_id, tenant: tenant_id)?;
+    let count = raisfast_derive::crud_count!(pool, "user_addresses", where: ("user_id", user_id), tenant: tenant_id)?;
     Ok(count)
 }
 

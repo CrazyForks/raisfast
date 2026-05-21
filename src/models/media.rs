@@ -61,7 +61,7 @@ pub async fn create(
     )?;
 
     let media =
-        raisfast_derive::crud_find_one!(pool, "media", Media, "id" => id, tenant: tenant_id)?;
+        raisfast_derive::crud_find_one!(pool, "media", Media, where: ("id", id), tenant: tenant_id)?;
 
     Ok(media)
 }
@@ -75,9 +75,9 @@ pub async fn find_all(
 ) -> AppResult<(Vec<Media>, i64)> {
     let result = raisfast_derive::crud_query_paged!(
         pool, Media,
-        data_sql: "SELECT * FROM media WHERE user_id = ?{tenant} ORDER BY created_at DESC",
-        count_sql: "SELECT COUNT(*) FROM media WHERE user_id = ?{tenant}",
-        binds: [user_id],
+        table: "media",
+        where: ("user_id", user_id),
+        order_by: "created_at DESC",
         tenant: tenant_id,
         page: page,
         page_size: page_size
@@ -93,9 +93,8 @@ pub async fn find_all_admin(
 ) -> AppResult<(Vec<Media>, i64)> {
     let result = raisfast_derive::crud_query_paged!(
         pool, Media,
-        data_sql: "SELECT * FROM media WHERE 1=1{tenant} ORDER BY created_at DESC",
-        count_sql: "SELECT COUNT(*) FROM media WHERE 1=1{tenant}",
-        binds: [],
+        table: "media",
+        order_by: "created_at DESC",
         tenant: tenant_id,
         page: page,
         page_size: page_size
@@ -108,7 +107,7 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Media>> {
-    Ok(raisfast_derive::crud_find!(pool, "media", Media, "id" => id, tenant: tenant_id)?)
+    Ok(raisfast_derive::crud_find!(pool, "media", Media, where: ("id", id), tenant: tenant_id)?)
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -179,7 +178,7 @@ pub async fn delete(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let result = raisfast_derive::crud_delete!(pool, "media", "id" => id, tenant: tenant_id)?;
+    let result = raisfast_derive::crud_delete!(pool, "media", where: ("id", id), tenant: tenant_id)?;
     AppError::expect_affected(&result, "media")
 }
 

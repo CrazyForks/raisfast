@@ -27,7 +27,7 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<PaymentChannel>> {
-    raisfast_derive::crud_find!(pool, "payment_channels", PaymentChannel, "id" => id, tenant: tenant_id)
+    raisfast_derive::crud_find!(pool, "payment_channels", PaymentChannel, where: ("id", id), tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -35,7 +35,7 @@ pub async fn find_all_active(
     pool: &crate::db::Pool,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<PaymentChannel>> {
-    raisfast_derive::crud_find_all!(pool, "payment_channels", PaymentChannel, "is_active" => 1_i64, tenant: tenant_id, order_by: "sort_order, created_at DESC")
+    raisfast_derive::crud_find_all!(pool, "payment_channels", PaymentChannel, where: ("is_active", 1_i64), tenant: tenant_id, order_by: "sort_order, created_at DESC")
         .map_err(Into::into)
 }
 
@@ -49,10 +49,9 @@ pub async fn find_all_admin_paginated(
     let active_val = is_active.map(|a| if a { 1_i64 } else { 0_i64 });
     let result = raisfast_derive::crud_query_paged!(
         pool, PaymentChannel,
-        data_sql: "SELECT * FROM payment_channels WHERE 1=1{tenant} ORDER BY sort_order, created_at DESC",
-        count_sql: "SELECT COUNT(*) FROM payment_channels WHERE 1=1{tenant}",
-        binds: [],
+        table: "payment_channels",
         where: ["is_active" => active_val],
+        order_by: "sort_order, created_at DESC",
         tenant: tenant_id,
         page: page,
         page_size: page_size
@@ -116,8 +115,7 @@ pub async fn update(
             "sort_order" => cmd.sort_order,
         ],
         raw: ["updated_at" => crate::db::Driver::now_fn(), "version" => "version + 1"],
-        where: "id" => cmd.id,
-        and: ["version" => cmd.version],
+        where: AND(("id", cmd.id), ("version", cmd.version)),
         tenant: tenant_id
     )?
     .rows_affected();
@@ -130,7 +128,7 @@ pub async fn delete_by_id(
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
     let affected =
-        raisfast_derive::crud_delete!(pool, "payment_channels", "id" => id, tenant: tenant_id)?
+        raisfast_derive::crud_delete!(pool, "payment_channels", where: ("id", id), tenant: tenant_id)?
             .rows_affected();
     Ok(affected > 0)
 }

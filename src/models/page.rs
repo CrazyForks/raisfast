@@ -315,7 +315,7 @@ pub async fn find_by_slug(
     slug: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Page>> {
-    Ok(raisfast_derive::crud_find!(pool, "pages", Page, "slug" => slug, tenant: tenant_id)?)
+    Ok(raisfast_derive::crud_find!(pool, "pages", Page, where: ("slug", slug), tenant: tenant_id)?)
 }
 
 pub async fn find_by_id(
@@ -323,7 +323,7 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Page>> {
-    Ok(raisfast_derive::crud_find!(pool, "pages", Page, "id" => id, tenant: tenant_id)?)
+    Ok(raisfast_derive::crud_find!(pool, "pages", Page, where: ("id", id), tenant: tenant_id)?)
 }
 
 pub async fn list_published(
@@ -334,9 +334,9 @@ pub async fn list_published(
 ) -> AppResult<(Vec<Page>, i64)> {
     let result = raisfast_derive::crud_query_paged!(
         pool, Page,
-        data_sql: "SELECT * FROM pages WHERE status = ?{tenant} ORDER BY sort_order ASC, created_at DESC",
-        count_sql: "SELECT COUNT(*) FROM pages WHERE status = ?{tenant}",
-        binds: [PageStatus::Published],
+        table: "pages",
+        where: ("status", PageStatus::Published),
+        order_by: "sort_order ASC, created_at DESC",
         tenant: tenant_id,
         page: page,
         page_size: page_size
@@ -353,10 +353,9 @@ pub async fn list_all(
 ) -> AppResult<(Vec<Page>, i64)> {
     let result = raisfast_derive::crud_query_paged!(
         pool, Page,
-        data_sql: "SELECT * FROM pages WHERE 1=1{tenant} ORDER BY sort_order ASC, created_at DESC",
-        count_sql: "SELECT COUNT(*) FROM pages WHERE 1=1{tenant}",
-        binds: [],
+        table: "pages",
         where: ["status" => status],
+        order_by: "sort_order ASC, created_at DESC",
         tenant: tenant_id,
         page: page,
         page_size: page_size
@@ -570,7 +569,7 @@ pub async fn delete(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let result = raisfast_derive::crud_delete!(pool, "pages", "id" => id, tenant: tenant_id)?;
+    let result = raisfast_derive::crud_delete!(pool, "pages", where: ("id", id), tenant: tenant_id)?;
     AppError::expect_affected(&result, "page")
 }
 
@@ -651,7 +650,7 @@ pub async fn reorder(
         raisfast_derive::crud_update!(
             pool, "pages",
             bind: ["sort_order" => sort_order, "updated_at" => now],
-            where: "id" => id,
+            where: ("id", id),
             tenant: tenant_id
         )?;
     }

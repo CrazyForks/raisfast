@@ -79,7 +79,7 @@ pub async fn consume_state(
         .await?;
 
     if state.is_some() {
-        raisfast_derive::crud_delete!(pool, "oauth_states", "id" => id)?;
+        raisfast_derive::crud_delete!(pool, "oauth_states", where: ("id", id))?;
     }
 
     Ok(state)
@@ -101,7 +101,7 @@ pub async fn find_by_provider_user(
     provider: &str,
     provider_user_id: &str,
 ) -> AppResult<Option<OAuthAccount>> {
-    raisfast_derive::crud_find!(pool, "oauth_accounts", OAuthAccount, "provider" => provider, and: ["provider_user_id" => provider_user_id])
+    raisfast_derive::crud_find!(pool, "oauth_accounts", OAuthAccount, where: AND(("provider", provider), ("provider_user_id", provider_user_id)))
         .map_err(Into::into)
 }
 
@@ -111,7 +111,7 @@ pub async fn find_by_user_id(
     user_id: SnowflakeId,
 ) -> AppResult<Vec<OAuthAccount>> {
     raisfast_derive::check_schema!("oauth_accounts", "user_id", "created_at");
-    let accounts = raisfast_derive::crud_find_all!(pool, "oauth_accounts", OAuthAccount, "user_id" => user_id, order_by: "created_at")?;
+    let accounts = raisfast_derive::crud_find_all!(pool, "oauth_accounts", OAuthAccount, where: ("user_id", user_id), order_by: "created_at")?;
     Ok(accounts)
 }
 
@@ -155,7 +155,7 @@ pub async fn create_account(
         "updated_at" => now,
     ])?;
 
-    Ok(raisfast_derive::crud_find_one!(pool, "oauth_accounts", OAuthAccount, "id" => id)?)
+    Ok(raisfast_derive::crud_find_one!(pool, "oauth_accounts", OAuthAccount, where: ("id", id))?)
 }
 
 /// Parameters for updating an OAuth account binding
@@ -187,7 +187,7 @@ pub async fn update_account(
             "token_expires_at" => params.token_expires_at,
             "profile" => params.profile,
         ],
-        where: "id" => params.id
+        where: ("id", params.id)
     )?;
     Ok(())
 }
@@ -198,13 +198,13 @@ pub async fn delete_account(
     user_id: SnowflakeId,
     provider: &str,
 ) -> AppResult<bool> {
-    let result = raisfast_derive::crud_delete!(pool, "oauth_accounts", "user_id" => user_id, and: ["provider" => provider])?;
+    let result = raisfast_derive::crud_delete!(pool, "oauth_accounts", where: AND(("user_id", user_id), ("provider", provider)))?;
     Ok(result.rows_affected() > 0)
 }
 
 /// Count the number of OAuth providers bound to a user
 pub async fn count_by_user(pool: &crate::db::Pool, user_id: SnowflakeId) -> AppResult<i64> {
-    Ok(raisfast_derive::crud_count!(pool, "oauth_accounts", "user_id" => user_id)?)
+    Ok(raisfast_derive::crud_count!(pool, "oauth_accounts", where: ("user_id", user_id))?)
 }
 
 #[cfg(test)]

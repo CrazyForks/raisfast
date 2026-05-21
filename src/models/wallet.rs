@@ -29,16 +29,16 @@ pub async fn find_by_user_and_currency(
     user_id: SnowflakeId,
     currency: &str,
 ) -> AppResult<Option<Wallet>> {
-    raisfast_derive::crud_find!(pool, "wallets", Wallet, "user_id" => user_id, and: ["currency" => currency])
+    raisfast_derive::crud_find!(pool, "wallets", Wallet, where: AND(("user_id", user_id), ("currency", currency)))
         .map_err(Into::into)
 }
 
 pub async fn find_by_id(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<Option<Wallet>> {
-    raisfast_derive::crud_find!(pool, "wallets", Wallet, "id" => id).map_err(Into::into)
+    raisfast_derive::crud_find!(pool, "wallets", Wallet, where: ("id", id)).map_err(Into::into)
 }
 
 pub async fn find_by_user(pool: &crate::db::Pool, user_id: SnowflakeId) -> AppResult<Vec<Wallet>> {
-    raisfast_derive::crud_find_all!(pool, "wallets", Wallet, "user_id" => user_id)
+    raisfast_derive::crud_find_all!(pool, "wallets", Wallet, where: ("user_id", user_id))
         .map_err(Into::into)
 }
 
@@ -58,7 +58,7 @@ pub async fn create(
         "created_at" => now,
         "updated_at" => now
     ])?;
-    raisfast_derive::crud_find_one!(pool, "wallets", Wallet, "id" => id).map_err(Into::into)
+    raisfast_derive::crud_find_one!(pool, "wallets", Wallet, where: ("id", id)).map_err(Into::into)
 }
 
 pub async fn find_or_create(
@@ -78,12 +78,10 @@ pub async fn find_all_wallets(
     page_size: i64,
     tenant_id: Option<&str>,
 ) -> AppResult<(Vec<Wallet>, i64)> {
-    raisfast_derive::check_schema!("wallets", "tenant_id", "created_at");
     let result = raisfast_derive::crud_query_paged!(
         pool, Wallet,
-        data_sql: "SELECT * FROM wallets WHERE 1=1{tenant} ORDER BY created_at DESC",
-        count_sql: "SELECT COUNT(*) FROM wallets WHERE 1=1{tenant}",
-        binds: [],
+        table: "wallets",
+        order_by: "created_at DESC",
         tenant: tenant_id,
         page: page,
         page_size: page_size

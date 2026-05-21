@@ -21,16 +21,17 @@
 //!
 //! | Macro | SQL operation |
 //! |-------|---------------|
-//! | `crud_delete!` | `DELETE FROM ... WHERE col = ?` |
+//! | `crud_delete!` | `DELETE FROM ... WHERE WhereExpr` |
 //! | `crud_insert!` | `INSERT INTO ... (...) VALUES (...)` |
 //! | `crud_scalar!` | `SELECT scalar ...` |
 //! | `crud_query!` | `SELECT ...` via `query_as` |
-//! | `crud_find!` | `SELECT cols FROM ... WHERE col = ?` → `fetch_optional` |
+//! | `crud_find!` | `SELECT cols FROM ... WHERE WhereExpr` → `fetch_optional` |
 //! | `crud_find_one!` | same → `fetch_one` |
 //! | `crud_find_all!` | same → `fetch_all` |
 //! | `crud_list!` | `SELECT cols FROM ...` → `fetch_all` (no WHERE) |
-//! | `crud_update!` | `UPDATE ... SET ... WHERE pk = ?` |
-//! | `crud_count!` | `SELECT COUNT(*) FROM ... WHERE col = ?` |
+//! | `crud_update!` | `UPDATE ... SET ... WHERE WhereExpr` |
+//! | `crud_count!` | `SELECT COUNT(*) FROM ... WHERE WhereExpr` |
+//! | `crud_exists!` | `SELECT EXISTS(SELECT 1 ... WHERE WhereExpr)` |
 //! | `crud_query_paged!` | paginated data + COUNT |
 //! | `crud_join_paged!` | paginated JOIN + COUNT |
 //!
@@ -52,6 +53,7 @@ mod aspect_service;
 mod crud;
 mod event_meta;
 mod schema;
+mod where_dsl;
 
 use proc_macro::TokenStream;
 
@@ -64,10 +66,10 @@ pub fn derive_event_meta(input: TokenStream) -> TokenStream {
     event_meta::derive_event_meta(input)
 }
 
-/// `crud_delete!(pool, "table", "col" => val [, tenant: expr, and: ...])`
+/// `crud_delete!(pool, "table", where: WhereExpr [, tenant: expr])`
 ///
-/// Generates `DELETE FROM table WHERE col = ?1` via `sqlx::query!()`.
-/// When `tenant:` is provided, adds `AND tenant_id = ?` filter.
+/// Generates `DELETE FROM table WHERE ...` via `sqlx::query()`.
+/// Uses Where DSL for conditions. When `tenant:` is provided, adds `AND tenant_id = ?` filter.
 #[proc_macro]
 pub fn crud_delete(input: TokenStream) -> TokenStream {
     crud::crud_delete(input)
@@ -90,17 +92,17 @@ pub fn crud_scalar(input: TokenStream) -> TokenStream {
     crud::crud_scalar(input)
 }
 
-/// `crud_select!(pool, "table", ["col1", "col2"], "where_col" => val [, tenant: expr, and: ...])`
+/// `crud_select!(pool, "table", ["col1", "col2"], where: WhereExpr [, tenant: expr])`
 ///
-/// Generates `SELECT col1, col2 FROM table WHERE where_col = ?` via `sqlx::query_as`.
+/// Generates `SELECT col1, col2 FROM table WHERE ...` via `sqlx::query_as`.
 #[proc_macro]
 pub fn crud_select(input: TokenStream) -> TokenStream {
     crud::crud_select(input)
 }
 
-/// `crud_join!(pool, Type, select: [...], from: "...", joins: [...], where: "col" => val [, tenant: expr, method: fetch_all])`
+/// `crud_join!(pool, Type, select: [...], from: "...", joins: [...], where: WhereExpr [, tenant: expr, method: fetch_all, order_by: "...", limit: expr, offset: expr])`
 ///
-/// Generates a JOIN query with optional tenant filtering.
+/// Generates a JOIN query with optional Where DSL conditions and tenant filtering.
 #[proc_macro]
 pub fn crud_join(input: TokenStream) -> TokenStream {
     crud::crud_join(input)
@@ -114,9 +116,9 @@ pub fn crud_join_paged(input: TokenStream) -> TokenStream {
     crud::crud_join_paged(input)
 }
 
-/// `crud_count!(pool, "table", "col" => val [, tenant: expr, and: ["c" => v, ...]])`
+/// `crud_count!(pool, "table", where: WhereExpr [, tenant: expr])`
 ///
-/// `SELECT COUNT(*) FROM table WHERE col = ? [AND c = ? ...]` → `i64`.
+/// `SELECT COUNT(*) FROM table WHERE ...` → `i64`.
 #[proc_macro]
 pub fn crud_count(input: TokenStream) -> TokenStream {
     crud::crud_count(input)
@@ -130,9 +132,9 @@ pub fn crud_query(input: TokenStream) -> TokenStream {
     crud::crud_query(input)
 }
 
-/// `crud_find!(pool, "table", Type, "col" => val [, tenant: expr, and: ...])`
+/// `crud_find!(pool, "table", Type, where: WhereExpr [, tenant: expr, order_by: "expr"])`
 ///
-/// `SELECT {all_columns} FROM table WHERE col = ?` → `fetch_optional`.
+/// `SELECT {all_columns} FROM table WHERE ...` → `fetch_optional`.
 /// Column list is generated from schema (replaces `SELECT *`).
 #[proc_macro]
 pub fn crud_find(input: TokenStream) -> TokenStream {
@@ -176,9 +178,9 @@ pub fn check_schema(input: TokenStream) -> TokenStream {
     crud::check_schema(input)
 }
 
-/// `crud_exists!(pool, "table", "col" => val [, tenant: expr, and: ["c" => v, ...]])`
+/// `crud_exists!(pool, "table", where: WhereExpr [, tenant: expr])`
 ///
-/// `SELECT EXISTS(SELECT 1 FROM table WHERE col = ? [...])` → `bool`.
+/// `SELECT EXISTS(SELECT 1 FROM table WHERE ...)` → `bool`.
 /// Uses `sqlx::query_scalar` with compile-time verified SQL.
 #[proc_macro]
 pub fn crud_exists(input: TokenStream) -> TokenStream {
@@ -194,20 +196,10 @@ pub fn crud_upsert(input: TokenStream) -> TokenStream {
     crud::crud_upsert(input)
 }
 
-/// `crud_patch!(pool, "table", bind: [...], optional: [...], raw: [...], where: "pk" => val, and: [...] [, tenant: tid])`
+/// `crud_update!(pool, "table", bind: [...], optional: [...], raw: [...], where: WhereExpr [, tenant: tid])`
 ///
-/// Dynamic partial UPDATE — only non-None `optional:` fields are included in SET.
-/// `bind:` fields are always set. `raw:` fields use SQL expressions.
-/// Generates runtime `sqlx::query()`.
-#[proc_macro]
-pub fn crud_patch(input: TokenStream) -> TokenStream {
-    crud::crud_patch(input)
-}
-
-/// `crud_update!(pool, "table", bind: [...], raw: [...], where: "pk" => val, and: [...] [, tenant: tid])`
-///
-/// Generates a runtime `sqlx::query()` UPDATE.
-/// Values are pre-bound to `let` variables to avoid E0716 temporary lifetime issues.
+/// Generates a runtime `sqlx::query()` UPDATE. Supports `bind:` (always-set),
+/// `optional:` (set only when Some), `raw:` (SQL expressions).
 #[proc_macro]
 pub fn crud_update(input: TokenStream) -> TokenStream {
     crud::crud_update(input)

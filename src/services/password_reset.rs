@@ -68,24 +68,23 @@ pub async fn reset_password(
             &mut *tx,
             "user_credentials",
             (SnowflakeId, crate::models::user_credential::AuthType),
-            "user_id" => reset_token.user_id,
-            and: ["auth_type" => crate::models::user_credential::AuthType::Email]
+            where: AND(("user_id", reset_token.user_id), ("auth_type", crate::models::user_credential::AuthType::Email))
         )?;
         if let Some((cred_id, _)) = row.into_iter().next() {
             let now = crate::utils::tz::now_str();
             raisfast_derive::crud_update!(&mut *tx, "user_credentials",
                 bind: ["credential_data" => crate::models::user_credential::wrap_password_hash(&new_hash), "updated_at" => &now],
-                where: "id" => cred_id
+                where: ("id", cred_id)
             )?;
         }
 
         let now = crate::utils::tz::now_utc();
         raisfast_derive::crud_update!(&mut *tx, "password_reset_tokens",
             bind: ["used_at" => now],
-            where: "id" => reset_token.id
+            where: ("id", reset_token.id)
         )?;
 
-        raisfast_derive::crud_delete!(&mut *tx, "refresh_tokens", "user_id" => reset_token.user_id)?;
+        raisfast_derive::crud_delete!(&mut *tx, "refresh_tokens", where: ("user_id", reset_token.user_id))?;
         Ok::<_, crate::errors::app_error::AppError>(())
     })?;
 

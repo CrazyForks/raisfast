@@ -115,7 +115,7 @@ impl JobQueue for DefaultJobQueue {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid id: {e}")))?;
         raisfast_derive::crud_update!(&self.pool, "jobs",
             bind: ["status" => JobStatus::Completed, "updated_at" => now],
-            where: "id" => id
+            where: ("id", id)
         )?;
         tracing::debug!("job {id} completed");
         Ok(())
@@ -144,7 +144,7 @@ impl JobQueue for DefaultJobQueue {
             if attempts >= max_attempts {
                 raisfast_derive::crud_update!(&mut *tx, "jobs",
                     bind: ["status" => JobStatus::Dead, "error" => error, "updated_at" => now],
-                    where: "id" => id
+                    where: ("id", id)
                 )?;
                 tracing::error!("job {id} dead: {error}");
                 return Ok::<_, AppError>(());
@@ -156,7 +156,7 @@ impl JobQueue for DefaultJobQueue {
 
             raisfast_derive::crud_update!(&mut *tx, "jobs",
                 bind: ["status" => JobStatus::Pending, "error" => error, "run_after" => run_after, "updated_at" => now],
-                where: "id" => id
+                where: ("id", id)
             )?;
 
             tracing::warn!(
@@ -173,7 +173,7 @@ impl JobQueue for DefaultJobQueue {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid id: {e}")))?;
         raisfast_derive::crud_update!(&self.pool, "jobs",
             bind: ["status" => JobStatus::Dead, "error" => error, "updated_at" => now],
-            where: "id" => id
+            where: ("id", id)
         )?;
         tracing::error!("job {id} dead: {error}");
         Ok(())
@@ -314,8 +314,7 @@ impl JobQueue for DefaultJobQueue {
                 "run_after" => None::<crate::utils::tz::Timestamp>,
                 "updated_at" => now
             ],
-            where: "id" => id,
-            and: ["status" => JobStatus::Dead]
+            where: AND(("id", id), ("status", JobStatus::Dead))
         )?;
 
         if result.rows_affected() == 0 {
@@ -331,7 +330,7 @@ impl JobQueue for DefaultJobQueue {
             .parse()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid id: {e}")))?;
         let result: crate::db::DbQueryResult =
-            raisfast_derive::crud_delete!(&self.pool, "jobs", "id" => id)?;
+            raisfast_derive::crud_delete!(&self.pool, "jobs", where: ("id", id))?;
 
         if result.rows_affected() == 0 {
             return Err(AppError::not_found("job"));

@@ -100,7 +100,7 @@ pub async fn mark_processing(pool: &crate::db::Pool, id: SnowflakeId) -> AppResu
 pub async fn mark_completed(pool: &crate::db::Pool, id: SnowflakeId) -> AppResult<()> {
     raisfast_derive::crud_update!(pool, "wallet_outbox",
         raw: ["status" => "'completed'", "updated_at" => crate::db::Driver::now_fn()],
-        where: "id" => id
+        where: ("id", id)
     )?;
     Ok(())
 }

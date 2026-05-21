@@ -31,7 +31,7 @@ pub async fn find_reusable_by_id(
     tenant_id: Option<&str>,
 ) -> AppResult<Option<ReusableBlock>> {
     Ok(
-        raisfast_derive::crud_find!(pool, "reusable_blocks", ReusableBlock, "id" => id, tenant: tenant_id)?,
+        raisfast_derive::crud_find!(pool, "reusable_blocks", ReusableBlock, where: ("id", id), tenant: tenant_id)?,
     )
 }
 
@@ -83,7 +83,7 @@ pub async fn update_reusable(
         pool, "reusable_blocks",
         bind: ["updated_at" => now],
         optional: ["updated_by" => cmd.updated_by, "name" => cmd.name, "block_type" => cmd.block_type, "content" => cmd.content, "description" => cmd.description],
-        where: "id" => cmd.id,
+        where: ("id", cmd.id),
         tenant: tenant_id
     )?;
 
@@ -98,7 +98,7 @@ pub async fn delete_reusable(
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
     let result =
-        raisfast_derive::crud_delete!(pool, "reusable_blocks", "id" => id, tenant: tenant_id)?;
+        raisfast_derive::crud_delete!(pool, "reusable_blocks", where: ("id", id), tenant: tenant_id)?;
     AppError::expect_affected(&result, "reusable_block")
 }
 

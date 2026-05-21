@@ -34,7 +34,7 @@ pub async fn find_by_id(
         pool,
         "product_variants",
         ProductVariant,
-        "id" => id,
+        where: ("id", id),
         tenant: tenant_id
     )
     .map_err(Into::into)
@@ -49,7 +49,7 @@ pub async fn find_by_sku(
         pool,
         "product_variants",
         ProductVariant,
-        "sku" => sku,
+        where: ("sku", sku),
         tenant: tenant_id
     )
     .map_err(Into::into)
@@ -64,7 +64,7 @@ pub async fn find_by_product_id(
         pool,
         "product_variants",
         ProductVariant,
-        "product_id" => product_id,
+        where: ("product_id", product_id),
         order_by: "sort_order, created_at",
         tenant: tenant_id
     )?)
@@ -79,8 +79,7 @@ pub async fn find_active_by_product_id(
         pool,
         "product_variants",
         ProductVariant,
-        "product_id" => product_id,
-        and: ["is_active" => true],
+        where: AND(("product_id", product_id), ("is_active", true)),
         order_by: "sort_order, created_at",
         tenant: tenant_id
     )?)
@@ -138,7 +137,7 @@ pub async fn update(
             "is_active" => cmd.is_active,
         ],
         raw: ["updated_at" => crate::db::Driver::now_fn()],
-        where: "id" => cmd.id,
+        where: ("id", cmd.id),
         tenant: tenant_id
     )?;
     Ok(result.rows_affected() > 0)
@@ -150,7 +149,7 @@ pub async fn delete_by_id(
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
     let result: crate::db::DbQueryResult =
-        raisfast_derive::crud_delete!(pool, "product_variants", "id" => id, tenant: tenant_id)?;
+        raisfast_derive::crud_delete!(pool, "product_variants", where: ("id", id), tenant: tenant_id)?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -162,7 +161,7 @@ pub async fn delete_by_product_id(
     let result = raisfast_derive::crud_delete!(
         pool,
         "product_variants",
-        "product_id" => product_id,
+        where: ("product_id", product_id),
         tenant: tenant_id
     )?;
     AppError::expect_affected(&result, "product_variant")
@@ -176,7 +175,7 @@ pub async fn count_by_product(
     let count = raisfast_derive::crud_count!(
         pool,
         "product_variants",
-        "product_id" => product_id,
+        where: ("product_id", product_id),
         tenant: tenant_id
     )?;
     Ok(count)

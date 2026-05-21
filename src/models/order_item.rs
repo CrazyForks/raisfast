@@ -31,7 +31,7 @@ pub async fn find_by_order_id(
     order_id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Vec<OrderItem>> {
-    raisfast_derive::crud_find_all!(pool, "order_items", OrderItem, "order_id" => order_id, tenant: tenant_id)
+    raisfast_derive::crud_find_all!(pool, "order_items", OrderItem, where: ("order_id", order_id), tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -65,7 +65,7 @@ pub async fn insert(
         ],
         tenant: tenant_id
     )?;
-    raisfast_derive::crud_find_one!(pool, "order_items", OrderItem, "id" => id, tenant: tenant_id)
+    raisfast_derive::crud_find_one!(pool, "order_items", OrderItem, where: ("id", id), tenant: tenant_id)
         .map_err(Into::into)
 }
 
@@ -110,7 +110,7 @@ pub async fn tx_insert(
         ],
         tenant: tenant_id
     )?;
-    raisfast_derive::crud_find_one!(&mut *tx, "order_items", OrderItem, "id" => id, tenant: tenant_id)
+    raisfast_derive::crud_find_one!(&mut *tx, "order_items", OrderItem, where: ("id", id), tenant: tenant_id)
         .map_err(Into::into)
 }
 
