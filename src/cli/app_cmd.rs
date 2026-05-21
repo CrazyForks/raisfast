@@ -78,6 +78,7 @@ pub fn create_new(name: &str, template: &str) -> anyhow::Result<()> {
     println!("  cd {name}");
     println!("  cp .env.example .env");
     println!("  raisfast db migrate");
+    println!("  raisfast db rollback");
     println!("  raisfast db seed");
     println!("  raisfast server start");
 

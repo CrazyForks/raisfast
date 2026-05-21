@@ -9,7 +9,8 @@
 //! and `max_lifetime`, ensuring no infinite waits under high concurrency while avoiding connection leaks.
 //!
 //! On first startup, automatically executes `SCHEMA_SQL` to create tables + seed data (idempotent).
-//! On every startup, automatically runs pending incremental migrations from `migrations/{db}/`.
+//! Incremental migrations must be run manually via `raisfast db migrate`.
+//! Rollback is available via `raisfast db rollback`.
 
 use crate::db::DbDriver;
 use std::time::Duration;
@@ -124,10 +125,10 @@ async fn try_connect(database_url: &str, pool_size: u32) -> Result<Pool, sqlx::E
 }
 
 /// On first startup, automatically execute schema to create tables + seed data.
-/// On every startup, run any pending incremental migrations.
 ///
 /// Checks for the existence of the `_migrations` table to determine if this is the first run.
 /// All SQL uses `IF NOT EXISTS` / `OR IGNORE`, making it naturally idempotent.
+/// Incremental migrations are NOT run automatically — use `db migrate` CLI command.
 pub async fn ensure_schema(pool: &Pool) -> anyhow::Result<()> {
     let has_migrations = check_migrations_table(pool).await;
 
@@ -145,18 +146,21 @@ pub async fn ensure_schema(pool: &Pool) -> anyhow::Result<()> {
             #[cfg(feature = "db-sqlite")]
             let sql = "CREATE TABLE IF NOT EXISTS _migrations (\
                  filename TEXT PRIMARY KEY, \
+                 batch INTEGER NOT NULL, \
                  checksum TEXT NOT NULL, \
                  applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))\
                  )";
             #[cfg(feature = "db-postgres")]
             let sql = "CREATE TABLE IF NOT EXISTS _migrations (\
                  filename TEXT PRIMARY KEY, \
+                 batch INTEGER NOT NULL, \
                  checksum TEXT NOT NULL, \
                  applied_at TEXT NOT NULL DEFAULT NOW()\
                  )";
             #[cfg(feature = "db-mysql")]
             let sql = "CREATE TABLE IF NOT EXISTS _migrations (\
                  filename TEXT PRIMARY KEY, \
+                 batch INTEGER NOT NULL, \
                  checksum TEXT NOT NULL, \
                  applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\
                  )";
@@ -168,11 +172,13 @@ pub async fn ensure_schema(pool: &Pool) -> anyhow::Result<()> {
 
         let ph = crate::db::Driver::ph;
         sqlx::query(&format!(
-            "INSERT INTO _migrations (filename, checksum) VALUES ({}, {})",
+            "INSERT INTO _migrations (filename, batch, checksum) VALUES ({}, {}, {})",
             ph(1),
-            ph(2)
+            ph(2),
+            ph(3)
         ))
         .bind(format!("schema.{schema_label}.sql"))
+        .bind(0i32)
         .bind(&checksum)
         .execute(pool)
         .await
@@ -183,30 +189,29 @@ pub async fn ensure_schema(pool: &Pool) -> anyhow::Result<()> {
         ensure_migrations_table_schema(pool).await;
     }
 
-    run_pending_migrations(pool).await?;
-
     Ok(())
 }
 
-/// Auto-run any pending incremental migration files from `migrations/{db}/`.
+/// Run all pending incremental migration files from `migrations/{db}/`.
 ///
-/// Called automatically during startup after `ensure_schema`.
+/// Should be called explicitly via `db migrate` CLI command, not automatically on startup.
 /// Migrations are sorted alphabetically and tracked in `_migrations`.
 /// Files already recorded are skipped. Checksums are verified on re-run detection.
-async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
+/// All applied migrations in one call share the same batch number (max batch + 1).
+/// `.down.sql` files are excluded from migration scanning (they are rollback scripts).
+pub async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
     let db_name = match db_label() {
         "sqlite" => "sqlite",
         "postgres" => "postgres",
         "mysql" => "mysql",
         other => {
-            tracing::debug!("unknown db label '{other}', skipping auto-migration");
-            return Ok(());
+            anyhow::bail!("unknown db label '{other}'");
         }
     };
 
     let migrations_dir = std::path::Path::new("./migrations").join(db_name);
     if !migrations_dir.exists() {
-        tracing::debug!("no migrations directory found, skipping auto-migration");
+        tracing::info!("no migrations directory found, nothing to do");
         return Ok(());
     }
 
@@ -217,8 +222,9 @@ async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
         .map(|dir| {
             dir.filter_map(|e| e.ok())
                 .filter(|e| {
-                    e.path().extension().is_some_and(|ext| ext == "sql")
-                        && e.file_name().to_string_lossy() != schema_label
+                    let name = e.file_name().to_string_lossy().to_string();
+                    let is_sql = e.path().extension().is_some_and(|ext| ext == "sql");
+                    is_sql && name != schema_label && !name.contains(".down.")
                 })
                 .collect()
         })
@@ -226,6 +232,7 @@ async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
     entries.sort_by_key(|e| e.file_name());
 
     if entries.is_empty() {
+        tracing::info!("no migration files found");
         return Ok(());
     }
 
@@ -234,10 +241,21 @@ async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
         "SELECT checksum FROM _migrations WHERE filename = {}",
         ph(1)
     );
+
+    let max_batch: i32 = sqlx::query_scalar::<_, i32>(
+        "SELECT COALESCE(MAX(batch), 0) FROM _migrations",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    let batch = max_batch + 1;
+
     let insert_sql = format!(
-        "INSERT INTO _migrations (filename, checksum) VALUES ({}, {})",
+        "INSERT INTO _migrations (filename, batch, checksum) VALUES ({}, {}, {})",
         ph(1),
-        ph(2)
+        ph(2),
+        ph(3)
     );
 
     let mut applied = 0u32;
@@ -267,7 +285,7 @@ async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
         let sql = std::fs::read_to_string(entry.path())?;
         let checksum = sha256_hex(&sql);
 
-        tracing::info!(filename = %filename, "applying migration...");
+        tracing::info!(filename = %filename, batch, "applying migration...");
         sqlx::query(&sql)
             .execute(pool)
             .await
@@ -275,6 +293,7 @@ async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
 
         sqlx::query(&insert_sql)
             .bind(&filename)
+            .bind(batch)
             .bind(&checksum)
             .execute(pool)
             .await
@@ -285,15 +304,133 @@ async fn run_pending_migrations(pool: &Pool) -> anyhow::Result<()> {
     }
 
     if applied > 0 {
-        tracing::info!("applied {applied} migration(s)");
+        tracing::info!("applied {applied} migration(s) [batch {batch}]");
+    } else {
+        tracing::info!("no pending migrations");
     }
 
     Ok(())
 }
 
-/// Ensure the `_migrations` table has the `checksum` and `applied_at` columns.
-/// Handles upgrades from the old schema (filename-only).
+/// Rollback the last batch (or the last `step` individual migrations).
+///
+/// For each migration being rolled back, looks for a corresponding `.down.sql` file
+/// in `migrations/{db}/`. For example, `001_add_foo.sql` → `001_add_foo.down.sql`.
+/// If the `.down.sql` file is missing, that migration is skipped with a warning.
+/// The schema baseline (`schema.{db}.sql`, batch 0) is never rolled back.
+pub async fn rollback_migrations(pool: &Pool, step: Option<u32>) -> anyhow::Result<()> {
+    let db_name = match db_label() {
+        "sqlite" => "sqlite",
+        "postgres" => "postgres",
+        "mysql" => "mysql",
+        other => {
+            anyhow::bail!("unknown db label '{other}'");
+        }
+    };
+
+    let migrations_dir = std::path::Path::new("./migrations").join(db_name);
+
+    let ph = crate::db::Driver::ph;
+
+    let filenames: Vec<String> = if let Some(n) = step {
+        let limit = n as i64;
+        let sql = format!(
+            "SELECT filename FROM _migrations WHERE batch > 0 ORDER BY applied_at DESC, filename DESC LIMIT {}",
+            ph(1)
+        );
+        let rows: Vec<(String,)> = sqlx::query_as(&sql)
+            .bind(limit)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("query migrations failed: {e}"))?;
+        rows.into_iter().map(|(f,)| f).collect()
+    } else {
+        let max_batch: i32 = sqlx::query_scalar::<_, i32>(
+            "SELECT COALESCE(MAX(batch), 0) FROM _migrations WHERE batch > 0",
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("query max batch failed: {e}"))?;
+
+        if max_batch == 0 {
+            tracing::info!("no migrations to rollback");
+            return Ok(());
+        }
+
+        let sql = format!(
+            "SELECT filename FROM _migrations WHERE batch = {} ORDER BY applied_at DESC, filename DESC",
+            ph(1)
+        );
+        let rows: Vec<(String,)> = sqlx::query_as(&sql)
+            .bind(max_batch)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("query batch migrations failed: {e}"))?;
+        rows.into_iter().map(|(f,)| f).collect()
+    };
+
+    if filenames.is_empty() {
+        tracing::info!("no migrations to rollback");
+        return Ok(());
+    }
+
+    let delete_sql = format!(
+        "DELETE FROM _migrations WHERE filename = {}",
+        ph(1)
+    );
+
+    let mut rolled_back = 0u32;
+
+    for filename in &filenames {
+        let down_filename = if filename.ends_with(".sql") {
+            format!("{}.down.sql", &filename[..filename.len() - 4])
+        } else {
+            format!("{filename}.down.sql")
+        };
+
+        let down_path = migrations_dir.join(&down_filename);
+
+        if !down_path.exists() {
+            tracing::warn!(
+                filename = %filename,
+                "no rollback file found (expected {}), skipping",
+                down_filename
+            );
+            continue;
+        }
+
+        let sql = std::fs::read_to_string(&down_path)
+            .map_err(|e| anyhow::anyhow!("read {down_filename} failed: {e}"))?;
+
+        tracing::info!(filename = %filename, "rolling back...");
+        sqlx::query(&sql)
+            .execute(pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("rollback {filename} failed: {e}"))?;
+
+        sqlx::query(&delete_sql)
+            .bind(filename)
+            .execute(pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("delete migration record {filename} failed: {e}"))?;
+
+        tracing::info!(filename = %filename, "rolled back");
+        rolled_back += 1;
+    }
+
+    if rolled_back > 0 {
+        tracing::info!("rolled back {rolled_back} migration(s)");
+    }
+
+    Ok(())
+}
+
+/// Ensure the `_migrations` table has all required columns.
+/// Handles upgrades from older schema versions (adds `batch`, `checksum`, `applied_at`).
 async fn ensure_migrations_table_schema(pool: &Pool) {
+    let _ = sqlx::query("ALTER TABLE _migrations ADD COLUMN batch INTEGER NOT NULL DEFAULT 0")
+        .execute(pool)
+        .await;
     let _ = sqlx::query("ALTER TABLE _migrations ADD COLUMN checksum TEXT NOT NULL DEFAULT ''")
         .execute(pool)
         .await;

@@ -114,6 +114,12 @@ pub enum ServerAction {
 pub enum DbAction {
     /// Run pending database migrations
     Migrate,
+    /// Rollback the last batch of migrations
+    Rollback {
+        /// Number of individual migrations to rollback (omit to rollback entire last batch)
+        #[arg(short, long)]
+        step: Option<u32>,
+    },
     /// Backup the database to a timestamped file
     Backup {
         /// Output directory (default: {STORAGE_ROOT_DIR}/backups)
@@ -364,6 +370,12 @@ pub async fn run(cli: Cli, config: &AppConfig) -> anyhow::Result<()> {
             action: DbAction::Migrate,
         }) => {
             db_cmd::migrate(config).await?;
+        }
+
+        Some(Commands::Db {
+            action: DbAction::Rollback { step },
+        }) => {
+            db_cmd::rollback(config, &step).await?;
         }
 
         Some(Commands::Db {

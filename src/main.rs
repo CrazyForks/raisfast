@@ -9,7 +9,8 @@
 //! - `server restart`  Restart the server
 //! - `server status`   Check running status
 //! - `db migrate`      Run database migrations
-//! - `db backup`       Backup the database
+//! - `db rollback`    Rollback last batch of migrations
+//! - `db backup`      Backup the database
 
 #![deny(unsafe_code)]
 
