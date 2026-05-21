@@ -119,8 +119,11 @@ pub async fn create(
         tenant: tenant_id
     )?;
 
-    let user = raisfast_derive::crud_find!(pool, "users", User, where: ("id", id), tenant: tenant_id)?
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("failed to fetch newly created user")))?;
+    let user =
+        raisfast_derive::crud_find!(pool, "users", User, where: ("id", id), tenant: tenant_id)?
+            .ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!("failed to fetch newly created user"))
+            })?;
     Ok(user)
 }
 

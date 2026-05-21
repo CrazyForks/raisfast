@@ -227,7 +227,8 @@ pub async fn delete_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<bool> {
-    let result = raisfast_derive::crud_delete!(pool, "products", where: ("id", id), tenant: tenant_id)?;
+    let result =
+        raisfast_derive::crud_delete!(pool, "products", where: ("id", id), tenant: tenant_id)?;
     Ok(result.rows_affected() > 0)
 }
 

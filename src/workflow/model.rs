@@ -148,7 +148,9 @@ pub async fn get_definition(
     pool: &Pool,
     id: SnowflakeId,
 ) -> anyhow::Result<Option<WorkflowDefinition>> {
-    Ok(raisfast_derive::crud_find!(pool, "workflow_definitions", WorkflowDefinition, where: ("id", id))?)
+    Ok(
+        raisfast_derive::crud_find!(pool, "workflow_definitions", WorkflowDefinition, where: ("id", id))?,
+    )
 }
 
 /// List all workflow definitions
@@ -188,7 +190,9 @@ pub async fn get_instance(
     pool: &Pool,
     id: SnowflakeId,
 ) -> anyhow::Result<Option<WorkflowInstance>> {
-    Ok(raisfast_derive::crud_find!(pool, "workflow_instances", WorkflowInstance, where: ("id", id))?)
+    Ok(
+        raisfast_derive::crud_find!(pool, "workflow_instances", WorkflowInstance, where: ("id", id))?,
+    )
 }
 
 /// List workflow instances

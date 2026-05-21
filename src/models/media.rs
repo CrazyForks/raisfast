@@ -60,8 +60,7 @@ pub async fn create(
         tenant: tenant_id
     )?;
 
-    let media =
-        raisfast_derive::crud_find_one!(pool, "media", Media, where: ("id", id), tenant: tenant_id)?;
+    let media = raisfast_derive::crud_find_one!(pool, "media", Media, where: ("id", id), tenant: tenant_id)?;
 
     Ok(media)
 }
@@ -178,7 +177,8 @@ pub async fn delete(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let result = raisfast_derive::crud_delete!(pool, "media", where: ("id", id), tenant: tenant_id)?;
+    let result =
+        raisfast_derive::crud_delete!(pool, "media", where: ("id", id), tenant: tenant_id)?;
     AppError::expect_affected(&result, "media")
 }
 

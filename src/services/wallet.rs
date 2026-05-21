@@ -188,9 +188,9 @@ async fn tx_find_or_create(
     );
 
     match insert_result {
-        Ok(_) => {
-            Ok(raisfast_derive::crud_find_one!(&mut *tx, "wallets", wallet::Wallet, where: ("id", id))?)
-        }
+        Ok(_) => Ok(
+            raisfast_derive::crud_find_one!(&mut *tx, "wallets", wallet::Wallet, where: ("id", id))?,
+        ),
         Err(_) => Ok(raisfast_derive::crud_find_one!(
             &mut *tx, "wallets", wallet::Wallet, where: AND(("user_id", user_id), ("currency", currency))
         )?),
@@ -201,7 +201,9 @@ async fn tx_find_tx_by_id(
     tx: &mut DbConnection,
     id: SnowflakeId,
 ) -> AppResult<Option<WalletTransaction>> {
-    Ok(raisfast_derive::crud_find!(tx, "wallet_transactions", WalletTransaction, where: ("id", id))?)
+    Ok(
+        raisfast_derive::crud_find!(tx, "wallet_transactions", WalletTransaction, where: ("id", id))?,
+    )
 }
 
 async fn tx_find_tx_by_transaction_no(

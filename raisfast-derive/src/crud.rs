@@ -127,7 +127,9 @@ fn validate_columns(table: &syn::LitStr, cols: &[syn::LitStr]) -> Option<TokenSt
 // Shared across all macros that support `and:`. These extra parameters allow
 // IS NULL checks and comparison operators alongside the existing `and:` (equality).
 
-fn emit_runtime_binds(binds: &[crate::where_dsl::BindKind]) -> (Vec<proc_macro2::TokenStream>, Vec<proc_macro2::TokenStream>) {
+fn emit_runtime_binds(
+    binds: &[crate::where_dsl::BindKind],
+) -> (Vec<proc_macro2::TokenStream>, Vec<proc_macro2::TokenStream>) {
     let local_stmts: Vec<_> = binds
         .iter()
         .enumerate()
@@ -161,7 +163,11 @@ fn emit_runtime_binds(binds: &[crate::where_dsl::BindKind]) -> (Vec<proc_macro2:
     (local_stmts, bind_stmts)
 }
 
-fn emit_tenant_code(tid: &Option<syn::Expr>, d: Dialect, tenant_alias: Option<&syn::LitStr>) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
+fn emit_tenant_code(
+    tid: &Option<syn::Expr>,
+    d: Dialect,
+    tenant_alias: Option<&syn::LitStr>,
+) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
     let numbered = matches!(d, Dialect::Sqlite | Dialect::Postgres);
     let numbered_lit = syn::LitBool::new(numbered, proc_macro2::Span::call_site());
     let ph_prefix_lit = syn::LitStr::new(
@@ -1534,44 +1540,66 @@ pub fn crud_join_paged(input: TokenStream) -> TokenStream {
         quote! {}
     };
 
-    let (where_sql_code, local_stmts, bind_stmts_dq, bind_stmts_cq) = if let Some(ref dsl_where) = parsed.dsl_where {
-        let wr = crate::where_dsl::generate_where_runtime(dsl_where, d);
-        let ls: Vec<_> = wr.binds.iter().enumerate().map(|(i, bk)| match bk {
-            crate::where_dsl::BindKind::Static(expr) => {
-                let ident = syn::Ident::new(&format!("__wb_{}", i), proc_macro2::Span::call_site());
-                quote! { let #ident = #expr; }
-            }
-            crate::where_dsl::BindKind::InLoop(expr) => {
-                let ident = syn::Ident::new(&format!("__in_{}", i), proc_macro2::Span::call_site());
-                quote! { let #ident = #expr; }
-            }
-        }).collect();
-        let bs_dq: Vec<_> = wr.binds.iter().enumerate().map(|(i, bk)| match bk {
-            crate::where_dsl::BindKind::Static(_) => {
-                let ident = syn::Ident::new(&format!("__wb_{}", i), proc_macro2::Span::call_site());
-                quote! { __dq = __dq.bind(#ident); }
-            }
-            crate::where_dsl::BindKind::InLoop(_) => {
-                let ident = syn::Ident::new(&format!("__in_{}", i), proc_macro2::Span::call_site());
-                quote! { for __iv in #ident { __dq = __dq.bind(__iv.clone()); } }
-            }
-        }).collect();
-        let bs_cq: Vec<_> = wr.binds.iter().enumerate().map(|(i, bk)| match bk {
-            crate::where_dsl::BindKind::Static(_) => {
-                let ident = syn::Ident::new(&format!("__wb_{}", i), proc_macro2::Span::call_site());
-                quote! { __cq = __cq.bind(#ident); }
-            }
-            crate::where_dsl::BindKind::InLoop(_) => {
-                let ident = syn::Ident::new(&format!("__in_{}", i), proc_macro2::Span::call_site());
-                quote! { for __iv in #ident { __cq = __cq.bind(__iv.clone()); } }
-            }
-        }).collect();
-        (wr.sql_code, ls, bs_dq, bs_cq)
-    } else {
-        let fallback = syn::LitStr::new("1=1", proc_macro2::Span::call_site());
-        let code = quote! { let __where_sql = #fallback.to_string(); };
-        (code, Vec::new(), Vec::new(), Vec::new())
-    };
+    let (where_sql_code, local_stmts, bind_stmts_dq, bind_stmts_cq) =
+        if let Some(ref dsl_where) = parsed.dsl_where {
+            let wr = crate::where_dsl::generate_where_runtime(dsl_where, d);
+            let ls: Vec<_> = wr
+                .binds
+                .iter()
+                .enumerate()
+                .map(|(i, bk)| match bk {
+                    crate::where_dsl::BindKind::Static(expr) => {
+                        let ident =
+                            syn::Ident::new(&format!("__wb_{}", i), proc_macro2::Span::call_site());
+                        quote! { let #ident = #expr; }
+                    }
+                    crate::where_dsl::BindKind::InLoop(expr) => {
+                        let ident =
+                            syn::Ident::new(&format!("__in_{}", i), proc_macro2::Span::call_site());
+                        quote! { let #ident = #expr; }
+                    }
+                })
+                .collect();
+            let bs_dq: Vec<_> = wr
+                .binds
+                .iter()
+                .enumerate()
+                .map(|(i, bk)| match bk {
+                    crate::where_dsl::BindKind::Static(_) => {
+                        let ident =
+                            syn::Ident::new(&format!("__wb_{}", i), proc_macro2::Span::call_site());
+                        quote! { __dq = __dq.bind(#ident); }
+                    }
+                    crate::where_dsl::BindKind::InLoop(_) => {
+                        let ident =
+                            syn::Ident::new(&format!("__in_{}", i), proc_macro2::Span::call_site());
+                        quote! { for __iv in #ident { __dq = __dq.bind(__iv.clone()); } }
+                    }
+                })
+                .collect();
+            let bs_cq: Vec<_> = wr
+                .binds
+                .iter()
+                .enumerate()
+                .map(|(i, bk)| match bk {
+                    crate::where_dsl::BindKind::Static(_) => {
+                        let ident =
+                            syn::Ident::new(&format!("__wb_{}", i), proc_macro2::Span::call_site());
+                        quote! { __cq = __cq.bind(#ident); }
+                    }
+                    crate::where_dsl::BindKind::InLoop(_) => {
+                        let ident =
+                            syn::Ident::new(&format!("__in_{}", i), proc_macro2::Span::call_site());
+                        quote! { for __iv in #ident { __cq = __cq.bind(__iv.clone()); } }
+                    }
+                })
+                .collect();
+            (wr.sql_code, ls, bs_dq, bs_cq)
+        } else {
+            let fallback = syn::LitStr::new("1=1", proc_macro2::Span::call_site());
+            let code = quote! { let __where_sql = #fallback.to_string(); };
+            (code, Vec::new(), Vec::new(), Vec::new())
+        };
 
     let limit_sql_code = quote! {
         let __limit_ph = if #numbered_lit {
@@ -2296,8 +2324,7 @@ impl syn::parse::Parse for QueryPagedInput {
             let _ = input.parse::<syn::Token![,]>();
         }
 
-        let table =
-            table.ok_or_else(|| syn::Error::new(ty.span(), "missing `table:` section"))?;
+        let table = table.ok_or_else(|| syn::Error::new(ty.span(), "missing `table:` section"))?;
         let page = page.ok_or_else(|| syn::Error::new(ty.span(), "missing `page:` section"))?;
         let page_size =
             page_size.ok_or_else(|| syn::Error::new(ty.span(), "missing `page_size:` section"))?;
@@ -2408,5 +2435,3 @@ impl syn::parse::Parse for UpsertInput {
         })
     }
 }
-
-

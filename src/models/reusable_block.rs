@@ -97,8 +97,7 @@ pub async fn delete_reusable(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let result =
-        raisfast_derive::crud_delete!(pool, "reusable_blocks", where: ("id", id), tenant: tenant_id)?;
+    let result = raisfast_derive::crud_delete!(pool, "reusable_blocks", where: ("id", id), tenant: tenant_id)?;
     AppError::expect_affected(&result, "reusable_block")
 }
 

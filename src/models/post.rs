@@ -78,7 +78,8 @@ pub async fn find_by_slug(
     slug: &str,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Post>> {
-    let post = raisfast_derive::crud_find!(pool, "posts", Post, where: ("slug", slug), tenant: tenant_id)?;
+    let post =
+        raisfast_derive::crud_find!(pool, "posts", Post, where: ("slug", slug), tenant: tenant_id)?;
     Ok(post)
 }
 
@@ -87,7 +88,8 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Post>> {
-    let post = raisfast_derive::crud_find!(pool, "posts", Post, where: ("id", id), tenant: tenant_id)?;
+    let post =
+        raisfast_derive::crud_find!(pool, "posts", Post, where: ("id", id), tenant: tenant_id)?;
     Ok(post)
 }
 
@@ -253,7 +255,8 @@ pub async fn delete(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let result = raisfast_derive::crud_delete!(pool, "posts", where: ("id", id), tenant: tenant_id)?;
+    let result =
+        raisfast_derive::crud_delete!(pool, "posts", where: ("id", id), tenant: tenant_id)?;
     AppError::expect_affected(&result, "post")
 }
 

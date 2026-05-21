@@ -93,8 +93,7 @@ pub async fn create(
         "created_at" => now,
         "updated_at" => now
     ])?;
-    let cred =
-        raisfast_derive::crud_find_one!(pool, "user_credentials", UserCredential, where: ("id", id))?;
+    let cred = raisfast_derive::crud_find_one!(pool, "user_credentials", UserCredential, where: ("id", id))?;
     Ok(cred)
 }
 

@@ -285,24 +285,36 @@ fn ph_code(d: Dialect) -> proc_macro2::TokenStream {
 fn build_runtime(expr: &WhereExpr, d: Dialect, result: &mut WhereRuntimeResult) {
     match expr {
         WhereExpr::And(exprs) => {
-            result.sql_code.extend(quote::quote! { __where_sql.push('('); });
+            result
+                .sql_code
+                .extend(quote::quote! { __where_sql.push('('); });
             for (i, e) in exprs.iter().enumerate() {
                 if i > 0 {
-                    result.sql_code.extend(quote::quote! { __where_sql.push_str(" AND "); });
+                    result
+                        .sql_code
+                        .extend(quote::quote! { __where_sql.push_str(" AND "); });
                 }
                 build_runtime(e, d, result);
             }
-            result.sql_code.extend(quote::quote! { __where_sql.push(')'); });
+            result
+                .sql_code
+                .extend(quote::quote! { __where_sql.push(')'); });
         }
         WhereExpr::Or(exprs) => {
-            result.sql_code.extend(quote::quote! { __where_sql.push('('); });
+            result
+                .sql_code
+                .extend(quote::quote! { __where_sql.push('('); });
             for (i, e) in exprs.iter().enumerate() {
                 if i > 0 {
-                    result.sql_code.extend(quote::quote! { __where_sql.push_str(" OR "); });
+                    result
+                        .sql_code
+                        .extend(quote::quote! { __where_sql.push_str(" OR "); });
                 }
                 build_runtime(e, d, result);
             }
-            result.sql_code.extend(quote::quote! { __where_sql.push(')'); });
+            result
+                .sql_code
+                .extend(quote::quote! { __where_sql.push(')'); });
         }
         WhereExpr::Condition { col, op, value, .. } => {
             let col_lit = syn::LitStr::new(col, proc_macro2::Span::call_site());

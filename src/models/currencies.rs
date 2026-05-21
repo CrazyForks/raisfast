@@ -18,7 +18,8 @@ pub struct Currency {
 }
 
 pub async fn find_by_code(pool: &crate::db::Pool, code: &str) -> AppResult<Option<Currency>> {
-    raisfast_derive::crud_find!(pool, "currencies", Currency, where: ("code", code)).map_err(Into::into)
+    raisfast_derive::crud_find!(pool, "currencies", Currency, where: ("code", code))
+        .map_err(Into::into)
 }
 
 pub async fn find_active_by_code(
@@ -75,7 +76,8 @@ pub async fn create(
         ]
     )?;
 
-    raisfast_derive::crud_find_one!(pool, "currencies", Currency, where: ("id", id)).map_err(Into::into)
+    raisfast_derive::crud_find_one!(pool, "currencies", Currency, where: ("id", id))
+        .map_err(Into::into)
 }
 
 pub async fn update(

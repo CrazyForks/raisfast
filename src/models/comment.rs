@@ -64,7 +64,9 @@ pub async fn find_by_id(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<Option<Comment>> {
-    Ok(raisfast_derive::crud_find!(pool, "comments", Comment, where: ("id", id), tenant: tenant_id)?)
+    Ok(
+        raisfast_derive::crud_find!(pool, "comments", Comment, where: ("id", id), tenant: tenant_id)?,
+    )
 }
 
 pub async fn create(
@@ -220,7 +222,8 @@ pub async fn delete(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let result = raisfast_derive::crud_delete!(pool, "comments", where: ("id", id), tenant: tenant_id)?;
+    let result =
+        raisfast_derive::crud_delete!(pool, "comments", where: ("id", id), tenant: tenant_id)?;
     AppError::expect_affected(&result, "comment")
 }
 

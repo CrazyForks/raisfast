@@ -569,7 +569,8 @@ pub async fn delete(
     id: SnowflakeId,
     tenant_id: Option<&str>,
 ) -> AppResult<()> {
-    let result = raisfast_derive::crud_delete!(pool, "pages", where: ("id", id), tenant: tenant_id)?;
+    let result =
+        raisfast_derive::crud_delete!(pool, "pages", where: ("id", id), tenant: tenant_id)?;
     AppError::expect_affected(&result, "page")
 }
 

@@ -63,7 +63,9 @@ pub async fn create_revision(
         "created_at" => now,
     ])?;
 
-    Ok(raisfast_derive::crud_find_one!(pool, "content_revisions", ContentRevision, where: ("id", id))?)
+    Ok(
+        raisfast_derive::crud_find_one!(pool, "content_revisions", ContentRevision, where: ("id", id))?,
+    )
 }
 
 async fn next_revision_number(
