@@ -218,6 +218,12 @@ pub struct BuiltinsConfig {
     pub fulltext: bool,
     #[serde(default = "default_true")]
     pub workflow: bool,
+    #[serde(default = "default_true")]
+    pub ecommerce: bool,
+    #[serde(default = "default_true")]
+    pub payment: bool,
+    #[serde(default = "default_true")]
+    pub wallet: bool,
 }
 
 impl Default for BuiltinsConfig {
@@ -228,6 +234,9 @@ impl Default for BuiltinsConfig {
             media: true,
             fulltext: true,
             workflow: true,
+            ecommerce: true,
+            payment: true,
+            wallet: true,
         }
     }
 }
@@ -255,85 +264,88 @@ impl BuiltinsConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(true),
+            ecommerce: env::var("BUILTIN_ECOMMERCE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(true),
+            payment: env::var("BUILTIN_PAYMENT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(true),
+            wallet: env::var("BUILTIN_WALLET")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(true),
         }
     }
 
     /// Whether all built-in modules are disabled (pure Headless CMS mode)
     pub fn is_all_disabled(&self) -> bool {
-        !self.blog && !self.pages && !self.media && !self.fulltext && !self.workflow
+        !self.blog
+            && !self.pages
+            && !self.media
+            && !self.fulltext
+            && !self.workflow
+            && !self.ecommerce
+            && !self.payment
+            && !self.wallet
     }
 
-    /// Returns the list of protected tables based on enabled modules
+    /// Returns the list of protected tables.
+    ///
+    /// At runtime, returns the live list queried from the database at startup
+    /// (includes tables from incremental migrations). Falls back to the
+    /// compile-time schema table list when no database is available (e.g. unit tests).
     pub fn protected_tables(&self) -> Vec<String> {
-        let mut tables = vec![
-            "users".into(),
-            "roles".into(),
-            "permissions".into(),
-            "audit_log".into(),
-            "plugin_storage".into(),
-            "options".into(),
-            "rbac_roles".into(),
-            "rbac_permissions".into(),
-            "rbac_role_permissions".into(),
-            "tenants".into(),
-            "api_tokens".into(),
-            "webhook_subscriptions".into(),
-            "content_revisions".into(),
-            "oauth_accounts".into(),
-            "password_resets".into(),
-        ];
-        if self.blog {
-            tables.extend([
-                "posts".into(),
-                "categories".into(),
-                "tags".into(),
-                "post_tags".into(),
-                "comments".into(),
-            ]);
-        }
-        if self.pages {
-            tables.extend(["pages".into(), "reusable_blocks".into()]);
-        }
-        if self.media {
-            tables.push("media".into());
-        }
-        tables
+        crate::db::schema::get_protected_tables()
     }
 
-    /// Returns the list of reserved route segments based on enabled modules
+    /// Returns the list of reserved route segments.
+    ///
+    /// These names are always reserved regardless of whether the corresponding
+    /// module is enabled, to prevent content type registration conflicts when
+    /// a module is re-enabled later.
     pub fn reserved_route_segments(&self) -> Vec<&'static str> {
-        let mut segments: Vec<&'static str> = vec![
-            "auth",
+        vec![
             "admin",
-            "options",
-            "routes",
-            "health",
-            "plugins",
-            "oauth",
+            "auth",
+            "audit",
+            "cart",
+            "categories",
             "cms",
-            "content-types",
-            "search",
+            "comments",
+            "crons",
+            "events",
+            "graphql",
+            "health",
+            "media",
+            "oauth",
+            "options",
+            "orders",
+            "pages",
+            "password",
+            "payment",
+            "plugins",
+            "posts",
+            "products",
+            "rbac",
+            "reusable-blocks",
+            "routes",
             "rss",
+            "search",
             "sitemap",
             "sse",
-            "password",
+            "stats",
+            "tags",
+            "tenants",
             "tokens",
+            "user",
             "users",
-            "events",
-        ];
-        if self.blog {
-            segments.extend(["posts", "categories", "tags", "comments"]);
-        }
-        if self.pages {
-            segments.push("pages");
-        }
-        if self.media {
-            segments.push("media");
-        }
-        if self.workflow {
-            segments.push("workflows");
-        }
-        segments
+            "wallets",
+            "webhooks",
+            "workflows",
+            "ws",
+        ]
     }
 }
 
@@ -1250,29 +1262,24 @@ mod tests {
             media: false,
             fulltext: false,
             workflow: false,
+            ecommerce: false,
+            payment: false,
+            wallet: false,
         };
         assert!(b.is_all_disabled());
     }
 
     #[test]
-    fn builtins_protected_tables_includes_users() {
+    fn builtins_protected_tables_includes_core() {
         let b = BuiltinsConfig::default();
         let tables = b.protected_tables();
         assert!(tables.contains(&"users".to_string()));
         assert!(tables.contains(&"posts".to_string()));
         assert!(tables.contains(&"pages".to_string()));
         assert!(tables.contains(&"media".to_string()));
-    }
-
-    #[test]
-    fn builtins_protected_tables_without_blog() {
-        let b = BuiltinsConfig {
-            blog: false,
-            ..Default::default()
-        };
-        let tables = b.protected_tables();
-        assert!(!tables.contains(&"posts".to_string()));
-        assert!(!tables.contains(&"categories".to_string()));
+        assert!(tables.contains(&"_migrations".to_string()));
+        assert!(tables.contains(&"wallets".to_string()));
+        assert!(tables.contains(&"categories".to_string()));
     }
 
     #[test]

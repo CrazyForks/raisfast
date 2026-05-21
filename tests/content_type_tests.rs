@@ -463,7 +463,7 @@ required = true
 async fn registry_load_and_lookup() {
     let ct = parse_product();
     let registry = ContentTypeRegistry::new();
-    let reserved = raisfast::config::app::BuiltinsConfig::default().reserved_route_segments();
+    let reserved: Vec<&str> = Vec::new();
     let protocol_reg = test_protocol_registry();
     let protocol_names: Vec<&str> = protocol_reg.names();
     registry

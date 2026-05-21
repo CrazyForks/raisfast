@@ -143,6 +143,9 @@ pub async fn build_app_state(
 ) -> anyhow::Result<AppState> {
     let pool = crate::db::connection::init_pool(&config.database_url, config.db_pool_size).await?;
     crate::db::connection::ensure_schema(&pool).await?;
+
+    let live_tables = crate::db::connection::fetch_table_names(&pool).await;
+
     let eventbus = EventBus::new(256);
 
     let cache: Arc<dyn crate::cache::CacheStore> = Arc::new(crate::cache::MemoryCache::new());
@@ -202,7 +205,9 @@ pub async fn build_app_state(
         &protocol_names,
         &protocol_registry,
     )?);
-    ct_registry.set_protected_tables(config.builtins.protected_tables());
+    let ct_tables: Vec<String> = ct_registry.all().iter().map(|ct| ct.table.clone()).collect();
+    crate::db::schema::set_protected_tables(live_tables, &ct_tables);
+    ct_registry.set_protected_tables(crate::db::schema::get_protected_tables());
 
     {
         let repo = crate::content_type::repository::ContentRepository::new(pool.clone());

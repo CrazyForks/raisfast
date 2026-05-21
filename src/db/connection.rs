@@ -424,12 +424,18 @@ pub async fn rollback_migrations(pool: &Pool, step: Option<u32>) -> anyhow::Resu
 /// Ensure the `_migrations` table has all required columns.
 /// Handles upgrades from older schema versions (adds `batch`, `checksum`, `applied_at`).
 async fn ensure_migrations_table_schema(pool: &Pool) {
-    let _ = sqlx::query("ALTER TABLE _migrations ADD COLUMN batch INTEGER NOT NULL DEFAULT 0")
+    if let Err(e) = sqlx::query("ALTER TABLE _migrations ADD COLUMN batch INTEGER NOT NULL DEFAULT 0")
         .execute(pool)
-        .await;
-    let _ = sqlx::query("ALTER TABLE _migrations ADD COLUMN checksum TEXT NOT NULL DEFAULT ''")
+        .await
+    {
+        tracing::debug!("migration schema: batch column: {e}");
+    }
+    if let Err(e) = sqlx::query("ALTER TABLE _migrations ADD COLUMN checksum TEXT NOT NULL DEFAULT ''")
         .execute(pool)
-        .await;
+        .await
+    {
+        tracing::debug!("migration schema: checksum column: {e}");
+    }
     {
         #[cfg(feature = "db-sqlite")]
         let sql = "ALTER TABLE _migrations ADD COLUMN applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))";
@@ -438,7 +444,9 @@ async fn ensure_migrations_table_schema(pool: &Pool) {
         #[cfg(feature = "db-mysql")]
         let sql =
             "ALTER TABLE _migrations ADD COLUMN applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP";
-        let _ = sqlx::query(sql).execute(pool).await;
+        if let Err(e) = sqlx::query(sql).execute(pool).await {
+            tracing::debug!("migration schema: applied_at column: {e}");
+        }
     }
 }
 
@@ -476,6 +484,32 @@ async fn check_migrations_table(pool: &Pool) -> bool {
         .unwrap_or(0)
             > 0
     }
+}
+
+/// Query the actual database for all user table names.
+///
+/// Returns a sorted, deduplicated list of table names present in the database right now.
+/// This catches tables created by both the base schema and any applied incremental migrations.
+pub async fn fetch_table_names(pool: &Pool) -> Vec<String> {
+    let tables: Vec<String> = if cfg!(feature = "db-sqlite") {
+        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default()
+    } else if cfg!(feature = "db-postgres") {
+        sqlx::query_scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name")
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default()
+    } else if cfg!(feature = "db-mysql") {
+        sqlx::query_scalar("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE' ORDER BY table_name")
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    tables
 }
 
 /// Return the database label string based on active feature flag.

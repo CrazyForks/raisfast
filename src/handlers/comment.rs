@@ -63,7 +63,7 @@ pub fn routes(
         "/comments/{id}",
         delete,
         self::delete,
-        "system public",
+        "system authed",
         "comments"
     );
     let r = reg_route!(
@@ -73,7 +73,7 @@ pub fn routes(
         "/comments/{id}/status",
         put,
         update_status,
-        "system public",
+        "system authed",
         "comments"
     );
     let r = reg_route!(
@@ -253,6 +253,7 @@ pub async fn delete(
     State(state): State<crate::AppState>,
     Path(id): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
+    auth.ensure_authenticated()?;
     let id = crate::types::snowflake_id::parse_id(&id)?;
     state.comment_service.delete(id, &auth).await?;
     Ok(ApiResponse::success(()))

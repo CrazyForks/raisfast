@@ -116,9 +116,7 @@ async fn build_app(
         .merge(auth::routes(&mut registry, config))
         .merge(crate::handlers::oauth::routes(&mut registry, config))
         .merge(api_token::routes(&mut registry, config))
-        .merge(user::routes(&mut registry, config))
-        .merge(wallet::routes(&mut registry, config))
-        .merge(crate::handlers::currencies::routes(&mut registry, config));
+        .merge(user::routes(&mut registry, config));
 
     if config.builtins.blog {
         api_v1 = api_v1
@@ -128,16 +126,26 @@ async fn build_app(
             .merge(comment::routes(&mut registry, config));
     }
 
-    api_v1 = api_v1
-        .merge(crate::handlers::product::routes(&mut registry, config))
-        .merge(crate::handlers::order::routes(&mut registry, config))
-        .merge(crate::handlers::cart::routes(&mut registry, config))
-        .merge(crate::handlers::product_variant::routes(
-            &mut registry,
-            config,
-        ))
-        .merge(crate::handlers::user_address::routes(&mut registry, config))
-        .merge(h_payment::routes(&mut registry, config));
+    if config.builtins.ecommerce {
+        api_v1 = api_v1
+            .merge(crate::handlers::product::routes(&mut registry, config))
+            .merge(crate::handlers::order::routes(&mut registry, config))
+            .merge(crate::handlers::cart::routes(&mut registry, config))
+            .merge(crate::handlers::product_variant::routes(
+                &mut registry,
+                config,
+            ))
+            .merge(crate::handlers::user_address::routes(&mut registry, config))
+            .merge(crate::handlers::currencies::routes(&mut registry, config));
+    }
+
+    if config.builtins.payment {
+        api_v1 = api_v1.merge(h_payment::routes(&mut registry, config));
+    }
+
+    if config.builtins.wallet {
+        api_v1 = api_v1.merge(wallet::routes(&mut registry, config));
+    }
 
     if config.builtins.pages {
         api_v1 = api_v1

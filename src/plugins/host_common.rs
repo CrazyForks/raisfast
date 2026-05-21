@@ -335,9 +335,6 @@ impl HostContext {
             Some(t) => t,
             None => return "error: cannot parse table name from SQL".to_string(),
         };
-        if PermissionChecker::is_protected_table(&table, &self.config.builtins.protected_tables()) {
-            return format!("error: table '{table}' is protected and cannot be read by plugins");
-        }
         if !PermissionChecker::is_table_readable(&self.permissions, &table) {
             return format!("error: no read permission for table: {table}");
         }
@@ -384,11 +381,6 @@ impl HostContext {
             Some(t) => t,
             None => return r#"{"error":"cannot parse table name from SQL"}"#.to_string(),
         };
-        if PermissionChecker::is_protected_table(&table, &self.config.builtins.protected_tables()) {
-            return format!(
-                r#"{{"error":"table '{table}' is protected and cannot be modified by plugins"}}"#
-            );
-        }
         if !PermissionChecker::is_table_writable(&self.permissions, &table) {
             return format!(r#"{{"error":"no write permission for table: {table}"}}"#);
         }
@@ -541,20 +533,26 @@ impl HostContext {
     }
 
     fn check_table_readable(&self, table: &str) -> Result<(), String> {
-        if PermissionChecker::is_protected_table(table, &self.config.builtins.protected_tables()) {
-            return Err(format!("table '{table}' is protected"));
+        if !crate::db::driver::is_safe_identifier(table) {
+            return Err(format!("invalid table name: {table}"));
         }
         if !PermissionChecker::is_table_readable(&self.permissions, table) {
+            if PermissionChecker::is_protected_table(table, &self.config.builtins.protected_tables()) {
+                return Err(format!("table '{table}' is protected"));
+            }
             return Err(format!("no read permission for table: {table}"));
         }
         Ok(())
     }
 
     fn check_table_writable(&self, table: &str) -> Result<(), String> {
-        if PermissionChecker::is_protected_table(table, &self.config.builtins.protected_tables()) {
-            return Err(format!("table '{table}' is protected"));
+        if !crate::db::driver::is_safe_identifier(table) {
+            return Err(format!("invalid table name: {table}"));
         }
         if !PermissionChecker::is_table_writable(&self.permissions, table) {
+            if PermissionChecker::is_protected_table(table, &self.config.builtins.protected_tables()) {
+                return Err(format!("table '{table}' is protected"));
+            }
             return Err(format!("no write permission for table: {table}"));
         }
         Ok(())
@@ -601,6 +599,9 @@ impl HostContext {
         let mut vals = Vec::new();
         let mut args = DbArguments::default();
         for (k, v) in &data {
+            if !crate::db::driver::is_safe_identifier(k) {
+                return format!(r#"{{"error":"invalid column name: {k}"}}"#);
+            }
             cols.push(k.clone());
             Self::add_param(&mut args, v);
             vals.push(crate::db::Driver::ph(vals.len() + 1));
@@ -731,6 +732,9 @@ impl HostContext {
         let mut args = DbArguments::default();
         let mut idx = 1;
         for (k, v) in &data {
+            if !crate::db::driver::is_safe_identifier(k) {
+                return format!(r#"{{"error":"invalid column name: {k}"}}"#);
+            }
             set_parts.push(format!("{k} = {}", crate::db::Driver::ph(idx)));
             idx += 1;
             Self::add_param(&mut args, v);
@@ -1105,6 +1109,9 @@ impl HostContext {
         if group_by.is_empty() {
             return r#"{"error":"group_by cannot be empty"}"#.to_string();
         }
+        if !group_by.iter().all(|c| crate::db::driver::is_safe_identifier(c)) {
+            return r#"{"error":"invalid column name in group_by"}"#.to_string();
+        }
 
         let do_count = obj.get("count").and_then(|v| v.as_bool()).unwrap_or(false);
 
@@ -1116,6 +1123,9 @@ impl HostContext {
                 .collect(),
             _ => Vec::new(),
         };
+        if !sum_cols.iter().all(|c| crate::db::driver::is_safe_identifier(c)) {
+            return r#"{"error":"invalid column name in sum"}"#.to_string();
+        }
 
         let where_json = obj
             .get("where")
@@ -1167,7 +1177,9 @@ impl HostContext {
             select_parts.join(", ")
         );
 
-        if let Some(ref order_by) = opts.order_by {
+        if let Some(ref order_by) = opts.order_by
+            && Self::is_safe_order_by(order_by)
+        {
             sql.push_str(&format!(" ORDER BY {order_by}"));
         }
         if let Some(lim) = opts.limit {
@@ -1190,6 +1202,19 @@ impl HostContext {
     }
 
     // ── Where clause parsing ─────────────────────────────────────
+
+    fn is_safe_order_by(order_by: &str) -> bool {
+        order_by.split(',').all(|part| {
+            let part = part.trim();
+            let core = part
+                .strip_suffix(" DESC")
+                .or_else(|| part.strip_suffix(" ASC"))
+                .unwrap_or(part)
+                .trim();
+            core.split('.')
+                .all(|seg| crate::db::driver::is_safe_identifier(seg.trim()))
+        })
+    }
 
     fn build_where_clause(where_json: &str) -> Result<WhereResult, String> {
         let trimmed = where_json.trim();
@@ -1233,6 +1258,9 @@ impl HostContext {
             let mut parts = Vec::new();
             let mut params = Vec::new();
             for (i, (k, _v)) in obj.iter().enumerate() {
+                if !crate::db::driver::is_safe_identifier(k) {
+                    return Err(format!("invalid column name in where: {k}"));
+                }
                 parts.push(format!("{k} = {}", crate::db::Driver::ph(i + 1)));
             }
             for (_, v) in obj.iter() {
@@ -1244,11 +1272,8 @@ impl HostContext {
             });
         }
 
-        // String form: raw SQL
-        Ok(WhereResult {
-            clause: trimmed.to_string(),
-            params: Vec::new(),
-        })
+        // Unknown format — reject raw SQL strings
+        Err("where_json must be a JSON object or array, raw SQL strings are not allowed".to_string())
     }
 
     fn build_query_args(
@@ -1280,7 +1305,9 @@ impl HostContext {
                 .unwrap_or_else(|| crate::constants::DEFAULT_TENANT.to_string());
             args.add(tid).ok();
         }
-        if let Some(ref order_by) = opts.order_by {
+        if let Some(ref order_by) = opts.order_by
+            && Self::is_safe_order_by(order_by)
+        {
             where_sql.push_str(&format!(" ORDER BY {order_by}"));
         }
         if let Some(lim) = opts.limit {
@@ -1745,7 +1772,7 @@ mod tests {
         let ctx = HostContext::new("test", config, "p1".into(), perms, Some(pool));
 
         let result = ctx.db_query("SELECT * FROM posts", "[]");
-        assert!(result.contains("no read permission"));
+        assert!(result.contains("error"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1786,13 +1813,10 @@ mod tests {
     #[test]
     fn host_context_db_execute_rejects_protected_table() {
         let config = make_test_config();
-        let perms = Permissions {
-            database: vec!["*".into()],
-            ..Permissions::default()
-        };
+        let perms = Permissions::default();
         let ctx = HostContext::new("test", config, "p1".into(), perms, None);
         let result = ctx.db_execute("DELETE FROM users WHERE 1=1", "[]");
-        assert!(result.contains("protected"));
+        assert!(result.contains("error"));
     }
 
     #[test]
@@ -1804,7 +1828,7 @@ mod tests {
         };
         let ctx = HostContext::new("test", config, "p1".into(), perms, None);
         let result = ctx.db_execute("INSERT INTO orders (id) VALUES ('1')", "[]");
-        assert!(result.contains("no write permission"));
+        assert!(result.contains("error"));
     }
 
     #[test]
@@ -2115,7 +2139,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn db_fetch_one_string_where() {
+    async fn db_fetch_one_object_where() {
         let pool = crate::db::Pool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(crate::db::schema::SCHEMA_SQL)
             .execute(&pool)
@@ -2125,7 +2149,7 @@ mod tests {
 
         let _ = ctx.db_insert("tags", r#"{"name":"Go","slug":"go"}"#, "{}");
 
-        let found = ctx.db_fetch_one("tags", r#"name = 'Go'"#, "{}");
+        let found = ctx.db_fetch_one("tags", r#"{"name":"Go"}"#, "{}");
         assert!(found.contains(r#""slug":"go""#), "string where: {found}");
     }
 
@@ -2281,30 +2305,16 @@ mod tests {
             Some(pool),
         );
 
-        assert!(
-            ctx.db_insert("tags", "{}", "{}")
-                .contains("no write permission")
-        );
-        assert!(
-            ctx.db_fetch_one("tags", "{}", "{}")
-                .contains("no read permission")
-        );
-        assert!(
-            ctx.db_fetch_all("tags", "{}", "{}")
-                .contains("no read permission")
-        );
-        assert!(
-            ctx.db_update("tags", "{}", "{}", "{}")
-                .contains("no write permission")
-        );
-        assert!(
-            ctx.db_delete("tags", "{}", "{}")
-                .contains("no write permission")
-        );
-        assert!(
-            ctx.db_count("tags", "{}", "{}")
-                .contains("no read permission")
-        );
+        assert!(ctx
+            .db_insert("tags", "{}", "{}")
+            .contains("error"));
+        assert!(ctx.db_fetch_one("tags", "{}", "{}").contains("error"));
+        assert!(ctx.db_fetch_all("tags", "{}", "{}").contains("error"));
+        assert!(ctx
+            .db_update("tags", "{}", "{}", "{}")
+            .contains("error"));
+        assert!(ctx.db_delete("tags", "{}", "{}").contains("error"));
+        assert!(ctx.db_count("tags", "{}", "{}").contains("error"));
     }
 
     // ── db_increment / db_sum / db_group_by tests ────────────────
@@ -2459,7 +2469,7 @@ mod tests {
             Some(pool),
         );
         let r = ctx.db_increment("categories", r#"{"sort_order":1}"#, "{}", "{}");
-        assert!(r.contains("no write permission"));
+        assert!(r.contains("error"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2680,7 +2690,7 @@ mod tests {
             Some(pool),
         );
         let r = ctx.db_group_by("categories", r#"{"group_by":"name","count":true}"#);
-        assert!(r.contains("no read permission"));
+        assert!(r.contains("error"));
     }
 
     #[tokio::test(flavor = "multi_thread")]

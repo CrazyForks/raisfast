@@ -270,6 +270,7 @@ pub async fn update(
     Path(slug): Path<String>,
     Json(req): Json<UpdatePostRequest>,
 ) -> AppResult<ApiResponse<PostResponse>> {
+    auth.ensure_author()?;
     validation::validate(&req)?;
     let post = state.post_service.update(&auth, &slug, req).await?;
     Ok(ApiResponse::success(post))
@@ -291,6 +292,7 @@ pub async fn delete(
     State(state): State<crate::AppState>,
     Path(slug): Path<String>,
 ) -> AppResult<ApiResponse<()>> {
+    auth.ensure_author()?;
     state.post_service.delete(&auth, &slug).await?;
     Ok(ApiResponse::success(()))
 }

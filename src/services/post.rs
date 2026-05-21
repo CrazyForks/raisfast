@@ -187,12 +187,14 @@ impl PostService for PostServiceImpl {
         let author_name =
             crate::models::post::get_author_name(&self.pool, *p.created_by, auth.tenant_id())
                 .await
+                .inspect_err(|e| tracing::warn!("failed to fetch author name: {e}"))
                 .ok()
                 .flatten();
 
         let category_name = if let Some(cat_id) = p.category_id {
             crate::models::post::get_category_name(&self.pool, cat_id, auth.tenant_id())
                 .await
+                .inspect_err(|e| tracing::warn!("failed to fetch category name: {e}"))
                 .ok()
                 .flatten()
         } else {
@@ -201,6 +203,7 @@ impl PostService for PostServiceImpl {
 
         let tags = crate::models::post::get_post_tags(&self.pool, p.id, auth.tenant_id())
             .await
+            .inspect_err(|e| tracing::warn!("failed to fetch post tags: {e}"))
             .unwrap_or_default();
 
         let resp = build_response_from_post(&p, author_name, category_name, tags).await?;
